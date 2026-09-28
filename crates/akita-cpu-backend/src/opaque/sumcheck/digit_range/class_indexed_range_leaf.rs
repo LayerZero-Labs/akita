@@ -6,6 +6,8 @@ use super::exact_prefix::ExactPrefixTable;
 use super::range_class_tables::{
     FoldedRangeImagePairTable, OrderedRangePairCoefficients, SecondRoundRangeQuartetCoefficients,
 };
+#[cfg(debug_assertions)]
+use super::round_accumulation::accumulate_equality_weighted_values;
 use super::round_accumulation::{
     accumulate_equality_weighted_pair_terms, accumulate_equality_weighted_round,
 };
@@ -144,10 +146,6 @@ pub(crate) struct ClassIndexedRangeLeafProver<E: Field> {
     input_claim: E,
     polynomial_coefficients: Vec<E>,
     depressed_quartic: Option<DepressedQuartic<E>>,
-    /// Running inner claim `(1 - tau) q(0) + tau q(1)` of the current round.
-    claim: E,
-    /// Inner polynomial of the last computed round, which advances `claim`.
-    last_round_coefficients: [E; MAX_TREE_STAGE_Q_DEGREE + 1],
     num_rounds: usize,
     rounds_completed: usize,
 }
@@ -184,8 +182,6 @@ impl<E: Field + Ring> ClassIndexedRangeLeafProver<E> {
             input_claim,
             depressed_quartic: DepressedQuartic::new(&polynomial_coefficients),
             polynomial_coefficients,
-            claim: input_claim,
-            last_round_coefficients: [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
             num_rounds: equality_point.len(),
             rounds_completed: 0,
         })
@@ -205,11 +201,12 @@ impl<E: Field + Ring + Fold + Unreduced> ClassIndexedRangeLeafProver<E> {
     pub(crate) fn round_q_coefficients(
         &mut self,
         round: usize,
+        claim: E,
     ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
         debug_assert_eq!(round, self.rounds_completed);
         let (equality_prefix_weights, equality_suffix_weights) =
             self.split_eq.remaining_eq_tables();
-        let coefficients = match &self.range_image {
+        match &self.range_image {
             RangeImageTableState::Compact(CompactRangeLeafState {
                 source,
                 pair_coefficients,
@@ -273,9 +270,31 @@ impl<E: Field + Ring + Fold + Unreduced> ClassIndexedRangeLeafProver<E> {
                         );
                         let nonconstant: [E; MAX_TREE_STAGE_Q_DEGREE] =
                             std::array::from_fn(|index| quartic.scales[index] * sums[index]);
-                        // The running claim is `q(0) + tau (q(1) - q(0))`.
+                        // The normalized claim is `q(0) + tau (q(1) - q(0))`.
                         let nonconstant_sum: E = nonconstant.iter().copied().sum();
-                        let constant = self.claim - self.split_eq.current_tau() * nonconstant_sum;
+                        let constant = claim - self.split_eq.current_tau() * nonconstant_sum;
+                        #[cfg(debug_assertions)]
+                        {
+                            let evaluate = |point: E| {
+                                self.polynomial_coefficients
+                                    .iter()
+                                    .rev()
+                                    .fold(E::zero(), |value, &coefficient| {
+                                        value * point + coefficient
+                                    })
+                            };
+                            let [direct_constant] = accumulate_equality_weighted_values(
+                                equality_prefix_weights,
+                                equality_suffix_weights,
+                                pair_count,
+                                |pair_index| {
+                                    let (left, _) = pair_at(pair_index);
+                                    [evaluate(left)]
+                                },
+                                [evaluate(table.default_value())],
+                            );
+                            debug_assert_eq!(constant, direct_constant);
+                        }
                         let [q1, q2, q3, q4] = nonconstant;
                         [constant, q1, q2, q3, q4]
                     }
@@ -289,9 +308,7 @@ impl<E: Field + Ring + Fold + Unreduced> ClassIndexedRangeLeafProver<E> {
                     ),
                 }
             }
-        };
-        self.last_round_coefficients = coefficients;
-        coefficients
+        }
     }
 
     pub(crate) fn final_range_claim(&self) -> E {
@@ -332,18 +349,13 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
         self.split_eq.current_tau()
     }
 
-    fn compute_round_eq_factored(&mut self, round: usize) -> OmittedConstantPoly<E> {
-        let coefficients = self.round_q_coefficients(round);
+    fn compute_round_eq_factored(&mut self, round: usize, claim: E) -> OmittedConstantPoly<E> {
+        let coefficients = self.round_q_coefficients(round, claim);
         OmittedConstantPoly::from_q_coefficients(coefficients[..=self.degree_bound()].to_vec())
     }
 
     fn ingest_challenge(&mut self, round: usize, challenge: E) {
         debug_assert_eq!(round, self.rounds_completed);
-        self.claim = self
-            .last_round_coefficients
-            .iter()
-            .rev()
-            .fold(E::zero(), |acc, &coefficient| acc * challenge + coefficient);
         self.split_eq.bind(challenge);
         if self.rounds_completed == 0 && self.num_rounds >= 2 {
             let deferred = match &self.range_image {

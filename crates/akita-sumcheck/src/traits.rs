@@ -138,8 +138,8 @@ pub trait EqFactoredSumcheckInstanceProver<E: Field>: Send + Sync {
     /// Equality point coordinate `tau` for the current round.
     fn current_tau(&self) -> E;
 
-    /// Compute the eq-factored round message.
-    fn compute_round_eq_factored(&mut self, round: usize) -> OmittedConstantPoly<E>;
+    /// Compute the eq-factored round message from the normalized running claim.
+    fn compute_round_eq_factored(&mut self, round: usize, claim: E) -> OmittedConstantPoly<E>;
 
     /// Ingest the verifier challenge `r_round` to fold/bind the current variable.
     fn ingest_challenge(&mut self, round: usize, r_round: E);
@@ -184,10 +184,10 @@ impl<E: Field, P: EqFactoredSumcheckInstanceProver<E> + ?Sized> EqFactoredSumche
     fn round_polynomial(
         &mut self,
         round: usize,
-        _claim: E,
+        claim: E,
     ) -> Result<OmittedConstantPoly<E>, AkitaError> {
         Ok(EqFactoredSumcheckInstanceProver::compute_round_eq_factored(
-            self.0, round,
+            self.0, round, claim,
         ))
     }
     fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {

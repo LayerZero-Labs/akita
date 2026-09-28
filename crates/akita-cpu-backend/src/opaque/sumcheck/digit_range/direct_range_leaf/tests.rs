@@ -153,7 +153,7 @@ fn stage1_round0_matches_dense_reference() {
             ring_bits,
         )
         .unwrap();
-        let stage1_poly = prover.compute_round_eq_factored(0);
+        let stage1_poly = prover.compute_round_eq_factored(0, F::zero());
         let compact_range_image = build_compact_range_image(&compact_digit_witness);
         let reference = compute_range_round_polynomial_from_range_image(
             &prover.split_eq,
@@ -213,8 +213,8 @@ fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
             let mut padded_claim = F::zero();
 
             for round in 0..(col_bits + ring_bits) {
-                let prefix_poly = prefix_prover.compute_round_eq_factored(round);
-                let padded_poly = padded_prover.compute_round_eq_factored(round);
+                let prefix_poly = prefix_prover.compute_round_eq_factored(round, prefix_claim);
+                let padded_poly = padded_prover.compute_round_eq_factored(round, padded_claim);
                 assert_eq!(
                     prefix_poly, padded_poly,
                     "round {round} polynomial mismatch live_x_cols={live_x_cols} basis={basis}"
@@ -304,8 +304,8 @@ fn stage1_prefix_x_rounds_allow_ring_bits_at_least_col_bits() {
         let mut padded_claim = F::zero();
 
         for round in 0..(col_bits + ring_bits) {
-            let prefix_poly = prefix_prover.compute_round_eq_factored(round);
-            let padded_poly = padded_prover.compute_round_eq_factored(round);
+            let prefix_poly = prefix_prover.compute_round_eq_factored(round, prefix_claim);
+            let padded_poly = padded_prover.compute_round_eq_factored(round, padded_claim);
             assert_eq!(
                 prefix_poly, padded_poly,
                 "round {round} polynomial mismatch live_x_cols={live_x_cols} basis={basis}"
@@ -398,7 +398,7 @@ fn assert_rounds_match_dense_reference(
         "{shape} initial storage"
     );
     for round in 0..num_vars {
-        let poly = prover.compute_round_eq_factored(round);
+        let poly = prover.compute_round_eq_factored(round, F::zero());
         let expected =
             compute_range_round_polynomial_from_range_image(&reference_eq, &precomputation, |j| {
                 (reference[2 * j], reference[2 * j + 1])

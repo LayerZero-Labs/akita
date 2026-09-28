@@ -3,8 +3,10 @@
 use super::class_indexed_state::ClassIndexedTableState;
 use super::compact_digit_source::CompactDigitSource;
 use super::exact_prefix::ExactPrefixTable;
+#[cfg(test)]
+use super::range_class_tables::product_coefficients;
 use super::range_class_tables::{
-    product_coefficients, FoldedProductPairTable, OrderedProductPairCoefficients, ProductNodeTable,
+    FoldedProductPairTable, OrderedProductPairCoefficients, ProductNodeTable,
     SecondRoundProductQuartetCoefficients,
 };
 use super::round_accumulation::{
@@ -29,7 +31,7 @@ struct CompactProductState<E: Field, const LANES: usize> {
 struct FirstChallengeFoldedProductState<E: Field, const LANES: usize> {
     source: CompactDigitSource,
     folded_pairs: FoldedProductPairTable<E, LANES>,
-    cached_second_round_coefficients: [E; MAX_TREE_STAGE_Q_DEGREE + 1],
+    cached_second_round_coefficients: Option<[E; MAX_TREE_STAGE_Q_DEGREE + 1]>,
 }
 
 type ProductTableState<E, const LANES: usize> = ClassIndexedTableState<
@@ -38,80 +40,165 @@ type ProductTableState<E, const LANES: usize> = ClassIndexedTableState<
     [E; LANES],
 >;
 
-/// Batched product of one pair at `X = 1` and the leading coefficient, for
-/// arity-two parents.
-#[inline(always)]
-fn arity_two_product_values<E: Field, const LANES: usize>(
-    left: [E; LANES],
-    right: [E; LANES],
-    parent_weights: &[E],
-) -> [E; 2] {
-    let mut values = [E::zero(); 2];
-    for (parent_index, &weight) in parent_weights.iter().enumerate() {
-        let lane = 2 * parent_index;
-        let mut at_one = right[lane] * right[lane + 1];
-        let mut leading = (right[lane] - left[lane]) * (right[lane + 1] - left[lane + 1]);
-        if weight != E::one() {
-            at_one *= weight;
-            leading *= weight;
+#[derive(Clone, Copy)]
+enum ProductArity {
+    Two,
+    Four,
+}
+
+impl ProductArity {
+    fn new(arity: usize) -> Option<Self> {
+        match arity {
+            2 => Some(Self::Two),
+            4 => Some(Self::Four),
+            _ => None,
         }
-        values[0] += at_one;
-        values[1] += leading;
+    }
+
+    fn degree(self) -> usize {
+        match self {
+            Self::Two => 2,
+            Self::Four => 4,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ParentWeights<'a, E> {
+    unweighted_parent_count: usize,
+    weighted: &'a [E],
+}
+
+impl<'a, E: Field> ParentWeights<'a, E> {
+    fn new(weights: &'a [E]) -> Self {
+        let unweighted_parent_count = weights
+            .iter()
+            .position(|&weight| weight != E::one())
+            .unwrap_or(weights.len());
+        Self {
+            unweighted_parent_count,
+            weighted: &weights[unweighted_parent_count..],
+        }
+    }
+}
+
+#[inline(always)]
+fn accumulate_parent_values<E: Field, const VALUES: usize>(
+    parent_weights: ParentWeights<'_, E>,
+    parent_values: impl Fn(usize) -> [E; VALUES],
+) -> [E; VALUES] {
+    let mut values = [E::zero(); VALUES];
+    for parent_index in 0..parent_weights.unweighted_parent_count {
+        for (value, parent_value) in values.iter_mut().zip(parent_values(parent_index)) {
+            *value += parent_value;
+        }
+    }
+    for (weighted_index, &weight) in parent_weights.weighted.iter().enumerate() {
+        let parent_index = parent_weights.unweighted_parent_count + weighted_index;
+        for (value, parent_value) in values.iter_mut().zip(parent_values(parent_index)) {
+            *value += weight * parent_value;
+        }
     }
     values
 }
 
-/// Batched product of one pair at `X = 1`, the leading coefficient, `X = -1`
-/// and `X = 2`, for arity-four parents.
-///
-/// Each parent splits into two quadratic half-products. A half-product
-/// `h(X) = (l0 + X s0)(l1 + X s1)` costs three multiplications for `h(0)`,
-/// `h(1)` and its leading coefficient `h_inf`, and then `h(-1) = 2 (h(0) +
-/// h_inf) - h(1)` and `h(2) = 2 (h(1) + h_inf) - h(0)` are additions. The four
-/// product values cost one multiplication each, ten in all per parent.
+/// Batched product of one pair at `X = 1` and infinity, for arity-two parents.
+#[cfg(not(debug_assertions))]
 #[inline(always)]
+fn arity_two_product_values<E: Field, const LANES: usize>(
+    left: [E; LANES],
+    right: [E; LANES],
+    parent_weights: ParentWeights<'_, E>,
+) -> [E; 2] {
+    accumulate_parent_values(parent_weights, |parent_index| {
+        let lane = 2 * parent_index;
+        [
+            right[lane] * right[lane + 1],
+            (right[lane] - left[lane]) * (right[lane + 1] - left[lane + 1]),
+        ]
+    })
+}
+
+/// The arity-two values with `X = 0` prepended.
+#[inline(always)]
+fn arity_two_product_values_with_zero<E: Field, const LANES: usize>(
+    left: [E; LANES],
+    right: [E; LANES],
+    parent_weights: ParentWeights<'_, E>,
+) -> [E; 3] {
+    accumulate_parent_values(parent_weights, |parent_index| {
+        let lane = 2 * parent_index;
+        [
+            left[lane] * left[lane + 1],
+            right[lane] * right[lane + 1],
+            (right[lane] - left[lane]) * (right[lane + 1] - left[lane + 1]),
+        ]
+    })
+}
+
+/// Values of a quadratic half-product at `0`, `1`, infinity, `-1`, and `2`.
+#[inline(always)]
+fn half_product_values<E: Field>(left: [E; 2], right: [E; 2]) -> [E; 5] {
+    let at_zero = left[0] * left[1];
+    let at_one = right[0] * right[1];
+    let leading = (right[0] - left[0]) * (right[1] - left[1]);
+    let zero_plus_leading = at_zero + leading;
+    let one_plus_leading = at_one + leading;
+    [
+        at_zero,
+        at_one,
+        leading,
+        zero_plus_leading + zero_plus_leading - at_one,
+        one_plus_leading + one_plus_leading - at_zero,
+    ]
+}
+
+/// Batched product of one pair at `X = 1`, infinity, `X = -1`, and `X = 2`,
+/// for arity-four parents.
+///
+/// Each parent splits into two quadratic half-products. The two halves cost
+/// six multiplications and the four combined values cost four more.
+#[inline(always)]
+#[cfg(not(debug_assertions))]
 fn arity_four_product_values<E: Field, const LANES: usize>(
     left: [E; LANES],
     right: [E; LANES],
-    parent_weights: &[E],
+    parent_weights: ParentWeights<'_, E>,
 ) -> [E; 4] {
-    #[inline(always)]
-    fn half_product<E: Field>(left: [E; 2], right: [E; 2], weight: E) -> [E; 4] {
-        let mut at_zero = left[0] * left[1];
-        let mut at_one = right[0] * right[1];
-        let mut leading = (right[0] - left[0]) * (right[1] - left[1]);
-        if weight != E::one() {
-            at_zero *= weight;
-            at_one *= weight;
-            leading *= weight;
-        }
-        let zero_plus_leading = at_zero + leading;
-        let one_plus_leading = at_one + leading;
-        [
-            at_one,
-            leading,
-            zero_plus_leading + zero_plus_leading - at_one,
-            one_plus_leading + one_plus_leading - at_zero,
-        ]
-    }
-    let mut values = [E::zero(); 4];
-    for (parent_index, &weight) in parent_weights.iter().enumerate() {
+    accumulate_parent_values(parent_weights, |parent_index| {
         let lane = 4 * parent_index;
-        let head = half_product(
-            [left[lane], left[lane + 1]],
-            [right[lane], right[lane + 1]],
-            weight,
-        );
-        let tail = half_product(
+        let head =
+            half_product_values([left[lane], left[lane + 1]], [right[lane], right[lane + 1]]);
+        let tail = half_product_values(
             [left[lane + 2], left[lane + 3]],
             [right[lane + 2], right[lane + 3]],
-            E::one(),
         );
-        for ((value, head), tail) in values.iter_mut().zip(head).zip(tail) {
-            *value += head * tail;
-        }
-    }
-    values
+        [
+            head[1] * tail[1],
+            head[2] * tail[2],
+            head[3] * tail[3],
+            head[4] * tail[4],
+        ]
+    })
+}
+
+/// The arity-four values with `X = 0` prepended.
+#[inline(always)]
+fn arity_four_product_values_with_zero<E: Field, const LANES: usize>(
+    left: [E; LANES],
+    right: [E; LANES],
+    parent_weights: ParentWeights<'_, E>,
+) -> [E; 5] {
+    accumulate_parent_values(parent_weights, |parent_index| {
+        let lane = 4 * parent_index;
+        let head =
+            half_product_values([left[lane], left[lane + 1]], [right[lane], right[lane + 1]]);
+        let tail = half_product_values(
+            [left[lane + 2], left[lane + 3]],
+            [right[lane + 2], right[lane + 3]],
+        );
+        std::array::from_fn(|index| head[index] * tail[index])
+    })
 }
 
 /// Constants of the round interpolation, fixed at construction.
@@ -122,24 +209,20 @@ struct RoundInterpolation<E> {
 }
 
 impl<E: Field + Ring> RoundInterpolation<E> {
-    fn new() -> Self {
-        Self {
-            inverse_two: E::from_u64(2)
-                .inverse()
-                .expect("the extension field has odd characteristic"),
-            inverse_three: E::from_u64(3)
-                .inverse()
-                .expect("the extension field has characteristic above three"),
-        }
+    fn new() -> Option<Self> {
+        Some(Self {
+            inverse_two: E::from_u64(2).inverse()?,
+            inverse_three: E::from_u64(3).inverse()?,
+        })
     }
 }
 
 /// Round coefficients of a materialized product round.
 ///
-/// The round sums the pair products at `X = 1` and at infinity, plus `X = -1`
-/// and `X = 2` for arity four, and recovers `q(0)` from the running claim
-/// `(1 - tau) q(0) + tau q(1)`. When `tau = 1` the claim does not determine
-/// `q(0)`, and the round falls back to full coefficient accumulation.
+/// The round sums the pair products at `X = 1` and infinity, plus `X = -1`
+/// and `X = 2` for arity four. It normally recovers `q(0)` from the running
+/// claim `(1 - tau) q(0) + tau q(1)`. Debug builds also sum `q(0)` directly
+/// and check it; when `tau = 1`, all builds use the direct sum.
 #[allow(clippy::too_many_arguments)]
 fn accumulate_round<E: Field + Ring + Unreduced, const LANES: usize>(
     equality_prefix_weights: &[E],
@@ -147,59 +230,25 @@ fn accumulate_round<E: Field + Ring + Unreduced, const LANES: usize>(
     explicit_pair_count: usize,
     padding: [E; LANES],
     pair_at: impl Fn(usize) -> ([E; LANES], [E; LANES]) + Sync,
-    arity: usize,
+    arity: ProductArity,
     parent_weights: &[E],
     claim: E,
     tau: E,
     interpolation: RoundInterpolation<E>,
 ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
-    let Some(inverse_one_minus_tau) = (E::one() - tau).inverse() else {
-        let padding_coefficients = product_coefficients(padding, padding, arity, parent_weights);
-        return accumulate_equality_weighted_round(
-            equality_prefix_weights,
-            equality_suffix_weights,
-            explicit_pair_count,
-            |pair_index| {
-                let (left, right) = pair_at(pair_index);
-                product_coefficients(left, right, arity, parent_weights)
-            },
-            padding_coefficients,
-        );
+    let inverse_one_minus_tau = (E::one() - tau).inverse();
+    let parent_weights = ParentWeights::new(parent_weights);
+    let arity_two_coefficients = |constant: E, at_one: E, leading: E| {
+        [
+            constant,
+            at_one - constant - leading,
+            leading,
+            E::zero(),
+            E::zero(),
+        ]
     };
-    let constant_from = |at_one: E| (claim - tau * at_one) * inverse_one_minus_tau;
-    match arity {
-        2 => {
-            let [at_one, leading] = accumulate_equality_weighted_values(
-                equality_prefix_weights,
-                equality_suffix_weights,
-                explicit_pair_count,
-                |pair_index| {
-                    let (left, right) = pair_at(pair_index);
-                    arity_two_product_values(left, right, parent_weights)
-                },
-                arity_two_product_values(padding, padding, parent_weights),
-            );
-            let constant = constant_from(at_one);
-            [
-                constant,
-                at_one - constant - leading,
-                leading,
-                E::zero(),
-                E::zero(),
-            ]
-        }
-        4 => {
-            let [at_one, leading, at_minus_one, at_two] = accumulate_equality_weighted_values(
-                equality_prefix_weights,
-                equality_suffix_weights,
-                explicit_pair_count,
-                |pair_index| {
-                    let (left, right) = pair_at(pair_index);
-                    arity_four_product_values(left, right, parent_weights)
-                },
-                arity_four_product_values(padding, padding, parent_weights),
-            );
-            let constant = constant_from(at_one);
+    let arity_four_coefficients =
+        |constant: E, at_one: E, leading: E, at_minus_one: E, at_two: E| {
             let known = constant + leading;
             // `odd_plus` is q1 + q2 + q3 and `odd_minus` is -q1 + q2 - q3.
             let odd_plus = at_one - known;
@@ -218,8 +267,92 @@ fn accumulate_round<E: Field + Ring + Unreduced, const LANES: usize>(
                 cubic,
                 leading,
             ]
-        }
-        _ => unreachable!("validated range-product arity"),
+        };
+    #[cfg(not(debug_assertions))]
+    let arity_two_values = || {
+        accumulate_equality_weighted_values(
+            equality_prefix_weights,
+            equality_suffix_weights,
+            explicit_pair_count,
+            |pair_index| {
+                let (left, right) = pair_at(pair_index);
+                arity_two_product_values(left, right, parent_weights)
+            },
+            arity_two_product_values(padding, padding, parent_weights),
+        )
+    };
+    let arity_two_values_with_zero = || {
+        accumulate_equality_weighted_values(
+            equality_prefix_weights,
+            equality_suffix_weights,
+            explicit_pair_count,
+            |pair_index| {
+                let (left, right) = pair_at(pair_index);
+                arity_two_product_values_with_zero(left, right, parent_weights)
+            },
+            arity_two_product_values_with_zero(padding, padding, parent_weights),
+        )
+    };
+    #[cfg(not(debug_assertions))]
+    let arity_four_values = || {
+        accumulate_equality_weighted_values(
+            equality_prefix_weights,
+            equality_suffix_weights,
+            explicit_pair_count,
+            |pair_index| {
+                let (left, right) = pair_at(pair_index);
+                arity_four_product_values(left, right, parent_weights)
+            },
+            arity_four_product_values(padding, padding, parent_weights),
+        )
+    };
+    let arity_four_values_with_zero = || {
+        accumulate_equality_weighted_values(
+            equality_prefix_weights,
+            equality_suffix_weights,
+            explicit_pair_count,
+            |pair_index| {
+                let (left, right) = pair_at(pair_index);
+                arity_four_product_values_with_zero(left, right, parent_weights)
+            },
+            arity_four_product_values_with_zero(padding, padding, parent_weights),
+        )
+    };
+    match arity {
+        ProductArity::Two => match inverse_one_minus_tau {
+            None => {
+                let [at_zero, at_one, leading] = arity_two_values_with_zero();
+                arity_two_coefficients(at_zero, at_one, leading)
+            }
+            Some(inverse) => {
+                #[cfg(debug_assertions)]
+                let [at_zero, at_one, leading] = arity_two_values_with_zero();
+                #[cfg(not(debug_assertions))]
+                let [at_one, leading] = arity_two_values();
+                let constant = (claim - tau * at_one) * inverse;
+                #[cfg(debug_assertions)]
+                debug_assert_eq!(constant, at_zero);
+                arity_two_coefficients(constant, at_one, leading)
+            }
+        },
+        ProductArity::Four => match inverse_one_minus_tau {
+            None => {
+                let [at_zero, at_one, leading, at_minus_one, at_two] =
+                    arity_four_values_with_zero();
+                arity_four_coefficients(at_zero, at_one, leading, at_minus_one, at_two)
+            }
+            Some(inverse) => {
+                #[cfg(debug_assertions)]
+                let [at_zero, at_one, leading, at_minus_one, at_two] =
+                    arity_four_values_with_zero();
+                #[cfg(not(debug_assertions))]
+                let [at_one, leading, at_minus_one, at_two] = arity_four_values();
+                let constant = (claim - tau * at_one) * inverse;
+                #[cfg(debug_assertions)]
+                debug_assert_eq!(constant, at_zero);
+                arity_four_coefficients(constant, at_one, leading, at_minus_one, at_two)
+            }
+        },
     }
 }
 
@@ -229,12 +362,8 @@ pub(super) struct ClassIndexedProductSubcheckProver<E: Field, const LANES: usize
     parent_weights: Vec<E>,
     split_eq: GruenSplitEq<E>,
     input_claim: E,
-    /// Running inner claim `(1 - tau) q(0) + tau q(1)` of the current round.
-    claim: E,
-    /// Inner polynomial of the last computed round, which advances `claim`.
-    last_round_coefficients: [E; MAX_TREE_STAGE_Q_DEGREE + 1],
     interpolation: RoundInterpolation<E>,
-    arity: usize,
+    arity: ProductArity,
     num_rounds: usize,
     rounds_completed: usize,
 }
@@ -254,9 +383,13 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
             .get(stage_index)
             .copied()
             .ok_or(AkitaError::InvalidProof)?;
-        let expected_lanes = arity.checked_mul(parent_weights.len()).ok_or_else(|| {
-            AkitaError::InvalidInput("range-product lane count overflow".to_string())
-        })?;
+        let arity = ProductArity::new(arity).ok_or(AkitaError::InvalidProof)?;
+        let expected_lanes = arity
+            .degree()
+            .checked_mul(parent_weights.len())
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("range-product lane count overflow".to_string())
+            })?;
         if LANES != expected_lanes {
             return Err(AkitaError::InvalidSize {
                 expected: expected_lanes,
@@ -267,7 +400,7 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
             let _span = tracing::info_span!(
                 "digit_range_build_node_table",
                 stage_index,
-                arity,
+                arity = arity.degree(),
                 lane_count = LANES,
             )
             .entered();
@@ -277,12 +410,17 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
             let _span = tracing::info_span!(
                 "digit_range_build_pair_coefficients",
                 stage_index,
-                arity,
+                arity = arity.degree(),
                 lane_count = LANES,
                 class_count = plan.basis() / 2,
             )
             .entered();
-            OrderedProductPairCoefficients::new(&nodes, plan.basis() / 2, arity, &parent_weights)
+            OrderedProductPairCoefficients::new(
+                &nodes,
+                plan.basis() / 2,
+                arity.degree(),
+                &parent_weights,
+            )
         };
         Ok(Self {
             product_table: ProductTableState::Compact(CompactProductState {
@@ -293,9 +431,7 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
             parent_weights,
             split_eq: GruenSplitEq::new(equality_point)?,
             input_claim,
-            claim: input_claim,
-            last_round_coefficients: [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
-            interpolation: RoundInterpolation::new(),
+            interpolation: RoundInterpolation::new().ok_or(AkitaError::InvalidProof)?,
             arity,
             num_rounds: equality_point.len(),
             rounds_completed: 0,
@@ -318,7 +454,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
     }
 
     fn degree_bound(&self) -> usize {
-        self.arity
+        self.arity.degree()
     }
 
     fn input_claim(&self) -> E {
@@ -329,7 +465,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
         self.split_eq.current_tau()
     }
 
-    fn compute_round_eq_factored(&mut self, round: usize) -> OmittedConstantPoly<E> {
+    fn compute_round_eq_factored(&mut self, round: usize, claim: E) -> OmittedConstantPoly<E> {
         debug_assert_eq!(round, self.rounds_completed);
         let (equality_prefix_weights, equality_suffix_weights) =
             self.split_eq.remaining_eq_tables();
@@ -359,16 +495,45 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                 )
             }
             ProductTableState::FirstChallengeFolded(FirstChallengeFoldedProductState {
+                source,
+                folded_pairs,
                 cached_second_round_coefficients,
-                ..
             }) => {
-                let _span = tracing::info_span!(
-                    "digit_range_product_initial_round",
-                    round = self.rounds_completed,
-                    kernel_strategy = "cached-second-round",
-                )
-                .entered();
-                *cached_second_round_coefficients
+                if let Some(coefficients) = cached_second_round_coefficients {
+                    let _span = tracing::info_span!(
+                        "digit_range_product_initial_round",
+                        round = self.rounds_completed,
+                        kernel_strategy = "cached-second-round",
+                    )
+                    .entered();
+                    *coefficients
+                } else {
+                    let _span = tracing::info_span!(
+                        "digit_range_product_initial_round",
+                        round = self.rounds_completed,
+                        kernel_strategy = "factorized-pair-rescan",
+                    )
+                    .entered();
+                    accumulate_round(
+                        equality_prefix_weights,
+                        equality_suffix_weights,
+                        source.quartet_count(),
+                        folded_pairs.row_by_pair_index(0),
+                        |quartet_index| {
+                            let (left_pair, right_pair) =
+                                source.ordered_pair_indices_for_quartet(quartet_index);
+                            (
+                                folded_pairs.row_by_pair_index(left_pair),
+                                folded_pairs.row_by_pair_index(right_pair),
+                            )
+                        },
+                        self.arity,
+                        &self.parent_weights,
+                        claim,
+                        self.split_eq.current_tau(),
+                        self.interpolation,
+                    )
+                }
             }
             ProductTableState::Materialized(table) => {
                 let _span = tracing::info_span!(
@@ -391,23 +556,17 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                     },
                     self.arity,
                     &self.parent_weights,
-                    self.claim,
+                    claim,
                     self.split_eq.current_tau(),
                     self.interpolation,
                 )
             }
         };
-        self.last_round_coefficients = coefficients;
-        OmittedConstantPoly::from_q_coefficients(coefficients[..=self.arity].to_vec())
+        OmittedConstantPoly::from_q_coefficients(coefficients[..=self.arity.degree()].to_vec())
     }
 
     fn ingest_challenge(&mut self, round: usize, challenge: E) {
         debug_assert_eq!(round, self.rounds_completed);
-        self.claim = self
-            .last_round_coefficients
-            .iter()
-            .rev()
-            .fold(E::zero(), |acc, &coefficient| acc * challenge + coefficient);
         self.split_eq.bind(challenge);
         if self.rounds_completed == 0 && self.num_rounds >= 2 {
             let deferred = match &self.product_table {
@@ -424,8 +583,6 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                     )
                     .entered();
                     let folded_pairs = FoldedProductPairTable::new(nodes, challenge);
-                    let (equality_prefix_weights, equality_suffix_weights) =
-                        self.split_eq.remaining_eq_tables();
                     let coefficients = if source.class_count() == MAX_QUARTET_TABLE_CLASS_COUNT {
                         let _span = tracing::info_span!(
                             "digit_range_build_second_round_quartet_table",
@@ -435,10 +592,12 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                         .entered();
                         let quartets = SecondRoundProductQuartetCoefficients::new(
                             &folded_pairs,
-                            self.arity,
+                            self.arity.degree(),
                             &self.parent_weights,
                         );
-                        accumulate_equality_weighted_round(
+                        let (equality_prefix_weights, equality_suffix_weights) =
+                            self.split_eq.remaining_eq_tables();
+                        Some(accumulate_equality_weighted_round(
                             equality_prefix_weights,
                             equality_suffix_weights,
                             source.quartet_count(),
@@ -448,27 +607,9 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                                 quartets.coefficients_by_pair_indices(left_pair, right_pair)
                             },
                             quartets.coefficients_by_pair_indices(0, 0),
-                        )
+                        ))
                     } else {
-                        accumulate_round(
-                            equality_prefix_weights,
-                            equality_suffix_weights,
-                            source.quartet_count(),
-                            folded_pairs.row_by_pair_index(0),
-                            |quartet_index| {
-                                let (left_pair, right_pair) =
-                                    source.ordered_pair_indices_for_quartet(quartet_index);
-                                (
-                                    folded_pairs.row_by_pair_index(left_pair),
-                                    folded_pairs.row_by_pair_index(right_pair),
-                                )
-                            },
-                            self.arity,
-                            &self.parent_weights,
-                            self.claim,
-                            self.split_eq.current_tau(),
-                            self.interpolation,
-                        )
+                        None
                     };
                     Some(ProductTableState::FirstChallengeFolded(
                         FirstChallengeFoldedProductState {
@@ -598,7 +739,7 @@ mod tests {
     use jolt_field::{Ext2, Prime128Offset275, Prime64Offset59};
 
     fn check_interpolated_rounds<E: Field + Ring + Unreduced, const LANES: usize>(
-        arity: usize,
+        arity: ProductArity,
         parent_weights: &[E],
     ) {
         let first = [2, 3, 5, 7].map(E::from_u64);
@@ -610,7 +751,7 @@ mod tests {
             .map(|pair_index| (lanes(2 * pair_index), lanes(2 * pair_index + 1)))
             .collect::<Vec<_>>();
         let padding = lanes(1000);
-        let interpolation = RoundInterpolation::new();
+        let interpolation = RoundInterpolation::new().expect("test fields support interpolation");
         let tau = E::from_u64(17);
         for explicit_pair_count in 0..=pairs.len() {
             let round = |claim: E, tau: E| {
@@ -627,18 +768,26 @@ mod tests {
                     interpolation,
                 )
             };
-            // `tau = 1` leaves `q(0)` undetermined and takes the full
-            // coefficient path, which does not read the claim.
-            let expected = round(E::zero(), E::one());
+            let expected = accumulate_equality_weighted_round(
+                &first,
+                &second,
+                explicit_pair_count,
+                |pair_index| {
+                    let (left, right) = pairs[pair_index];
+                    product_coefficients(left, right, arity.degree(), parent_weights)
+                },
+                product_coefficients(padding, padding, arity.degree(), parent_weights),
+            );
+            assert_eq!(round(E::zero(), E::one()), expected);
             let claim = expected[0] + tau * expected[1..].iter().copied().sum::<E>();
             assert_eq!(round(claim, tau), expected);
         }
     }
 
     fn check_all_arities<E: Field + Ring + Unreduced>() {
-        check_interpolated_rounds::<E, 2>(2, &[E::one()]);
-        check_interpolated_rounds::<E, 4>(4, &[E::one()]);
-        check_interpolated_rounds::<E, 8>(4, &[E::one(), E::from_u64(19)]);
+        check_interpolated_rounds::<E, 2>(ProductArity::Two, &[E::one()]);
+        check_interpolated_rounds::<E, 4>(ProductArity::Four, &[E::one()]);
+        check_interpolated_rounds::<E, 8>(ProductArity::Four, &[E::one(), E::from_u64(19)]);
     }
 
     #[test]
