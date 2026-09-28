@@ -295,7 +295,7 @@ fn check_response_norm_source(basis: usize, with_trace: bool, wide_digits: bool)
         }
     }
     linear.resize(domain_len, F::zero());
-    let binding_claim = witness
+    let linear_claim = witness
         .iter()
         .zip(&linear)
         .map(|(&digit, &weight)| F::from_i64(i64::from(digit)) * weight)
@@ -313,8 +313,8 @@ fn check_response_norm_source(basis: usize, with_trace: bool, wide_digits: bool)
         .zip(&relation)
         .map(|(&digit, &weight)| F::from_i64(i64::from(digit)) * weight)
         .sum::<F>();
-    for (weight, &response_norm) in relation.iter_mut().zip(&linear) {
-        *weight += response_norm;
+    for (weight, &linear_weight) in relation.iter_mut().zip(&linear) {
+        *weight += linear_weight;
     }
     let equality = EqPolynomial::evals(&point).unwrap();
     let range_image_evaluation = padded_witness
@@ -359,7 +359,7 @@ fn check_response_norm_source(basis: usize, with_trace: bool, wide_digits: bool)
         live_lane_count,
         lane_bits,
         coefficient_bits,
-        base_relation_claim + binding_claim,
+        base_relation_claim + linear_claim,
         linear_terms,
         None,
     )
