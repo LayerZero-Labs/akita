@@ -52,6 +52,7 @@ where
     Reduce: Fn(T, T) -> T + Sync + Send,
 {
     use rayon::iter::plumbing::{Producer, ProducerCallback};
+    use rayon::iter::ParallelIterator;
     struct SerialFold<T, F>(T, F);
     impl<Item, T, F: Fn(T, Item) -> T> ProducerCallback<Item> for SerialFold<T, F> {
         type Output = T;

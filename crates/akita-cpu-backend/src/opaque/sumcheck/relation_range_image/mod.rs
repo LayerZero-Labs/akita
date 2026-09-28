@@ -279,14 +279,6 @@ fn add_round_terms<E: Field>(
 }
 
 #[inline]
-pub(crate) fn accumulate_relation_coeffs<E: Field>(rel: &mut [E; 3], w0: E, dw: E, p0: E, p1: E) {
-    let dp = p1 - p0;
-    rel[0] += w0 * p0;
-    rel[1] += w0 * dp + dw * p0;
-    rel[2] += dw * dp;
-}
-
-#[inline]
 pub(crate) fn accumulate_relation_eval_coeffs_signed<E: Field + Unreduced>(
     rel: &mut [E::SmallProduct; 4],
     w0: i64,

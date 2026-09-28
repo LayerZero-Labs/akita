@@ -280,11 +280,11 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     &self.split_eq,
                     self.can_skip_norm_linear_coeff(),
                 );
-                let relation =
-                    engine.relation_coeffs(weights.common_alpha_factor(), &self.linear_terms);
+                let mut relation =
+                    engine.relation_message(weights.common_alpha_factor(), &self.linear_terms);
                 let norm_poly = self.norm_poly_from_prefix(norm);
-                let polynomial = self.combine_polys(&norm_poly, &coeffs_to_poly(relation));
-                self.cached_round_message = Some(RoundMessage::from_polynomial(&polynomial));
+                relation.add_assign(RoundMessage::from_polynomial(&norm_poly));
+                self.cached_round_message = Some(relation);
                 self.prev_norm_poly = Some(norm_poly);
                 Phase::Coefficient {
                     witness: WitnessState::FoldedSuffix(folded),
@@ -443,26 +443,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 .try_gruen_poly_deg_3(q_constant, q_quadratic, self.prev_norm_claim)
                 .expect("split-eq norm claim recovery should succeed"),
         }
-    }
-
-    #[inline]
-    pub(super) fn combine_polys(
-        &self,
-        virt_poly: &UnivariatePoly<E>,
-        relation_poly: &UnivariatePoly<E>,
-    ) -> UnivariatePoly<E> {
-        let max_len = virt_poly
-            .coefficients()
-            .len()
-            .max(relation_poly.coefficients().len());
-        let mut combined = vec![E::zero(); max_len];
-        for (i, c) in virt_poly.coefficients().iter().enumerate() {
-            combined[i] += *c;
-        }
-        for (i, c) in relation_poly.coefficients().iter().enumerate() {
-            combined[i] += *c;
-        }
-        UnivariatePoly::new(combined)
     }
 
     #[inline]

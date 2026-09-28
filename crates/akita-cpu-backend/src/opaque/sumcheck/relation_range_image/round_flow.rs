@@ -14,7 +14,6 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
 
     pub(super) fn compute_current_round_message_from_state(&mut self) -> RoundMessage<E> {
         enum RoundComputation<E: Field> {
-            Polynomial(UnivariatePoly<E>, UnivariatePoly<E>),
             Message(RoundMessage<E>, UnivariatePoly<E>),
             Terms(NormRoundTerms<E>, RoundMessage<E>),
         }
@@ -24,8 +23,8 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
             Phase::CompactPrefix {
                 weights, engine, ..
             } => {
-                let (poly, norm) = self.compact_prefix_round_polys(engine, weights);
-                RoundComputation::Polynomial(poly, norm)
+                let (message, norm) = self.compact_prefix_round_message(engine, weights);
+                RoundComputation::Message(message, norm)
             }
             Phase::Coefficient {
                 witness,
@@ -65,11 +64,8 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
                             ),
                     };
                     let relation_coeffs =
-                        moments.relation_coeffs(weights.common_alpha_factor(), &self.linear_terms);
-                    RoundComputation::Terms(
-                        virt_terms,
-                        RoundMessage::from_coefficients(&relation_coeffs),
-                    )
+                        moments.relation_message(weights.common_alpha_factor(), &self.linear_terms);
+                    RoundComputation::Terms(virt_terms, relation_coeffs)
                 } else {
                     let (message, norm) = self.compute_quotient_round_from_state(witness, weights);
                     RoundComputation::Message(message, norm)
@@ -89,9 +85,6 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
         };
         self.phase = Some(phase);
         let (message, norm_poly) = match computation {
-            RoundComputation::Polynomial(poly, norm_poly) => {
-                (RoundMessage::from_polynomial(&poly), norm_poly)
-            }
             RoundComputation::Message(message, norm_poly) => (message, norm_poly),
             RoundComputation::Terms(virt_terms, relation_message) => {
                 self.combine_terms(virt_terms, relation_message)
@@ -225,9 +218,8 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
                             r,
                         );
                     let rel_coeffs =
-                        moments.relation_coeffs(&next_alpha_factor, &self.linear_terms);
-                    let (message, norm_poly) = self
-                        .combine_terms(virt_terms, RoundMessage::from_coefficients(&rel_coeffs));
+                        moments.relation_message(&next_alpha_factor, &self.linear_terms);
+                    let (message, norm_poly) = self.combine_terms(virt_terms, rel_coeffs);
                     self.prev_norm_poly = Some(norm_poly);
                     self.cached_round_message = Some(message);
                     next_folded_witness

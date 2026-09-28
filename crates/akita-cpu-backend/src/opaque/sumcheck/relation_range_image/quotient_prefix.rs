@@ -139,12 +139,12 @@ impl<E: Field> CoefficientRelationMoments<E> {
         }
     }
 
-    pub(super) fn relation_coeffs(
+    pub(super) fn relation_message(
         &self,
         alpha: &[E],
         linear_terms: &PreparedProverLinearTerms<E>,
-    ) -> [E; 3] {
-        let mut rel = [E::zero(); 3];
+    ) -> RoundMessage<E> {
+        let mut rel = RoundMessage::zero();
         let masses = std::iter::once((&self.alpha_mass, alpha)).chain(
             self.source_mass
                 .iter()
@@ -153,13 +153,8 @@ impl<E: Field> CoefficientRelationMoments<E> {
         for (mass, weight) in masses {
             debug_assert_eq!(mass.len(), weight.len());
             for (mass, weight) in mass.chunks_exact(2).zip(weight.chunks_exact(2)) {
-                accumulate_relation_coeffs(
-                    &mut rel,
-                    mass[0],
-                    mass[1] - mass[0],
-                    weight[0],
-                    weight[1],
-                );
+                rel.at_one += mass[1] * weight[1];
+                rel.quadratic += (mass[1] - mass[0]) * (weight[1] - weight[0]);
             }
         }
         rel
@@ -712,12 +707,12 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
     }
 
     /// Relation and structured-linear message of the current round.
-    pub(super) fn relation_coeffs(
+    pub(super) fn relation_message(
         &self,
         alpha: &[E],
         linear_terms: &PreparedProverLinearTerms<E>,
-    ) -> [E; 3] {
-        self.relation_moments.relation_coeffs(alpha, linear_terms)
+    ) -> RoundMessage<E> {
+        self.relation_moments.relation_message(alpha, linear_terms)
     }
 
     /// Range-image message of a round that keeps the witness compact.
@@ -936,18 +931,17 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     /// `(combined, range-image)` messages of a compact-prefix round.
-    pub(super) fn compact_prefix_round_polys(
+    pub(super) fn compact_prefix_round_message(
         &self,
         prefix: &CompactQuotientPrefix<E>,
         weights: &RelationWeightFactorization<E>,
-    ) -> (UnivariatePoly<E>, UnivariatePoly<E>) {
+    ) -> (RoundMessage<E>, UnivariatePoly<E>) {
         let norm = prefix.norm_round(&self.split_eq, self.can_skip_norm_linear_coeff());
         let norm_poly = self.norm_poly_from_prefix(norm);
-        let relation = prefix.relation_coeffs(weights.common_alpha_factor(), &self.linear_terms);
-        (
-            self.combine_polys(&norm_poly, &coeffs_to_poly(relation)),
-            norm_poly,
-        )
+        let mut message =
+            prefix.relation_message(weights.common_alpha_factor(), &self.linear_terms);
+        message.add_assign(RoundMessage::from_polynomial(&norm_poly));
+        (message, norm_poly)
     }
 }
 
