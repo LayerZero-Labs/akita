@@ -17,12 +17,12 @@ fn fold_lane_and_compute_next_round<
     e_second: &[E],
     first_bits: usize,
     block_size: usize,
-) -> ([E; 3], [E; 3]) {
+) -> ([E; 3], RoundMessage<E>) {
     let next_coeff_count = target.len();
     let next_coefficient_half = next_coeff_count / 2;
     let equality_address_base = lane * next_coefficient_half;
     let mut virt = FieldNorm::<E, SKIP_LINEAR>::zero();
-    let mut relation = [ProductSum::<E>::zero(); 3];
+    let mut relation = [ProductSum::<E>::zero(); 2];
     let mut blk = 0usize;
 
     while blk < next_coefficient_half {
@@ -60,10 +60,8 @@ fn fold_lane_and_compute_next_round<
                 let q0 = p0 + t0;
                 let q1 = p1 + t1;
                 let dq = q1 - q0;
-                relation[0].add(w0, q0);
-                relation[1].add(w0, dq);
-                relation[1].add(dw, q0);
-                relation[2].add(dw, dq);
+                relation[0].add(w1, q1);
+                relation[1].add(dw, dq);
             }
         }
 
@@ -72,7 +70,15 @@ fn fold_lane_and_compute_next_round<
         blk = blk_end;
     }
 
-    (virt.totals(), relation.map(ProductSum::finish))
+    let relation = relation.map(ProductSum::finish);
+    (
+        virt.totals(),
+        RoundMessage {
+            at_one: relation[0],
+            quadratic: relation[1],
+            cubic: E::zero(),
+        },
+    )
 }
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
@@ -86,7 +92,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         weights: &RelationWeightFactorization<E>,
         next_alpha_factor: &[E],
         challenge: E,
-    ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
+    ) -> (Vec<E>, NormRoundTerms<E>, RoundMessage<E>) {
         if self.can_skip_norm_linear_coeff() {
             self.fuse_folded_coefficients_with::<true, false>(
                 folded_witness,
@@ -135,7 +141,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         weights: &RelationWeightFactorization<E>,
         next_alpha_factor: &[E],
         challenge: E,
-    ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
+    ) -> (Vec<E>, NormRoundTerms<E>, RoundMessage<E>) {
         debug_assert!(self.in_coefficient_round());
         debug_assert!(self.current_coefficient_width() >= 2);
         let old_coeff_count = weights.common_alpha_factor().len();
@@ -150,7 +156,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let mut output = vec![E::zero(); self.live_lane_count * next_coeff_count];
         let totals = cfg_fold_reduce!(
             cfg_chunks_mut!(output, next_coeff_count).enumerate(),
-            || ([E::zero(); 3], [E::zero(); 3]),
+            || ([E::zero(); 3], RoundMessage::zero()),
             |mut totals, (lane, target)| {
                 let source_start = lane * old_coeff_count;
                 let source = &folded_witness[source_start..source_start + old_coeff_count];

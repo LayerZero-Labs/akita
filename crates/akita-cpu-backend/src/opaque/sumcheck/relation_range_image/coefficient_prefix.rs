@@ -9,7 +9,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, [E; 3]) {
+    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
         debug_assert!(self.in_coefficient_round());
         debug_assert_eq!(
             compact_witness.len(),
@@ -55,7 +55,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, [E; 3]) {
+    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
@@ -69,7 +69,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             0..self.live_lane_count,
             || (
                 FieldNorm::<E, SKIP_LINEAR>::zero(),
-                [E::SmallProduct::zero(); 6]
+                [E::SmallProduct::zero(); 4]
             ),
             |(mut virt, mut rel), lane| {
                 let lane_start = lane * common_alpha_factor.len();
@@ -112,7 +112,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                                 .as_ref()
                                 .expect("relation lane is resolved when relation work is enabled")
                                 .pair(left);
-                            accumulate_relation_coeffs_signed(
+                            accumulate_relation_eval_coeffs_signed(
                                 &mut rel,
                                 w0_i64,
                                 dw_i64,
@@ -130,7 +130,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             },
             |(mut va, mut ra), (vb, rb)| {
                 va.merge(vb);
-                add_assign_all(&mut ra, &rb);
+                for (left, right) in ra.iter_mut().zip(rb) {
+                    *left += right;
+                }
                 (va, ra)
             }
         );
@@ -146,7 +148,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         folded_witness: &[E],
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, [E; 3]) {
+    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
         debug_assert!(self.in_coefficient_round());
         debug_assert_eq!(
             folded_witness.len(),
@@ -192,7 +194,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         folded_witness: &[E],
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, [E; 3]) {
+    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
@@ -204,13 +206,13 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
         let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
             0..self.live_lane_count,
-            || (FieldNorm::<E, SKIP_LINEAR>::zero(), [E::zero(); 3]),
+            || (FieldNorm::<E, SKIP_LINEAR>::zero(), RoundMessage::zero()),
             |(mut virt, mut rel), lane| {
                 let lane_start = lane * common_alpha_factor.len();
                 let lane_values =
                     &folded_witness[lane_start..lane_start + common_alpha_factor.len()];
                 let equality_address_base = lane * current_coefficient_half;
-                let mut lane_rel = [ProductSum::<E>::zero(); 3];
+                let mut lane_rel = [ProductSum::<E>::zero(); 2];
                 let lane_weight = if SKIP_RELATION {
                     E::zero()
                 } else {
@@ -250,10 +252,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                             let q0 = p0 + t0;
                             let q1 = p1 + t1;
                             let dq = q1 - q0;
-                            lane_rel[0].add(w0, q0);
-                            lane_rel[1].add(w0, dq);
-                            lane_rel[1].add(dw, q0);
-                            lane_rel[2].add(dw, dq);
+                            lane_rel[0].add(w1, q1);
+                            lane_rel[1].add(dw, dq);
                         }
                     }
 
@@ -262,15 +262,14 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 }
 
                 if !SKIP_RELATION {
-                    for (sum, product_sum) in rel.iter_mut().zip(lane_rel) {
-                        *sum += product_sum.finish();
-                    }
+                    rel.at_one += lane_rel[0].finish();
+                    rel.quadratic += lane_rel[1].finish();
                 }
                 (virt, rel)
             },
             |(mut va, mut ra), (vb, rb)| {
                 va.merge(vb);
-                add_assign_all(&mut ra, &rb);
+                ra.add_assign(rb);
                 (va, ra)
             }
         );

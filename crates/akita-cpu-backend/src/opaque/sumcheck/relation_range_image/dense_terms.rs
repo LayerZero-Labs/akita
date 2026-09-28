@@ -10,7 +10,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         compact_witness: PackedSignedDigitView<'_>,
         live_pairs: usize,
         relation_pair: impl Fn(usize) -> (E, E) + Sync,
-    ) -> (NormRoundTerms<E>, [E; 3]) {
+    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
         if self.can_skip_norm_linear_coeff() {
             self.compute_round_compact_dense_terms_with_skip_linear::<true>(
                 compact_witness,
@@ -31,7 +31,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         compact_witness: PackedSignedDigitView<'_>,
         live_pairs: usize,
         relation_pair: impl Fn(usize) -> (E, E) + Sync,
-    ) -> (NormRoundTerms<E>, [E; 3]) {
+    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let num_second = e_second.len();
@@ -41,7 +41,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             0..num_second,
             || (
                 FieldNorm::<E, SKIP_LINEAR>::zero(),
-                [E::SmallProduct::zero(); 6]
+                [E::SmallProduct::zero(); 4]
             ),
             |(mut virt, mut rel), j_high| {
                 let mut inner_virt = CompactNorm::<E, SKIP_LINEAR>::zero();
@@ -78,7 +78,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             },
             |(mut va, mut ra), (vb, rb)| {
                 va.merge(vb);
-                add_assign_all(&mut ra, &rb);
+                for (left, right) in ra.iter_mut().zip(rb) {
+                    *left += right;
+                }
                 (va, ra)
             }
         );
@@ -108,7 +110,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, [E; 3]) {
+    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
         let relation_pair = self.factored_relation_pair(weights);
         self.compute_round_compact_dense_terms_with(
             compact_witness,
@@ -121,7 +123,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         dense: &[E],
-    ) -> (NormRoundTerms<E>, [E; 3]) {
+    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
         self.compute_round_compact_dense_terms_with(
             compact_witness,
             compact_witness.len().div_ceil(2),
@@ -138,7 +140,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         folded_witness: &[E],
         live_pairs: usize,
         relation_pair: impl Fn(usize) -> (E, E) + Sync,
-    ) -> (NormRoundTerms<E>, [E; 3]) {
+    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
         if self.can_skip_norm_linear_coeff() {
             self.compute_folded_dense_round_terms_with_skip_linear::<true>(
                 folded_witness,
@@ -159,7 +161,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         folded_witness: &[E],
         live_pairs: usize,
         relation_pair: impl Fn(usize) -> (E, E) + Sync,
-    ) -> (NormRoundTerms<E>, [E; 3]) {
+    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let num_second = e_second.len();
@@ -167,10 +169,10 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
         let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
             0..num_second,
-            || (FieldNorm::<E, SKIP_LINEAR>::zero(), [E::zero(); 3]),
+            || (FieldNorm::<E, SKIP_LINEAR>::zero(), RoundMessage::zero()),
             |(mut virt, mut rel), j_high| {
                 let mut inner_virt = ProductNorm::<E, SKIP_LINEAR>::zero();
-                let mut inner_rel = [ProductSum::<E>::zero(); 3];
+                let mut inner_rel = [ProductSum::<E>::zero(); 2];
                 let base = j_high * num_first;
 
                 for (j_low, &e_in) in e_first.iter().enumerate() {
@@ -190,21 +192,21 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     let (p0, p1) = relation_pair(2 * j);
                     let (t0, t1) = self.linear_terms.pair_from_flat_index(2 * j);
                     let q0 = p0 + t0;
-                    let dq = p1 + t1 - q0;
-                    inner_rel[0].add(w0, q0);
-                    inner_rel[1].add(w0, dq);
-                    inner_rel[1].add(dw, q0);
-                    inner_rel[2].add(dw, dq);
+                    let q1 = p1 + t1;
+                    let dq = q1 - q0;
+                    inner_rel[0].add(w1, q1);
+                    inner_rel[1].add(dw, dq);
                 }
 
                 virt.scaled_add(e_second[j_high], inner_virt.reduce());
-                add_assign_all(&mut rel, &inner_rel.map(ProductSum::finish));
+                rel.at_one += inner_rel[0].finish();
+                rel.quadratic += inner_rel[1].finish();
 
                 (virt, rel)
             },
             |(mut va, mut ra), (vb, rb)| {
                 va.merge(vb);
-                add_assign_all(&mut ra, &rb);
+                ra.add_assign(rb);
                 (va, ra)
             }
         );
@@ -215,7 +217,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         folded_witness: &[E],
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, [E; 3]) {
+    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
         let relation_pair = self.factored_relation_pair(weights);
         self.compute_folded_dense_round_terms_with(
             folded_witness,
@@ -228,7 +230,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         folded_witness: &[E],
         dense: &[E],
-    ) -> (NormRoundTerms<E>, [E; 3]) {
+    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
         self.compute_folded_dense_round_terms_with(
             folded_witness,
             folded_witness.len().div_ceil(2),
@@ -244,8 +246,21 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let weights = self
             .quotient_weights()
             .expect("factored dense test helper requires quotient weights");
-        let (virt_q_coeffs, rel_coeffs) =
+        let (virt_terms, relation_message) =
             self.compute_round_compact_dense_terms(compact_witness, weights);
-        self.polys_from_terms(virt_q_coeffs, rel_coeffs)
+        let relation_pair = self.factored_relation_pair(weights);
+        let mut relation_claim = E::zero();
+        for left in (0..compact_witness.len()).step_by(2) {
+            let (p0, p1) = relation_pair(left);
+            let (t0, t1) = self.linear_terms.pair_from_flat_index(left);
+            let w0 = compact_witness.get(left).map_or(0, i8::from);
+            let w1 = compact_witness.get(left + 1).map_or(0, i8::from);
+            relation_claim +=
+                E::from_i64(i64::from(w0)) * (p0 + t0) + E::from_i64(i64::from(w1)) * (p1 + t1);
+        }
+        (
+            self.norm_poly_from_terms(virt_terms),
+            relation_message.into_polynomial(relation_claim),
+        )
     }
 }

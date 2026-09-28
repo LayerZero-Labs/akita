@@ -257,7 +257,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             num_vars,
             prev_norm_claim: batching_coeff * range_image_evaluation,
             prev_norm_poly: None,
-            cached_round_poly: None,
+            cached_round_message: None,
             rounds_completed: 0,
         };
         prover.phase = Some(prover.advance_phase(phase));
@@ -301,8 +301,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 let relation =
                     engine.relation_coeffs(weights.common_alpha_factor(), &self.linear_terms);
                 let norm_poly = self.norm_poly_from_prefix(norm);
-                self.cached_round_poly =
-                    Some(self.combine_polys(&norm_poly, &coeffs_to_poly(relation)));
+                let polynomial = self.combine_polys(&norm_poly, &coeffs_to_poly(relation));
+                self.cached_round_message = Some(RoundMessage::from_polynomial(&polynomial));
                 self.prev_norm_poly = Some(norm_poly);
                 Phase::Coefficient {
                     witness: WitnessState::FoldedSuffix(folded),
@@ -399,22 +399,22 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         Ok(virtual_claim + witness * relation_weight + additional)
     }
 
-    pub(super) fn additional_round_polynomial(&self) -> Option<UnivariatePoly<E>> {
+    pub(super) fn additional_round_message(&self) -> Option<RoundMessage<E>> {
         let additional = self.additional_relation_terms.as_ref()?;
         Some(
             match self.phase.as_ref().expect("prover phase is installed") {
                 Phase::CompactPrefix {
                     witness, engine, ..
-                } => additional.round_polynomial_compact(witness.view(), engine.challenges()),
+                } => additional.round_message_compact(witness.view(), engine.challenges()),
                 Phase::Coefficient {
                     witness: WitnessState::CompactPrefix(witness),
                     ..
-                } => additional.round_polynomial_compact(witness.view(), &[]),
+                } => additional.round_message_compact(witness.view(), &[]),
                 Phase::Coefficient {
                     witness: WitnessState::FoldedSuffix(witness),
                     ..
                 }
-                | Phase::Lane { witness, .. } => additional.round_polynomial_folded(witness),
+                | Phase::Lane { witness, .. } => additional.round_message_folded(witness),
             },
         )
     }
@@ -464,17 +464,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     #[inline]
-    pub(super) fn polys_from_terms(
-        &self,
-        virt_terms: NormRoundTerms<E>,
-        rel_coeffs: [E; 3],
-    ) -> (UnivariatePoly<E>, UnivariatePoly<E>) {
-        let virt_poly = self.norm_poly_from_terms(virt_terms);
-        let rel_poly = coeffs_to_poly(rel_coeffs);
-        (virt_poly, rel_poly)
-    }
-
-    #[inline]
     pub(super) fn combine_polys(
         &self,
         virt_poly: &UnivariatePoly<E>,
@@ -496,14 +485,14 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
     #[inline]
     pub(super) fn combine_terms(
-        &mut self,
+        &self,
         virt_terms: NormRoundTerms<E>,
-        rel_coeffs: [E; 3],
-    ) -> UnivariatePoly<E> {
-        let (virt_poly, relation_poly) = self.polys_from_terms(virt_terms, rel_coeffs);
-        let combined = self.combine_polys(&virt_poly, &relation_poly);
-        self.prev_norm_poly = Some(virt_poly);
-        combined
+        relation_message: RoundMessage<E>,
+    ) -> (RoundMessage<E>, UnivariatePoly<E>) {
+        let norm_poly = self.norm_poly_from_terms(virt_terms);
+        let mut message = RoundMessage::from_polynomial(&norm_poly);
+        message.add_assign(relation_message);
+        (message, norm_poly)
     }
 
     #[cfg(test)]

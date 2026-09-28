@@ -142,7 +142,59 @@ impl<E: Field> NormRoundTerms<E> {
     }
 }
 
-type CompactRelAccum<E> = [<E as Unreduced>::SmallProduct; 6];
+type CompactRelAccum<E> = [<E as Unreduced>::SmallProduct; 4];
+
+/// Internal round state stores the message value at one and its top two
+/// coefficients. The sumcheck claim recovers the constant, and the value at
+/// one then recovers the linear coefficient at emission.
+#[derive(Clone, Copy)]
+struct RoundMessage<E: Field> {
+    at_one: E,
+    quadratic: E,
+    cubic: E,
+}
+
+impl<E: Field> RoundMessage<E> {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self {
+            at_one: E::zero(),
+            quadratic: E::zero(),
+            cubic: E::zero(),
+        }
+    }
+
+    #[inline(always)]
+    fn add_assign(&mut self, other: Self) {
+        self.at_one += other.at_one;
+        self.quadratic += other.quadratic;
+        self.cubic += other.cubic;
+    }
+
+    #[inline]
+    fn from_polynomial(polynomial: &UnivariatePoly<E>) -> Self {
+        Self::from_coefficients(polynomial.coefficients())
+    }
+
+    #[inline]
+    fn from_coefficients(coefficients: &[E]) -> Self {
+        debug_assert!(coefficients.len() <= 4);
+        Self {
+            at_one: coefficients.iter().copied().sum(),
+            quadratic: coefficients.get(2).copied().unwrap_or_else(E::zero),
+            cubic: coefficients.get(3).copied().unwrap_or_else(E::zero),
+        }
+    }
+
+    #[inline]
+    fn into_polynomial(self, previous_claim: E) -> UnivariatePoly<E> {
+        let constant = previous_claim - self.at_one;
+        let linear = self.at_one - constant - self.quadratic - self.cubic;
+        let mut coefficients = vec![constant, linear, self.quadratic, self.cubic];
+        trim_trailing_zeros(&mut coefficients);
+        UnivariatePoly::new(coefficients)
+    }
+}
 
 #[inline]
 fn coeffs_to_poly<E: Field>(coeffs: [E; 3]) -> UnivariatePoly<E> {
@@ -170,12 +222,12 @@ fn accum_small_signed<E: Field + Unreduced>(
 }
 
 #[inline]
-fn reduce_compact_rel<E: Field + Unreduced>(rel: CompactRelAccum<E>) -> [E; 3] {
-    [
-        reduce_signed_accum::<E>(rel[0], rel[1]),
-        reduce_signed_accum::<E>(rel[2], rel[3]),
-        reduce_signed_accum::<E>(rel[4], rel[5]),
-    ]
+fn reduce_compact_rel<E: Field + Unreduced>(rel: CompactRelAccum<E>) -> RoundMessage<E> {
+    RoundMessage {
+        at_one: reduce_signed_accum::<E>(rel[0], rel[1]),
+        quadratic: reduce_signed_accum::<E>(rel[2], rel[3]),
+        cubic: E::zero(),
+    }
 }
 
 #[inline]
@@ -218,9 +270,12 @@ impl<E: Unreduced> ProductSum<E> {
     }
 }
 
-fn add_round_terms<E: Field>(left: &mut ([E; 3], [E; 3]), right: ([E; 3], [E; 3])) {
+fn add_round_terms<E: Field>(
+    left: &mut ([E; 3], RoundMessage<E>),
+    right: ([E; 3], RoundMessage<E>),
+) {
     add_assign_all(&mut left.0, &right.0);
-    add_assign_all(&mut left.1, &right.1);
+    left.1.add_assign(right.1);
 }
 
 #[inline]
@@ -232,18 +287,16 @@ pub(crate) fn accumulate_relation_coeffs<E: Field>(rel: &mut [E; 3], w0: E, dw: 
 }
 
 #[inline]
-pub(crate) fn accumulate_relation_coeffs_signed<E: Field + Unreduced>(
-    rel: &mut [E::SmallProduct; 6],
+pub(crate) fn accumulate_relation_eval_coeffs_signed<E: Field + Unreduced>(
+    rel: &mut [E::SmallProduct; 4],
     w0: i64,
     dw: i64,
     p0: E,
     p1: E,
 ) {
     let dp = p1 - p0;
-    accum_small_signed::<E>(rel, 0, p0, w0);
-    accum_small_signed::<E>(rel, 2, dp, w0);
-    accum_small_signed::<E>(rel, 2, p0, dw);
-    accum_small_signed::<E>(rel, 4, dp, dw);
+    accum_small_signed::<E>(rel, 0, p1, w0 + dw);
+    accum_small_signed::<E>(rel, 2, dp, dw);
 }
 
 /// Fused relation, structured-linear, and range-image sumcheck prover.
@@ -265,7 +318,7 @@ pub(crate) struct RelationRangeImageProver<E: Field> {
     num_vars: usize,
     prev_norm_claim: E,
     prev_norm_poly: Option<UnivariatePoly<E>>,
-    cached_round_poly: Option<UnivariatePoly<E>>,
+    cached_round_message: Option<RoundMessage<E>>,
 
     rounds_completed: usize,
 }
@@ -326,7 +379,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn accumulate_fused_relation_linear_signed(
         &self,
-        rel: &mut [E::SmallProduct; 6],
+        rel: &mut [E::SmallProduct; 4],
         w0: i64,
         dw: i64,
         witness_idx0: usize,
@@ -334,7 +387,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         p1: E,
     ) {
         let (t0, t1) = self.linear_terms.pair_from_flat_index(witness_idx0);
-        accumulate_relation_coeffs_signed(rel, w0, dw, p0 + t0, p1 + t1);
+        accumulate_relation_eval_coeffs_signed(rel, w0, dw, p0 + t0, p1 + t1);
     }
 }
 

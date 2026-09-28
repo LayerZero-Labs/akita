@@ -4,18 +4,19 @@ use jolt_poly::UnivariatePoly;
 impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
     fn finish_ingested_round(&mut self) {
         if self.rounds_completed < self.num_vars {
-            if self.cached_round_poly.is_none() {
-                self.cached_round_poly = Some(self.compute_current_round_poly_from_state());
+            if self.cached_round_message.is_none() {
+                self.cached_round_message = Some(self.compute_current_round_message_from_state());
             }
         } else {
-            self.cached_round_poly = None;
+            self.cached_round_message = None;
         }
     }
 
-    pub(super) fn compute_current_round_poly_from_state(&mut self) -> UnivariatePoly<E> {
+    pub(super) fn compute_current_round_message_from_state(&mut self) -> RoundMessage<E> {
         enum RoundComputation<E: Field> {
-            Polynomials(UnivariatePoly<E>, UnivariatePoly<E>),
-            Terms(NormRoundTerms<E>, [E; 3]),
+            Polynomial(UnivariatePoly<E>, UnivariatePoly<E>),
+            Message(RoundMessage<E>, UnivariatePoly<E>),
+            Terms(NormRoundTerms<E>, RoundMessage<E>),
         }
 
         let mut phase = self.phase.take().expect("prover phase is installed");
@@ -24,7 +25,7 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
                 weights, engine, ..
             } => {
                 let (poly, norm) = self.compact_prefix_round_polys(engine, weights);
-                RoundComputation::Polynomials(poly, norm)
+                RoundComputation::Polynomial(poly, norm)
             }
             Phase::Coefficient {
                 witness,
@@ -63,13 +64,15 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
                                 weights,
                             ),
                     };
+                    let relation_coeffs =
+                        moments.relation_coeffs(weights.common_alpha_factor(), &self.linear_terms);
                     RoundComputation::Terms(
                         virt_terms,
-                        moments.relation_coeffs(weights.common_alpha_factor(), &self.linear_terms),
+                        RoundMessage::from_coefficients(&relation_coeffs),
                     )
                 } else {
-                    let (poly, norm) = self.compute_quotient_round_from_state(witness, weights);
-                    RoundComputation::Polynomials(poly, norm)
+                    let (message, norm) = self.compute_quotient_round_from_state(witness, weights);
+                    RoundComputation::Message(message, norm)
                 }
             }
             Phase::Lane { witness, lane } => {
@@ -85,15 +88,17 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
             }
         };
         self.phase = Some(phase);
-        let (poly, norm_poly) = match computation {
-            RoundComputation::Polynomials(poly, norm) => (poly, norm),
-            RoundComputation::Terms(virt_terms, relation) => {
-                let (norm, relation) = self.polys_from_terms(virt_terms, relation);
-                (self.combine_polys(&norm, &relation), norm)
+        let (message, norm_poly) = match computation {
+            RoundComputation::Polynomial(poly, norm_poly) => {
+                (RoundMessage::from_polynomial(&poly), norm_poly)
+            }
+            RoundComputation::Message(message, norm_poly) => (message, norm_poly),
+            RoundComputation::Terms(virt_terms, relation_message) => {
+                self.combine_terms(virt_terms, relation_message)
             }
         };
         self.prev_norm_poly = Some(norm_poly);
-        poly
+        message
     }
 }
 
@@ -102,7 +107,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         witness: &WitnessState<E>,
         weights: &RelationWeightFactorization<E>,
-    ) -> (UnivariatePoly<E>, UnivariatePoly<E>) {
+    ) -> (RoundMessage<E>, UnivariatePoly<E>) {
         let (virt_terms, rel_coeffs) = match witness {
             WitnessState::CompactPrefix(compact_witness) => {
                 if self.use_partial_lane_coefficient_round() {
@@ -125,8 +130,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 }
             }
         };
-        let (norm_poly, relation_poly) = self.polys_from_terms(virt_terms, rel_coeffs);
-        (self.combine_polys(&norm_poly, &relation_poly), norm_poly)
+        self.combine_terms(virt_terms, rel_coeffs)
     }
 
     #[inline]
@@ -222,7 +226,10 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
                         );
                     let rel_coeffs =
                         moments.relation_coeffs(&next_alpha_factor, &self.linear_terms);
-                    self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
+                    let (message, norm_poly) = self
+                        .combine_terms(virt_terms, RoundMessage::from_coefficients(&rel_coeffs));
+                    self.prev_norm_poly = Some(norm_poly);
+                    self.cached_round_message = Some(message);
                     next_folded_witness
                 } else {
                     let (next_folded_witness, virt_terms, rel_coeffs) = self
@@ -232,7 +239,9 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
                             &next_alpha_factor,
                             r,
                         );
-                    self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
+                    let (message, norm_poly) = self.combine_terms(virt_terms, rel_coeffs);
+                    self.prev_norm_poly = Some(norm_poly);
+                    self.cached_round_message = Some(message);
                     next_folded_witness
                 }
             }
@@ -271,24 +280,16 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
         self.input_claim
     }
 
-    fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UnivariatePoly<E> {
-        let mut polynomial = if let Some(poly) = self.cached_round_poly.take() {
-            poly
+    fn compute_round_univariate(&mut self, _round: usize, previous_claim: E) -> UnivariatePoly<E> {
+        let mut message = if let Some(message) = self.cached_round_message.take() {
+            message
         } else {
-            self.compute_current_round_poly_from_state()
+            self.compute_current_round_message_from_state()
         };
-        if let Some(additional) = self.additional_round_polynomial() {
-            let mut coefficients = polynomial.into_coefficients();
-            coefficients.resize(
-                coefficients.len().max(additional.coefficients().len()),
-                E::zero(),
-            );
-            for (coefficient, addition) in coefficients.iter_mut().zip(additional.coefficients()) {
-                *coefficient += *addition;
-            }
-            polynomial = UnivariatePoly::new(coefficients);
+        if let Some(additional) = self.additional_round_message() {
+            message.add_assign(additional);
         }
-        polynomial
+        message.into_polynomial(previous_claim)
     }
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
@@ -355,6 +356,35 @@ mod tests {
                     assert_eq!(lut.fold(i16::from(left), i16::from(right)), expected);
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod round_message_tests {
+    use super::*;
+    use jolt_field::{One, Prime128Offset275};
+
+    type E = Prime128Offset275;
+
+    #[test]
+    fn round_message_reconstructs_every_coefficient_from_the_sumcheck_claim() {
+        let cases = [
+            vec![E::from_u64(9)],
+            vec![E::from_u64(7), E::from_u64(11)],
+            vec![E::from_u64(5), E::from_u64(13), E::from_u64(17)],
+            vec![
+                E::from_u64(3),
+                E::from_u64(19),
+                E::from_u64(23),
+                E::from_u64(29),
+            ],
+        ];
+        for coefficients in cases {
+            let expected = UnivariatePoly::new(coefficients);
+            let claim = expected.evaluate(E::zero()) + expected.evaluate(E::one());
+            let actual = RoundMessage::from_polynomial(&expected).into_polynomial(claim);
+            assert_eq!(actual, expected);
         }
     }
 }

@@ -73,7 +73,7 @@ fn lane_product_tile<E, const FOLD: bool, const SKIP_LINEAR: bool>(
     live: usize,
     witness_out: &mut [E],
     weight_out: &mut [E],
-) -> ([E; 3], [E; 3])
+) -> ([E; 3], RoundMessage<E>)
 where
     E: Field + Unreduced + Fold,
 {
@@ -87,7 +87,7 @@ where
     let low_bits = tables.eq_low.len().trailing_zeros();
     let low_mask = tables.eq_low.len() - 1;
     let mut norm = [E::zero(); 3];
-    let mut relation = [ProductSum::<E>::zero(); 3];
+    let mut relation = [ProductSum::<E>::zero(); 2];
     let mut block_start = pairs.start;
     while block_start < pairs.end {
         let high = block_start >> low_bits;
@@ -115,9 +115,8 @@ where
             let dw = w1 - w0;
             let e_in = tables.eq_low[pair & low_mask];
             inner.add(w0, dw, e_in);
-            relation[0].add(w0, q0);
-            relation[1].add(w1, q1);
-            relation[2].add(dw, q1 - q0);
+            relation[0].add(w1, q1);
+            relation[1].add(dw, q1 - q0);
         }
         let e_out = tables.eq_high[high];
         for (norm, inner) in norm.iter_mut().zip(inner.reduce()) {
@@ -125,9 +124,15 @@ where
         }
         block_start = block_end;
     }
-    // The linear coefficient is `p(1) - p(0) - p_2`.
-    let [constant, at_one, quadratic] = relation.map(ProductSum::finish);
-    (norm, [constant, at_one - constant - quadratic, quadratic])
+    let relation = relation.map(ProductSum::finish);
+    (
+        norm,
+        RoundMessage {
+            at_one: relation[0],
+            quadratic: relation[1],
+            cubic: E::zero(),
+        },
+    )
 }
 
 /// [`lane_product_tile`] with its const parameters chosen at run time.
@@ -139,7 +144,7 @@ fn run_lane_product_tile<E: Field + Unreduced + Fold>(
     live: usize,
     witness_out: &mut [E],
     weight_out: &mut [E],
-) -> ([E; 3], [E; 3]) {
+) -> ([E; 3], RoundMessage<E>) {
     let unused = E::precompute(E::zero());
     match (fold, skip_linear) {
         (Some(fold), true) => {
@@ -180,7 +185,7 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
         challenge: Option<E>,
         eq: Option<(&[E], &[E])>,
         skip_linear: bool,
-    ) -> Option<(NormRoundTerms<E>, [E; 3])> {
+    ) -> Option<(NormRoundTerms<E>, RoundMessage<E>)> {
         let fold = challenge.map(E::precompute);
         let Some((eq_low, eq_high)) = eq else {
             let fold = fold.expect("the final lane-product fold requires a challenge");
@@ -219,7 +224,7 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
                 weight_out,
             )
         };
-        let parts: Vec<([E; 3], [E; 3])> = if let Some(fold) = &fold {
+        let parts: Vec<([E; 3], RoundMessage<E>)> = if let Some(fold) = &fold {
             let weight_len = self.weights.len().div_ceil(2).max(2 * pair_count);
             reuse_buffer(&mut self.witness_scratch, live);
             reuse_buffer(&mut self.weight_scratch, weight_len);
@@ -267,13 +272,13 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
             mem::swap(witness, &mut self.witness_scratch);
             mem::swap(&mut self.weights, &mut self.weight_scratch);
         }
-        let (norm, relation) =
-            parts
-                .into_iter()
-                .fold(([E::zero(); 3], [E::zero(); 3]), |mut totals, part| {
-                    add_round_terms(&mut totals, part);
-                    totals
-                });
+        let (norm, relation) = parts.into_iter().fold(
+            ([E::zero(); 3], RoundMessage::zero()),
+            |mut totals, part| {
+                add_round_terms(&mut totals, part);
+                totals
+            },
+        );
         let norm = if skip_linear {
             NormRoundTerms::from_totals::<true>(norm)
         } else {
@@ -299,7 +304,9 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
         let terms = lane.round_terms(&mut witness, Some(r), eq, skip_linear);
         self.live_lane_count = self.live_lane_count.div_ceil(2);
         if let Some((norm, relation)) = terms {
-            self.cached_round_poly = Some(self.combine_terms(norm, relation));
+            let (message, norm_poly) = self.combine_terms(norm, relation);
+            self.prev_norm_poly = Some(norm_poly);
+            self.cached_round_message = Some(message);
         }
         Phase::Lane { witness, lane }
     }
