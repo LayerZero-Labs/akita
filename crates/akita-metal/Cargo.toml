@@ -14,6 +14,7 @@ readme = "../../README.md"
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-error = { version = "0.1.0", path = "../akita-error" }
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 bytemuck = { version = "1.16", features = ["derive"] }
 jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c7c2d08d5bb0c7c80501f29f723e595af7fcff3c", default-features = false, features = [
   "bytemuck",
@@ -23,11 +24,24 @@ jolt-metal = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 thiserror = "2.0"
 
 [dev-dependencies]
+# The CPU backend is the reference every kernel is tested and benchmarked
+# against; it is never a normal dependency.
+akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend" }
 criterion = { version = "0.8", features = ["html_reports"] }
 rayon = "1.10"
 
+[features]
+default = ["transcript-blake2b"]
+# akita-types needs exactly one transcript backend; forward the choice.
+transcript-blake2b = ["akita-types/transcript-blake2b"]
+transcript-keccak = ["akita-types/transcript-keccak"]
+
 [[bench]]
 name = "ntt"
+harness = false
+
+[[bench]]
+name = "matvec"
 harness = false
 
 [lints]

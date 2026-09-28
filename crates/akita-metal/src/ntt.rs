@@ -8,12 +8,28 @@
 
 use std::time::Duration;
 
-use akita_algebra::{CrtNttParamSet, NttPrime};
+use akita_algebra::{CrtNttParamSet, MontCoeff, NttPrime};
 use bytemuck::{Pod, Zeroable};
 use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid};
 
 use crate::error::AkitaMetalError;
-use crate::library::{ring_degree_kernel, AkitaMetal, RING_DEGREES};
+use crate::library::{ring_degree_kernel, AkitaMetal, Instance, RING_DEGREES};
+
+/// Transform templates, instantiated at every ring degree.
+const TEMPLATES: [&str; 2] = ["akita_ntt_forward", "akita_ntt_inverse"];
+
+pub(crate) fn instances() -> Vec<Instance> {
+    TEMPLATES
+        .iter()
+        .flat_map(|&template| {
+            RING_DEGREES.iter().map(move |&ring_degree| Instance {
+                template,
+                args: ring_degree.to_string(),
+                host_name: ring_degree_kernel(template, ring_degree),
+            })
+        })
+        .collect()
+}
 
 /// Layout of `akita::NttPrime` in `shaders/akita/mont.h`.
 #[repr(C)]
@@ -48,7 +64,9 @@ struct NttBatch {
 /// in device memory.
 pub struct DeviceCrtNtt<const K: usize, const D: usize> {
     pub(crate) primes: DeviceBuffer<DevicePrime>,
-    /// `[K][4][D]` words: `NttTwiddles::negacyclic_tables` per prime.
+    /// `[K][7][D]` words: per prime the rows of `akita::NttTables`
+    /// (`NttTwiddles::negacyclic_tables`, `psi^i R^2`, and the canonical
+    /// forward twiddles with their Shoup quotients).
     pub(crate) tables: DeviceBuffer<i32>,
     /// `[K][K]` words: the Garner inverse `p_j^-1 mod p_i` in prime `i`'s
     /// Montgomery form at `[i][j]` for `j < i`, zero elsewhere.
@@ -70,10 +88,35 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
         }
         let primes = params.primes.map(DevicePrime::from);
         let tables = params
-            .twiddles
+            .primes
             .iter()
-            .flat_map(|twiddles| twiddles.negacyclic_tables())
-            .flat_map(|table| table.iter().map(|coefficient| coefficient.raw()))
+            .zip(params.twiddles.iter())
+            .flat_map(|(prime, twiddles)| {
+                let [fwd, inv, psi, untwist] = twiddles.negacyclic_tables();
+                // psi^i R^2: mont_mul(psi^i R, R^2) = psi^i R^2 (akita::NttTables::PSI_R2).
+                let montsq = MontCoeff::from_raw(prime.montsq);
+                let psi_r2 = psi.map(|twist| prime.mul(twist, montsq).raw());
+                // Harvey's butterflies take canonical twiddles w and their
+                // Shoup quotients floor(w 2^32 / p) (NttTables::FWD_*).
+                let canonical = fwd.map(|twiddle| prime.to_canonical(twiddle));
+                let shoup = canonical.map(|twiddle| {
+                    let quotient = (u64::from(twiddle.unsigned_abs()) << 32)
+                        .checked_div(u64::from(prime.p.unsigned_abs()))
+                        .unwrap_or_default();
+                    // The quotient is below 2^32 because w < p; store its bits.
+                    u32::try_from(quotient).unwrap_or_default() as i32
+                });
+                [
+                    fwd.map(MontCoeff::raw),
+                    inv.map(MontCoeff::raw),
+                    psi.map(MontCoeff::raw),
+                    untwist.map(MontCoeff::raw),
+                    psi_r2,
+                    canonical,
+                    shoup,
+                ]
+            })
+            .flatten()
             .collect::<Vec<_>>();
         let gamma = params
             .primes

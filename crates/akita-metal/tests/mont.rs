@@ -137,8 +137,10 @@ fn check_prime(test: &support::GpuTest, library: &ShaderLibrary, prime: NttPrime
 #[test]
 fn montgomery_ops_match_ntt_prime() {
     let test = gpu();
-    let spec = HEADERS
+    // Akita's headers follow jolt-metal's field headers, as in the library.
+    let spec = jolt_metal::shaders::FIELD_HEADERS
         .iter()
+        .chain(&HEADERS)
         .fold(LibrarySpec::new(), |spec, (name, text)| {
             spec.source(name, text)
         })

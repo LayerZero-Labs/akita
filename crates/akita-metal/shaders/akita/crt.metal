@@ -1,8 +1,9 @@
 // Batched CRT reconstruction: one thread per coefficient.
 //
-// `residues` holds ring elements in CyclotomicCrtNtt<i32, K, D> layout
-// ([elements][K][D] raw Montgomery words in (-p, p)); `out` receives the
-// field coefficients, [elements][D].
+// `residues` holds `limbs` groups of ring elements in CyclotomicCrtNtt<i32,
+// K, D> layout ([limb][elements][K][D] raw Montgomery words in (-p, p));
+// `out` receives the field coefficients sum_l scales[l] reconstruct(limb l),
+// [elements][D]. One limb with scale one is plain reconstruction.
 
 #include <metal_stdlib>
 
@@ -12,6 +13,10 @@ namespace akita {
 struct CrtBatch {
     uint coefficients;
     uint log_degree;
+    // Nonzero: add to `out` instead of overwriting it (later CRT segments
+    // of one product).
+    uint accumulate;
+    uint limbs;
 };
 
 template <typename F, uint K>
@@ -21,7 +26,8 @@ template <typename F, uint K>
     device const NttPrime* primes [[buffer(2)]],
     device const int* gamma [[buffer(3)]],
     device const F* radix [[buffer(4)]],
-    constant CrtBatch& batch [[buffer(5)]],
+    device const F* scales [[buffer(5)]],
+    constant CrtBatch& batch [[buffer(6)]],
     uint index [[thread_position_in_grid]]) {
     if (index >= batch.coefficients) {
         return;
@@ -29,12 +35,20 @@ template <typename F, uint K>
     uint degree = 1u << batch.log_degree;
     uint element = index >> batch.log_degree;
     uint coefficient = index & (degree - 1);
-    // A valid dispatch may contain nearly 2^32 coefficients, while each
-    // coefficient has K residue words. Widen before multiplying so residue
-    // bases beyond the first 2^32 words cannot wrap and alias earlier rings.
-    ulong residue_base = ulong(element) * ulong(K) * ulong(degree);
-    device const int* words = residues + residue_base + ulong(coefficient);
-    out[ulong(index)] = crt_reconstruct<F, K>(words, degree, primes, gamma, radix);
+    // A valid dispatch may contain nearly 2^32 coefficients, while every
+    // limb contains K residue words per coefficient. Widen both bases before
+    // multiplying so later elements and limbs cannot alias earlier storage.
+    ulong limb_stride = ulong(batch.coefficients) * K;
+    ulong residue_base = ulong(element) * K * degree + coefficient;
+    device const int* words = residues + residue_base;
+    F value = F::zero();
+    for (uint limb = 0; limb < batch.limbs; limb++) {
+        F part = crt_reconstruct<F, K>(
+            words + ulong(limb) * limb_stride, degree, primes, gamma, radix);
+        value = value + scales[limb] * part;
+    }
+    ulong output = ulong(index);
+    out[output] = batch.accumulate != 0 ? out[output] + value : value;
 }
 
 } // namespace akita

@@ -100,7 +100,9 @@ name = "akita-metal"
 version = "0.1.0"
 dependencies = [
  "akita-algebra",
+ "akita-cpu-backend",
  "akita-error",
+ "akita-types",
  "bytemuck",
  "criterion",
  "jolt-field",

@@ -3,9 +3,7 @@
 
 use std::fmt::Write;
 
-use akita_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
-use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
-use jolt_metal::runtime::{Device, LibrarySpec, MslType, Pipeline, ShaderLibrary};
+use jolt_metal::runtime::{Device, LibrarySpec, Pipeline, ShaderLibrary};
 use jolt_metal::shaders::FIELD_HEADERS;
 
 use crate::error::AkitaMetalError;
@@ -14,17 +12,27 @@ use crate::error::AkitaMetalError;
 /// Q64 also admit degree 2048, which is not compiled here.
 pub const RING_DEGREES: [usize; 5] = [64, 128, 256, 512, 1024];
 
+/// The host name of a template instance at one ring degree, with an
+/// optional suffix for its remaining arguments.
+pub(crate) fn ring_degree_kernel(template: &str, ring_degree: usize) -> String {
+    format!("{template}_d{ring_degree}")
+}
+
 /// Akita's MSL headers, in dependency order. They follow `jolt-metal`'s
 /// field headers in a library, since runtime-compiled source cannot
 /// `#include` repository paths.
-pub const HEADERS: [(&str, &str); 3] = [
+pub const HEADERS: [(&str, &str); 4] = [
     ("akita/mont.h", include_str!("../shaders/akita/mont.h")),
     ("akita/ntt.h", include_str!("../shaders/akita/ntt.h")),
     ("akita/crt.h", include_str!("../shaders/akita/crt.h")),
+    (
+        "akita/decompose.h",
+        include_str!("../shaders/akita/decompose.h"),
+    ),
 ];
 
 /// Kernel sources.
-const KERNELS: [(&str, &str); 2] = [
+const KERNELS: [(&str, &str); 4] = [
     (
         "akita/ntt.metal",
         include_str!("../shaders/akita/ntt.metal"),
@@ -33,54 +41,35 @@ const KERNELS: [(&str, &str); 2] = [
         "akita/crt.metal",
         include_str!("../shaders/akita/crt.metal"),
     ),
+    (
+        "akita/matvec.metal",
+        include_str!("../shaders/akita/matvec.metal"),
+    ),
+    (
+        "akita/decompose.metal",
+        include_str!("../shaders/akita/decompose.metal"),
+    ),
 ];
-
-/// Kernel templates instantiated once per ring degree.
-const RING_DEGREE_TEMPLATES: [&str; 2] = ["akita_ntt_forward", "akita_ntt_inverse"];
 
 /// One explicit instantiation `namespace::template<args>` under a host name.
 ///
 /// `jolt-metal` instantiates templates over one field type; Akita's kernels
 /// also take shape parameters, so this crate writes its own instantiations
-/// and declares each host name as a kernel.
-struct Instance {
-    template: &'static str,
-    args: String,
-    host_name: String,
-}
-
-/// The host name of a ring-degree template instance.
-pub(crate) fn ring_degree_kernel(template: &str, ring_degree: usize) -> String {
-    format!("{template}_d{ring_degree}")
-}
-
-/// The host name of the CRT reconstruction into `F` from `primes` residues.
-pub(crate) fn crt_kernel<F: MslType>(primes: usize) -> String {
-    format!("akita_crt_reconstruct_k{primes}_{}", F::HOST_SUFFIX)
-}
-
-fn crt_instance<F: MslType>(primes: usize) -> Instance {
-    Instance {
-        template: "akita_crt_reconstruct",
-        args: format!("{}, {primes}", F::MSL_NAME),
-        host_name: crt_kernel::<F>(primes),
-    }
+/// and declares each host name as a kernel. Each kernel module lists its
+/// instances next to the code that dispatches them.
+pub(crate) struct Instance {
+    pub(crate) template: &'static str,
+    pub(crate) args: String,
+    pub(crate) host_name: String,
 }
 
 fn instances() -> Vec<Instance> {
-    let transforms = RING_DEGREE_TEMPLATES.iter().flat_map(|&template| {
-        RING_DEGREES.iter().map(move |&ring_degree| Instance {
-            template,
-            args: ring_degree.to_string(),
-            host_name: ring_degree_kernel(template, ring_degree),
-        })
-    });
-    // Each field preset reconstructs from its own CRT profile.
-    let reconstructions = [
-        crt_instance::<Prime128OffsetA7F7>(Q128_NUM_PRIMES),
-        crt_instance::<Prime64Offset59>(Q64_NUM_PRIMES),
-    ];
-    transforms.chain(reconstructions).collect()
+    crate::ntt::instances()
+        .into_iter()
+        .chain(crate::crt::instances())
+        .chain(crate::matvec::instances())
+        .chain(crate::decompose::instances())
+        .collect()
 }
 
 fn library_spec() -> LibrarySpec {
