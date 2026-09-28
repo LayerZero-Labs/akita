@@ -20,11 +20,13 @@
 
 mod crt;
 pub mod decompose;
+pub mod digits;
 mod error;
 mod library;
 pub mod matvec;
 pub mod ntt;
 
+pub use digits::{DeviceDigitPlanes, DigitPlane};
 pub use error::AkitaMetalError;
 pub use jolt_metal::{ErrorClass, MetalError};
 pub use library::{AkitaMetal, HEADERS, RING_DEGREES};

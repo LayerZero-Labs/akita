@@ -14,12 +14,13 @@ use akita_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
 use akita_algebra::{CanonicalEncoding, CrtCapacity, CrtNttParamSet, CyclotomicRing, NttPrime};
 use akita_error::checked;
 use akita_types::ntt_cache::PreparedNttBaseView;
-use bytemuck::{NoUninit, Pod, Zeroable};
+use bytemuck::{Pod, Zeroable};
 use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
 use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid};
 use jolt_metal::MetalField;
 
 use crate::crt::{crt_kernel, CrtBatch, COEFFICIENT_GROUP};
+use crate::digits::{DeviceDigitPlanes, DigitPlane};
 use crate::error::AkitaMetalError;
 use crate::library::{ring_degree_kernel, AkitaMetal, Instance, RING_DEGREES};
 use crate::ntt::{shape_overflow, DeviceCrtNtt};
@@ -40,36 +41,9 @@ mod sealed {
     use akita_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
     use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
 
-    pub trait Sealed {}
-    impl Sealed for i8 {}
-    impl Sealed for i16 {}
-
     pub trait PreparedMatrixField<const K: usize> {}
     impl PreparedMatrixField<Q64_NUM_PRIMES> for Prime64Offset59 {}
     impl PreparedMatrixField<Q128_NUM_PRIMES> for Prime128OffsetA7F7 {}
-}
-
-/// A signed digit type for digit planes: `i8` for `log_basis <= 8`, `i16`
-/// up to 16.
-pub trait DigitPlane: sealed::Sealed + NoUninit {
-    /// The MSL spelling.
-    const MSL_NAME: &'static str;
-    /// Host-name suffix of the kernels over this digit type.
-    const SUFFIX: &'static str;
-    /// The largest `log_basis` whose balanced digits fit.
-    const MAX_LOG_BASIS: u32;
-}
-
-impl DigitPlane for i8 {
-    const MSL_NAME: &'static str = "char";
-    const SUFFIX: &'static str = "i8";
-    const MAX_LOG_BASIS: u32 = 8;
-}
-
-impl DigitPlane for i16 {
-    const MSL_NAME: &'static str = "short";
-    const SUFFIX: &'static str = "i16";
-    const MAX_LOG_BASIS: u32 = 16;
 }
 
 /// A field whose full prepared-cache profile contains exactly `K` primes.
@@ -286,6 +260,7 @@ where
     where
         F: PreparedMatrixField<K>,
     {
+        metal.pipeline(&crt_kernel::<F>(K))?;
         let modulus = field_modulus::<F>()?;
         let prepared = view.negacyclic().ok_or_else(|| {
             AkitaMetalError::Shape("the negacyclic NTT domain is not prepared".into())
@@ -328,6 +303,7 @@ where
         cols: usize,
         limbs: usize,
     ) -> Result<Self, AkitaMetalError> {
+        metal.pipeline(&crt_kernel::<F>(K))?;
         if !LIMB_COUNTS.contains(&limbs) {
             return Err(AkitaMetalError::Shape(format!(
                 "{limbs} limbs has no kernel"
@@ -373,8 +349,8 @@ where
     /// products' field coefficients to `out`, returning the GPU time.
     ///
     /// `planes` holds `blocks x cols` digit planes of `D` digits, block-major,
-    /// each digit balanced for `log_basis` (in `[-2^(log_basis-1),
-    /// 2^(log_basis-1)]`); `out` receives `blocks x rows` ring elements. The
+    /// with its balanced range validated at upload or decomposition; `out`
+    /// receives `blocks x rows` ring elements. The
     /// columns run in CRT segments, each as wide as the primes' product can
     /// hold exactly, and the segments add in the field, so the result is
     /// `A x mod q` exactly at any width. A shape whose single column
@@ -382,19 +358,13 @@ where
     pub fn mat_vec<T>(
         &self,
         metal: &AkitaMetal,
-        planes: &DeviceBuffer<T>,
-        log_basis: u32,
+        planes: &DeviceDigitPlanes<T>,
         out: &mut DeviceBuffer<F>,
     ) -> Result<Duration, AkitaMetalError>
     where
         T: DigitPlane,
     {
-        if !(1..=T::MAX_LOG_BASIS).contains(&log_basis) {
-            return Err(AkitaMetalError::Shape(format!(
-                "log_basis {log_basis} does not fit {} digits",
-                T::SUFFIX
-            )));
-        }
+        let log_basis = planes.log_basis();
         let plane_words = checked::product([self.cols, D]).ok_or_else(|| shape_overflow(D))?;
         let blocks = checked::exact_div(planes.len(), plane_words).ok_or_else(|| {
             AkitaMetalError::Shape(format!(
@@ -512,7 +482,7 @@ where
             batch.dispatch(
                 partials_pipeline,
                 &[
-                    Binding::buffer(planes),
+                    Binding::buffer(planes.buffer()),
                     Binding::buffer(&self.entries),
                     Binding::buffer(&partials),
                     Binding::buffer(&self.ntt.primes),

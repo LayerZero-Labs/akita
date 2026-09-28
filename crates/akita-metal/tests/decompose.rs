@@ -8,8 +8,8 @@ use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::{CanonicalEncoding, CyclotomicRing, Field};
 use akita_cpu_backend::benchmark_support::decompose_rows_i8_into;
 use akita_metal::decompose::decompose;
-use akita_metal::AkitaMetal;
-use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
+use akita_metal::{AkitaMetal, AkitaMetalError};
+use jolt_field::{Prime128OffsetA7F7, Prime48Offset59, Prime64Offset59};
 use jolt_metal::runtime::DeviceBuffer;
 use jolt_metal::MetalField;
 use support::{gpu, SplitMix64};
@@ -76,8 +76,7 @@ fn check_i8<F: MetalField + CanonicalEncoding>(metal: &AkitaMetal, levels: usize
     let mut expected = vec![[0i8; D]; RINGS * levels];
     decompose_rows_i8_into(&rings(&input), &mut expected, levels, log_basis);
     let buffer = DeviceBuffer::from_slice(metal.device(), &input).expect("upload");
-    let mut out = DeviceBuffer::<i8>::zeroed(metal.device(), RINGS * levels * D).expect("output");
-    decompose(metal, &buffer, D, levels, log_basis, &mut out).expect("decompose");
+    let (mut out, _) = decompose::<F, i8>(metal, &buffer, D, levels, log_basis).expect("decompose");
     assert_eq!(
         out.read().expect("read back"),
         expected.as_flattened(),
@@ -96,8 +95,8 @@ fn check_i16<F: MetalField + CanonicalEncoding>(metal: &AkitaMetal, levels: usiz
         })
         .collect::<Vec<_>>();
     let buffer = DeviceBuffer::from_slice(metal.device(), &input).expect("upload");
-    let mut out = DeviceBuffer::<i16>::zeroed(metal.device(), RINGS * levels * D).expect("output");
-    decompose(metal, &buffer, D, levels, log_basis, &mut out).expect("decompose");
+    let (mut out, _) =
+        decompose::<F, i16>(metal, &buffer, D, levels, log_basis).expect("decompose");
     assert_eq!(
         out.read().expect("read back"),
         expected.as_flattened(),
@@ -128,4 +127,16 @@ fn fp64_digits_match_cpu() {
     for (levels, log_basis) in [(6, 11), (4, 16)] {
         check_i16::<Prime64Offset59>(&test.metal, levels, log_basis);
     }
+}
+
+#[test]
+fn unsupported_field_rejects_before_output_allocation() {
+    let test = gpu();
+    let input = [Prime48Offset59::from_u64(1); D];
+    let buffer = DeviceBuffer::from_slice(test.metal.device(), &input).expect("input");
+    let error = match decompose::<Prime48Offset59, i8>(&test.metal, &buffer, D, 1, 3) {
+        Ok(_) => panic!("fp48 has no Akita decomposition kernel"),
+        Err(error) => error,
+    };
+    assert!(matches!(&error, AkitaMetalError::Shape(_)), "{error}");
 }
