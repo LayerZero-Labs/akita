@@ -240,9 +240,9 @@ below describes this mode.
 weights and creates no polynomial-modulus quotient rows or quotient digits.
 Production schedules admit it only as a monotone, setup-direct
 `EvaluationTrace` suffix beginning at absolute level 2. Coefficient packing
-remains quotient-lift-only. The [ring-relation realization
-chapter](./akita-fold-realizations.md#reduced-evaluation) gives the reduced
-weights and complete schedule restrictions.
+remains quotient-lift-only. [Checking ring relations over a
+field](./ring-relation-checking.md) derives both methods and their schedule
+restrictions. This section explains how the prover computes the quotients.
 
 This operation is distinct from EOR. EOR changes an extension-valued opening
 claim before the lattice relation is formed. In `QuotientLift` mode, ring
