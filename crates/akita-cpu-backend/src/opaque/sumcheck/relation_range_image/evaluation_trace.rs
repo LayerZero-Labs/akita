@@ -221,19 +221,19 @@ pub(crate) struct PreparedProverLinearTerms<E: Field> {
 }
 
 impl<E: Field> PreparedProverLinearTerms<E> {
-    /// Prepare a rank-one physical-L2 term over validated Stage-2 geometry.
-    pub(crate) fn from_physical_l2(
+    /// Prepare a rank-one response-norm term over validated Stage-2 geometry.
+    pub(crate) fn from_response_norm_factors(
         coefficient_weights: Vec<E>,
         lane_weights: Vec<E>,
         live_lane_count: usize,
         coeff_count: usize,
     ) -> Result<Self, AkitaError> {
         let _witness_len = live_lane_count.checked_mul(coeff_count).ok_or_else(|| {
-            AkitaError::InvalidSetup("physical-L2 witness length overflow".into())
+            AkitaError::InvalidSetup("response-norm witness length overflow".into())
         })?;
         if coeff_count == 0 || !coeff_count.is_power_of_two() {
             return Err(AkitaError::InvalidSetup(
-                "physical-L2 coefficient count must be a nonzero power of two".into(),
+                "response-norm coefficient count must be a nonzero power of two".into(),
             ));
         }
         if coefficient_weights.len() != coeff_count {

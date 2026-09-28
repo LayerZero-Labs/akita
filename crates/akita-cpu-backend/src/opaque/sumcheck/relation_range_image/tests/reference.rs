@@ -220,7 +220,7 @@ fn stage2_every_phase_matches_boolean_hypercube_reference() {
 }
 
 #[test]
-fn factored_physical_l2_source_matches_dense_reference_through_all_transitions() {
+fn factored_response_norm_source_matches_dense_reference_through_all_transitions() {
     let coefficient_bits = 3usize;
     let coeff_count = 1usize << coefficient_bits;
     let lane_bits = 3usize;
@@ -245,7 +245,7 @@ fn factored_physical_l2_source_matches_dense_reference_through_all_transitions()
         .map(|index| F::from_u64(173 + 13 * index as u64))
         .collect::<Vec<_>>();
     let coefficient_weights = EqPolynomial::evals(&point[..coefficient_bits]).unwrap();
-    let physical_lane_weights = (0..live_lane_count)
+    let norm_lane_weights = (0..live_lane_count)
         .map(|lane| {
             let high_point = &point[coefficient_bits..];
             let equality = EqPolynomial::evals(high_point).unwrap();
@@ -254,14 +254,14 @@ fn factored_physical_l2_source_matches_dense_reference_through_all_transitions()
         .collect::<Vec<_>>();
     let mut linear = (0..live_lane_count)
         .flat_map(|lane| {
-            let lane_factor = physical_lane_weights[lane];
+            let lane_factor = norm_lane_weights[lane];
             coefficient_weights
                 .iter()
                 .map(move |&coefficient| lane_factor * coefficient)
         })
         .collect::<Vec<_>>();
     linear.resize(domain_len, F::zero());
-    let physical_claim = witness
+    let binding_claim = witness
         .iter()
         .zip(&linear)
         .map(|(&digit, &weight)| F::from_i64(i64::from(digit)) * weight)
@@ -306,7 +306,7 @@ fn factored_physical_l2_source_matches_dense_reference_through_all_transitions()
     let mut relation_factorization =
         RelationWeightFactorization::new(common_alpha_factor, relation_lane_weights).unwrap();
     relation_factorization
-        .attach_physical_l2(coefficient_weights, physical_lane_weights)
+        .attach_response_norm(coefficient_weights, norm_lane_weights)
         .unwrap();
     let mut prover = RelationRangeImageProver::new(
         batching,
@@ -318,7 +318,7 @@ fn factored_physical_l2_source_matches_dense_reference_through_all_transitions()
         live_lane_count,
         lane_bits,
         coefficient_bits,
-        base_relation_claim + physical_claim,
+        base_relation_claim + binding_claim,
         PreparedProverLinearTerms::zero(live_lane_count, coeff_count),
         F::zero(),
         None,

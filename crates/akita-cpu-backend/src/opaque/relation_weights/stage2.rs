@@ -1,4 +1,4 @@
-use super::lane_weights::PhysicalL2Factors;
+use super::lane_weights::ResponseNormFactors;
 use super::*;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{
@@ -13,12 +13,12 @@ pub(crate) struct CompiledStage2Weights<E: Field> {
 }
 
 impl<E: Field> CompiledStage2Weights<E> {
-    /// Incorporate one dense physical-L2 table into the existing Stage 2 state.
+    /// Incorporate one dense response-norm table into the existing Stage 2 state.
     ///
     /// Reduced evaluations can absorb the addend in place. Quotient-factored
     /// weights retain the sparse additional-term representation used by their
     /// sumcheck path.
-    fn incorporate_physical_l2(&mut self, weights: Vec<E>) -> Result<(), AkitaError> {
+    fn absorb_response_norm_weights(&mut self, weights: Vec<E>) -> Result<(), AkitaError> {
         match &mut self.ordinary {
             RelationWeightDescription::ReducedEvaluations { evaluations, .. } => {
                 let destination = evaluations
@@ -42,15 +42,15 @@ impl<E: Field> CompiledStage2Weights<E> {
     }
 }
 
-/// Factor the physical-L2 equality table when its Stage-2 coefficient blocks
+/// Factor the response-norm equality table when its Stage-2 coefficient blocks
 /// align with the physical ring rows. The result represents each table entry
 /// as `lane_weights[lane] * coefficient_weights[coefficient]`.
-fn factor_physical_l2<E: Field + Ring>(
+fn factor_response_norm_weights<E: Field + Ring>(
     point: &[E],
     families: &[EqPairTensorFamily<E>],
     output_len: usize,
     coefficient_count: usize,
-) -> Result<Option<PhysicalL2Factors<E>>, AkitaError> {
+) -> Result<Option<ResponseNormFactors<E>>, AkitaError> {
     if coefficient_count == 0
         || !coefficient_count.is_power_of_two()
         || output_len == 0
@@ -77,7 +77,7 @@ fn factor_physical_l2<E: Field + Ring>(
         let expected_row_stride = limb_axis
             .len
             .checked_mul(ring_axis.len)
-            .ok_or_else(|| AkitaError::InvalidSetup("physical-L2 row stride overflow".into()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("response-norm row stride overflow".into()))?;
         if family.scalar != E::one()
             || ring_axis.len == 0
             || ring_axis.left_stride != 1
@@ -105,16 +105,16 @@ fn factor_physical_l2<E: Field + Ring>(
             .checked_sub(1)
             .and_then(|row| row.checked_mul(row_axis.left_stride))
             .and_then(|offset| family.left_offset.checked_add(offset))
-            .ok_or_else(|| AkitaError::InvalidSetup("physical-L2 row offset overflow".into()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("response-norm row offset overflow".into()))?;
         let last_limb_start = limb_axis
             .len
             .checked_sub(1)
             .and_then(|limb| limb.checked_mul(limb_axis.left_stride))
             .and_then(|offset| last_row_start.checked_add(offset))
-            .ok_or_else(|| AkitaError::InvalidSetup("physical-L2 limb offset overflow".into()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("response-norm limb offset overflow".into()))?;
         let left_end = last_limb_start
             .checked_add(ring_axis.len)
-            .ok_or_else(|| AkitaError::InvalidSetup("physical-L2 span overflow".into()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("response-norm span overflow".into()))?;
         if left_end > output_len {
             return Err(AkitaError::InvalidProof);
         }
@@ -127,23 +127,25 @@ fn factor_physical_l2<E: Field + Ring>(
                     row.checked_mul(row_lane_stride)
                         .and_then(|offset| base.checked_add(offset))
                 })
-                .ok_or_else(|| AkitaError::InvalidSetup("physical-L2 lane overflow".into()))?;
+                .ok_or_else(|| AkitaError::InvalidSetup("response-norm lane overflow".into()))?;
             let physical_row = row
                 .checked_mul(row_axis.right_stride)
                 .and_then(|offset| family.right_offset.checked_add(offset))
-                .ok_or_else(|| AkitaError::InvalidSetup("physical-L2 address overflow".into()))?;
+                .ok_or_else(|| AkitaError::InvalidSetup("response-norm address overflow".into()))?;
             for limb in 0..limb_axis.len {
                 let limb_start = limb
                     .checked_mul(limb_lane_stride)
                     .and_then(|offset| target_row_lane.checked_add(offset))
-                    .ok_or_else(|| AkitaError::InvalidSetup("physical-L2 lane overflow".into()))?;
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("response-norm lane overflow".into())
+                    })?;
                 let limb_weight = limb_weights
                     .get(limb)
                     .copied()
                     .ok_or(AkitaError::InvalidProof)?;
                 for ring_chunk in 0..ring_chunks {
                     let lane = limb_start.checked_add(ring_chunk).ok_or_else(|| {
-                        AkitaError::InvalidSetup("physical-L2 lane overflow".into())
+                        AkitaError::InvalidSetup("response-norm lane overflow".into())
                     })?;
                     if lane >= live_lane_count {
                         return Err(AkitaError::InvalidProof);
@@ -152,7 +154,7 @@ fn factor_physical_l2<E: Field + Ring>(
                         .checked_mul(coefficient_count)
                         .and_then(|offset| physical_row.checked_add(offset))
                         .ok_or_else(|| {
-                            AkitaError::InvalidSetup("physical-L2 address overflow".into())
+                            AkitaError::InvalidSetup("response-norm address overflow".into())
                         })?;
                     if !physical_coefficient.is_multiple_of(coefficient_count) {
                         return Ok(None);
@@ -163,7 +165,7 @@ fn factor_physical_l2<E: Field + Ring>(
             }
         }
     }
-    Ok(Some(PhysicalL2Factors {
+    Ok(Some(ResponseNormFactors {
         coefficient_weights,
         lane_weights,
     }))
@@ -297,7 +299,7 @@ where
         }
         let families = norm.plan.virtualization_families(norm.batching)?;
         let factorized = match &mut compiled.ordinary {
-            RelationWeightDescription::QuotientFactored(weights) => factor_physical_l2(
+            RelationWeightDescription::QuotientFactored(weights) => factor_response_norm_weights(
                 norm.point,
                 &families,
                 plan.witness_len(),
@@ -307,17 +309,18 @@ where
         };
         if let (
             RelationWeightDescription::QuotientFactored(weights),
-            Some(PhysicalL2Factors {
+            Some(ResponseNormFactors {
                 coefficient_weights,
                 lane_weights,
             }),
         ) = (&mut compiled.ordinary, factorized)
         {
-            weights.attach_physical_l2(coefficient_weights, lane_weights)?;
+            weights.attach_response_norm(coefficient_weights, lane_weights)?;
         } else {
             let equality = OffsetEqWindow::new(norm.point)?;
-            let physical_l2 = materialize_eq_tensor_left(&equality, &families, plan.witness_len())?;
-            compiled.incorporate_physical_l2(physical_l2)?;
+            let response_norm =
+                materialize_eq_tensor_left(&equality, &families, plan.witness_len())?;
+            compiled.absorb_response_norm_weights(response_norm)?;
         }
     }
     Ok(compiled)
@@ -336,7 +339,7 @@ mod tests {
         E::from_base_fn(|coordinate| F::from_u64(seed + 13 * coordinate as u64))
     }
 
-    fn physical_family(
+    fn response_norm_family(
         left_offset: usize,
         right_offset: usize,
         row_count: usize,
@@ -355,10 +358,10 @@ mod tests {
                 EqPairTensorAxis::unit(row_count, row_stride_left, row_stride_right),
             ],
         )
-        .expect("valid physical-L2 family")
+        .expect("valid response-norm family")
     }
 
-    fn assert_physical_l2_factor_matches_dense(
+    fn assert_response_norm_factor_matches_dense(
         point: &[E],
         families: &[EqPairTensorFamily<E>],
         output_len: usize,
@@ -366,11 +369,11 @@ mod tests {
     ) {
         let equality = OffsetEqWindow::new(point).expect("valid equality point");
         let dense = materialize_eq_tensor_left(&equality, families, output_len)
-            .expect("dense physical-L2 table");
-        let PhysicalL2Factors {
+            .expect("dense response-norm table");
+        let ResponseNormFactors {
             coefficient_weights: coefficients,
             lane_weights: lanes,
-        } = factor_physical_l2(point, families, output_len, coefficient_count)
+        } = factor_response_norm_weights(point, families, output_len, coefficient_count)
             .expect("factorization check")
             .expect("aligned geometry factors");
         let factored = (0..output_len)
@@ -380,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn physical_l2_direct_and_gram_factors_match_dense_for_multiple_units() {
+    fn response_norm_direct_and_gram_factors_match_dense_for_multiple_units() {
         let ring_dimension = 8;
         let coefficient_count = 4;
         let row_stride_left = ring_dimension * 3;
@@ -399,7 +402,7 @@ mod tests {
 
         for limb_weights in [direct_limb_weights, gram_limb_weights] {
             let families = vec![
-                physical_family(
+                response_norm_family(
                     0,
                     0,
                     2,
@@ -408,7 +411,7 @@ mod tests {
                     limb_weights.clone(),
                     ring_dimension,
                 ),
-                physical_family(
+                response_norm_family(
                     2 * row_stride_left,
                     2 * row_stride_right,
                     2,
@@ -418,18 +421,19 @@ mod tests {
                     ring_dimension,
                 ),
             ];
-            assert_physical_l2_factor_matches_dense(&point, &families, 96, coefficient_count);
+            assert_response_norm_factor_matches_dense(&point, &families, 96, coefficient_count);
         }
     }
 
     #[test]
-    fn physical_l2_factorization_falls_back_for_misaligned_ring_blocks() {
+    fn response_norm_factorization_falls_back_for_misaligned_ring_blocks() {
         let point = (0..7)
             .map(|index| E::from_u64(37 + 3 * index as u64))
             .collect::<Vec<_>>();
-        let family = physical_family(0, 0, 2, 12, 6, vec![E::from_u64(41), E::from_u64(43)], 6);
+        let family =
+            response_norm_family(0, 0, 2, 12, 6, vec![E::from_u64(41), E::from_u64(43)], 6);
         assert!(
-            factor_physical_l2(&point, std::slice::from_ref(&family), 24, 4)
+            factor_response_norm_weights(&point, std::slice::from_ref(&family), 24, 4)
                 .expect("well-formed fallback geometry")
                 .is_none()
         );
@@ -438,9 +442,9 @@ mod tests {
     }
 
     #[test]
-    fn reduced_physical_l2_merge_matches_the_legacy_sparse_coefficient_table() {
+    fn reduced_response_norm_merge_matches_the_legacy_sparse_coefficient_table() {
         let relation = (0..8).map(|index| extension(7 + index)).collect::<Vec<_>>();
-        let physical_l2 = (0..6)
+        let response_norm = (0..6)
             .map(|index| {
                 if index % 3 == 0 {
                     E::zero()
@@ -450,9 +454,9 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let mut legacy = relation.clone();
-        for (index, weight) in physical_l2.iter().copied().enumerate() {
+        for (index, weight) in response_norm.iter().copied().enumerate() {
             if !weight.is_zero() {
-                *legacy.get_mut(index).expect("bounded physical-L2 index") += weight;
+                *legacy.get_mut(index).expect("bounded response-norm index") += weight;
             }
         }
 
@@ -465,8 +469,8 @@ mod tests {
             binary_intervals: Vec::new(),
         };
         compiled
-            .incorporate_physical_l2(physical_l2)
-            .expect("physical-L2 table fits reduced relation table");
+            .absorb_response_norm_weights(response_norm)
+            .expect("response-norm table fits reduced relation table");
 
         let RelationWeightDescription::ReducedEvaluations { evaluations, .. } = compiled.ordinary
         else {
@@ -477,17 +481,17 @@ mod tests {
     }
 
     #[test]
-    fn quotient_physical_l2_keeps_the_legacy_sparse_representation() {
+    fn quotient_response_norm_keeps_the_legacy_sparse_representation() {
         let factorization = RelationWeightFactorization::new(
             vec![extension(1), extension(2)],
             vec![extension(3), extension(4)],
         )
         .expect("valid factorization");
         let prior = vec![(5, extension(9)), (1, extension(10))];
-        let physical_l2 = vec![E::zero(), extension(11), E::zero(), extension(12)];
+        let response_norm = vec![E::zero(), extension(11), E::zero(), extension(12)];
         let mut expected = prior.clone();
         expected.extend(
-            physical_l2
+            response_norm
                 .iter()
                 .copied()
                 .enumerate()
@@ -501,13 +505,13 @@ mod tests {
             binary_intervals: Vec::new(),
         };
         compiled
-            .incorporate_physical_l2(physical_l2)
+            .absorb_response_norm_weights(response_norm)
             .expect("sparse route remains valid");
         assert_eq!(compiled.linear, expected);
     }
 
     #[test]
-    fn reduced_physical_l2_rejects_a_table_larger_than_its_relation_weights() {
+    fn reduced_response_norm_rejects_a_table_larger_than_its_relation_weights() {
         let mut compiled = CompiledStage2Weights {
             ordinary: RelationWeightDescription::ReducedEvaluations {
                 evaluations: vec![extension(1); 2],
@@ -517,7 +521,7 @@ mod tests {
             binary_intervals: Vec::new(),
         };
         assert!(matches!(
-            compiled.incorporate_physical_l2(vec![extension(2); 3]),
+            compiled.absorb_response_norm_weights(vec![extension(2); 3]),
             Err(AkitaError::InvalidProof)
         ));
     }

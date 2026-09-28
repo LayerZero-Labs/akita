@@ -203,11 +203,11 @@ fn materialize_shared(semantics: &CoefficientPackingGroupSemantics<'_, E>) -> Ve
             CpuCoefficientPackingSource::PackingZ => &sources[1],
         };
         for segment in &segments[term.segments()] {
-            for (physical, source_index) in segment
+            for (response_norm, source_index) in segment
                 .physical_coefficients()
                 .zip(segment.source_coefficients())
             {
-                dense[physical] += term.factor() * source[source_index];
+                dense[response_norm] += term.factor() * source[source_index];
             }
         }
     }
@@ -330,11 +330,11 @@ fn materialize_cpu_sources(
             CpuCoefficientPackingSource::PackingZ => (&mut packing_z, &sources[1]),
         };
         for segment in &segments[term.segments()] {
-            for (physical, source_index) in segment
+            for (response_norm, source_index) in segment
                 .physical_coefficients()
                 .zip(segment.source_coefficients())
             {
-                destination[physical] += term.factor() * source[source_index];
+                destination[response_norm] += term.factor() * source[source_index];
             }
         }
     }
@@ -354,7 +354,7 @@ fn prover_adapter_preserves_shared_stage2_semantics() {
 }
 
 #[test]
-fn physical_l2_sparse_terms_merge_with_coefficient_packing_support() {
+fn response_norm_sparse_terms_merge_with_coefficient_packing_support() {
     let fixture = fixture();
     let batch = prepare_batch(&fixture);
     let semantics = &batch.groups()[0];
@@ -374,14 +374,14 @@ fn physical_l2_sparse_terms_merge_with_coefficient_packing_support() {
         .map(|index| E::from_u64(503 + 13 * index as u64))
         .collect::<Vec<_>>();
     let original = prepared.materialize_dense();
-    let physical = PreparedProverLinearTerms::from_physical_l2(
+    let response_norm = PreparedProverLinearTerms::from_response_norm_factors(
         coefficient_weights.clone(),
         lane_weights.clone(),
         live_lane_count,
         coeff_count,
     )
     .unwrap();
-    prepared.merge(physical).unwrap();
+    prepared.merge(response_norm).unwrap();
 
     let expected = original
         .chunks_exact(coeff_count)

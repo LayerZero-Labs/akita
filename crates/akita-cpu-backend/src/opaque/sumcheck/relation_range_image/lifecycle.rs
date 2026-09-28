@@ -104,18 +104,18 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 actual: stage1_point.len(),
             });
         }
-        let physical_l2 = match &mut relation_weights {
-            RelationWeightOracle::QuotientFactored(weights) => weights.take_physical_l2(),
+        let response_norm = match &mut relation_weights {
+            RelationWeightOracle::QuotientFactored(weights) => weights.take_response_norm(),
             RelationWeightOracle::ReducedDense(_) => None,
         };
-        if let Some(factors) = physical_l2 {
-            let physical_terms = PreparedProverLinearTerms::from_physical_l2(
+        if let Some(factors) = response_norm {
+            let response_norm_terms = PreparedProverLinearTerms::from_response_norm_factors(
                 factors.coefficient_weights,
                 factors.lane_weights,
                 live_lane_count,
                 coeff_count,
             )?;
-            linear_terms.merge(physical_terms)?;
+            linear_terms.merge(response_norm_terms)?;
         }
         match &relation_weights {
             RelationWeightOracle::QuotientFactored(factorization) => {

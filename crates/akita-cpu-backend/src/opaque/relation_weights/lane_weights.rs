@@ -21,9 +21,9 @@ pub(crate) struct RelationLaneWeights<E: Field> {
     setup_is_deferred: bool,
 }
 
-/// Rank-one physical-L2 weights in low coefficient and high lane coordinates.
+/// Rank-one response-norm weights in low coefficient and high lane coordinates.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PhysicalL2Factors<E: Field> {
+pub(crate) struct ResponseNormFactors<E: Field> {
     pub(crate) coefficient_weights: Vec<E>,
     pub(crate) lane_weights: Vec<E>,
 }
@@ -33,9 +33,9 @@ pub(crate) struct PhysicalL2Factors<E: Field> {
 pub(crate) struct RelationWeightFactorization<E: Field> {
     common_alpha_factor: Vec<E>,
     relation_lane_weights: Vec<E>,
-    /// Optional rank-one physical-L2 addend, factored over the Stage-2
+    /// Optional rank-one response-norm addend, factored over the Stage-2
     /// coefficient and lane coordinates.
-    physical_l2: Option<PhysicalL2Factors<E>>,
+    response_norm: Option<ResponseNormFactors<E>>,
 }
 
 impl<E: Field> RelationWeightFactorization<E> {
@@ -56,7 +56,7 @@ impl<E: Field> RelationWeightFactorization<E> {
         Ok(Self {
             common_alpha_factor,
             relation_lane_weights,
-            physical_l2: None,
+            response_norm: None,
         })
     }
 
@@ -80,28 +80,28 @@ impl<E: Field> RelationWeightFactorization<E> {
         std::mem::take(&mut self.relation_lane_weights)
     }
 
-    pub(crate) fn attach_physical_l2(
+    pub(crate) fn attach_response_norm(
         &mut self,
         coefficient_weights: Vec<E>,
         lane_weights: Vec<E>,
     ) -> Result<(), AkitaError> {
-        if self.physical_l2.is_some()
+        if self.response_norm.is_some()
             || coefficient_weights.len() != self.common_alpha_factor.len()
             || lane_weights.len() > self.relation_lane_weights.len()
         {
             return Err(AkitaError::InvalidSetup(
-                "physical-L2 factorization disagrees with relation geometry".into(),
+                "response-norm factorization disagrees with relation geometry".into(),
             ));
         }
-        self.physical_l2 = Some(PhysicalL2Factors {
+        self.response_norm = Some(ResponseNormFactors {
             coefficient_weights,
             lane_weights,
         });
         Ok(())
     }
 
-    pub(crate) fn take_physical_l2(&mut self) -> Option<PhysicalL2Factors<E>> {
-        self.physical_l2.take()
+    pub(crate) fn take_response_norm(&mut self) -> Option<ResponseNormFactors<E>> {
+        self.response_norm.take()
     }
 
     /// Expand this factorization over its complete padded flat domain.
@@ -254,7 +254,7 @@ impl<E: Field> RelationLaneWeights<E> {
         Ok(RelationWeightFactorization {
             common_alpha_factor,
             relation_lane_weights: self.lanes,
-            physical_l2: None,
+            response_norm: None,
         })
     }
 }

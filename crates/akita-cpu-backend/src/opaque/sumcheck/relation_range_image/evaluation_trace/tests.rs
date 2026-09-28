@@ -300,7 +300,7 @@ fn coefficient_folds_reuse_prepared_source_buffers() {
 }
 
 #[test]
-fn physical_l2_linear_source_matches_dense_table_and_signed_claim() {
+fn response_norm_linear_source_matches_dense_table_and_signed_claim() {
     let coeff_count = 4;
     let live_lane_count = 3;
     let coefficient_weights = (0..coeff_count)
@@ -309,7 +309,7 @@ fn physical_l2_linear_source_matches_dense_table_and_signed_claim() {
     let lane_weights = (0..live_lane_count)
         .map(|index| F::from_u64(71 + 13 * index as u64))
         .collect::<Vec<_>>();
-    let prepared = PreparedProverLinearTerms::from_physical_l2(
+    let prepared = PreparedProverLinearTerms::from_response_norm_factors(
         coefficient_weights.clone(),
         lane_weights.clone(),
         live_lane_count,
