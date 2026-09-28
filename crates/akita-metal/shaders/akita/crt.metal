@@ -29,8 +29,12 @@ template <typename F, uint K>
     uint degree = 1u << batch.log_degree;
     uint element = index >> batch.log_degree;
     uint coefficient = index & (degree - 1);
-    device const int* words = residues + element * K * degree + coefficient;
-    out[index] = crt_reconstruct<F, K>(words, degree, primes, gamma, radix);
+    // A valid dispatch may contain nearly 2^32 coefficients, while each
+    // coefficient has K residue words. Widen before multiplying so residue
+    // bases beyond the first 2^32 words cannot wrap and alias earlier rings.
+    ulong residue_base = ulong(element) * ulong(K) * ulong(degree);
+    device const int* words = residues + residue_base + ulong(coefficient);
+    out[ulong(index)] = crt_reconstruct<F, K>(words, degree, primes, gamma, radix);
 }
 
 } // namespace akita
