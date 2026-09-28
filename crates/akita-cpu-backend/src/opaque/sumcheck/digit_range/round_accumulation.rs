@@ -89,6 +89,85 @@ fn accumulate_delayed_blocks<E: Field + Unreduced>(
     .map(E::reduce_product)
 }
 
+/// Sum `N` products over the explicit pairs of a split-equality round.
+///
+/// `pair_terms(pair_index, inner_weight)` returns two factor arrays whose
+/// lane-wise products are the pair's terms, already scaled by its inner
+/// equality weight. Each block of the inner table is summed first, then scaled
+/// by its outer weight. Implicit pairs contribute nothing, so callers use this
+/// only for terms that vanish on a constant pair.
+pub(super) fn accumulate_equality_weighted_pair_terms<E: Field + Unreduced, const N: usize>(
+    first: &[E],
+    second: &[E],
+    explicit_pair_count: usize,
+    pair_terms: impl Fn(usize, E) -> ([E; N], [E; N]) + Sync,
+) -> [E; N] {
+    debug_assert!(explicit_pair_count <= first.len() * second.len());
+    let explicit_block_count = explicit_pair_count.div_ceil(first.len());
+    if E::SUM_IS_EXACT {
+        cfg_fold_reduce!(
+            0..explicit_block_count,
+            || [E::Product::zero(); N],
+            |mut outer, second_index| {
+                let block_start = second_index * first.len();
+                let block_end = explicit_pair_count.min(block_start + first.len());
+                let mut inner = [E::Product::zero(); N];
+                for pair_index in block_start..block_end {
+                    let (factors, weighted) =
+                        pair_terms(pair_index, first[pair_index - block_start]);
+                    for ((destination, factor), weighted) in
+                        inner.iter_mut().zip(factors).zip(weighted)
+                    {
+                        *destination += factor.mul_unreduced(weighted);
+                    }
+                }
+                let second_weight = second[second_index];
+                for (destination, inner) in outer.iter_mut().zip(inner) {
+                    *destination += second_weight.mul_unreduced(E::reduce_product(inner));
+                }
+                outer
+            },
+            |mut left, right| {
+                for (left, right) in left.iter_mut().zip(right) {
+                    *left += right;
+                }
+                left
+            }
+        )
+        .map(E::reduce_product)
+    } else {
+        cfg_fold_reduce!(
+            0..explicit_block_count,
+            || [E::zero(); N],
+            |mut outer, second_index| {
+                let block_start = second_index * first.len();
+                let block_end = explicit_pair_count.min(block_start + first.len());
+                let mut inner = [E::zero(); N];
+                for pair_index in block_start..block_end {
+                    let (factors, weighted) =
+                        pair_terms(pair_index, first[pair_index - block_start]);
+                    for ((destination, factor), weighted) in
+                        inner.iter_mut().zip(factors).zip(weighted)
+                    {
+                        *destination += factor * weighted;
+                    }
+                }
+                let second_weight = second[second_index];
+                for (destination, inner) in outer.iter_mut().zip(inner) {
+                    *destination += second_weight * inner;
+                }
+                outer
+            },
+            |mut left, right| {
+                for (left, right) in left.iter_mut().zip(right) {
+                    *left += right;
+                }
+                left
+            }
+        )
+    }
+}
+
 pub(super) fn accumulate_equality_weighted_round<E: Field + Unreduced>(
     first: &[E],
     second: &[E],
