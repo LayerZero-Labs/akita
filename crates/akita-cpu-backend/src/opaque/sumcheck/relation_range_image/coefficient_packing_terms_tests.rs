@@ -1,6 +1,5 @@
 use super::*;
 
-use crate::sources::packed_digits::PackedSignedDigits;
 use akita_algebra::poly::multilinear_eval;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
@@ -368,7 +367,6 @@ fn physical_l2_sparse_terms_merge_with_coefficient_packing_support() {
             _ => (index % 17) as i8 - 8,
         })
         .collect::<Vec<_>>();
-    let witness = PackedSignedDigits::from_i8_digits_auto(witness_digits.clone());
     let coefficient_weights = (0..coeff_count)
         .map(|index| E::from_u64(401 + 7 * index as u64))
         .collect::<Vec<_>>();
@@ -376,10 +374,9 @@ fn physical_l2_sparse_terms_merge_with_coefficient_packing_support() {
         .map(|index| E::from_u64(503 + 13 * index as u64))
         .collect::<Vec<_>>();
     let original = prepared.materialize_dense();
-    let (physical, claim) = PreparedProverLinearTerms::from_physical_l2(
+    let physical = PreparedProverLinearTerms::from_physical_l2(
         coefficient_weights.clone(),
         lane_weights.clone(),
-        &witness,
         live_lane_count,
         coeff_count,
     )
@@ -397,12 +394,21 @@ fn physical_l2_sparse_terms_merge_with_coefficient_packing_support() {
                 .map(move |(&existing, &coefficient)| existing + factor * coefficient)
         })
         .collect::<Vec<_>>();
-    let expected_claim = witness_digits
+    let rank_one_claim = witness_digits
+        .iter()
+        .enumerate()
+        .map(|(index, &digit)| {
+            lane_weights[index / coeff_count]
+                * coefficient_weights[index % coeff_count]
+                * E::from_i64(i64::from(digit))
+        })
+        .sum::<E>();
+    let dense_delta_claim = witness_digits
         .iter()
         .zip(original.iter().zip(&expected))
         .map(|(&digit, (&before, &after))| (after - before) * E::from_i64(i64::from(digit)))
         .sum::<E>();
-    assert_eq!(claim, expected_claim);
+    assert_eq!(rank_one_claim, dense_delta_claim);
     assert_eq!(prepared.materialize_dense(), expected);
 }
 

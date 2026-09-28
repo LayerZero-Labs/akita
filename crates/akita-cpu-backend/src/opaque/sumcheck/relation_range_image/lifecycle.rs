@@ -68,7 +68,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         coefficient_bits: usize,
         relation_claim: E,
         mut linear_terms: PreparedProverLinearTerms<E>,
-        mut linear_opening_claim: E,
+        linear_opening_claim: E,
         additional_relation_terms: Option<AdditionalRelationTerms<E>>,
     ) -> Result<Self, AkitaError>
     where
@@ -108,18 +108,14 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             RelationWeightOracle::QuotientFactored(weights) => weights.take_physical_l2(),
             RelationWeightOracle::ReducedDense(_) => None,
         };
-        let mut relation_claim = relation_claim;
         if let Some(factors) = physical_l2 {
-            let (physical_terms, physical_claim) = PreparedProverLinearTerms::from_physical_l2(
+            let physical_terms = PreparedProverLinearTerms::from_physical_l2(
                 factors.coefficient_weights,
                 factors.lane_weights,
-                &w_evals_compact,
                 live_lane_count,
                 coeff_count,
             )?;
             linear_terms.merge(physical_terms)?;
-            relation_claim -= physical_claim;
-            linear_opening_claim += physical_claim;
         }
         match &relation_weights {
             RelationWeightOracle::QuotientFactored(factorization) => {

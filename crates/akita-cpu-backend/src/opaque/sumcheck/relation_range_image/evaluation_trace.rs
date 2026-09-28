@@ -9,7 +9,7 @@ use akita_error::AkitaError;
 
 use akita_types::{basis_weights_prefix, BasisMode};
 use jolt_field::solinas::parallel::*;
-use jolt_field::{Field, Unreduced};
+use jolt_field::Field;
 
 use super::coefficient_packing_terms::{CpuCoefficientPackingSource, CpuCoefficientPackingTerms};
 
@@ -221,78 +221,54 @@ pub(crate) struct PreparedProverLinearTerms<E: Field> {
 }
 
 impl<E: Field> PreparedProverLinearTerms<E> {
-    /// Prepare a rank-one physical-L2 term and return its input witness claim.
+    /// Prepare a rank-one physical-L2 term over validated Stage-2 geometry.
     pub(crate) fn from_physical_l2(
         coefficient_weights: Vec<E>,
         lane_weights: Vec<E>,
-        witness: &crate::sources::packed_digits::PackedSignedDigits,
         live_lane_count: usize,
         coeff_count: usize,
-    ) -> Result<(Self, E), AkitaError>
-    where
-        E: Unreduced,
-    {
-        let witness_len = live_lane_count.checked_mul(coeff_count).ok_or_else(|| {
+    ) -> Result<Self, AkitaError> {
+        let _witness_len = live_lane_count.checked_mul(coeff_count).ok_or_else(|| {
             AkitaError::InvalidSetup("physical-L2 witness length overflow".into())
         })?;
-        if coeff_count == 0
-            || !coeff_count.is_power_of_two()
-            || coefficient_weights.len() != coeff_count
-            || lane_weights.len() != live_lane_count
-            || witness.len() != witness_len
-        {
+        if coeff_count == 0 || !coeff_count.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "physical-L2 coefficient count must be a nonzero power of two".into(),
+            ));
+        }
+        if coefficient_weights.len() != coeff_count {
             return Err(AkitaError::InvalidSize {
-                expected: witness_len,
-                actual: witness.len(),
+                expected: coeff_count,
+                actual: coefficient_weights.len(),
+            });
+        }
+        if lane_weights.len() != live_lane_count {
+            return Err(AkitaError::InvalidSize {
+                expected: live_lane_count,
+                actual: lane_weights.len(),
             });
         }
 
         let mut lane_terms = vec![Vec::new(); live_lane_count];
-        let mut input_claim = E::zero();
-        for lane in 0..live_lane_count {
-            let factor = lane_weights[lane];
-            if factor.is_zero() {
-                continue;
+        for (lane, &factor) in lane_weights.iter().enumerate() {
+            if !factor.is_zero() {
+                lane_terms[lane].push(PreparedLaneTerm {
+                    factor,
+                    source_index: 0,
+                    lane: 0,
+                });
             }
-            let mut coefficient_dot = E::zero();
-            let lane_start = lane.checked_mul(coeff_count).ok_or_else(|| {
-                AkitaError::InvalidSetup("physical-L2 witness offset overflow".into())
-            })?;
-            for (coefficient, &weight) in coefficient_weights.iter().enumerate() {
-                let index = lane_start.checked_add(coefficient).ok_or_else(|| {
-                    AkitaError::InvalidSetup("physical-L2 witness index overflow".into())
-                })?;
-                let digit = witness.get(index).ok_or(AkitaError::InvalidProof)?;
-                let magnitude = u64::from(digit.unsigned_abs());
-                if magnitude != 0 {
-                    let product = E::reduce_small_product(weight.mul_u64_unreduced(magnitude));
-                    if digit < 0 {
-                        coefficient_dot -= product;
-                    } else {
-                        coefficient_dot += product;
-                    }
-                }
-            }
-            input_claim += factor * coefficient_dot;
-            lane_terms[lane].push(PreparedLaneTerm {
-                factor,
-                source_index: 0,
-                lane: 0,
-            });
         }
 
-        Ok((
-            Self {
-                lane_weights: PreparedLaneWeights::Sparse(lane_terms),
-                sources: vec![PreparedTraceSource {
-                    values: coefficient_weights,
-                    lane_count: 1,
-                }],
-                live_lane_count,
-                coeff_count,
-            },
-            input_claim,
-        ))
+        Ok(Self {
+            lane_weights: PreparedLaneWeights::Sparse(lane_terms),
+            sources: vec![PreparedTraceSource {
+                values: coefficient_weights,
+                lane_count: 1,
+            }],
+            live_lane_count,
+            coeff_count,
+        })
     }
 
     #[cfg(test)]
