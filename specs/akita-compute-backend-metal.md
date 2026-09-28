@@ -118,6 +118,17 @@ machine.
 |---|---|---|
 | Negacyclic NTT, forward and inverse, `D` in 64..1024, any CRT profile of 30-bit primes | done | `akita_algebra::ntt::butterfly` |
 | Garner CRT reconstruction into the field (fp128 over Q128, fp64 over Q64) | done | `CyclotomicCrtNtt::to_ring` |
+| NTT matvec over i8 and i16 digit planes, with CRT segments past capacity | done | `mat_vec_mul_ntt_digits_i8`, `PreparedNttCache::mat_vec_i16` |
+| Balanced digit decomposition into i8 and i16 planes | done | `decompose_rows_i8_into`, `CyclotomicRing::balanced_decompose_pow2_i16_into` |
+
+The matvec's digit transforms need only residues congruent to the CPU's, so
+they use Harvey's lazy radix-4 butterflies with Shoup products and
+per-lane twiddles held in registers. On the dense inner commitment
+(`D = 1024`, 16-bit digits) the digit transforms take about two thirds of the
+time and are bound by 32-bit integer multiply throughput; the next step there
+is a prime set chosen for the device's arithmetic, with the device preparing
+its own NTT matrix from the canonical setup, which leaves the result unchanged
+because the product is exact.
 
 ## Acceptance criteria
 
