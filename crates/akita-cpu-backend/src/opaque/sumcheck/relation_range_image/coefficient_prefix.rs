@@ -1,6 +1,5 @@
-#[cfg(feature = "parallel")]
-use super::dense_terms::MIN_PARALLEL_ROUND_PAIRS;
 use super::*;
+use crate::opaque::sumcheck::par_fold_by_grain;
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[tracing::instrument(
@@ -131,29 +130,19 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
             (virt, rel)
         };
-        #[cfg(feature = "parallel")]
-        let lanes_per_task = MIN_PARALLEL_ROUND_PAIRS.div_ceil(current_coefficient_half);
-        #[cfg(feature = "parallel")]
-        let (virt_coeffs, rel_accum) = if self.live_lane_count * current_coefficient_half
-            <= MIN_PARALLEL_ROUND_PAIRS
-            || self.live_lane_count < 2 * lanes_per_task
-        {
-            (0..self.live_lane_count).fold(identity(), fold)
-        } else {
-            (0..self.live_lane_count)
-                .into_par_iter()
-                .with_min_len(lanes_per_task)
-                .fold(identity, fold)
-                .reduce(identity, |(mut va, mut ra), (vb, rb)| {
-                    va.merge(vb);
-                    for (left, right) in ra.iter_mut().zip(rb) {
-                        *left += right;
-                    }
-                    (va, ra)
-                })
-        };
-        #[cfg(not(feature = "parallel"))]
-        let (virt_coeffs, rel_accum) = (0..self.live_lane_count).fold(identity(), fold);
+        let (virt_coeffs, rel_accum) = par_fold_by_grain(
+            cfg_into_iter!(0..self.live_lane_count),
+            current_coefficient_half,
+            identity,
+            fold,
+            |(mut va, mut ra), (vb, rb)| {
+                va.merge(vb);
+                for (left, right) in ra.iter_mut().zip(rb) {
+                    *left += right;
+                }
+                (va, ra)
+            },
+        );
 
         (virt_coeffs.into_terms(), reduce_compact_rel(rel_accum))
     }
@@ -283,27 +272,17 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             }
             (virt, rel)
         };
-        #[cfg(feature = "parallel")]
-        let lanes_per_task = MIN_PARALLEL_ROUND_PAIRS.div_ceil(current_coefficient_half);
-        #[cfg(feature = "parallel")]
-        let (virt_coeffs, rel_coeffs) = if self.live_lane_count * current_coefficient_half
-            <= MIN_PARALLEL_ROUND_PAIRS
-            || self.live_lane_count < 2 * lanes_per_task
-        {
-            (0..self.live_lane_count).fold(identity(), fold)
-        } else {
-            (0..self.live_lane_count)
-                .into_par_iter()
-                .with_min_len(lanes_per_task)
-                .fold(identity, fold)
-                .reduce(identity, |(mut va, mut ra), (vb, rb)| {
-                    va.merge(vb);
-                    ra.add_assign(rb);
-                    (va, ra)
-                })
-        };
-        #[cfg(not(feature = "parallel"))]
-        let (virt_coeffs, rel_coeffs) = (0..self.live_lane_count).fold(identity(), fold);
+        let (virt_coeffs, rel_coeffs) = par_fold_by_grain(
+            cfg_into_iter!(0..self.live_lane_count),
+            current_coefficient_half,
+            identity,
+            fold,
+            |(mut va, mut ra), (vb, rb)| {
+                va.merge(vb);
+                ra.add_assign(rb);
+                (va, ra)
+            },
+        );
         (virt_coeffs.into_terms(), rel_coeffs)
     }
 
@@ -327,25 +306,13 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 *dst = w0 + r * (w1 - w0);
             }
         };
-        #[cfg(feature = "parallel")]
-        let lanes_per_task = MIN_PARALLEL_ROUND_PAIRS.div_ceil(next_coeff_count);
-        #[cfg(feature = "parallel")]
-        if live_lane_count * next_coeff_count <= MIN_PARALLEL_ROUND_PAIRS
-            || live_lane_count < 2 * lanes_per_task
-        {
-            out.chunks_mut(next_coeff_count)
-                .enumerate()
-                .for_each(fold_lane);
-        } else {
-            cfg_chunks_mut!(out, next_coeff_count)
-                .enumerate()
-                .with_min_len(lanes_per_task)
-                .for_each(fold_lane);
-        }
-        #[cfg(not(feature = "parallel"))]
-        out.chunks_mut(next_coeff_count)
-            .enumerate()
-            .for_each(fold_lane);
+        par_fold_by_grain(
+            cfg_chunks_mut!(out, next_coeff_count).enumerate(),
+            next_coeff_count,
+            || (),
+            |(), item| fold_lane(item),
+            |(), ()| (),
+        );
 
         out
     }

@@ -1,6 +1,5 @@
-#[cfg(feature = "parallel")]
-use super::dense_terms::MIN_PARALLEL_ROUND_PAIRS;
 use super::*;
+use crate::opaque::sumcheck::par_fold_by_grain;
 
 #[allow(clippy::too_many_arguments)]
 fn fold_lane_and_compute_next_round<
@@ -182,33 +181,16 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             add_round_terms(&mut totals, terms);
             totals
         };
-        #[cfg(feature = "parallel")]
-        let live_pairs = self.live_lane_count * next_coefficient_half;
-        #[cfg(feature = "parallel")]
-        let lanes_per_task = MIN_PARALLEL_ROUND_PAIRS.div_ceil(next_coefficient_half);
-        #[cfg(feature = "parallel")]
-        let totals = if live_pairs <= MIN_PARALLEL_ROUND_PAIRS
-            || self.live_lane_count < 2 * lanes_per_task
-        {
-            output
-                .chunks_mut(next_coeff_count)
-                .enumerate()
-                .fold(identity(), fold)
-        } else {
-            cfg_chunks_mut!(output, next_coeff_count)
-                .enumerate()
-                .with_min_len(lanes_per_task)
-                .fold(identity, fold)
-                .reduce(identity, |mut left, right| {
-                    add_round_terms(&mut left, right);
-                    left
-                })
-        };
-        #[cfg(not(feature = "parallel"))]
-        let totals = output
-            .chunks_mut(next_coeff_count)
-            .enumerate()
-            .fold(identity(), fold);
+        let totals = par_fold_by_grain(
+            cfg_chunks_mut!(output, next_coeff_count).enumerate(),
+            next_coefficient_half,
+            identity,
+            fold,
+            |mut left, right| {
+                add_round_terms(&mut left, right);
+                left
+            },
+        );
         (
             output,
             NormRoundTerms::from_totals::<SKIP_LINEAR>(totals.0),

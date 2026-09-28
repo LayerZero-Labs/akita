@@ -1,8 +1,5 @@
 use super::*;
-
-/// Minimum live pair work per parallel task in dense Stage 2 rounds.
-#[cfg(feature = "parallel")]
-pub(super) const MIN_PARALLEL_ROUND_PAIRS: usize = 2048;
+use crate::opaque::sumcheck::par_fold_by_grain;
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     /// Independently recompute the dense round constant before claim recovery.
@@ -121,31 +118,19 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
             (virt, rel)
         };
-        // A final row may be partial, so a chunk containing it needs one extra
-        // row to guarantee the minimum amount of live pair work.
-        #[cfg(feature = "parallel")]
-        let partial_last_row = usize::from(!live_pairs.is_multiple_of(num_first));
-        #[cfg(feature = "parallel")]
-        let rows_per_task = MIN_PARALLEL_ROUND_PAIRS.div_ceil(num_first) + partial_last_row;
-        #[cfg(feature = "parallel")]
-        let (virt_coeffs, rel_accum) =
-            if live_pairs <= MIN_PARALLEL_ROUND_PAIRS || live_rows < 2 * rows_per_task {
-                (0..live_rows).fold(identity(), fold)
-            } else {
-                (0..live_rows)
-                    .into_par_iter()
-                    .with_min_len(rows_per_task)
-                    .fold(identity, fold)
-                    .reduce(identity, |(mut va, mut ra), (vb, rb)| {
-                        va.merge(vb);
-                        for (left, right) in ra.iter_mut().zip(rb) {
-                            *left += right;
-                        }
-                        (va, ra)
-                    })
-            };
-        #[cfg(not(feature = "parallel"))]
-        let (virt_coeffs, rel_accum) = (0..live_rows).fold(identity(), fold);
+        let (virt_coeffs, rel_accum) = par_fold_by_grain(
+            cfg_into_iter!(0..live_rows),
+            num_first,
+            identity,
+            fold,
+            |(mut va, mut ra), (vb, rb)| {
+                va.merge(vb);
+                for (left, right) in ra.iter_mut().zip(rb) {
+                    *left += right;
+                }
+                (va, ra)
+            },
+        );
 
         (virt_coeffs.into_terms(), reduce_compact_rel(rel_accum))
     }
@@ -266,29 +251,17 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
             (virt, rel)
         };
-        // A final row may be partial, so a chunk containing it needs one extra
-        // row to guarantee the minimum amount of live pair work.
-        #[cfg(feature = "parallel")]
-        let partial_last_row = usize::from(!live_pairs.is_multiple_of(num_first));
-        #[cfg(feature = "parallel")]
-        let rows_per_task = MIN_PARALLEL_ROUND_PAIRS.div_ceil(num_first) + partial_last_row;
-        #[cfg(feature = "parallel")]
-        let (virt_coeffs, rel_coeffs) =
-            if live_pairs <= MIN_PARALLEL_ROUND_PAIRS || live_rows < 2 * rows_per_task {
-                (0..live_rows).fold(identity(), fold)
-            } else {
-                (0..live_rows)
-                    .into_par_iter()
-                    .with_min_len(rows_per_task)
-                    .fold(identity, fold)
-                    .reduce(identity, |(mut va, mut ra), (vb, rb)| {
-                        va.merge(vb);
-                        ra.add_assign(rb);
-                        (va, ra)
-                    })
-            };
-        #[cfg(not(feature = "parallel"))]
-        let (virt_coeffs, rel_coeffs) = (0..live_rows).fold(identity(), fold);
+        let (virt_coeffs, rel_coeffs) = par_fold_by_grain(
+            cfg_into_iter!(0..live_rows),
+            num_first,
+            identity,
+            fold,
+            |(mut va, mut ra), (vb, rb)| {
+                va.merge(vb);
+                ra.add_assign(rb);
+                (va, ra)
+            },
+        );
         (virt_coeffs.into_terms(), rel_coeffs)
     }
 
