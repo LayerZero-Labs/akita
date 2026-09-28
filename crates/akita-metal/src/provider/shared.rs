@@ -22,6 +22,12 @@ impl<T: DeviceObject> Shared<T> {
     pub(super) fn get(&self) -> &T {
         &self.0
     }
+
+    /// Exclusive access, for scratch buffers kernels write: callers hold the
+    /// provider's lock on the scratch slot, so no other thread binds it.
+    pub(super) fn get_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
 }
 
 /// Objects [`Shared`] may hold: a device with its compiled library, and
@@ -45,7 +51,9 @@ impl<F: Send + Sync> DeviceObject for DeviceFlatMatrix<F> {}
 // Command buffers and encoders are created per `Batch` on the calling thread
 // and never stored. The provider binds shared buffers only as kernel inputs
 // (the setup matrices after their preparation, and the inner rows after the
-// inner stage), so concurrent batches on several threads never write one.
+// inner stage), so concurrent batches on several threads never write one;
+// the one exception, the dense digit-plane scratch, is written only through
+// `get_mut` while the provider's mutex for that slot is held.
 unsafe impl<T: DeviceObject> Send for Shared<T> {}
 // SAFETY: as for `Send` above.
 unsafe impl<T: DeviceObject> Sync for Shared<T> {}

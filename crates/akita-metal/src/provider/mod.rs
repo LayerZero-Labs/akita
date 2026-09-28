@@ -60,7 +60,7 @@ mod outer;
 mod shared;
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use akita_algebra::tables::{q128_primes, Q64_PRIMES};
@@ -76,6 +76,7 @@ use akita_types::AkitaExpandedSetup;
 use jolt_field::{
     CanonicalEncoding, Field, Prime128OffsetA7F7, Prime64Offset59, Unreduced, WithCommitAccumulator,
 };
+use jolt_metal::runtime::DeviceBuffer;
 use jolt_metal::MetalField;
 
 use crate::error::AkitaMetalError;
@@ -178,6 +179,11 @@ pub struct MetalCommitmentProvider<F: CommitmentField> {
     counters: Counters,
     /// Digit-plane bytes per dense inner chunk.
     dense_chunk_bytes: usize,
+    /// The last dense chunk's digit planes, reused by the next chunk of the
+    /// same size: decomposition overwrites every digit, and a fresh buffer
+    /// costs a full zero fill (about 50 ms per GiB on an M4).
+    planes_i8: Mutex<Option<Shared<DeviceBuffer<i8>>>>,
+    planes_i16: Mutex<Option<Shared<DeviceBuffer<i16>>>>,
 }
 
 /// Default digit-plane bytes per dense inner chunk: the fp128 dense nv26
@@ -202,6 +208,8 @@ impl<F: CommitmentField> MetalCommitmentProvider<F> {
             matrices: MatrixCache::new(),
             counters: Counters::default(),
             dense_chunk_bytes: DEFAULT_DENSE_CHUNK_BYTES,
+            planes_i8: Mutex::new(None),
+            planes_i16: Mutex::new(None),
         }
     }
 

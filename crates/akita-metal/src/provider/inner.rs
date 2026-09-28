@@ -282,29 +282,29 @@ impl<F: CommitmentField> MetalCommitmentProvider<F> {
             )
             .map_err(AkitaMetalError::from)?;
             if plan.log_basis_inner <= i8::MAX_LOG_BASIS {
-                let mut planes = DeviceBuffer::<i8>::zeroed(metal.device(), digits)
-                    .map_err(AkitaMetalError::from)?;
+                let mut slot = lock_scratch(&self.planes_i8)?;
+                let planes = scratch_planes(&mut slot, metal, digits)?;
                 decompose(
                     metal,
                     &coefficients,
                     D,
                     plan.num_digits_inner,
                     plan.log_basis_inner,
-                    &mut planes,
+                    planes,
                 )?;
-                matrix.mat_vec_i8(metal, &planes, plan.log_basis_inner, &mut out)?;
+                matrix.mat_vec_i8(metal, planes, plan.log_basis_inner, &mut out)?;
             } else {
-                let mut planes = DeviceBuffer::<i16>::zeroed(metal.device(), digits)
-                    .map_err(AkitaMetalError::from)?;
+                let mut slot = lock_scratch(&self.planes_i16)?;
+                let planes = scratch_planes(&mut slot, metal, digits)?;
                 decompose(
                     metal,
                     &coefficients,
                     D,
                     plan.num_digits_inner,
                     plan.log_basis_inner,
-                    &mut planes,
+                    planes,
                 )?;
-                matrix.mat_vec_i16(metal, &planes, plan.log_basis_inner, &mut out)?;
+                matrix.mat_vec_i16(metal, planes, plan.log_basis_inner, &mut out)?;
             }
             rows.extend_from_slice(out.read().map_err(AkitaMetalError::from)?);
             if count == total_blocks {
@@ -381,6 +381,35 @@ impl<F: CommitmentField> MetalCommitmentProvider<F> {
 /// `g % blocks_per_source` of source `g / blocks_per_source`) on the device,
 /// each `block_fields` long with a short last block zero-padded. Zero
 /// coefficients decompose to zero digits, as the CPU pads its last block.
+/// Locks one digit-plane scratch slot.
+fn lock_scratch<T>(
+    slot: &std::sync::Mutex<Option<Shared<DeviceBuffer<T>>>>,
+) -> Result<std::sync::MutexGuard<'_, Option<Shared<DeviceBuffer<T>>>>, AkitaError> {
+    slot.lock()
+        .map_err(|_| AkitaError::InvalidSetup("digit-plane scratch lock poisoned".into()))
+}
+
+/// The slot's buffer when it holds exactly `digits` digits, else a fresh one
+/// that replaces it. Decomposition overwrites every digit, so a reused
+/// buffer's old contents never reach a product.
+fn scratch_planes<'s, T: bytemuck::Pod + Send + Sync>(
+    slot: &'s mut Option<Shared<DeviceBuffer<T>>>,
+    metal: &crate::library::AkitaMetal,
+    digits: usize,
+) -> Result<&'s mut DeviceBuffer<T>, AkitaError> {
+    if slot
+        .as_ref()
+        .is_none_or(|planes| planes.get().len() != digits)
+    {
+        *slot = Some(Shared::new(
+            DeviceBuffer::zeroed(metal.device(), digits).map_err(AkitaMetalError::from)?,
+        ));
+    }
+    slot.as_mut()
+        .map(Shared::get_mut)
+        .ok_or_else(|| AkitaError::InvalidSetup("digit-plane scratch missing".into()))
+}
+
 fn stage_blocks<F: CommitmentField>(
     metal: &crate::library::AkitaMetal,
     slices: &[&[F]],
