@@ -203,11 +203,11 @@ fn materialize_shared(semantics: &CoefficientPackingGroupSemantics<'_, E>) -> Ve
             CpuCoefficientPackingSource::PackingZ => &sources[1],
         };
         for segment in &segments[term.segments()] {
-            for (response_norm, source_index) in segment
+            for (physical, source_index) in segment
                 .physical_coefficients()
                 .zip(segment.source_coefficients())
             {
-                dense[response_norm] += term.factor() * source[source_index];
+                dense[physical] += term.factor() * source[source_index];
             }
         }
     }
@@ -330,11 +330,11 @@ fn materialize_cpu_sources(
             CpuCoefficientPackingSource::PackingZ => (&mut packing_z, &sources[1]),
         };
         for segment in &segments[term.segments()] {
-            for (response_norm, source_index) in segment
+            for (physical, source_index) in segment
                 .physical_coefficients()
                 .zip(segment.source_coefficients())
             {
-                destination[response_norm] += term.factor() * source[source_index];
+                destination[physical] += term.factor() * source[source_index];
             }
         }
     }
