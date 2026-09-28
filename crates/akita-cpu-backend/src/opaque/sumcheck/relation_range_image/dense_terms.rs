@@ -5,6 +5,45 @@ use super::*;
 pub(super) const MIN_PARALLEL_ROUND_PAIRS: usize = 2048;
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
+    /// Independently recompute the dense round constant before claim recovery.
+    #[cfg(debug_assertions)]
+    pub(super) fn debug_dense_round_at_zero(&self) -> Option<E> {
+        let Phase::Coefficient {
+            witness, relation, ..
+        } = self.phase.as_ref()?
+        else {
+            return None;
+        };
+        let witness_at = |index| match witness {
+            WitnessState::CompactPrefix(witness) => witness
+                .get(index)
+                .map_or_else(E::zero, |w| E::from_i64(i64::from(w))),
+            WitnessState::FoldedSuffix(witness) => {
+                witness.get(index).copied().unwrap_or_else(E::zero)
+            }
+        };
+        let witness_len = match witness {
+            WitnessState::CompactPrefix(witness) => witness.len(),
+            WitnessState::FoldedSuffix(witness) => witness.len(),
+        };
+        let mut at_zero = E::zero();
+        for left in (0..witness_len).step_by(2) {
+            let p0 = match relation {
+                CoefficientRelation::Factored(weights) => {
+                    self.factored_relation_pair(weights)(left).0
+                }
+                CoefficientRelation::ReducedDense(weights) => weights.evaluations()[left],
+            };
+            let t0 = self.linear_terms.pair_from_flat_index(left).0;
+            at_zero += witness_at(left) * (p0 + t0);
+        }
+        at_zero += self.prev_norm_poly.as_ref()?.evaluate(E::zero());
+        if let Some(additional) = &self.additional_relation_terms {
+            at_zero += additional.debug_round_at_zero(witness_at);
+        }
+        Some(at_zero)
+    }
+
     #[tracing::instrument(
         skip_all,
         name = "RelationRangeImageProver::compute_round_compact_dense_terms"

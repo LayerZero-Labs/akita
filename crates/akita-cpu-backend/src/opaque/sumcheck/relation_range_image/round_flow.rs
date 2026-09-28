@@ -289,7 +289,16 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
         if let Some(additional) = self.additional_round_message() {
             message.add_assign(additional);
         }
-        message.into_polynomial(previous_claim)
+        let polynomial = message.into_polynomial(previous_claim);
+        #[cfg(debug_assertions)]
+        if let Some(at_zero) = self.debug_dense_round_at_zero() {
+            debug_assert_eq!(
+                polynomial.evaluate(E::zero()),
+                at_zero,
+                "dense round constant disagrees with its folded oracle"
+            );
+        }
+        polynomial
     }
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {

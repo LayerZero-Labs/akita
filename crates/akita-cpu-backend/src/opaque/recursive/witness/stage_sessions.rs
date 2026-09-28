@@ -283,9 +283,7 @@ where
             round,
             previous_claim,
         );
-        if polynomial.degree() > 3
-            || polynomial.evaluate(E::zero()) + polynomial.evaluate(E::one()) != previous_claim
-        {
+        if polynomial.degree() > 3 {
             return Err(AkitaError::InvalidInput(
                 "relation session returned an invalid round polynomial".into(),
             ));

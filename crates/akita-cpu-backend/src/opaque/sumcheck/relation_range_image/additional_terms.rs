@@ -222,6 +222,18 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
             .sum::<E>()
     }
 
+    #[cfg(debug_assertions)]
+    pub(super) fn debug_round_at_zero(&self, witness_at: impl Fn(usize) -> E) -> E {
+        self.weights
+            .iter()
+            .filter(|weight| weight.index % 2 == 0)
+            .map(|weight| {
+                let w = witness_at(weight.index);
+                w * weight.linear + self.binary_batching * weight.binary * w * (w + E::one())
+            })
+            .sum()
+    }
+
     /// Accumulate the value at one and the top two coefficients directly.
     /// The caller reconstructs the constant and linear coefficients from the
     /// running sumcheck claim, so this avoids their per-coordinate products.
