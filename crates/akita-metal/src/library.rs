@@ -21,14 +21,18 @@ pub(crate) fn ring_degree_kernel(template: &str, ring_degree: usize) -> String {
 /// Akita's MSL headers, in dependency order. They follow `jolt-metal`'s
 /// field headers in a library, since runtime-compiled source cannot
 /// `#include` repository paths.
-pub const HEADERS: [(&str, &str); 3] = [
+pub const HEADERS: [(&str, &str); 4] = [
     ("akita/mont.h", include_str!("../shaders/akita/mont.h")),
     ("akita/ntt.h", include_str!("../shaders/akita/ntt.h")),
     ("akita/crt.h", include_str!("../shaders/akita/crt.h")),
+    (
+        "akita/decompose.h",
+        include_str!("../shaders/akita/decompose.h"),
+    ),
 ];
 
 /// Kernel sources.
-const KERNELS: [(&str, &str); 3] = [
+const KERNELS: [(&str, &str); 4] = [
     (
         "akita/ntt.metal",
         include_str!("../shaders/akita/ntt.metal"),
@@ -40,6 +44,10 @@ const KERNELS: [(&str, &str); 3] = [
     (
         "akita/matvec.metal",
         include_str!("../shaders/akita/matvec.metal"),
+    ),
+    (
+        "akita/decompose.metal",
+        include_str!("../shaders/akita/decompose.metal"),
     ),
 ];
 
@@ -60,6 +68,7 @@ fn instances() -> Vec<Instance> {
         .into_iter()
         .chain(crate::crt::instances())
         .chain(crate::matvec::instances())
+        .chain(crate::decompose::instances())
         .collect()
 }
 

@@ -108,7 +108,7 @@ struct MatvecShape {
 
 /// The modulus of `F`: one more than the canonical value of `-1`.
 #[expect(clippy::arithmetic_side_effects, reason = "field negation is modular")]
-fn field_modulus<F: MetalField + CanonicalEncoding>() -> Result<u128, AkitaMetalError> {
+pub(crate) fn field_modulus<F: MetalField + CanonicalEncoding>() -> Result<u128, AkitaMetalError> {
     (-F::one())
         .to_u128_checked()
         .and_then(|top| top.checked_add(1))

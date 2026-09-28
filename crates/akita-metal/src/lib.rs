@@ -19,6 +19,7 @@
 )]
 
 mod crt;
+pub mod decompose;
 mod error;
 mod library;
 pub mod matvec;
