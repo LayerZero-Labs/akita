@@ -113,19 +113,12 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         compact_witness: PackedSignedDigitView<'_>,
         r: E,
     ) -> CompactPairFoldLut<E> {
-        let min_w = compact_witness
-            .iter()
-            .map(i32::from)
-            .min()
-            .unwrap_or(0)
-            .min(0);
-        let max_w = compact_witness
-            .iter()
-            .map(i32::from)
-            .max()
-            .unwrap_or(0)
-            .max(0);
-        CompactPairFoldLut::from_contiguous_range(min_w as i16, max_w as i16, r)
+        let bounds = compact_witness.bounds();
+        CompactPairFoldLut::from_contiguous_range(
+            -i16::from(bounds.negative_abs_max()),
+            i16::from(bounds.positive_max()),
+            r,
+        )
     }
 
     pub(super) fn materialize_compact_witness(
@@ -288,5 +281,37 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
         self.phase = Some(phase);
         drop(_span);
         self.finish_ingested_round();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jolt_field::{Ext2, ExtField, Prime64Offset59};
+
+    #[test]
+    fn compact_fold_uses_stored_extrema_and_zero_padding() {
+        type F = Prime64Offset59;
+        type E = Ext2<F>;
+        let r = E::from_base_fn(|i| F::from_u64(19 + 7 * i as u64));
+        for digits in [
+            vec![],
+            vec![0],
+            vec![3, 1, 2],
+            vec![-4, -1, -2],
+            vec![-128, 127, 0],
+        ] {
+            let witness = PackedSignedDigits::from_i8_digits_auto(digits.clone());
+            let lut = RelationRangeImageProver::<E>::build_compact_w_fold_lut(witness.view(), r);
+            let mut values = digits;
+            values.push(0);
+            for &left in &values {
+                for &right in &values {
+                    let l = E::from_i64(i64::from(left));
+                    let expected = l + r * (E::from_i64(i64::from(right)) - l);
+                    assert_eq!(lut.fold(i16::from(left), i16::from(right)), expected);
+                }
+            }
+        }
     }
 }
