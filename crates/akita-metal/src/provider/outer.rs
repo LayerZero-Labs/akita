@@ -1,5 +1,7 @@
 //! The outer (B) commitment stage on the device.
 
+use std::time::Instant;
+
 use akita_cpu_backend::commitment_backend::{
     InnerImage, InnerImageInput, OuterCommitOperation, StateOwnerCapability, UncompressedCommitPlan,
 };
@@ -8,7 +10,7 @@ use akita_types::RingVec;
 use jolt_metal::runtime::DeviceBuffer;
 
 use super::inner::MetalInnerImage;
-use super::{bump, CommitmentField, MetalCommitmentProvider};
+use super::{record, CommitmentField, MetalCommitmentProvider};
 use crate::decompose::decompose;
 use crate::error::AkitaMetalError;
 
@@ -41,6 +43,7 @@ impl<F: CommitmentField> OuterCommitOperation<F> for MetalOuterCommit<'_, F> {
         plan: &UncompressedCommitPlan,
         inner: InnerImageInput<'_, F>,
     ) -> Result<RingVec<F>, AkitaError> {
+        let start = Instant::now();
         let (rows, device) = match inner {
             InnerImageInput::Owned(image) => {
                 if image.binding().inner_plan() != plan.inner() {
@@ -59,7 +62,8 @@ impl<F: CommitmentField> OuterCommitOperation<F> for MetalOuterCommit<'_, F> {
         let u = with_ring_degree!(plan.outer().ring_dimension(), |D_B| self
             .provider
             .commit_outer::<D_B>(plan, rows, device))?;
-        bump(&self.provider.counters.outer);
+        let counters = &self.provider.counters;
+        record(&counters.outer, &counters.outer_nanos, start);
         Ok(u)
     }
 }

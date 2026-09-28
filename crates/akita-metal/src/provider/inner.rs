@@ -1,6 +1,7 @@
 //! The inner (A) commitment stage on the device.
 
 use std::marker::PhantomData;
+use std::time::Instant;
 
 use akita_cpu_backend::benchmark_support::column_sweep_ajtai_onehot_multi;
 use akita_cpu_backend::commitment_backend::{
@@ -14,7 +15,7 @@ use akita_types::RingVec;
 use jolt_metal::runtime::DeviceBuffer;
 
 use super::shared::Shared;
-use super::{bump, CommitmentField, MetalCommitmentProvider};
+use super::{bump, record, CommitmentField, MetalCommitmentProvider};
 use crate::decompose::decompose;
 use crate::error::AkitaMetalError;
 use crate::matvec::DigitPlane;
@@ -58,13 +59,15 @@ impl<F: CommitmentField> InnerCommitOperation<F> for MetalInnerCommit<'_, F> {
         plan: &CommitInnerPlan,
         sources: &[ResolvedCommitSource<'_, F>],
     ) -> Result<InnerCommitOutput, AkitaError> {
+        let start = Instant::now();
         for source in sources {
             source.validate_plan(plan)?;
         }
         let image = with_ring_degree!(plan.ring_dimension, |D| self
             .provider
             .commit_inner::<D>(plan, sources))?;
-        bump(&self.provider.counters.inner);
+        let counters = &self.provider.counters;
+        record(&counters.inner, &counters.inner_nanos, start);
         let bytes = checked::product([
             image.rows.iter().map(RingVec::coeff_len).sum::<usize>(),
             size_of::<F>(),

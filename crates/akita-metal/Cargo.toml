@@ -66,5 +66,9 @@ harness = false
 name = "onehot"
 harness = false
 
+[[bench]]
+name = "commit"
+harness = false
+
 [lints]
 workspace = true

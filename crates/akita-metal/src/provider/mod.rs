@@ -59,8 +59,9 @@ mod matrix;
 mod outer;
 mod shared;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use akita_algebra::tables::{q128_primes, Q64_PRIMES};
 use akita_algebra::NttPrime;
@@ -139,6 +140,10 @@ pub struct StageCalls {
     /// One-hot inner stages at a ring degree without a one-hot kernel for
     /// the field (fp128 at `D = 1024`), committed with the CPU column sweep.
     pub onehot_host: usize,
+    /// Wall time in the inner stages: staging, device work and read-back.
+    pub inner_time: Duration,
+    /// Wall time in the outer stages.
+    pub outer_time: Duration,
 }
 
 #[derive(Default)]
@@ -146,10 +151,19 @@ struct Counters {
     inner: AtomicUsize,
     outer: AtomicUsize,
     onehot_host: AtomicUsize,
+    inner_nanos: AtomicU64,
+    outer_nanos: AtomicU64,
 }
 
 fn bump(counter: &AtomicUsize) {
     counter.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Counts one completed stage that started at `start`.
+fn record(calls: &AtomicUsize, nanos: &AtomicU64, start: Instant) {
+    bump(calls);
+    let elapsed = u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
+    nanos.fetch_add(elapsed, Ordering::Relaxed);
 }
 
 /// Inner and outer commitment stages on an Apple GPU for one expanded setup.
@@ -190,6 +204,8 @@ impl<F: CommitmentField> MetalCommitmentProvider<F> {
             inner: self.counters.inner.load(Ordering::Relaxed),
             outer: self.counters.outer.load(Ordering::Relaxed),
             onehot_host: self.counters.onehot_host.load(Ordering::Relaxed),
+            inner_time: Duration::from_nanos(self.counters.inner_nanos.load(Ordering::Relaxed)),
+            outer_time: Duration::from_nanos(self.counters.outer_nanos.load(Ordering::Relaxed)),
         }
     }
 

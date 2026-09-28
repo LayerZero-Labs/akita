@@ -57,8 +57,8 @@ model and the MSL field arithmetic, and adds Akita's ring and commitment kernels
 on top. `scripts/check-crate-deps.sh` keeps both crates out of the verifier,
 prover, CPU backend, config, planner and setup graphs, and keeps the verifier,
 planner, setup and PCS crates out of `akita-metal`. `akita-metal` depends on
-`akita-cpu-backend` for the prover's source types (one-hot sources today, the
-commitment stage traits next) and uses it as the test and benchmark reference;
+`akita-cpu-backend` for the prover's source types and the commitment stage
+traits it implements and uses it as the test and benchmark reference;
 the CPU backend never depends on `akita-metal`.
 
 On targets without Metal the crate compiles against `jolt-metal`'s uninhabited
@@ -123,6 +123,7 @@ machine.
 | NTT matvec over i8 and i16 digit planes, with CRT segments past capacity | done | `mat_vec_mul_ntt_digits_i8`, `PreparedNttCache::mat_vec_i16` |
 | Balanced digit decomposition into i8 and i16 planes | done | `decompose_rows_i8_into`, `CyclotomicRing::balanced_decompose_pow2_i16_into` |
 | One-hot inner commitment (fp128 at `D` 64..512, fp64 at 64..1024) | done | `column_sweep_ajtai_onehot_multi` |
+| Commitment stage provider `MetalCommitmentProvider` (`crates/akita-metal/src/provider/`): inner stage for dense coefficient and one-hot sources, outer stage with dyadic slices, fp128 and fp64 | done | `CpuInnerCommitOperation`, `CpuOuterCommitOperation` |
 
 The matvec's digit transforms need only residues congruent to the CPU's, so
 they use Harvey's lazy radix-4 butterflies with Shoup products and
@@ -147,6 +148,28 @@ the cheapest `(primes, limbs)` that fits one CRT segment. On the dense nv26
 inner commitment this is three primes and three limbs (96.6 to 62.9 ms on an
 M4), and on the one-hot nv32 outer commitment two primes and four limbs
 (4.6 to 4.0 ms).
+
+### Commitment stage provider
+
+`MetalCommitmentProvider` implements the CPU backend's
+`CommitmentStageProvider` and is installed at runtime with
+`CpuBackend::with_commitment_stage_provider`; `MetalCommitmentProvider::new`
+returns an error of class `Unavailable` without a device, and the caller keeps
+the plain CPU backend. The CPU backend keeps handle ownership, compression,
+retained state and proving. The inner stage takes dense coefficient sources
+(decomposition into `i8` or `i16` digit planes, then the A matvec) and one-hot
+sources (the one-hot kernel; fp128 at `D = 1024` has no kernel and runs the
+CPU column sweep inside the stage). It reads `t` back once, so the retained
+state and a CPU outer stage get host rows. The outer stage arranges `t` into
+the dyadic slices with zero padding (on the host unless `t` already has the
+slice layout), decomposes each `D_A` ring as `D_A / D_B` subrings of outer
+digits, and runs the B matvec. Other source kinds (short-norm witnesses,
+predecomposed digits, external sources) and plans without kernels (ring
+degrees outside 64..1024, digits past `i16` inner or `i8` outer, a single
+column past the CRT profile) are declined before any source is materialized
+and run on the CPU. Device setup matrices are prepared once per
+`(ring degree, rows, cols, matvec plan)` from the setup's coefficient form
+with `DeviceNttMatrix::from_rings` and kept for the provider's lifetime.
 
 ## Acceptance criteria
 
