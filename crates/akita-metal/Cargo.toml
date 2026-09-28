@@ -15,10 +15,6 @@ readme = "../../README.md"
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 bytemuck = { version = "1.16", features = ["derive"] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c7c2d08d5bb0c7c80501f29f723e595af7fcff3c", default-features = false, features = [
-  "bytemuck",
-  "solinas",
-] }
 jolt-metal = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c7c2d08d5bb0c7c80501f29f723e595af7fcff3c" }
 thiserror = "2.0"
 

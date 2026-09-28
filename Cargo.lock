@@ -103,7 +103,6 @@ dependencies = [
  "akita-error",
  "bytemuck",
  "criterion",
- "jolt-field",
  "jolt-metal",
  "rayon",
  "thiserror",
