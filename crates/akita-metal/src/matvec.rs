@@ -7,12 +7,15 @@
 //! `mat_vec_mul_ntt_digits_i8` and `PreparedNttCache::mat_vec_i16` do, and
 //! returns the same field coefficients.
 
+use std::marker::PhantomData;
 use std::time::Duration;
 
+use akita_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
 use akita_algebra::{CanonicalEncoding, CrtCapacity, CrtNttParamSet, CyclotomicRing, NttPrime};
 use akita_error::checked;
 use akita_types::ntt_cache::PreparedNttBaseView;
 use bytemuck::{NoUninit, Pod, Zeroable};
+use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
 use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid};
 use jolt_metal::MetalField;
 
@@ -34,9 +37,16 @@ pub const LIMB_COUNTS: [usize; 4] = [1, 2, 3, 4];
 const TARGET_GROUPS: usize = 256;
 
 mod sealed {
+    use akita_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
+    use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
+
     pub trait Sealed {}
     impl Sealed for i8 {}
     impl Sealed for i16 {}
+
+    pub trait PreparedMatrixField<const K: usize> {}
+    impl PreparedMatrixField<Q64_NUM_PRIMES> for Prime64Offset59 {}
+    impl PreparedMatrixField<Q128_NUM_PRIMES> for Prime128OffsetA7F7 {}
 }
 
 /// A signed digit type for digit planes: `i8` for `log_basis <= 8`, `i16`
@@ -61,6 +71,37 @@ impl DigitPlane for i16 {
     const SUFFIX: &'static str = "i16";
     const MAX_LOG_BASIS: u32 = 16;
 }
+
+/// A field whose full prepared-cache profile contains exactly `K` primes.
+///
+/// This sealed association prevents a field-erased [`PreparedNttBaseView`]
+/// from being labeled as the wrong field by [`DeviceNttMatrix::new`]. Limb
+/// matrices built by [`DeviceNttMatrix::from_rings`] may still use any
+/// supported prefix length.
+///
+/// ```compile_fail
+/// use akita_algebra::tables::Q128_NUM_PRIMES;
+/// use akita_metal::matvec::DeviceNttMatrix;
+/// use akita_metal::AkitaMetal;
+/// use akita_types::ntt_cache::PreparedNttBaseView;
+/// use jolt_field::Prime64Offset59;
+///
+/// fn relabel_q128_as_fp64<const D: usize>(
+///     metal: &AkitaMetal,
+///     view: PreparedNttBaseView<'_, i32, Q128_NUM_PRIMES, D>,
+/// ) {
+///     let _ = DeviceNttMatrix::<Prime64Offset59, Q128_NUM_PRIMES, D>::new(
+///         metal, view, 1, 1,
+///     );
+/// }
+/// ```
+pub trait PreparedMatrixField<const K: usize>:
+    MetalField + CanonicalEncoding + sealed::PreparedMatrixField<K>
+{
+}
+
+impl PreparedMatrixField<Q64_NUM_PRIMES> for Prime64Offset59 {}
+impl PreparedMatrixField<Q128_NUM_PRIMES> for Prime128OffsetA7F7 {}
 
 fn partials_kernel<T: DigitPlane>(ring_degree: usize, limbs: usize) -> String {
     format!(
@@ -212,19 +253,28 @@ fn limb_modulus(modulus: u128, limbs: usize) -> Option<u128> {
     1u128.checked_shl(limb_bits(modulus, limbs)?)
 }
 
-/// A prepared `rows x cols` negacyclic NTT matrix in device memory, each
-/// entry split into `limbs` limbs.
-pub struct DeviceNttMatrix<const K: usize, const D: usize> {
+/// A prepared `rows x cols` negacyclic NTT matrix over `F` in device memory,
+/// each entry split into `limbs` limbs. The field parameter binds preparation,
+/// capacity pricing, limb scales, and output interpretation to one field.
+pub struct DeviceNttMatrix<F, const K: usize, const D: usize> {
     ntt: DeviceCrtNtt<K, D>,
     /// `[rows][cols][limbs][K][D]` raw Montgomery words.
     entries: DeviceBuffer<i32>,
     rows: usize,
     cols: usize,
     limbs: usize,
+    /// The exact modulus bound used to price each prepared limb.
+    limb_modulus: u128,
+    /// The construction-time split width; absent for an unsplit matrix.
+    limb_width: Option<u32>,
     capacity: CrtCapacity,
+    field: PhantomData<F>,
 }
 
-impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
+impl<F, const K: usize, const D: usize> DeviceNttMatrix<F, K, D>
+where
+    F: MetalField + CanonicalEncoding,
+{
     /// Uploads the leading `rows x cols` entries of a prepared negacyclic
     /// matrix (row-major, as the CPU prepares it) and its CRT profile.
     pub fn new(
@@ -232,7 +282,11 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
         view: PreparedNttBaseView<'_, i32, K, D>,
         rows: usize,
         cols: usize,
-    ) -> Result<Self, AkitaMetalError> {
+    ) -> Result<Self, AkitaMetalError>
+    where
+        F: PreparedMatrixField<K>,
+    {
+        let modulus = field_modulus::<F>()?;
         let prepared = view.negacyclic().ok_or_else(|| {
             AkitaMetalError::Shape("the negacyclic NTT domain is not prepared".into())
         })?;
@@ -254,7 +308,10 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
             rows,
             cols,
             limbs: 1,
+            limb_modulus: modulus,
+            limb_width: None,
             capacity: params.crt_capacity(),
+            field: PhantomData,
         })
     }
 
@@ -263,17 +320,14 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
     /// (`plan_matvec` chooses the count), each limb is reduced modulo
     /// `params`' primes, and the device transforms them. The matvec then
     /// recombines the limbs in the field, so the product equals the CPU's.
-    pub fn from_rings<F>(
+    pub fn from_rings(
         metal: &AkitaMetal,
         params: &CrtNttParamSet<i32, K, D>,
         rings: &[CyclotomicRing<F, D>],
         rows: usize,
         cols: usize,
         limbs: usize,
-    ) -> Result<Self, AkitaMetalError>
-    where
-        F: MetalField + CanonicalEncoding,
-    {
+    ) -> Result<Self, AkitaMetalError> {
         if !LIMB_COUNTS.contains(&limbs) {
             return Err(AkitaMetalError::Shape(format!(
                 "{limbs} limbs has no kernel"
@@ -289,6 +343,7 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
         let modulus = field_modulus::<F>()?;
         let limb_width = limb_bits(modulus, limbs)
             .ok_or_else(|| AkitaMetalError::Shape(format!("{limbs} limbs of a {modulus} field")))?;
+        let limb_modulus = limb_modulus(modulus, limbs).ok_or_else(|| shape_overflow(limbs))?;
         let words = split_limbs(rings, modulus, limbs, limb_width, &params.primes)?;
         let ntt = DeviceCrtNtt::new(metal, params)?;
         let mut entries = DeviceBuffer::from_slice(metal.device(), &words)?;
@@ -299,7 +354,10 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
             rows,
             cols,
             limbs,
+            limb_modulus,
+            limb_width: (limbs > 1).then_some(limb_width),
             capacity: params.crt_capacity(),
+            field: PhantomData,
         })
     }
 
@@ -321,7 +379,7 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
     /// hold exactly, and the segments add in the field, so the result is
     /// `A x mod q` exactly at any width. A shape whose single column
     /// overflows the primes is rejected before any work.
-    pub fn mat_vec<F, T>(
+    pub fn mat_vec<T>(
         &self,
         metal: &AkitaMetal,
         planes: &DeviceBuffer<T>,
@@ -329,7 +387,6 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
         out: &mut DeviceBuffer<F>,
     ) -> Result<Duration, AkitaMetalError>
     where
-        F: MetalField + CanonicalEncoding,
         T: DigitPlane,
     {
         if !(1..=T::MAX_LOG_BASIS).contains(&log_basis) {
@@ -355,9 +412,6 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
                 out.len()
             )));
         }
-        let modulus = field_modulus::<F>()?;
-        let bound_modulus =
-            limb_modulus(modulus, self.limbs).ok_or_else(|| shape_overflow(self.limbs))?;
         let digit_bound = log_basis
             .checked_sub(1)
             .and_then(|shift| 1u64.checked_shl(shift))
@@ -367,7 +421,7 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
         // as the CPU does for widths past its capacity.
         let segment_cols = self
             .capacity
-            .max_safe_width_for_modulus(D, bound_modulus, digit_bound)
+            .max_safe_width_for_modulus(D, self.limb_modulus, digit_bound)
             .filter(|&width| width > 0)
             .ok_or_else(|| {
                 AkitaMetalError::Shape(format!(
@@ -439,8 +493,10 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
             checked::product([residue_rows, D]).ok_or_else(|| shape_overflow(residue_rows))?,
         )?;
         let radix = DeviceBuffer::from_slice(metal.device(), &self.ntt.crt_weights::<F>())?;
-        let scales =
-            DeviceBuffer::from_slice(metal.device(), &limb_scales::<F>(modulus, self.limbs)?)?;
+        let scales = DeviceBuffer::from_slice(
+            metal.device(),
+            &limb_scales::<F>(self.limb_width, self.limbs)?,
+        )?;
         let partials_pipeline = metal.pipeline(&partials_kernel::<T>(D, self.limbs))?;
         let finish_pipeline = metal.pipeline(&ring_degree_kernel("akita_matvec_finish", D))?;
         let crt_pipeline = metal.pipeline(&crt_kernel::<F>(K))?;
@@ -501,13 +557,13 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
     reason = "field multiplication is modular"
 )]
 fn limb_scales<F: MetalField + CanonicalEncoding>(
-    modulus: u128,
+    width: Option<u32>,
     limbs: usize,
 ) -> Result<Vec<F>, AkitaMetalError> {
     if limbs == 1 {
         return Ok(vec![F::one()]);
     }
-    let width = limb_bits(modulus, limbs).ok_or_else(|| shape_overflow(limbs))?;
+    let width = width.ok_or_else(|| shape_overflow(limbs))?;
     let step = F::from_u128(
         1u128
             .checked_shl(width)
@@ -527,11 +583,43 @@ fn limb_scales<F: MetalField + CanonicalEncoding>(
 /// bits, each reduced modulo every prime into Montgomery form, laid out
 /// `[entry][limb][prime][D]` for the device transform. One limb is the
 /// centered entry itself.
+fn centered_value(canonical: u128, modulus: u128) -> Option<i128> {
+    if canonical > modulus / 2 {
+        i128::try_from(modulus.checked_sub(canonical)?)
+            .ok()?
+            .checked_neg()
+    } else {
+        i128::try_from(canonical).ok()
+    }
+}
+
 #[expect(
     clippy::arithmetic_side_effects,
-    reason = "centered entries are below 2^127 in magnitude, limbs below 2^66, and each \
-              step keeps (centered - digit) a multiple of the base"
+    reason = "digits and the base are bounded by the caller, and the shift-plus-carry \
+              recurrence avoids an overflowing numerator"
 )]
+fn balanced_limbs(mut centered: i128, limbs: usize, width: u32) -> Option<[i128; 4]> {
+    let mut digits = [0; 4];
+    let active = digits.get_mut(..limbs)?;
+    if limbs == 1 {
+        *active.first_mut()? = centered;
+        return Some(digits);
+    }
+    let base = 1i128.checked_shl(width)?;
+    for digit in active.iter_mut() {
+        *digit = centered.rem_euclid(base);
+        if *digit >= base / 2 {
+            *digit -= base;
+        }
+        // `centered - digit` is divisible by the base but can equal 2^127
+        // for a valid fp128 coefficient. The arithmetic shift gives the
+        // floor quotient; a negative digit adds the carry for the selected
+        // balanced representative.
+        centered = (centered >> width) + i128::from(*digit < 0);
+    }
+    (centered == 0).then_some(digits)
+}
+
 fn split_limbs<F: MetalField + CanonicalEncoding, const K: usize, const D: usize>(
     rings: &[CyclotomicRing<F, D>],
     modulus: u128,
@@ -539,7 +627,6 @@ fn split_limbs<F: MetalField + CanonicalEncoding, const K: usize, const D: usize
     width: u32,
     primes: &[NttPrime<i32>; K],
 ) -> Result<Vec<i32>, AkitaMetalError> {
-    let half = modulus / 2;
     let overflow = || AkitaMetalError::Shape("an entry does not fit its limbs".into());
     let mut words = Vec::with_capacity(
         checked::product([rings.len(), limbs, K, D]).ok_or_else(|| shape_overflow(limbs))?,
@@ -548,30 +635,11 @@ fn split_limbs<F: MetalField + CanonicalEncoding, const K: usize, const D: usize
     for ring in rings {
         for (index, coefficient) in ring.coefficients().iter().enumerate() {
             let canonical = coefficient.to_u128_checked().ok_or_else(overflow)?;
-            let mut centered = if canonical > half {
-                i128::try_from(modulus - canonical)
-                    .map(|magnitude| -magnitude)
-                    .map_err(|_| overflow())?
-            } else {
-                i128::try_from(canonical).map_err(|_| overflow())?
-            };
-            for limb in entry_limbs.iter_mut() {
+            let centered = centered_value(canonical, modulus).ok_or_else(overflow)?;
+            let digits = balanced_limbs(centered, limbs, width).ok_or_else(overflow)?;
+            for (limb, digit) in entry_limbs.iter_mut().zip(digits) {
                 let slot = limb.get_mut(index).ok_or_else(overflow)?;
-                if limbs == 1 {
-                    *slot = centered;
-                    centered = 0;
-                    continue;
-                }
-                let base = 1i128.checked_shl(width).ok_or_else(overflow)?;
-                let mut digit = centered.rem_euclid(base);
-                if digit >= base / 2 {
-                    digit -= base;
-                }
                 *slot = digit;
-                centered = (centered - digit) >> width;
-            }
-            if centered != 0 {
-                return Err(overflow());
             }
         }
         for limb in &entry_limbs {
@@ -586,4 +654,68 @@ fn split_limbs<F: MetalField + CanonicalEncoding, const K: usize, const D: usize
         }
     }
     Ok(words)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{balanced_limbs, centered_value, field_modulus, limb_bits};
+    use jolt_field::Prime128OffsetA7F7;
+
+    fn recombine_wide(digits: &[i128], base: u128) -> Option<(bool, u128)> {
+        digits
+            .iter()
+            .rev()
+            .try_fold((false, 0u128), |(negative, magnitude), &digit| {
+                let magnitude = magnitude.checked_mul(base)?;
+                let digit_negative = digit < 0;
+                let digit_magnitude = digit.unsigned_abs();
+                if negative == digit_negative {
+                    Some((negative, magnitude.checked_add(digit_magnitude)?))
+                } else if magnitude >= digit_magnitude {
+                    Some((negative, magnitude.checked_sub(digit_magnitude)?))
+                } else {
+                    Some((digit_negative, digit_magnitude.checked_sub(magnitude)?))
+                }
+            })
+    }
+
+    #[test]
+    fn fp128_centering_boundary_limbs_recombine_exactly() {
+        let modulus = field_modulus::<Prime128OffsetA7F7>().expect("fp128 modulus");
+        for limbs in [2, 3, 4] {
+            let width = limb_bits(modulus, limbs).expect("limb width");
+            let base = 1u128.checked_shl(width).expect("limb base");
+            for canonical in [modulus / 2 - 1, modulus / 2, modulus / 2 + 1] {
+                let centered = centered_value(canonical, modulus).expect("centered value");
+                let digits = balanced_limbs(centered, limbs, width).expect("balanced limbs");
+                let recombined = recombine_wide(digits.get(..limbs).expect("limb prefix"), base)
+                    .expect("wide-enough independent recombination");
+                assert_eq!(
+                    recombined,
+                    (centered < 0, centered.unsigned_abs()),
+                    "limbs={limbs} canonical={canonical}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn global_matrix_and_plane_addresses_can_cross_u32() {
+        let degree = 64u64;
+        let block = 1u64 << 26;
+        let plane = block.checked_mul(degree).expect("plane word address");
+        assert_eq!(plane, 1u64 << 32);
+
+        let row = 1u64 << 20;
+        let cols = 64u64;
+        let limbs = 4u64;
+        let primes = 6u64;
+        let matrix = row
+            .checked_mul(cols)
+            .and_then(|value| value.checked_mul(limbs))
+            .and_then(|value| value.checked_mul(primes))
+            .and_then(|value| value.checked_mul(degree))
+            .expect("matrix word address");
+        assert!(matrix > u64::from(u32::MAX));
+    }
 }

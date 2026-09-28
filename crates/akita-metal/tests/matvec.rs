@@ -5,7 +5,7 @@
 
 mod support;
 
-use akita_algebra::{CanonicalEncoding, CyclotomicRing, Field};
+use akita_algebra::{CanonicalEncoding, CyclotomicRing, Field, Zero};
 use akita_cpu_backend::benchmark_support::mat_vec_mul_ntt_digits_i8;
 use akita_metal::matvec::DeviceNttMatrix;
 use akita_metal::AkitaMetal;
@@ -15,8 +15,8 @@ use jolt_metal::runtime::DeviceBuffer;
 use jolt_metal::MetalField;
 use support::{gpu, SplitMix64};
 
-/// A random matrix whose first entry has every coefficient at `-1`, the
-/// largest centered magnitude.
+/// A random matrix whose first entry has every coefficient at `-1`, an
+/// adversarial canonical value near the modulus.
 fn matrix<F: Field + CanonicalEncoding, const D: usize>(
     rows: usize,
     cols: usize,
@@ -108,7 +108,7 @@ fn schoolbook<F: Field + CanonicalEncoding, const D: usize>(
 
 fn device_i8<F: MetalField + CanonicalEncoding, const K: usize, const D: usize>(
     metal: &AkitaMetal,
-    device: &DeviceNttMatrix<K, D>,
+    device: &DeviceNttMatrix<F, K, D>,
     planes: &[[i16; D]],
     log_basis: u32,
 ) -> Vec<F> {
@@ -129,7 +129,7 @@ fn device_i8<F: MetalField + CanonicalEncoding, const K: usize, const D: usize>(
 
 fn device_i16<F: MetalField + CanonicalEncoding, const K: usize, const D: usize>(
     metal: &AkitaMetal,
-    device: &DeviceNttMatrix<K, D>,
+    device: &DeviceNttMatrix<F, K, D>,
     planes: &[[i16; D]],
     log_basis: u32,
 ) -> Vec<F> {
@@ -381,6 +381,43 @@ fn limb_matrices_match_cpu() {
     }
     // Two primes hold only narrow limbs: four limbs of 33 bits.
     limb_matrix::<2, 128>(&test.metal, 4, &mut rng);
+}
+
+/// The positive fp128 centering boundary has a negative low balanced limb.
+/// The old `(centered - digit) >> width` recurrence overflowed at `q / 2`
+/// before producing the mathematically representable quotient.
+#[test]
+fn fp128_centering_boundary_limb_matrices_match_constant_multiplication() {
+    use akita_algebra::tables::q128_primes;
+    use akita_algebra::{CrtNttParamSet, One};
+
+    const DEGREE: usize = 64;
+    let test = gpu();
+    let modulus = (-Prime128OffsetA7F7::one())
+        .to_u128_checked()
+        .expect("u128")
+        + 1;
+    let matrix = [CyclotomicRing::from_coefficients(std::array::from_fn(
+        |coefficient| match coefficient {
+            0 => Prime128OffsetA7F7::from_u128_reduced(modulus / 2),
+            1 => Prime128OffsetA7F7::from_u128_reduced(modulus / 2 - 1),
+            2 => Prime128OffsetA7F7::from_u128_reduced(modulus / 2 + 1),
+            _ => Prime128OffsetA7F7::zero(),
+        },
+    ))];
+    let primes = std::array::from_fn(|index| q128_primes()[index]);
+    let params = CrtNttParamSet::<i32, 6, DEGREE>::new(primes);
+    let constant_one = [std::array::from_fn(|index| i16::from(index == 0))];
+
+    for limbs in [2, 3, 4] {
+        let device = DeviceNttMatrix::from_rings(&test.metal, &params, &matrix, 1, 1, limbs)
+            .expect("centering-boundary matrix");
+        assert_eq!(
+            device_i8::<Prime128OffsetA7F7, 6, DEGREE>(&test.metal, &device, &constant_one, 2,),
+            matrix[0].coefficients(),
+            "limbs={limbs}",
+        );
+    }
 }
 
 /// The planner halves the primes on the production shapes.

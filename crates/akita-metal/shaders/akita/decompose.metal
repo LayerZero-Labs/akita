@@ -28,12 +28,12 @@ template <typename F, typename Digit>
     if (index >= shape.coefficients) {
         return;
     }
-    uint ring = index >> shape.log_degree;
+    ulong ring = ulong(index) >> shape.log_degree;
     uint coefficient = index & ((1u << shape.log_degree) - 1u);
     Balanced160 x = Balanced160::centered(
         canonical_words(coefficients[index]), shape.modulus, shape.threshold);
     for (uint level = 0; level < shape.levels; level++) {
-        planes[((ring * shape.levels + level) << shape.log_degree) | coefficient] =
+        planes[((ring * ulong(shape.levels) + level) << shape.log_degree) | coefficient] =
             Digit(x.next_digit(shape.log_basis));
     }
 }
