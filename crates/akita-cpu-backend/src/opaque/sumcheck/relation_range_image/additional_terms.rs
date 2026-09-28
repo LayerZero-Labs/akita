@@ -236,41 +236,45 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
     where
         E: Unreduced,
     {
-        let partials = cfg_into_iter!(parent_ranges(&self.weights))
-            .map(|range| {
-                // A task contains at most TASK_WEIGHTS + 1 entries. Even the
-                // cubic's linear coefficient adds only four products per pair,
-                // well within ProductSum's accumulation bound.
-                let mut coefficients = [super::ProductSum::<E>::zero(); 4];
-                for (parent, linear, binary) in parent_pairs(&self.weights[range]) {
-                    let witness = [witness_at(2 * parent), witness_at(2 * parent + 1)];
-                    let dw = witness[1] - witness[0];
-                    let d_linear = linear[1] - linear[0];
-                    coefficients[0].add(witness[0], linear[0]);
-                    coefficients[1].add(witness[0], d_linear);
-                    coefficients[1].add(dw, linear[0]);
-                    coefficients[2].add(dw, d_linear);
+        let ranges = parent_ranges(&self.weights);
+        let task = |range: Range<usize>| {
+            // A task contains at most TASK_WEIGHTS + 1 entries. Even the
+            // cubic's linear coefficient adds only four products per pair,
+            // well within ProductSum's accumulation bound.
+            let mut coefficients = [super::ProductSum::<E>::zero(); 4];
+            for (parent, linear, binary) in parent_pairs(&self.weights[range]) {
+                let witness = [witness_at(2 * parent), witness_at(2 * parent + 1)];
+                let dw = witness[1] - witness[0];
+                let d_linear = linear[1] - linear[0];
+                coefficients[0].add(witness[0], linear[0]);
+                coefficients[1].add(witness[0], d_linear);
+                coefficients[1].add(dw, linear[0]);
+                coefficients[2].add(dw, d_linear);
 
-                    // Compression and physical-norm coordinates can have only
-                    // a linear weight. Their round polynomial is quadratic;
-                    // no witness squaring or binary products are needed.
-                    if !binary[0].is_zero() || !binary[1].is_zero() {
-                        let witness_square_constant = witness[0].square() + witness[0];
-                        let witness_square_linear = dw * (witness[0] + witness[0] + E::one());
-                        let witness_square_quadratic = dw.square();
-                        let batched_binary = self.binary_batching * binary[0];
-                        let batched_binary_delta = self.binary_batching * (binary[1] - binary[0]);
-                        coefficients[0].add(batched_binary, witness_square_constant);
-                        coefficients[1].add(batched_binary, witness_square_linear);
-                        coefficients[1].add(batched_binary_delta, witness_square_constant);
-                        coefficients[2].add(batched_binary, witness_square_quadratic);
-                        coefficients[2].add(batched_binary_delta, witness_square_linear);
-                        coefficients[3].add(batched_binary_delta, witness_square_quadratic);
-                    }
+                // Compression and physical-norm coordinates can have only
+                // a linear weight. Their round polynomial is quadratic;
+                // no witness squaring or binary products are needed.
+                if !binary[0].is_zero() || !binary[1].is_zero() {
+                    let witness_square_constant = witness[0].square() + witness[0];
+                    let witness_square_linear = dw * (witness[0] + witness[0] + E::one());
+                    let witness_square_quadratic = dw.square();
+                    let batched_binary = self.binary_batching * binary[0];
+                    let batched_binary_delta = self.binary_batching * (binary[1] - binary[0]);
+                    coefficients[0].add(batched_binary, witness_square_constant);
+                    coefficients[1].add(batched_binary, witness_square_linear);
+                    coefficients[1].add(batched_binary_delta, witness_square_constant);
+                    coefficients[2].add(batched_binary, witness_square_quadratic);
+                    coefficients[2].add(batched_binary_delta, witness_square_linear);
+                    coefficients[3].add(batched_binary_delta, witness_square_quadratic);
                 }
-                coefficients.map(super::ProductSum::finish)
-            })
-            .collect::<Vec<_>>();
+            }
+            coefficients.map(super::ProductSum::finish)
+        };
+        let partials = if ranges.len() <= 1 {
+            ranges.into_iter().map(task).collect::<Vec<_>>()
+        } else {
+            cfg_into_iter!(ranges).map(task).collect::<Vec<_>>()
+        };
         let mut coefficients = sum_partials(E::zero(), partials).to_vec();
         trim_trailing_zeros(&mut coefficients);
         UnivariatePoly::new(coefficients)
@@ -317,42 +321,46 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
     where
         E: Unreduced,
     {
-        let partials = cfg_into_iter!(parent_ranges(&self.weights))
-            .map(|range| {
-                let mut coefficients = [E::SmallProduct::zero(); 8];
-                for (parent, linear, binary) in parent_pairs(&self.weights[range]) {
-                    let witness_at = |index| compact_witness.get(index).map_or(0, i64::from);
-                    let witness = witness_at(2 * parent);
-                    let witness_delta = witness_at(2 * parent + 1) - witness;
-                    let linear_delta = linear[1] - linear[0];
-                    let binary_delta = binary[1] - binary[0];
-                    let witness_square_constant = witness * (witness + 1);
-                    let witness_square_linear = witness_delta * (2 * witness + 1);
-                    let witness_square_quadratic = witness_delta * witness_delta;
-                    let batched_binary = self.binary_batching * binary[0];
-                    let batched_binary_delta = self.binary_batching * binary_delta;
+        let ranges = parent_ranges(&self.weights);
+        let task = |range: Range<usize>| {
+            let mut coefficients = [E::SmallProduct::zero(); 8];
+            for (parent, linear, binary) in parent_pairs(&self.weights[range]) {
+                let witness_at = |index| compact_witness.get(index).map_or(0, i64::from);
+                let witness = witness_at(2 * parent);
+                let witness_delta = witness_at(2 * parent + 1) - witness;
+                let linear_delta = linear[1] - linear[0];
+                let binary_delta = binary[1] - binary[0];
+                let witness_square_constant = witness * (witness + 1);
+                let witness_square_linear = witness_delta * (2 * witness + 1);
+                let witness_square_quadratic = witness_delta * witness_delta;
+                let batched_binary = self.binary_batching * binary[0];
+                let batched_binary_delta = self.binary_batching * binary_delta;
 
-                    let terms = [
-                        (0, linear[0], witness),
-                        (0, batched_binary, witness_square_constant),
-                        (2, linear_delta, witness),
-                        (2, linear[0], witness_delta),
-                        (2, batched_binary, witness_square_linear),
-                        (2, batched_binary_delta, witness_square_constant),
-                        (4, linear_delta, witness_delta),
-                        (4, batched_binary, witness_square_quadratic),
-                        (4, batched_binary_delta, witness_square_linear),
-                        (6, batched_binary_delta, witness_square_quadratic),
-                    ];
-                    for (slot, factor, small) in terms {
-                        super::accum_small_signed(&mut coefficients, slot, factor, small);
-                    }
+                let terms = [
+                    (0, linear[0], witness),
+                    (0, batched_binary, witness_square_constant),
+                    (2, linear_delta, witness),
+                    (2, linear[0], witness_delta),
+                    (2, batched_binary, witness_square_linear),
+                    (2, batched_binary_delta, witness_square_constant),
+                    (4, linear_delta, witness_delta),
+                    (4, batched_binary, witness_square_quadratic),
+                    (4, batched_binary_delta, witness_square_linear),
+                    (6, batched_binary_delta, witness_square_quadratic),
+                ];
+                for (slot, factor, small) in terms {
+                    super::accum_small_signed(&mut coefficients, slot, factor, small);
                 }
-                std::array::from_fn::<E, 4, _>(|degree| {
-                    reduce_signed_accum::<E>(coefficients[2 * degree], coefficients[2 * degree + 1])
-                })
+            }
+            std::array::from_fn::<E, 4, _>(|degree| {
+                reduce_signed_accum::<E>(coefficients[2 * degree], coefficients[2 * degree + 1])
             })
-            .collect::<Vec<_>>();
+        };
+        let partials = if ranges.len() <= 1 {
+            ranges.into_iter().map(task).collect::<Vec<_>>()
+        } else {
+            cfg_into_iter!(ranges).map(task).collect::<Vec<_>>()
+        };
         let mut coefficients = sum_partials(E::zero(), partials).to_vec();
         trim_trailing_zeros(&mut coefficients);
         UnivariatePoly::new(coefficients)
@@ -382,36 +390,39 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
             rest = tail;
         }
         let even_scale = E::one() - challenge;
-        let kept = cfg_into_iter!(chunks)
-            .map(|chunk| {
-                let (mut read, mut write) = (0usize, 0usize);
-                while read < chunk.len() {
-                    let parent = chunk[read].index >> 1;
-                    let mut linear = E::zero();
-                    let mut binary = E::zero();
-                    while read < chunk.len() && chunk[read].index >> 1 == parent {
-                        let weight = chunk[read];
-                        let scale = if weight.index & 1 == 0 {
-                            even_scale
-                        } else {
-                            challenge
-                        };
-                        linear += scale * weight.linear;
-                        binary += scale * weight.binary;
-                        read += 1;
-                    }
-                    if !linear.is_zero() || !binary.is_zero() {
-                        chunk[write] = SparseWeight {
-                            index: parent,
-                            linear,
-                            binary,
-                        };
-                        write += 1;
-                    }
+        let task = |chunk: &mut [SparseWeight<E>]| {
+            let (mut read, mut write) = (0usize, 0usize);
+            while read < chunk.len() {
+                let parent = chunk[read].index >> 1;
+                let mut linear = E::zero();
+                let mut binary = E::zero();
+                while read < chunk.len() && chunk[read].index >> 1 == parent {
+                    let weight = chunk[read];
+                    let scale = if weight.index & 1 == 0 {
+                        even_scale
+                    } else {
+                        challenge
+                    };
+                    linear += scale * weight.linear;
+                    binary += scale * weight.binary;
+                    read += 1;
                 }
-                write
-            })
-            .collect::<Vec<_>>();
+                if !linear.is_zero() || !binary.is_zero() {
+                    chunk[write] = SparseWeight {
+                        index: parent,
+                        linear,
+                        binary,
+                    };
+                    write += 1;
+                }
+            }
+            write
+        };
+        let kept = if chunks.len() <= 1 {
+            chunks.into_iter().map(task).collect::<Vec<_>>()
+        } else {
+            cfg_into_iter!(chunks).map(task).collect::<Vec<_>>()
+        };
         let mut write = 0usize;
         for (range, kept) in ranges.into_iter().zip(kept) {
             self.weights

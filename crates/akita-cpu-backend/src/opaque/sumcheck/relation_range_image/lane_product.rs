@@ -168,6 +168,7 @@ fn run_lane_product_tile<E: Field + Unreduced + Fold>(
 }
 
 const TAIL_FOLD_CHUNK: usize = 1 << 14;
+const MIN_PARALLEL_PAIRS: usize = 1 << 11;
 
 impl<E: Field + Unreduced + Fold> LaneProduct<E> {
     /// Terms of the round over `witness`, after folding `witness` and the
@@ -198,7 +199,8 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
             witness.len()
         };
         let pair_count = live.div_ceil(2);
-        let tile_pairs = crate::opaque::sumcheck::single_row_tile_pairs(eq_low.len());
+        let tile_pairs =
+            crate::opaque::sumcheck::single_row_tile_pairs(eq_low.len()).max(MIN_PARALLEL_PAIRS);
         let tables = LaneTables {
             witness: witness.as_slice(),
             weights: self.weights.as_slice(),
@@ -222,23 +224,44 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
             reuse_buffer(&mut self.witness_scratch, live);
             reuse_buffer(&mut self.weight_scratch, weight_len);
             let (head, tail) = self.weight_scratch.split_at_mut(2 * pair_count);
-            cfg_chunks_mut!(tail, TAIL_FOLD_CHUNK)
-                .enumerate()
-                .for_each(|(chunk, values)| {
-                    let first = 2 * pair_count + chunk * TAIL_FOLD_CHUNK;
-                    for (offset, value) in values.iter_mut().enumerate() {
-                        *value = fold_pair(tables.weights, 2 * (first + offset), fold);
-                    }
-                });
-            cfg_chunks_mut!(self.witness_scratch, 2 * tile_pairs)
-                .zip(cfg_chunks_mut!(head, 2 * tile_pairs))
-                .enumerate()
-                .map(|(task, (witness_out, weight_out))| tile(task, witness_out, weight_out))
-                .collect()
+            let fold_tail = |(chunk, values): (usize, &mut [E])| {
+                let first = 2 * pair_count + chunk * TAIL_FOLD_CHUNK;
+                for (offset, value) in values.iter_mut().enumerate() {
+                    *value = fold_pair(tables.weights, 2 * (first + offset), fold);
+                }
+            };
+            if tail.len() <= TAIL_FOLD_CHUNK {
+                tail.chunks_mut(TAIL_FOLD_CHUNK)
+                    .enumerate()
+                    .for_each(fold_tail);
+            } else {
+                cfg_chunks_mut!(tail, TAIL_FOLD_CHUNK)
+                    .enumerate()
+                    .for_each(fold_tail);
+            }
+            let fold_tile = |(task, (witness_out, weight_out))| tile(task, witness_out, weight_out);
+            if pair_count <= MIN_PARALLEL_PAIRS {
+                self.witness_scratch
+                    .chunks_mut(2 * tile_pairs)
+                    .zip(head.chunks_mut(2 * tile_pairs))
+                    .enumerate()
+                    .map(fold_tile)
+                    .collect()
+            } else {
+                cfg_chunks_mut!(self.witness_scratch, 2 * tile_pairs)
+                    .zip(cfg_chunks_mut!(head, 2 * tile_pairs))
+                    .enumerate()
+                    .map(fold_tile)
+                    .collect()
+            }
         } else {
-            cfg_into_iter!(0..pair_count.div_ceil(tile_pairs))
-                .map(|task| tile(task, &mut [], &mut []))
-                .collect()
+            let tasks = 0..pair_count.div_ceil(tile_pairs);
+            let compute_tile = |task| tile(task, &mut [], &mut []);
+            if pair_count <= MIN_PARALLEL_PAIRS {
+                tasks.map(compute_tile).collect()
+            } else {
+                cfg_into_iter!(tasks).map(compute_tile).collect()
+            }
         };
         if fold.is_some() {
             mem::swap(witness, &mut self.witness_scratch);
