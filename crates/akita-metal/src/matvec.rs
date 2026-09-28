@@ -100,6 +100,8 @@ struct MatvecShape {
     rows: u32,
     cols: u32,
     primes: u32,
+    col_begin: u32,
+    col_end: u32,
     chunk_cols: u32,
     chunks: u32,
     block_tiles: u32,
@@ -172,8 +174,10 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
     /// `planes` holds `blocks x cols` digit planes of `D` digits, block-major,
     /// each digit balanced for `log_basis` (in `[-2^(log_basis-1),
     /// 2^(log_basis-1)]`); `out` receives `blocks x rows` ring elements. The
-    /// shape is rejected before any work when the CRT product cannot hold
-    /// the exact integer products, so the result is `A x mod q` exactly.
+    /// columns run in CRT segments, each as wide as the primes' product can
+    /// hold exactly, and the segments add in the field, so the result is
+    /// `A x mod q` exactly at any width. A shape whose single column
+    /// overflows the primes is rejected before any work.
     pub fn mat_vec<F, T>(
         &self,
         metal: &AkitaMetal,
@@ -213,15 +217,19 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
             .checked_sub(1)
             .and_then(|shift| 1u64.checked_shl(shift))
             .ok_or_else(|| shape_overflow(D))?;
-        if !self
+        // CRT segments: the widest column ranges whose exact products the
+        // primes hold. Each is reconstructed into the field and added there,
+        // as the CPU does for widths past its capacity.
+        let segment_cols = self
             .capacity
-            .supports_modulus(self.cols, D, modulus, digit_bound)
-        {
-            return Err(AkitaMetalError::Shape(format!(
-                "{K} primes cannot hold {} columns of degree {D} with digits up to {digit_bound}",
-                self.cols
-            )));
-        }
+            .max_safe_width_for_modulus(D, modulus, digit_bound)
+            .filter(|&width| width > 0)
+            .ok_or_else(|| {
+                AkitaMetalError::Shape(format!(
+                    "{K} primes cannot hold one column of degree {D} with digits up to {digit_bound}"
+                ))
+            })?
+            .min(self.cols);
         if coefficients == 0 {
             return Ok(Duration::ZERO);
         }
@@ -234,11 +242,13 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
             checked::product([K, block_tiles, row_tiles]).ok_or_else(|| shape_overflow(blocks))?;
         let wanted_chunks = checked::div_ceil(TARGET_GROUPS, tile_groups)
             .unwrap_or(1)
-            .clamp(1, self.cols);
-        let chunk_cols =
-            checked::div_ceil(self.cols, wanted_chunks).ok_or_else(|| shape_overflow(self.cols))?;
-        let chunks =
-            checked::div_ceil(self.cols, chunk_cols).ok_or_else(|| shape_overflow(self.cols))?;
+            .clamp(1, segment_cols);
+        let chunk_cols = checked::div_ceil(segment_cols, wanted_chunks)
+            .ok_or_else(|| shape_overflow(segment_cols))?;
+        // Chunks per segment; a shorter last segment leaves its trailing
+        // chunks empty, and they contribute zero sums.
+        let chunks = checked::div_ceil(segment_cols, chunk_cols)
+            .ok_or_else(|| shape_overflow(segment_cols))?;
         let partial_groups =
             checked::product([chunks, tile_groups]).ok_or_else(|| shape_overflow(chunks))?;
         let residue_rows =
@@ -246,20 +256,33 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
         let lanes = D / 2;
 
         let u32_of = |value: usize| u32::try_from(value).map_err(|_| shape_overflow(value));
-        let shape = MatvecShape {
-            blocks: u32_of(blocks)?,
-            rows: u32_of(self.rows)?,
-            cols: u32_of(self.cols)?,
-            primes: u32_of(K)?,
-            chunk_cols: u32_of(chunk_cols)?,
-            chunks: u32_of(chunks)?,
-            block_tiles: u32_of(block_tiles)?,
-            row_tiles: u32_of(row_tiles)?,
-        };
-        let crt_shape = CrtBatch {
-            coefficients: u32_of(coefficients)?,
-            log_degree: D.trailing_zeros(),
-        };
+        let mut shapes = Vec::new();
+        let mut crt_shapes = Vec::new();
+        let mut col_begin = 0;
+        while col_begin < self.cols {
+            let col_end = col_begin
+                .checked_add(segment_cols)
+                .ok_or_else(|| shape_overflow(col_begin))?
+                .min(self.cols);
+            shapes.push(MatvecShape {
+                blocks: u32_of(blocks)?,
+                rows: u32_of(self.rows)?,
+                cols: u32_of(self.cols)?,
+                primes: u32_of(K)?,
+                col_begin: u32_of(col_begin)?,
+                col_end: u32_of(col_end)?,
+                chunk_cols: u32_of(chunk_cols)?,
+                chunks: u32_of(chunks)?,
+                block_tiles: u32_of(block_tiles)?,
+                row_tiles: u32_of(row_tiles)?,
+            });
+            crt_shapes.push(CrtBatch {
+                coefficients: u32_of(coefficients)?,
+                log_degree: D.trailing_zeros(),
+                accumulate: u32::from(col_begin > 0),
+            });
+            col_begin = col_end;
+        }
         let partials = DeviceBuffer::<i32>::zeroed(
             metal.device(),
             checked::product([chunks, residue_rows, D]).ok_or_else(|| shape_overflow(chunks))?,
@@ -269,51 +292,54 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
             checked::product([residue_rows, D]).ok_or_else(|| shape_overflow(residue_rows))?,
         )?;
         let radix = DeviceBuffer::from_slice(metal.device(), &self.ntt.crt_weights::<F>())?;
+        let partials_pipeline = metal.pipeline(&partials_kernel::<T>(D))?;
+        let finish_pipeline = metal.pipeline(&ring_degree_kernel("akita_matvec_finish", D))?;
+        let crt_pipeline = metal.pipeline(&crt_kernel::<F>(K))?;
+        let partial_threads = checked::product([partial_groups, lanes])
+            .ok_or_else(|| shape_overflow(partial_groups))?;
+        let finish_threads =
+            checked::product([residue_rows, lanes]).ok_or_else(|| shape_overflow(residue_rows))?;
 
+        // Dispatches run in order, so the segments can share the partials
+        // and residue buffers.
         let mut batch = Batch::new(metal.device())?;
-        batch.dispatch(
-            metal.pipeline(&partials_kernel::<T>(D))?,
-            &[
-                Binding::buffer(planes),
-                Binding::buffer(&self.entries),
-                Binding::buffer(&partials),
-                Binding::buffer(&self.ntt.primes),
-                Binding::buffer(&self.ntt.tables),
-                Binding::value(&shape),
-            ],
-            Grid::linear(
-                checked::product([partial_groups, lanes])
-                    .ok_or_else(|| shape_overflow(partial_groups))?,
-                lanes,
-            ),
-        )?;
-        batch.dispatch(
-            metal.pipeline(&ring_degree_kernel("akita_matvec_finish", D))?,
-            &[
-                Binding::buffer(&partials),
-                Binding::buffer(&residues),
-                Binding::buffer(&self.ntt.primes),
-                Binding::buffer(&self.ntt.tables),
-                Binding::value(&shape),
-            ],
-            Grid::linear(
-                checked::product([residue_rows, lanes])
-                    .ok_or_else(|| shape_overflow(residue_rows))?,
-                lanes,
-            ),
-        )?;
-        batch.dispatch(
-            metal.pipeline(&crt_kernel::<F>(K))?,
-            &[
-                Binding::buffer(&residues),
-                Binding::buffer(out),
-                Binding::buffer(&self.ntt.primes),
-                Binding::buffer(&self.ntt.gamma),
-                Binding::buffer(&radix),
-                Binding::value(&crt_shape),
-            ],
-            Grid::linear(coefficients, COEFFICIENT_GROUP),
-        )?;
+        for (shape, crt_shape) in shapes.iter().zip(&crt_shapes) {
+            batch.dispatch(
+                partials_pipeline,
+                &[
+                    Binding::buffer(planes),
+                    Binding::buffer(&self.entries),
+                    Binding::buffer(&partials),
+                    Binding::buffer(&self.ntt.primes),
+                    Binding::buffer(&self.ntt.tables),
+                    Binding::value(shape),
+                ],
+                Grid::linear(partial_threads, lanes),
+            )?;
+            batch.dispatch(
+                finish_pipeline,
+                &[
+                    Binding::buffer(&partials),
+                    Binding::buffer(&residues),
+                    Binding::buffer(&self.ntt.primes),
+                    Binding::buffer(&self.ntt.tables),
+                    Binding::value(shape),
+                ],
+                Grid::linear(finish_threads, lanes),
+            )?;
+            batch.dispatch(
+                crt_pipeline,
+                &[
+                    Binding::buffer(&residues),
+                    Binding::buffer(out),
+                    Binding::buffer(&self.ntt.primes),
+                    Binding::buffer(&self.ntt.gamma),
+                    Binding::buffer(&radix),
+                    Binding::value(crt_shape),
+                ],
+                Grid::linear(coefficients, COEFFICIENT_GROUP),
+            )?;
+        }
         Ok(batch.commit_and_wait()?)
     }
 }

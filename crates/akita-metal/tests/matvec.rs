@@ -8,7 +8,7 @@ mod support;
 use akita_algebra::{CanonicalEncoding, CyclotomicRing, Field};
 use akita_cpu_backend::benchmark_support::mat_vec_mul_ntt_digits_i8;
 use akita_metal::matvec::DeviceNttMatrix;
-use akita_metal::{AkitaMetal, ErrorClass};
+use akita_metal::AkitaMetal;
 use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode, PreparedNttCache};
 use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
 use jolt_metal::runtime::DeviceBuffer;
@@ -271,20 +271,20 @@ fn fp64_i8_matches_cpu_and_schoolbook() {
     }
 }
 
-/// Q64's three primes hold i16 digits of degree 64 only up to a narrow
-/// width; past it the device refuses before encoding anything.
+/// Past the CRT capacity the columns run in segments that add in the
+/// field: Q64 holds about 2000 columns of 8-bit digits at degree 256, so
+/// 4500 columns take three segments.
 #[test]
-fn rejects_widths_past_crt_capacity() {
+fn fp64_segments_past_crt_capacity_match_cpu() {
     let test = gpu();
     let mut rng = SplitMix64::new(0xcafe);
-    let cols = 64;
-    let a = matrix::<Prime64Offset59, 64>(1, cols, &mut rng);
-    let cache = prepare(&a, 1, cols);
-    let device = device_matrix!(&test.metal, cache, q64_base, 1, cols);
-    let digits = DeviceBuffer::<i16>::zeroed(test.metal.device(), cols * 64).expect("digits");
-    let mut out = DeviceBuffer::<Prime64Offset59>::zeroed(test.metal.device(), 64).expect("output");
-    let error = device
-        .mat_vec(&test.metal, &digits, 16, &mut out)
-        .expect_err("past capacity");
-    assert_eq!(error.class(), ErrorClass::Setup);
+    let (blocks, rows, cols) = (2, 1, 4500);
+    let a = matrix::<Prime64Offset59, 256>(rows, cols, &mut rng);
+    let cache = prepare(&a, rows, cols);
+    let device = device_matrix!(&test.metal, cache, q64_base, rows, cols);
+    let x = planes::<256>(blocks, cols, 8, &mut rng);
+    assert_eq!(
+        device_i8::<Prime64Offset59, 3, 256>(&test.metal, &device, &x, 8),
+        cpu_i8::<Prime64Offset59, 256>(&cache, rows, cols, &x, 8)
+    );
 }

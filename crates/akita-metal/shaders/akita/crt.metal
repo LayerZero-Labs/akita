@@ -12,6 +12,9 @@ namespace akita {
 struct CrtBatch {
     uint coefficients;
     uint log_degree;
+    // Nonzero: add to `out` instead of overwriting it (later CRT segments
+    // of one product).
+    uint accumulate;
 };
 
 template <typename F, uint K>
@@ -30,7 +33,8 @@ template <typename F, uint K>
     uint element = index >> batch.log_degree;
     uint coefficient = index & (degree - 1);
     device const int* words = residues + element * K * degree + coefficient;
-    out[index] = crt_reconstruct<F, K>(words, degree, primes, gamma, radix);
+    F value = crt_reconstruct<F, K>(words, degree, primes, gamma, radix);
+    out[index] = batch.accumulate != 0 ? out[index] + value : value;
 }
 
 } // namespace akita

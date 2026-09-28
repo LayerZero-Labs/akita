@@ -24,8 +24,12 @@ namespace akita {
 struct MatvecShape {
     uint blocks;
     uint rows;
+    // The matrix and plane stride.
     uint cols;
     uint primes;
+    // This pass's columns [col_begin, col_end): one CRT segment.
+    uint col_begin;
+    uint col_end;
     // Columns per chunk; the last chunk may be shorter.
     uint chunk_cols;
     uint chunks;
@@ -58,8 +62,8 @@ template <uint D, typename Digit, uint BLOCK_TILE, uint ROW_TILE>
     device const int* prime_tables = tables + prime * NttTables::COUNT * D;
     uint block0 = block_tile * BLOCK_TILE;
     uint row0 = row_tile * ROW_TILE;
-    uint col0 = chunk * shape.chunk_cols;
-    uint col1 = metal::min(col0 + shape.chunk_cols, shape.cols);
+    uint col0 = shape.col_begin + chunk * shape.chunk_cols;
+    uint col1 = metal::min(col0 + shape.chunk_cols, shape.col_end);
 
     threadgroup int x[BLOCK_TILE * D];
     int acc[BLOCK_TILE][ROW_TILE][2];

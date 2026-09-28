@@ -44,6 +44,8 @@ pub(crate) const COEFFICIENT_GROUP: usize = 256;
 pub(crate) struct CrtBatch {
     pub(crate) coefficients: u32,
     pub(crate) log_degree: u32,
+    /// Nonzero: add into the output (a later CRT segment).
+    pub(crate) accumulate: u32,
 }
 
 impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
@@ -85,6 +87,7 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
         let shape = CrtBatch {
             coefficients: u32::try_from(coefficients).map_err(|_| shape_overflow(coefficients))?,
             log_degree: D.trailing_zeros(),
+            accumulate: 0,
         };
         let radix = DeviceBuffer::from_slice(metal.device(), &self.crt_weights::<F>())?;
         let pipeline = metal.pipeline(&crt_kernel::<F>(K))?;
