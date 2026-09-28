@@ -80,7 +80,11 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             } else {
                 relation_lane_weights[lane]
             };
-            let linear_lane = (!SKIP_RELATION).then(|| self.linear_terms.resolve_lane(lane));
+            let linear_lane = if SKIP_RELATION {
+                PreparedLinearLane::zero()
+            } else {
+                self.linear_terms.resolve_lane(lane)
+            };
             let equality_address_base = lane * current_coefficient_half;
             let mut blk = 0usize;
 
@@ -110,10 +114,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     if !SKIP_RELATION {
                         let p0 = common_alpha_factor[left] * lane_weight;
                         let p1 = common_alpha_factor[left + 1] * lane_weight;
-                        let (t0, t1) = linear_lane
-                            .as_ref()
-                            .expect("relation lane is resolved when relation work is enabled")
-                            .pair(left);
+                        let (t0, t1) = linear_lane.pair(left);
                         accumulate_relation_eval_coeffs_signed(
                             &mut rel,
                             w0_i64,
@@ -223,7 +224,11 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             } else {
                 relation_lane_weights[lane]
             };
-            let linear_lane = (!SKIP_RELATION).then(|| self.linear_terms.resolve_lane(lane));
+            let linear_lane = if SKIP_RELATION {
+                PreparedLinearLane::zero()
+            } else {
+                self.linear_terms.resolve_lane(lane)
+            };
             let mut blk = 0usize;
 
             while blk < current_coefficient_half {
@@ -250,10 +255,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     if !SKIP_RELATION {
                         let p0 = common_alpha_factor[left] * lane_weight;
                         let p1 = common_alpha_factor[left + 1] * lane_weight;
-                        let (t0, t1) = linear_lane
-                            .as_ref()
-                            .expect("relation lane is resolved when relation work is enabled")
-                            .pair(left);
+                        let (t0, t1) = linear_lane.pair(left);
                         let q0 = p0 + t0;
                         let q1 = p1 + t1;
                         let dq = q1 - q0;

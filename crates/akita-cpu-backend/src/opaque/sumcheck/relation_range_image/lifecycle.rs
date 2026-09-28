@@ -182,18 +182,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let split_eq = GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?;
         let phase = match relation_weights {
             RelationWeightOracle::QuotientFactored(weights) => {
-                let relation_moments =
-                    if b == 32 && coefficient_bits > 0 && live_lane_count < lane_capacity {
-                        CoefficientRelationMoments::from_basis32(
-                            &w_evals_compact,
-                            weights.relation_lane_weights(),
-                            &linear_terms,
-                            live_lane_count,
-                            coeff_count,
-                        )
-                    } else {
-                        None
-                    };
                 let engine = CompactQuotientPrefix::new(
                     &w_evals_compact,
                     weights.relation_lane_weights(),
@@ -211,11 +199,26 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                         weights,
                         engine: Box::new(engine),
                     },
-                    None => Phase::Coefficient {
-                        witness: WitnessState::CompactPrefix(w_evals_compact),
-                        relation: CoefficientRelation::Factored(weights),
-                        relation_moments,
-                    },
+                    None => {
+                        // Moments reuse the norm kernels for partially live lanes.
+                        let relation_moments =
+                            if b == 32 && coefficient_bits > 0 && live_lane_count < lane_capacity {
+                                CoefficientRelationMoments::from_basis32(
+                                    &w_evals_compact,
+                                    weights.relation_lane_weights(),
+                                    &linear_terms,
+                                    live_lane_count,
+                                    coeff_count,
+                                )
+                            } else {
+                                None
+                            };
+                        Phase::Coefficient {
+                            witness: WitnessState::CompactPrefix(w_evals_compact),
+                            relation: CoefficientRelation::Factored(weights),
+                            relation_moments,
+                        }
+                    }
                 }
             }
             RelationWeightOracle::ReducedDense(weights) => Phase::Coefficient {

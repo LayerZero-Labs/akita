@@ -202,14 +202,14 @@ fn scan_basis32_lane_range<E: Field + Unreduced + 'static>(
     digit_capacity: usize,
     first_lane: usize,
     end_lane: usize,
-) -> CoefficientMassChunk<E> {
+) -> Option<CoefficientMassChunk<E>> {
     let mut alpha_mass = WideMass::<E, 32>::new(1, coeff_count, 32);
     let mut source_mass = WideMass::<E, 32>::new(source_block_count, coeff_count, 32);
     if first_lane == end_lane {
-        return CoefficientMassChunk {
+        return Some(CoefficientMassChunk {
             alpha_mass: alpha_mass.finish(),
             source_mass: source_mass.finish(),
-        };
+        });
     }
     let mut digits = vec![0i8; digit_capacity];
     let mut alpha_rows = Vec::with_capacity(chunk_lanes);
@@ -219,9 +219,7 @@ fn scan_basis32_lane_range<E: Field + Unreduced + 'static>(
         let lanes = (end_lane - first).min(chunk_lanes);
         let digit_len = lanes * coeff_count;
         let chunk = &mut digits[..digit_len];
-        witness
-            .decode_range(first * coeff_count, chunk)
-            .expect("basis-32 scan chunk is within the validated witness");
+        witness.decode_range(first * coeff_count, chunk).ok()?;
         alpha_rows.clear();
         alpha_rows.extend(
             lane_weights[first..first + lanes]
@@ -239,10 +237,10 @@ fn scan_basis32_lane_range<E: Field + Unreduced + 'static>(
         source_rows.add_to(&mut source_mass, chunk);
         first += lanes;
     }
-    CoefficientMassChunk {
+    Some(CoefficientMassChunk {
         alpha_mass: alpha_mass.finish(),
         source_mass: source_mass.finish(),
-    }
+    })
 }
 
 impl<E: Field + Unreduced + 'static> CoefficientRelationMoments<E> {
@@ -297,17 +295,17 @@ impl<E: Field + Unreduced + 'static> CoefficientRelationMoments<E> {
         };
         #[cfg(feature = "parallel")]
         let totals = if task_count == 1 {
-            scan(0)
+            scan(0)?
         } else {
             (0..task_count)
                 .into_par_iter()
                 .map(scan)
-                .reduce_with(CoefficientMassChunk::merge)?
+                .reduce_with(|left, right| Some(left?.merge(right?)))??
         };
         #[cfg(not(feature = "parallel"))]
         let totals = (0..task_count)
             .map(scan)
-            .reduce(CoefficientMassChunk::merge)?;
+            .reduce(|left, right| Some(left?.merge(right?)))??;
         let source_mass = source_blocks
             .iter()
             .zip(&linear_terms.sources)

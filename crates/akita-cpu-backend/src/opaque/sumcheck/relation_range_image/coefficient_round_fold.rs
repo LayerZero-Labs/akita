@@ -7,7 +7,7 @@ fn fold_lane_and_compute_next_round<
     const SKIP_LINEAR: bool,
     const SKIP_RELATION: bool,
 >(
-    linear_lane: Option<&PreparedLinearLane<'_, E>>,
+    linear_lane: &PreparedLinearLane<'_, E>,
     source: &[E],
     target: &mut [E],
     next_alpha_factor: &[E],
@@ -55,9 +55,7 @@ fn fold_lane_and_compute_next_round<
             if !SKIP_RELATION {
                 let p0 = next_alpha_factor[left] * lane_weight;
                 let p1 = next_alpha_factor[left + 1] * lane_weight;
-                let (t0, t1) = linear_lane
-                    .expect("relation lane is resolved when relation work is enabled")
-                    .pair(left);
+                let (t0, t1) = linear_lane.pair(left);
                 let q0 = p0 + t0;
                 let q1 = p1 + t1;
                 let dq = q1 - q0;
@@ -164,9 +162,13 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             } else {
                 weights.relation_lane_weights()[lane]
             };
-            let linear_lane = (!SKIP_RELATION).then(|| self.linear_terms.resolve_lane(lane));
+            let linear_lane = if SKIP_RELATION {
+                PreparedLinearLane::zero()
+            } else {
+                self.linear_terms.resolve_lane(lane)
+            };
             let terms = fold_lane_and_compute_next_round::<E, SKIP_LINEAR, SKIP_RELATION>(
-                linear_lane.as_ref(),
+                &linear_lane,
                 source,
                 target,
                 next_alpha_factor,
