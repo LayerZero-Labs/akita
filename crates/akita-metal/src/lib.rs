@@ -18,6 +18,7 @@
     clippy::unreachable
 )]
 
+mod crt;
 mod error;
 mod library;
 pub mod ntt;
