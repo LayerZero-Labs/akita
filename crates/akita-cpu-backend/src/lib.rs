@@ -59,6 +59,28 @@ pub mod custom_source {
     pub use crate::sources::poly_helpers::fill_rotated_challenge;
 }
 
+/// Extension contracts for compute backends that accelerate commitment stages.
+///
+/// A provider implements [`commitment_backend::CommitmentStageProvider`] and is
+/// installed with [`CpuBackend::with_commitment_stage_provider`]. The CPU
+/// backend keeps ownership of handles, retained state, and compression.
+#[doc(hidden)]
+pub mod commitment_backend {
+    pub use crate::commitment::{
+        BackendInstanceId, BackendKindId, BackendStateRef, CommitSourceDescriptor,
+        CommitmentNttRequirement, CommitmentNttStage, CommitmentOperationContext,
+        CommitmentRequestCapabilities, CommitmentResourceControl, CommitmentStageProvider,
+        CommitmentStages, CommitmentStateBinding, DenseCoefficientSource, DenseRepresentation,
+        DenseType, InnerCommitOperation, InnerCommitOutput, InnerImage, InnerImageExportOperation,
+        InnerImageInput, OneHotIndexWidth, OneHotRepresentation, OneHotType, OuterCommitOperation,
+        OuterCommitPlan, PolynomialRepresentation, PolynomialType, PredecomposedDigitPlanes,
+        PreparedInnerCommitment, PreparedOuterCommitment, ResolvedCommitSource,
+        ShortNormRepresentation, ShortNormType, StageDimensionCapabilities, StageResources,
+        StateOwnerCapability, UncompressedCommitPlan, UnitPositionSlice,
+    };
+    pub use crate::opaque::{CommitInnerPlan, NttCacheOwnerId};
+}
+
 /// Arithmetic entry points exercised by the crate's standalone kernel benchmarks.
 #[doc(hidden)]
 pub mod benchmark_support {

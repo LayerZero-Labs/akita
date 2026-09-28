@@ -13,6 +13,7 @@ mod imported_outer;
 mod outer_slices;
 mod plan;
 mod prepared;
+mod provider;
 mod registration;
 mod resources;
 mod source;
@@ -27,28 +28,29 @@ pub(crate) use outer_slices::for_each_outer_slice_input;
 pub use state_policy::PortableCompressionState;
 
 pub(crate) use builder::CommitmentExecutorBuilder;
-pub(crate) use capabilities::{
-    CommitmentRequestCapabilities, CompressionOperationCapabilities, StageDimensionCapabilities,
-};
+pub(crate) use capabilities::CompressionOperationCapabilities;
+pub use capabilities::{CommitmentRequestCapabilities, StageDimensionCapabilities};
 pub(crate) use executor::CommitmentExecutor;
-pub(crate) use plan::{
-    CommitmentExecutionMode, CommitmentExecutionPlan, OuterCommitPlan, UncompressedCommitPlan,
-};
-pub(crate) use prepared::{
-    PreparedCompression, PreparedFusedCommitment, PreparedInnerCommitment, PreparedOuterCommitment,
-};
-pub(crate) use registration::{
-    BackendStateRef, CommitmentStateBinding, CompressionState, InnerImage, StateOwnerCapability,
+pub(crate) use plan::{CommitmentExecutionMode, CommitmentExecutionPlan};
+pub use plan::{OuterCommitPlan, UncompressedCommitPlan};
+pub(crate) use prepared::{PreparedCompression, PreparedFusedCommitment};
+pub use prepared::{PreparedInnerCommitment, PreparedOuterCommitment};
+pub use provider::{CommitmentStageProvider, CommitmentStages};
+pub(crate) use registration::CompressionState;
+pub use registration::{BackendStateRef, CommitmentStateBinding, InnerImage, StateOwnerCapability};
+pub use resources::{
+    BackendInstanceId, CommitmentNttRequirement, CommitmentNttStage, CommitmentOperationContext,
+    CommitmentResourceControl, StageResources,
 };
 pub(crate) use resources::{
-    BackendInstanceId, CommitmentNttRequirement, CommitmentNttRoute, CommitmentNttStage,
-    CommitmentOperationContext, CommitmentOperationId, PreparedCommitmentResources, StageResources,
+    CommitmentNttRoute, CommitmentOperationId, PreparedCommitmentResources,
 };
 
-pub(crate) use source::{
-    compile_commitment_request, CompiledCommitmentRequest, DenseCoefficientSource,
-    DenseRepresentation, DenseType, OneHotIndexWidth, PolynomialType, PredecomposedDigitPlanes,
-    ResolvedCommitSource, UnitPositionSlice,
+pub(crate) use source::{compile_commitment_request, CompiledCommitmentRequest};
+pub use source::{
+    DenseCoefficientSource, DenseRepresentation, DenseType, OneHotIndexWidth, OneHotRepresentation,
+    OneHotType, PolynomialType, PredecomposedDigitPlanes, ResolvedCommitSource,
+    ShortNormRepresentation, ShortNormType, UnitPositionSlice,
 };
 
 pub use external::{
@@ -62,8 +64,11 @@ pub use source::{
 };
 pub(crate) use stages::{
     CompressionOperation, CompressionStageOutput, FullCommitmentOutput, FusedInnerOuterOperation,
+    UncompressedCommitmentOutput,
+};
+pub use stages::{
     InnerCommitOperation, InnerCommitOutput, InnerImageExportOperation, InnerImageInput,
-    OuterCommitOperation, UncompressedCommitmentOutput,
+    OuterCommitOperation,
 };
 pub(crate) use state_policy::{
     CommitmentExecutionOutput, CommitmentStateComponents, CommitmentStatePolicy,
@@ -80,9 +85,5 @@ pub use setup_prefix::{SetupPrefixProverRegistry, SetupPrefixSlot};
 
 #[cfg(test)]
 pub(crate) use external::ExternalFusedInnerCommitmentEncoder;
-#[cfg(test)]
-pub(crate) use resources::CommitmentResourceControl;
-#[cfg(test)]
-pub(crate) use source::{OneHotRepresentation, OneHotType, ShortNormRepresentation, ShortNormType};
 #[cfg(test)]
 pub(crate) use state_policy::{NoRetainedStatePolicy, PortableCommitmentState};

@@ -1,4 +1,5 @@
 use super::*;
+use crate::commitment::CommitmentStages;
 use crate::commitment::PortableStatePolicy;
 use crate::opaque::CpuBackend;
 use crate::opaque::{ComputeBackendSetup, OperationCtx};
@@ -301,11 +302,12 @@ fn commit_fixture_with_profile(
 ) -> Result<(Commitment<F>, PortableCommitmentHandle<F>), AkitaError> {
     let execution_plan = CommitmentExecutionPlan::for_root(&profile)?;
     let expanded = ctx.backend().prepared_expanded_setup(ctx.prepared());
-    let executor = CommitmentExecutor::cpu(
+    let executor = CommitmentExecutor::new(
         ctx.backend(),
         ctx.prepared(),
         expanded,
         Vec::new(),
+        CommitmentStages::default(),
         PortableStatePolicy,
     )?;
     let sources = polys
@@ -515,11 +517,12 @@ fn imported_root_outer_image_matches_full_cpu_commitment() {
     .unwrap();
     let backend = CpuBackend::<ImportedF, ImportedF>::new(setup.expanded.clone()).unwrap();
     let prepared = backend.prepared().unwrap();
-    let executor = CommitmentExecutor::cpu(
+    let executor = CommitmentExecutor::new(
         &backend,
         prepared,
         setup.expanded.as_ref(),
         Vec::new(),
+        CommitmentStages::default(),
         PortableStatePolicy,
     )
     .unwrap();

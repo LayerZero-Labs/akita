@@ -6,6 +6,7 @@
 
 #![allow(missing_docs)]
 
+use crate::commitment::CommitmentStages;
 use crate::commitment::{
     AvailablePolynomialTypes, CommitSourceClass, CommitSourceDescriptor, CommitmentExecutionPlan,
     CommitmentExecutor, CommitmentSource, DenseCoefficientSource, DenseRepresentation, DenseType,
@@ -133,11 +134,12 @@ fn run_custom_commit_source_contract() {
     let expanded = setup.expanded.as_ref();
     let backend = CpuBackend::<F, E>::new(setup.expanded.clone()).unwrap();
     let prepared = backend.prepare_setup(&setup).expect("prepared");
-    let portable_executor = CommitmentExecutor::cpu(
+    let portable_executor = CommitmentExecutor::new(
         &backend,
         &prepared,
         expanded,
         vec![PolynomialType::Dense(DenseType::Coefficients)],
+        CommitmentStages::default(),
         PortableStatePolicy,
     )
     .expect("portable executor");
@@ -165,11 +167,12 @@ fn run_custom_commit_source_contract() {
     );
     assert_eq!(contract_output.prover_state, dense_output.prover_state);
 
-    let no_state_executor = CommitmentExecutor::cpu(
+    let no_state_executor = CommitmentExecutor::new(
         &backend,
         &prepared,
         expanded,
         vec![PolynomialType::Dense(DenseType::Coefficients)],
+        CommitmentStages::default(),
         NoRetainedStatePolicy,
     )
     .expect("no-state executor");
@@ -187,11 +190,12 @@ fn run_custom_commit_source_contract() {
     );
     assert_eq!(no_state_output.prover_state, ());
 
-    let resident_executor = CommitmentExecutor::cpu(
+    let resident_executor = CommitmentExecutor::new(
         &backend,
         &prepared,
         expanded,
         vec![PolynomialType::Dense(DenseType::Coefficients)],
+        CommitmentStages::default(),
         ResidentStatePolicy,
     )
     .expect("resident executor");

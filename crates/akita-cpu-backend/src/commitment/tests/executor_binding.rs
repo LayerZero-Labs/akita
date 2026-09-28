@@ -1,7 +1,8 @@
 use super::*;
 use crate::commitment::{
-    CommitmentSource, DenseType, InnerCommitOperation, InnerImage, InnerRelationState,
-    InnerRelationStateMaterial, NoRetainedStatePolicy, ResolvedCommitSource, StateOwnerCapability,
+    BackendKindId, CommitmentExecutorBuilder, CommitmentSource, DenseType, InnerCommitOperation,
+    InnerImage, InnerRelationState, InnerRelationStateMaterial, NoRetainedStatePolicy,
+    PolynomialType, ResolvedCommitSource, StageDimensionCapabilities, StateOwnerCapability,
 };
 use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;

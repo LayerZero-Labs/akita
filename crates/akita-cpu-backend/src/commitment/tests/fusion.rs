@@ -1,4 +1,5 @@
 use super::*;
+use crate::commitment::CommitmentStages;
 use crate::commitment::{
     BackendKindId, BackendStateRef, CommitmentExecutionPlan, CommitmentNttRequirement,
     CommitmentNttRoute, CommitmentRequestCapabilities, CommitmentResourceControl, CommitmentSource,
@@ -216,11 +217,12 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
     let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let prepared = backend.prepare_setup(&setup).unwrap();
     let standard_types = vec![PolynomialType::Dense(DenseType::Coefficients)];
-    let split = CommitmentExecutor::cpu(
+    let split = CommitmentExecutor::new(
         &backend,
         &prepared,
         setup.expanded.as_ref(),
         standard_types.clone(),
+        CommitmentStages::default(),
         PortableStatePolicy,
     )
     .unwrap();

@@ -1,6 +1,6 @@
 //! Validated conversion from portable setup artifacts to current-owner handles.
 use super::owned::{CommitmentHandle, CommittedSource, OwnedPolynomials};
-use crate::commitment::{CommitmentExecutor, DenseType, PolynomialType, PortableStatePolicy};
+use crate::commitment::{CommitmentSource, DenseType, PolynomialType};
 use crate::{CpuBackend, DensePoly};
 use akita_error::AkitaError;
 use akita_prover::{PreparedSetupPrefix, SetupPrefixProverRegistry};
@@ -62,22 +62,23 @@ impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
         let validated =
             crate::setup::setup_prefix::validate_setup_prefix_commitment(&prepared.expanded, id)?;
         self.memoized_setup_prefix(id, || {
-            let executor = CommitmentExecutor::cpu(
-                self,
-                prepared,
-                &prepared.expanded,
+            let source = self.setup_prefix_source(id)?;
+            let sources = source
+                .polynomials
+                .iter()
+                .map(|polynomial| polynomial as &dyn CommitmentSource<F>)
+                .collect::<Vec<_>>();
+            let executor = self.commitment_executor(
                 vec![PolynomialType::Dense(DenseType::Coefficients)],
-                PortableStatePolicy,
+                validated.plan(),
+                &sources,
             )?;
             let artifact = crate::setup::setup_prefix::commit_validated_setup_prefix(
                 &prepared.expanded,
                 &executor,
                 validated,
             )?;
-            Ok(CachedSetupPrefix {
-                artifact,
-                source: self.setup_prefix_source(id)?,
-            })
+            Ok(CachedSetupPrefix { artifact, source })
         })
     }
 

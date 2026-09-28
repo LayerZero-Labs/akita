@@ -8,7 +8,7 @@ use akita_types::{
 
 /// Checked B-stage arithmetic plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OuterCommitPlan {
+pub struct OuterCommitPlan {
     /// Number of rows produced by each physical B application.
     n_b: usize,
     /// Runtime B ring dimension.
@@ -54,7 +54,7 @@ impl OuterCommitPlan {
     }
 
     /// Exact coefficient length of the canonical stacked B image.
-    pub(crate) fn output_coefficient_len(&self) -> Result<usize, AkitaError> {
+    pub fn output_coefficient_len(&self) -> Result<usize, AkitaError> {
         checked::product([
             self.geometry.slice_count().get(),
             self.n_b,
@@ -64,46 +64,46 @@ impl OuterCommitPlan {
     }
 
     /// Number of B-matrix output rows per physical slice.
-    pub(crate) const fn n_b(&self) -> usize {
+    pub const fn n_b(&self) -> usize {
         self.n_b
     }
 
     /// Runtime B-ring dimension.
-    pub(crate) const fn ring_dimension(&self) -> usize {
+    pub const fn ring_dimension(&self) -> usize {
         self.ring_dimension
     }
 
     /// Number of outer balanced digits.
-    pub(crate) const fn num_digits_outer(&self) -> usize {
+    pub const fn num_digits_outer(&self) -> usize {
         self.num_digits_outer
     }
 
     /// Logarithm of the outer decomposition basis.
-    pub(crate) const fn log_basis_outer(&self) -> u32 {
+    pub const fn log_basis_outer(&self) -> u32 {
         self.log_basis_outer
     }
 
     /// Canonical source slicing and padding geometry.
-    pub(crate) const fn geometry(&self) -> &CommitmentSliceGeometry {
+    pub const fn geometry(&self) -> &CommitmentSliceGeometry {
         &self.geometry
     }
 }
 
 /// Shared checked plan for inner-plus-outer execution.
 #[derive(Debug, Clone)]
-pub(crate) struct UncompressedCommitPlan {
+pub struct UncompressedCommitPlan {
     inner: CommitInnerPlan,
     outer: OuterCommitPlan,
 }
 
 impl UncompressedCommitPlan {
     /// A-stage view.
-    pub(crate) const fn inner(&self) -> &CommitInnerPlan {
+    pub const fn inner(&self) -> &CommitInnerPlan {
         &self.inner
     }
 
     /// B-stage view.
-    pub(crate) const fn outer(&self) -> &OuterCommitPlan {
+    pub const fn outer(&self) -> &OuterCommitPlan {
         &self.outer
     }
 }

@@ -1,6 +1,6 @@
 //! Commitment execution and persistence admission at the owning backend boundary.
 use super::owned::{CommitOutput, CommitmentHandle, CommittedSource, SourceHandle};
-use crate::commitment::{CommitmentExecutor, GroupContext, PortableStatePolicy};
+use crate::commitment::{CommitmentExecutionPlan, GroupContext};
 use crate::opaque::CpuBackend;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
@@ -44,13 +44,8 @@ where
                 "transferred source differs from commitment parameters".into(),
             ));
         }
-        let executor = CommitmentExecutor::cpu(
-            self,
-            prepared,
-            &prepared.expanded,
-            Vec::new(),
-            PortableStatePolicy,
-        )?;
+        let plan = CommitmentExecutionPlan::for_root(&committed.parameters)?;
+        let executor = self.commitment_executor(Vec::new(), &plan, &sources)?;
         let (recomputed, retained) =
             executor.execute_full_via_outer_image(self, committed.parameters, &sources)?;
         if recomputed.commitment != committed.public || retained != committed.retained {
@@ -103,21 +98,16 @@ where
             ));
         }
         let prepared = self.prepared()?;
-        let executor = CommitmentExecutor::cpu(
-            self,
-            prepared,
-            &prepared.expanded,
-            Vec::new(),
-            PortableStatePolicy,
-        )?;
         let sources = source.storage.commitment_sources();
-        executor.validate_setup(&prepared.expanded)?;
         let (profile, producer_contract) = crate::commitment::resolve_commit_params::<Cfg, _>(
             &sources,
             &prepared.expanded,
             family,
             context,
         )?;
+        let plan = CommitmentExecutionPlan::for_root(&profile)?;
+        let executor = self.commitment_executor(Vec::new(), &plan, &sources)?;
+        executor.validate_setup(&prepared.expanded)?;
         let (committed_group, prover_state) =
             executor.execute_full_via_outer_image(self, profile, &sources)?;
         let private_handle = CommitmentHandle {
@@ -142,6 +132,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commitment::{CommitmentExecutor, CommitmentStages, PortableStatePolicy};
     use crate::{AkitaProverSetup, DensePoly};
     use akita_config::proof_optimized::fp64;
     use akita_prover::CommitmentHandleMetadata;
@@ -171,11 +162,12 @@ mod tests {
                     AkitaProverSetup::<F>::generate_with_capacity(NUM_VARS, 1, capacity).unwrap();
                 let backend = CpuBackend::<F, E>::new(setup.expanded.clone()).unwrap();
                 let prepared = backend.prepared().unwrap();
-                let executor = CommitmentExecutor::cpu(
+                let executor = CommitmentExecutor::new(
                     &backend,
                     prepared,
                     setup.expanded.as_ref(),
                     Vec::new(),
+                    CommitmentStages::default(),
                     PortableStatePolicy,
                 )
                 .unwrap();

@@ -8,29 +8,29 @@ use akita_types::{CompressionChainPlan, RingRelationMode, RingVec};
 use jolt_field::Field;
 
 /// State output of one inner commitment stage.
-pub(crate) struct InnerCommitOutput {
+pub struct InnerCommitOutput {
     image: BackendStateRef<InnerImage>,
 }
 
 impl InnerCommitOutput {
     /// Bind a checked resident inner image to the stage output.
-    pub(crate) fn new(image: BackendStateRef<InnerImage>) -> Self {
+    pub fn new(image: BackendStateRef<InnerImage>) -> Self {
         Self { image }
     }
 
     /// Borrow the resident inner image.
-    pub(crate) const fn image(&self) -> &BackendStateRef<InnerImage> {
+    pub const fn image(&self) -> &BackendStateRef<InnerImage> {
         &self.image
     }
 
     /// Consume the output into its resident inner image.
-    pub(crate) fn into_image(self) -> BackendStateRef<InnerImage> {
+    pub fn into_image(self) -> BackendStateRef<InnerImage> {
         self.image
     }
 }
 
 /// Input accepted by an outer commitment stage.
-pub(crate) enum InnerImageInput<'a, F: Field> {
+pub enum InnerImageInput<'a, F: Field> {
     /// Same-owner resident image.
     Owned(&'a BackendStateRef<InnerImage>),
     /// Explicitly exported canonical host rows, one `RingVec` per source.
@@ -148,7 +148,16 @@ impl<F: Field> CompressionStageOutput<F> {
 }
 
 /// Object-safe inner commitment operation.
-pub(crate) trait InnerCommitOperation<F: Field>: Send + Sync {
+pub trait InnerCommitOperation<F: Field>: Send + Sync {
+    /// Whether this operation implements the checked inner plan.
+    ///
+    /// The executor asks before it materializes any source, so an accelerated
+    /// operation can decline shapes it does not implement. Declining is a
+    /// routing decision only; it never changes plans or bytes.
+    fn supports_plan(&self, _plan: &CommitInnerPlan) -> bool {
+        true
+    }
+
     /// Commit one request-compiled same-shape source group.
     fn commit_inner(
         &self,
@@ -159,7 +168,15 @@ pub(crate) trait InnerCommitOperation<F: Field>: Send + Sync {
 }
 
 /// Object-safe outer commitment operation.
-pub(crate) trait OuterCommitOperation<F: Field>: Send + Sync {
+pub trait OuterCommitOperation<F: Field>: Send + Sync {
+    /// Whether this operation implements the checked inner-plus-outer plan.
+    ///
+    /// Checked before source materialization, like
+    /// [`InnerCommitOperation::supports_plan`].
+    fn supports_plan(&self, _plan: &UncompressedCommitPlan) -> bool {
+        true
+    }
+
     /// Decompose the inner image and apply canonical B slicing.
     fn commit_outer(
         &self,
@@ -192,7 +209,7 @@ pub(crate) trait FusedInnerOuterOperation<F: Field>: Send + Sync {
 }
 
 /// Explicit owner-specific host export edge for an inner image.
-pub(crate) trait InnerImageExportOperation<F: Field>: Send + Sync {
+pub trait InnerImageExportOperation<F: Field>: Send + Sync {
     /// Export canonical source-ordered rows from a resident image.
     fn export_inner_rows(
         &self,

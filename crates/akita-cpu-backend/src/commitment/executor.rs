@@ -1,21 +1,15 @@
 use super::{
-    compile_commitment_request, BackendKindId, CommitmentExecutionOutput, CommitmentExecutionPlan,
-    CommitmentExecutorBuilder, CommitmentRequestCapabilities, CommitmentSource,
-    CommitmentStateBinding, CommitmentStatePolicy, CompiledCommitmentRequest,
-    CompressionOperationCapabilities, FullCommitmentOutput, InnerCommitOutput, PolynomialType,
-    PreparedCommitmentResources, PreparedCompression, PreparedFusedCommitment,
-    PreparedInnerCommitment, PreparedOuterCommitment, ResidentStatePolicy,
-    StageDimensionCapabilities, StageResources, UncompressedCommitmentOutput,
+    compile_commitment_request, CommitmentExecutionOutput, CommitmentExecutionPlan,
+    CommitmentRequestCapabilities, CommitmentSource, CommitmentStateBinding, CommitmentStatePolicy,
+    CompiledCommitmentRequest, FullCommitmentOutput, InnerCommitOutput, PreparedCompression,
+    PreparedFusedCommitment, PreparedInnerCommitment, PreparedOuterCommitment, ResidentStatePolicy,
+    StageResources, UncompressedCommitmentOutput,
 };
 use super::{InnerRelationStateMaterial, PortableCommitmentHandle, PortableStatePolicy};
-use crate::opaque::{
-    ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
-    CpuOuterCommitOperation, CpuPreparedSetup,
-};
+use crate::opaque::CpuBackend;
 use akita_error::AkitaError;
 use akita_types::{AkitaExpandedSetup, CommittedGroup, GroupCommitPhaseParams};
 use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
-use std::sync::Arc;
 
 use super::state_policy::CommitmentStateExporters;
 
@@ -93,75 +87,6 @@ where
             | PreparedInnerOuterRoute::Split { inner, .. } => Some(inner),
             PreparedInnerOuterRoute::Fused { terminal_inner, .. } => terminal_inner.as_mut(),
         }
-    }
-}
-
-impl<'a, F, SP> CommitmentExecutor<'a, F, SP>
-where
-    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + 'static,
-    SP: CommitmentStatePolicy<F>,
-{
-    /// Build a CPU executor with an explicit standard-representation registry.
-    pub(crate) fn cpu<E>(
-        backend: &'a CpuBackend<F, E>,
-        prepared: &'a CpuPreparedSetup<F>,
-        expanded: &AkitaExpandedSetup<F>,
-        standard_types: Vec<PolynomialType>,
-        state_policy: SP,
-    ) -> Result<Self, AkitaError> {
-        if backend.prepared_expanded_setup(prepared).descriptor() != expanded.descriptor() {
-            return Err(AkitaError::InvalidSetup(
-                "CPU commitment executor setup descriptor mismatch".into(),
-            ));
-        }
-        let mut builder = CommitmentExecutorBuilder::new(expanded, state_policy);
-        let mut inner_capabilities = CommitmentRequestCapabilities::split::<CpuPreparedSetup<F>>(
-            BackendKindId::of::<super::external::CpuBackendKind>("cpu")?,
-            standard_types,
-        );
-        inner_capabilities.accept_any_standard_type();
-        let inner_operation = Arc::new(CpuInnerCommitOperation::new(backend, prepared));
-        let outer_operation = Arc::new(CpuOuterCommitOperation::new(
-            backend,
-            prepared,
-            inner_operation.as_ref(),
-        ));
-        let compression_operation =
-            Arc::new(CpuCompressionOperation::new(backend, prepared, expanded)?);
-        let inner_owner = inner_operation.owner().clone();
-        let outer_owner = inner_owner.clone();
-        let backend_instance = builder.issue_backend_instance();
-        let resources = StageResources::controlled(PreparedCommitmentResources::new(
-            backend, prepared, expanded,
-        )?);
-        let inner_context =
-            builder.operation_context(backend_instance, "cpu-inner", resources.clone())?;
-        let outer_context =
-            builder.operation_context(backend_instance, "cpu-outer", resources.clone())?;
-        let compression_context =
-            builder.operation_context(backend_instance, "cpu-compression", resources)?;
-        builder.register_inner(PreparedInnerCommitment::new(
-            inner_operation.clone(),
-            inner_owner,
-            inner_context,
-            inner_capabilities,
-            StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
-            Some(inner_operation.portable_exporter()),
-        )?)?;
-        builder.register_outer(PreparedOuterCommitment::new(
-            outer_operation,
-            outer_owner,
-            outer_context,
-            StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Outer),
-        ))?;
-        builder.register_compression(PreparedCompression::new(
-            compression_operation.clone(),
-            compression_operation.owner().clone(),
-            compression_context,
-            CompressionOperationCapabilities::cpu::<F>(),
-            Some(compression_operation.portable_exporter()),
-        ))?;
-        builder.build()
     }
 }
 
@@ -290,23 +215,24 @@ where
                 ));
             }
         } else {
-            if !self
-                .split_inner()?
-                .dimensions
-                .supports(plan.inner().ring_dimension)
+            let inner = self.split_inner()?;
+            if !inner.dimensions.supports(plan.inner().ring_dimension)
+                || !inner.stage.operation.supports_plan(plan.inner())
             {
                 return Err(AkitaError::InvalidInput(
-                    "inner operation does not support the selected ring dimension".into(),
+                    "inner operation does not support the selected ring dimension or plan".into(),
                 ));
             }
             if let Some(uncompressed) = plan.uncompressed() {
-                if !self
-                    .split_outer()?
+                let outer = self.split_outer()?;
+                if !outer
                     .dimensions
                     .supports(uncompressed.outer().ring_dimension())
+                    || !outer.stage.operation.supports_plan(uncompressed)
                 {
                     return Err(AkitaError::InvalidInput(
-                        "outer operation does not support the selected ring dimension".into(),
+                        "outer operation does not support the selected ring dimension or plan"
+                            .into(),
                     ));
                 }
             }
@@ -721,6 +647,12 @@ mod tests {
         NoRetainedStatePolicy, OuterCommitOperation, PolynomialRepresentation,
         PolynomialTypeSelection, PortableStatePolicy, StateOwnerCapability,
     };
+    use crate::commitment::{
+        BackendKindId, CommitmentExecutorBuilder, CommitmentStages,
+        CompressionOperationCapabilities, PolynomialType, PreparedCommitmentResources,
+        StageDimensionCapabilities,
+    };
+    use crate::opaque::{ComputeBackendSetup, CpuInnerCommitOperation};
     use crate::{AkitaProverSetup, DensePoly};
     use akita_challenges::SparseChallengeConfig;
     use akita_types::{
@@ -811,11 +743,12 @@ mod tests {
         .unwrap();
         let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
-        let executor = CommitmentExecutor::cpu(
+        let executor = CommitmentExecutor::new(
             &backend,
             &prepared,
             setup.expanded.as_ref(),
             vec![PolynomialType::Dense(DenseType::Coefficients)],
+            CommitmentStages::default(),
             ResidentStatePolicy,
         )
         .unwrap();
@@ -849,11 +782,12 @@ mod tests {
         .unwrap();
         let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
-        let mut executor = CommitmentExecutor::cpu(
+        let mut executor = CommitmentExecutor::new(
             &backend,
             &prepared,
             setup.expanded.as_ref(),
             vec![PolynomialType::Dense(DenseType::Coefficients)],
+            CommitmentStages::default(),
             ResidentStatePolicy,
         )
         .unwrap();
@@ -893,11 +827,12 @@ mod tests {
         .unwrap();
         let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
-        let mut executor = CommitmentExecutor::cpu(
+        let mut executor = CommitmentExecutor::new(
             &backend,
             &prepared,
             setup.expanded.as_ref(),
             vec![PolynomialType::Dense(DenseType::Coefficients)],
+            CommitmentStages::default(),
             ResidentStatePolicy,
         )
         .unwrap();
@@ -930,11 +865,12 @@ mod tests {
         .unwrap();
         let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
-        let executor = CommitmentExecutor::cpu(
+        let executor = CommitmentExecutor::new(
             &backend,
             &prepared,
             setup.expanded.as_ref(),
             vec![PolynomialType::Dense(DenseType::Coefficients)],
+            CommitmentStages::default(),
             ResidentStatePolicy,
         )
         .unwrap();
@@ -1202,11 +1138,12 @@ mod tests {
         .unwrap();
         let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
-        let executor = CommitmentExecutor::cpu(
+        let executor = CommitmentExecutor::new(
             &backend,
             &prepared,
             setup.expanded.as_ref(),
             vec![PolynomialType::Dense(DenseType::Coefficients)],
+            CommitmentStages::default(),
             ResidentStatePolicy,
         )
         .unwrap();
@@ -1287,12 +1224,13 @@ mod tests {
         let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared_a = backend.prepare_setup(&setup_a).unwrap();
 
-        assert!(CommitmentExecutor::cpu(
+        assert!(CommitmentExecutor::new(
             &backend,
             &prepared_a,
             setup_b.expanded.as_ref(),
             vec![PolynomialType::Dense(DenseType::Coefficients)],
-            ResidentStatePolicy,
+            CommitmentStages::default(),
+            ResidentStatePolicy
         )
         .is_err());
     }
@@ -1329,11 +1267,12 @@ mod tests {
         .unwrap();
         let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
-        let executor = CommitmentExecutor::cpu(
+        let executor = CommitmentExecutor::new(
             &backend,
             &prepared,
             setup.expanded.as_ref(),
             vec![PolynomialType::Dense(DenseType::Coefficients)],
+            CommitmentStages::default(),
             ResidentStatePolicy,
         )
         .unwrap();
@@ -1384,11 +1323,12 @@ mod tests {
         .unwrap();
         let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
-        let executor = CommitmentExecutor::cpu(
+        let executor = CommitmentExecutor::new(
             &backend,
             &prepared,
             setup.expanded.as_ref(),
             vec![PolynomialType::Dense(DenseType::Coefficients)],
+            CommitmentStages::default(),
             ResidentStatePolicy,
         )
         .unwrap();
@@ -1406,11 +1346,12 @@ mod tests {
         );
         drop(output);
 
-        let no_state_executor = CommitmentExecutor::cpu(
+        let no_state_executor = CommitmentExecutor::new(
             &backend,
             &prepared,
             setup.expanded.as_ref(),
             vec![PolynomialType::Dense(DenseType::Coefficients)],
+            CommitmentStages::default(),
             NoRetainedStatePolicy,
         )
         .unwrap();
@@ -1418,11 +1359,12 @@ mod tests {
         let expected_payload = output.terminal_payload().clone();
         assert_eq!(output.prover_state(), &());
 
-        let portable_executor = CommitmentExecutor::cpu(
+        let portable_executor = CommitmentExecutor::new(
             &backend,
             &prepared,
             setup.expanded.as_ref(),
             vec![PolynomialType::Dense(DenseType::Coefficients)],
+            CommitmentStages::default(),
             PortableStatePolicy,
         )
         .unwrap();

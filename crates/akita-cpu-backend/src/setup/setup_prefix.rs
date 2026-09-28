@@ -18,6 +18,13 @@ pub(crate) struct ValidatedSetupPrefixCommitment<'a> {
     plan: CommitmentExecutionPlan,
 }
 
+impl ValidatedSetupPrefixCommitment<'_> {
+    /// Checked execution plan that commits this prefix.
+    pub(crate) const fn plan(&self) -> &CommitmentExecutionPlan {
+        &self.plan
+    }
+}
+
 pub(crate) fn validate_setup_prefix_commitment<'a, F: Field>(
     expanded: &AkitaExpandedSetup<F>,
     id: &'a SetupPrefixSlotId,
@@ -167,6 +174,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commitment::CommitmentStages;
     use crate::commitment::{
         BackendKindId, CommitmentExecutorBuilder, CommitmentRequestCapabilities,
         CompressionOperationCapabilities, DenseType, PolynomialType, PortableStatePolicy,
@@ -311,11 +319,12 @@ mod tests {
         backend: &'a CpuBackend<F, F>,
         prepared: &'a crate::opaque::CpuPreparedSetup<F>,
     ) -> CommitmentExecutor<'a, F, PortableStatePolicy> {
-        CommitmentExecutor::cpu(
+        CommitmentExecutor::new(
             backend,
             prepared,
             &setup.expanded,
             vec![PolynomialType::Dense(DenseType::Coefficients)],
+            CommitmentStages::default(),
             PortableStatePolicy,
         )
         .expect("setup-prefix executor")
@@ -326,11 +335,12 @@ mod tests {
         backend: &'a CpuBackend<F, F>,
         prepared: &'a crate::opaque::CpuPreparedSetup<F>,
     ) -> CommitmentExecutor<'a, F, ResidentStatePolicy> {
-        CommitmentExecutor::cpu(
+        CommitmentExecutor::new(
             backend,
             prepared,
             &setup.expanded,
             vec![PolynomialType::Dense(DenseType::Coefficients)],
+            CommitmentStages::default(),
             ResidentStatePolicy,
         )
         .expect("resident setup-prefix executor")

@@ -102,7 +102,7 @@ impl CommitSourceDescriptor {
 
 /// Physical dense representation offered by a source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum DenseType {
+pub enum DenseType {
     /// Borrowed canonical field coefficients.
     Coefficients,
     /// Borrowed exact-plan balanced digit planes.
@@ -111,7 +111,7 @@ pub(crate) enum DenseType {
 
 /// Packed short-norm source representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct ShortNormType {
+pub struct ShortNormType {
     signed_bit_width: u8,
 }
 
@@ -129,7 +129,7 @@ impl ShortNormType {
 
 /// Width of the source-owned one-hot position indices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum OneHotIndexWidth {
+pub enum OneHotIndexWidth {
     /// Eight-bit positions.
     U8,
     /// Sixteen-bit positions.
@@ -142,7 +142,7 @@ pub(crate) enum OneHotIndexWidth {
 
 /// Semantic one-hot representation descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct OneHotType {
+pub struct OneHotType {
     chunk_size: usize,
     index_width: OneHotIndexWidth,
 }
@@ -172,7 +172,7 @@ impl OneHotType {
 
 /// Akita-owned semantic polynomial types understood by commitment operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum PolynomialType {
+pub enum PolynomialType {
     /// General dense coefficients or exact-plan cached digit planes.
     Dense(DenseType),
     /// Packed bounded signed coefficients.
@@ -244,13 +244,13 @@ impl PolynomialTypeSelection {
 }
 
 /// Borrowed source of canonical dense coefficients.
-pub(crate) trait DenseCoefficientSource<F: Field>: Send + Sync {
+pub trait DenseCoefficientSource<F: Field>: Send + Sync {
     /// Physical coefficient buffer in canonical source order.
     fn coefficients(&self) -> &[F];
 }
 
 /// Borrowed dense source representation.
-pub(crate) enum DenseRepresentation<'a, F: Field> {
+pub enum DenseRepresentation<'a, F: Field> {
     /// Canonical field coefficients.
     Coefficients(&'a dyn DenseCoefficientSource<F>),
     /// Exact-plan balanced digit planes in `[ring][digit][coefficient]` order.
@@ -258,7 +258,7 @@ pub(crate) enum DenseRepresentation<'a, F: Field> {
 }
 
 /// Checked borrowed dense digit planes.
-pub(crate) struct PredecomposedDigitPlanes<'a> {
+pub struct PredecomposedDigitPlanes<'a> {
     /// Flat signed digits in `[ring][digit][coefficient]` order.
     pub bytes: &'a [i8],
     /// Ring dimension of each digit plane.
@@ -272,7 +272,7 @@ pub(crate) struct PredecomposedDigitPlanes<'a> {
 }
 
 /// Borrowed packed bounded signed coefficients.
-pub(crate) struct ShortNormRepresentation<'a> {
+pub struct ShortNormRepresentation<'a> {
     /// Encoded two's-complement payload, excluding safe-load padding.
     encoded_bytes: &'a [u8],
     /// Number of source-owned live coefficients.
@@ -362,22 +362,22 @@ impl<'a> ShortNormRepresentation<'a> {
     }
 
     /// Encoded two's-complement payload, excluding safe-load padding.
-    pub(crate) const fn encoded_bytes(&self) -> &'a [u8] {
+    pub const fn encoded_bytes(&self) -> &'a [u8] {
         self.encoded_bytes
     }
 
     /// Number of source-owned live coefficients.
-    pub(crate) const fn live_coefficient_len(&self) -> usize {
+    pub const fn live_coefficient_len(&self) -> usize {
         self.live_coefficient_len
     }
 
     /// Commitment-aligned logical coefficient extent.
-    pub(crate) const fn physical_coefficient_len(&self) -> usize {
+    pub const fn physical_coefficient_len(&self) -> usize {
         self.physical_coefficient_len
     }
 
     /// Stored two's-complement bit width.
-    pub(crate) const fn signed_bit_width(&self) -> u8 {
+    pub const fn signed_bit_width(&self) -> u8 {
         self.signed_bit_width
     }
 
@@ -390,7 +390,7 @@ impl<'a> ShortNormRepresentation<'a> {
 
 /// Borrowed one-hot chunk indices at their stored width.
 /// `None` denotes an all-zero chunk.
-pub(crate) enum UnitPositionSlice<'a> {
+pub enum UnitPositionSlice<'a> {
     /// Eight-bit positions.
     U8(&'a [Option<u8>]),
     /// Sixteen-bit positions.
@@ -435,7 +435,7 @@ impl UnitPositionSlice<'_> {
 }
 
 /// Borrowed one-hot source representation.
-pub(crate) struct OneHotRepresentation<'a> {
+pub struct OneHotRepresentation<'a> {
     /// Complete source-owned position slice, preserving index width.
     pub positions: UnitPositionSlice<'a>,
     /// Logical coefficients per one-hot chunk.
@@ -445,7 +445,6 @@ pub(crate) struct OneHotRepresentation<'a> {
 }
 
 /// Materialized representation selected by request compilation.
-#[allow(private_interfaces)]
 pub enum PolynomialRepresentation<'a, F: Field> {
     /// Dense coefficients or predecomposed digit planes.
     Dense(DenseRepresentation<'a, F>),
@@ -588,7 +587,7 @@ enum ResolvedCommitSourcePath<'a, F: Field> {
 }
 
 /// One admitted source with its compiled representation choice.
-pub(crate) struct ResolvedCommitSource<'a, F: Field> {
+pub struct ResolvedCommitSource<'a, F: Field> {
     descriptor: CommitSourceDescriptor,
     inner_plan: CommitInnerPlan,
     path: ResolvedCommitSourcePath<'a, F>,
@@ -596,12 +595,12 @@ pub(crate) struct ResolvedCommitSource<'a, F: Field> {
 
 impl<'a, F: Field> ResolvedCommitSource<'a, F> {
     /// Validated source metadata.
-    pub(crate) const fn descriptor(&self) -> &CommitSourceDescriptor {
+    pub const fn descriptor(&self) -> &CommitSourceDescriptor {
         &self.descriptor
     }
 
     /// Compiled polynomial representation type.
-    pub(crate) const fn selected_type(&self) -> Option<PolynomialType> {
+    pub const fn selected_type(&self) -> Option<PolynomialType> {
         match self.path {
             ResolvedCommitSourcePath::Standard { selected, .. } => Some(selected),
             ResolvedCommitSourcePath::External(_) => None,
@@ -609,7 +608,7 @@ impl<'a, F: Field> ResolvedCommitSource<'a, F> {
     }
 
     /// Borrow the selected representation.
-    pub(crate) const fn representation(&self) -> Option<&PolynomialRepresentation<'a, F>> {
+    pub const fn representation(&self) -> Option<&PolynomialRepresentation<'a, F>> {
         match &self.path {
             ResolvedCommitSourcePath::Standard { representation, .. } => Some(representation),
             ResolvedCommitSourcePath::External(_) => None,
@@ -617,14 +616,15 @@ impl<'a, F: Field> ResolvedCommitSource<'a, F> {
     }
 
     /// Borrow the prepared external path when one was selected.
-    pub(crate) const fn external(&self) -> Option<&PreparedExternalInnerCommitment<'a, F>> {
+    pub const fn external(&self) -> Option<&PreparedExternalInnerCommitment<'a, F>> {
         match &self.path {
             ResolvedCommitSourcePath::Standard { .. } => None,
             ResolvedCommitSourcePath::External(prepared) => Some(prepared),
         }
     }
 
-    pub(crate) fn validate_plan(&self, plan: &CommitInnerPlan) -> Result<(), AkitaError> {
+    /// Reject a source compiled for a different inner plan.
+    pub fn validate_plan(&self, plan: &CommitInnerPlan) -> Result<(), AkitaError> {
         if self.inner_plan != *plan {
             return Err(AkitaError::InvalidInput(
                 "resolved commitment source was compiled for a different inner plan".into(),
