@@ -523,10 +523,10 @@ impl<F: MetalField> OneHotWorkspace<'_, F> {
         // changes. Release mismatched buffers first to avoid holding the old
         // and new working sets at once.
         if self.out.as_ref().is_some_and(|out| out.len() != len) {
-            drop(self.out.take());
+            self.out = None;
         }
         if self.partials.as_ref().map(DeviceBuffer::len) != partials_len {
-            drop(self.partials.take());
+            self.partials = None;
         }
         let device = metal.device();
         if self.out.is_none() {
