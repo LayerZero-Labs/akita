@@ -9,7 +9,7 @@ use akita_error::AkitaError;
 
 use akita_types::{basis_weights_prefix, BasisMode};
 use jolt_field::solinas::parallel::*;
-use jolt_field::Field;
+use jolt_field::{Field, Unreduced};
 
 use super::coefficient_packing_terms::{CpuCoefficientPackingSource, CpuCoefficientPackingTerms};
 
@@ -221,6 +221,80 @@ pub(crate) struct PreparedProverLinearTerms<E: Field> {
 }
 
 impl<E: Field> PreparedProverLinearTerms<E> {
+    /// Prepare a rank-one physical-L2 term and return its input witness claim.
+    pub(crate) fn from_physical_l2(
+        coefficient_weights: Vec<E>,
+        lane_weights: Vec<E>,
+        witness: &crate::sources::packed_digits::PackedSignedDigits,
+        live_lane_count: usize,
+        coeff_count: usize,
+    ) -> Result<(Self, E), AkitaError>
+    where
+        E: Unreduced,
+    {
+        let witness_len = live_lane_count.checked_mul(coeff_count).ok_or_else(|| {
+            AkitaError::InvalidSetup("physical-L2 witness length overflow".into())
+        })?;
+        if coeff_count == 0
+            || !coeff_count.is_power_of_two()
+            || coefficient_weights.len() != coeff_count
+            || lane_weights.len() != live_lane_count
+            || witness.len() != witness_len
+        {
+            return Err(AkitaError::InvalidSize {
+                expected: witness_len,
+                actual: witness.len(),
+            });
+        }
+
+        let mut lane_terms = vec![Vec::new(); live_lane_count];
+        let mut input_claim = E::zero();
+        for lane in 0..live_lane_count {
+            let factor = lane_weights[lane];
+            if factor.is_zero() {
+                continue;
+            }
+            let mut coefficient_dot = E::zero();
+            let lane_start = lane.checked_mul(coeff_count).ok_or_else(|| {
+                AkitaError::InvalidSetup("physical-L2 witness offset overflow".into())
+            })?;
+            for (coefficient, &weight) in coefficient_weights.iter().enumerate() {
+                let index = lane_start.checked_add(coefficient).ok_or_else(|| {
+                    AkitaError::InvalidSetup("physical-L2 witness index overflow".into())
+                })?;
+                let digit = witness.get(index).ok_or(AkitaError::InvalidProof)?;
+                let magnitude = u64::from(digit.unsigned_abs());
+                if magnitude != 0 {
+                    let product = E::reduce_small_product(weight.mul_u64_unreduced(magnitude));
+                    if digit < 0 {
+                        coefficient_dot -= product;
+                    } else {
+                        coefficient_dot += product;
+                    }
+                }
+            }
+            input_claim += factor * coefficient_dot;
+            lane_terms[lane].push(PreparedLaneTerm {
+                factor,
+                source_index: 0,
+                lane: 0,
+            });
+        }
+
+        Ok((
+            Self {
+                lane_weights: PreparedLaneWeights::Sparse(lane_terms),
+                sources: vec![PreparedTraceSource {
+                    values: coefficient_weights,
+                    lane_count: 1,
+                }],
+                live_lane_count,
+                coeff_count,
+            },
+            input_claim,
+        ))
+    }
+
     #[cfg(test)]
     pub(crate) fn source_count(&self) -> usize {
         self.sources.len()
@@ -685,13 +759,59 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         })
     }
 
+    fn packing_as_sparse(
+        packing: &PreparedPackingLaneMap<E>,
+        sources: &[PreparedTraceSource<E>],
+        live_lane_count: usize,
+    ) -> Result<Vec<Vec<PreparedLaneTerm<E>>>, AkitaError> {
+        if packing.lane_to_segment.len() != live_lane_count {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut lane_terms = vec![Vec::new(); live_lane_count];
+        for (lane, terms) in lane_terms.iter_mut().enumerate() {
+            let Some((segment, source_lane)) = packing.source_lane(lane) else {
+                continue;
+            };
+            let source = sources
+                .get(segment.source_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            if source_lane >= source.lane_count {
+                return Err(AkitaError::InvalidProof);
+            }
+            terms.push(PreparedLaneTerm {
+                factor: segment.factor,
+                source_index: segment.source_index,
+                lane: source_lane,
+            });
+        }
+        Ok(lane_terms)
+    }
+
+    fn convert_packing_to_sparse(&mut self) -> Result<(), AkitaError> {
+        let PreparedLaneWeights::Packing(packing) = &self.lane_weights else {
+            return Ok(());
+        };
+        let sparse = Self::packing_as_sparse(packing, &self.sources, self.live_lane_count)?;
+        self.lane_weights = PreparedLaneWeights::Sparse(sparse);
+        Ok(())
+    }
+
     /// Add another checked structured term set over the same witness domain.
-    pub(crate) fn merge(&mut self, other: Self) -> Result<(), AkitaError> {
+    pub(crate) fn merge(&mut self, mut other: Self) -> Result<(), AkitaError> {
         if self.live_lane_count != other.live_lane_count || self.coeff_count != other.coeff_count {
             return Err(AkitaError::InvalidSize {
                 expected: self.live_lane_count * self.coeff_count,
                 actual: other.live_lane_count * other.coeff_count,
             });
+        }
+        match (&self.lane_weights, &other.lane_weights) {
+            (PreparedLaneWeights::Packing(_), PreparedLaneWeights::Sparse(_)) => {
+                self.convert_packing_to_sparse()?;
+            }
+            (PreparedLaneWeights::Sparse(_), PreparedLaneWeights::Packing(_)) => {
+                other.convert_packing_to_sparse()?;
+            }
+            _ => {}
         }
         let Self {
             lane_weights: source_weights,

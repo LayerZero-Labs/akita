@@ -21,11 +21,21 @@ pub(crate) struct RelationLaneWeights<E: Field> {
     setup_is_deferred: bool,
 }
 
+/// Rank-one physical-L2 weights in low coefficient and high lane coordinates.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PhysicalL2Factors<E: Field> {
+    pub(crate) coefficient_weights: Vec<E>,
+    pub(crate) lane_weights: Vec<E>,
+}
+
 /// Exact common-alpha factorization of the padded relation-weight table.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RelationWeightFactorization<E: Field> {
     common_alpha_factor: Vec<E>,
     relation_lane_weights: Vec<E>,
+    /// Optional rank-one physical-L2 addend, factored over the Stage-2
+    /// coefficient and lane coordinates.
+    physical_l2: Option<PhysicalL2Factors<E>>,
 }
 
 impl<E: Field> RelationWeightFactorization<E> {
@@ -46,6 +56,7 @@ impl<E: Field> RelationWeightFactorization<E> {
         Ok(Self {
             common_alpha_factor,
             relation_lane_weights,
+            physical_l2: None,
         })
     }
 
@@ -67,6 +78,30 @@ impl<E: Field> RelationWeightFactorization<E> {
 
     pub(crate) fn take_lane_weights(&mut self) -> Vec<E> {
         std::mem::take(&mut self.relation_lane_weights)
+    }
+
+    pub(crate) fn attach_physical_l2(
+        &mut self,
+        coefficient_weights: Vec<E>,
+        lane_weights: Vec<E>,
+    ) -> Result<(), AkitaError> {
+        if self.physical_l2.is_some()
+            || coefficient_weights.len() != self.common_alpha_factor.len()
+            || lane_weights.len() > self.relation_lane_weights.len()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "physical-L2 factorization disagrees with relation geometry".into(),
+            ));
+        }
+        self.physical_l2 = Some(PhysicalL2Factors {
+            coefficient_weights,
+            lane_weights,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn take_physical_l2(&mut self) -> Option<PhysicalL2Factors<E>> {
+        self.physical_l2.take()
     }
 
     /// Expand this factorization over its complete padded flat domain.
@@ -219,6 +254,7 @@ impl<E: Field> RelationLaneWeights<E> {
         Ok(RelationWeightFactorization {
             common_alpha_factor,
             relation_lane_weights: self.lanes,
+            physical_l2: None,
         })
     }
 }

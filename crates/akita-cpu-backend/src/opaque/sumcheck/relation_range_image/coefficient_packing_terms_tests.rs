@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::sources::packed_digits::PackedSignedDigits;
 use akita_algebra::poly::multilinear_eval;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
@@ -351,6 +352,58 @@ fn prover_adapter_preserves_shared_stage2_semantics() {
     assert_eq!(semantics.geometry(), fixture.prepared_point.geometry());
     assert_eq!(prepared.source_count(), 2);
     assert_eq!(prepared.materialize_dense(), materialize_shared(semantics));
+}
+
+#[test]
+fn physical_l2_sparse_terms_merge_with_coefficient_packing_support() {
+    let fixture = fixture();
+    let batch = prepare_batch(&fixture);
+    let semantics = &batch.groups()[0];
+    let mut prepared = prepare_coefficient_packing_linear_terms(semantics.clone()).unwrap();
+    let live_lane_count = prepared.live_lane_count;
+    let coeff_count = prepared.coeff_count;
+    let witness_digits = (0..live_lane_count * coeff_count)
+        .map(|index| match index {
+            0 => i8::MIN,
+            _ => (index % 17) as i8 - 8,
+        })
+        .collect::<Vec<_>>();
+    let witness = PackedSignedDigits::from_i8_digits_auto(witness_digits.clone());
+    let coefficient_weights = (0..coeff_count)
+        .map(|index| E::from_u64(401 + 7 * index as u64))
+        .collect::<Vec<_>>();
+    let lane_weights = (0..live_lane_count)
+        .map(|index| E::from_u64(503 + 13 * index as u64))
+        .collect::<Vec<_>>();
+    let original = prepared.materialize_dense();
+    let (physical, claim) = PreparedProverLinearTerms::from_physical_l2(
+        coefficient_weights.clone(),
+        lane_weights.clone(),
+        &witness,
+        live_lane_count,
+        coeff_count,
+    )
+    .unwrap();
+    prepared.merge(physical).unwrap();
+
+    let expected = original
+        .chunks_exact(coeff_count)
+        .enumerate()
+        .flat_map(|(lane, existing)| {
+            let factor = lane_weights[lane];
+            existing
+                .iter()
+                .zip(&coefficient_weights)
+                .map(move |(&existing, &coefficient)| existing + factor * coefficient)
+        })
+        .collect::<Vec<_>>();
+    let expected_claim = witness_digits
+        .iter()
+        .zip(original.iter().zip(&expected))
+        .map(|(&digit, (&before, &after))| (after - before) * E::from_i64(i64::from(digit)))
+        .sum::<E>();
+    assert_eq!(claim, expected_claim);
+    assert_eq!(prepared.materialize_dense(), expected);
 }
 
 #[test]

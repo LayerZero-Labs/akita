@@ -1,4 +1,5 @@
 use super::*;
+use crate::sources::packed_digits::PackedSignedDigits;
 
 use akita_algebra::{poly::multilinear_eval, CyclotomicRing};
 use akita_config::proof_optimized::fp128;
@@ -297,6 +298,46 @@ fn coefficient_folds_reuse_prepared_source_buffers() {
         .map(|pair| pair[0] + r1 * (pair[1] - pair[0]))
         .collect::<Vec<_>>();
     assert_eq!(two_round.materialize_dense(), expected_two_round);
+}
+
+#[test]
+fn physical_l2_linear_source_matches_dense_table_and_signed_claim() {
+    let coeff_count = 4;
+    let live_lane_count = 3;
+    let coefficient_weights = (0..coeff_count)
+        .map(|index| F::from_u64(43 + 11 * index as u64))
+        .collect::<Vec<_>>();
+    let lane_weights = (0..live_lane_count)
+        .map(|index| F::from_u64(71 + 13 * index as u64))
+        .collect::<Vec<_>>();
+    let digits = vec![i8::MIN, -7, 0, 4, 9, -3, 2, -1, 11, 5, -8, 6];
+    let witness = PackedSignedDigits::from_i8_digits_auto(digits.clone());
+
+    let (prepared, actual_claim) = PreparedProverLinearTerms::from_physical_l2(
+        coefficient_weights.clone(),
+        lane_weights.clone(),
+        &witness,
+        live_lane_count,
+        coeff_count,
+    )
+    .expect("valid rank-one source");
+    let expected = digits
+        .chunks_exact(coeff_count)
+        .enumerate()
+        .flat_map(|(lane, _)| {
+            let factor = lane_weights[lane];
+            coefficient_weights
+                .iter()
+                .map(move |&coefficient| factor * coefficient)
+        })
+        .collect::<Vec<_>>();
+    let expected_claim = digits
+        .iter()
+        .zip(&expected)
+        .map(|(&digit, &weight)| F::from_i64(i64::from(digit)) * weight)
+        .sum::<F>();
+    assert_eq!(prepared.materialize_dense(), expected);
+    assert_eq!(actual_claim, expected_claim);
 }
 
 #[test]

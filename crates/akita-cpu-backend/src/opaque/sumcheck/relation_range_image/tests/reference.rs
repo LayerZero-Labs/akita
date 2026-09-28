@@ -218,3 +218,125 @@ fn stage2_every_phase_matches_boolean_hypercube_reference() {
         }
     }
 }
+
+#[test]
+fn factored_physical_l2_source_matches_dense_reference_through_all_transitions() {
+    let coefficient_bits = 3usize;
+    let coeff_count = 1usize << coefficient_bits;
+    let lane_bits = 3usize;
+    let live_lane_count = 6usize;
+    let domain_len = 1usize << (coefficient_bits + lane_bits);
+    let witness = (0..live_lane_count * coeff_count)
+        .map(|index| match index {
+            0 => i8::MIN,
+            1 => -1,
+            _ => ((index * 7 + 3) % 13) as i8 - 6,
+        })
+        .collect::<Vec<_>>();
+    let packed_witness = packed(&witness);
+    let point = (0..coefficient_bits + lane_bits)
+        .map(|index| F::from_u64(109 + 17 * index as u64))
+        .collect::<Vec<_>>();
+    let batching = F::from_u64(131);
+    let common_alpha_factor = (0..coeff_count)
+        .map(|index| F::from_u64(149 + 11 * index as u64))
+        .collect::<Vec<_>>();
+    let relation_lane_weights = (0..1usize << lane_bits)
+        .map(|index| F::from_u64(173 + 13 * index as u64))
+        .collect::<Vec<_>>();
+    let coefficient_weights = EqPolynomial::evals(&point[..coefficient_bits]).unwrap();
+    let physical_lane_weights = (0..live_lane_count)
+        .map(|lane| {
+            let high_point = &point[coefficient_bits..];
+            let equality = EqPolynomial::evals(high_point).unwrap();
+            equality[lane]
+        })
+        .collect::<Vec<_>>();
+    let mut linear = (0..live_lane_count)
+        .flat_map(|lane| {
+            let lane_factor = physical_lane_weights[lane];
+            coefficient_weights
+                .iter()
+                .map(move |&coefficient| lane_factor * coefficient)
+        })
+        .collect::<Vec<_>>();
+    linear.resize(domain_len, F::zero());
+    let physical_claim = witness
+        .iter()
+        .zip(&linear)
+        .map(|(&digit, &weight)| F::from_i64(i64::from(digit)) * weight)
+        .sum::<F>();
+
+    let padded_witness =
+        pad_compact_witness(&witness, live_lane_count, lane_bits, coefficient_bits);
+    let mut relation = (0..domain_len)
+        .map(|index| {
+            common_alpha_factor[index % coeff_count] * relation_lane_weights[index / coeff_count]
+        })
+        .collect::<Vec<_>>();
+    let base_relation_claim = padded_witness
+        .iter()
+        .zip(&relation)
+        .map(|(&digit, &weight)| F::from_i64(i64::from(digit)) * weight)
+        .sum::<F>();
+    for (weight, &physical) in relation.iter_mut().zip(&linear) {
+        *weight += physical;
+    }
+    let equality = EqPolynomial::evals(&point).unwrap();
+    let range_image_evaluation = padded_witness
+        .iter()
+        .zip(&equality)
+        .map(|(&digit, &eq)| {
+            let digit = F::from_i64(i64::from(digit));
+            eq * digit * (digit + F::one())
+        })
+        .sum::<F>();
+    let range = equality
+        .into_iter()
+        .map(|eq| batching * eq)
+        .collect::<Vec<_>>();
+    let mut reference = Reference {
+        witness: padded_witness
+            .into_iter()
+            .map(|digit| F::from_i64(i64::from(digit)))
+            .collect(),
+        linear: relation,
+        range,
+    };
+    let mut relation_factorization =
+        RelationWeightFactorization::new(common_alpha_factor, relation_lane_weights).unwrap();
+    relation_factorization
+        .attach_physical_l2(coefficient_weights, physical_lane_weights)
+        .unwrap();
+    let mut prover = RelationRangeImageProver::new(
+        batching,
+        packed_witness,
+        &point,
+        range_image_evaluation,
+        8,
+        RelationWeightOracle::QuotientFactored(relation_factorization),
+        live_lane_count,
+        lane_bits,
+        coefficient_bits,
+        base_relation_claim + physical_claim,
+        PreparedProverLinearTerms::zero(live_lane_count, coeff_count),
+        F::zero(),
+        None,
+    )
+    .unwrap();
+
+    let mut claim = reference.claim();
+    assert_eq!(prover.input_claim(), claim);
+    for round in 0..coefficient_bits + lane_bits {
+        let expected = reference.round();
+        let actual = prover.compute_round_univariate(round, claim);
+        assert_eq!(actual, expected, "round {round}");
+        let challenge = F::from_u64(211 + 19 * round as u64);
+        claim = expected.evaluate(challenge);
+        reference.bind(challenge);
+        prover.ingest_challenge(round, challenge);
+        assert_eq!(reference.claim(), claim, "fold {round}");
+    }
+    assert_eq!(prover.final_w_eval(), reference.witness[0]);
+    assert_eq!(prover.expected_final_claim().unwrap(), reference.claim());
+}

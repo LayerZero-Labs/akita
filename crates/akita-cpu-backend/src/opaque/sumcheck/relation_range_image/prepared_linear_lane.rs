@@ -29,7 +29,7 @@ pub(crate) struct PreparedLinearLane<'a, E: Field> {
 
 impl<E: Field> PreparedPackingLaneMap<E> {
     /// The segment covering witness lane `lane`, and the source lane it reads.
-    fn source_lane(&self, lane: usize) -> Option<(&PreparedPackingSegment<E>, usize)> {
+    pub(super) fn source_lane(&self, lane: usize) -> Option<(&PreparedPackingSegment<E>, usize)> {
         let segment = self
             .segments
             .get(self.lane_to_segment.get(lane).copied().flatten()?.get() - 1)?;
