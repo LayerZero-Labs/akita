@@ -25,6 +25,38 @@ Observation (not a defect): under ASan, proving gets slower as Rayon threads
 increase (one `pcs_parallel` seed: 11 s at 1 thread, 23 s at 4), so the
 parallel lane uses 2 internal threads.
 
+## F-6 (Low, robustness): artifact admission scans an artifact-supplied digit count
+
+Fix: draft PR #113 (`fix/digit-series-saturation`).
+
+`balanced_digit_max`, `balanced_digit_abs_max`, and
+`balanced_digit_interval_diameter`
+(`crates/akita-types/src/sis/decomposition_digits.rs`) loop `for _ in
+0..num_digits` with saturating arithmetic and never stop once the value has
+saturated. Admission derives the A-matrix norm bound from the artifact's
+`num_digits_fold` (`audit.rs`, `rounded_up_role_a_inf_norm`) before any upper
+range check (only `== 0` is rejected), so the audit's cost is linear in a
+value the artifact chooses: about 1.6 ns per digit, 61 s for the
+3.8·10^10 the fuzzer found, and effectively unbounded near `u64::MAX`. The
+admission result is correct once it finishes (`InvalidSetup`); only its cost
+is unbounded. As with F-5, artifacts are approved inputs, not proof-controlled,
+so this is not verifier-reachable from a proof.
+
+Found by `schedule_artifact` as a timeout (build `310b26f8`, reported as not
+reproducible because the replay allows more time; it reproduces as a 61 s
+admission in a release build). Minimal reproduction: the shipped
+`fp128_onehot_multi_chunk_w2r2.aks` with only
+`rows[0].schedule.root.params.groups.entries[0].opening.num_digits_fold` set to
+37777777777 (selector byte `5`):
+
+```bash
+cd fuzz && cargo run --release -p akita-fuzz-dev -- replay schedule_artifact \
+  regressions/schedule_artifact/f6-num-digits-fold-scan.bin
+```
+
+The fix stops each series at saturation (identical results, at most
+`128 / log_basis + 1` iterations).
+
 ## F-5 (Medium, robustness): schedule-artifact admission panics on a zero terminal `log_basis`
 
 Fixed upstream: PR #91 (`fix/artifact-log-basis-validation`), merged 2026-09-27
