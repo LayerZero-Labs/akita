@@ -1,8 +1,8 @@
 //! The one-hot inner Ajtai commitment on the device.
 //!
-//! [`commit_onehot`] computes the inner (A) commitment rows of one-hot
-//! sources and matches `akita-cpu-backend`'s one-hot column sweep word for
-//! word: for every source, block and A row, the canonical coefficients of
+//! [`OneHotWorkspace::commit`] computes the inner (A) commitment rows of
+//! one-hot sources and matches `akita-cpu-backend`'s one-hot column sweep
+//! word for word: for every source, block and A row, the canonical coefficients of
 //!
 //! ```text
 //! t[block][row] = sum over hot entries (position, s) of the block
@@ -282,6 +282,31 @@ pub struct OneHotSchedule {
     pub fold_terms: u64,
 }
 
+/// Exclusive reusable output and segment scratch for one-hot commitments on
+/// one [`AkitaMetal`] device.
+///
+/// The first [`commit`](Self::commit) allocates exact-sized buffers. Later
+/// calls of the same shape reuse them; a changed output length or segment
+/// count releases the obsolete allocation before replacing it. Borrowing the
+/// workspace mutably serializes use, and the device borrow prevents callers
+/// from pairing retained buffers with a different [`AkitaMetal`] instance.
+pub struct OneHotWorkspace<'device, F> {
+    metal: &'device AkitaMetal,
+    out: Option<DeviceBuffer<F>>,
+    partials: Option<DeviceBuffer<F>>,
+}
+
+impl<'device, F> OneHotWorkspace<'device, F> {
+    /// Creates an empty workspace bound to `metal`.
+    pub fn new(metal: &'device AkitaMetal) -> Self {
+        Self {
+            metal,
+            out: None,
+            partials: None,
+        }
+    }
+}
+
 impl OneHotSchedule {
     /// The most lanes a schedule for `F` at ring degree `D` may use:
     /// `MAX_LANES`, or fewer when the kernel's registers limit its
@@ -383,137 +408,175 @@ impl Geometry {
     }
 }
 
-/// Commits `sources` with the A matrix `shape` views in `matrix`, at ring
-/// degree `D`, and returns the rows and the GPU time.
-///
-/// The rows are canonical field elements in the CPU's order: source, block,
-/// A row, coefficient. Source `i` contributes its `ceil(2^num_vars / (D P))`
-/// blocks of `n_a` ring elements, `P = active_a_cols / num_digits_inner` being
-/// the positions per block. Shapes the kernel does not cover are rejected
-/// with [`AkitaMetalError::Shape`] before anything is encoded.
-pub fn commit_onehot<F: MetalField, const D: usize>(
-    metal: &AkitaMetal,
-    matrix: &DeviceFlatMatrix<F>,
-    sources: &DeviceOneHotSources,
-    shape: OneHotCommitShape,
-    schedule: OneHotSchedule,
-) -> Result<(DeviceBuffer<F>, Duration), AkitaMetalError> {
-    let geometry = Geometry::new::<D>(shape)?;
-    let pipeline = metal.pipeline(&commit_kernel::<F, D>()?)?;
-    let matrix_len = checked::product([geometry.rows, geometry.columns, D])
-        .ok_or_else(|| shape_overflow("A matrix"))?;
-    if matrix_len > matrix.coefficients.len() {
-        return Err(shape_error(format!(
-            "a {} x {} A matrix at D={D} needs {matrix_len} coefficients; the setup has {}",
-            geometry.rows,
-            geometry.columns,
-            matrix.coefficients.len()
-        )));
-    }
-    let max_lanes = OneHotSchedule::max_lanes::<F, D>(metal)?;
-    if !(1..=max_lanes).contains(&schedule.lanes) {
-        return Err(shape_error(format!(
-            "{} lanes is outside 1..={max_lanes}",
-            schedule.lanes
-        )));
-    }
-    let threads = checked::product([schedule.lanes, lane_threads::<D>()])
-        .ok_or_else(|| shape_overflow("threads per threadgroup"))?;
-    if schedule.segments == 0 {
-        return Err(shape_error("a schedule needs at least one segment"));
-    }
-    let group_blocks = checked::product([schedule.lanes, BLOCKS_PER_LANE])
-        .ok_or_else(|| shape_overflow("blocks per threadgroup"))?;
+impl<F: MetalField> OneHotWorkspace<'_, F> {
+    /// Commits `sources` with the A matrix `shape` views in `matrix`, at ring
+    /// degree `D`, and returns the borrowed rows and GPU time.
+    ///
+    /// The rows are canonical field elements in the CPU's order: source,
+    /// block, A row, coefficient. Source `i` contributes its
+    /// `ceil(2^num_vars / (D P))` blocks of `n_a` ring elements,
+    /// `P = active_a_cols / num_digits_inner` being the positions per block.
+    /// Shapes the kernel does not cover are rejected before the workspace is
+    /// resized or anything is encoded.
+    pub fn commit<const D: usize>(
+        &mut self,
+        matrix: &DeviceFlatMatrix<F>,
+        sources: &DeviceOneHotSources,
+        shape: OneHotCommitShape,
+        schedule: OneHotSchedule,
+    ) -> Result<(&mut DeviceBuffer<F>, Duration), AkitaMetalError> {
+        let metal = self.metal;
+        let geometry = Geometry::new::<D>(shape)?;
+        let pipeline = metal.pipeline(&commit_kernel::<F, D>()?)?;
+        let matrix_len = checked::product([geometry.rows, geometry.columns, D])
+            .ok_or_else(|| shape_overflow("A matrix"))?;
+        if matrix_len > matrix.coefficients.len() {
+            return Err(shape_error(format!(
+                "a {} x {} A matrix at D={D} needs {matrix_len} coefficients; the setup has {}",
+                geometry.rows,
+                geometry.columns,
+                matrix.coefficients.len()
+            )));
+        }
+        let max_lanes = OneHotSchedule::max_lanes::<F, D>(metal)?;
+        if !(1..=max_lanes).contains(&schedule.lanes) {
+            return Err(shape_error(format!(
+                "{} lanes is outside 1..={max_lanes}",
+                schedule.lanes
+            )));
+        }
+        let threads = checked::product([schedule.lanes, lane_threads::<D>()])
+            .ok_or_else(|| shape_overflow("threads per threadgroup"))?;
+        if schedule.segments == 0 {
+            return Err(shape_error("a schedule needs at least one segment"));
+        }
+        let group_blocks = checked::product([schedule.lanes, BLOCKS_PER_LANE])
+            .ok_or_else(|| shape_overflow("blocks per threadgroup"))?;
 
-    // Per-source dispatch parameters, then the output length they share.
-    let mut dispatches = Vec::with_capacity(sources.sources.len());
-    let mut len = 0usize;
-    for source in &sources.sources {
-        let blocks = geometry.blocks::<D>(source)?;
-        let block_groups = blocks.div_ceil(group_blocks);
-        // The kernel numbers blocks up to block_groups * group_blocks in 32
-        // bits.
-        to_u32(
-            checked::product([block_groups, group_blocks])
-                .ok_or_else(|| shape_overflow("blocks"))?,
-        )?;
-        let groups = checked::product([schedule.segments, geometry.rows, block_groups])
-            .ok_or_else(|| shape_overflow("threadgroups"))?;
-        let params = CommitParams {
-            chunks: to_u64(source.chunks)?,
-            fields: to_u64(source.fields)?,
-            hot_offset: to_u64(source.hot_offset)?,
-            out_offset: to_u64(len)?,
-            segment_stride: 0,
-            fold_terms: schedule.fold_terms,
-            log_chunk: source.log_chunk,
-            positions: to_u32(geometry.positions)?,
-            blocks: to_u32(blocks)?,
-            digits: to_u32(geometry.digits)?,
-            columns: to_u32(geometry.columns)?,
-            rows: to_u32(geometry.rows)?,
+        // Per-source dispatch parameters, then the output length they share.
+        let mut dispatches = Vec::with_capacity(sources.sources.len());
+        let mut len = 0usize;
+        for source in &sources.sources {
+            let blocks = geometry.blocks::<D>(source)?;
+            let block_groups = blocks.div_ceil(group_blocks);
+            // The kernel numbers blocks up to block_groups * group_blocks in
+            // 32 bits.
+            to_u32(
+                checked::product([block_groups, group_blocks])
+                    .ok_or_else(|| shape_overflow("blocks"))?,
+            )?;
+            let groups = checked::product([schedule.segments, geometry.rows, block_groups])
+                .ok_or_else(|| shape_overflow("threadgroups"))?;
+            let params = CommitParams {
+                chunks: to_u64(source.chunks)?,
+                fields: to_u64(source.fields)?,
+                hot_offset: to_u64(source.hot_offset)?,
+                out_offset: to_u64(len)?,
+                segment_stride: 0,
+                fold_terms: schedule.fold_terms,
+                log_chunk: source.log_chunk,
+                positions: to_u32(geometry.positions)?,
+                blocks: to_u32(blocks)?,
+                digits: to_u32(geometry.digits)?,
+                columns: to_u32(geometry.columns)?,
+                rows: to_u32(geometry.rows)?,
+                segments: to_u32(schedule.segments)?,
+                block_groups: to_u32(block_groups)?,
+            };
+            let grid_threads =
+                checked::product([groups, threads]).ok_or_else(|| shape_overflow("threads"))?;
+            to_u32(grid_threads)?;
+            dispatches.push((params, grid_threads));
+            len = checked::product([blocks, geometry.rows, D])
+                .and_then(|rows| len.checked_add(rows))
+                .ok_or_else(|| shape_overflow("output"))?;
+        }
+        let segment_stride = to_u64(len)?;
+        for (params, _) in &mut dispatches {
+            params.segment_stride = segment_stride;
+        }
+
+        let partials_len = (schedule.segments > 1)
+            .then(|| {
+                checked::product([schedule.segments, len])
+                    .ok_or_else(|| shape_overflow("segment partial sums"))
+            })
+            .transpose()?;
+        checked::product([len, size_of::<F>()]).ok_or_else(|| shape_overflow("output bytes"))?;
+        if let Some(partials_len) = partials_len {
+            checked::product([partials_len, size_of::<F>()])
+                .ok_or_else(|| shape_overflow("segment partial bytes"))?;
+        }
+        let combine_params = CombineParams {
+            len: segment_stride,
             segments: to_u32(schedule.segments)?,
-            block_groups: to_u32(block_groups)?,
+            pad: 0,
         };
-        let grid_threads =
-            checked::product([groups, threads]).ok_or_else(|| shape_overflow("threads"))?;
-        to_u32(grid_threads)?;
-        dispatches.push((params, grid_threads));
-        len = checked::product([blocks, geometry.rows, D])
-            .and_then(|rows| len.checked_add(rows))
-            .ok_or_else(|| shape_overflow("output"))?;
-    }
-    let segment_stride = to_u64(len)?;
-    for (params, _) in &mut dispatches {
-        params.segment_stride = segment_stride;
-    }
+        let combine_threads = checked::align_up(len, COMBINE_THREADS)
+            .ok_or_else(|| shape_overflow("segment-sum threads"))?;
+        to_u32(combine_threads)?;
+        let combine_pipeline = partials_len
+            .map(|_| metal.pipeline(&field_kernel(ONEHOT_COMBINE, F::HOST_SUFFIX)))
+            .transpose()?;
 
-    // With several segments the commitment kernel writes one partial sum per
-    // segment, and the segment-sum kernel adds them into `out`.
-    let device = metal.device();
-    let out = DeviceBuffer::<F>::zeroed(device, len)?;
-    let partials = if schedule.segments > 1 {
-        let partials_len = checked::product([schedule.segments, len])
-            .ok_or_else(|| shape_overflow("segment partial sums"))?;
-        Some(DeviceBuffer::<F>::zeroed(device, partials_len)?)
-    } else {
-        None
-    };
-    let combine_params = CombineParams {
-        len: segment_stride,
-        segments: to_u32(schedule.segments)?,
-        pad: 0,
-    };
-    let combine_threads = checked::align_up(len, COMBINE_THREADS)
-        .ok_or_else(|| shape_overflow("segment-sum threads"))?;
-    to_u32(combine_threads)?;
+        // Every shape and encoded width above is valid before retained state
+        // changes. Release mismatched buffers first to avoid holding the old
+        // and new working sets at once.
+        if self.out.as_ref().is_some_and(|out| out.len() != len) {
+            drop(self.out.take());
+        }
+        if self.partials.as_ref().map(DeviceBuffer::len) != partials_len {
+            drop(self.partials.take());
+        }
+        let device = metal.device();
+        if self.out.is_none() {
+            self.out = Some(DeviceBuffer::<F>::zeroed(device, len)?);
+        }
+        if let Some(partials_len) = partials_len {
+            if self.partials.is_none() {
+                self.partials = Some(DeviceBuffer::<F>::zeroed(device, partials_len)?);
+            }
+        }
 
-    let mut batch = Batch::new(device)?;
-    for (params, grid_threads) in &dispatches {
-        batch.dispatch(
-            pipeline,
-            &[
-                Binding::buffer(&matrix.coefficients),
-                Binding::buffer(&sources.hot),
-                Binding::buffer(partials.as_ref().unwrap_or(&out)),
-                Binding::value(params),
-            ],
-            Grid::linear(*grid_threads, threads),
-        )?;
+        let out = self
+            .out
+            .as_mut()
+            .ok_or_else(|| shape_error("the one-hot output workspace is unavailable"))?;
+        let partials = match partials_len {
+            Some(_) => Some(
+                self.partials
+                    .as_ref()
+                    .ok_or_else(|| shape_error("the one-hot partial workspace is unavailable"))?,
+            ),
+            None => None,
+        };
+        let mut batch = Batch::new(device)?;
+        for (params, grid_threads) in &dispatches {
+            batch.dispatch(
+                pipeline,
+                &[
+                    Binding::buffer(&matrix.coefficients),
+                    Binding::buffer(&sources.hot),
+                    Binding::buffer(partials.unwrap_or(&*out)),
+                    Binding::value(params),
+                ],
+                Grid::linear(*grid_threads, threads),
+            )?;
+        }
+        if let (Some(partials), Some(combine_pipeline)) = (partials, combine_pipeline) {
+            batch.dispatch(
+                combine_pipeline,
+                &[
+                    Binding::buffer(partials),
+                    Binding::buffer(&*out),
+                    Binding::value(&combine_params),
+                ],
+                Grid::linear(combine_threads, COMBINE_THREADS),
+            )?;
+        }
+        let time = batch.commit_and_wait()?;
+        Ok((out, time))
     }
-    if let Some(partials) = &partials {
-        batch.dispatch(
-            metal.pipeline(&field_kernel(ONEHOT_COMBINE, F::HOST_SUFFIX))?,
-            &[
-                Binding::buffer(partials),
-                Binding::buffer(&out),
-                Binding::value(&combine_params),
-            ],
-            Grid::linear(combine_threads, COMBINE_THREADS),
-        )?;
-    }
-    let time = batch.commit_and_wait()?;
-    Ok((out, time))
 }
 
 /// Threads of one lane at ring degree `D`.

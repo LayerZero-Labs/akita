@@ -10,7 +10,7 @@ use akita_algebra::CyclotomicRing;
 use akita_cpu_backend::benchmark_support::column_sweep_ajtai_onehot_multi;
 use akita_cpu_backend::{OneHotIndex, OneHotSource};
 use akita_metal::onehot::{
-    commit_onehot, DeviceFlatMatrix, DeviceOneHotSources, OneHotCommitShape, OneHotSchedule,
+    DeviceFlatMatrix, DeviceOneHotSources, OneHotCommitShape, OneHotSchedule, OneHotWorkspace,
 };
 use akita_metal::{AkitaMetal, ErrorClass};
 use akita_types::FlatMatrix;
@@ -130,6 +130,35 @@ fn model<F: Field, const D: usize>(
     out
 }
 
+fn cpu_words<F, I, const D: usize>(
+    matrix: &[F],
+    sources: &[OneHotSource<'_, I>],
+    shape: OneHotCommitShape,
+) -> Vec<F>
+where
+    F: Field + jolt_field::WithCommitAccumulator,
+    F::Wide: jolt_field::AdditiveGroup + From<F>,
+    I: OneHotIndex,
+{
+    let flat = FlatMatrix::from_flat_data(matrix.to_vec());
+    let view = flat
+        .ring_view::<D>(shape.n_a, shape.active_a_cols)
+        .expect("A view");
+    column_sweep_ajtai_onehot_multi::<F, D, I>(
+        &view,
+        sources,
+        shape.n_a,
+        shape.active_a_cols,
+        shape.num_digits_inner,
+    )
+    .expect("CPU sweep")
+    .into_iter()
+    .flatten()
+    .flatten()
+    .flat_map(|ring| *ring.coefficients())
+    .collect()
+}
+
 /// Commits `case` on the device under each schedule and compares every
 /// output word with both references.
 fn check<F, const D: usize>(
@@ -165,21 +194,12 @@ fn check<F, const D: usize>(
         })
         .collect();
 
-    let flat = FlatMatrix::from_flat_data(matrix.clone());
-    let view = flat.ring_view::<D>(case.n_a, columns).expect("A view");
-    let cpu: Vec<F> = column_sweep_ajtai_onehot_multi::<F, D, u32>(
-        &view,
-        &sources,
-        case.n_a,
-        columns,
-        case.digits,
-    )
-    .expect("CPU sweep")
-    .into_iter()
-    .flatten()
-    .flatten()
-    .flat_map(|ring| *ring.coefficients())
-    .collect();
+    let shape = OneHotCommitShape {
+        n_a: case.n_a,
+        active_a_cols: columns,
+        num_digits_inner: case.digits,
+    };
+    let cpu = cpu_words::<F, _, D>(&matrix, &sources, shape);
     assert_eq!(
         cpu,
         model::<F, D>(&matrix, case, &sources),
@@ -188,16 +208,12 @@ fn check<F, const D: usize>(
 
     let device_matrix = DeviceFlatMatrix::new(metal, &matrix).expect("upload A");
     let device_sources = DeviceOneHotSources::new(metal, &sources).expect("upload sources");
-    let shape = OneHotCommitShape {
-        n_a: case.n_a,
-        active_a_cols: columns,
-        num_digits_inner: case.digits,
-    };
     let default = OneHotSchedule::new::<F, D>(metal, &device_sources, shape).expect("schedule");
+    let mut workspace = OneHotWorkspace::new(metal);
     for &schedule in std::iter::once(&default).chain(schedules) {
-        let (mut rows, _) =
-            commit_onehot::<F, D>(metal, &device_matrix, &device_sources, shape, schedule)
-                .unwrap_or_else(|error| panic!("commit D={D} {schedule:?}: {error}"));
+        let (rows, _) = workspace
+            .commit::<D>(&device_matrix, &device_sources, shape, schedule)
+            .unwrap_or_else(|error| panic!("commit D={D} {schedule:?}: {error}"));
         assert!(
             rows.read().expect("canonical rows") == cpu.as_slice(),
             "D={D} {schedule:?} {case:?}"
@@ -336,17 +352,13 @@ fn narrow_indices_match_wide_ones() {
         num_digits_inner: 1,
     };
     let device_matrix = DeviceFlatMatrix::new(metal, &matrix).expect("upload A");
-    let rows = |sources: &DeviceOneHotSources| {
+    let mut workspace = OneHotWorkspace::new(metal);
+    let mut rows = |sources: &DeviceOneHotSources| {
         let schedule = OneHotSchedule::new::<Prime128OffsetA7F7, 256>(metal, sources, shape)
             .expect("schedule");
-        let (mut rows, _) = commit_onehot::<Prime128OffsetA7F7, 256>(
-            metal,
-            &device_matrix,
-            sources,
-            shape,
-            schedule,
-        )
-        .expect("commit");
+        let (rows, _) = workspace
+            .commit::<256>(&device_matrix, sources, shape, schedule)
+            .expect("commit");
         rows.read().expect("rows").to_vec()
     };
     fn upload<I: OneHotIndex>(metal: &AkitaMetal, indices: &[Option<I>]) -> DeviceOneHotSources {
@@ -395,8 +407,10 @@ fn clips_hot_entries_to_the_logical_source_length() {
         num_digits_inner: 1,
     };
     let schedule = OneHotSchedule::new::<F, 64>(metal, &sources, shape).expect("schedule");
-    let (mut rows, _) =
-        commit_onehot::<F, 64>(metal, &device_matrix, &sources, shape, schedule).expect("commit");
+    let mut workspace = OneHotWorkspace::new(metal);
+    let (rows, _) = workspace
+        .commit::<64>(&device_matrix, &sources, shape, schedule)
+        .expect("commit");
     assert_eq!(rows.read().expect("rows"), &[F::zero(); 2 * 64]);
 }
 
@@ -422,14 +436,14 @@ fn rejects_unsupported_shapes_before_encoding() {
         num_digits_inner: 1,
     };
     let fine = schedule(1, 1, u64::MAX);
-    let class = |result: Result<_, akita_metal::AkitaMetalError>| {
-        result
-            .map(|_: (jolt_metal::runtime::DeviceBuffer<F>, _)| ())
-            .expect_err("rejected")
-            .class()
+    let class =
+        |result: Result<(), akita_metal::AkitaMetalError>| result.expect_err("rejected").class();
+    let mut workspace = OneHotWorkspace::new(metal);
+    let mut commit = |shape, schedule| {
+        workspace
+            .commit::<64>(&matrix, &sources, shape, schedule)
+            .map(|_| ())
     };
-    let commit =
-        |shape, schedule| commit_onehot::<F, 64>(metal, &matrix, &sources, shape, schedule);
     // The same call is accepted.
     commit(shape, fine).expect("valid shape");
     // Positions per block that are not a power of two.
@@ -475,9 +489,12 @@ fn rejects_unsupported_shapes_before_encoding() {
     // Ring degrees without a kernel: one below the transform degrees, and
     // fp128 at D = 1024, whose A columns exceed a tile.
     assert_eq!(
-        class(commit_onehot::<F, 32>(
-            metal, &matrix, &sources, shape, fine
-        )),
+        class({
+            drop(commit);
+            workspace
+                .commit::<32>(&matrix, &sources, shape, fine)
+                .map(|_| ())
+        }),
         ErrorClass::Setup
     );
     let error =
@@ -505,6 +522,148 @@ fn rejects_unsupported_shapes_before_encoding() {
     }
 }
 
+#[test]
+fn workspace_overwrites_and_resizes_across_calls() {
+    const D: usize = 64;
+    type F = Prime64Offset59;
+
+    let test = gpu();
+    let metal = &test.metal;
+    let mut rng = StdRng::seed_from_u64(0xa110_ca7e);
+    let matrix_a: Vec<F> = (0..16 * D).map(|_| F::random(&mut rng)).collect();
+    let matrix_b: Vec<F> = (0..16 * D).map(|_| F::random(&mut rng)).collect();
+    let device_matrix_a = DeviceFlatMatrix::new(metal, &matrix_a).expect("upload A");
+    let device_matrix_b = DeviceFlatMatrix::new(metal, &matrix_b).expect("upload B");
+
+    let indices_a: Vec<Option<u32>> = (0..64).map(|index| Some(index * 7 % 64)).collect();
+    let indices_b: Vec<Option<u32>> = (0..64)
+        .map(|index| (index % 5 != 0).then_some(index * 11 % 64))
+        .collect();
+    let source_a = [OneHotSource {
+        indices: &indices_a,
+        chunk_size: 64,
+        num_vars: 12,
+    }];
+    let source_b = [OneHotSource {
+        indices: &indices_b,
+        chunk_size: 64,
+        num_vars: 12,
+    }];
+    let device_source_a = DeviceOneHotSources::new(metal, &source_a).expect("upload source A");
+    let device_source_b = DeviceOneHotSources::new(metal, &source_b).expect("upload source B");
+    let empty = DeviceOneHotSources::new(metal, &[] as &[OneHotSource<'_, u32>])
+        .expect("upload empty source group");
+
+    let large = OneHotCommitShape {
+        n_a: 1,
+        active_a_cols: 16,
+        num_digits_inner: 1,
+    };
+    let small = OneHotCommitShape {
+        active_a_cols: 8,
+        ..large
+    };
+    let mut workspace = OneHotWorkspace::new(metal);
+
+    let expected_large_a = cpu_words::<F, _, D>(&matrix_a, &source_a, large);
+    let got = {
+        let (rows, _) = workspace
+            .commit::<D>(
+                &device_matrix_a,
+                &device_source_a,
+                large,
+                schedule(1, 3, u64::MAX),
+            )
+            .expect("initial multi-segment commit");
+        rows.read().expect("initial rows").to_vec()
+    };
+    assert_eq!(got, expected_large_a);
+
+    // A rejected shape must not prevent the retained valid shape from being
+    // used again.
+    let invalid = OneHotCommitShape {
+        active_a_cols: 12,
+        ..large
+    };
+    let error = workspace
+        .commit::<D>(
+            &device_matrix_a,
+            &device_source_a,
+            invalid,
+            schedule(1, 3, u64::MAX),
+        )
+        .err()
+        .expect("invalid shape rejected");
+    assert_eq!(error.class(), ErrorClass::Setup);
+    let got = {
+        let (rows, _) = workspace
+            .commit::<D>(
+                &device_matrix_a,
+                &device_source_a,
+                large,
+                schedule(1, 3, u64::MAX),
+            )
+            .expect("valid recovery");
+        rows.read().expect("recovered rows").to_vec()
+    };
+    assert_eq!(got, expected_large_a);
+
+    for segments in [1, 4] {
+        let (rows, _) = workspace
+            .commit::<D>(
+                &device_matrix_a,
+                &empty,
+                large,
+                schedule(1, segments, u64::MAX),
+            )
+            .expect("empty source group");
+        assert!(rows.read().expect("empty rows").is_empty());
+    }
+
+    let expected_small_a = cpu_words::<F, _, D>(&matrix_a, &source_a, small);
+    let got = {
+        let (rows, _) = workspace
+            .commit::<D>(
+                &device_matrix_a,
+                &device_source_a,
+                small,
+                schedule(1, 1, u64::MAX),
+            )
+            .expect("smaller single-segment commit");
+        rows.read().expect("small rows").to_vec()
+    };
+    assert_eq!(got, expected_small_a);
+
+    let expected_large_b = cpu_words::<F, _, D>(&matrix_b, &source_b, large);
+    let got = {
+        let (rows, _) = workspace
+            .commit::<D>(
+                &device_matrix_b,
+                &device_source_b,
+                large,
+                schedule(1, 5, u64::MAX),
+            )
+            .expect("regrown changed-input commit");
+        rows.read().expect("regrown rows").to_vec()
+    };
+    assert_eq!(got, expected_large_b);
+
+    // Same-sized retained buffers must overwrite the prior matrix/source
+    // result rather than accumulate stale data.
+    let got = {
+        let (rows, _) = workspace
+            .commit::<D>(
+                &device_matrix_a,
+                &device_source_a,
+                large,
+                schedule(1, 5, u64::MAX),
+            )
+            .expect("same-size overwrite");
+        rows.read().expect("overwritten rows").to_vec()
+    };
+    assert_eq!(got, expected_large_a);
+}
+
 /// An empty group commits to no rows, as the CPU sweep does.
 #[test]
 fn no_sources_commit_to_no_rows() {
@@ -518,15 +677,11 @@ fn no_sources_commit_to_no_rows() {
         active_a_cols: 8,
         num_digits_inner: 1,
     };
+    let mut workspace = OneHotWorkspace::new(metal);
     for segments in [1, 3] {
-        let (mut rows, _) = commit_onehot::<F, 128>(
-            metal,
-            &matrix,
-            &sources,
-            shape,
-            schedule(1, segments, u64::MAX),
-        )
-        .expect("commit");
+        let (rows, _) = workspace
+            .commit::<128>(&matrix, &sources, shape, schedule(1, segments, u64::MAX))
+            .expect("commit");
         assert!(rows.read().expect("rows").is_empty());
     }
 }
