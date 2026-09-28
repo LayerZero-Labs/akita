@@ -136,7 +136,7 @@ fn cpu_words<F, I, const D: usize>(
     shape: OneHotCommitShape,
 ) -> Vec<F>
 where
-    F: Field + jolt_field::WithCommitAccumulator,
+    F: Field + jolt_field::CanonicalEncoding + jolt_field::WithCommitAccumulator,
     F::Wide: jolt_field::AdditiveGroup + From<F>,
     I: OneHotIndex,
 {
@@ -490,7 +490,6 @@ fn rejects_unsupported_shapes_before_encoding() {
     // fp128 at D = 1024, whose A columns exceed a tile.
     assert_eq!(
         class({
-            drop(commit);
             workspace
                 .commit::<32>(&matrix, &sources, shape, fine)
                 .map(|_| ())
@@ -554,36 +553,36 @@ fn workspace_overwrites_and_resizes_across_calls() {
     let empty = DeviceOneHotSources::new(metal, &[] as &[OneHotSource<'_, u32>])
         .expect("upload empty source group");
 
-    let large = OneHotCommitShape {
+    let wide = OneHotCommitShape {
         n_a: 1,
         active_a_cols: 16,
         num_digits_inner: 1,
     };
-    let small = OneHotCommitShape {
+    let narrow = OneHotCommitShape {
         active_a_cols: 8,
-        ..large
+        ..wide
     };
     let mut workspace = OneHotWorkspace::new(metal);
 
-    let expected_large_a = cpu_words::<F, _, D>(&matrix_a, &source_a, large);
+    let expected_wide_a = cpu_words::<F, _, D>(&matrix_a, &source_a, wide);
     let got = {
         let (rows, _) = workspace
             .commit::<D>(
                 &device_matrix_a,
                 &device_source_a,
-                large,
+                wide,
                 schedule(1, 3, u64::MAX),
             )
             .expect("initial multi-segment commit");
         rows.read().expect("initial rows").to_vec()
     };
-    assert_eq!(got, expected_large_a);
+    assert_eq!(got, expected_wide_a);
 
     // A rejected shape must not prevent the retained valid shape from being
     // used again.
     let invalid = OneHotCommitShape {
         active_a_cols: 12,
-        ..large
+        ..wide
     };
     let error = workspace
         .commit::<D>(
@@ -600,53 +599,53 @@ fn workspace_overwrites_and_resizes_across_calls() {
             .commit::<D>(
                 &device_matrix_a,
                 &device_source_a,
-                large,
+                wide,
                 schedule(1, 3, u64::MAX),
             )
             .expect("valid recovery");
         rows.read().expect("recovered rows").to_vec()
     };
-    assert_eq!(got, expected_large_a);
+    assert_eq!(got, expected_wide_a);
 
     for segments in [1, 4] {
         let (rows, _) = workspace
             .commit::<D>(
                 &device_matrix_a,
                 &empty,
-                large,
+                wide,
                 schedule(1, segments, u64::MAX),
             )
             .expect("empty source group");
         assert!(rows.read().expect("empty rows").is_empty());
     }
 
-    let expected_small_a = cpu_words::<F, _, D>(&matrix_a, &source_a, small);
+    let expected_narrow_a = cpu_words::<F, _, D>(&matrix_a, &source_a, narrow);
     let got = {
         let (rows, _) = workspace
             .commit::<D>(
                 &device_matrix_a,
                 &device_source_a,
-                small,
+                narrow,
                 schedule(1, 1, u64::MAX),
             )
-            .expect("smaller single-segment commit");
-        rows.read().expect("small rows").to_vec()
+            .expect("narrower single-segment commit (larger output)");
+        rows.read().expect("narrow rows").to_vec()
     };
-    assert_eq!(got, expected_small_a);
+    assert_eq!(got, expected_narrow_a);
 
-    let expected_large_b = cpu_words::<F, _, D>(&matrix_b, &source_b, large);
+    let expected_wide_b = cpu_words::<F, _, D>(&matrix_b, &source_b, wide);
     let got = {
         let (rows, _) = workspace
             .commit::<D>(
                 &device_matrix_b,
                 &device_source_b,
-                large,
+                wide,
                 schedule(1, 5, u64::MAX),
             )
-            .expect("regrown changed-input commit");
-        rows.read().expect("regrown rows").to_vec()
+            .expect("shrunk changed-input commit");
+        rows.read().expect("shrunk rows").to_vec()
     };
-    assert_eq!(got, expected_large_b);
+    assert_eq!(got, expected_wide_b);
 
     // Same-sized retained buffers must overwrite the prior matrix/source
     // result rather than accumulate stale data.
@@ -655,13 +654,58 @@ fn workspace_overwrites_and_resizes_across_calls() {
             .commit::<D>(
                 &device_matrix_a,
                 &device_source_a,
-                large,
+                wide,
                 schedule(1, 5, u64::MAX),
             )
             .expect("same-size overwrite");
         rows.read().expect("overwritten rows").to_vec()
     };
-    assert_eq!(got, expected_large_a);
+    assert_eq!(got, expected_wide_a);
+
+    // Empty hot entries retain the same output shape and must overwrite all
+    // old nonzero values, unlike an empty source group with no output.
+    let no_hot = vec![None::<u32>; indices_a.len()];
+    let zero_sources = DeviceOneHotSources::new(
+        metal,
+        &[OneHotSource {
+            indices: &no_hot,
+            chunk_size: 64,
+            num_vars: 12,
+        }],
+    )
+    .expect("zero source");
+    let (rows, _) = workspace
+        .commit::<D>(
+            &device_matrix_a,
+            &zero_sources,
+            wide,
+            schedule(1, 5, u64::MAX),
+        )
+        .expect("same-size zero overwrite");
+    assert_eq!(
+        rows.read().expect("zero rows"),
+        vec![F::zero(); expected_wide_a.len()]
+    );
+    let (rows, _) = workspace
+        .commit::<D>(
+            &device_matrix_b,
+            &device_source_b,
+            wide,
+            schedule(1, 5, u64::MAX),
+        )
+        .expect("same-size nonzero overwrite");
+    assert_eq!(rows.read().expect("nonzero rows"), expected_wide_b);
+
+    // Narrower matrix width means more output blocks: regrow after shrink.
+    let (rows, _) = workspace
+        .commit::<D>(
+            &device_matrix_a,
+            &device_source_a,
+            narrow,
+            schedule(1, 3, u64::MAX),
+        )
+        .expect("regrow output");
+    assert_eq!(rows.read().expect("regrown rows"), expected_narrow_a);
 }
 
 /// An empty group commits to no rows, as the CPU sweep does.

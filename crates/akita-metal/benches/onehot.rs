@@ -5,7 +5,9 @@
 //! with `n_A = 1` and one digit column per position (the fp128 and fp64
 //! one-hot schedules' root rows). Each shape checks the device rows against
 //! the CPU's before timing. GPU samples are command-buffer execution time;
-//! CPU samples are wall time of `column_sweep_ajtai_onehot_multi` on all
+//! Resident wall samples reuse output/scratch buffers; fresh-workspace wall
+//! samples include their allocation and destruction. Matrix/source uploads and
+//! shader compilation are outside both. CPU samples time `column_sweep_ajtai_onehot_multi` on all
 //! cores. Before timing, each shape prints its work: one hot entry adds
 //! `n_A D` coefficients, each read once from threadgroup memory.
 //!
@@ -20,7 +22,7 @@ mod bench {
     use akita_cpu_backend::benchmark_support::column_sweep_ajtai_onehot_multi;
     use akita_cpu_backend::OneHotSource;
     use akita_metal::onehot::{
-        commit_onehot, DeviceFlatMatrix, DeviceOneHotSources, OneHotCommitShape, OneHotSchedule,
+        DeviceFlatMatrix, DeviceOneHotSources, OneHotCommitShape, OneHotSchedule, OneHotWorkspace,
     };
     use akita_metal::AkitaMetal;
     use akita_types::FlatMatrix;
@@ -87,17 +89,10 @@ mod bench {
         let upload = upload.elapsed();
         let schedule =
             OneHotSchedule::new::<F, D>(metal, &device_sources, commit_shape).expect("schedule");
-        let gpu = || {
-            commit_onehot::<F, D>(
-                metal,
-                &device_matrix,
-                &device_sources,
-                commit_shape,
-                schedule,
-            )
-            .expect("commit")
-        };
-        let (mut rows, _) = gpu();
+        let mut workspace = OneHotWorkspace::<F>::new(metal);
+        let (rows, _) = workspace
+            .commit::<D>(&device_matrix, &device_sources, commit_shape, schedule)
+            .expect("commit");
         assert!(
             rows.read().expect("canonical rows") == expected.as_slice(),
             "{}: device rows differ from the CPU",
@@ -117,8 +112,34 @@ mod bench {
         let mut group = c.benchmark_group("onehot_commit");
         group.sample_size(10);
         group.throughput(Throughput::Elements(hot as u64));
-        group.bench_function(BenchmarkId::new("gpu", shape.name), |b| {
-            b.iter_custom(|iters| (0..iters).map(|_| gpu().1).sum::<Duration>())
+        group.bench_function(BenchmarkId::new("resident_gpu", shape.name), |b| {
+            b.iter_custom(|iters| {
+                (0..iters)
+                    .map(|_| {
+                        workspace
+                            .commit::<D>(&device_matrix, &device_sources, commit_shape, schedule)
+                            .expect("commit")
+                            .1
+                    })
+                    .sum::<Duration>()
+            });
+        });
+        group.bench_function(BenchmarkId::new("resident_wall", shape.name), |b| {
+            b.iter(|| {
+                workspace
+                    .commit::<D>(&device_matrix, &device_sources, commit_shape, schedule)
+                    .expect("commit")
+                    .1
+            });
+        });
+        group.bench_function(BenchmarkId::new("fresh_workspace_wall", shape.name), |b| {
+            b.iter(|| {
+                let mut fresh = OneHotWorkspace::<F>::new(metal);
+                fresh
+                    .commit::<D>(&device_matrix, &device_sources, commit_shape, schedule)
+                    .expect("commit")
+                    .1
+            });
         });
         group.bench_function(BenchmarkId::new("cpu", shape.name), |b| b.iter(cpu));
         group.finish();
@@ -145,6 +166,15 @@ mod bench {
         ] {
             bench_shape::<Prime128OffsetA7F7, 256>(c, &metal, &shape);
         }
+        bench_shape::<Prime128OffsetA7F7, 512>(
+            c,
+            &metal,
+            &Shape {
+                name: "fp128_nv28_d512",
+                num_vars: 28,
+                positions: 4096,
+            },
+        );
         bench_shape::<Prime128OffsetA7F7, 512>(
             c,
             &metal,

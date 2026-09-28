@@ -286,8 +286,8 @@ pub struct OneHotSchedule {
 /// one [`AkitaMetal`] device.
 ///
 /// The first [`commit`](Self::commit) allocates exact-sized buffers. Later
-/// calls of the same shape reuse them; a changed output length or segment
-/// count releases the obsolete allocation before replacing it. Borrowing the
+/// calls reuse them while the required exact sizes match. An obsolete
+/// allocation is released before its replacement is allocated. Borrowing the
 /// workspace mutably serializes use, and the device borrow prevents callers
 /// from pairing retained buffers with a different [`AkitaMetal`] instance.
 pub struct OneHotWorkspace<'device, F> {

@@ -99,6 +99,16 @@ decomposition returns the same typed state. Matvec consumes that state directly;
 it cannot receive an independently supplied basis that would price CRT capacity
 for a smaller range than the stored digits.
 
+One-hot commitments run through `OneHotWorkspace::commit`. The workspace borrows
+its `AkitaMetal` device and exclusively owns reusable output and segment-partial
+buffers. Calls validate geometry and encoded sizes before changing retained
+storage, reuse exact-sized buffers, and release obsolete buffers when the required
+exact sizes change.
+The kernels overwrite every logical output and partial before reading retained
+contents, so steady-state calls need no buffer clearing. Returned rows borrow the
+workspace until the caller finishes using them. This replaces the earlier
+allocating `commit_onehot` function; there is one canonical execution path.
+
 ### Testing
 
 Each kernel has a differential test against the CPU function it replaces, for
@@ -120,7 +130,10 @@ backend on every core (wall time) on the same inputs, after checking that all
 outputs match one shared CPU oracle. Matvec reports full-profile and
 planner-selected limb/profile variants on those inputs. Device matrix
 preparation is reported in a separate benchmark group, so transform/upload cost
-is not folded into steady-state multiplication. Each kernel pull request states
+is not folded into steady-state multiplication. One-hot benchmarks separately
+report resident GPU time, resident call wall time, and fresh-workspace wall time
+including buffer allocation and destruction. Matrix/source uploads and shader
+compilation are outside these call measurements. Each kernel pull request states
 the hardware, the command, the work per element and the bounding limit, measured
 with `jolt-metal`'s `limits` benchmark on the same machine.
 
