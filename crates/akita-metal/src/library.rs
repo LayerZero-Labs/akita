@@ -3,7 +3,9 @@
 
 use std::fmt::Write;
 
-use jolt_metal::runtime::{Device, LibrarySpec, Pipeline, ShaderLibrary};
+use akita_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
+use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
+use jolt_metal::runtime::{Device, LibrarySpec, MslType, Pipeline, ShaderLibrary};
 use jolt_metal::shaders::FIELD_HEADERS;
 
 use crate::error::AkitaMetalError;
@@ -15,16 +17,23 @@ pub const RING_DEGREES: [usize; 5] = [64, 128, 256, 512, 1024];
 /// Akita's MSL headers, in dependency order. They follow `jolt-metal`'s
 /// field headers in a library, since runtime-compiled source cannot
 /// `#include` repository paths.
-pub const HEADERS: [(&str, &str); 2] = [
+pub const HEADERS: [(&str, &str); 3] = [
     ("akita/mont.h", include_str!("../shaders/akita/mont.h")),
     ("akita/ntt.h", include_str!("../shaders/akita/ntt.h")),
+    ("akita/crt.h", include_str!("../shaders/akita/crt.h")),
 ];
 
 /// Kernel sources.
-const KERNELS: [(&str, &str); 1] = [(
-    "akita/ntt.metal",
-    include_str!("../shaders/akita/ntt.metal"),
-)];
+const KERNELS: [(&str, &str); 2] = [
+    (
+        "akita/ntt.metal",
+        include_str!("../shaders/akita/ntt.metal"),
+    ),
+    (
+        "akita/crt.metal",
+        include_str!("../shaders/akita/crt.metal"),
+    ),
+];
 
 /// Kernel templates instantiated once per ring degree.
 const RING_DEGREE_TEMPLATES: [&str; 2] = ["akita_ntt_forward", "akita_ntt_inverse"];
@@ -45,17 +54,33 @@ pub(crate) fn ring_degree_kernel(template: &str, ring_degree: usize) -> String {
     format!("{template}_d{ring_degree}")
 }
 
+/// The host name of the CRT reconstruction into `F` from `primes` residues.
+pub(crate) fn crt_kernel<F: MslType>(primes: usize) -> String {
+    format!("akita_crt_reconstruct_k{primes}_{}", F::HOST_SUFFIX)
+}
+
+fn crt_instance<F: MslType>(primes: usize) -> Instance {
+    Instance {
+        template: "akita_crt_reconstruct",
+        args: format!("{}, {primes}", F::MSL_NAME),
+        host_name: crt_kernel::<F>(primes),
+    }
+}
+
 fn instances() -> Vec<Instance> {
-    RING_DEGREE_TEMPLATES
-        .iter()
-        .flat_map(|&template| {
-            RING_DEGREES.iter().map(move |&ring_degree| Instance {
-                template,
-                args: ring_degree.to_string(),
-                host_name: ring_degree_kernel(template, ring_degree),
-            })
+    let transforms = RING_DEGREE_TEMPLATES.iter().flat_map(|&template| {
+        RING_DEGREES.iter().map(move |&ring_degree| Instance {
+            template,
+            args: ring_degree.to_string(),
+            host_name: ring_degree_kernel(template, ring_degree),
         })
-        .collect()
+    });
+    // Each field preset reconstructs from its own CRT profile.
+    let reconstructions = [
+        crt_instance::<Prime128OffsetA7F7>(Q128_NUM_PRIMES),
+        crt_instance::<Prime64Offset59>(Q64_NUM_PRIMES),
+    ];
+    transforms.chain(reconstructions).collect()
 }
 
 fn library_spec() -> LibrarySpec {

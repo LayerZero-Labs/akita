@@ -117,6 +117,7 @@ machine.
 | Kernel | Status | CPU reference |
 |---|---|---|
 | Negacyclic NTT, forward and inverse, `D` in 64..1024, any CRT profile of 30-bit primes | done | `akita_algebra::ntt::butterfly` |
+| Garner CRT reconstruction into the field (fp128 over Q128, fp64 over Q64) | done | `CyclotomicCrtNtt::to_ring` |
 
 ## Acceptance criteria
 

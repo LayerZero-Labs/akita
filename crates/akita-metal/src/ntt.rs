@@ -50,6 +50,11 @@ pub struct DeviceCrtNtt<const K: usize, const D: usize> {
     pub(crate) primes: DeviceBuffer<DevicePrime>,
     /// `[K][4][D]` words: `NttTwiddles::negacyclic_tables` per prime.
     pub(crate) tables: DeviceBuffer<i32>,
+    /// `[K][K]` words: the Garner inverse `p_j^-1 mod p_i` in prime `i`'s
+    /// Montgomery form at `[i][j]` for `j < i`, zero elsewhere.
+    pub(crate) gamma: DeviceBuffer<i32>,
+    /// The primes, for field-side constants.
+    pub(crate) moduli: [NttPrime<i32>; K],
 }
 
 impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
@@ -70,9 +75,25 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
             .flat_map(|twiddles| twiddles.negacyclic_tables())
             .flat_map(|table| table.iter().map(|coefficient| coefficient.raw()))
             .collect::<Vec<_>>();
+        let gamma = params
+            .primes
+            .iter()
+            .zip(&params.garner.gamma)
+            .flat_map(|(prime, row)| {
+                row.iter().map(|&inverse| {
+                    // Garner inverses are canonical residues below p < 2^30.
+                    let canonical = i32::try_from(inverse).map_err(|_| {
+                        AkitaMetalError::Shape(format!("Garner inverse {inverse} exceeds i32"))
+                    })?;
+                    Ok(prime.from_canonical(canonical).raw())
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaMetalError>>()?;
         Ok(Self {
             primes: DeviceBuffer::from_slice(metal.device(), &primes)?,
             tables: DeviceBuffer::from_slice(metal.device(), &tables)?,
+            gamma: DeviceBuffer::from_slice(metal.device(), &gamma)?,
+            moduli: params.primes,
         })
     }
 
@@ -129,7 +150,9 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
 
 /// The number of ring elements and of `(element, prime)` rows in a buffer
 /// of `len` words.
-fn rows<const K: usize, const D: usize>(len: usize) -> Result<(usize, usize), AkitaMetalError> {
+pub(crate) fn rows<const K: usize, const D: usize>(
+    len: usize,
+) -> Result<(usize, usize), AkitaMetalError> {
     let element = K.checked_mul(D).filter(|&words| words > 0);
     element
         .and_then(|words| akita_error::checked::exact_div(len, words))
@@ -141,6 +164,6 @@ fn rows<const K: usize, const D: usize>(len: usize) -> Result<(usize, usize), Ak
         })
 }
 
-fn shape_overflow(value: usize) -> AkitaMetalError {
+pub(crate) fn shape_overflow(value: usize) -> AkitaMetalError {
     AkitaMetalError::Shape(format!("{value} exceeds the 32-bit dispatch range"))
 }
