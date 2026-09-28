@@ -127,6 +127,7 @@ pub(crate) const NO_HOT: u32 = u32::MAX;
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct CommitParams {
     chunks: u64,
+    fields: u64,
     hot_offset: u64,
     out_offset: u64,
     segment_stride: u64,
@@ -172,6 +173,7 @@ impl<F: MetalField> DeviceFlatMatrix<F> {
 struct SourceLayout {
     hot_offset: usize,
     chunks: usize,
+    fields: usize,
     log_chunk: u32,
     num_vars: usize,
 }
@@ -210,9 +212,19 @@ impl DeviceOneHotSources {
                     "one-hot chunk size {chunk_size} is not a power of two below 2^32"
                 )));
             }
+            let fields = u32::try_from(source.num_vars)
+                .ok()
+                .and_then(|num_vars| 1usize.checked_shl(num_vars))
+                .ok_or_else(|| {
+                    shape_error(format!(
+                        "2^{} one-hot entries overflow the host address space",
+                        source.num_vars
+                    ))
+                })?;
             layouts.push(SourceLayout {
                 hot_offset: hot.len(),
                 chunks: source.indices.len(),
+                fields,
                 log_chunk: chunk_size.trailing_zeros(),
                 num_vars: source.num_vars,
             });
@@ -361,16 +373,12 @@ impl Geometry {
     /// The source's live blocks: its `2^num_vars / D` ring elements in
     /// blocks of `positions`, as the CPU's `OneHotSource::view_layout`.
     fn blocks<const D: usize>(&self, source: &SourceLayout) -> Result<usize, AkitaMetalError> {
-        let rings = u32::try_from(source.num_vars)
-            .ok()
-            .and_then(|num_vars| 1usize.checked_shl(num_vars))
-            .and_then(|fields| checked::exact_div(fields, D))
-            .ok_or_else(|| {
-                shape_error(format!(
-                    "2^{} one-hot entries are not a whole number of D={D} ring elements",
-                    source.num_vars
-                ))
-            })?;
+        let rings = checked::exact_div(source.fields, D).ok_or_else(|| {
+            shape_error(format!(
+                "2^{} one-hot entries are not a whole number of D={D} ring elements",
+                source.num_vars
+            ))
+        })?;
         checked::div_ceil(rings, self.positions).ok_or_else(|| shape_overflow("blocks"))
     }
 }
@@ -433,6 +441,7 @@ pub fn commit_onehot<F: MetalField, const D: usize>(
             .ok_or_else(|| shape_overflow("threadgroups"))?;
         let params = CommitParams {
             chunks: to_u64(source.chunks)?,
+            fields: to_u64(source.fields)?,
             hot_offset: to_u64(source.hot_offset)?,
             out_offset: to_u64(len)?,
             segment_stride: 0,

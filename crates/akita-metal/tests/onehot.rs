@@ -14,7 +14,7 @@ use akita_metal::onehot::{
 };
 use akita_metal::{AkitaMetal, ErrorClass};
 use akita_types::FlatMatrix;
-use jolt_field::{Field, One, Prime128OffsetA7F7, Prime64Offset59};
+use jolt_field::{Field, One, Prime128OffsetA7F7, Prime64Offset59, Zero};
 use jolt_metal::MetalField;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -358,6 +358,46 @@ fn narrow_indices_match_wide_ones() {
         DeviceOneHotSources::new(metal, &[source]).expect("upload")
     }
     assert_eq!(rows(&upload(metal, &wide)), rows(&upload(metal, &narrow)));
+}
+
+/// Backing chunks outside a source's logical `2^num_vars` coefficients do
+/// not contribute, including the case where the final chunk straddles the
+/// logical boundary.
+#[test]
+fn clips_hot_entries_to_the_logical_source_length() {
+    let test = gpu();
+    let metal = &test.metal;
+    type F = Prime64Offset59;
+
+    // Two constant A columns: an out-of-view entry would select A[1] = 1.
+    let mut matrix = vec![F::zero(); 2 * 64];
+    matrix[64] = F::one();
+    let device_matrix = DeviceFlatMatrix::new(metal, &matrix).expect("upload A");
+
+    let extra_chunk = [None, Some(0u32)];
+    let straddling_chunk = [Some(64u32)];
+    let borrowed = [
+        OneHotSource {
+            indices: &extra_chunk,
+            chunk_size: 64,
+            num_vars: 6,
+        },
+        OneHotSource {
+            indices: &straddling_chunk,
+            chunk_size: 128,
+            num_vars: 6,
+        },
+    ];
+    let sources = DeviceOneHotSources::new(metal, &borrowed).expect("upload sources");
+    let shape = OneHotCommitShape {
+        n_a: 1,
+        active_a_cols: 2,
+        num_digits_inner: 1,
+    };
+    let schedule = OneHotSchedule::new::<F, 64>(metal, &sources, shape).expect("schedule");
+    let (mut rows, _) =
+        commit_onehot::<F, 64>(metal, &device_matrix, &sources, shape, schedule).expect("commit");
+    assert_eq!(rows.read().expect("rows"), &[F::zero(); 2 * 64]);
 }
 
 #[test]

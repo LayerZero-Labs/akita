@@ -73,6 +73,8 @@ struct SignedSum {
 struct OneHotCommitParams {
     // Chunks of the source; later chunks do not exist.
     ulong chunks;
+    // Logical field entries in the source; backing chunks may extend past it.
+    ulong fields;
     // Index of the source's chunk 0 in `hot`.
     ulong hot_offset;
     // Index of the source's first output coefficient in `out`.
@@ -218,7 +220,8 @@ template <typename F,
                     if (h != NO_HOT) {
                         ulong field = (chunk << params.log_chunk) + h;
                         // Chunks larger than the tile also cover other rings.
-                        if (field >= first_field && field - first_field < tile_fields) {
+                        if (field < params.fields && field >= first_field
+                            && field - first_field < tile_fields) {
                             entry = ushort(field - first_field);
                         }
                     }
