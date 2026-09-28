@@ -68,6 +68,7 @@ pub mod benchmark_support {
     };
     #[cfg(feature = "labinius-trinomial")]
     pub use crate::kernels::trinomial_relation::TrinomialRelationQuotientBuilder;
+    pub use crate::sources::onehot::column_sweep_ajtai_onehot_multi;
     pub use crate::sources::poly_helpers::{
         balanced_ring_decompose_fold_partitioned, DecomposeParams,
     };

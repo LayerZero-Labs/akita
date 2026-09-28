@@ -107,6 +107,7 @@ dependencies = [
  "criterion",
  "jolt-field",
  "jolt-metal",
+ "rand 0.8.8",
  "rayon",
  "thiserror",
 ]

@@ -13,6 +13,8 @@ readme = "../../README.md"
 # `AkitaMetal::new` reports `Unavailable`.
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+# The one-hot kernel takes the CPU backend's one-hot sources directly.
+akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 bytemuck = { version = "1.16", features = ["derive"] }
@@ -24,17 +26,27 @@ jolt-metal = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 thiserror = "2.0"
 
 [dev-dependencies]
-# The CPU backend is the reference every kernel is tested and benchmarked
-# against; it is never a normal dependency.
-akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend" }
+# The CPU backend is also the reference every kernel is tested and
+# benchmarked against, with its parallel kernels.
+akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false, features = [
+  "parallel",
+] }
 criterion = { version = "0.8", features = ["html_reports"] }
+rand = "0.8"
 rayon = "1.10"
 
 [features]
 default = ["transcript-blake2b"]
-# akita-types needs exactly one transcript backend; forward the choice.
-transcript-blake2b = ["akita-types/transcript-blake2b"]
-transcript-keccak = ["akita-types/transcript-keccak"]
+# akita-types and akita-cpu-backend need exactly one transcript backend;
+# forward the choice.
+transcript-blake2b = [
+  "akita-types/transcript-blake2b",
+  "akita-cpu-backend/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-types/transcript-keccak",
+  "akita-cpu-backend/transcript-keccak",
+]
 
 [[bench]]
 name = "ntt"
@@ -42,6 +54,10 @@ harness = false
 
 [[bench]]
 name = "matvec"
+harness = false
+
+[[bench]]
+name = "onehot"
 harness = false
 
 [lints]

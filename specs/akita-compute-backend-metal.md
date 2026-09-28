@@ -56,8 +56,10 @@ pinned to the same revision as `jolt-field`) for the device runtime, the error
 model and the MSL field arithmetic, and adds Akita's ring and commitment kernels
 on top. `scripts/check-crate-deps.sh` keeps both crates out of the verifier,
 prover, CPU backend, config, planner and setup graphs, and keeps the verifier,
-planner, setup and PCS crates out of `akita-metal`. The CPU backend is a
-development dependency only, as the test and benchmark reference.
+planner, setup and PCS crates out of `akita-metal`. `akita-metal` depends on
+`akita-cpu-backend` for the prover's source types (one-hot sources today, the
+commitment stage traits next) and uses it as the test and benchmark reference;
+the CPU backend never depends on `akita-metal`.
 
 On targets without Metal the crate compiles against `jolt-metal`'s uninhabited
 backend, and `AkitaMetal::new` returns an error of class `Unavailable`.
@@ -97,6 +99,16 @@ decomposition returns the same typed state. Matvec consumes that state directly;
 it cannot receive an independently supplied basis that would price CRT capacity
 for a smaller range than the stored digits.
 
+One-hot commitments run through `OneHotWorkspace::commit`. The workspace borrows
+its `AkitaMetal` device and exclusively owns reusable output and segment-partial
+buffers. Calls validate geometry and encoded sizes before changing retained
+storage, reuse exact-sized buffers, and release obsolete buffers when the required
+exact sizes change.
+The kernels overwrite every logical output and partial before reading retained
+contents, so steady-state calls need no buffer clearing. Returned rows borrow the
+workspace until the caller finishes using them. This replaces the earlier
+allocating `commit_onehot` function; there is one canonical execution path.
+
 ### Testing
 
 Each kernel has a differential test against the CPU function it replaces, for
@@ -118,7 +130,10 @@ backend on every core (wall time) on the same inputs, after checking that all
 outputs match one shared CPU oracle. Matvec reports full-profile and
 planner-selected limb/profile variants on those inputs. Device matrix
 preparation is reported in a separate benchmark group, so transform/upload cost
-is not folded into steady-state multiplication. Each kernel pull request states
+is not folded into steady-state multiplication. One-hot benchmarks separately
+report resident GPU time, resident call wall time, and fresh-workspace wall time
+including buffer allocation and destruction. Matrix/source uploads and shader
+compilation are outside these call measurements. Each kernel pull request states
 the hardware, the command, the work per element and the bounding limit, measured
 with `jolt-metal`'s `limits` benchmark on the same machine.
 
@@ -130,6 +145,7 @@ with `jolt-metal`'s `limits` benchmark on the same machine.
 | Garner CRT reconstruction into the field (fp128 over Q128, fp64 over Q64) | done | `CyclotomicCrtNtt::to_ring` |
 | NTT matvec over i8 and i16 digit planes, with CRT segments past capacity | done | `mat_vec_mul_ntt_digits_i8`, `PreparedNttCache::mat_vec_i16` |
 | Balanced digit decomposition into i8 and i16 planes | done | `decompose_rows_i8_into`, `CyclotomicRing::balanced_decompose_pow2_i16_into` |
+| One-hot inner commitment (fp128 at `D` 64..512, fp64 at 64..1024) | done | `column_sweep_ajtai_onehot_multi` |
 
 The matvec's digit transforms need only residues congruent to the CPU's, so
 they use Harvey's lazy radix-4 butterflies with Shoup products and
