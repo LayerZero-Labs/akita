@@ -167,3 +167,34 @@ pub(crate) fn rows<const K: usize, const D: usize>(
 pub(crate) fn shape_overflow(value: usize) -> AkitaMetalError {
     AkitaMetalError::Shape(format!("{value} exceeds the 32-bit dispatch range"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::rows;
+
+    #[test]
+    fn accepted_shapes_can_cross_the_32_bit_word_boundary() {
+        const D: usize = 64;
+
+        let first_wide_row = usize::try_from(u32::MAX).expect("usize holds u32") / D + 1;
+        let len = (first_wide_row + 1) * D;
+        let (elements, row_count) = rows::<1, D>(len).expect("whole ring buffer");
+
+        assert_eq!(elements, first_wide_row + 1);
+        assert_eq!(row_count, first_wide_row + 1);
+        assert_eq!(first_wide_row * D, 1usize << 32);
+    }
+
+    #[test]
+    fn shader_promotes_global_bases_before_multiplication() {
+        const SOURCE: &str = include_str!("../shaders/akita/ntt.metal");
+
+        assert_eq!(SOURCE.matches("data + ulong(row) * D").count(), 2);
+        assert_eq!(
+            SOURCE
+                .matches("tables + ulong(prime) * NttTables::COUNT * D")
+                .count(),
+            2
+        );
+    }
+}
