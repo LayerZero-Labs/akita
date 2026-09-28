@@ -366,11 +366,8 @@ where
                 )
             })
             .transpose()?;
-        let ordinary_claim = plan.relation_claim() + plan.physical_l2_claim()
-            - additional.as_ref().map_or_else(
-                E::zero,
-                relation_range_image::AdditionalRelationTerms::input_claim,
-            );
+        let relation_linear_claim =
+            plan.relation_claim() + plan.physical_l2_claim() + plan.linear_opening_claim();
         let relation_weights = match weights.ordinary {
             crate::opaque::RelationWeightDescription::QuotientFactored(weights) => {
                 relation_range_image::RelationWeightOracle::QuotientFactored(weights)
@@ -389,7 +386,6 @@ where
         let live_lane_count = plan.live_lane_count();
         let lane_bits = plan.lane_bits();
         let coefficient_bits = plan.coefficient_bits();
-        let linear_opening_claim = plan.linear_opening_claim();
         let mut linear_terms = match plan.into_linear_terms() {
             crate::opaque::Stage2OpeningDescription::EvaluationTrace {
                 trace,
@@ -436,9 +432,8 @@ where
             live_lane_count,
             lane_bits,
             coefficient_bits,
-            ordinary_claim,
+            relation_linear_claim,
             linear_terms,
-            linear_opening_claim,
             additional,
         )?;
         let claim = akita_sumcheck::SumcheckInstanceProver::input_claim(&prover);

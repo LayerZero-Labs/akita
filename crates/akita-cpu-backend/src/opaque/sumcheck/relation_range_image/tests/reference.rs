@@ -92,7 +92,7 @@ fn check_configuration(coefficient_bits: usize, live_lanes: usize, mode: WeightM
             }
         })
         .collect::<Vec<_>>();
-    let relation_claim = witness
+    let relation_claim: F = witness
         .iter()
         .zip(&relation)
         .map(|(&w, &p)| F::from_i64(i64::from(w)) * p)
@@ -144,6 +144,9 @@ fn check_configuration(coefficient_bits: usize, live_lanes: usize, mode: WeightM
         )
         .unwrap()
     });
+    let additional_claim = additional
+        .as_ref()
+        .map_or_else(F::zero, |terms| terms.input_claim(&packed_witness));
     let mut prover = RelationRangeImageProver::new(
         gamma,
         packed_witness,
@@ -154,9 +157,8 @@ fn check_configuration(coefficient_bits: usize, live_lanes: usize, mode: WeightM
         live_lanes,
         lane_bits,
         coefficient_bits,
-        relation_claim,
+        relation_claim + direct.evaluation_trace + additional_claim,
         structured,
-        direct.evaluation_trace,
         additional,
     )
     .unwrap();
@@ -324,7 +326,6 @@ fn factored_response_norm_source_matches_dense_reference_through_all_transitions
         coefficient_bits,
         base_relation_claim + binding_claim,
         linear_terms,
-        F::zero(),
         None,
     )
     .unwrap();

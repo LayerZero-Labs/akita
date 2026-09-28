@@ -133,7 +133,7 @@ fn multi_task_rounds_and_binds_match_serial_reference() {
         .iter()
         .map(|&digit| F::from_i64(i64::from(digit)))
         .collect::<Vec<_>>();
-    let mut claim = terms.input_claim();
+    let mut claim = terms.input_claim(&packed_witness);
     for round in 0..6u64 {
         let polynomial = if round == 0 {
             terms
@@ -227,7 +227,7 @@ fn round_polynomial_matches_boolean_sum_and_fold() {
         rho,
     )
     .unwrap();
-    assert_eq!(prover.input_claim(), claim);
+    assert_eq!(prover.input_claim(&packed_witness), claim);
     let polynomial = prover
         .round_message_compact(packed_witness.view(), &[])
         .into_polynomial(claim);
@@ -264,7 +264,7 @@ fn nonbinary_digit_inside_support_contributes_a_nonzero_constraint() {
     )
     .unwrap();
     assert_eq!(
-        invalid.input_claim(),
+        invalid.input_claim(&invalid_witness),
         rho * eq_eval_at_index(&equality_point, 0) * F::from_u64(6)
     );
 
@@ -272,7 +272,7 @@ fn nonbinary_digit_inside_support_contributes_a_nonzero_constraint() {
     let valid =
         AdditionalRelationTerms::new(&valid_witness, 2, Vec::new(), support, &equality_point, rho)
             .unwrap();
-    assert_eq!(valid.input_claim(), F::zero());
+    assert_eq!(valid.input_claim(&valid_witness), F::zero());
 }
 
 #[test]

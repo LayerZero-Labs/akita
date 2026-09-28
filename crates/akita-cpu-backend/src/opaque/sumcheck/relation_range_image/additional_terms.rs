@@ -69,7 +69,6 @@ fn parent_pairs<E: Field>(
 pub(crate) struct AdditionalRelationTerms<E: Field> {
     weights: Vec<SparseWeight<E>>,
     binary_batching: E,
-    input_claim: E,
     domain_len: usize,
 }
 
@@ -203,25 +202,24 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
                 (None, None) => break,
             }
         }
-        let input_claim = cfg_iter!(weights)
+        Ok(Self {
+            weights,
+            binary_batching,
+            domain_len,
+        })
+    }
+
+    #[cfg(any(debug_assertions, test))]
+    pub(crate) fn input_claim(&self, compact_witness: &PackedSignedDigits) -> E {
+        cfg_iter!(self.weights)
             .map(|weight| {
                 let witness = compact_witness
                     .get(weight.index)
                     .map_or_else(E::zero, |value| E::from_i64(i64::from(value)));
                 witness * weight.linear
-                    + binary_batching * weight.binary * witness * (witness + E::one())
+                    + self.binary_batching * weight.binary * witness * (witness + E::one())
             })
-            .sum::<E>();
-        Ok(Self {
-            weights,
-            binary_batching,
-            input_claim,
-            domain_len,
-        })
-    }
-
-    pub(crate) fn input_claim(&self) -> E {
-        self.input_claim
+            .sum::<E>()
     }
 
     /// Accumulate the value at one and the top two coefficients directly.

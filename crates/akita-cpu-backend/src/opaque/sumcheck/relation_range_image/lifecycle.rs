@@ -48,7 +48,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             coefficient_bits,
             E::zero(),
             PreparedProverLinearTerms::zero(live_lanes, coeff_count),
-            E::zero(),
             None,
         )
     }
@@ -66,9 +65,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         live_lane_count: usize,
         lane_bits: usize,
         coefficient_bits: usize,
-        relation_claim: E,
+        relation_linear_claim: E,
         linear_terms: PreparedProverLinearTerms<E>,
-        linear_opening_claim: E,
         additional_relation_terms: Option<AdditionalRelationTerms<E>>,
     ) -> Result<Self, AkitaError>
     where
@@ -168,8 +166,11 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                         structured + witness * linear_terms.get(lane, coefficient, coeff_count),
                     )
                 });
-            if ordinary_relation_sum + structured_relation_sum
-                != relation_claim + linear_opening_claim
+            let additional_claim = additional_relation_terms
+                .as_ref()
+                .map_or_else(E::zero, |terms| terms.input_claim(&w_evals_compact));
+            if ordinary_relation_sum + structured_relation_sum + additional_claim
+                != relation_linear_claim
             {
                 return Err(AkitaError::InvalidInput(
                     "materialized relation weights do not match the combined relation claim".into(),
@@ -177,12 +178,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             }
         }
 
-        let relation_linear_claim = relation_claim + linear_opening_claim;
-        let additional_claim = additional_relation_terms
-            .as_ref()
-            .map_or_else(E::zero, AdditionalRelationTerms::input_claim);
-        let input_claim =
-            batching_coeff * range_image_evaluation + relation_linear_claim + additional_claim;
+        let input_claim = batching_coeff * range_image_evaluation + relation_linear_claim;
         let split_eq = GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?;
         let phase = match relation_weights {
             RelationWeightOracle::QuotientFactored(weights) => {
