@@ -116,6 +116,7 @@ enum Phase<E: Field> {
     Coefficient {
         witness: WitnessState<E>,
         relation: CoefficientRelation<E>,
+        relation_moments: Option<CoefficientRelationMoments<E>>,
     },
     /// Lane rounds on the folded witness.
     Lane {
@@ -296,7 +297,7 @@ pub(crate) use evaluation_trace::{
 };
 use lane_product::LaneProduct;
 pub(crate) use prepared_linear_lane::PreparedLinearLane;
-use quotient_prefix::CompactQuotientPrefix;
+use quotient_prefix::{CoefficientRelationMoments, CompactQuotientPrefix};
 pub(crate) use weight_oracle::{DenseRelationWeights, RelationWeightOracle};
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {

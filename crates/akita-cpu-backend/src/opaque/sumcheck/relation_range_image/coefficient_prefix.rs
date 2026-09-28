@@ -17,19 +17,41 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         );
 
         if self.can_skip_norm_linear_coeff() {
-            self.compute_compact_partial_lane_coefficient_round_terms_skip_linear::<true>(
+            self.compute_compact_partial_lane_coefficient_round_terms_skip_linear::<true, false>(
                 compact_witness,
                 weights,
             )
         } else {
-            self.compute_compact_partial_lane_coefficient_round_terms_skip_linear::<false>(
+            self.compute_compact_partial_lane_coefficient_round_terms_skip_linear::<false, false>(
                 compact_witness,
                 weights,
             )
         }
     }
 
-    fn compute_compact_partial_lane_coefficient_round_terms_skip_linear<const SKIP_LINEAR: bool>(
+    pub(super) fn compute_compact_partial_lane_coefficient_round_norm_terms(
+        &self,
+        compact_witness: PackedSignedDigitView<'_>,
+        weights: &RelationWeightFactorization<E>,
+    ) -> NormRoundTerms<E> {
+        let terms = if self.can_skip_norm_linear_coeff() {
+            self.compute_compact_partial_lane_coefficient_round_terms_skip_linear::<true, true>(
+                compact_witness,
+                weights,
+            )
+        } else {
+            self.compute_compact_partial_lane_coefficient_round_terms_skip_linear::<false, true>(
+                compact_witness,
+                weights,
+            )
+        };
+        terms.0
+    }
+
+    fn compute_compact_partial_lane_coefficient_round_terms_skip_linear<
+        const SKIP_LINEAR: bool,
+        const SKIP_RELATION: bool,
+    >(
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         weights: &RelationWeightFactorization<E>,
@@ -51,8 +73,12 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             ),
             |(mut virt, mut rel), lane| {
                 let lane_start = lane * common_alpha_factor.len();
-                let lane_weight = relation_lane_weights[lane];
-                let linear_lane = self.linear_terms.resolve_lane(lane);
+                let lane_weight = if SKIP_RELATION {
+                    E::zero()
+                } else {
+                    relation_lane_weights[lane]
+                };
+                let linear_lane = (!SKIP_RELATION).then(|| self.linear_terms.resolve_lane(lane));
                 let equality_address_base = lane * current_coefficient_half;
                 let mut blk = 0usize;
 
@@ -79,16 +105,21 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
                         inner_virt.add(w0_i64, dw_i64, e_in);
 
-                        let p0 = common_alpha_factor[left] * lane_weight;
-                        let p1 = common_alpha_factor[left + 1] * lane_weight;
-                        let (t0, t1) = linear_lane.pair(left);
-                        accumulate_relation_coeffs_signed(
-                            &mut rel,
-                            w0_i64,
-                            dw_i64,
-                            p0 + t0,
-                            p1 + t1,
-                        );
+                        if !SKIP_RELATION {
+                            let p0 = common_alpha_factor[left] * lane_weight;
+                            let p1 = common_alpha_factor[left + 1] * lane_weight;
+                            let (t0, t1) = linear_lane
+                                .as_ref()
+                                .expect("relation lane is resolved when relation work is enabled")
+                                .pair(left);
+                            accumulate_relation_coeffs_signed(
+                                &mut rel,
+                                w0_i64,
+                                dw_i64,
+                                p0 + t0,
+                                p1 + t1,
+                            );
+                        }
                     }
 
                     virt.scaled_add(e_second[j_high], inner_virt.reduce());
@@ -123,19 +154,41 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         );
 
         if self.can_skip_norm_linear_coeff() {
-            self.compute_folded_partial_lane_coefficient_round_terms_skip_linear::<true>(
+            self.compute_folded_partial_lane_coefficient_round_terms_skip_linear::<true, false>(
                 folded_witness,
                 weights,
             )
         } else {
-            self.compute_folded_partial_lane_coefficient_round_terms_skip_linear::<false>(
+            self.compute_folded_partial_lane_coefficient_round_terms_skip_linear::<false, false>(
                 folded_witness,
                 weights,
             )
         }
     }
 
-    fn compute_folded_partial_lane_coefficient_round_terms_skip_linear<const SKIP_LINEAR: bool>(
+    pub(super) fn compute_folded_partial_lane_coefficient_round_norm_terms(
+        &self,
+        folded_witness: &[E],
+        weights: &RelationWeightFactorization<E>,
+    ) -> NormRoundTerms<E> {
+        let terms = if self.can_skip_norm_linear_coeff() {
+            self.compute_folded_partial_lane_coefficient_round_terms_skip_linear::<true, true>(
+                folded_witness,
+                weights,
+            )
+        } else {
+            self.compute_folded_partial_lane_coefficient_round_terms_skip_linear::<false, true>(
+                folded_witness,
+                weights,
+            )
+        };
+        terms.0
+    }
+
+    fn compute_folded_partial_lane_coefficient_round_terms_skip_linear<
+        const SKIP_LINEAR: bool,
+        const SKIP_RELATION: bool,
+    >(
         &self,
         folded_witness: &[E],
         weights: &RelationWeightFactorization<E>,
@@ -156,10 +209,14 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 let lane_start = lane * common_alpha_factor.len();
                 let lane_values =
                     &folded_witness[lane_start..lane_start + common_alpha_factor.len()];
-                let lane_weight = relation_lane_weights[lane];
-                let linear_lane = self.linear_terms.resolve_lane(lane);
                 let equality_address_base = lane * current_coefficient_half;
                 let mut lane_rel = [ProductSum::<E>::zero(); 3];
+                let lane_weight = if SKIP_RELATION {
+                    E::zero()
+                } else {
+                    relation_lane_weights[lane]
+                };
+                let linear_lane = (!SKIP_RELATION).then(|| self.linear_terms.resolve_lane(lane));
                 let mut blk = 0usize;
 
                 while blk < current_coefficient_half {
@@ -183,24 +240,31 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
                         inner_virt.add(w0, dw, e_in);
 
-                        let p0 = common_alpha_factor[left] * lane_weight;
-                        let p1 = common_alpha_factor[left + 1] * lane_weight;
-                        let (t0, t1) = linear_lane.pair(left);
-                        let q0 = p0 + t0;
-                        let q1 = p1 + t1;
-                        let dq = q1 - q0;
-                        lane_rel[0].add(w0, q0);
-                        lane_rel[1].add(w0, dq);
-                        lane_rel[1].add(dw, q0);
-                        lane_rel[2].add(dw, dq);
+                        if !SKIP_RELATION {
+                            let p0 = common_alpha_factor[left] * lane_weight;
+                            let p1 = common_alpha_factor[left + 1] * lane_weight;
+                            let (t0, t1) = linear_lane
+                                .as_ref()
+                                .expect("relation lane is resolved when relation work is enabled")
+                                .pair(left);
+                            let q0 = p0 + t0;
+                            let q1 = p1 + t1;
+                            let dq = q1 - q0;
+                            lane_rel[0].add(w0, q0);
+                            lane_rel[1].add(w0, dq);
+                            lane_rel[1].add(dw, q0);
+                            lane_rel[2].add(dw, dq);
+                        }
                     }
 
                     virt.scaled_add(e_second[j_high], inner_virt.reduce());
                     blk = blk_end;
                 }
 
-                for (sum, product_sum) in rel.iter_mut().zip(lane_rel) {
-                    *sum += product_sum.finish();
+                if !SKIP_RELATION {
+                    for (sum, product_sum) in rel.iter_mut().zip(lane_rel) {
+                        *sum += product_sum.finish();
+                    }
                 }
                 (virt, rel)
             },

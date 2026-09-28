@@ -186,6 +186,18 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let split_eq = GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?;
         let phase = match relation_weights {
             RelationWeightOracle::QuotientFactored(weights) => {
+                let relation_moments =
+                    if b == 32 && coefficient_bits > 0 && live_lane_count < lane_capacity {
+                        CoefficientRelationMoments::from_basis32(
+                            &w_evals_compact,
+                            weights.relation_lane_weights(),
+                            &linear_terms,
+                            live_lane_count,
+                            coeff_count,
+                        )
+                    } else {
+                        None
+                    };
                 let engine = CompactQuotientPrefix::new(
                     &w_evals_compact,
                     weights.relation_lane_weights(),
@@ -206,12 +218,14 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     None => Phase::Coefficient {
                         witness: WitnessState::CompactPrefix(w_evals_compact),
                         relation: CoefficientRelation::Factored(weights),
+                        relation_moments,
                     },
                 }
             }
             RelationWeightOracle::ReducedDense(weights) => Phase::Coefficient {
                 witness: WitnessState::CompactPrefix(w_evals_compact),
                 relation: CoefficientRelation::ReducedDense(weights),
+                relation_moments: None,
             },
         };
 
@@ -276,6 +290,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 Phase::Coefficient {
                     witness: WitnessState::FoldedSuffix(folded),
                     relation: CoefficientRelation::Factored(weights),
+                    relation_moments: None,
                 }
             }
             phase => phase,
@@ -285,7 +300,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             return phase;
         }
         match phase {
-            Phase::Coefficient { witness, relation } => self.enter_lane_phase(witness, relation),
+            Phase::Coefficient {
+                witness, relation, ..
+            } => self.enter_lane_phase(witness, relation),
             phase => phase,
         }
     }
@@ -473,6 +490,27 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     #[cfg(test)]
+    pub(super) fn disable_factored_relation_moments(&mut self) {
+        if let Some(Phase::Coefficient {
+            relation_moments, ..
+        }) = self.phase.as_mut()
+        {
+            *relation_moments = None;
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_factored_relation_moments(&self) -> bool {
+        matches!(
+            self.phase.as_ref(),
+            Some(Phase::Coefficient {
+                relation_moments: Some(_),
+                ..
+            })
+        )
+    }
+
+    #[cfg(test)]
     pub(super) fn disable_compact_quotient_prefix(&mut self) {
         let Some(phase) = self.phase.take() else {
             return;
@@ -483,6 +521,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             } => Phase::Coefficient {
                 witness: WitnessState::CompactPrefix(witness),
                 relation: CoefficientRelation::Factored(weights),
+                relation_moments: None,
             },
             phase => phase,
         });

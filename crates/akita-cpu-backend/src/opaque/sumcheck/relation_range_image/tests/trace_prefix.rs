@@ -49,11 +49,10 @@ pub(super) fn two_source_linear_terms(
 
 #[test]
 fn stage2_two_shared_sources_match_direct_path_through_all_transitions() {
-    let lane_bits = 5usize;
     let coefficient_bits = 4usize;
-    let live_lane_count = 19usize;
     let coeff_count = 1usize << coefficient_bits;
-    for b in [8usize, 32] {
+    // The larger case crosses both scan-chunk and parallel task boundaries.
+    for (b, lane_bits, live_lane_count) in [(8usize, 5usize, 19usize), (32, 5, 19), (32, 10, 641)] {
         let half = (b / 2) as i8;
         let compact_witness = (0..live_lane_count * coeff_count)
             .map(|index| ((13 * index + 3) % b) as i8 - half)
@@ -85,6 +84,7 @@ fn stage2_two_shared_sources_match_direct_path_through_all_transitions() {
             params,
         );
         assert_eq!(optimized.compact_quotient_prefix().is_some(), b == 8);
+        assert_eq!(optimized.has_factored_relation_moments(), b == 32);
         let (structured, _) = two_source_linear_terms(live_lane_count, coeff_count);
         let mut direct = new_stage2_test_prover_with_linear_terms(
             F::from_u64(701),
@@ -96,6 +96,8 @@ fn stage2_two_shared_sources_match_direct_path_through_all_transitions() {
             params,
         );
         direct.disable_compact_quotient_prefix();
+        direct.disable_factored_relation_moments();
+        assert!(!direct.has_factored_relation_moments());
 
         let mut optimized_claim = optimized.input_claim();
         let mut direct_claim = direct.input_claim();

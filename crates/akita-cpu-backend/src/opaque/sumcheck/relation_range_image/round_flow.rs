@@ -29,6 +29,7 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
             Phase::Coefficient {
                 witness,
                 relation: CoefficientRelation::ReducedDense(dense),
+                ..
             } => {
                 let (virt_terms, rel_terms) = match witness {
                     WitnessState::CompactPrefix(compact_witness) => self
@@ -47,9 +48,29 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
             Phase::Coefficient {
                 witness,
                 relation: CoefficientRelation::Factored(weights),
+                relation_moments,
             } => {
-                let (poly, norm) = self.compute_quotient_round_from_state(witness, weights);
-                RoundComputation::Polynomials(poly, norm)
+                if let Some(moments) = relation_moments {
+                    let virt_terms = match witness {
+                        WitnessState::CompactPrefix(compact_witness) => self
+                            .compute_compact_partial_lane_coefficient_round_norm_terms(
+                                compact_witness.view(),
+                                weights,
+                            ),
+                        WitnessState::FoldedSuffix(folded_witness) => self
+                            .compute_folded_partial_lane_coefficient_round_norm_terms(
+                                folded_witness,
+                                weights,
+                            ),
+                    };
+                    RoundComputation::Terms(
+                        virt_terms,
+                        moments.relation_coeffs(weights.common_alpha_factor(), &self.linear_terms),
+                    )
+                } else {
+                    let (poly, norm) = self.compute_quotient_round_from_state(witness, weights);
+                    RoundComputation::Polynomials(poly, norm)
+                }
             }
             Phase::Lane { witness, lane } => {
                 let (norm, relation) = lane
@@ -160,6 +181,7 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
         Phase::Coefficient {
             witness: WitnessState::FoldedSuffix(witness),
             relation: CoefficientRelation::ReducedDense(weights),
+            relation_moments: None,
         }
     }
 
@@ -170,10 +192,14 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
         &mut self,
         witness: WitnessState<E>,
         mut weights: RelationWeightFactorization<E>,
+        mut relation_moments: Option<CoefficientRelationMoments<E>>,
         r: E,
     ) -> Phase<E> {
         self.split_eq.bind(r);
         self.linear_terms.fold_coefficients(r);
+        if let Some(moments) = &mut relation_moments {
+            moments.bind(r);
+        }
         let coeff_count = weights.common_alpha_factor().len();
         let partial_lanes = self.use_partial_lane_coefficient_round();
         let fuse_next_round = partial_lanes && self.rounds_completed + 1 < self.coefficient_bits();
@@ -186,15 +212,29 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
                 Self::materialize_compact_witness(compact_view, &fold_lut)
             }
             WitnessState::FoldedSuffix(folded_witness) if fuse_next_round => {
-                let (next_folded_witness, virt_terms, rel_coeffs) = self
-                    .fuse_folded_coefficients_and_compute_next_round(
-                        &folded_witness,
-                        &weights,
-                        &next_alpha_factor,
-                        r,
-                    );
-                self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
-                next_folded_witness
+                if let Some(moments) = &relation_moments {
+                    let (next_folded_witness, virt_terms) = self
+                        .fuse_folded_coefficients_and_compute_next_round_norm_terms(
+                            &folded_witness,
+                            &weights,
+                            &next_alpha_factor,
+                            r,
+                        );
+                    let rel_coeffs =
+                        moments.relation_coeffs(&next_alpha_factor, &self.linear_terms);
+                    self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
+                    next_folded_witness
+                } else {
+                    let (next_folded_witness, virt_terms, rel_coeffs) = self
+                        .fuse_folded_coefficients_and_compute_next_round(
+                            &folded_witness,
+                            &weights,
+                            &next_alpha_factor,
+                            r,
+                        );
+                    self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
+                    next_folded_witness
+                }
             }
             WitnessState::FoldedSuffix(folded_witness) if partial_lanes => {
                 Self::fold_folded_coefficients(
@@ -213,6 +253,7 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
         Phase::Coefficient {
             witness: WitnessState::FoldedSuffix(folded_witness),
             relation: CoefficientRelation::Factored(weights),
+            relation_moments,
         }
     }
 }
@@ -269,10 +310,12 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
             Phase::Coefficient {
                 witness,
                 relation: CoefficientRelation::Factored(weights),
-            } => self.ingest_factored_coefficient_challenge(witness, weights, r),
+                relation_moments,
+            } => self.ingest_factored_coefficient_challenge(witness, weights, relation_moments, r),
             Phase::Coefficient {
                 witness,
                 relation: CoefficientRelation::ReducedDense(weights),
+                ..
             } => self.ingest_reduced_dense_challenge(witness, weights, r),
             Phase::Lane { witness, lane } => self.ingest_lane_product_challenge(witness, lane, r),
         };
