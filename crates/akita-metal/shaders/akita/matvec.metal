@@ -70,8 +70,8 @@ template <uint D, typename Digit, uint BLOCK_TILE, uint ROW_TILE>
         }
     }
 
+    PlainForward<D> forward = PlainForward<D>::load(prime_tables, lane);
     for (uint col = col0; col < col1; col++) {
-        // Digits enter Montgomery form: d R mod p, in (-p, p).
         for (uint t = 0; t < BLOCK_TILE; t++) {
             uint block = block0 + t;
             int d0 = 0;
@@ -81,10 +81,11 @@ template <uint D, typename Digit, uint BLOCK_TILE, uint ROW_TILE>
                 d0 = int(plane[lane]);
                 d1 = int(plane[lane + HALF]);
             }
-            x[t * D + lane] = mont_mul(q, d0, q.montsq);
-            x[t * D + lane + HALF] = mont_mul(q, d1, q.montsq);
+            x[t * D + lane] = d0;
+            x[t * D + lane + HALF] = d1;
         }
-        forward_negacyclic<D, BLOCK_TILE>(x, q, prime_tables, lane);
+        // |digit| <= 2^15 and |psi^i R^2| < p, so the fused twist applies.
+        forward.template apply<BLOCK_TILE>(x, q, lane);
         // Guards instead of early exits keep every accumulator index static,
         // so the accumulators stay in registers.
         for (uint r = 0; r < ROW_TILE; r++) {

@@ -79,6 +79,15 @@ inline int center(NttPrime q, int a) {
     return a - (((half_p - a) >> 31) & q.p);
 }
 
+// Shoup's product w v mod p for a constant w: with w_shoup = floor(w 2^32 / p)
+// and any v < 2^32, returns a value in [0, 2p) congruent to w v. Needs
+// p < 2^31 and w in [0, p). Three multiplies against Montgomery's four, and
+// the result is unsigned, which lets Harvey's butterflies stay in [0, 2p).
+inline uint shoup_mul(uint v, uint w, uint w_shoup, uint p) {
+    uint quotient = metal::mulhi(v, w_shoup);
+    return v * w - quotient * p;
+}
+
 } // namespace akita
 
 #endif // AKITA_MONT_H
