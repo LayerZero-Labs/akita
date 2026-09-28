@@ -272,7 +272,7 @@ pub struct OneHotSchedule {
 
 impl OneHotSchedule {
     /// The most lanes a schedule for `F` at ring degree `D` may use:
-    /// [`MAX_LANES`], or fewer when the kernel's registers limit its
+    /// `MAX_LANES`, or fewer when the kernel's registers limit its
     /// threadgroups.
     pub fn max_lanes<F: MetalField, const D: usize>(
         metal: &AkitaMetal,
@@ -286,9 +286,9 @@ impl OneHotSchedule {
     }
 
     /// The default schedule for committing `sources` at ring degree `D`:
-    /// [`DEFAULT_LANES`] lanes, or fewer when the blocks run out, then
-    /// enough segments to keep [`TARGET_THREADGROUPS`] threadgroups in
-    /// flight while each segment keeps [`MIN_SEGMENT_POSITIONS`] positions.
+    /// `DEFAULT_LANES` lanes, or fewer when the blocks run out, then
+    /// enough segments to keep `TARGET_THREADGROUPS` threadgroups in
+    /// flight while each segment keeps `MIN_SEGMENT_POSITIONS` positions.
     pub fn new<F: MetalField, const D: usize>(
         metal: &AkitaMetal,
         sources: &DeviceOneHotSources,
