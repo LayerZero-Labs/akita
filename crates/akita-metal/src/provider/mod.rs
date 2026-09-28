@@ -186,9 +186,13 @@ pub struct MetalCommitmentProvider<F: CommitmentField> {
     planes_i16: Mutex<Option<Shared<DeviceBuffer<i16>>>>,
 }
 
-/// Default digit-plane bytes per dense inner chunk: the fp128 dense nv26
-/// root (1 GiB of `i16` planes) runs as one chunk, larger sources in several.
-pub const DEFAULT_DENSE_CHUNK_BYTES: usize = 1 << 30;
+/// Default digit-plane bytes per dense inner chunk (512 MiB): the fp128 dense
+/// nv24 root (384 MiB of `i16` planes) runs as one chunk, and larger sources
+/// run in several, each staged on the host while the GPU works on the one
+/// before it. On an M4, dense nv26 (1 GiB of planes) took 350 ms as one
+/// chunk, 341 ms as two and 329 ms as four, while 256 MiB chunks slowed
+/// nv24 from 104 to 124 ms.
+pub const DEFAULT_DENSE_CHUNK_BYTES: usize = 1 << 29;
 
 impl<F: CommitmentField> MetalCommitmentProvider<F> {
     /// Opens the system GPU and compiles the kernels.

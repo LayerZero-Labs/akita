@@ -264,54 +264,84 @@ impl<F: CommitmentField> MetalCommitmentProvider<F> {
         let mut rows =
             Vec::with_capacity(checked::product([total_blocks, row_fields]).ok_or_else(overflow)?);
         let mut device_rows = None;
+        let mut ranges = Vec::new();
         let mut first = 0;
         while first < total_blocks {
             let count = chunk_blocks.min(total_blocks.saturating_sub(first));
-            let coefficients = stage_blocks(
-                metal,
-                &slices,
+            let end = checked::sum([first, count]).ok_or_else(overflow)?;
+            ranges.push(first..end);
+            first = end;
+        }
+        // Staging copies a chunk's coefficients into device memory on the
+        // host; it runs on a scoped thread for the next chunk while the GPU
+        // decomposes and multiplies the current one.
+        let shared_metal = &self.metal;
+        let slices = &slices;
+        let stage = |range: std::ops::Range<usize>| {
+            stage_blocks(
+                shared_metal.get(),
+                slices,
                 plan.num_live_blocks,
                 block_fields,
-                first..checked::sum([first, count]).ok_or_else(overflow)?,
-            )?;
-            let digits = checked::product([coefficients.len(), plan.num_digits_inner])
-                .ok_or_else(overflow)?;
-            let mut out = DeviceBuffer::<F>::zeroed(
-                metal.device(),
-                checked::product([count, row_fields]).ok_or_else(overflow)?,
+                range,
             )
-            .map_err(AkitaMetalError::from)?;
-            if plan.log_basis_inner <= i8::MAX_LOG_BASIS {
-                let mut slot = lock_scratch(&self.planes_i8)?;
-                let planes = scratch_planes(&mut slot, metal, digits)?;
-                decompose(
-                    metal,
-                    &coefficients,
-                    D,
-                    plan.num_digits_inner,
-                    plan.log_basis_inner,
-                    planes,
-                )?;
-                matrix.mat_vec_i8(metal, planes, plan.log_basis_inner, &mut out)?;
-            } else {
-                let mut slot = lock_scratch(&self.planes_i16)?;
-                let planes = scratch_planes(&mut slot, metal, digits)?;
-                decompose(
-                    metal,
-                    &coefficients,
-                    D,
-                    plan.num_digits_inner,
-                    plan.log_basis_inner,
-                    planes,
-                )?;
-                matrix.mat_vec_i16(metal, planes, plan.log_basis_inner, &mut out)?;
+            .map(Shared::new)
+        };
+        std::thread::scope(|scope| -> Result<(), AkitaError> {
+            let mut pending = ranges
+                .first()
+                .cloned()
+                .map(|range| scope.spawn(move || stage(range)));
+            for (index, range) in ranges.iter().enumerate() {
+                let coefficients =
+                    pending.take().ok_or_else(overflow)?.join().map_err(|_| {
+                        AkitaError::InvalidSetup("dense staging thread panicked".into())
+                    })??;
+                pending = ranges
+                    .get(index.saturating_add(1))
+                    .cloned()
+                    .map(|range| scope.spawn(move || stage(range)));
+                let coefficients = coefficients.get();
+                let count = range.len();
+                let digits = checked::product([coefficients.len(), plan.num_digits_inner])
+                    .ok_or_else(overflow)?;
+                let mut out = DeviceBuffer::<F>::zeroed(
+                    metal.device(),
+                    checked::product([count, row_fields]).ok_or_else(overflow)?,
+                )
+                .map_err(AkitaMetalError::from)?;
+                if plan.log_basis_inner <= i8::MAX_LOG_BASIS {
+                    let mut slot = lock_scratch(&self.planes_i8)?;
+                    let planes = scratch_planes(&mut slot, metal, digits)?;
+                    decompose(
+                        metal,
+                        coefficients,
+                        D,
+                        plan.num_digits_inner,
+                        plan.log_basis_inner,
+                        planes,
+                    )?;
+                    matrix.mat_vec_i8(metal, planes, plan.log_basis_inner, &mut out)?;
+                } else {
+                    let mut slot = lock_scratch(&self.planes_i16)?;
+                    let planes = scratch_planes(&mut slot, metal, digits)?;
+                    decompose(
+                        metal,
+                        coefficients,
+                        D,
+                        plan.num_digits_inner,
+                        plan.log_basis_inner,
+                        planes,
+                    )?;
+                    matrix.mat_vec_i16(metal, planes, plan.log_basis_inner, &mut out)?;
+                }
+                rows.extend_from_slice(out.read().map_err(AkitaMetalError::from)?);
+                if count == total_blocks {
+                    device_rows = Some(Shared::new(out));
+                }
             }
-            rows.extend_from_slice(out.read().map_err(AkitaMetalError::from)?);
-            if count == total_blocks {
-                device_rows = Some(Shared::new(out));
-            }
-            first = checked::sum([first, count]).ok_or_else(overflow)?;
-        }
+            Ok(())
+        })?;
         Ok(MetalInnerImage {
             rows: split_rows(&rows, sources.len(), D)?,
             device: device_rows,
