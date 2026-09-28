@@ -80,7 +80,7 @@ impl CommitSourceDescriptor {
     }
 
     /// Logical multilinear variable count.
-    pub(crate) const fn num_vars(&self) -> usize {
+    pub const fn num_vars(&self) -> usize {
         self.num_vars
     }
 
@@ -149,10 +149,7 @@ pub struct OneHotType {
 
 impl OneHotType {
     /// Construct a checked one-hot type.
-    pub(crate) fn new(
-        chunk_size: usize,
-        index_width: OneHotIndexWidth,
-    ) -> Result<Self, AkitaError> {
+    pub fn new(chunk_size: usize, index_width: OneHotIndexWidth) -> Result<Self, AkitaError> {
         if chunk_size == 0 {
             return Err(AkitaError::InvalidInput(
                 "one-hot polynomial type requires a nonzero chunk size".into(),
@@ -165,7 +162,7 @@ impl OneHotType {
     }
 
     /// Stored position-index width.
-    pub(crate) const fn index_width(self) -> OneHotIndexWidth {
+    pub const fn index_width(self) -> OneHotIndexWidth {
         self.index_width
     }
 }

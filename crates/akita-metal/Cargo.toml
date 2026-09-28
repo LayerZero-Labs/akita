@@ -26,6 +26,12 @@ jolt-metal = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 thiserror = "2.0"
 
 [dev-dependencies]
+# The provider tests commit and prove through the CPU backend with the
+# checked-in schedule catalogs.
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
+  "test-support",
+] }
+akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }
 # The CPU backend is also the reference every kernel is tested and
 # benchmarked against, with its parallel kernels.
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false, features = [
