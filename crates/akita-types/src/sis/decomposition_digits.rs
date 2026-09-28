@@ -138,9 +138,14 @@ pub(crate) fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
     let max_digit = base / 2 - 1;
     let base_minus_1 = base - 1;
 
+    // Stop once `b^n` saturates: later factors leave it at `u128::MAX`, and a
+    // schedule-supplied `num_digits` must not make this linear in its value.
     let mut base_pow = 1u128;
     for _ in 0..num_digits {
         base_pow = base_pow.saturating_mul(base);
+        if base_pow == u128::MAX {
+            break;
+        }
     }
 
     max_digit.saturating_mul(base_pow.saturating_sub(1) / base_minus_1)
@@ -159,10 +164,14 @@ pub fn balanced_digit_abs_max(log_basis: u32, num_digits: usize) -> u128 {
     let base: u128 = 1u128 << log_basis;
     let max_abs_digit = base / 2;
 
+    // Stop once the series saturates; see `balanced_digit_max`.
     let mut pow = 1u128;
     let mut series = 0u128;
     for _ in 0..num_digits {
         series = series.saturating_add(pow);
+        if series == u128::MAX {
+            break;
+        }
         pow = pow.saturating_mul(base);
     }
 
@@ -183,9 +192,13 @@ pub fn balanced_digit_abs_max(log_basis: u32, num_digits: usize) -> u128 {
 #[must_use]
 pub fn balanced_digit_interval_diameter(log_basis: u32, num_digits: usize) -> u128 {
     let base: u128 = 1u128 << log_basis;
+    // Stop once the power saturates; see `balanced_digit_max`.
     let mut power = 1u128;
     for _ in 0..num_digits {
         power = power.saturating_mul(base);
+        if power == u128::MAX {
+            break;
+        }
     }
     power.saturating_sub(1)
 }
@@ -343,6 +356,33 @@ mod tests {
     fn balanced_digit_max_cases() {
         assert_eq!(balanced_digit_max(2, 2), 5);
         assert_eq!(balanced_digit_max(3, 1), 3);
+    }
+
+    /// Schedule-supplied digit counts reach these helpers before any range
+    /// check, so they must cost O(128 / log_basis), not O(num_digits).
+    #[test]
+    fn saturated_digit_series_stop_at_saturation() {
+        for log_basis in [1u32, 2, 3, 5, 16, 64, 127] {
+            let base = 1u128 << log_basis;
+            let saturated = 128usize.div_ceil(log_basis as usize) + 1;
+            for huge in [usize::MAX, 1 << 40] {
+                assert_eq!(
+                    balanced_digit_max(log_basis, huge),
+                    balanced_digit_max(log_basis, saturated),
+                    "log_basis {log_basis}"
+                );
+                assert_eq!(
+                    balanced_digit_abs_max(log_basis, huge),
+                    balanced_digit_abs_max(log_basis, saturated),
+                    "log_basis {log_basis}"
+                );
+                assert_eq!(
+                    balanced_digit_interval_diameter(log_basis, huge),
+                    u128::MAX - 1,
+                    "log_basis {log_basis} (base {base})"
+                );
+            }
+        }
     }
 
     #[test]
