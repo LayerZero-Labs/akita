@@ -672,10 +672,14 @@ impl<Base, const LEVEL: usize> EarlyEvaluationTraceConfig<Base, LEVEL>
 where
     Base: CommitmentConfig + 'static,
 {
+    /// Rewrite a packing row to open by evaluation trace at `LEVEL`.
+    ///
+    /// Returns the raw row rather than a resolved one, so that tests hand it to
+    /// catalog admission themselves and observe admission reject it.
     pub(crate) fn derive_row(
         catalog: &akita_config::ValidatedScheduleCatalog,
         key: &AkitaScheduleLookupKey,
-    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+    ) -> Result<(CommittedGroupBatchProfile, akita_types::FoldSchedule), AkitaError> {
         let base = RootCoefficientPackingConfig::<Base>::derive_catalog_row(catalog, key, 64)?;
         let profiles = base.profiles().clone();
         let mut schedule = base.schedule().clone();
@@ -719,8 +723,7 @@ where
                 .opening
                 .fold_challenge_config = params.own_group_mut().opening.fold_challenge_config;
         }
-        schedule.validate_nonterminal_opening_execution(Self::EXT_DEGREE)?;
-        akita_config::ResolvedScheduleRow::try_new(profiles, schedule, &policy_of::<Self>())
+        Ok((profiles, schedule))
     }
 }
 

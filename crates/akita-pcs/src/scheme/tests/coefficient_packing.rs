@@ -280,33 +280,41 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         ))
                         .is_err());
 
-                    macro_rules! assert_early_evaluation_trace_rejects_at_catalog_boundary {
+                    macro_rules! early_evaluation_trace_admission_error {
                         ($config:ty, $context:literal) => {{
-                            let result = <$config>::derive_row(&catalog, &key)
-                                .and_then(|row| {
-                                    akita_config::ValidatedScheduleCatalog::try_new(
-                                        <$config>::schedule_family_name(),
-                                        [(row.profiles().clone(), row.schedule().clone())],
-                                        &akita_config::policy_of::<$config>(),
-                                        <$config>::ring_challenge_config,
-                                    )
-                                    .and_then(akita_config::TrustedScheduleCatalog::<$config>::new)
-                                })
-                                .map(AkitaCommitmentScheme::<$config>::new);
-                            assert!(
-                                result.is_err(),
-                                concat!($context, " must reject at the trusted catalog boundary")
-                            );
+                            let row = <$config>::derive_row(&catalog, &key)
+                                .expect(concat!($context, " test row must derive"));
+                            akita_config::ValidatedScheduleCatalog::try_new(
+                                <$config>::schedule_family_name(),
+                                [row],
+                                &akita_config::policy_of::<$config>(),
+                                <$config>::ring_challenge_config,
+                            )
+                            .expect_err(concat!(
+                                $context,
+                                " must reject at the trusted catalog boundary"
+                            ))
+                            .to_string()
                         }};
                     }
 
-                    assert_early_evaluation_trace_rejects_at_catalog_boundary!(
+                    // Rewriting the root to evaluation trace leaves its output
+                    // length sized for the packing relation block, so this row
+                    // is structurally invalid as well; the rule itself is
+                    // covered by `rejects_evaluation_trace_at_the_root`.
+                    early_evaluation_trace_admission_error!(
                         RootEvaluationTraceCfg,
                         "root EvaluationTrace"
                     );
-                    assert_early_evaluation_trace_rejects_at_catalog_boundary!(
+                    // The level-1 row is structurally valid, so admission must
+                    // reject it for its opening method before auditing geometry.
+                    let error = early_evaluation_trace_admission_error!(
                         RecursiveEvaluationTraceCfg,
                         "level-1 EvaluationTrace"
+                    );
+                    assert!(
+                        error.contains("nonterminal level 1 requires subring coefficient packing"),
+                        "unexpected level-1 admission error: {error}"
                     );
                 }
             }
