@@ -17,7 +17,7 @@ impl NttCacheOwnerId {
     ///
     /// Direct resource adapters use this when their physical cache owner is
     /// not itself a `ComputeBackendSetup::PreparedSetup` value.
-    pub(crate) fn from_owner<T: ?Sized>(owner: &T) -> Self {
+    pub fn from_owner<T: ?Sized>(owner: &T) -> Self {
         Self(owner as *const T as *const () as usize)
     }
 }

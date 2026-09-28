@@ -51,18 +51,7 @@ where
         name: &'static str,
         resources: StageResources<'a, F>,
     ) -> Result<CommitmentOperationContext<'a, F>, AkitaError> {
-        if name.is_empty() {
-            return Err(AkitaError::InvalidSetup(
-                "commitment stage registration requires a diagnostic name".into(),
-            ));
-        }
-        resources.validate_setup(&self.setup)?;
-        Ok(CommitmentOperationContext {
-            setup: self.setup.clone(),
-            backend_instance,
-            name,
-            resources,
-        })
+        CommitmentOperationContext::new(&self.setup, backend_instance, name, resources)
     }
 
     /// Register the inner operation and its optional host-export edge.

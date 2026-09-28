@@ -10,14 +10,14 @@ static NEXT_OWNER_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_INVOCATION_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Semantic marker for a resident inner commitment image.
-pub(crate) enum InnerImage {}
+pub enum InnerImage {}
 
 /// Semantic marker for retained commitment-compression state.
 pub(crate) enum CompressionState {}
 
 /// Immutable setup and request facts attached to resident stage state.
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct CommitmentStateBinding {
+pub struct CommitmentStateBinding {
     invocation: u64,
     setup: AkitaSetupDescriptor,
     inner_plan: CommitInnerPlan,
@@ -63,19 +63,19 @@ impl CommitmentStateBinding {
         &self.setup
     }
 
-    pub(crate) const fn inner_plan(&self) -> &CommitInnerPlan {
+    pub const fn inner_plan(&self) -> &CommitInnerPlan {
         &self.inner_plan
     }
 
-    pub(crate) const fn source_count(&self) -> usize {
+    pub const fn source_count(&self) -> usize {
         self.source_count
     }
 
-    pub(crate) const fn relation_mode(&self) -> Option<RingRelationMode> {
+    pub const fn relation_mode(&self) -> Option<RingRelationMode> {
         self.relation_mode
     }
 
-    pub(crate) const fn compression_plan(&self) -> Option<&CompressionChainPlan> {
+    pub const fn compression_plan(&self) -> Option<&CompressionChainPlan> {
         self.compression_plan.as_ref()
     }
 }
@@ -106,7 +106,7 @@ struct OwnedBackendState {
 /// The erased value may be CPU witness data, a device allocation lease, or a
 /// remote lease. Dropping the last reference drops the value and runs its
 /// ordinary backend-defined cleanup.
-pub(crate) struct BackendStateRef<K> {
+pub struct BackendStateRef<K> {
     state: Arc<OwnedBackendState>,
     marker: PhantomData<fn() -> K>,
 }
@@ -127,7 +127,8 @@ impl<K> std::fmt::Debug for BackendStateRef<K> {
 }
 
 impl<K> BackendStateRef<K> {
-    pub(crate) fn binding(&self) -> &CommitmentStateBinding {
+    /// Setup and request facts bound to this state.
+    pub fn binding(&self) -> &CommitmentStateBinding {
         &self.state.binding
     }
 
@@ -141,7 +142,7 @@ impl<K> BackendStateRef<K> {
 ///
 /// A backend keeps this beside its operation. Akita does not allocate a slot
 /// or keep a second table containing the backend value.
-pub(crate) struct StateOwnerCapability<K> {
+pub struct StateOwnerCapability<K> {
     owner: u64,
     marker: PhantomData<fn() -> K>,
 }
@@ -162,23 +163,26 @@ impl<K> std::fmt::Debug for StateOwnerCapability<K> {
 }
 
 impl<K> StateOwnerCapability<K> {
-    pub(crate) fn new() -> Self {
+    /// Issue a fresh owner identity.
+    pub fn new() -> Self {
         Self {
             owner: NEXT_OWNER_ID.fetch_add(1, Ordering::Relaxed),
             marker: PhantomData,
         }
     }
 
-    pub(crate) fn same_owner(&self, other: &Self) -> bool {
+    /// Whether both capabilities name the same owner.
+    pub fn same_owner(&self, other: &Self) -> bool {
         self.owner == other.owner
     }
 
-    pub(crate) fn owns(&self, state: &BackendStateRef<K>) -> bool {
+    /// Whether this owner produced `state`.
+    pub fn owns(&self, state: &BackendStateRef<K>) -> bool {
         self.owner == state.state.owner
     }
 
     /// Bind and directly own one concrete backend value.
-    pub(crate) fn bind<T>(
+    pub fn bind<T>(
         &self,
         binding: CommitmentStateBinding,
         _retained_bytes: usize,
@@ -200,7 +204,7 @@ impl<K> StateOwnerCapability<K> {
     }
 
     /// Borrow this owner's concrete value after checking ownership and type.
-    pub(crate) fn value<'a, T>(&self, state: &'a BackendStateRef<K>) -> Result<&'a T, AkitaError>
+    pub fn value<'a, T>(&self, state: &'a BackendStateRef<K>) -> Result<&'a T, AkitaError>
     where
         T: Any + Send + Sync,
     {
@@ -218,7 +222,7 @@ impl<K> StateOwnerCapability<K> {
     ///
     /// Shared state is returned intact so an exporter can use its borrowed
     /// fallback. Ownership and concrete type are always checked first.
-    pub(crate) fn try_unwrap<T>(
+    pub fn try_unwrap<T>(
         &self,
         state: BackendStateRef<K>,
     ) -> Result<Result<T, BackendStateRef<K>>, AkitaError>

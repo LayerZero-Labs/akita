@@ -17,7 +17,7 @@ static NEXT_OPERATION_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Builder-issued identity for one physical backend instance.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct BackendInstanceId(u64);
+pub struct BackendInstanceId(u64);
 
 impl std::fmt::Debug for BackendInstanceId {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -26,7 +26,8 @@ impl std::fmt::Debug for BackendInstanceId {
 }
 
 impl BackendInstanceId {
-    pub(crate) fn issue() -> Self {
+    /// Issue an identity shared by the stages of one physical backend instance.
+    pub fn issue() -> Self {
         Self(NEXT_BACKEND_INSTANCE_ID.fetch_add(1, Ordering::Relaxed))
     }
 }
@@ -49,7 +50,7 @@ impl CommitmentOperationId {
 
 /// Commitment stage that owns one exact NTT request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CommitmentNttStage {
+pub enum CommitmentNttStage {
     /// Inner A commitment.
     Inner,
     /// Outer B commitment.
@@ -67,7 +68,7 @@ pub(crate) enum CommitmentNttRoute {
 
 /// Exact cache request routed to one registered commitment stage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct CommitmentNttRequirement {
+pub struct CommitmentNttRequirement {
     fold_level: usize,
     route: CommitmentNttRoute,
     stage: CommitmentNttStage,
@@ -111,12 +112,12 @@ impl CommitmentNttRequirement {
     }
 
     /// Owning commitment stage.
-    pub(crate) const fn stage(&self) -> CommitmentNttStage {
+    pub const fn stage(&self) -> CommitmentNttStage {
         self.stage
     }
 
     /// Exact backend cache key.
-    pub(crate) const fn key(&self) -> NttCacheKey {
+    pub const fn key(&self) -> NttCacheKey {
         self.key
     }
 
@@ -209,7 +210,7 @@ impl CommitmentExecutionPlan {
 }
 
 /// Object-safe lifecycle boundary for backend resources used by a stage.
-pub(crate) trait CommitmentResourceControl<F>: Send + Sync
+pub trait CommitmentResourceControl<F>: Send + Sync
 where
     F: Field + CanonicalEncoding,
 {
@@ -299,7 +300,7 @@ where
 }
 
 /// Explicit resource declaration attached to one stage registration.
-pub(crate) enum StageResources<'a, F>
+pub enum StageResources<'a, F>
 where
     F: Field + CanonicalEncoding,
 {
@@ -310,7 +311,7 @@ where
 }
 
 /// Builder-validated backend identity, diagnostic name, and resource declaration.
-pub(crate) struct CommitmentOperationContext<'a, F>
+pub struct CommitmentOperationContext<'a, F>
 where
     F: Field + CanonicalEncoding,
 {
@@ -318,6 +319,32 @@ where
     pub(crate) backend_instance: BackendInstanceId,
     pub(crate) name: &'static str,
     pub(crate) resources: StageResources<'a, F>,
+}
+
+impl<'a, F> CommitmentOperationContext<'a, F>
+where
+    F: Field + CanonicalEncoding,
+{
+    /// Validate and bind registration metadata to one setup.
+    pub fn new(
+        setup: &AkitaSetupDescriptor,
+        backend_instance: BackendInstanceId,
+        name: &'static str,
+        resources: StageResources<'a, F>,
+    ) -> Result<Self, AkitaError> {
+        if name.is_empty() {
+            return Err(AkitaError::InvalidSetup(
+                "commitment stage registration requires a diagnostic name".into(),
+            ));
+        }
+        resources.validate_setup(setup)?;
+        Ok(Self {
+            setup: setup.clone(),
+            backend_instance,
+            name,
+            resources,
+        })
+    }
 }
 
 impl<F> Clone for StageResources<'_, F>
@@ -337,13 +364,12 @@ where
     F: Field + CanonicalEncoding,
 {
     /// Explicit no-resources declaration.
-    #[cfg(test)]
-    pub(crate) const fn none() -> Self {
+    pub const fn none() -> Self {
         Self::None
     }
 
     /// Capture a resource controller.
-    pub(crate) fn controlled(control: impl CommitmentResourceControl<F> + 'a) -> Self {
+    pub fn controlled(control: impl CommitmentResourceControl<F> + 'a) -> Self {
         Self::Controlled(Arc::new(control))
     }
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::commitment::{
     BackendInstanceId, CommitmentNttRequirement, CommitmentOperationContext,
-    CommitmentResourceControl, DenseType,
+    CommitmentResourceControl, DenseType, PolynomialType,
 };
 use crate::opaque::NttCacheOwnerId;
 use crate::AkitaProverSetup;

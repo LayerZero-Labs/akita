@@ -1,6 +1,7 @@
 //! CPU backend ownership, setup identity, and proof-session lifecycle.
 
 use crate::arithmetic::CpuPreparedSetup;
+use crate::commitment::CommitmentStageProvider;
 use crate::opaque::owned_prefix::CachedSetupPrefix;
 use crate::opaque::{BackendIdentity, CpuProofSessionHandle, OperationBinding};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
@@ -168,6 +169,8 @@ pub struct CpuBackend<F: Field, E> {
     /// id, both of which are fixed here, so deriving it more than once is
     /// wasted work.
     setup_prefix_cache: SetupPrefixCache<CachedSetupPrefix<F>>,
+    /// Runtime-installed accelerated commitment stages, if any.
+    commitment_stage_provider: Option<Arc<dyn CommitmentStageProvider<F>>>,
     extension: PhantomData<fn() -> E>,
 }
 
@@ -175,6 +178,10 @@ impl<F: Field, E> core::fmt::Debug for CpuBackend<F, E> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CpuBackend")
             .field("backend_id", &self.identity.backend_id())
+            .field(
+                "commitment_stage_provider",
+                &self.commitment_stage_provider.is_some(),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -213,8 +220,29 @@ impl<F: Field, E> CpuBackend<F, E> {
             prepared: Some(CpuPreparedSetup::new(expanded)),
             max_cached_ring_switch_elements,
             setup_prefix_cache: SetupPrefixCache::default(),
+            commitment_stage_provider: None,
             extension: PhantomData,
         })
+    }
+
+    /// Install accelerated commitment stages for this backend's commitments.
+    ///
+    /// Selection is per request: each root, setup-prefix, and recursive
+    /// commitment uses the provider's stages only when they accept the
+    /// request's plan and sources, and otherwise uses the CPU stages. The
+    /// provider must produce the same bytes as the CPU stages, so either route
+    /// yields identical setup, commitment, and proof bytes.
+    pub fn with_commitment_stage_provider(
+        mut self,
+        provider: Arc<dyn CommitmentStageProvider<F>>,
+    ) -> Self {
+        self.commitment_stage_provider = Some(provider);
+        self
+    }
+
+    /// Installed accelerated commitment stages, if any.
+    pub(crate) fn commitment_stage_provider(&self) -> Option<&dyn CommitmentStageProvider<F>> {
+        self.commitment_stage_provider.as_deref()
     }
 
     /// Return memoized setup-prefix material, deriving it once per slot.
@@ -386,6 +414,7 @@ impl<F: Field, E> CpuBackend<F, E> {
             prepared: None,
             max_cached_ring_switch_elements,
             setup_prefix_cache: SetupPrefixCache::default(),
+            commitment_stage_provider: None,
             extension: PhantomData,
         })
     }

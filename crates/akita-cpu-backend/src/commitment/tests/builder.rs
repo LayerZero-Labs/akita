@@ -1,4 +1,5 @@
 use super::*;
+use crate::commitment::CommitmentStages;
 use crate::commitment::{
     BackendKindId, CommitmentExecutionPlan, CommitmentNttRequirement,
     CommitmentRequestCapabilities, CommitmentResourceControl, CommitmentSource,
@@ -286,11 +287,12 @@ fn mixed_outer_with_cpu_compression_matches_the_all_cpu_route() {
     let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let prepared = backend.prepare_setup(&setup).unwrap();
     let standard_types = vec![PolynomialType::Dense(super::super::DenseType::Coefficients)];
-    let all_cpu = CommitmentExecutor::cpu(
+    let all_cpu = CommitmentExecutor::new(
         &backend,
         &prepared,
         setup.expanded.as_ref(),
         standard_types.clone(),
+        CommitmentStages::default(),
         super::super::NoRetainedStatePolicy,
     )
     .unwrap();
@@ -393,11 +395,12 @@ fn resident_state_preflight_rejects_mismatched_plan_metadata() {
     .unwrap();
     let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let prepared = backend.prepare_setup(&setup).unwrap();
-    let executor = CommitmentExecutor::cpu(
+    let executor = CommitmentExecutor::new(
         &backend,
         &prepared,
         setup.expanded.as_ref(),
         vec![PolynomialType::Dense(super::super::DenseType::Coefficients)],
+        CommitmentStages::default(),
         ResidentStatePolicy,
     )
     .unwrap();
@@ -432,11 +435,12 @@ fn builder_rejects_duplicate_inner_type_capabilities() {
     let dense = PolynomialType::Dense(super::super::DenseType::Coefficients);
     let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let prepared = backend.prepare_setup(&setup).unwrap();
-    let error = CommitmentExecutor::cpu(
+    let error = CommitmentExecutor::new(
         &backend,
         &prepared,
         setup.expanded.as_ref(),
         vec![dense, dense],
+        CommitmentStages::default(),
         super::super::ResidentStatePolicy,
     )
     .err()
@@ -445,12 +449,13 @@ fn builder_rejects_duplicate_inner_type_capabilities() {
         error,
         AkitaError::InvalidSetup(message) if message.contains("duplicate")
     ));
-    assert!(CommitmentExecutor::cpu(
+    assert!(CommitmentExecutor::new(
         &backend,
         &prepared,
         setup.expanded.as_ref(),
         vec![dense],
-        super::super::ResidentStatePolicy,
+        CommitmentStages::default(),
+        super::super::ResidentStatePolicy
     )
     .is_ok());
 }

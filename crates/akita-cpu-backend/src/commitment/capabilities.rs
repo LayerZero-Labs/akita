@@ -4,7 +4,7 @@ use akita_types::{RingRelationMode, RingRole};
 use jolt_field::{CanonicalEncoding, Field};
 
 /// Inner-operation capabilities used while compiling one request.
-pub(crate) struct CommitmentRequestCapabilities {
+pub struct CommitmentRequestCapabilities {
     pub(crate) backend: BackendKindId,
     pub(crate) standard_types: Vec<PolynomialType>,
     pub(crate) accepts_any_standard_type: bool,
@@ -14,7 +14,10 @@ pub(crate) struct CommitmentRequestCapabilities {
 
 impl CommitmentRequestCapabilities {
     /// Describe a split inner operation.
-    pub(crate) fn split<Context: 'static>(
+    ///
+    /// `Context` is the execution context type that source-owned external
+    /// inner operations must target to be selected for this backend.
+    pub fn split<Context: 'static>(
         backend: BackendKindId,
         standard_types: Vec<PolynomialType>,
     ) -> Self {
@@ -67,14 +70,13 @@ impl CommitmentRequestCapabilities {
 
 /// Ring dimensions implemented by one commitment stage operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct StageDimensionCapabilities {
+pub struct StageDimensionCapabilities {
     dimensions: Vec<usize>,
 }
 
 impl StageDimensionCapabilities {
     /// Construct a nonempty, duplicate-free dimension declaration.
-    #[cfg(test)]
-    pub(crate) fn new(dimensions: Vec<usize>) -> Result<Self, AkitaError> {
+    pub fn new(dimensions: Vec<usize>) -> Result<Self, AkitaError> {
         if dimensions.is_empty()
             || dimensions.iter().any(|dimension| {
                 *dimension == 0
@@ -116,7 +118,7 @@ impl StageDimensionCapabilities {
     }
 
     /// Whether the operation implements this runtime ring dimension.
-    pub(crate) fn supports(&self, dimension: usize) -> bool {
+    pub fn supports(&self, dimension: usize) -> bool {
         self.dimensions.contains(&dimension)
     }
 }

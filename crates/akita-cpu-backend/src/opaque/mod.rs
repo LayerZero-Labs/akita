@@ -27,12 +27,13 @@ pub(crate) mod sumcheck;
 
 #[cfg(test)]
 pub(crate) use crate::arithmetic::CyclicRowsComputeBackend;
+pub use crate::arithmetic::NttCacheOwnerId;
 pub(crate) use crate::arithmetic::{tensor_pack_recursive_witness, RingSwitchRelationView};
 pub(crate) use crate::arithmetic::{
     CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
     CpuCompressionOperation, CpuInnerCommitOperation, CpuOuterCommitOperation, CpuPreparedSetup,
-    DigitRowsComputeBackend, NttCacheOwnerId, NttExecutionRequirements, NttOperationCluster,
-    OperationCtx, RoutedNttRequirement,
+    DigitRowsComputeBackend, NttExecutionRequirements, NttOperationCluster, OperationCtx,
+    RoutedNttRequirement,
 };
 pub use crate::arithmetic::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 pub(crate) use crate::sources::commit_onehot_sources;
@@ -833,6 +834,8 @@ pub use fold::CpuFoldResponses;
 pub(crate) use fold::{CpuAcceptedFold, CpuAcceptedTerminalFold};
 pub(crate) use fold::{CpuAcceptedFoldHandle, CpuAcceptedTerminalFoldHandle};
 
+#[cfg(test)]
+mod commitment_provider_tests;
 #[cfg(test)]
 mod kernel_tests;
 

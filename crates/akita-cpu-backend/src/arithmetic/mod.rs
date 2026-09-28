@@ -32,8 +32,9 @@ mod streamed_tests;
 pub use backend::ComputeBackendSetup;
 #[cfg(test)]
 pub(crate) use backend::CyclicRowsComputeBackend;
+pub use backend::NttCacheOwnerId;
 pub(crate) use backend::{
-    CompressionComputeBackend, CompressionRowsProducts, DigitRowsComputeBackend, NttCacheOwnerId,
+    CompressionComputeBackend, CompressionRowsProducts, DigitRowsComputeBackend,
 };
 pub(crate) use commitment_stage::{CpuInnerCommitOperation, CpuOuterCommitOperation};
 pub(crate) use compression_stage::CpuCompressionOperation;

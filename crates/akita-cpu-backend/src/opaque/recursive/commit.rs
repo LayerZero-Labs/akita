@@ -1,5 +1,4 @@
 use super::{CpuWitnessHandle, RecursiveWitnessFlat};
-use crate::commitment::CommitmentExecutor;
 
 use akita_error::AkitaError;
 use akita_types::dispatch_for_field;
@@ -230,16 +229,9 @@ where
                 |D| witness.tensor_pack::<F, E, D>()
             )?;
         }
-        let prepared = self.prepared()?;
-        let executor = CommitmentExecutor::cpu(
-            self,
-            prepared,
-            &prepared.expanded,
-            Vec::new(),
-            crate::commitment::PortableStatePolicy,
-        )?;
         let source = witness.commitment_source();
         let sources: [&dyn crate::commitment::CommitmentSource<F>; 1] = [&source];
+        let executor = self.commitment_executor(Vec::new(), &execution, &sources)?;
         let (public, state) = match execution.mode() {
             crate::commitment::CommitmentExecutionMode::Full => {
                 let (public, state) = executor.execute_full(&execution, &sources)?.into_parts();

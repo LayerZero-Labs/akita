@@ -60,7 +60,7 @@ where
 }
 
 /// Prepared split-inner implementation and all metadata used to route it.
-pub(crate) struct PreparedInnerCommitment<'a, F>
+pub struct PreparedInnerCommitment<'a, F>
 where
     F: Field + CanonicalEncoding,
 {
@@ -76,7 +76,7 @@ where
     F: Field + CanonicalEncoding,
 {
     /// Bind one prepared operation to its ownership, routing, and export contract.
-    pub(crate) fn new<O>(
+    pub fn new<O>(
         operation: Arc<O>,
         owner: StateOwnerCapability<InnerImage>,
         context: CommitmentOperationContext<'a, F>,
@@ -105,7 +105,7 @@ where
 }
 
 /// Prepared split-outer implementation and its resident-state ownership contract.
-pub(crate) struct PreparedOuterCommitment<'a, F>
+pub struct PreparedOuterCommitment<'a, F>
 where
     F: Field + CanonicalEncoding,
 {
@@ -119,7 +119,7 @@ where
     F: Field + CanonicalEncoding,
 {
     /// Bind one prepared outer operation to its ownership and routing metadata.
-    pub(crate) fn new<O>(
+    pub fn new<O>(
         operation: Arc<O>,
         owner: StateOwnerCapability<InnerImage>,
         context: CommitmentOperationContext<'a, F>,
