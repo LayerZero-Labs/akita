@@ -283,26 +283,6 @@ response bounds. This is separate from the proof-of-work predicate. The
 explains why adversarial nonce trials must be included in random-oracle query
 accounting.
 
-### Public identities before the first challenge
-
-`akita_config::public_setup_identity` returns a 32-byte Blake2b-256 identity
-for the public verifier setup and its configuration. It includes the algebra,
-decomposition and security profile, seed and derivation tag, provisioning
-bounds, materialized matrix, and installed prefix commitments. Prepared caches
-are excluded. This identifies supplied public data; callers still establish
-its provenance when installing a key.
-
-`akita_config::public_schedule_identity` returns a separate 32-byte identity
-for the selected row, expanded fold schedule, and grinding plan derived for the
-opening layout and field. Callers can absorb both identities into their own
-transcript before its first challenge. These functions do not mutate Akita's
-transcript or replace its normal descriptor binding.
-
-The API documentation specifies the versioned domains, canonical component
-encodings, and length prefixes. Fixed digest vectors pin the encoding across
-runs; changes to public parameters change the identity. Schedule identities
-include the complete schedule and the field-grinding policy version.
-
 ## Integration and regression checks
 
 `AKITA_INSTANCE_DESCRIPTOR_VERSION` is currently `5`. Validation rejects

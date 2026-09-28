@@ -67,7 +67,6 @@ macro_rules! impl_multi_chunk_companion {
 }
 
 pub mod proof_optimized;
-mod public_identity;
 pub mod recursive_commitment;
 #[cfg(test)]
 mod schedule_artifact_tests;
@@ -86,7 +85,6 @@ pub use akita_schedules::{
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
 pub use proof_optimized::{ensure_prover_schedule_fits_setup, verifier_schedule_fits_setup};
-pub use public_identity::{public_schedule_identity, public_setup_identity};
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use transcript_binding::transcript_instance_descriptor;
 pub use transcript_grinding_plan::derive_transcript_grinding_plan;
