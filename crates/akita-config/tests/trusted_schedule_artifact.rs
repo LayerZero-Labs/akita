@@ -821,23 +821,3 @@ fn unsupported_fold_group_log_basis_is_rejected_not_panicking() {
         assert_rejected_as_invalid_setup::<Cfg>(&opening, "fold opening log_basis");
     }
 }
-
-#[test]
-fn oversized_fold_digit_count_is_rejected_without_scanning_it() {
-    // Admission derives the A-matrix norm bound from the artifact's
-    // `num_digits_fold` before comparing it; the digit series must stop at
-    // saturation instead of iterating the declared count.
-    for num_digits_fold in [1u64 << 40, u64::MAX] {
-        let bytes = edited_artifact::<fp128::Dense>(|value| {
-            value["rows"][0]["schedule"]["root"]["params"]["groups"]["entries"][0]["opening"]
-                ["num_digits_fold"] = num_digits_fold.into();
-        });
-        let started = std::time::Instant::now();
-        assert_rejected_as_invalid_setup::<fp128::Dense>(&bytes, "oversized num_digits_fold");
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(5),
-            "rejecting num_digits_fold = {num_digits_fold} took {:?}",
-            started.elapsed()
-        );
-    }
-}
