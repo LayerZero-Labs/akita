@@ -255,7 +255,7 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
                 coefficients[0].add(witness[1], linear[1]);
                 coefficients[1].add(dw, d_linear);
 
-                // Compression and physical-norm coordinates can have only
+                // Compression and response-norm coordinates can have only
                 // a linear weight. Their round polynomial is quadratic;
                 // no witness squaring or binary products are needed.
                 if !binary[0].is_zero() || !binary[1].is_zero() {

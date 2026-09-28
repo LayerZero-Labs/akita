@@ -27,9 +27,9 @@
 //! `y_alpha = [0,`
 //! `           u_0(alpha), ..., u_{N_B-1}(alpha),`
 //! `           v_0(alpha), ..., v_{N_D-1}(alpha)]`
-//! `           for physical quotient rows only;`
+//! `           for quotient relation rows only;`
 //!
-//! then the linear relation claim over physical quotient rows is
+//! then the linear relation claim over quotient relation rows is
 //!
 //! `relation_claim = sum_i eq(tau1, i) * y_alpha[i]`
 //! `               = sum_address digit_witness(address) * p(address)`.
@@ -51,6 +51,11 @@
 //! paths). It reuses the existing row-index challenge (`tau1`) and adds no extra
 //! Fiat-Shamir challenge at terminal folds (`batching_coeff = 0` there).
 //!
+//! The response-norm binding term contributes `C_bind` to the combined linear
+//! claim. Its weights are absorbed into the reduced relation table, prepared as
+//! a rank-one linear source, or retained as sparse additional terms. These are
+//! equivalent representations of the same binding term.
+//!
 //! Stage 1 supplies the carried virtual claim
 //!
 //! `range_image_evaluation`
@@ -59,7 +64,8 @@
 //! for the multilinear extension of the pointwise Boolean range-image table. Away from
 //! Boolean points this is not generally `w(stage1_point) * (w(stage1_point) + 1)`.
 //! With `gamma = batching_coeff`, the
-//! exact identity established by this sumcheck is
+//! identity below shows the EvaluationTrace case before adding the response-norm
+//! binding and other optional terms:
 //!
 //! `gamma * range_image_evaluation + relation_claim + eq(tau1, EvaluationTrace_row_index) * trace_target =`
 //! `sum_address [ gamma * eq(stage1_point, address)`
