@@ -821,3 +821,12 @@ fn unsupported_fold_group_log_basis_is_rejected_not_panicking() {
         assert_rejected_as_invalid_setup::<Cfg>(&opening, "fold opening log_basis");
     }
 }
+
+#[test]
+fn oversized_fold_digit_count_is_rejected() {
+    let bytes = edited_artifact::<fp128::Dense>(|value| {
+        value["rows"][0]["schedule"]["root"]["params"]["groups"]["entries"][0]["opening"]
+            ["num_digits_fold"] = u64::MAX.into();
+    });
+    assert_rejected_as_invalid_setup::<fp128::Dense>(&bytes, "num_digits_fold = u64::MAX");
+}
