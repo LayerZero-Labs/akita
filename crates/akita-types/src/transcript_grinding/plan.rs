@@ -21,48 +21,6 @@ fn validate_claim_extension_degree(extension_degree: usize) -> Result<(), AkitaE
         .map_err(|_| AkitaError::InvalidSetup("grinding extension degree exceeds u32".into()))
 }
 
-/// Derive the only accepted grinding plan from field metadata and public protocol shape.
-pub fn derive_transcript_grinding_plan_from_public_shape(
-    schedule: &FoldSchedule,
-    root_layout: &OpeningClaimsLayout,
-    challenge_order: ChallengeFieldOrder,
-    claim_extension_degree: usize,
-) -> Result<GrindingPlan, AkitaError> {
-    schedule.validate_structure()?;
-    schedule.validate_nonterminal_opening_execution(claim_extension_degree)?;
-    derive_transcript_grinding_plan(
-        schedule,
-        root_layout,
-        challenge_order,
-        claim_extension_degree,
-    )
-}
-
-/// Price a planner fold sequence with the canonical query schedule.
-///
-/// A recursive suffix may legally start with a raw payload, so it is not a
-/// standalone [`FoldSchedule`] and must not pass root-only structure checks.
-/// The planner separately validates candidate geometry before calling this
-/// pricing entry point.
-pub fn transcript_grinding_cost_for_planner_candidate(
-    schedule: &FoldSchedule,
-    root_layout: &OpeningClaimsLayout,
-    challenge_order: ChallengeFieldOrder,
-    claim_extension_degree: usize,
-) -> Result<TranscriptGrindingCost, AkitaError> {
-    let plan = derive_transcript_grinding_plan(
-        schedule,
-        root_layout,
-        challenge_order,
-        claim_extension_degree,
-    )?;
-    Ok(TranscriptGrindingCost {
-        total_nonce_bits: plan.total_nonce_bits(),
-        native_nonce_max_bytes: plan.native_nonce_max_bytes(),
-        expanded_query_count: plan.expanded_query_count(),
-    })
-}
-
 /// Price one planner edge using the canonical query builders.
 #[allow(clippy::too_many_arguments)]
 pub fn transcript_grinding_cost_for_planner_edge(
@@ -76,7 +34,7 @@ pub fn transcript_grinding_cost_for_planner_edge(
 ) -> Result<TranscriptGrindingCost, AkitaError> {
     layout.check()?;
     validate_claim_extension_degree(claim_extension_degree)?;
-    let mut accumulator = GrindingPlanAccumulator::new(challenge_order)?;
+    let mut accumulator = GrindingPlanAccumulator::new(challenge_order);
     let rounds = append_nonterminal(
         &mut accumulator,
         challenge_order,
@@ -102,12 +60,15 @@ pub fn transcript_grinding_cost_for_planner_edge(
     Ok(accumulator.cost())
 }
 
-fn derive_transcript_grinding_plan(
+/// Derive the only accepted grinding plan from field metadata and public protocol shape.
+pub fn derive_transcript_grinding_plan_from_public_shape(
     schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
     challenge_order: ChallengeFieldOrder,
     claim_extension_degree: usize,
 ) -> Result<GrindingPlan, AkitaError> {
+    schedule.validate_structure()?;
+    schedule.validate_nonterminal_opening_execution(claim_extension_degree)?;
     root_layout.check()?;
     validate_claim_extension_degree(claim_extension_degree)?;
     let mut runs = Vec::new();
@@ -608,7 +569,7 @@ mod tests {
                             FoldSuccessor::Recursive(&successor),
                         )
                         .unwrap();
-                        let mut priced = GrindingPlanAccumulator::new(challenge_order).unwrap();
+                        let mut priced = GrindingPlanAccumulator::new(challenge_order);
                         append_nonterminal(
                             &mut priced,
                             challenge_order,
@@ -729,8 +690,7 @@ mod tests {
                             "basis={basis} rounds={rounds} norm={norm_shape:?}"
                         );
                         let cost = |runs: &[GrindingRun]| {
-                            let mut accumulator =
-                                GrindingPlanAccumulator::new(challenge_order).unwrap();
+                            let mut accumulator = GrindingPlanAccumulator::new(challenge_order);
                             for &run in runs {
                                 accumulator.push(run).unwrap();
                             }
@@ -759,7 +719,7 @@ mod tests {
                 runs.push(run);
                 Ok(())
             };
-            let mut cost = GrindingPlanAccumulator::new(challenge_order).unwrap();
+            let mut cost = GrindingPlanAccumulator::new(challenge_order);
             append_eor(
                 &mut materialize,
                 challenge_order,

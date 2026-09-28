@@ -442,22 +442,10 @@ impl ChallengeFieldOrder {
         })
     }
 
-    /// Nominal bit width used to identify the field extension.
+    /// Nominal bit width for diagnostics only; grinding uses exact cardinality.
     #[must_use]
     pub const fn nominal_capacity_bits(self) -> u32 {
         self.nominal_capacity_bits
-    }
-
-    /// Extension degree of the field-backed challenge set, or zero for an exact power of two.
-    #[must_use]
-    pub const fn extension_degree(self) -> u32 {
-        self.extension_degree
-    }
-
-    /// Prime-field modulus of a field-backed challenge set, or zero for an exact power of two.
-    #[must_use]
-    pub const fn field_modulus(self) -> u128 {
-        self.field_modulus
     }
 
     fn append_canonical_bytes(self, out: &mut Vec<u8>) {
@@ -811,14 +799,14 @@ pub(crate) struct GrindingPlanAccumulator {
 }
 
 impl GrindingPlanAccumulator {
-    pub(crate) fn new(challenge_order: ChallengeFieldOrder) -> Result<Self, AkitaError> {
-        Ok(Self {
+    pub(crate) fn new(challenge_order: ChallengeFieldOrder) -> Self {
+        Self {
             challenge_order,
             run_count: 0,
             total_nonce_bits: 0,
             native_nonce_max_bytes: 0,
             expanded_query_count: 0,
-        })
+        }
     }
 
     fn push_repeated(&mut self, run: GrindingRun, repetitions: u32) -> Result<(), AkitaError> {
@@ -830,7 +818,7 @@ impl GrindingPlanAccumulator {
             && run.grind_bits != grind_bits_for_loss(run.loss_factor, self.challenge_order)?
         {
             return Err(AkitaError::InvalidSetup(
-                "proof-of-work run target does not match its loss and capacity".into(),
+                "proof-of-work run target does not match its loss and challenge order".into(),
             ));
         }
         let multiplicity = usize::try_from(run.multiplicity).map_err(|_| {
@@ -895,11 +883,10 @@ impl GrindingPlan {
         runs: Vec<GrindingRun>,
         challenge_order: ChallengeFieldOrder,
     ) -> Result<Self, AkitaError> {
-        let mut accumulator = GrindingPlanAccumulator::new(challenge_order)?;
+        let mut accumulator = GrindingPlanAccumulator::new(challenge_order);
         for &run in &runs {
             accumulator.push(run)?;
         }
-        let native_nonce_max_bytes = accumulator.native_nonce_max_bytes;
         let cost = accumulator.cost();
         if cost.expanded_query_count >= TRANSCRIPT_GRINDING_QUERY_LIMIT {
             return Err(AkitaError::InvalidSetup(
@@ -910,7 +897,7 @@ impl GrindingPlan {
             runs,
             challenge_order,
             total_nonce_bits: cost.total_nonce_bits,
-            native_nonce_max_bytes,
+            native_nonce_max_bytes: cost.native_nonce_max_bytes,
             expanded_query_count: cost.expanded_query_count,
         })
     }
@@ -921,16 +908,10 @@ impl GrindingPlan {
         &self.runs
     }
 
-    /// Nominal bit width of the challenge field order.
+    /// Nominal bit width for diagnostics only; not a security or sizing bound.
     #[must_use]
     pub const fn nominal_capacity_bits(&self) -> u32 {
         self.challenge_order.nominal_capacity_bits()
-    }
-
-    /// Exact challenge order used to price all proof-of-work runs.
-    #[must_use]
-    pub const fn challenge_order(&self) -> ChallengeFieldOrder {
-        self.challenge_order
     }
 
     #[must_use]
@@ -968,18 +949,6 @@ impl GrindingPlan {
     pub fn digest(&self) -> Result<[u8; 32], AkitaError> {
         Ok(digest_descriptor_bytes(&self.canonical_bytes()?))
     }
-}
-
-/// Nominal field capacity in bits used to identify an extension field.
-pub fn nominal_challenge_capacity_bits(
-    modulus_bits: u32,
-    extension_degree: usize,
-) -> Result<u32, AkitaError> {
-    let extension_degree = u32::try_from(extension_degree)
-        .map_err(|_| AkitaError::InvalidSetup("challenge extension degree exceeds u32".into()))?;
-    modulus_bits
-        .checked_mul(extension_degree)
-        .ok_or_else(|| AkitaError::InvalidSetup("nominal challenge capacity overflow".into()))
 }
 
 /// Assign the least public proof-of-work target satisfying the exact challenge-set bound.

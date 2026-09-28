@@ -1,16 +1,13 @@
 use super::*;
 
-fn full_order(capacity_bits: u32) -> ChallengeFieldOrder {
-    ChallengeFieldOrder::from_full_capacity(capacity_bits).unwrap()
-}
-
 #[test]
-fn current_capacity_prices_exact_nominal_loss_bits() {
+fn full_capacity_prices_exact_loss_bits() {
+    let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
     for (loss, expected) in [(1, 0), (2, 1), (3, 2), (4, 2), (5, 3), (u64::MAX, 64)] {
         let actual = if expected > u32::from(MAX_GRINDING_BITS) {
-            grind_bits_for_loss(loss, full_order(128)).expect_err("oversized target")
+            grind_bits_for_loss(loss, order).expect_err("oversized target")
         } else {
-            let actual = grind_bits_for_loss(loss, full_order(128)).expect("supported target");
+            let actual = grind_bits_for_loss(loss, order).expect("supported target");
             assert_eq!(u32::from(actual), expected);
             continue;
         };
@@ -19,7 +16,7 @@ fn current_capacity_prices_exact_nominal_loss_bits() {
 }
 
 #[test]
-fn nominal_security_inequality_holds_for_every_supported_target() {
+fn full_capacity_security_inequality_holds_for_every_supported_target() {
     let losses = [
         1,
         2,
@@ -31,8 +28,9 @@ fn nominal_security_inequality_holds_for_every_supported_target() {
         (1u64 << MAX_GRINDING_BITS) - 1,
         1u64 << MAX_GRINDING_BITS,
     ];
+    let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
     for loss in losses {
-        let grind = grind_bits_for_loss(loss, full_order(128)).expect("supported loss");
+        let grind = grind_bits_for_loss(loss, order).expect("supported loss");
         assert!(u128::from(loss) <= (1u128 << grind));
     }
 }
@@ -166,11 +164,22 @@ fn plan_encoding_covers_every_discriminator() {
     ];
     let mut runs = sites
         .into_iter()
-        .map(|site| GrindingRun::proof_of_work(site, 3, full_order(capacity)).unwrap())
+        .map(|site| {
+            GrindingRun::proof_of_work(
+                site,
+                3,
+                ChallengeFieldOrder::from_full_capacity(capacity).unwrap(),
+            )
+            .unwrap()
+        })
         .collect::<Vec<_>>();
     runs.push(GrindingRun::fold_response(2));
     runs.push(GrindingRun::fold_challenge_group(2, 3, 4).unwrap());
-    let plan = GrindingPlan::new(runs, full_order(capacity)).unwrap();
+    let plan = GrindingPlan::new(
+        runs,
+        ChallengeFieldOrder::from_full_capacity(capacity).unwrap(),
+    )
+    .unwrap();
     let bytes = plan.canonical_bytes().unwrap();
     assert!(bytes.starts_with(GRINDING_PLAN_DOMAIN));
     assert_eq!(plan.expanded_query_count(), 23);
@@ -204,22 +213,14 @@ fn ring_switch_loss_uses_the_opening_polynomial_dimension() {
 
 #[test]
 fn special_proof_of_work_site_and_reserved_sentinel_are_rejected() {
-    assert!(GrindingRun::proof_of_work(
-        GrindingSite::FoldResponse { level: 0 },
-        1,
-        full_order(128)
-    )
-    .is_err());
+    let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
+    assert!(GrindingRun::proof_of_work(GrindingSite::FoldResponse { level: 0 }, 1, order).is_err());
 
-    let mut underpriced = GrindingRun::proof_of_work(
-        GrindingSite::RingSwitchAlpha { level: 0 },
-        3,
-        full_order(128),
-    )
-    .unwrap();
+    let mut underpriced =
+        GrindingRun::proof_of_work(GrindingSite::RingSwitchAlpha { level: 0 }, 3, order).unwrap();
     underpriced.grind_bits = 1;
     underpriced.nonce_bits = 8;
-    assert!(GrindingPlan::new(vec![underpriced], full_order(128)).is_err());
+    assert!(GrindingPlan::new(vec![underpriced], order).is_err());
 
     let reserved = GrindingRun::proof_of_work(
         GrindingSite::SumcheckRound {
@@ -229,18 +230,19 @@ fn special_proof_of_work_site_and_reserved_sentinel_are_rejected() {
             round: 0,
         },
         3,
-        full_order(128),
+        order,
     )
     .unwrap();
-    assert!(GrindingPlan::new(vec![reserved], full_order(128)).is_err());
+    assert!(GrindingPlan::new(vec![reserved], order).is_err());
 }
 
 #[test]
 fn public_plan_rejects_query_limit_without_expanding_runs() {
+    let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
     let accepted =
         GrindingRun::fold_challenge_group(0, 0, TRANSCRIPT_GRINDING_QUERY_LIMIT - 2).unwrap();
     assert_eq!(
-        GrindingPlan::new(vec![accepted], full_order(128))
+        GrindingPlan::new(vec![accepted], order)
             .unwrap()
             .expanded_query_count(),
         TRANSCRIPT_GRINDING_QUERY_LIMIT - 1
@@ -249,7 +251,7 @@ fn public_plan_rejects_query_limit_without_expanding_runs() {
     let excessive =
         GrindingRun::fold_challenge_group(0, 0, TRANSCRIPT_GRINDING_QUERY_LIMIT - 1).unwrap();
     assert!(matches!(
-        GrindingPlan::new(vec![excessive], full_order(128)),
+        GrindingPlan::new(vec![excessive], order),
         Err(AkitaError::InvalidSetup(_))
     ));
 }
@@ -257,7 +259,8 @@ fn public_plan_rejects_query_limit_without_expanding_runs() {
 #[test]
 fn planner_accumulator_prices_an_oversized_edge_without_plan_validation() {
     let run = GrindingRun::fold_challenge_group(0, 0, TRANSCRIPT_GRINDING_QUERY_LIMIT - 1).unwrap();
-    let mut accumulator = GrindingPlanAccumulator::new(full_order(128)).unwrap();
+    let mut accumulator =
+        GrindingPlanAccumulator::new(ChallengeFieldOrder::from_full_capacity(128).unwrap());
     accumulator.push(run).unwrap();
     assert_eq!(
         accumulator.cost(),

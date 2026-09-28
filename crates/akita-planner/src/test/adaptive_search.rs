@@ -51,13 +51,6 @@ fn assert_selected_grinding_edge_parity(
         extension_degree,
     )
     .expect("selected schedule has a public grinding plan");
-    let candidate = akita_types::transcript_grinding_cost_for_planner_candidate(
-        schedule,
-        &root_layout,
-        challenge_order,
-        extension_degree,
-    )
-    .expect("selected candidate grinding cost");
 
     let folds = std::iter::once(&schedule.root)
         .chain(&schedule.recursive_folds)
@@ -115,7 +108,6 @@ fn assert_selected_grinding_edge_parity(
         previous_rounds = geometry.relation_point_variable_count();
     }
     assert!(edge_sum.expanded_query_count > 0);
-    assert_eq!(edge_sum, candidate);
     assert_eq!(edge_sum.total_nonce_bits, full_plan.total_nonce_bits());
     assert_eq!(
         edge_sum.native_nonce_max_bytes,

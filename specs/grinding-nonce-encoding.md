@@ -150,7 +150,7 @@ The grinding plan is derived only from trusted public data:
 
 - the selected fold schedule;
 - the normalized opening layout;
-- field modulus bits and extension degree; and
+- the validated base-field modulus and challenge extension degree; and
 - protocol policy and loss bounds.
 
 Its digest is bound into the instance descriptor. Proof bytes do not choose the
