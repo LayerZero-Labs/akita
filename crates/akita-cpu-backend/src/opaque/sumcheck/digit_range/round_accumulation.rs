@@ -5,22 +5,22 @@ use jolt_field::Unreduced;
 use jolt_field::{Field, Zero};
 
 #[inline]
-fn accumulate_canonical_blocks<E: Field>(
+fn accumulate_canonical_blocks<E: Field, const N: usize>(
     first: &[E],
     second: &[E],
     explicit_pair_count: usize,
-    coefficients_at: &(impl Fn(usize) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] + Sync),
-) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
+    values_at: &(impl Fn(usize) -> [E; N] + Sync),
+) -> [E; N] {
     let explicit_block_count = explicit_pair_count.div_ceil(first.len());
     cfg_fold_reduce!(
         0..explicit_block_count,
-        || [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
+        || [E::zero(); N],
         |mut outer, second_index| {
             let block_start = second_index * first.len();
             let block_end = explicit_pair_count.min(block_start + first.len());
-            let mut inner = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
+            let mut inner = [E::zero(); N];
             for pair_index in block_start..block_end {
-                let source = coefficients_at(pair_index);
+                let source = values_at(pair_index);
                 let first_weight = first[pair_index - block_start];
                 for (destination, source) in inner.iter_mut().zip(source) {
                     *destination += first_weight * source;
@@ -41,33 +41,22 @@ fn accumulate_canonical_blocks<E: Field>(
     )
 }
 
-#[inline(always)]
-pub(super) fn add_scaled_round_coefficients<E: Field>(
-    destination: &mut [E; MAX_TREE_STAGE_Q_DEGREE + 1],
-    source: &[E; MAX_TREE_STAGE_Q_DEGREE + 1],
-    scale: E,
-) {
-    for (destination, &source) in destination.iter_mut().zip(source.iter()) {
-        *destination += scale * source;
-    }
-}
-
-fn accumulate_delayed_blocks<E: Field + Unreduced>(
+fn accumulate_delayed_blocks<E: Field + Unreduced, const N: usize>(
     first: &[E],
     second: &[E],
     explicit_pair_count: usize,
-    coefficients_at: &(impl Fn(usize) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] + Sync),
-) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
+    values_at: &(impl Fn(usize) -> [E; N] + Sync),
+) -> [E; N] {
     let explicit_block_count = explicit_pair_count.div_ceil(first.len());
     cfg_fold_reduce!(
         0..explicit_block_count,
-        || [E::Product::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
+        || [E::Product::zero(); N],
         |mut outer, second_index| {
             let block_start = second_index * first.len();
             let block_end = explicit_pair_count.min(block_start + first.len());
-            let mut inner = [E::Product::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
+            let mut inner = [E::Product::zero(); N];
             for pair_index in block_start..block_end {
-                let source = coefficients_at(pair_index);
+                let source = values_at(pair_index);
                 let first_weight = first[pair_index - block_start];
                 for (destination, source) in inner.iter_mut().zip(source) {
                     *destination += first_weight.mul_unreduced(source);
@@ -168,6 +157,32 @@ pub(super) fn accumulate_equality_weighted_pair_terms<E: Field + Unreduced, cons
     }
 }
 
+/// Sum per-pair values over a split-equality round.
+///
+/// Explicit pairs contribute `values_at(pair_index)` weighted by their
+/// equality weight; every implicit pair contributes `default_values`.
+pub(super) fn accumulate_equality_weighted_values<E: Field + Unreduced, const N: usize>(
+    first: &[E],
+    second: &[E],
+    explicit_pair_count: usize,
+    values_at: impl Fn(usize) -> [E; N] + Sync,
+    default_values: [E; N],
+) -> [E; N] {
+    debug_assert!(explicit_pair_count <= first.len() * second.len());
+    let mut values = if E::SUM_IS_EXACT {
+        accumulate_delayed_blocks(first, second, explicit_pair_count, &values_at)
+    } else {
+        accumulate_canonical_blocks(first, second, explicit_pair_count, &values_at)
+    };
+    let suffix_weight = SplitEqualitySuffixMass::new(first, second)
+        .and_then(|suffix| suffix.weight_from(explicit_pair_count))
+        .expect("split equality and exact prefix were validated at construction");
+    for (value, default) in values.iter_mut().zip(default_values) {
+        *value += suffix_weight * default;
+    }
+    values
+}
+
 pub(super) fn accumulate_equality_weighted_round<E: Field + Unreduced>(
     first: &[E],
     second: &[E],
@@ -175,17 +190,13 @@ pub(super) fn accumulate_equality_weighted_round<E: Field + Unreduced>(
     coefficients_at: impl Fn(usize) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] + Sync,
     default_coefficients: [E; MAX_TREE_STAGE_Q_DEGREE + 1],
 ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
-    debug_assert!(explicit_pair_count <= first.len() * second.len());
-    let mut coefficients = if E::SUM_IS_EXACT {
-        accumulate_delayed_blocks(first, second, explicit_pair_count, &coefficients_at)
-    } else {
-        accumulate_canonical_blocks(first, second, explicit_pair_count, &coefficients_at)
-    };
-    let suffix_weight = SplitEqualitySuffixMass::new(first, second)
-        .and_then(|suffix| suffix.weight_from(explicit_pair_count))
-        .expect("split equality and exact prefix were validated at construction");
-    add_scaled_round_coefficients(&mut coefficients, &default_coefficients, suffix_weight);
-    coefficients
+    accumulate_equality_weighted_values(
+        first,
+        second,
+        explicit_pair_count,
+        coefficients_at,
+        default_coefficients,
+    )
 }
 
 #[cfg(test)]
@@ -221,7 +232,9 @@ mod tests {
                     default
                 };
                 let weight = first[pair_index % first.len()] * second[pair_index / first.len()];
-                add_scaled_round_coefficients(&mut expected, &row, weight);
+                for (expected, row) in expected.iter_mut().zip(row) {
+                    *expected += weight * row;
+                }
             }
             assert_eq!(actual, expected);
         }
