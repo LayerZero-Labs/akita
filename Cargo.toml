@@ -4,6 +4,7 @@ members = [
   "crates/akita-challenges",
   "crates/akita-config",
   "crates/akita-cpu-backend",
+  "crates/akita-metal",
   "crates/akita-error",
   "crates/akita-pcs",
   "crates/akita-serialization",

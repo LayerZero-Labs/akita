@@ -30,6 +30,7 @@ scripts/check-crate-deps.sh akita-cpu-backend
 scripts/check-crate-deps.sh akita-config
 scripts/check-crate-deps.sh akita-planner
 scripts/check-crate-deps.sh akita-setup
+scripts/check-crate-deps.sh akita-metal
 scripts/check-shared-field-identity.sh
 scripts/check-external-schedule-artifacts.sh
 cargo machete --with-metadata

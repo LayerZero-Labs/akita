@@ -185,6 +185,23 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
             barrett,
         }
     }
+
+    /// The negacyclic transform tables in Montgomery form, in the order
+    /// forward stage twiddles, inverse stage twiddles, twist `psi^i`, and
+    /// fused untwist `D^{-1} psi^{-i}`. Stage twiddles use the packed layout
+    /// of [`forward_ntt`] and [`inverse_ntt`].
+    ///
+    /// Extension seam: device backends upload these tables instead of
+    /// recomputing roots, so every transform shares one root choice
+    /// (`specs/akita-compute-backend-metal.md`).
+    pub fn negacyclic_tables(&self) -> [&[MontCoeff<W>; D]; 4] {
+        [
+            &self.fwd_twiddles,
+            &self.inv_twiddles,
+            &self.psi_pows,
+            &self.d_inv_psi_inv,
+        ]
+    }
 }
 
 /// Forward negacyclic NTT (twist + cyclic Gentleman-Sande DIF).

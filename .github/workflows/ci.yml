@@ -75,6 +75,7 @@ jobs:
           scripts/check-crate-deps.sh akita-config
           scripts/check-crate-deps.sh akita-planner
           scripts/check-crate-deps.sh akita-setup
+          scripts/check-crate-deps.sh akita-metal
 
   labinius-trinomial:
     name: LaBinius trinomial arithmetic and relation bridge
