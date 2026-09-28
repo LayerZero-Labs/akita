@@ -3,6 +3,8 @@
 // `data` holds `polys` ring elements in CyclotomicCrtNtt<i32, K, D> layout:
 // element-major, then prime, then coefficient ([polys][K][D] words). One
 // threadgroup of D/2 lanes transforms one (element, prime) row in place.
+// Global word bases are widened before multiplication; lane and butterfly
+// indices stay uint because every compiled D is at most 1024.
 
 #include <metal_stdlib>
 
@@ -24,8 +26,8 @@ template <uint D>
     uint lane [[thread_position_in_threadgroup]]) {
     threadgroup int a[D];
     uint prime = row % batch.primes;
-    device int* words = data + row * D;
-    device const int* prime_tables = tables + prime * NttTables::COUNT * D;
+    device int* words = data + ulong(row) * D;
+    device const int* prime_tables = tables + ulong(prime) * NttTables::COUNT * D;
     a[lane] = words[lane];
     a[lane + D / 2] = words[lane + D / 2];
     forward_negacyclic<D>(a, primes[prime], prime_tables, lane);
@@ -43,8 +45,8 @@ template <uint D>
     uint lane [[thread_position_in_threadgroup]]) {
     threadgroup int a[D];
     uint prime = row % batch.primes;
-    device int* words = data + row * D;
-    device const int* prime_tables = tables + prime * NttTables::COUNT * D;
+    device int* words = data + ulong(row) * D;
+    device const int* prime_tables = tables + ulong(prime) * NttTables::COUNT * D;
     a[lane] = words[lane];
     a[lane + D / 2] = words[lane + D / 2];
     inverse_negacyclic<D>(a, primes[prime], prime_tables, lane);

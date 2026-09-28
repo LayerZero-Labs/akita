@@ -66,7 +66,8 @@ template <uint D, typename Digit, uint BLOCK_TILE, uint ROW_TILE, uint LIMBS>
     uint chunk = rest / shape.block_tiles;
 
     NttPrime q = primes[prime];
-    device const int* prime_tables = tables + prime * NttTables::COUNT * D;
+    device const int* prime_tables =
+        tables + ulong(prime) * NttTables::COUNT * D;
     uint block0 = block_tile * BLOCK_TILE;
     uint row0 = row_tile * ROW_TILE;
     uint col0 = shape.col_begin + chunk * shape.chunk_cols;
@@ -90,7 +91,8 @@ template <uint D, typename Digit, uint BLOCK_TILE, uint ROW_TILE, uint LIMBS>
             int d0 = 0;
             int d1 = 0;
             if (block < shape.blocks) {
-                device const Digit* plane = planes + (block * shape.cols + col) * D;
+                device const Digit* plane =
+                    planes + (ulong(block) * shape.cols + col) * D;
                 d0 = int(plane[lane]);
                 d1 = int(plane[lane + HALF]);
             }
@@ -106,7 +108,7 @@ template <uint D, typename Digit, uint BLOCK_TILE, uint ROW_TILE, uint LIMBS>
             if (row < shape.rows) {
                 for (uint l = 0; l < LIMBS; l++) {
                     device const int* entry = matrix
-                        + (((row * shape.cols + col) * LIMBS + l) * shape.primes + prime) * D;
+                        + (((ulong(row) * shape.cols + col) * LIMBS + l) * shape.primes + prime) * D;
                     int a0 = entry[lane];
                     int a1 = entry[lane + HALF];
                     for (uint t = 0; t < BLOCK_TILE; t++) {
@@ -130,7 +132,7 @@ template <uint D, typename Digit, uint BLOCK_TILE, uint ROW_TILE, uint LIMBS>
             if (block < shape.blocks && row < shape.rows) {
                 for (uint l = 0; l < LIMBS; l++) {
                     device int* out = partials
-                        + ((((chunk * LIMBS + l) * shape.blocks + block) * shape.rows + row)
+                        + ((((ulong(chunk) * LIMBS + l) * shape.blocks + block) * shape.rows + row)
                                * shape.primes
                            + prime)
                             * D;
@@ -156,21 +158,22 @@ template <uint D>
     // residue row itself.
     uint prime = group % shape.primes;
     NttPrime q = primes[prime];
-    uint stride = shape.limbs * shape.blocks * shape.rows * shape.primes * D;
+    ulong stride = ulong(shape.limbs) * shape.blocks * shape.rows * shape.primes * D;
 
     threadgroup int a[D];
     int s0 = 0;
     int s1 = 0;
     for (uint chunk = 0; chunk < shape.chunks; chunk++) {
-        device const int* sums = partials + chunk * stride + group * D;
+        device const int* sums = partials + ulong(chunk) * stride + ulong(group) * D;
         s0 = reduce_range(q, s0 + sums[lane]);
         s1 = reduce_range(q, s1 + sums[lane + HALF]);
     }
     a[lane] = s0;
     a[lane + HALF] = s1;
-    inverse_negacyclic<D>(a, q, tables + prime * NttTables::COUNT * D, lane);
-    residues[group * D + lane] = a[lane];
-    residues[group * D + lane + HALF] = a[lane + HALF];
+    inverse_negacyclic<D>(a, q, tables + ulong(prime) * NttTables::COUNT * D, lane);
+    ulong residue = ulong(group) * D + lane;
+    residues[residue] = a[lane];
+    residues[residue + HALF] = a[lane + HALF];
 }
 
 } // namespace akita

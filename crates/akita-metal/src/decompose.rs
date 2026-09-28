@@ -133,3 +133,20 @@ where
     )?;
     Ok(batch.commit_and_wait()?)
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn output_address_crosses_u32_at_admitted_shape() {
+        let index = (1u64 << 25) as u32;
+        let degree = 64u64;
+        let levels = 128u64;
+        let ring = u64::from(index) / degree;
+        let output = ring
+            .checked_mul(levels)
+            .and_then(|value| value.checked_mul(degree))
+            .expect("decomposition output address");
+        assert_eq!(output, 1u64 << 32);
+        assert!(output > u64::from(u32::MAX));
+    }
+}

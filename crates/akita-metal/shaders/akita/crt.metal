@@ -35,14 +35,20 @@ template <typename F, uint K>
     uint degree = 1u << batch.log_degree;
     uint element = index >> batch.log_degree;
     uint coefficient = index & (degree - 1);
-    uint limb_stride = batch.coefficients * K;
-    device const int* words = residues + element * K * degree + coefficient;
+    // A valid dispatch may contain nearly 2^32 coefficients, while every
+    // limb contains K residue words per coefficient. Widen both bases before
+    // multiplying so later elements and limbs cannot alias earlier storage.
+    ulong limb_stride = ulong(batch.coefficients) * K;
+    ulong residue_base = ulong(element) * K * degree + coefficient;
+    device const int* words = residues + residue_base;
     F value = F::zero();
     for (uint limb = 0; limb < batch.limbs; limb++) {
-        F part = crt_reconstruct<F, K>(words + limb * limb_stride, degree, primes, gamma, radix);
+        F part = crt_reconstruct<F, K>(
+            words + ulong(limb) * limb_stride, degree, primes, gamma, radix);
         value = value + scales[limb] * part;
     }
-    out[index] = batch.accumulate != 0 ? out[index] + value : value;
+    ulong output = ulong(index);
+    out[output] = batch.accumulate != 0 ? out[output] + value : value;
 }
 
 } // namespace akita
