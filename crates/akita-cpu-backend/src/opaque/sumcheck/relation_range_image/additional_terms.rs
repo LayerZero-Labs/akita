@@ -75,6 +75,7 @@ pub(crate) struct AdditionalRelationTerms<E: Field> {
 }
 
 impl<E: Field + Ring> AdditionalRelationTerms<E> {
+    #[tracing::instrument(skip_all, name = "additional_relation_new")]
     pub(crate) fn new(
         compact_witness: &PackedSignedDigits,
         domain_len: usize,
@@ -230,34 +231,44 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
     /// linear and binary weights. Expanding
     /// `w(t) l(t) + rho b(t) w(t) (w(t) + 1)` once avoids four separate point
     /// evaluations followed by generic interpolation.
-    fn round_polynomial_with(&self, witness_at: impl Fn(usize) -> E + Sync) -> UnivariatePoly<E> {
+    #[tracing::instrument(skip_all, name = "additional_relation_round")]
+    fn round_polynomial_with(&self, witness_at: impl Fn(usize) -> E + Sync) -> UnivariatePoly<E>
+    where
+        E: Unreduced,
+    {
         let partials = cfg_into_iter!(parent_ranges(&self.weights))
             .map(|range| {
-                let mut coefficients = [E::zero(); 4];
+                // A task contains at most TASK_WEIGHTS + 1 entries. Even the
+                // cubic's linear coefficient adds only four products per pair,
+                // well within ProductSum's accumulation bound.
+                let mut coefficients = [super::ProductSum::<E>::zero(); 4];
                 for (parent, linear, binary) in parent_pairs(&self.weights[range]) {
                     let witness = [witness_at(2 * parent), witness_at(2 * parent + 1)];
                     let dw = witness[1] - witness[0];
                     let d_linear = linear[1] - linear[0];
-                    let d_binary = binary[1] - binary[0];
+                    coefficients[0].add(witness[0], linear[0]);
+                    coefficients[1].add(witness[0], d_linear);
+                    coefficients[1].add(dw, linear[0]);
+                    coefficients[2].add(dw, d_linear);
 
-                    let witness_square_constant = witness[0].square() + witness[0];
-                    let witness_square_linear = dw * (witness[0] + witness[0] + E::one());
-                    let witness_square_quadratic = dw.square();
-                    let batched_binary = self.binary_batching * binary[0];
-                    let batched_binary_delta = self.binary_batching * d_binary;
-
-                    coefficients[0] +=
-                        witness[0] * linear[0] + batched_binary * witness_square_constant;
-                    coefficients[1] += witness[0] * d_linear
-                        + dw * linear[0]
-                        + batched_binary * witness_square_linear
-                        + batched_binary_delta * witness_square_constant;
-                    coefficients[2] += dw * d_linear
-                        + batched_binary * witness_square_quadratic
-                        + batched_binary_delta * witness_square_linear;
-                    coefficients[3] += batched_binary_delta * witness_square_quadratic;
+                    // Compression and physical-norm coordinates can have only
+                    // a linear weight. Their round polynomial is quadratic;
+                    // no witness squaring or binary products are needed.
+                    if !binary[0].is_zero() || !binary[1].is_zero() {
+                        let witness_square_constant = witness[0].square() + witness[0];
+                        let witness_square_linear = dw * (witness[0] + witness[0] + E::one());
+                        let witness_square_quadratic = dw.square();
+                        let batched_binary = self.binary_batching * binary[0];
+                        let batched_binary_delta = self.binary_batching * (binary[1] - binary[0]);
+                        coefficients[0].add(batched_binary, witness_square_constant);
+                        coefficients[1].add(batched_binary, witness_square_linear);
+                        coefficients[1].add(batched_binary_delta, witness_square_constant);
+                        coefficients[2].add(batched_binary, witness_square_quadratic);
+                        coefficients[2].add(batched_binary_delta, witness_square_linear);
+                        coefficients[3].add(batched_binary_delta, witness_square_quadratic);
+                    }
                 }
-                coefficients
+                coefficients.map(super::ProductSum::finish)
             })
             .collect::<Vec<_>>();
         let mut coefficients = sum_partials(E::zero(), partials).to_vec();
@@ -267,6 +278,7 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
 
     /// Round polynomial while the witness is still packed signed digits, after
     /// the coefficient challenges `bound` have been drawn.
+    #[tracing::instrument(skip_all, name = "additional_relation_compact_round")]
     pub(crate) fn round_polynomial_compact(
         &self,
         compact_witness: PackedSignedDigitView<'_>,
@@ -346,7 +358,10 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
         UnivariatePoly::new(coefficients)
     }
 
-    pub(crate) fn round_polynomial_folded(&self, folded_witness: &[E]) -> UnivariatePoly<E> {
+    pub(crate) fn round_polynomial_folded(&self, folded_witness: &[E]) -> UnivariatePoly<E>
+    where
+        E: Unreduced,
+    {
         self.round_polynomial_with(|index| {
             folded_witness.get(index).copied().unwrap_or_else(E::zero)
         })
@@ -356,6 +371,7 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
     ///
     /// Tasks compact their parent-aligned ranges in place, and the compacted
     /// ranges are then moved together in order.
+    #[tracing::instrument(skip_all, name = "additional_relation_bind")]
     pub(crate) fn bind(&mut self, challenge: E) {
         let ranges = parent_ranges(&self.weights);
         let mut chunks = Vec::with_capacity(ranges.len());
@@ -428,6 +444,50 @@ mod tests {
     use jolt_field::One;
     use jolt_field::Prime128OffsetA7F7 as F;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn folded_extension_round_matches_direct_evaluation_with_mixed_support() {
+        use jolt_field::{Ext2, ExtField, Prime64Offset59 as B};
+        type E = Ext2<B>;
+        let value = |index: usize| {
+            E::from_base_slice(&[
+                -B::from_u64(13 * index as u64 + 7),
+                B::from_u64(19 * index as u64 + 3),
+            ])
+        };
+        let domain_len = 1 << 14;
+        let weights = (0..domain_len)
+            .filter(|index| index % 5 != 0)
+            .map(|index| SparseWeight {
+                index,
+                linear: value(index),
+                binary: if index % 17 < 3 {
+                    value(index + 1)
+                } else {
+                    E::zero()
+                },
+            })
+            .collect();
+        let terms = AdditionalRelationTerms {
+            weights,
+            binary_batching: value(31),
+            input_claim: E::zero(),
+            domain_len,
+        };
+        let witness = (0..domain_len).map(value).collect::<Vec<_>>();
+        let polynomial = terms.round_polynomial_folded(&witness);
+        for point in [E::zero(), E::one(), value(2), value(5), value(11)] {
+            let mut expected = E::zero();
+            for (parent, linear, binary) in parent_pairs(&terms.weights) {
+                let w =
+                    witness[2 * parent] + point * (witness[2 * parent + 1] - witness[2 * parent]);
+                let linear = linear[0] + point * (linear[1] - linear[0]);
+                let binary = binary[0] + point * (binary[1] - binary[0]);
+                expected += w * linear + terms.binary_batching * binary * w * (w + E::one());
+            }
+            assert_eq!(polynomial.evaluate(point), expected);
+        }
+    }
 
     fn equality_point(domain_len: usize) -> Vec<F> {
         (0..domain_len.trailing_zeros() as usize)
