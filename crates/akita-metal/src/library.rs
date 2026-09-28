@@ -8,8 +8,8 @@ use jolt_metal::shaders::FIELD_HEADERS;
 
 use crate::error::AkitaMetalError;
 
-/// Ring degrees with compiled transform kernels: every `D` a CRT+NTT
-/// profile admits (`Q128_MAX_RING_D` is 1024).
+/// Ring degrees with compiled transform kernels. This covers Q128; Q32 and
+/// Q64 also admit degree 2048, which is not compiled here.
 pub const RING_DEGREES: [usize; 5] = [64, 128, 256, 512, 1024];
 
 /// Akita's MSL headers, in dependency order. They follow `jolt-metal`'s
