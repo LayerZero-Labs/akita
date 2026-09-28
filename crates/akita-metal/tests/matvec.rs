@@ -119,7 +119,7 @@ fn device_i8<F: MetalField + CanonicalEncoding, const K: usize, const D: usize>(
         .map(|&digit| digit as i8)
         .collect::<Vec<_>>();
     let planes = DeviceDigitPlanes::from_slice(metal, &digits, log_basis).expect("upload");
-    let blocks = planes.len() / device.cols();
+    let blocks = planes.len() / (device.cols() * D);
     let mut out =
         DeviceBuffer::<F>::zeroed(metal.device(), blocks * device.rows() * D).expect("output");
     device.mat_vec(metal, &planes, &mut out).expect("matvec");
@@ -134,7 +134,7 @@ fn device_i16<F: MetalField + CanonicalEncoding, const K: usize, const D: usize>
 ) -> Vec<F> {
     let digits = planes.iter().flatten().copied().collect::<Vec<_>>();
     let planes = DeviceDigitPlanes::from_slice(metal, &digits, log_basis).expect("upload");
-    let blocks = planes.len() / device.cols();
+    let blocks = planes.len() / (device.cols() * D);
     let mut out =
         DeviceBuffer::<F>::zeroed(metal.device(), blocks * device.rows() * D).expect("output");
     device.mat_vec(metal, &planes, &mut out).expect("matvec");

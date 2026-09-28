@@ -9,7 +9,7 @@ use akita_algebra::{CanonicalEncoding, CyclotomicRing, Field};
 use akita_cpu_backend::benchmark_support::decompose_rows_i8_into;
 use akita_metal::decompose::decompose;
 use akita_metal::{AkitaMetal, AkitaMetalError};
-use jolt_field::{Prime128OffsetA7F7, Prime48Offset59, Prime64Offset59};
+use jolt_field::{Prime128Offset275, Prime128OffsetA7F7, Prime64Offset59, Ring};
 use jolt_metal::runtime::DeviceBuffer;
 use jolt_metal::MetalField;
 use support::{gpu, SplitMix64};
@@ -132,10 +132,10 @@ fn fp64_digits_match_cpu() {
 #[test]
 fn unsupported_field_rejects_before_output_allocation() {
     let test = gpu();
-    let input = [Prime48Offset59::from_u64(1); D];
+    let input = [Prime128Offset275::from_u64(1); D];
     let buffer = DeviceBuffer::from_slice(test.metal.device(), &input).expect("input");
-    let error = match decompose::<Prime48Offset59, i8>(&test.metal, &buffer, D, 1, 3) {
-        Ok(_) => panic!("fp48 has no Akita decomposition kernel"),
+    let error = match decompose::<Prime128Offset275, i8>(&test.metal, &buffer, D, 1, 3) {
+        Ok(_) => panic!("fp128 offset 275 has no Akita decomposition kernel"),
         Err(error) => error,
     };
     assert!(matches!(&error, AkitaMetalError::Shape(_)), "{error}");
