@@ -169,7 +169,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             0..num_second,
             || (FieldNorm::<E, SKIP_LINEAR>::zero(), [E::zero(); 3]),
             |(mut virt, mut rel), j_high| {
-                let mut inner_virt = FieldNorm::<E, SKIP_LINEAR>::zero();
+                let mut inner_virt = ProductNorm::<E, SKIP_LINEAR>::zero();
+                let mut inner_rel = [ProductSum::<E>::zero(); 3];
                 let base = j_high * num_first;
 
                 for (j_low, &e_in) in e_first.iter().enumerate() {
@@ -187,10 +188,17 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     inner_virt.add(w0, dw, e_in);
 
                     let (p0, p1) = relation_pair(2 * j);
-                    self.accumulate_fused_relation_linear(&mut rel, w0, dw, 2 * j, p0, p1);
+                    let (t0, t1) = self.linear_terms.pair_from_flat_index(2 * j);
+                    let q0 = p0 + t0;
+                    let dq = p1 + t1 - q0;
+                    inner_rel[0].add(w0, q0);
+                    inner_rel[1].add(w0, dq);
+                    inner_rel[1].add(dw, q0);
+                    inner_rel[2].add(dw, dq);
                 }
 
-                virt.scaled_add(e_second[j_high], inner_virt.totals());
+                virt.scaled_add(e_second[j_high], inner_virt.reduce());
+                add_assign_all(&mut rel, &inner_rel.map(ProductSum::finish));
 
                 (virt, rel)
             },

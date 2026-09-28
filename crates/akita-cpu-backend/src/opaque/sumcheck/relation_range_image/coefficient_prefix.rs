@@ -52,6 +52,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             |(mut virt, mut rel), lane| {
                 let lane_start = lane * common_alpha_factor.len();
                 let lane_weight = relation_lane_weights[lane];
+                let linear_lane = self.linear_terms.resolve_lane(lane);
                 let equality_address_base = lane * current_coefficient_half;
                 let mut blk = 0usize;
 
@@ -80,13 +81,13 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
                         let p0 = common_alpha_factor[left] * lane_weight;
                         let p1 = common_alpha_factor[left + 1] * lane_weight;
-                        self.accumulate_fused_relation_linear_signed(
+                        let (t0, t1) = linear_lane.pair(left);
+                        accumulate_relation_coeffs_signed(
                             &mut rel,
                             w0_i64,
                             dw_i64,
-                            lane_start + left,
-                            p0,
-                            p1,
+                            p0 + t0,
+                            p1 + t1,
                         );
                     }
 
@@ -156,7 +157,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 let lane_values =
                     &folded_witness[lane_start..lane_start + common_alpha_factor.len()];
                 let lane_weight = relation_lane_weights[lane];
+                let linear_lane = self.linear_terms.resolve_lane(lane);
                 let equality_address_base = lane * current_coefficient_half;
+                let mut lane_rel = [ProductSum::<E>::zero(); 3];
                 let mut blk = 0usize;
 
                 while blk < current_coefficient_half {
@@ -168,7 +171,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                         block_size,
                         current_coefficient_half,
                     );
-                    let mut inner_virt = FieldNorm::<E, SKIP_LINEAR>::zero();
+                    let mut inner_virt = ProductNorm::<E, SKIP_LINEAR>::zero();
 
                     for coefficient_pair in blk..blk_end {
                         let j_low = (equality_address_base + coefficient_pair) & (num_first - 1);
@@ -182,20 +185,23 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
                         let p0 = common_alpha_factor[left] * lane_weight;
                         let p1 = common_alpha_factor[left + 1] * lane_weight;
-                        self.accumulate_fused_relation_linear(
-                            &mut rel,
-                            w0,
-                            dw,
-                            lane_start + left,
-                            p0,
-                            p1,
-                        );
+                        let (t0, t1) = linear_lane.pair(left);
+                        let q0 = p0 + t0;
+                        let q1 = p1 + t1;
+                        let dq = q1 - q0;
+                        lane_rel[0].add(w0, q0);
+                        lane_rel[1].add(w0, dq);
+                        lane_rel[1].add(dw, q0);
+                        lane_rel[2].add(dw, dq);
                     }
 
-                    virt.scaled_add(e_second[j_high], inner_virt.totals());
+                    virt.scaled_add(e_second[j_high], inner_virt.reduce());
                     blk = blk_end;
                 }
 
+                for (sum, product_sum) in rel.iter_mut().zip(lane_rel) {
+                    *sum += product_sum.finish();
+                }
                 (virt, rel)
             },
             |(mut va, mut ra), (vb, rb)| {

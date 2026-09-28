@@ -323,21 +323,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn accumulate_fused_relation_linear(
-        &self,
-        rel: &mut [E; 3],
-        w0: E,
-        dw: E,
-        witness_idx0: usize,
-        p0: E,
-        p1: E,
-    ) {
-        let (t0, t1) = self.linear_terms.pair_from_flat_index(witness_idx0);
-        accumulate_relation_coeffs(rel, w0, dw, p0 + t0, p1 + t1);
-    }
-
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn accumulate_fused_relation_linear_signed(
         &self,
         rel: &mut [E::SmallProduct; 6],

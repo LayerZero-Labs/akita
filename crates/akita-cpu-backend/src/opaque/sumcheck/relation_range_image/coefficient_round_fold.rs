@@ -18,7 +18,7 @@ fn fold_lane_and_compute_next_round<E: Field + Ring + Unreduced, const SKIP_LINE
     let next_coefficient_half = next_coeff_count / 2;
     let equality_address_base = lane * next_coefficient_half;
     let mut virt = FieldNorm::<E, SKIP_LINEAR>::zero();
-    let mut rel = [E::zero(); 3];
+    let mut relation = [ProductSum::<E>::zero(); 3];
     let mut blk = 0usize;
 
     while blk < next_coefficient_half {
@@ -30,7 +30,7 @@ fn fold_lane_and_compute_next_round<E: Field + Ring + Unreduced, const SKIP_LINE
             block_size,
             next_coefficient_half,
         );
-        let mut inner_virt = FieldNorm::<E, SKIP_LINEAR>::zero();
+        let mut inner_virt = ProductNorm::<E, SKIP_LINEAR>::zero();
 
         for coefficient_pair in blk..blk_end {
             let left = 2 * coefficient_pair;
@@ -50,15 +50,21 @@ fn fold_lane_and_compute_next_round<E: Field + Ring + Unreduced, const SKIP_LINE
             let p0 = next_alpha_factor[left] * lane_weight;
             let p1 = next_alpha_factor[left + 1] * lane_weight;
             let (t0, t1) = linear_lane.pair(left);
-            accumulate_relation_coeffs(&mut rel, w0, dw, p0 + t0, p1 + t1);
+            let q0 = p0 + t0;
+            let q1 = p1 + t1;
+            let dq = q1 - q0;
+            relation[0].add(w0, q0);
+            relation[1].add(w0, dq);
+            relation[1].add(dw, q0);
+            relation[2].add(dw, dq);
         }
 
         let e_out = e_second[j_high];
-        virt.scaled_add(e_out, inner_virt.totals());
+        virt.scaled_add(e_out, inner_virt.reduce());
         blk = blk_end;
     }
 
-    (virt.totals(), rel)
+    (virt.totals(), relation.map(ProductSum::finish))
 }
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
