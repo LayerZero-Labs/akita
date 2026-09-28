@@ -514,6 +514,8 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sources::packed_digits::PackedSignedDigits;
+    use akita_types::{DigitRangePlan, FlatBooleanDomain};
     use jolt_field::{Ext2, One, Prime64Offset59, Zero};
 
     type F = Ext2<Prime64Offset59>;
@@ -555,5 +557,65 @@ mod tests {
             DepressedQuartic::<F>::new(&[F::one(), F::one(), F::one(), F::one(), F::zero()])
                 .is_none()
         );
+    }
+
+    #[test]
+    fn cubic_leaf_rounds_match_dense_reference() {
+        let digits = [-7, -3, -1, 0, 2, 5, 7];
+        let domain = FlatBooleanDomain::new(digits.len(), 3).unwrap();
+        let source = CompactDigitSource::new(
+            PackedSignedDigits::from_i8_digits_auto(digits.to_vec()),
+            domain,
+            DigitRangePlan::new(16).unwrap(),
+        )
+        .unwrap();
+        let equality_point = [17, 19, 23].map(F::from_u64);
+        let polynomial = [3, 5, 7, 11].map(F::from_u64).to_vec();
+        let mut dense = digits
+            .into_iter()
+            .map(|digit| {
+                let digit = F::from_i64(i64::from(digit));
+                digit * (digit + F::one())
+            })
+            .chain(std::iter::once(F::zero()))
+            .collect::<Vec<_>>();
+        let mut reference_eq = GruenSplitEq::new(&equality_point).unwrap();
+        let dense_round = |dense: &[F], split_eq: &GruenSplitEq<F>| {
+            let (first, second) = split_eq.remaining_eq_tables();
+            accumulate_round(
+                first,
+                second,
+                dense.len() / 2,
+                F::zero(),
+                |pair_index| (dense[2 * pair_index], dense[2 * pair_index + 1]),
+                &polynomial,
+            )
+        };
+        let first_round = dense_round(&dense, &reference_eq);
+        let mut claim = first_round[0]
+            + reference_eq.current_tau() * first_round[1..].iter().copied().sum::<F>();
+        let mut prover =
+            ClassIndexedRangeLeafProver::new(source, &equality_point, claim, polynomial.clone())
+                .unwrap();
+
+        for round in 0..equality_point.len() {
+            let expected = dense_round(&dense, &reference_eq);
+            assert_eq!(prover.round_q_coefficients(round, claim), expected);
+
+            let challenge = F::from_u64(29 + round as u64 * 2);
+            claim = expected
+                .iter()
+                .rev()
+                .fold(F::zero(), |value, &coefficient| {
+                    value * challenge + coefficient
+                });
+            prover.ingest_challenge(round, challenge);
+            reference_eq.bind(challenge);
+            let fold_context = F::precompute(challenge);
+            dense = dense
+                .chunks_exact(2)
+                .map(|pair| F::fold_one(&fold_context, pair[0], pair[1]))
+                .collect();
+        }
     }
 }
