@@ -8,8 +8,8 @@ use jolt_metal::shaders::FIELD_HEADERS;
 
 use crate::error::AkitaMetalError;
 
-/// Ring degrees with compiled transform kernels: every `D` a CRT+NTT
-/// profile admits (`Q128_MAX_RING_D` is 1024).
+/// Ring degrees with compiled transform kernels. This covers Q128; Q32 and
+/// Q64 also admit degree 2048, which is not compiled here.
 pub const RING_DEGREES: [usize; 5] = [64, 128, 256, 512, 1024];
 
 /// The host name of a template instance at one ring degree, with an
@@ -121,6 +121,16 @@ impl AkitaMetal {
     }
 
     pub(crate) fn pipeline(&self, host_name: &str) -> Result<&Pipeline, AkitaMetalError> {
-        Ok(self.library.pipeline(host_name)?)
+        // The compiled library is the capability registry. Generic public
+        // entry points may request an uninstantiated field/shape combination;
+        // that is a setup limitation, not a device execution fault.
+        self.library
+            .pipeline(host_name)
+            .map_err(|error| match error {
+                jolt_metal::MetalError::UnknownPipeline { name } => {
+                    AkitaMetalError::Shape(format!("no compiled kernel for {name}"))
+                }
+                other => other.into(),
+            })
     }
 }

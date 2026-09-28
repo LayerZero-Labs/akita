@@ -1,7 +1,8 @@
 //! Batched negacyclic NTT throughput: device kernels against the CPU's
 //! transforms on every core, over the same Q128 batches.
 //!
-//! Device samples are GPU time; CPU samples are wall time. Each transform
+//! `metal` samples are GPU time; `metal_wall` includes submission and waiting.
+//! CPU samples are wall time over typed, in-place Montgomery buffers. Each transform
 //! reads and writes every word once, so the device bound is memory copy.
 //!
 //! `cargo bench -p akita-metal --bench ntt`
@@ -37,13 +38,56 @@ mod bench {
             .collect()
     }
 
+    fn cpu_forward<const D: usize>(
+        cpu: &mut [[MontCoeff<i32>; D]],
+        params: &CrtNttParamSet<i32, K, D>,
+    ) {
+        cpu.par_iter_mut().enumerate().for_each(|(row, limb)| {
+            let prime = row % K;
+            forward_ntt(
+                limb,
+                params.primes[prime],
+                &params.twiddles[prime],
+                params.kernel_plan(),
+            );
+        });
+    }
+
     fn degree<const D: usize>(c: &mut Criterion, metal: &AkitaMetal) {
         let params = CrtNttParamSet::<i32, K, D>::new(q128_primes());
         let device = DeviceCrtNtt::new(metal, &params).expect("tables");
         let len = WORDS / (K * D) * (K * D);
         let input = words(len);
         let mut buffer = DeviceBuffer::from_slice(metal.device(), &input).expect("upload");
-        let mut cpu = input.clone();
+        let mut cpu = input
+            .chunks_exact(D)
+            .map(|row| std::array::from_fn(|index| MontCoeff::from_raw(row[index])))
+            .collect::<Vec<[MontCoeff<i32>; D]>>();
+
+        // Check the entire timed shape before sampling. Native CPU kernels may
+        // choose different lazy representatives, so compare canonical residues.
+        device
+            .forward(metal, &mut buffer)
+            .expect("forward equality check");
+        cpu_forward(&mut cpu, &params);
+        for (row, (actual, expected)) in buffer
+            .read()
+            .expect("read")
+            .chunks_exact(D)
+            .zip(&cpu)
+            .enumerate()
+        {
+            let prime = params.primes[row % K];
+            for (&actual, &expected) in actual.iter().zip(expected) {
+                assert_eq!(
+                    prime.to_canonical(MontCoeff::from_raw(actual)),
+                    prime.to_canonical(expected),
+                    "D={D} row={row}"
+                );
+            }
+        }
+        // Each timed path repeatedly transforms its resident buffer; iteration
+        // counts can differ, but every forward input is a supported i32 word.
 
         let mut group = c.benchmark_group("ntt_forward_q128");
         group.throughput(Throughput::Bytes((len * 4) as u64));
@@ -54,31 +98,20 @@ mod bench {
                     .sum::<Duration>()
             });
         });
+        group.bench_function(BenchmarkId::new("metal_wall", D), |b| {
+            b.iter(|| device.forward(metal, &mut buffer).expect("forward"));
+        });
         group.bench_function(BenchmarkId::new("cpu", D), |b| {
             b.iter_custom(|iterations| {
                 let start = Instant::now();
                 for _ in 0..iterations {
-                    cpu.par_chunks_exact_mut(D)
-                        .enumerate()
-                        .for_each(|(row, words)| {
-                            let prime = row % K;
-                            let mut limb: [MontCoeff<i32>; D] =
-                                std::array::from_fn(|index| MontCoeff::from_raw(words[index]));
-                            forward_ntt(
-                                &mut limb,
-                                params.primes[prime],
-                                &params.twiddles[prime],
-                                params.kernel_plan(),
-                            );
-                            for (word, coefficient) in words.iter_mut().zip(limb) {
-                                *word = coefficient.raw();
-                            }
-                        });
+                    cpu_forward(std::hint::black_box(&mut cpu), &params);
                 }
                 start.elapsed()
             });
         });
         group.finish();
+        std::hint::black_box(&cpu);
     }
 
     pub(crate) fn main() {

@@ -172,3 +172,19 @@ fn rejects_mismatched_output_length() {
         .expect_err("short output");
     assert_eq!(error.class(), akita_metal::ErrorClass::Setup);
 }
+
+#[test]
+fn unsupported_field_profile_is_a_setup_error_without_output_writes() {
+    let test = gpu();
+    let params = CrtNttParamSet::<i32, 6, 64>::new(q128_primes());
+    let device = DeviceCrtNtt::new(&test.metal, &params).expect("tables");
+    let residues = DeviceBuffer::<i32>::zeroed(test.metal.device(), 6 * 64).expect("residues");
+    let mut out = DeviceBuffer::<Prime64Offset59>::zeroed(test.metal.device(), 64).expect("output");
+    let before = out.read().expect("initial output").to_vec();
+    let error = device
+        .reconstruct(&test.metal, &residues, &mut out)
+        .expect_err("fp64 K6 is unsupported");
+    assert!(matches!(error, akita_metal::AkitaMetalError::Shape(_)));
+    assert_eq!(error.class(), akita_metal::ErrorClass::Setup);
+    assert_eq!(out.read().expect("unchanged output"), before);
+}
