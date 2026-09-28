@@ -2,13 +2,18 @@
 // out[b][r] = sum_c A[r][c] x[b][c] in Z_q[X]/(X^D + 1), with A prepared in
 // NTT form and each x[b][c] a plane of D small signed digits.
 //
+// Each entry may be split into LIMBS signed limbs, A = sum_l 2^(w l) A_l,
+// each prepared in NTT form: the digit transforms are shared by every limb
+// and only the multiply-accumulate repeats, while each limb's product is
+// small enough for fewer primes. akita_crt_reconstruct recombines the limbs.
+//
 // akita_matvec_partials: each threadgroup owns one prime, a tile of
 // BLOCK_TILE blocks, up to ROW_TILE rows and a chunk of
 // columns. Per column it transforms the tile's digit planes together, then
 // multiplies each by the matrix entry and accumulates in registers, one pair
 // of coefficients per lane. It writes the chunk's NTT-domain sums.
 //
-// akita_matvec_finish: one threadgroup per (block, row, prime) adds the
+// akita_matvec_finish: one threadgroup per (limb, block, row, prime) adds the
 // chunk sums and inverse-transforms them, leaving the residues that
 // akita_crt_reconstruct lifts into the field.
 //
@@ -27,6 +32,7 @@ struct MatvecShape {
     // The matrix and plane stride.
     uint cols;
     uint primes;
+    uint limbs;
     // This pass's columns [col_begin, col_end): one CRT segment.
     uint col_begin;
     uint col_end;
@@ -38,8 +44,9 @@ struct MatvecShape {
 };
 
 // BLOCK_TILE and ROW_TILE are tuning knobs spelled by the host
-// (akita_metal::matvec), which sizes the grid from the same constants.
-template <uint D, typename Digit, uint BLOCK_TILE, uint ROW_TILE>
+// (akita_metal::matvec), which sizes the grid from the same constants;
+// LIMBS is the matrix's limb count. The matrix is [row][col][limb][prime][D].
+template <uint D, typename Digit, uint BLOCK_TILE, uint ROW_TILE, uint LIMBS>
 [[kernel]] void akita_matvec_partials(
     device const Digit* planes [[buffer(0)]],
     device const int* matrix [[buffer(1)]],
@@ -66,11 +73,13 @@ template <uint D, typename Digit, uint BLOCK_TILE, uint ROW_TILE>
     uint col1 = metal::min(col0 + shape.chunk_cols, shape.col_end);
 
     threadgroup int x[BLOCK_TILE * D];
-    int acc[BLOCK_TILE][ROW_TILE][2];
+    int acc[BLOCK_TILE][ROW_TILE][LIMBS][2];
     for (uint t = 0; t < BLOCK_TILE; t++) {
         for (uint r = 0; r < ROW_TILE; r++) {
-            acc[t][r][0] = 0;
-            acc[t][r][1] = 0;
+            for (uint l = 0; l < LIMBS; l++) {
+                acc[t][r][l][0] = 0;
+                acc[t][r][l][1] = 0;
+            }
         }
     }
 
@@ -95,14 +104,17 @@ template <uint D, typename Digit, uint BLOCK_TILE, uint ROW_TILE>
         for (uint r = 0; r < ROW_TILE; r++) {
             uint row = row0 + r;
             if (row < shape.rows) {
-                device const int* entry =
-                    matrix + ((row * shape.cols + col) * shape.primes + prime) * D;
-                int a0 = entry[lane];
-                int a1 = entry[lane + HALF];
-                for (uint t = 0; t < BLOCK_TILE; t++) {
-                    acc[t][r][0] = reduce_range(q, acc[t][r][0] + mont_mul(q, a0, x[t * D + lane]));
-                    acc[t][r][1] =
-                        reduce_range(q, acc[t][r][1] + mont_mul(q, a1, x[t * D + lane + HALF]));
+                for (uint l = 0; l < LIMBS; l++) {
+                    device const int* entry = matrix
+                        + (((row * shape.cols + col) * LIMBS + l) * shape.primes + prime) * D;
+                    int a0 = entry[lane];
+                    int a1 = entry[lane + HALF];
+                    for (uint t = 0; t < BLOCK_TILE; t++) {
+                        acc[t][r][l][0] =
+                            reduce_range(q, acc[t][r][l][0] + mont_mul(q, a0, x[t * D + lane]));
+                        acc[t][r][l][1] = reduce_range(
+                            q, acc[t][r][l][1] + mont_mul(q, a1, x[t * D + lane + HALF]));
+                    }
                 }
             }
         }
@@ -110,15 +122,21 @@ template <uint D, typename Digit, uint BLOCK_TILE, uint ROW_TILE>
         // column's loads overwrite: no barrier is needed here.
     }
 
+    // Partial sums are [chunk][limb][block][row][prime][D].
     for (uint t = 0; t < BLOCK_TILE; t++) {
         for (uint r = 0; r < ROW_TILE; r++) {
             uint block = block0 + t;
             uint row = row0 + r;
             if (block < shape.blocks && row < shape.rows) {
-                device int* out = partials
-                    + (((chunk * shape.blocks + block) * shape.rows + row) * shape.primes + prime) * D;
-                out[lane] = acc[t][r][0];
-                out[lane + HALF] = acc[t][r][1];
+                for (uint l = 0; l < LIMBS; l++) {
+                    device int* out = partials
+                        + ((((chunk * LIMBS + l) * shape.blocks + block) * shape.rows + row)
+                               * shape.primes
+                           + prime)
+                            * D;
+                    out[lane] = acc[t][r][l][0];
+                    out[lane + HALF] = acc[t][r][l][1];
+                }
             }
         }
     }
@@ -134,10 +152,11 @@ template <uint D>
     uint group [[threadgroup_position_in_grid]],
     uint lane [[thread_position_in_threadgroup]]) {
     constexpr uint HALF = D / 2;
-    // group = (block * rows + row) * primes + prime: the residue row itself.
+    // group = ((limb * blocks + block) * rows + row) * primes + prime: the
+    // residue row itself.
     uint prime = group % shape.primes;
     NttPrime q = primes[prime];
-    uint stride = shape.blocks * shape.rows * shape.primes * D;
+    uint stride = shape.limbs * shape.blocks * shape.rows * shape.primes * D;
 
     threadgroup int a[D];
     int s0 = 0;

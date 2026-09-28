@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use akita_algebra::{CanonicalEncoding, CrtCapacity};
+use akita_algebra::{CanonicalEncoding, CrtCapacity, CrtNttParamSet, CyclotomicRing, NttPrime};
 use akita_error::checked;
 use akita_types::ntt_cache::PreparedNttBaseView;
 use bytemuck::{NoUninit, Pod, Zeroable};
@@ -24,8 +24,11 @@ use crate::ntt::{shape_overflow, DeviceCrtNtt};
 /// Blocks per partials threadgroup: each column's digit planes for these
 /// blocks share one set of transform barriers and matrix loads.
 const BLOCK_TILE: usize = 4;
-/// Matrix rows per partials threadgroup, accumulated in registers.
-const ROW_TILE: usize = 4;
+/// Matrix rows per partials threadgroup, accumulated in registers. Every
+/// production matrix has one row; more rows run as more row tiles.
+const ROW_TILE: usize = 1;
+/// Limb counts with compiled partials kernels.
+pub const LIMB_COUNTS: [usize; 4] = [1, 2, 3, 4];
 /// Threadgroups the partials pass aims for; columns split into chunks until
 /// the grid reaches it.
 const TARGET_GROUPS: usize = 256;
@@ -59,19 +62,22 @@ impl DigitPlane for i16 {
     const MAX_LOG_BASIS: u32 = 16;
 }
 
-fn partials_kernel<T: DigitPlane>(ring_degree: usize) -> String {
+fn partials_kernel<T: DigitPlane>(ring_degree: usize, limbs: usize) -> String {
     format!(
-        "{}_{}",
+        "{}_{}_l{limbs}",
         ring_degree_kernel("akita_matvec_partials", ring_degree),
         T::SUFFIX
     )
 }
 
-fn partials_instance<T: DigitPlane>(ring_degree: usize) -> Instance {
+fn partials_instance<T: DigitPlane>(ring_degree: usize, limbs: usize) -> Instance {
     Instance {
         template: "akita_matvec_partials",
-        args: format!("{ring_degree}, {}, {BLOCK_TILE}, {ROW_TILE}", T::MSL_NAME),
-        host_name: partials_kernel::<T>(ring_degree),
+        args: format!(
+            "{ring_degree}, {}, {BLOCK_TILE}, {ROW_TILE}, {limbs}",
+            T::MSL_NAME
+        ),
+        host_name: partials_kernel::<T>(ring_degree, limbs),
     }
 }
 
@@ -79,15 +85,19 @@ pub(crate) fn instances() -> Vec<Instance> {
     RING_DEGREES
         .iter()
         .flat_map(|&ring_degree| {
-            [
-                partials_instance::<i8>(ring_degree),
-                partials_instance::<i16>(ring_degree),
-                Instance {
+            LIMB_COUNTS
+                .iter()
+                .flat_map(move |&limbs| {
+                    [
+                        partials_instance::<i8>(ring_degree, limbs),
+                        partials_instance::<i16>(ring_degree, limbs),
+                    ]
+                })
+                .chain([Instance {
                     template: "akita_matvec_finish",
                     args: ring_degree.to_string(),
                     host_name: ring_degree_kernel("akita_matvec_finish", ring_degree),
-                },
-            ]
+                }])
         })
         .collect()
 }
@@ -100,6 +110,7 @@ struct MatvecShape {
     rows: u32,
     cols: u32,
     primes: u32,
+    limbs: u32,
     col_begin: u32,
     col_end: u32,
     chunk_cols: u32,
@@ -117,13 +128,99 @@ pub(crate) fn field_modulus<F: MetalField + CanonicalEncoding>() -> Result<u128,
         .ok_or_else(|| AkitaMetalError::Shape("the field modulus exceeds u128".into()))
 }
 
-/// A prepared `rows x cols` negacyclic NTT matrix in device memory.
+/// The CRT primes and matrix limbs one matvec runs with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MatvecPlan {
+    /// How many of the profile's primes, from the first.
+    pub primes: usize,
+    /// Limbs per matrix entry (one: the centered entry itself).
+    pub limbs: usize,
+}
+
+/// Relative cost of one column per prime: the digit transform and loads,
+/// then the multiply-accumulate per limb. Measured on the dense inner
+/// commitment (the transform is about 87% of a one-limb column).
+const TRANSFORM_COST: usize = 87;
+const LIMB_COST: usize = 13;
+
+/// The cheapest `(primes, limbs)` whose exact per-limb products fit one CRT
+/// segment for `cols` columns of degree `ring_degree` and `log_basis`
+/// digits, over prefixes of `profile`; the whole profile with one limb (and
+/// CRT segments) when none fits. `modulus` is the field modulus.
+pub fn plan_matvec(
+    modulus: u128,
+    profile: &[NttPrime<i32>],
+    cols: usize,
+    ring_degree: usize,
+    log_basis: u32,
+) -> MatvecPlan {
+    let digit_bound = log_basis
+        .checked_sub(1)
+        .and_then(|shift| 1u64.checked_shl(shift))
+        .unwrap_or(u64::MAX);
+    let mut best: Option<(usize, MatvecPlan)> = None;
+    for primes in 1..=profile.len() {
+        let Some(prefix) = profile.get(..primes) else {
+            break;
+        };
+        let capacity = CrtCapacity::from_prime_moduli(
+            prefix
+                .iter()
+                .map(|prime| u128::from(prime.p.unsigned_abs())),
+        );
+        for limbs in LIMB_COUNTS {
+            let fits = limb_modulus(modulus, limbs).is_some_and(|bound| {
+                capacity.supports_modulus(cols, ring_degree, bound, digit_bound)
+            });
+            let cost = checked::product([
+                primes,
+                checked::mul_add(LIMB_COST, limbs, TRANSFORM_COST).unwrap_or(usize::MAX),
+            ]);
+            if let (true, Some(cost)) = (fits, cost) {
+                if best.is_none_or(|(best_cost, _)| cost < best_cost) {
+                    best = Some((cost, MatvecPlan { primes, limbs }));
+                }
+            }
+        }
+    }
+    best.map_or(
+        MatvecPlan {
+            primes: profile.len(),
+            limbs: 1,
+        },
+        |(_, plan)| plan,
+    )
+}
+
+/// The bits per limb when a centered entry (magnitude at most `q / 2`)
+/// splits into `limbs` balanced limbs: `ceil((bits(q) + 1) / limbs)`.
+fn limb_bits(modulus: u128, limbs: usize) -> Option<u32> {
+    let bits = 128u32
+        .checked_sub(modulus.leading_zeros())?
+        .checked_add(1)?;
+    let limbs = u32::try_from(limbs).ok().filter(|&limbs| limbs > 0)?;
+    bits.checked_add(limbs.checked_sub(1)?)?.checked_div(limbs)
+}
+
+/// The modulus whose half bounds one limb's magnitude, as
+/// `CrtCapacity::supports_modulus` takes it: the field modulus itself for
+/// one limb (a centered entry), `2^w` for limbs of `w` bits.
+fn limb_modulus(modulus: u128, limbs: usize) -> Option<u128> {
+    if limbs == 1 {
+        return Some(modulus);
+    }
+    1u128.checked_shl(limb_bits(modulus, limbs)?)
+}
+
+/// A prepared `rows x cols` negacyclic NTT matrix in device memory, each
+/// entry split into `limbs` limbs.
 pub struct DeviceNttMatrix<const K: usize, const D: usize> {
     ntt: DeviceCrtNtt<K, D>,
-    /// `[rows][cols][K][D]` raw Montgomery words.
+    /// `[rows][cols][limbs][K][D]` raw Montgomery words.
     entries: DeviceBuffer<i32>,
     rows: usize,
     cols: usize,
+    limbs: usize,
     capacity: CrtCapacity,
 }
 
@@ -156,6 +253,52 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
             entries: DeviceBuffer::from_slice(metal.device(), &words)?,
             rows,
             cols,
+            limbs: 1,
+            capacity: params.crt_capacity(),
+        })
+    }
+
+    /// Prepares a `rows x cols` matrix of coefficient-form rings (row-major)
+    /// on the device: each centered entry splits into `limbs` balanced limbs
+    /// (`plan_matvec` chooses the count), each limb is reduced modulo
+    /// `params`' primes, and the device transforms them. The matvec then
+    /// recombines the limbs in the field, so the product equals the CPU's.
+    pub fn from_rings<F>(
+        metal: &AkitaMetal,
+        params: &CrtNttParamSet<i32, K, D>,
+        rings: &[CyclotomicRing<F, D>],
+        rows: usize,
+        cols: usize,
+        limbs: usize,
+    ) -> Result<Self, AkitaMetalError>
+    where
+        F: MetalField + CanonicalEncoding,
+    {
+        if !LIMB_COUNTS.contains(&limbs) {
+            return Err(AkitaMetalError::Shape(format!(
+                "{limbs} limbs has no kernel"
+            )));
+        }
+        let count = rows.checked_mul(cols).ok_or_else(|| shape_overflow(rows))?;
+        let rings = rings.get(..count).ok_or_else(|| {
+            AkitaMetalError::Shape(format!(
+                "{} rings has no {rows} x {cols} prefix",
+                rings.len()
+            ))
+        })?;
+        let modulus = field_modulus::<F>()?;
+        let limb_width = limb_bits(modulus, limbs)
+            .ok_or_else(|| AkitaMetalError::Shape(format!("{limbs} limbs of a {modulus} field")))?;
+        let words = split_limbs(rings, modulus, limbs, limb_width, &params.primes)?;
+        let ntt = DeviceCrtNtt::new(metal, params)?;
+        let mut entries = DeviceBuffer::from_slice(metal.device(), &words)?;
+        ntt.forward(metal, &mut entries)?;
+        Ok(Self {
+            ntt,
+            entries,
+            rows,
+            cols,
+            limbs,
             capacity: params.crt_capacity(),
         })
     }
@@ -213,6 +356,8 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
             )));
         }
         let modulus = field_modulus::<F>()?;
+        let bound_modulus =
+            limb_modulus(modulus, self.limbs).ok_or_else(|| shape_overflow(self.limbs))?;
         let digit_bound = log_basis
             .checked_sub(1)
             .and_then(|shift| 1u64.checked_shl(shift))
@@ -222,7 +367,7 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
         // as the CPU does for widths past its capacity.
         let segment_cols = self
             .capacity
-            .max_safe_width_for_modulus(D, modulus, digit_bound)
+            .max_safe_width_for_modulus(D, bound_modulus, digit_bound)
             .filter(|&width| width > 0)
             .ok_or_else(|| {
                 AkitaMetalError::Shape(format!(
@@ -251,8 +396,8 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
             .ok_or_else(|| shape_overflow(segment_cols))?;
         let partial_groups =
             checked::product([chunks, tile_groups]).ok_or_else(|| shape_overflow(chunks))?;
-        let residue_rows =
-            checked::product([blocks, self.rows, K]).ok_or_else(|| shape_overflow(blocks))?;
+        let residue_rows = checked::product([self.limbs, blocks, self.rows, K])
+            .ok_or_else(|| shape_overflow(blocks))?;
         let lanes = D / 2;
 
         let u32_of = |value: usize| u32::try_from(value).map_err(|_| shape_overflow(value));
@@ -269,6 +414,7 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
                 rows: u32_of(self.rows)?,
                 cols: u32_of(self.cols)?,
                 primes: u32_of(K)?,
+                limbs: u32_of(self.limbs)?,
                 col_begin: u32_of(col_begin)?,
                 col_end: u32_of(col_end)?,
                 chunk_cols: u32_of(chunk_cols)?,
@@ -280,6 +426,7 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
                 coefficients: u32_of(coefficients)?,
                 log_degree: D.trailing_zeros(),
                 accumulate: u32::from(col_begin > 0),
+                limbs: u32_of(self.limbs)?,
             });
             col_begin = col_end;
         }
@@ -292,7 +439,9 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
             checked::product([residue_rows, D]).ok_or_else(|| shape_overflow(residue_rows))?,
         )?;
         let radix = DeviceBuffer::from_slice(metal.device(), &self.ntt.crt_weights::<F>())?;
-        let partials_pipeline = metal.pipeline(&partials_kernel::<T>(D))?;
+        let scales =
+            DeviceBuffer::from_slice(metal.device(), &limb_scales::<F>(modulus, self.limbs)?)?;
+        let partials_pipeline = metal.pipeline(&partials_kernel::<T>(D, self.limbs))?;
         let finish_pipeline = metal.pipeline(&ring_degree_kernel("akita_matvec_finish", D))?;
         let crt_pipeline = metal.pipeline(&crt_kernel::<F>(K))?;
         let partial_threads = checked::product([partial_groups, lanes])
@@ -335,6 +484,7 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
                     Binding::buffer(&self.ntt.primes),
                     Binding::buffer(&self.ntt.gamma),
                     Binding::buffer(&radix),
+                    Binding::buffer(&scales),
                     Binding::value(crt_shape),
                 ],
                 Grid::linear(coefficients, COEFFICIENT_GROUP),
@@ -342,4 +492,98 @@ impl<const K: usize, const D: usize> DeviceNttMatrix<K, D> {
         }
         Ok(batch.commit_and_wait()?)
     }
+}
+
+/// `2^(w l)` in `F` for each limb `l`: the weights that recombine limb
+/// products (one, for a single limb).
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "field multiplication is modular"
+)]
+fn limb_scales<F: MetalField + CanonicalEncoding>(
+    modulus: u128,
+    limbs: usize,
+) -> Result<Vec<F>, AkitaMetalError> {
+    if limbs == 1 {
+        return Ok(vec![F::one()]);
+    }
+    let width = limb_bits(modulus, limbs).ok_or_else(|| shape_overflow(limbs))?;
+    let step = F::from_u128(
+        1u128
+            .checked_shl(width)
+            .ok_or_else(|| shape_overflow(limbs))?,
+    );
+    let mut scale = F::one();
+    Ok((0..limbs)
+        .map(|_| {
+            let current = scale;
+            scale *= step;
+            current
+        })
+        .collect())
+}
+
+/// The centered entries of `rings` as `limbs` balanced limbs of `width`
+/// bits, each reduced modulo every prime into Montgomery form, laid out
+/// `[entry][limb][prime][D]` for the device transform. One limb is the
+/// centered entry itself.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "centered entries are below 2^127 in magnitude, limbs below 2^66, and each \
+              step keeps (centered - digit) a multiple of the base"
+)]
+fn split_limbs<F: MetalField + CanonicalEncoding, const K: usize, const D: usize>(
+    rings: &[CyclotomicRing<F, D>],
+    modulus: u128,
+    limbs: usize,
+    width: u32,
+    primes: &[NttPrime<i32>; K],
+) -> Result<Vec<i32>, AkitaMetalError> {
+    let half = modulus / 2;
+    let overflow = || AkitaMetalError::Shape("an entry does not fit its limbs".into());
+    let mut words = Vec::with_capacity(
+        checked::product([rings.len(), limbs, K, D]).ok_or_else(|| shape_overflow(limbs))?,
+    );
+    let mut entry_limbs = vec![[0i128; D]; limbs];
+    for ring in rings {
+        for (index, coefficient) in ring.coefficients().iter().enumerate() {
+            let canonical = coefficient.to_u128_checked().ok_or_else(overflow)?;
+            let mut centered = if canonical > half {
+                i128::try_from(modulus - canonical)
+                    .map(|magnitude| -magnitude)
+                    .map_err(|_| overflow())?
+            } else {
+                i128::try_from(canonical).map_err(|_| overflow())?
+            };
+            for limb in entry_limbs.iter_mut() {
+                let slot = limb.get_mut(index).ok_or_else(overflow)?;
+                if limbs == 1 {
+                    *slot = centered;
+                    centered = 0;
+                    continue;
+                }
+                let base = 1i128.checked_shl(width).ok_or_else(overflow)?;
+                let mut digit = centered.rem_euclid(base);
+                if digit >= base / 2 {
+                    digit -= base;
+                }
+                *slot = digit;
+                centered = (centered - digit) >> width;
+            }
+            if centered != 0 {
+                return Err(overflow());
+            }
+        }
+        for limb in &entry_limbs {
+            for prime in primes {
+                let modulus = i128::from(prime.p);
+                for &value in limb {
+                    let residue =
+                        i32::try_from(value.rem_euclid(modulus)).map_err(|_| overflow())?;
+                    words.push(prime.from_canonical(residue).raw());
+                }
+            }
+        }
+    }
+    Ok(words)
 }

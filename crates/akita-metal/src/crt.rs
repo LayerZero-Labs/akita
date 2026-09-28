@@ -27,12 +27,13 @@ fn crt_instance<F: MslType>(primes: usize) -> Instance {
     }
 }
 
-/// Each field preset reconstructs from its own CRT profile.
+/// Each field preset reconstructs from any prefix of its own CRT profile:
+/// limb-split matrices (`DeviceNttMatrix::from_rings`) use fewer primes.
 pub(crate) fn instances() -> Vec<Instance> {
-    vec![
-        crt_instance::<Prime128OffsetA7F7>(Q128_NUM_PRIMES),
-        crt_instance::<Prime64Offset59>(Q64_NUM_PRIMES),
-    ]
+    (1..=Q128_NUM_PRIMES)
+        .map(crt_instance::<Prime128OffsetA7F7>)
+        .chain((1..=Q64_NUM_PRIMES).map(crt_instance::<Prime64Offset59>))
+        .collect()
 }
 
 /// Threads per threadgroup for one-coefficient-per-thread kernels.
@@ -46,6 +47,8 @@ pub(crate) struct CrtBatch {
     pub(crate) log_degree: u32,
     /// Nonzero: add into the output (a later CRT segment).
     pub(crate) accumulate: u32,
+    /// Limb groups to reconstruct and combine with the scales buffer.
+    pub(crate) limbs: u32,
 }
 
 impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
@@ -88,8 +91,10 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
             coefficients: u32::try_from(coefficients).map_err(|_| shape_overflow(coefficients))?,
             log_degree: D.trailing_zeros(),
             accumulate: 0,
+            limbs: 1,
         };
         let radix = DeviceBuffer::from_slice(metal.device(), &self.crt_weights::<F>())?;
+        let scales = DeviceBuffer::from_slice(metal.device(), &[F::one()])?;
         let pipeline = metal.pipeline(&crt_kernel::<F>(K))?;
         let mut batch = Batch::new(metal.device())?;
         batch.dispatch(
@@ -100,6 +105,7 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
                 Binding::buffer(&self.primes),
                 Binding::buffer(&self.gamma),
                 Binding::buffer(&radix),
+                Binding::buffer(&scales),
                 Binding::value(&shape),
             ],
             Grid::linear(coefficients, COEFFICIENT_GROUP),

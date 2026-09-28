@@ -134,6 +134,17 @@ FMA reduction for primes near `2^22` costs about as much as Shoup's with half
 again as many primes. Further gains need less transform work, not cheaper
 arithmetic.
 
+Limb-split matrices provide it. `DeviceNttMatrix::from_rings` prepares the
+matrix on the device from its coefficient form, splitting each centered
+entry into `L` balanced limbs of `ceil(129 / L)` bits. Each limb's product
+with a digit plane is small enough for a prefix of the CRT primes, the digit
+transforms are shared by the limbs, and only the multiply-accumulate repeats;
+the CRT step recombines `sum_l 2^(w l) t_l` in the field. `plan_matvec` picks
+the cheapest `(primes, limbs)` that fits one CRT segment. On the dense nv26
+inner commitment this is three primes and three limbs (96.6 to 62.9 ms on an
+M4), and on the one-hot nv32 outer commitment two primes and four limbs
+(4.6 to 4.0 ms).
+
 ## Acceptance criteria
 
 - The workspace builds without Metal dependencies on unsupported targets.
