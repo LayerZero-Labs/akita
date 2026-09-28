@@ -35,7 +35,7 @@ mod sealed {
             let Some(bound) = 1i16.checked_shl(log_basis.saturating_sub(1)) else {
                 return false;
             };
-            akita_algebra::i16_values_in_balanced_range(values, bound)
+            akita_algebra::ntt::i16_values_in_balanced_range(values, bound)
         }
     }
 }
