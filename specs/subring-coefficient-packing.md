@@ -831,9 +831,9 @@ The implemented transcript structure is specified normatively in
 [`specs/transcript-grinding.md`](transcript-grinding.md). For a fixed group root
 and the fixed shared fold-response nonce, coordinate `(claim, block)` is a
 separate indexed random-oracle query. Reprogramming it leaves every other fold
-coordinate and the live transcript state unchanged. Thus the implementation
-supplies the coordinatewise CWSS transcripts below without relying
-on extraction from full-vector forks.
+coordinate and the live transcript state unchanged. This supplies the fork
+structure needed for a coordinatewise CWSS argument; it does not ensure that
+the required accepting siblings exist or establish the extraction bound.
 
 Consider two accepting transcripts with the same pre-challenge commitments and
 different challenge at one claim/block position. Let
@@ -855,20 +855,22 @@ relations gives
 L(G(z - z')) = delta(Y) e_j           in C.
 ```
 
-Because `delta` is a unit in both rings, these equations determine the opened
-`t_j` and `e_j` from the fork. The existing B/F binding of `t_hat`, D/H binding
-of `e_hat`, A binding of the folded source, range proof for all digit planes,
-and quotient checks then give the same weak-opening/MSIS reduction as the
-current fold.
+Because `delta` is a unit in both rings, these equations algebraically
+determine the opened `t_j` and `e_j` from such an accepting fork. A full
+weak-opening/MSIS reduction must also show that the accepting descendants
+authenticate these relations and the scheduled response bounds, and that the
+extracted source meets the required collision radius. Unit division alone
+does not preserve coefficient norms.
 
-The extractor takes one central accepting vector and one coordinatewise fork
-for every claim and block position. The CWSS sum charges the support of every
-coordinate. The online random-oracle reduction separately charges group-root
-queries, indexed coordinate queries, and repeated roots caused by the shared
-fold-response nonce. Root collisions, root prequeries, sum-check errors, the
-`(2s - 1)/|E|` ring-switch error, and all A/B/D/F/H MSIS terms remain additive.
-This accounting does not claim extraction from challenge entropy alone or from
-two arbitrary full-vector forks.
+A proposed binary CWSS extractor needs one central accepting vector and one
+coordinatewise accepting fork for every claim and block position. Its
+whole-fold error ledger must include every coordinate and group. The
+random-oracle reduction must count group-root and indexed-coordinate queries,
+including fresh queries induced by shared fold-response nonce trials.
+Root collisions, root prequeries, sum-check errors, the `(2s - 1)/|E|`
+ring-switch error, and A/B/D/F/H MSIS terms also belong in the composition.
+The required adaptive extraction and schedule-wide ledger are not yet
+certified; see the [soundness boundary](transcript-grinding.md#current-security-conclusion-and-evidence).
 
 ### Ring-switch polynomial check
 

@@ -191,8 +191,9 @@ Depending on the public layout, the plan contains:
 - one zero-width fold-challenge-group entry per commitment group, with
   multiplicity covering the group root and every indexed sparse coordinate.
 
-The sparse fold challenges themselves do not receive extra proof-of-work. Their
-certified challenge support is accounted for separately.
+The sparse fold challenges themselves do not receive extra proof-of-work.
+Their certified support and the outstanding fold soundness accounting are
+described in the [transcript grinding specification](transcript-grinding.md#current-security-conclusion-and-evidence).
 
 #### Ring switch and evaluation points
 

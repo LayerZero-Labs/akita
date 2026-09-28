@@ -34,7 +34,9 @@ are authoritative.
 
 The sparse fold sampler derives every claim-major block coordinate from an
 indexed SHAKE256 query. This preserves the configured coordinate law while
-exposing coordinatewise forks for the CWSS extraction argument.
+exposing coordinatewise forks needed by a CWSS extraction argument. This is
+a sampler property, not by itself a conditional soundness theorem. The
+security boundary and outstanding premises are stated below.
 
 ## Security model
 
@@ -61,9 +63,11 @@ The classical random-oracle bad-event bound is
 sum_i q_i * 2^-g_i * L_i / |E_i|,
 ```
 
-under the conditional bad-set premise used by the corresponding algebraic
-check. `q_i` includes adversarial candidate queries, including fold-response
-trials. Grinding does not add entropy, prove uniqueness, or establish a QROM
+for queried candidates, under the conditional bad-set premise used by the
+corresponding algebraic check. Fresh checks completed only by the final
+verifier need their own terms. This local search bound is not by itself an
+end-to-end knowledge-extraction theorem. `q_i` includes adversarial candidate
+queries, including fold-response trials. Grinding does not add entropy, prove uniqueness, or establish a QROM
 claim. Accepting any satisfying in-range nonce is sound; the verifier MUST NOT
 require the prover's first solution.
 
@@ -95,7 +99,12 @@ Each plan entry contains:
 - the nonce width, if any; and
 - the multiplicity used for query accounting.
 
-The plan uses checked arithmetic. Its expanded query count MUST be less than
+The plan uses checked arithmetic. Its expanded query count is a structural
+count for one replay, not a bound on adversarial oracle work. A fold group
+contributes one root plus its claim-major coordinate count; the response entry
+contributes separately as semantic bookkeeping. Absorbing its nonce is not a
+separate oracle squeeze. Failed previews, alternative prefixes, and repeated
+proof attempts are not enumerated by this count. It MUST be less than
 `u32::MAX`. Site fields reject `u32::MAX`, and Rust enum layout, `usize`, debug
 text, source lines, and diagnostic labels MUST NOT enter canonical site bytes.
 
@@ -154,12 +163,11 @@ candidate remains an adversarial random-oracle query in security accounting.
 
 ## Indexed sparse challenges
 
-Sparse-fold soundness is accounted per indexed coordinate stream. Each
-coordinate has its own XOF input `(seed, coordinate index)`, with conditional
-error `1/|C| < 2^-128` for the production challenge set `C`. An adversary pays
-one XOF evaluation per coordinate touched. The 12-bit response-nonce search
-remains a completeness mechanism: every candidate is an ordinary oracle query,
-and no fold security proof-of-work is added.
+The implementation supplies separately indexed coordinate streams and adds no
+fold security proof-of-work. The latter is current behavior, **not a proven
+consequence of a conditional error of `1/|C|`**. A large support and separate
+XOF addresses supply necessary sampling structure; they do not prove that an
+adaptive adversary has at most one bad value at each address.
 
 For one group root and zero-based claim-major block coordinate `i`, the sampler
 uses exactly
@@ -177,6 +185,183 @@ The coordinate count is the checked product
 `num_claims * num_live_blocks`. Reprogramming coordinate `i` changes only that
 coordinate. Group roots, coordinate order, and distribution parameters are
 bound by the public schedule and the versioned positional grammar.
+
+### Geometry and the sampling denominator
+
+For fold level `j` (including the terminal) and ordered commitment group `g`,
+write `W[j,g] = num_claims[j,g] * num_live_blocks[j,g]`. Coordinates are pairs
+`(claim, block)`, with index `claim * num_live_blocks + block`. They are sparse
+ring elements, not individual polynomial coefficients. Groups can have
+different dimensions and supports. Root opening layout and recursive group
+layout determine these counts; neither one group nor one coordinate per fold
+can be assumed. The current terminal has one evaluation-trace group and one
+claim, so its coordinate count is its number of live blocks.
+
+The two current opening methods are `EvaluationTrace` and
+`SubringCoefficientPacking`. Evaluation trace uses the scheduled challenge
+ring and can use coefficient-Linf or selective-L2 response security. Packing
+samples in its bound challenge subring and requires the Linf route. It also
+has a separate packed consistency polynomial check, with degree at most
+`2s - 1` for challenge-subring dimension `s`. That field-check loss is not a
+sparse-coordinate loss and is not removed by indexing.
+
+The nonterminal prover admits a response only when its coefficients fit the
+balanced interval represented by the scheduled response digit count and base.
+Selective L2 additionally checks the scheduled squared norm and currently
+requires one scalar group. The verifier authenticates these predicates through
+the range and physical-L2 relation checks; it does not trust the prover's
+search. The terminal uses centered response coefficients with a scheduled
+Linf cap, optional L2 cap, and bounded Golomb-Rice encoding, then checks the
+direct A and consistency relations. These bounds constrain accepted responses,
+not the norm of an extracted source after division by a challenge difference.
+
+Let `C[j,g]` be the exact output support after fixed, witness-independent
+sampler filters. A signed shell in dimension `d` with `a` magnitude-one and
+`b` magnitude-two coefficients has cardinality
+
+```text
+|C_raw| = binom(d, a) * binom(d-a, b) * 2^(a+b).
+```
+
+The production unfiltered ladder is:
+
+| Dimension | `(a,b)` | Certified integer support-bit floor |
+|---|---|---|
+| 64 | (31,10) | 128 |
+| 128 | (31,0) | 129 |
+| 256 | (23,0) | 131 |
+| 512 | (19,0) | 132 |
+| 1024 | (16,0) | 131 |
+| 2048 | (14,0) | 131 |
+
+Selective L2 instead uses `(31,11)` at D64 with operator threshold 18, or
+`(31,0)` at D128 with threshold 13. Its denominator is the family accepted by
+the exact fixed-point predicate, not the raw shell. The support certificates
+and runtime containment checks retain a lower bound of at least `2^128` for
+these accepted families. The exact rational certificate checks are described
+in [operator support certification](../scripts/operator_norm/README.md), with
+reported lower bounds of 128.062439 bits at D64 and 128.563317 bits at D128.
+This is a support bound, not a schedule-wide error certificate.
+
+In the ideal independent-stream model, unbiased position/sign sampling is
+uniform on the shell. Trying at most 4096 shell samples against a fixed
+operator predicate is uniform on its accepted family conditional on sampler
+success: every accepted element has the same first-success probability.
+Sampler exhaustion rejects. This inner fixed-filter search is distinct from
+the outer 4096-candidate response-nonce search. Conditioning on a response
+fitting its cap need not preserve the product distribution: response admission
+depends on the source and all fold challenges together. It MUST NOT be treated
+as another fixed support certificate.
+
+### What a conditional coordinate bound would require
+
+For a fresh uniform coordinate `c` in `C`, if a bad set is fixed before that
+answer is revealed and contains at most one value, its probability is at most
+`1/|C|`. The missing step is establishing that bad-set premise for the actual
+accepting protocol, not counting the support. Pairwise unit differences allow
+subtraction of two authenticated fold identities to recover one source block.
+They do not guarantee that suitable accepting siblings exist, authenticate
+their descendant witnesses, or bound the norm after dividing by a unit.
+
+A complete application needs all of the following:
+
+- A binary coordinate-wise extractor for both opening methods, with the same
+  pre-fold messages, nonce, root, and other coordinate answers fixed. Its
+  accepting descendants must establish the exact fold identities and the
+  verifier's digit, representation, and norm predicates, or yield a collision
+  within the scheduled SIS radius. Extraction need not return the honest
+  canonical digit decomposition.
+- An exact conditional sampler for the full ideal XOF answer given an accepted
+  coordinate, with bounded expected cost. Programming a decoded sparse value
+  alone is insufficient, and programming the stream does not mean finding a
+  preimage of the concrete SHAKE seed.
+- A matching-input extraction argument for adaptive selection of roots,
+  prefixes, nonces, and final proofs. Fixing all other answers defines a fiber
+  of possible answers at one selected address. A proof must bound failures in
+  those fibers and retain the selected context even when suffix extraction
+  fails; honest linearity alone does not supply this argument.
+- Composition with the range, norm, ring-relation, sumcheck, batching, terminal,
+  and recursive checks, including a bound on extractor work and the resulting
+  SIS reduction costs. Flat binary fold trees alone have branching factor
+  `1 + sum_g W[j,g]` at level `j`; their product across levels is already a
+  cost obligation before adding other extraction stages.
+
+There are two accounting conventions. Under the corresponding heterogeneous
+CWSS and composition premises, whole-fold accounting has sparse contribution
+
+```text
+epsilon_fold <= sum_j sum_g W[j,g] / |C[j,g]|.
+```
+
+The classical Fiat--Shamir tree reduction would then use an aggregate
+interactive error (including the other checks) and a factor `Q + 1`. This is a
+conditional template, not a certification of the current schedules.
+
+A sharper indexed-address argument would instead charge each distinct
+coordinate-stream address touched by the original adversary, plus addresses
+completed only by the final verifier. If a matching-input theorem establishes
+a binary failure charge of at most `1/|C(a)|` for each such address `a`, the
+fold contribution is bounded by the expected sum of those charges. A uniform
+upper bound is
+
+```text
+(Q_coord + R_coord) / C_min,
+C_min = min_j,g |C[j,g]|,
+R_coord <= sum_j,g W[j,g]   (one final proof's untouched coordinates).
+```
+
+Here `Q_coord` is an adversarial address budget, not the number of vector or
+root requests. Evaluating `V` fresh complete candidates at level `j` touches
+`V * sum_g W[j,g]` coordinate streams, as well as the transcript/root queries induced by those candidates.
+Partial evaluation counts the streams actually touched. This convention does
+not multiply the same charge by `W` again, but it does not discard geometry:
+geometry determines both coordinate work and verifier completion. The two
+formulas MUST NOT be combined by dropping the whole-fold factors while still
+counting only vector queries. The refined formula is stated as a proof
+obligation here; the sampler implementation alone does not establish it.
+
+All these statements use ideal, separately programmable streams at distinct
+addresses. The concrete address contains a 32-byte root and index, not the
+entire context. A full reduction must also account for root collisions,
+aliasing across contexts, and the transcript-to-oracle abstraction. None of
+these formulas is a QROM theorem.
+
+### Current security conclusion and evidence
+
+The current code checks support floors, binds geometry and method, replays the
+shared nonce and group roots, and enforces the response predicates. It does
+not supply a verified schedule-wide CWSS/extractor ledger and adversarial
+`Q_max` certificate establishing an aggregate 128-bit knowledge error. The
+structural `expanded_query_count < u32::MAX` gate is not such a certificate.
+Accordingly, this spec withdraws the unconditional reading of the former
+`1/|C| < 2^-128` claim. Zero fold proof-of-work remains an implementation
+choice pending the extraction and composition premises above. This finding
+neither proves an attack nor changes the protocol or schedule pricing.
+
+Nonce trials count in the adversary's actual oracle budget, including rejected
+trials and searches over earlier messages. There is no additional fixed
+12-bit debit when that same work is already counted. Conversely, a 12-bit
+nonce range does not cap total adversarial work. Even a proved per-address
+rate at most `2^-128` would give a budget-dependent aggregate bound, not
+`2^-128` for an arbitrary number of queries.
+
+The implementation evidence for this boundary is:
+
+| Source | What it establishes |
+|---|---|
+| `crates/akita-challenges/src/fold_draw.rs` | Method, group, dimensions, family, and counts bound before the group root; packing rejects operator filtering |
+| `crates/akita-challenges/src/challenges.rs` and `sampler/xof.rs` in that crate | Claim-major addressing and independent indexed XOF inputs |
+| `crates/akita-challenges/src/config.rs` and `sampler/mod.rs` in that crate | Production support ladder, fixed operator policies, bounded coordinate rejection, runtime certificate containment |
+| `crates/akita-types/src/transcript_grinding/plan.rs` and `crates/akita-types/src/transcript_grinding.rs` | Geometry-derived runs, root-plus-coordinate multiplicity, structural count, response nonce width, and zero fold work bits |
+| `crates/akita-prover/src/protocol/fold_grind.rs` | Joint response-admission search across groups |
+| `crates/akita-verifier/src/protocol/core/fold/mod.rs` | Nonterminal range and physical-L2 claims tied into the recursive relation |
+| `crates/akita-verifier/src/protocol/core/terminal_direct.rs` | Terminal representation/norm and direct relation checks |
+| [Security model](../book/src/how/security.md) and [subring packing](subring-coefficient-packing.md) | Accepted response-space contract and separate packed relation loss |
+
+The [Book's binding chapter](../book/src/foundations/pcs-and-binding.md)
+explains CWSS and the public classical-ROM references. Distribution, replay,
+and tampering tests check implementation correspondence; they do not prove
+adaptive extraction or its concrete loss.
 
 ## Encoding and proof-size accounting
 

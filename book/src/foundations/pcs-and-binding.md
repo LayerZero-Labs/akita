@@ -179,13 +179,63 @@ Here $\ell$ counts coordinates, and $\mu$ counts challenge rounds. See
 Definitions 2.29 and 2.30 and Lemma 2.31 of
 [Lattice-Based Polynomial Commitments](https://eprint.iacr.org/2023/846.pdf).
 
-Akita's sampler exposes coordinate inputs explicitly. It squeezes one group
-root, then derives each claim-major block coordinate from an indexed
-random-oracle input. A coordinate fork fixes the root and the other
-coordinate answers. The selected support, group counts, and response
-admission rules must still be matched to the extraction argument. Equation
-(5) is the common-parameter case, not a complete error estimate for a
-heterogeneous Akita schedule.
+Akita's sampler exposes coordinate inputs explicitly. At fold level $j$,
+commitment group $g$ has
+$W_{j,g}=\text{num\_claims}_{j,g}\text{num\_live\_blocks}_{j,g}$
+coordinates. Each coordinate is one sparse ring element indexed by a claim
+and source block, not one coefficient of that element. The sampler squeezes
+one 32-byte group root, then uses
+`SHAKE256(root || little_endian_u64(index))`, with
+`index = claim * num_live_blocks + block`. The group payload binds the method,
+dimension, challenge family, group index, and counts. In the ideal-oracle
+model, changing one coordinate answer leaves the other coordinate streams
+unchanged. This supplies a place to fork; it does not prove extraction.
+
+There are two opening methods. Evaluation trace uses the scheduled challenge
+ring and permits coefficient-Linf or selective-L2 response security. Subring
+coefficient packing samples in the specified challenge subring and requires
+the Linf route. Selective L2 currently requires one scalar group; the
+terminal has one evaluation-trace group with one claim. Packing also has a separate consistency polynomial check of
+degree at most $2s-1$, where $s$ is the challenge-subring dimension. Its field
+error belongs to the relation-check ledger, not the sparse support bound.
+
+Let $C_{j,g}$ be the support after fixed sampler filters. For a shell in
+dimension $d$ with $a$ coefficients of magnitude one and $b$ of magnitude two,
+its unfiltered cardinality is
+$\binom d a\binom{d-a}b2^{a+b}$.
+The production shell ladder has at least 128 support bits per coordinate.
+Selective L2 at D64 and D128 uses a fixed operator-norm predicate; its
+certified accepted subset also retains at least 128 support bits. The
+[grinding specification](../../../specs/transcript-grinding.md#geometry-and-the-sampling-denominator)
+records the exact families. The raw shell cardinality cannot replace the
+accepted-support bound for a filtered sampler.
+
+Binary CWSS needs a central accepting vector and one accepting alternative
+for each coordinate, with all other coordinates fixed. For example, two
+coordinates need three children, not merely two different whole vectors.
+Under the matching extraction and composition premises, heterogeneous
+whole-fold accounting would contribute
+
+$$
+\varepsilon_{\mathrm{fold}}
+\le \sum_j\sum_g\frac{W_{j,g}}{|C_{j,g}|},
+\tag{5a}
+$$
+
+including terminal folds. Coordinates, groups, and rounds all appear in this
+sum. This is a conditional accounting template for Akita, not a certified
+error estimate for its current schedules. Even with binary folds, the tree's
+branching factors $1+\sum_g W_{j,g}$ multiply across levels. Other challenge
+stages add their own extraction costs and errors.
+
+The crucial premise is that accepting descendants authenticate the folded
+responses and establish their exact relations, ranges, and norms. Only then
+can coordinate subtraction recover a source, or expose a short collision in
+one of the commitment maps. Pairwise unit challenge differences permit
+algebraic division but do not preserve coefficient norms. The extracted
+source need not be the honest canonical digit decomposition. A soundness
+argument must specify its witness relation and collision bounds rather than
+infer them from honest response linearity.
 
 ## Fiat-Shamir queries and fold nonces
 
@@ -223,12 +273,65 @@ nonce freedom would count the same work twice. Conversely, the bounded nonce
 field does not justify omitting adversarial trials from $Q$. An adversary
 can also vary earlier messages and start from other transcript prefixes.
 
-Sparse-fold soundness uses indexed-coordinate accounting: each coordinate is
-drawn from its own XOF stream on `(seed, coordinate index)`, with conditional
-error $1/|C| < 2^{-128}$ for its production challenge set $C$. An adversary pays
-one XOF evaluation per coordinate touched. The 12-bit response-nonce search
-is a completeness mechanism, every candidate remains an ordinary oracle query,
-and Akita adds no fold security proof-of-work.
+A local $1/|C|$ bound has a precise premise: before a fresh uniform
+coordinate is revealed, its bad set must contain at most one value. Uniform
+sampling alone proves no such bound for an arbitrary bad set. Nor can one
+condition on the prover's chosen successful nonce and assume the coordinate
+is still uniform.
+
+Fixed operator rejection and response admission play different roles. The
+operator predicate depends only on the challenge and public policy. Bounded
+rejection against it is uniform on its accepted family conditional on sampler
+success. Response admission depends on the source and the complete challenge
+vector. Nonterminal responses must satisfy the scheduled representation and
+range predicates and, on an L2 route, the authenticated physical response
+norm check. The terminal checks its clear response directly. These predicates
+are essential to the collision bound; they do not give a witness-independent
+product support for the outer nonce search.
+
+An indexed-address refinement could charge the fold error by
+
+$$
+\frac{Q_{\mathrm{coord}}+R_{\mathrm{coord}}}{C_{\min}},
+\qquad C_{\min}=\min_{j,g}|C_{j,g}|,
+\tag{8}
+$$
+
+**provided** a matching-input extraction theorem bounds each selected
+coordinate address's binary-fork loss by $1/|C_{j,g}|$ and composes these
+losses through the accepting descendants. Here $Q_{\mathrm{coord}}$ bounds
+the distinct coordinate addresses touched by the original adversary, and
+$R_{\mathrm{coord}}$ counts untouched addresses completed by the final
+verifier. For one final proof,
+$R_{\mathrm{coord}}\le\sum_{j,g}W_{j,g}$.
+A whole candidate at level $j$ costs $\sum_gW_{j,g}$ coordinate touches;
+$V$ fresh complete candidates cost $V\sum_gW_{j,g}$, plus the transcript/root queries induced by those candidates. Partial evaluations count only the streams touched. Thus indexing
+can change the accounting unit without making geometry disappear.
+
+Equation (8) is a proof obligation, not a theorem established by the sampler.
+It requires an exact, efficient conditional sampler for the complete ideal
+oracle answer, adaptive matching-input analysis that preserves the originally
+selected context even when suffix extraction fails, and a bound on the full
+extractor's work. Programming a decoded sparse value is not enough. A
+concrete reduction must also handle collisions or aliases in the compressed
+group roots and justify the transcript's ideal-oracle model. One must not
+remove the coordinate factors from (5a) while retaining a budget that counts
+only whole-vector calls.
+
+The plan's `expanded_query_count` is structural bookkeeping for one replay.
+It includes one root plus $W_{j,g}$ coordinates per group and separate nonce
+entries. Its `u32::MAX` limit does not bound the adversary's $Q$, failed
+previews, or searches over other prefixes. The current support and plan
+checks do not certify the full CWSS ledger, extractor cost, or an aggregate
+128-bit knowledge-error bound for a declared adversarial budget.
+
+Akita currently adds no fold security proof-of-work. This is implementation
+behavior, not a proven conclusion from support size. Establishing that choice
+at a stated security target requires the indexed extraction and composition
+premises above, or a complete whole-fold analysis using (5a) and (6). Even a
+proved $2^{-128}$ rate per counted address would remain budget-dependent
+after aggregation. The 12-bit response search contributes no independent soundness term and
+incurs no separate fixed debit when its trials are already counted in $Q$.
 
 Honest search measures how often the response fits the scheduled cap.
 Under an independent-trial model with per-trial acceptance probability $p$,
