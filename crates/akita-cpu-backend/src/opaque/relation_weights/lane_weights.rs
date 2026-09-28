@@ -33,9 +33,6 @@ pub(crate) struct ResponseNormFactors<E: Field> {
 pub(crate) struct RelationWeightFactorization<E: Field> {
     common_alpha_factor: Vec<E>,
     relation_lane_weights: Vec<E>,
-    /// Optional rank-one response-norm addend, factored over the Stage-2
-    /// coefficient and lane coordinates.
-    response_norm: Option<ResponseNormFactors<E>>,
 }
 
 impl<E: Field> RelationWeightFactorization<E> {
@@ -56,7 +53,6 @@ impl<E: Field> RelationWeightFactorization<E> {
         Ok(Self {
             common_alpha_factor,
             relation_lane_weights,
-            response_norm: None,
         })
     }
 
@@ -78,30 +74,6 @@ impl<E: Field> RelationWeightFactorization<E> {
 
     pub(crate) fn take_lane_weights(&mut self) -> Vec<E> {
         std::mem::take(&mut self.relation_lane_weights)
-    }
-
-    pub(crate) fn attach_response_norm(
-        &mut self,
-        coefficient_weights: Vec<E>,
-        lane_weights: Vec<E>,
-    ) -> Result<(), AkitaError> {
-        if self.response_norm.is_some()
-            || coefficient_weights.len() != self.common_alpha_factor.len()
-            || lane_weights.len() > self.relation_lane_weights.len()
-        {
-            return Err(AkitaError::InvalidSetup(
-                "response-norm factorization disagrees with relation geometry".into(),
-            ));
-        }
-        self.response_norm = Some(ResponseNormFactors {
-            coefficient_weights,
-            lane_weights,
-        });
-        Ok(())
-    }
-
-    pub(crate) fn take_response_norm(&mut self) -> Option<ResponseNormFactors<E>> {
-        self.response_norm.take()
     }
 
     /// Expand this factorization over its complete padded flat domain.
@@ -254,7 +226,6 @@ impl<E: Field> RelationLaneWeights<E> {
         Ok(RelationWeightFactorization {
             common_alpha_factor,
             relation_lane_weights: self.lanes,
-            response_norm: None,
         })
     }
 }

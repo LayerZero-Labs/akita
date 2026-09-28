@@ -390,7 +390,7 @@ where
         let lane_bits = plan.lane_bits();
         let coefficient_bits = plan.coefficient_bits();
         let linear_opening_claim = plan.linear_opening_claim();
-        let linear_terms = match plan.into_linear_terms() {
+        let mut linear_terms = match plan.into_linear_terms() {
             crate::opaque::Stage2OpeningDescription::EvaluationTrace {
                 trace,
                 output_scale,
@@ -416,6 +416,16 @@ where
                 prepared
             }
         };
+        if let Some(factors) = weights.response_norm {
+            linear_terms.merge(
+                relation_range_image::PreparedProverLinearTerms::from_response_norm_factors(
+                    factors.coefficient_weights,
+                    factors.lane_weights,
+                    live_lane_count,
+                    1usize << coefficient_bits,
+                )?,
+            )?;
+        }
         let prover = relation_range_image::RelationRangeImageProver::new(
             batching_coefficient,
             witness.packed,

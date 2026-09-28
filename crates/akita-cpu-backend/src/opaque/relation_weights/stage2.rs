@@ -7,6 +7,7 @@ use akita_algebra::offset_eq::{
 use akita_prover::backend::ValidatedRelationSessionPlan;
 
 pub(crate) struct CompiledStage2Weights<E: Field> {
+    pub response_norm: Option<ResponseNormFactors<E>>,
     pub ordinary: RelationWeightDescription<E>,
     pub linear: Vec<(usize, E)>,
     pub binary_intervals: Vec<Range<usize>>,
@@ -285,6 +286,7 @@ where
         Vec::new()
     };
     let mut compiled = CompiledStage2Weights {
+        response_norm: None,
         ordinary,
         linear,
         binary_intervals,
@@ -307,15 +309,8 @@ where
             )?,
             RelationWeightDescription::ReducedEvaluations { .. } => None,
         };
-        if let (
-            RelationWeightDescription::QuotientFactored(weights),
-            Some(ResponseNormFactors {
-                coefficient_weights,
-                lane_weights,
-            }),
-        ) = (&mut compiled.ordinary, factorized)
-        {
-            weights.attach_response_norm(coefficient_weights, lane_weights)?;
+        if let Some(factors) = factorized {
+            compiled.response_norm = Some(factors);
         } else {
             let equality = OffsetEqWindow::new(norm.point)?;
             let response_norm =
@@ -461,6 +456,7 @@ mod tests {
         }
 
         let mut compiled = CompiledStage2Weights {
+            response_norm: None,
             ordinary: RelationWeightDescription::ReducedEvaluations {
                 evaluations: relation,
                 live_len: 6,
@@ -500,6 +496,7 @@ mod tests {
         expected.sort_unstable_by_key(|(index, _)| *index);
 
         let mut compiled = CompiledStage2Weights {
+            response_norm: None,
             ordinary: RelationWeightDescription::QuotientFactored(factorization),
             linear: prior,
             binary_intervals: Vec::new(),
@@ -513,6 +510,7 @@ mod tests {
     #[test]
     fn reduced_response_norm_rejects_a_table_larger_than_its_relation_weights() {
         let mut compiled = CompiledStage2Weights {
+            response_norm: None,
             ordinary: RelationWeightDescription::ReducedEvaluations {
                 evaluations: vec![extension(1); 2],
                 live_len: 2,

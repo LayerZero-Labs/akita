@@ -303,11 +303,15 @@ fn factored_response_norm_source_matches_dense_reference_through_all_transitions
         linear: relation,
         range,
     };
-    let mut relation_factorization =
+    let relation_factorization =
         RelationWeightFactorization::new(common_alpha_factor, relation_lane_weights).unwrap();
-    relation_factorization
-        .attach_response_norm(coefficient_weights, norm_lane_weights)
-        .unwrap();
+    let linear_terms = PreparedProverLinearTerms::from_response_norm_factors(
+        coefficient_weights,
+        norm_lane_weights,
+        live_lane_count,
+        coeff_count,
+    )
+    .unwrap();
     let mut prover = RelationRangeImageProver::new(
         batching,
         packed_witness,
@@ -319,7 +323,7 @@ fn factored_response_norm_source_matches_dense_reference_through_all_transitions
         lane_bits,
         coefficient_bits,
         base_relation_claim + binding_claim,
-        PreparedProverLinearTerms::zero(live_lane_count, coeff_count),
+        linear_terms,
         F::zero(),
         None,
     )

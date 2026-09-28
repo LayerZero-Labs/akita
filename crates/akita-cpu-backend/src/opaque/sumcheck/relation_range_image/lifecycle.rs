@@ -62,12 +62,12 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         stage1_point: &[E],
         range_image_evaluation: E,
         b: usize,
-        mut relation_weights: RelationWeightOracle<E>,
+        relation_weights: RelationWeightOracle<E>,
         live_lane_count: usize,
         lane_bits: usize,
         coefficient_bits: usize,
         relation_claim: E,
-        mut linear_terms: PreparedProverLinearTerms<E>,
+        linear_terms: PreparedProverLinearTerms<E>,
         linear_opening_claim: E,
         additional_relation_terms: Option<AdditionalRelationTerms<E>>,
     ) -> Result<Self, AkitaError>
@@ -103,19 +103,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 expected: num_vars,
                 actual: stage1_point.len(),
             });
-        }
-        let response_norm = match &mut relation_weights {
-            RelationWeightOracle::QuotientFactored(weights) => weights.take_response_norm(),
-            RelationWeightOracle::ReducedDense(_) => None,
-        };
-        if let Some(factors) = response_norm {
-            let response_norm_terms = PreparedProverLinearTerms::from_response_norm_factors(
-                factors.coefficient_weights,
-                factors.lane_weights,
-                live_lane_count,
-                coeff_count,
-            )?;
-            linear_terms.merge(response_norm_terms)?;
         }
         match &relation_weights {
             RelationWeightOracle::QuotientFactored(factorization) => {
