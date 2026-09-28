@@ -66,10 +66,10 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         }
         // An octet prefix allocates a class table even for a tiny live witness,
         // so small witnesses stay on the field table. Basis 4 requires eight
-        // live digits per class. Basis 8 has 65536 classes whose table costs
-        // about as much as four field rounds per class, so four live digits
-        // per class already pay for it: at that size the prefix rounds run
-        // about twice as fast single-threaded and break even across threads.
+        // live digits per class. The basis-8 threshold of four live digits per
+        // class was chosen from one measured shape with 521,216 live digits,
+        // where the class table was about 3.7x faster single-threaded and
+        // slightly faster on 16 threads.
         let octet_minimum_digits = match basis {
             4 => 8 * 256,
             8 => 4 * 65_536,

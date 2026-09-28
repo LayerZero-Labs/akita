@@ -387,7 +387,7 @@ fn assert_rounds_match_dense_reference(
         "basis={basis} width={bit_width} col_bits={col_bits} ring_bits={ring_bits} live={live_x_cols}"
     );
     let uses_octet_prefix = num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS
-        && (live_x_cols << ring_bits) >= if basis == 4 { 8 * 256 } else { 8 * 65_536 };
+        && (live_x_cols << ring_bits) >= if basis == 4 { 8 * 256 } else { 4 * 65_536 };
 
     assert_eq!(
         matches!(
@@ -428,9 +428,11 @@ fn stage1_octet_prefix_requires_enough_live_digits() {
         (4usize, 16usize, false),
         (4, 2_048, true),
         (8, 11_072, false),
+        (8, 262_143, false),
+        (8, 262_144, true),
         (8, 524_288, true),
     ] {
-        let ring_bits = 4;
+        let ring_bits = 0;
         let col_bits = (live_digits / (1 << ring_bits))
             .next_power_of_two()
             .trailing_zeros() as usize;
