@@ -397,3 +397,39 @@ fn structured_linear_terms_reject_malformed_arena_and_incompatible_merge() {
     let incompatible = PreparedProverLinearTerms::from_dense(vec![F::one(); 8], 4, 2);
     assert!(prepared.merge(incompatible).is_err());
 }
+
+/// A nonempty semantic trace source sharing every live response-norm lane.
+pub(crate) fn response_norm_trace_fixture<E: Field>(
+    live_lane_count: usize,
+    coeff_count: usize,
+) -> (PreparedProverLinearTerms<E>, Vec<E>) {
+    let lane_bits = live_lane_count.next_power_of_two().trailing_zeros() as usize;
+    let weights = EvaluationTraceWeights {
+        terms: vec![EvaluationTraceTerm {
+            coefficient: E::from_u64(3),
+            block_opening_point: vec![E::from_u64(5); lane_bits].into(),
+            basis: BasisMode::Lagrange,
+            group_block_count: live_lane_count,
+            source_ring_dimension: coeff_count,
+            opening_ring_dimension: coeff_count,
+            coefficient_block_len: coeff_count,
+            opening_digit_weights: vec![E::from_u64(7)].into(),
+            inner_trace: (0..coeff_count)
+                .map(|i| E::from_u64(11 + i as u64))
+                .collect::<Vec<_>>()
+                .into(),
+            segments: vec![EvaluationTraceSegment {
+                physical_coefficient_start: 0,
+                global_block_start: 0,
+                block_count: live_lane_count,
+            }],
+        }],
+        physical_field_len: live_lane_count * coeff_count,
+        num_vars: lane_bits + coeff_count.trailing_zeros() as usize,
+    };
+    let dense = materialize_semantic_trace_oracle(&weights, E::one());
+    let prepared =
+        PreparedProverLinearTerms::from_evaluation_trace(&weights, coeff_count, E::one()).unwrap();
+    assert!(!prepared.sources.is_empty());
+    (prepared, dense)
+}

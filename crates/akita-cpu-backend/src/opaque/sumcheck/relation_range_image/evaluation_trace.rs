@@ -971,4 +971,4 @@ impl<E: Field> PreparedProverLinearTerms<E> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

@@ -223,16 +223,37 @@ fn stage2_every_phase_matches_boolean_hypercube_reference() {
 
 #[test]
 fn factored_response_norm_source_matches_dense_reference_through_all_transitions() {
+    for (basis, with_trace) in [
+        (4, false),
+        (8, false),
+        (32, false),
+        (4, true),
+        (8, true),
+        (32, true),
+    ] {
+        check_response_norm_source(basis, with_trace, false);
+    }
+    // Retain the original out-of-range compact-prefix fallback coverage.
+    check_response_norm_source(8, false, true);
+}
+
+fn check_response_norm_source(basis: usize, with_trace: bool, wide_digits: bool) {
     let coefficient_bits = 3usize;
     let coeff_count = 1usize << coefficient_bits;
     let lane_bits = 3usize;
     let live_lane_count = 6usize;
     let domain_len = 1usize << (coefficient_bits + lane_bits);
     let witness = (0..live_lane_count * coeff_count)
-        .map(|index| match index {
-            0 => i8::MIN,
-            1 => -1,
-            _ => ((index * 7 + 3) % 13) as i8 - 6,
+        .map(|index| {
+            if wide_digits {
+                match index {
+                    0 => i8::MIN,
+                    1 => -1,
+                    _ => ((index * 7 + 3) % 13) as i8 - 6,
+                }
+            } else {
+                ((index * 7 + 3) % basis) as i8 - (basis / 2) as i8
+            }
         })
         .collect::<Vec<_>>();
     let packed_witness = packed(&witness);
@@ -262,6 +283,17 @@ fn factored_response_norm_source_matches_dense_reference_through_all_transitions
                 .map(move |&coefficient| lane_factor * coefficient)
         })
         .collect::<Vec<_>>();
+    let trace = with_trace.then(|| {
+        super::super::evaluation_trace::tests::response_norm_trace_fixture::<F>(
+            live_lane_count,
+            coeff_count,
+        )
+    });
+    if let Some((_, trace_weights)) = &trace {
+        for (weight, trace_weight) in linear.iter_mut().zip(trace_weights) {
+            *weight += *trace_weight;
+        }
+    }
     linear.resize(domain_len, F::zero());
     let binding_claim = witness
         .iter()
@@ -281,8 +313,8 @@ fn factored_response_norm_source_matches_dense_reference_through_all_transitions
         .zip(&relation)
         .map(|(&digit, &weight)| F::from_i64(i64::from(digit)) * weight)
         .sum::<F>();
-    for (weight, &physical) in relation.iter_mut().zip(&linear) {
-        *weight += physical;
+    for (weight, &response_norm) in relation.iter_mut().zip(&linear) {
+        *weight += response_norm;
     }
     let equality = EqPolynomial::evals(&point).unwrap();
     let range_image_evaluation = padded_witness
@@ -307,19 +339,22 @@ fn factored_response_norm_source_matches_dense_reference_through_all_transitions
     };
     let relation_factorization =
         RelationWeightFactorization::new(common_alpha_factor, relation_lane_weights).unwrap();
-    let linear_terms = PreparedProverLinearTerms::from_response_norm_factors(
+    let mut linear_terms = PreparedProverLinearTerms::from_response_norm_factors(
         coefficient_weights,
         norm_lane_weights,
         live_lane_count,
         coeff_count,
     )
     .unwrap();
+    if let Some((trace, _)) = trace {
+        linear_terms.merge(trace).unwrap();
+    }
     let mut prover = RelationRangeImageProver::new(
         batching,
         packed_witness,
         &point,
         range_image_evaluation,
-        8,
+        basis,
         RelationWeightOracle::QuotientFactored(relation_factorization),
         live_lane_count,
         lane_bits,
@@ -330,6 +365,14 @@ fn factored_response_norm_source_matches_dense_reference_through_all_transitions
     )
     .unwrap();
 
+    assert_eq!(
+        prover.compact_quotient_prefix().is_some(),
+        basis != 32 && !wide_digits
+    );
+    if basis == 32 {
+        assert!(live_lane_count < (1 << lane_bits));
+        assert!(prover.has_factored_relation_moments());
+    }
     let mut claim = reference.claim();
     assert_eq!(prover.input_claim(), claim);
     for round in 0..coefficient_bits + lane_bits {

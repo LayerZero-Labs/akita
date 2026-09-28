@@ -30,7 +30,6 @@ fn folded_extension_round_matches_direct_evaluation_with_mixed_support() {
     let terms = AdditionalRelationTerms {
         weights,
         binary_batching: value(31),
-        input_claim: E::zero(),
         domain_len,
     };
     let witness = (0..domain_len).map(value).collect::<Vec<_>>();
