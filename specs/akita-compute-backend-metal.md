@@ -56,8 +56,10 @@ pinned to the same revision as `jolt-field`) for the device runtime, the error
 model and the MSL field arithmetic, and adds Akita's ring and commitment kernels
 on top. `scripts/check-crate-deps.sh` keeps both crates out of the verifier,
 prover, CPU backend, config, planner and setup graphs, and keeps the verifier,
-planner, setup and PCS crates out of `akita-metal`. The CPU backend is a
-development dependency only, as the test and benchmark reference.
+planner, setup and PCS crates out of `akita-metal`. `akita-metal` depends on
+`akita-cpu-backend` for the prover's source types (one-hot sources today, the
+commitment stage traits next) and uses it as the test and benchmark reference;
+the CPU backend never depends on `akita-metal`.
 
 On targets without Metal the crate compiles against `jolt-metal`'s uninhabited
 backend, and `AkitaMetal::new` returns an error of class `Unavailable`.
@@ -120,6 +122,7 @@ machine.
 | Garner CRT reconstruction into the field (fp128 over Q128, fp64 over Q64) | done | `CyclotomicCrtNtt::to_ring` |
 | NTT matvec over i8 and i16 digit planes, with CRT segments past capacity | done | `mat_vec_mul_ntt_digits_i8`, `PreparedNttCache::mat_vec_i16` |
 | Balanced digit decomposition into i8 and i16 planes | done | `decompose_rows_i8_into`, `CyclotomicRing::balanced_decompose_pow2_i16_into` |
+| One-hot inner commitment (fp128 at `D` 64..512, fp64 at 64..1024) | done | `column_sweep_ajtai_onehot_multi` |
 
 The matvec's digit transforms need only residues congruent to the CPU's, so
 they use Harvey's lazy radix-4 butterflies with Shoup products and

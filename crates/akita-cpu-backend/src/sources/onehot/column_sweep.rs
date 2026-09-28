@@ -510,7 +510,11 @@ where
 }
 
 /// Fused multi-polynomial column sweep over one hot source views.
-pub(crate) fn column_sweep_ajtai_onehot_multi<F, const D: usize, I>(
+///
+/// Extension seam: exported through [`crate::benchmark_support`] so device
+/// backends can time and check their one-hot inner commitment against this
+/// CPU reference on the same inputs.
+pub fn column_sweep_ajtai_onehot_multi<F, const D: usize, I>(
     a_view: &RingMatrixView<'_, F, D>,
     sources: &[OneHotSource<'_, I>],
     n_a: usize,

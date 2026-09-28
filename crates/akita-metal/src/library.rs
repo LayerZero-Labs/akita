@@ -32,7 +32,7 @@ pub const HEADERS: [(&str, &str); 4] = [
 ];
 
 /// Kernel sources.
-const KERNELS: [(&str, &str); 4] = [
+const KERNELS: [(&str, &str); 5] = [
     (
         "akita/ntt.metal",
         include_str!("../shaders/akita/ntt.metal"),
@@ -48,6 +48,10 @@ const KERNELS: [(&str, &str); 4] = [
     (
         "akita/decompose.metal",
         include_str!("../shaders/akita/decompose.metal"),
+    ),
+    (
+        "akita/onehot.metal",
+        include_str!("../shaders/akita/onehot.metal"),
     ),
 ];
 
@@ -69,6 +73,7 @@ fn instances() -> Vec<Instance> {
         .chain(crate::crt::instances())
         .chain(crate::matvec::instances())
         .chain(crate::decompose::instances())
+        .chain(crate::onehot::instances())
         .collect()
 }
 

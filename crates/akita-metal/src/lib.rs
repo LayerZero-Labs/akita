@@ -24,6 +24,7 @@ mod error;
 mod library;
 pub mod matvec;
 pub mod ntt;
+pub mod onehot;
 
 pub use error::AkitaMetalError;
 pub use jolt_metal::{ErrorClass, MetalError};
