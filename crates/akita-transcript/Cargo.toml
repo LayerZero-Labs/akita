@@ -9,7 +9,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c7c2d08d5bb0c7c80501f29f723e595af7fcff3c", default-features = false, features = [
   "asm",
   "solinas",
 ] }

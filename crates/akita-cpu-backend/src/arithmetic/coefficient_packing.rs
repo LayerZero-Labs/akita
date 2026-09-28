@@ -368,7 +368,7 @@ mod tests {
             .map(|index| {
                 E::from_base_slice(&std::array::from_fn::<_, 4, _>(|coordinate| {
                     let offset = ((29 * index + 17 * coordinate + 1) % 97) as u32;
-                    F::from_canonical_u32(MAX_CANONICAL - offset)
+                    F::from_u64(u64::from(MAX_CANONICAL - offset))
                 }))
             })
             .collect::<Vec<_>>();
@@ -385,7 +385,7 @@ mod tests {
             .map(|position| {
                 CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|coefficient| {
                     let offset = ((31 * position + 43 * coefficient + 3) % 101) as u32;
-                    F::from_canonical_u32(MAX_CANONICAL - offset)
+                    F::from_u64(u64::from(MAX_CANONICAL - offset))
                 }))
             })
             .collect::<Vec<_>>();
