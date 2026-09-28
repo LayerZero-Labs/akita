@@ -1,5 +1,9 @@
 use super::*;
 
+/// Minimum live pair work per parallel task in dense Stage 2 rounds.
+#[cfg(feature = "parallel")]
+pub(super) const MIN_PARALLEL_ROUND_PAIRS: usize = 2048;
+
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[tracing::instrument(
         skip_all,
@@ -37,53 +41,72 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let num_second = e_second.len();
         debug_assert!(live_pairs <= num_first * num_second);
 
-        let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
-            0..num_second,
-            || (
+        let live_rows = live_pairs.div_ceil(num_first);
+        let identity = || {
+            (
                 FieldNorm::<E, SKIP_LINEAR>::zero(),
-                [E::SmallProduct::zero(); 4]
-            ),
-            |(mut virt, mut rel), j_high| {
-                let mut inner_virt = CompactNorm::<E, SKIP_LINEAR>::zero();
-                let base = j_high * num_first;
-                for (j_low, &e_in) in e_first.iter().enumerate() {
-                    let j = base + j_low;
-                    if j >= live_pairs {
-                        break;
-                    }
-                    let w0 = compact_witness.get(2 * j).map_or(0, i32::from);
-                    let w1 = compact_witness.get(2 * j + 1).map_or(0, i32::from);
-                    let dw = w1 - w0;
-                    let w0_i64 = w0 as i64;
-                    let dw_i64 = dw as i64;
-
-                    inner_virt.add(w0_i64, dw_i64, e_in);
-
-                    let (p0, p1) = relation_pair(2 * j);
-                    self.accumulate_fused_relation_linear_signed(
-                        &mut rel,
-                        w0_i64,
-                        dw_i64,
-                        2 * j,
-                        p0,
-                        p1,
-                    );
+                [E::SmallProduct::zero(); 4],
+            )
+        };
+        let fold = |(mut virt, mut rel): (FieldNorm<E, SKIP_LINEAR>, CompactRelAccum<E>),
+                    j_high: usize| {
+            let mut inner_virt = CompactNorm::<E, SKIP_LINEAR>::zero();
+            let base = j_high * num_first;
+            for (j_low, &e_in) in e_first.iter().enumerate() {
+                let j = base + j_low;
+                if j >= live_pairs {
+                    break;
                 }
+                let w0 = compact_witness.get(2 * j).map_or(0, i32::from);
+                let w1 = compact_witness.get(2 * j + 1).map_or(0, i32::from);
+                let dw = w1 - w0;
+                let w0_i64 = w0 as i64;
+                let dw_i64 = dw as i64;
 
-                let reduced_inner = inner_virt.reduce();
-                let e_out = e_second[j_high];
-                virt.scaled_add(e_out, reduced_inner);
+                inner_virt.add(w0_i64, dw_i64, e_in);
 
-                (virt, rel)
-            },
-            |(mut va, mut ra), (vb, rb)| {
-                va.merge(vb);
-                for (left, right) in ra.iter_mut().zip(rb) {
-                    *left += right;
-                }
-                (va, ra)
+                let (p0, p1) = relation_pair(2 * j);
+                self.accumulate_fused_relation_linear_signed(
+                    &mut rel,
+                    w0_i64,
+                    dw_i64,
+                    2 * j,
+                    p0,
+                    p1,
+                );
             }
-        );
+
+            let reduced_inner = inner_virt.reduce();
+            let e_out = e_second[j_high];
+            virt.scaled_add(e_out, reduced_inner);
+
+            (virt, rel)
+        };
+        // A final row may be partial, so a chunk containing it needs one extra
+        // row to guarantee the minimum amount of live pair work.
+        #[cfg(feature = "parallel")]
+        let partial_last_row = usize::from(!live_pairs.is_multiple_of(num_first));
+        #[cfg(feature = "parallel")]
+        let rows_per_task = MIN_PARALLEL_ROUND_PAIRS.div_ceil(num_first) + partial_last_row;
+        #[cfg(feature = "parallel")]
+        let (virt_coeffs, rel_accum) =
+            if live_pairs <= MIN_PARALLEL_ROUND_PAIRS || live_rows < 2 * rows_per_task {
+                (0..live_rows).fold(identity(), fold)
+            } else {
+                (0..live_rows)
+                    .into_par_iter()
+                    .with_min_len(rows_per_task)
+                    .fold(identity, fold)
+                    .reduce(identity, |(mut va, mut ra), (vb, rb)| {
+                        va.merge(vb);
+                        for (left, right) in ra.iter_mut().zip(rb) {
+                            *left += right;
+                        }
+                        (va, ra)
+                    })
+            };
+        #[cfg(not(feature = "parallel"))]
+        let (virt_coeffs, rel_accum) = (0..live_rows).fold(identity(), fold);
 
         (virt_coeffs.into_terms(), reduce_compact_rel(rel_accum))
     }
@@ -167,49 +190,66 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let num_second = e_second.len();
         debug_assert!(live_pairs <= num_first * num_second);
 
-        let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
-            0..num_second,
-            || (FieldNorm::<E, SKIP_LINEAR>::zero(), RoundMessage::zero()),
-            |(mut virt, mut rel), j_high| {
-                let mut inner_virt = ProductNorm::<E, SKIP_LINEAR>::zero();
-                let mut inner_rel = [ProductSum::<E>::zero(); 2];
-                let base = j_high * num_first;
+        let live_rows = live_pairs.div_ceil(num_first);
+        let identity = || (FieldNorm::<E, SKIP_LINEAR>::zero(), RoundMessage::zero());
+        let fold = |(mut virt, mut rel): (FieldNorm<E, SKIP_LINEAR>, RoundMessage<E>),
+                    j_high: usize| {
+            let mut inner_virt = ProductNorm::<E, SKIP_LINEAR>::zero();
+            let mut inner_rel = [ProductSum::<E>::zero(); 2];
+            let base = j_high * num_first;
 
-                for (j_low, &e_in) in e_first.iter().enumerate() {
-                    let j = base + j_low;
-                    if j >= live_pairs {
-                        break;
-                    }
-                    let w0 = folded_witness.get(2 * j).copied().unwrap_or_else(E::zero);
-                    let w1 = folded_witness
-                        .get(2 * j + 1)
-                        .copied()
-                        .unwrap_or_else(E::zero);
-                    let dw = w1 - w0;
-
-                    inner_virt.add(w0, dw, e_in);
-
-                    let (p0, p1) = relation_pair(2 * j);
-                    let (t0, t1) = self.linear_terms.pair_from_flat_index(2 * j);
-                    let q0 = p0 + t0;
-                    let q1 = p1 + t1;
-                    let dq = q1 - q0;
-                    inner_rel[0].add(w1, q1);
-                    inner_rel[1].add(dw, dq);
+            for (j_low, &e_in) in e_first.iter().enumerate() {
+                let j = base + j_low;
+                if j >= live_pairs {
+                    break;
                 }
+                let w0 = folded_witness.get(2 * j).copied().unwrap_or_else(E::zero);
+                let w1 = folded_witness
+                    .get(2 * j + 1)
+                    .copied()
+                    .unwrap_or_else(E::zero);
+                let dw = w1 - w0;
 
-                virt.scaled_add(e_second[j_high], inner_virt.reduce());
-                rel.at_one += inner_rel[0].finish();
-                rel.quadratic += inner_rel[1].finish();
+                inner_virt.add(w0, dw, e_in);
 
-                (virt, rel)
-            },
-            |(mut va, mut ra), (vb, rb)| {
-                va.merge(vb);
-                ra.add_assign(rb);
-                (va, ra)
+                let (p0, p1) = relation_pair(2 * j);
+                let (t0, t1) = self.linear_terms.pair_from_flat_index(2 * j);
+                let q0 = p0 + t0;
+                let q1 = p1 + t1;
+                let dq = q1 - q0;
+                inner_rel[0].add(w1, q1);
+                inner_rel[1].add(dw, dq);
             }
-        );
+
+            virt.scaled_add(e_second[j_high], inner_virt.reduce());
+            rel.at_one += inner_rel[0].finish();
+            rel.quadratic += inner_rel[1].finish();
+
+            (virt, rel)
+        };
+        // A final row may be partial, so a chunk containing it needs one extra
+        // row to guarantee the minimum amount of live pair work.
+        #[cfg(feature = "parallel")]
+        let partial_last_row = usize::from(!live_pairs.is_multiple_of(num_first));
+        #[cfg(feature = "parallel")]
+        let rows_per_task = MIN_PARALLEL_ROUND_PAIRS.div_ceil(num_first) + partial_last_row;
+        #[cfg(feature = "parallel")]
+        let (virt_coeffs, rel_coeffs) =
+            if live_pairs <= MIN_PARALLEL_ROUND_PAIRS || live_rows < 2 * rows_per_task {
+                (0..live_rows).fold(identity(), fold)
+            } else {
+                (0..live_rows)
+                    .into_par_iter()
+                    .with_min_len(rows_per_task)
+                    .fold(identity, fold)
+                    .reduce(identity, |(mut va, mut ra), (vb, rb)| {
+                        va.merge(vb);
+                        ra.add_assign(rb);
+                        (va, ra)
+                    })
+            };
+        #[cfg(not(feature = "parallel"))]
+        let (virt_coeffs, rel_coeffs) = (0..live_rows).fold(identity(), fold);
         (virt_coeffs.into_terms(), rel_coeffs)
     }
 

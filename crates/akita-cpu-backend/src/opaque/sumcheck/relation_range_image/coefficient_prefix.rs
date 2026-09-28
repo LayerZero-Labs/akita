@@ -1,3 +1,5 @@
+#[cfg(feature = "parallel")]
+use super::dense_terms::MIN_PARALLEL_ROUND_PAIRS;
 use super::*;
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
@@ -65,77 +67,93 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let relation_lane_weights = weights.relation_lane_weights();
         debug_assert_eq!(relation_lane_weights.len(), 1usize << self.lane_bits);
 
-        let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
-            0..self.live_lane_count,
-            || (
+        let identity = || {
+            (
                 FieldNorm::<E, SKIP_LINEAR>::zero(),
-                [E::SmallProduct::zero(); 4]
-            ),
-            |(mut virt, mut rel), lane| {
-                let lane_start = lane * common_alpha_factor.len();
-                let lane_weight = if SKIP_RELATION {
-                    E::zero()
-                } else {
-                    relation_lane_weights[lane]
-                };
-                let linear_lane = (!SKIP_RELATION).then(|| self.linear_terms.resolve_lane(lane));
-                let equality_address_base = lane * current_coefficient_half;
-                let mut blk = 0usize;
+                [E::SmallProduct::zero(); 4],
+            )
+        };
+        let fold = |(mut virt, mut rel): (FieldNorm<E, SKIP_LINEAR>, CompactRelAccum<E>),
+                    lane: usize| {
+            let lane_start = lane * common_alpha_factor.len();
+            let lane_weight = if SKIP_RELATION {
+                E::zero()
+            } else {
+                relation_lane_weights[lane]
+            };
+            let linear_lane = (!SKIP_RELATION).then(|| self.linear_terms.resolve_lane(lane));
+            let equality_address_base = lane * current_coefficient_half;
+            let mut blk = 0usize;
 
-                while blk < current_coefficient_half {
-                    let (j_high, blk_end) = stage2_eq_block(
-                        equality_address_base,
-                        blk,
-                        num_first,
-                        first_bits,
-                        block_size,
-                        current_coefficient_half,
-                    );
-                    let mut inner_virt = CompactNorm::<E, SKIP_LINEAR>::zero();
+            while blk < current_coefficient_half {
+                let (j_high, blk_end) = stage2_eq_block(
+                    equality_address_base,
+                    blk,
+                    num_first,
+                    first_bits,
+                    block_size,
+                    current_coefficient_half,
+                );
+                let mut inner_virt = CompactNorm::<E, SKIP_LINEAR>::zero();
 
-                    for coefficient_pair in blk..blk_end {
-                        let j_low = (equality_address_base + coefficient_pair) & (num_first - 1);
-                        let e_in = e_first[j_low];
-                        let left = 2 * coefficient_pair;
-                        let w0 = i32::from(compact_witness.at(lane_start + left));
-                        let w1 = i32::from(compact_witness.at(lane_start + left + 1));
-                        let dw = w1 - w0;
-                        let w0_i64 = w0 as i64;
-                        let dw_i64 = dw as i64;
+                for coefficient_pair in blk..blk_end {
+                    let j_low = (equality_address_base + coefficient_pair) & (num_first - 1);
+                    let e_in = e_first[j_low];
+                    let left = 2 * coefficient_pair;
+                    let w0 = i32::from(compact_witness.at(lane_start + left));
+                    let w1 = i32::from(compact_witness.at(lane_start + left + 1));
+                    let dw = w1 - w0;
+                    let w0_i64 = w0 as i64;
+                    let dw_i64 = dw as i64;
 
-                        inner_virt.add(w0_i64, dw_i64, e_in);
+                    inner_virt.add(w0_i64, dw_i64, e_in);
 
-                        if !SKIP_RELATION {
-                            let p0 = common_alpha_factor[left] * lane_weight;
-                            let p1 = common_alpha_factor[left + 1] * lane_weight;
-                            let (t0, t1) = linear_lane
-                                .as_ref()
-                                .expect("relation lane is resolved when relation work is enabled")
-                                .pair(left);
-                            accumulate_relation_eval_coeffs_signed(
-                                &mut rel,
-                                w0_i64,
-                                dw_i64,
-                                p0 + t0,
-                                p1 + t1,
-                            );
-                        }
+                    if !SKIP_RELATION {
+                        let p0 = common_alpha_factor[left] * lane_weight;
+                        let p1 = common_alpha_factor[left + 1] * lane_weight;
+                        let (t0, t1) = linear_lane
+                            .as_ref()
+                            .expect("relation lane is resolved when relation work is enabled")
+                            .pair(left);
+                        accumulate_relation_eval_coeffs_signed(
+                            &mut rel,
+                            w0_i64,
+                            dw_i64,
+                            p0 + t0,
+                            p1 + t1,
+                        );
                     }
-
-                    virt.scaled_add(e_second[j_high], inner_virt.reduce());
-                    blk = blk_end;
                 }
 
-                (virt, rel)
-            },
-            |(mut va, mut ra), (vb, rb)| {
-                va.merge(vb);
-                for (left, right) in ra.iter_mut().zip(rb) {
-                    *left += right;
-                }
-                (va, ra)
+                virt.scaled_add(e_second[j_high], inner_virt.reduce());
+                blk = blk_end;
             }
-        );
+
+            (virt, rel)
+        };
+        #[cfg(feature = "parallel")]
+        let lanes_per_task = MIN_PARALLEL_ROUND_PAIRS.div_ceil(current_coefficient_half);
+        #[cfg(feature = "parallel")]
+        let (virt_coeffs, rel_accum) = if self.live_lane_count * current_coefficient_half
+            <= MIN_PARALLEL_ROUND_PAIRS
+            || self.live_lane_count < 2 * lanes_per_task
+        {
+            (0..self.live_lane_count).fold(identity(), fold)
+        } else {
+            (0..self.live_lane_count)
+                .into_par_iter()
+                .with_min_len(lanes_per_task)
+                .fold(identity, fold)
+                .reduce(identity, |(mut va, mut ra), (vb, rb)| {
+                    va.merge(vb);
+                    for (left, right) in ra.iter_mut().zip(rb) {
+                        *left += right;
+                    }
+                    (va, ra)
+                })
+        };
+        #[cfg(not(feature = "parallel"))]
+        let (virt_coeffs, rel_accum) = (0..self.live_lane_count).fold(identity(), fold);
 
         (virt_coeffs.into_terms(), reduce_compact_rel(rel_accum))
     }
@@ -204,75 +222,88 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let relation_lane_weights = weights.relation_lane_weights();
         debug_assert_eq!(relation_lane_weights.len(), 1usize << self.lane_bits);
 
-        let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
-            0..self.live_lane_count,
-            || (FieldNorm::<E, SKIP_LINEAR>::zero(), RoundMessage::zero()),
-            |(mut virt, mut rel), lane| {
-                let lane_start = lane * common_alpha_factor.len();
-                let lane_values =
-                    &folded_witness[lane_start..lane_start + common_alpha_factor.len()];
-                let equality_address_base = lane * current_coefficient_half;
-                let mut lane_rel = [ProductSum::<E>::zero(); 2];
-                let lane_weight = if SKIP_RELATION {
-                    E::zero()
-                } else {
-                    relation_lane_weights[lane]
-                };
-                let linear_lane = (!SKIP_RELATION).then(|| self.linear_terms.resolve_lane(lane));
-                let mut blk = 0usize;
+        let identity = || (FieldNorm::<E, SKIP_LINEAR>::zero(), RoundMessage::zero());
+        let fold = |(mut virt, mut rel): (FieldNorm<E, SKIP_LINEAR>, RoundMessage<E>),
+                    lane: usize| {
+            let lane_start = lane * common_alpha_factor.len();
+            let lane_values = &folded_witness[lane_start..lane_start + common_alpha_factor.len()];
+            let equality_address_base = lane * current_coefficient_half;
+            let mut lane_rel = [ProductSum::<E>::zero(); 2];
+            let lane_weight = if SKIP_RELATION {
+                E::zero()
+            } else {
+                relation_lane_weights[lane]
+            };
+            let linear_lane = (!SKIP_RELATION).then(|| self.linear_terms.resolve_lane(lane));
+            let mut blk = 0usize;
 
-                while blk < current_coefficient_half {
-                    let (j_high, blk_end) = stage2_eq_block(
-                        equality_address_base,
-                        blk,
-                        num_first,
-                        first_bits,
-                        block_size,
-                        current_coefficient_half,
-                    );
-                    let mut inner_virt = ProductNorm::<E, SKIP_LINEAR>::zero();
+            while blk < current_coefficient_half {
+                let (j_high, blk_end) = stage2_eq_block(
+                    equality_address_base,
+                    blk,
+                    num_first,
+                    first_bits,
+                    block_size,
+                    current_coefficient_half,
+                );
+                let mut inner_virt = ProductNorm::<E, SKIP_LINEAR>::zero();
 
-                    for coefficient_pair in blk..blk_end {
-                        let j_low = (equality_address_base + coefficient_pair) & (num_first - 1);
-                        let e_in = e_first[j_low];
-                        let left = 2 * coefficient_pair;
-                        let w0 = lane_values[left];
-                        let w1 = lane_values[left + 1];
-                        let dw = w1 - w0;
+                for coefficient_pair in blk..blk_end {
+                    let j_low = (equality_address_base + coefficient_pair) & (num_first - 1);
+                    let e_in = e_first[j_low];
+                    let left = 2 * coefficient_pair;
+                    let w0 = lane_values[left];
+                    let w1 = lane_values[left + 1];
+                    let dw = w1 - w0;
 
-                        inner_virt.add(w0, dw, e_in);
+                    inner_virt.add(w0, dw, e_in);
 
-                        if !SKIP_RELATION {
-                            let p0 = common_alpha_factor[left] * lane_weight;
-                            let p1 = common_alpha_factor[left + 1] * lane_weight;
-                            let (t0, t1) = linear_lane
-                                .as_ref()
-                                .expect("relation lane is resolved when relation work is enabled")
-                                .pair(left);
-                            let q0 = p0 + t0;
-                            let q1 = p1 + t1;
-                            let dq = q1 - q0;
-                            lane_rel[0].add(w1, q1);
-                            lane_rel[1].add(dw, dq);
-                        }
+                    if !SKIP_RELATION {
+                        let p0 = common_alpha_factor[left] * lane_weight;
+                        let p1 = common_alpha_factor[left + 1] * lane_weight;
+                        let (t0, t1) = linear_lane
+                            .as_ref()
+                            .expect("relation lane is resolved when relation work is enabled")
+                            .pair(left);
+                        let q0 = p0 + t0;
+                        let q1 = p1 + t1;
+                        let dq = q1 - q0;
+                        lane_rel[0].add(w1, q1);
+                        lane_rel[1].add(dw, dq);
                     }
-
-                    virt.scaled_add(e_second[j_high], inner_virt.reduce());
-                    blk = blk_end;
                 }
 
-                if !SKIP_RELATION {
-                    rel.at_one += lane_rel[0].finish();
-                    rel.quadratic += lane_rel[1].finish();
-                }
-                (virt, rel)
-            },
-            |(mut va, mut ra), (vb, rb)| {
-                va.merge(vb);
-                ra.add_assign(rb);
-                (va, ra)
+                virt.scaled_add(e_second[j_high], inner_virt.reduce());
+                blk = blk_end;
             }
-        );
+
+            if !SKIP_RELATION {
+                rel.at_one += lane_rel[0].finish();
+                rel.quadratic += lane_rel[1].finish();
+            }
+            (virt, rel)
+        };
+        #[cfg(feature = "parallel")]
+        let lanes_per_task = MIN_PARALLEL_ROUND_PAIRS.div_ceil(current_coefficient_half);
+        #[cfg(feature = "parallel")]
+        let (virt_coeffs, rel_coeffs) = if self.live_lane_count * current_coefficient_half
+            <= MIN_PARALLEL_ROUND_PAIRS
+            || self.live_lane_count < 2 * lanes_per_task
+        {
+            (0..self.live_lane_count).fold(identity(), fold)
+        } else {
+            (0..self.live_lane_count)
+                .into_par_iter()
+                .with_min_len(lanes_per_task)
+                .fold(identity, fold)
+                .reduce(identity, |(mut va, mut ra), (vb, rb)| {
+                    va.merge(vb);
+                    ra.add_assign(rb);
+                    (va, ra)
+                })
+        };
+        #[cfg(not(feature = "parallel"))]
+        let (virt_coeffs, rel_coeffs) = (0..self.live_lane_count).fold(identity(), fold);
         (virt_coeffs.into_terms(), rel_coeffs)
     }
 
@@ -286,19 +317,35 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         debug_assert!(coeff_count >= 2);
         let next_coeff_count = coeff_count >> 1;
         let mut out = vec![E::zero(); live_lane_count * next_coeff_count];
-
-        cfg_chunks_mut!(out, next_coeff_count)
+        let fold_lane = |(lane, lane_out): (usize, &mut [E])| {
+            let lane_start = lane * coeff_count;
+            let lane_values = &folded_witness[lane_start..lane_start + coeff_count];
+            for (coefficient_pair, dst) in lane_out.iter_mut().enumerate() {
+                let left = 2 * coefficient_pair;
+                let w0 = lane_values[left];
+                let w1 = lane_values[left + 1];
+                *dst = w0 + r * (w1 - w0);
+            }
+        };
+        #[cfg(feature = "parallel")]
+        let lanes_per_task = MIN_PARALLEL_ROUND_PAIRS.div_ceil(next_coeff_count);
+        #[cfg(feature = "parallel")]
+        if live_lane_count * next_coeff_count <= MIN_PARALLEL_ROUND_PAIRS
+            || live_lane_count < 2 * lanes_per_task
+        {
+            out.chunks_mut(next_coeff_count)
+                .enumerate()
+                .for_each(fold_lane);
+        } else {
+            cfg_chunks_mut!(out, next_coeff_count)
+                .enumerate()
+                .with_min_len(lanes_per_task)
+                .for_each(fold_lane);
+        }
+        #[cfg(not(feature = "parallel"))]
+        out.chunks_mut(next_coeff_count)
             .enumerate()
-            .for_each(|(lane, lane_out)| {
-                let lane_start = lane * coeff_count;
-                let lane_values = &folded_witness[lane_start..lane_start + coeff_count];
-                for (coefficient_pair, dst) in lane_out.iter_mut().enumerate() {
-                    let left = 2 * coefficient_pair;
-                    let w0 = lane_values[left];
-                    let w1 = lane_values[left + 1];
-                    *dst = w0 + r * (w1 - w0);
-                }
-            });
+            .for_each(fold_lane);
 
         out
     }

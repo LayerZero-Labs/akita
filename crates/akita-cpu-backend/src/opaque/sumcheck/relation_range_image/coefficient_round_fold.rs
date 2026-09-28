@@ -1,3 +1,5 @@
+#[cfg(feature = "parallel")]
+use super::dense_terms::MIN_PARALLEL_ROUND_PAIRS;
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
@@ -154,39 +156,59 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let next_coefficient_half = next_coeff_count / 2;
         let block_size = e_first.len().min(next_coefficient_half);
         let mut output = vec![E::zero(); self.live_lane_count * next_coeff_count];
-        let totals = cfg_fold_reduce!(
-            cfg_chunks_mut!(output, next_coeff_count).enumerate(),
-            || ([E::zero(); 3], RoundMessage::zero()),
-            |mut totals, (lane, target)| {
-                let source_start = lane * old_coeff_count;
-                let source = &folded_witness[source_start..source_start + old_coeff_count];
-                let lane_weight = if SKIP_RELATION {
-                    E::zero()
-                } else {
-                    weights.relation_lane_weights()[lane]
-                };
-                let linear_lane = (!SKIP_RELATION).then(|| self.linear_terms.resolve_lane(lane));
-                let terms = fold_lane_and_compute_next_round::<E, SKIP_LINEAR, SKIP_RELATION>(
-                    linear_lane.as_ref(),
-                    source,
-                    target,
-                    next_alpha_factor,
-                    lane,
-                    lane_weight,
-                    challenge,
-                    e_first,
-                    e_second,
-                    first_bits,
-                    block_size,
-                );
-                add_round_terms(&mut totals, terms);
-                totals
-            },
-            |mut left, right| {
-                add_round_terms(&mut left, right);
-                left
-            }
-        );
+        let identity = || ([E::zero(); 3], RoundMessage::zero());
+        let fold = |mut totals, (lane, target)| {
+            let source_start = lane * old_coeff_count;
+            let source = &folded_witness[source_start..source_start + old_coeff_count];
+            let lane_weight = if SKIP_RELATION {
+                E::zero()
+            } else {
+                weights.relation_lane_weights()[lane]
+            };
+            let linear_lane = (!SKIP_RELATION).then(|| self.linear_terms.resolve_lane(lane));
+            let terms = fold_lane_and_compute_next_round::<E, SKIP_LINEAR, SKIP_RELATION>(
+                linear_lane.as_ref(),
+                source,
+                target,
+                next_alpha_factor,
+                lane,
+                lane_weight,
+                challenge,
+                e_first,
+                e_second,
+                first_bits,
+                block_size,
+            );
+            add_round_terms(&mut totals, terms);
+            totals
+        };
+        #[cfg(feature = "parallel")]
+        let live_pairs = self.live_lane_count * next_coefficient_half;
+        #[cfg(feature = "parallel")]
+        let lanes_per_task = MIN_PARALLEL_ROUND_PAIRS.div_ceil(next_coefficient_half);
+        #[cfg(feature = "parallel")]
+        let totals = if live_pairs <= MIN_PARALLEL_ROUND_PAIRS
+            || self.live_lane_count < 2 * lanes_per_task
+        {
+            output
+                .chunks_mut(next_coeff_count)
+                .enumerate()
+                .fold(identity(), fold)
+        } else {
+            cfg_chunks_mut!(output, next_coeff_count)
+                .enumerate()
+                .with_min_len(lanes_per_task)
+                .fold(identity, fold)
+                .reduce(identity, |mut left, right| {
+                    add_round_terms(&mut left, right);
+                    left
+                })
+        };
+        #[cfg(not(feature = "parallel"))]
+        let totals = output
+            .chunks_mut(next_coeff_count)
+            .enumerate()
+            .fold(identity(), fold);
         (
             output,
             NormRoundTerms::from_totals::<SKIP_LINEAR>(totals.0),
