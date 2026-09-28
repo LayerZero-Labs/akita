@@ -13,7 +13,23 @@ use bytemuck::{Pod, Zeroable};
 use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid};
 
 use crate::error::AkitaMetalError;
-use crate::library::{ring_degree_kernel, AkitaMetal, RING_DEGREES};
+use crate::library::{ring_degree_kernel, AkitaMetal, Instance, RING_DEGREES};
+
+/// Transform templates, instantiated at every ring degree.
+const TEMPLATES: [&str; 2] = ["akita_ntt_forward", "akita_ntt_inverse"];
+
+pub(crate) fn instances() -> Vec<Instance> {
+    TEMPLATES
+        .iter()
+        .flat_map(|&template| {
+            RING_DEGREES.iter().map(move |&ring_degree| Instance {
+                template,
+                args: ring_degree.to_string(),
+                host_name: ring_degree_kernel(template, ring_degree),
+            })
+        })
+        .collect()
+}
 
 /// Layout of `akita::NttPrime` in `shaders/akita/mont.h`.
 #[repr(C)]

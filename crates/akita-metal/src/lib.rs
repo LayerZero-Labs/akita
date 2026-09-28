@@ -21,6 +21,7 @@
 mod crt;
 mod error;
 mod library;
+pub mod matvec;
 pub mod ntt;
 
 pub use error::AkitaMetalError;

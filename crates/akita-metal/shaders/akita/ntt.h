@@ -28,31 +28,46 @@ struct NttTables {
     static constexpr constant uint COUNT = 4;
 };
 
-// Twist then cyclic Gentleman-Sande DIF. Input in (-p, p) (any i32 with
-// |a psi| < 2^31 p), output in (-p, p).
-template <uint D>
+// Twist then cyclic Gentleman-Sande DIF over TILE contiguous arrays
+// a[t * D .. (t + 1) * D) at once, so the arrays share each stage's barrier
+// and twiddle load. Input in (-p, p) (any i32 with |a psi| < 2^31 p),
+// output in (-p, p).
+template <uint D, uint TILE = 1>
 inline void forward_negacyclic(threadgroup int* a, NttPrime q, device const int* tables, uint lane) {
     static_assert(D >= 2 && (D & (D - 1)) == 0, "D must be a power of two");
+    static_assert(TILE >= 1, "a tile holds at least one array");
     device const int* fwd = tables + NttTables::FWD * D;
     device const int* psi = tables + NttTables::PSI * D;
     constexpr uint HALF = D / 2;
 
-    a[lane] = mont_mul(q, a[lane], psi[lane]);
-    a[lane + HALF] = mont_mul(q, a[lane + HALF], psi[lane + HALF]);
+    int psi0 = psi[lane];
+    int psi1 = psi[lane + HALF];
+    for (uint t = 0; t < TILE; t++) {
+        threadgroup int* at = a + t * D;
+        at[lane] = mont_mul(q, at[lane], psi0);
+        at[lane + HALF] = mont_mul(q, at[lane + HALF], psi1);
+    }
     for (uint len = HALF; len > 0; len >>= 1) {
         metal::threadgroup_barrier(metal::mem_flags::mem_threadgroup);
         uint j = lane & (len - 1);
         uint i0 = ((lane - j) << 1) + j;
         uint i1 = i0 + len;
-        int u = a[i0];
-        int v = a[i1];
-        // u, v in (-p, p): the sum and difference fit i32.
-        a[i0] = reduce_range(q, u + v);
-        a[i1] = mont_mul(q, u - v, fwd[len - 1 + j]);
+        int w = fwd[len - 1 + j];
+        for (uint t = 0; t < TILE; t++) {
+            threadgroup int* at = a + t * D;
+            int u = at[i0];
+            int v = at[i1];
+            // u, v in (-p, p): the sum and difference fit i32.
+            at[i0] = reduce_range(q, u + v);
+            at[i1] = mont_mul(q, u - v, w);
+        }
     }
     metal::threadgroup_barrier(metal::mem_flags::mem_threadgroup);
-    a[lane] = reduce_range(q, a[lane]);
-    a[lane + HALF] = reduce_range(q, a[lane + HALF]);
+    for (uint t = 0; t < TILE; t++) {
+        threadgroup int* at = a + t * D;
+        at[lane] = reduce_range(q, at[lane]);
+        at[lane + HALF] = reduce_range(q, at[lane + HALF]);
+    }
 }
 
 // Cyclic Cooley-Tukey DIT then fused D^-1 untwist. Input in (-p, p),

@@ -7,18 +7,43 @@ use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid};
 use jolt_metal::MetalField;
 
 use crate::error::AkitaMetalError;
-use crate::library::{crt_kernel, AkitaMetal};
+use akita_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
+use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
+use jolt_metal::runtime::MslType;
+
+use crate::library::{AkitaMetal, Instance};
 use crate::ntt::{rows, shape_overflow, DeviceCrtNtt};
 
+/// The host name of the CRT reconstruction into `F` from `primes` residues.
+pub(crate) fn crt_kernel<F: MslType>(primes: usize) -> String {
+    format!("akita_crt_reconstruct_k{primes}_{}", F::HOST_SUFFIX)
+}
+
+fn crt_instance<F: MslType>(primes: usize) -> Instance {
+    Instance {
+        template: "akita_crt_reconstruct",
+        args: format!("{}, {primes}", F::MSL_NAME),
+        host_name: crt_kernel::<F>(primes),
+    }
+}
+
+/// Each field preset reconstructs from its own CRT profile.
+pub(crate) fn instances() -> Vec<Instance> {
+    vec![
+        crt_instance::<Prime128OffsetA7F7>(Q128_NUM_PRIMES),
+        crt_instance::<Prime64Offset59>(Q64_NUM_PRIMES),
+    ]
+}
+
 /// Threads per threadgroup for one-coefficient-per-thread kernels.
-const COEFFICIENT_GROUP: usize = 256;
+pub(crate) const COEFFICIENT_GROUP: usize = 256;
 
 /// Layout of `akita::CrtBatch` in `shaders/akita/crt.metal`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-struct CrtBatch {
-    coefficients: u32,
-    log_degree: u32,
+pub(crate) struct CrtBatch {
+    pub(crate) coefficients: u32,
+    pub(crate) log_degree: u32,
 }
 
 impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
