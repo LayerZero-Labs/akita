@@ -228,9 +228,6 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         live_lane_count: usize,
         coeff_count: usize,
     ) -> Result<Self, AkitaError> {
-        let _witness_len = live_lane_count.checked_mul(coeff_count).ok_or_else(|| {
-            AkitaError::InvalidSetup("response-norm witness length overflow".into())
-        })?;
         if coeff_count == 0 || !coeff_count.is_power_of_two() {
             return Err(AkitaError::InvalidSetup(
                 "response-norm coefficient count must be a nonzero power of two".into(),

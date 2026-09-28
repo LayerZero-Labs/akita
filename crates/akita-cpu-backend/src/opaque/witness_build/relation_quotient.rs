@@ -134,9 +134,6 @@ fn add_sparse_ring_products_high_half<F: Field + Ring, const D: usize>(
 ) {
     for (&position, &coefficient) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
         let position = position as usize;
-        if position >= D {
-            continue;
-        }
         let coefficient = i64::from(coefficient);
         for (output, ring) in outputs
             .iter_mut()
@@ -245,21 +242,25 @@ where
     if group.fold.response_coefficient_len() != inner_width * D {
         return Err(AkitaError::InvalidProof);
     }
-    let evaluation_trace = match &group.folded_opening {
-        OpeningFamily::EvaluationTrace(_)
+    let (evaluation_trace, consistency_rows, packing_product) = match &group.folded_opening {
+        OpeningFamily::EvaluationTrace(e_folded)
             if group_opening.coefficient_packing_geometry().is_none() =>
         {
-            Some((
-                group_opening.evaluation_trace_multiplier_point()?,
-                group.params.num_positions_per_block(),
-                group.params.num_digits_inner(),
-                group.params.log_basis_inner(),
-            ))
+            (
+                Some((
+                    group_opening.evaluation_trace_multiplier_point()?,
+                    group.params.num_positions_per_block(),
+                    group.params.num_digits_inner(),
+                    group.params.log_basis_inner(),
+                )),
+                Some(e_folded.as_ring_slice::<D>()?),
+                None,
+            )
         }
         OpeningFamily::SubringCoefficientPacking(product)
             if Some(product.geometry()) == group_opening.coefficient_packing_geometry() =>
         {
-            None
+            (None, None, Some(product))
         }
         _ => {
             return Err(AkitaError::InvalidSetup(
@@ -291,31 +292,14 @@ where
     if a_quotients.len() != n_a {
         return Err(AkitaError::InvalidProof);
     }
-    let consistency_rows = match &group.folded_opening {
-        OpeningFamily::EvaluationTrace(e_folded)
-            if group_opening.coefficient_packing_geometry().is_none() =>
-        {
-            Some(e_folded.as_ring_slice::<D>()?)
-        }
-        OpeningFamily::SubringCoefficientPacking(product)
-            if Some(product.geometry()) == group_opening.coefficient_packing_geometry() =>
-        {
-            None
-        }
-        _ => {
-            return Err(AkitaError::InvalidSetup(
-                "relation quotient opening method and witness disagree".into(),
-            ));
-        }
-    };
     let products = parallel_high_half_accumulate_a_rows::<F, D>(
         challenges,
         recomposed_inner_rows,
         n_a,
         consistency_rows,
     )?;
-    let consistency_quotient = match &group.folded_opening {
-        OpeningFamily::EvaluationTrace(_) => {
+    let consistency_quotient = match packing_product {
+        None => {
             let [consistency_product, ..] = products.as_slice() else {
                 return Err(AkitaError::InvalidProof);
             };
@@ -330,7 +314,7 @@ where
             }
             RelationQuotientOutput::row_from_ring(CyclotomicRing::from_coefficients(coefficients))?
         }
-        OpeningFamily::SubringCoefficientPacking(product) => {
+        Some(product) => {
             if z_consistency.is_some() {
                 return Err(AkitaError::InvalidProof);
             }

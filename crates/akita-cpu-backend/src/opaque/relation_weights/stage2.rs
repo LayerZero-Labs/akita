@@ -157,9 +157,7 @@ fn factor_response_norm_weights<E: Field + Ring>(
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("response-norm address overflow".into())
                         })?;
-                    if !physical_coefficient.is_multiple_of(coefficient_count) {
-                        return Ok(None);
-                    }
+                    debug_assert!(physical_coefficient.is_multiple_of(coefficient_count));
                     lane_weights[lane] +=
                         limb_weight * high_equality.eval(physical_coefficient / coefficient_count);
                 }
