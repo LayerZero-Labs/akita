@@ -74,7 +74,6 @@ mod bench {
         matrix: &[CyclotomicRing<F, D>],
         planes: &DeviceDigitPlanes<T>,
         expected: &[F],
-        blocks: usize,
         plan: MatvecPlan,
     ) {
         let primes = std::array::from_fn(|index| q128_primes()[index]);
@@ -82,7 +81,7 @@ mod bench {
         let device =
             DeviceNttMatrix::from_rings(metal, &params, matrix, 1, matrix.len(), plan.limbs)
                 .expect("planned matrix");
-        let mut out = DeviceBuffer::<F>::zeroed(metal.device(), blocks * D).expect("out");
+        let mut out = DeviceBuffer::<F>::zeroed(metal.device(), expected.len()).expect("out");
         device
             .mat_vec(metal, planes, &mut out)
             .expect("planned device");
@@ -201,7 +200,7 @@ mod bench {
                 limbs: 3
             }
         );
-        benchmark_planned::<i16, 3, D>(c, metal, name, &a, &planes, &expected, blocks, plan);
+        benchmark_planned::<i16, 3, D>(c, metal, name, &a, &planes, &expected, plan);
     }
 
     /// Outer commitment: `blocks` slices of `cols` base-8 digit planes.
@@ -273,7 +272,7 @@ mod bench {
                 limbs: 4
             }
         );
-        benchmark_planned::<i8, 2, D>(c, metal, name, &a, &planes, &expected, blocks, plan);
+        benchmark_planned::<i8, 2, D>(c, metal, name, &a, &planes, &expected, plan);
     }
 
     pub(crate) fn main() {
