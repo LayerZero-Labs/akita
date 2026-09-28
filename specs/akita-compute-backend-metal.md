@@ -125,10 +125,14 @@ The matvec's digit transforms need only residues congruent to the CPU's, so
 they use Harvey's lazy radix-4 butterflies with Shoup products and
 per-lane twiddles held in registers. On the dense inner commitment
 (`D = 1024`, 16-bit digits) the digit transforms take about two thirds of the
-time and are bound by 32-bit integer multiply throughput; the next step there
-is a prime set chosen for the device's arithmetic, with the device preparing
-its own NTT matrix from the canonical setup, which leaves the result unchanged
-because the product is exact.
+time and are bound by modular-multiply throughput: on an M4 GPU a dependent
+Shoup product runs at about 117 G/s (Montgomery 82 G/s, 32-bit `mulhi`
+234 G/s, fp32 FMA 832 G/s), and the transforms reach about 64 G butterflies/s.
+Floating-point modular arithmetic does not help: exact fp32 products need
+primes below `2^12` (two and a half times the transforms), and two-product
+FMA reduction for primes near `2^22` costs about as much as Shoup's with half
+again as many primes. Further gains need less transform work, not cheaper
+arithmetic.
 
 ## Acceptance criteria
 
