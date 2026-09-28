@@ -1,0 +1,30 @@
+[package]
+name = "akita-metal"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "Apache-2.0 OR MIT"
+description = "Prover-only Metal kernels for the Akita polynomial commitment scheme"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+
+# Metal is linked only on macOS, through jolt-metal. On every other target
+# this crate compiles against jolt-metal's uninhabited backend and
+# `AkitaMetal::new` reports `Unavailable`.
+[dependencies]
+akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-error = { version = "0.1.0", path = "../akita-error" }
+bytemuck = { version = "1.16", features = ["derive"] }
+jolt-metal = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c7c2d08d5bb0c7c80501f29f723e595af7fcff3c" }
+thiserror = "2.0"
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+rayon = "1.10"
+
+[[bench]]
+name = "ntt"
+harness = false
+
+[lints]
+workspace = true

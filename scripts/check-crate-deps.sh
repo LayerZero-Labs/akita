@@ -14,16 +14,16 @@ if [ "$#" -gt 0 ]; then
 else
   case "${pkg}" in
     akita-verifier)
-      forbidden=(akita-planner akita-prover akita-cpu-backend akita-pcs)
+      forbidden=(akita-planner akita-prover akita-cpu-backend akita-pcs akita-metal jolt-metal)
       ;;
     akita-prover)
-      forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs)
+      forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal)
       ;;
     akita-cpu-backend)
-      forbidden=(akita-planner akita-verifier akita-setup akita-pcs)
+      forbidden=(akita-planner akita-verifier akita-setup akita-pcs akita-metal jolt-metal)
       ;;
     akita-config)
-      forbidden=(akita-planner akita-prover akita-cpu-backend akita-verifier akita-pcs)
+      forbidden=(akita-planner akita-prover akita-cpu-backend akita-verifier akita-pcs akita-metal jolt-metal)
       ;;
     akita-schedules)
       forbidden=(akita-planner akita-config akita-prover akita-cpu-backend akita-verifier akita-setup akita-pcs)
@@ -34,8 +34,13 @@ else
       # prover/verifier/setup crates.
       forbidden=(akita-prover akita-cpu-backend akita-verifier akita-setup akita-pcs)
       ;;
+    akita-metal)
+      # Prover-only device kernels: never a verifier, planner or setup
+      # dependency, and never the other way around (see the cases above).
+      forbidden=(akita-verifier akita-planner akita-setup akita-pcs)
+      ;;
     akita-setup)
-      forbidden=(akita-verifier akita-pcs)
+      forbidden=(akita-verifier akita-pcs akita-metal jolt-metal)
       ;;
     *)
       echo "no default forbidden dependency set for ${pkg}; pass forbidden packages explicitly" >&2
