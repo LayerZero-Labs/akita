@@ -19,7 +19,6 @@ impl<E: Field, const SKIP_LINEAR: bool> FieldNorm<E, SKIP_LINEAR> {
         self.0[2] += e_out * inner[2];
     }
 
-    #[cfg(feature = "parallel")]
     #[inline(always)]
     pub(super) fn merge(&mut self, other: Self) {
         self.0[0] += other.0[0];
