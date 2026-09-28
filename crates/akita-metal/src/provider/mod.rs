@@ -176,7 +176,13 @@ pub struct MetalCommitmentProvider<F: CommitmentField> {
     expanded: Arc<AkitaExpandedSetup<F>>,
     matrices: MatrixCache<F>,
     counters: Counters,
+    /// Digit-plane bytes per dense inner chunk.
+    dense_chunk_bytes: usize,
 }
+
+/// Default digit-plane bytes per dense inner chunk: the fp128 dense nv26
+/// root (1 GiB of `i16` planes) runs as one chunk, larger sources in several.
+pub const DEFAULT_DENSE_CHUNK_BYTES: usize = 1 << 30;
 
 impl<F: CommitmentField> MetalCommitmentProvider<F> {
     /// Opens the system GPU and compiles the kernels.
@@ -195,7 +201,16 @@ impl<F: CommitmentField> MetalCommitmentProvider<F> {
             expanded,
             matrices: MatrixCache::new(),
             counters: Counters::default(),
+            dense_chunk_bytes: DEFAULT_DENSE_CHUNK_BYTES,
         }
+    }
+
+    /// Caps the digit planes of one dense inner chunk at `bytes` (at least
+    /// one block per chunk). Any value gives the same commitment; smaller
+    /// chunks use less device memory.
+    pub fn with_dense_chunk_bytes(mut self, bytes: usize) -> Self {
+        self.dense_chunk_bytes = bytes;
+        self
     }
 
     /// How often each stage has run on this provider.

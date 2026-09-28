@@ -179,7 +179,10 @@ mod fp128_provider {
     }
 
     /// Two polynomials in one group: the outer stage interleaves their blocks
-    /// into each slice on the host before the B matvec.
+    /// into each slice on the host before the B matvec. The dense inner stage
+    /// also runs in chunks of one block and of three blocks (16 blocks per
+    /// source at nv16: 8 positions of 10 `i16` digit planes at `D = 512`, so
+    /// some chunks span both sources).
     #[test]
     fn two_polynomial_group_matches_cpu_commitment() {
         run(|| {
@@ -212,16 +215,22 @@ mod fp128_provider {
                     .committed_group
             };
             let expected = commit(&CpuBackend::new(setup.expanded.clone()).unwrap());
-            let provider = Arc::new(MetalCommitmentProvider::with_device(
-                test.metal,
-                setup.expanded.clone(),
-            ));
-            let installed: Arc<dyn CommitmentStageProvider<F>> = provider.clone();
-            let metal = CpuBackend::<F, E>::new(setup.expanded.clone())
-                .unwrap()
-                .with_commitment_stage_provider(installed);
-            assert_eq!(commit(&metal), expected);
-            assert_eq!(provider.stage_calls().outer, 1);
+            // Each provider opens its own device under the test's GPU lock.
+            let _gpu = test;
+            let block_bytes = 8 * 512 * 10 * size_of::<i16>();
+            for chunk_bytes in [usize::MAX, block_bytes, 3 * block_bytes] {
+                let provider = Arc::new(
+                    MetalCommitmentProvider::new(setup.expanded.clone())
+                        .unwrap()
+                        .with_dense_chunk_bytes(chunk_bytes),
+                );
+                let installed: Arc<dyn CommitmentStageProvider<F>> = provider.clone();
+                let backend = CpuBackend::<F, E>::new(setup.expanded.clone())
+                    .unwrap()
+                    .with_commitment_stage_provider(installed);
+                assert_eq!(commit(&backend), expected, "chunk of {chunk_bytes} bytes");
+                assert_eq!(provider.stage_calls().outer, 1);
+            }
         });
     }
 

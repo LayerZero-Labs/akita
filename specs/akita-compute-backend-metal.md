@@ -157,7 +157,8 @@ M4), and on the one-hot nv32 outer commitment two primes and four limbs
 returns an error of class `Unavailable` without a device, and the caller keeps
 the plain CPU backend. The CPU backend keeps handle ownership, compression,
 retained state and proving. The inner stage takes dense coefficient sources
-(decomposition into `i8` or `i16` digit planes, then the A matvec) and one-hot
+(decomposition into `i8` or `i16` digit planes, then the A matvec, in block
+chunks of at most `DEFAULT_DENSE_CHUNK_BYTES` of planes) and one-hot
 sources (the one-hot kernel; fp128 at `D = 1024` has no kernel and runs the
 CPU column sweep inside the stage). It reads `t` back once, so the retained
 state and a CPU outer stage get host rows. The outer stage arranges `t` into

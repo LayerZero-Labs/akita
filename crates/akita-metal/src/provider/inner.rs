@@ -234,72 +234,87 @@ impl<F: CommitmentField> MetalCommitmentProvider<F> {
                 "dense source block count disagrees with the inner plan".into(),
             ));
         }
-        let padded =
-            checked::product([plan.num_live_blocks, block_rings, D]).ok_or_else(overflow)?;
-        let physical = checked::product([rings, D]).ok_or_else(overflow)?;
-        let device = self.metal.get().device();
-        let coefficients = match slices.as_slice() {
-            [single] if padded == physical => {
-                DeviceBuffer::from_slice(device, single).map_err(AkitaMetalError::from)?
-            }
-            _ => {
-                let total = checked::product([sources.len(), padded]).ok_or_else(overflow)?;
-                let mut staged = Vec::with_capacity(total);
-                for slice in &slices {
-                    staged.extend_from_slice(slice);
-                    staged.resize(
-                        checked::sum([staged.len(), padded])
-                            .and_then(|end| end.checked_sub(physical))
-                            .ok_or_else(overflow)?,
-                        F::zero(),
-                    );
-                }
-                DeviceBuffer::from_slice(device, &staged).map_err(AkitaMetalError::from)?
-            }
-        };
+        let block_fields = checked::product([block_rings, D]).ok_or_else(overflow)?;
         let cols = checked::product([block_rings, plan.num_digits_inner]).ok_or_else(overflow)?;
+        let metal = self.metal.get();
         let matrix = self.matrices.ntt::<D>(
-            self.metal.get(),
+            metal,
             self.expanded.shared_matrix(),
             plan.n_a,
             cols,
             plan.log_basis_inner,
         )?;
-        let outputs = checked::product([sources.len(), plan.num_live_blocks, plan.n_a, D])
-            .ok_or_else(overflow)?;
-        let mut out = DeviceBuffer::<F>::zeroed(device, outputs).map_err(AkitaMetalError::from)?;
-        let digits =
-            checked::product([coefficients.len(), plan.num_digits_inner]).ok_or_else(overflow)?;
-        if plan.log_basis_inner <= i8::MAX_LOG_BASIS {
-            let mut planes =
-                DeviceBuffer::<i8>::zeroed(device, digits).map_err(AkitaMetalError::from)?;
-            decompose(
-                self.metal.get(),
-                &coefficients,
-                D,
-                plan.num_digits_inner,
-                plan.log_basis_inner,
-                &mut planes,
-            )?;
-            matrix.mat_vec_i8(self.metal.get(), &planes, plan.log_basis_inner, &mut out)?;
+        // Blocks of every source in order, in chunks whose digit planes fit
+        // the chunk budget, so any source size stays within device memory.
+        let total_blocks =
+            checked::product([sources.len(), plan.num_live_blocks]).ok_or_else(overflow)?;
+        let digit_bytes = if plan.log_basis_inner <= i8::MAX_LOG_BASIS {
+            size_of::<i8>()
         } else {
-            let mut planes =
-                DeviceBuffer::<i16>::zeroed(device, digits).map_err(AkitaMetalError::from)?;
-            decompose(
-                self.metal.get(),
-                &coefficients,
-                D,
-                plan.num_digits_inner,
-                plan.log_basis_inner,
-                &mut planes,
+            size_of::<i16>()
+        };
+        let block_bytes = checked::product([block_fields, plan.num_digits_inner, digit_bytes])
+            .ok_or_else(overflow)?;
+        let chunk_blocks = self
+            .dense_chunk_bytes
+            .checked_div(block_bytes)
+            .unwrap_or(0)
+            .clamp(1, total_blocks);
+        let row_fields = checked::product([plan.n_a, D]).ok_or_else(overflow)?;
+        let mut rows =
+            Vec::with_capacity(checked::product([total_blocks, row_fields]).ok_or_else(overflow)?);
+        let mut device_rows = None;
+        let mut first = 0;
+        while first < total_blocks {
+            let count = chunk_blocks.min(total_blocks.saturating_sub(first));
+            let coefficients = stage_blocks(
+                metal,
+                &slices,
+                plan.num_live_blocks,
+                block_fields,
+                first..checked::sum([first, count]).ok_or_else(overflow)?,
             )?;
-            matrix.mat_vec_i16(self.metal.get(), &planes, plan.log_basis_inner, &mut out)?;
+            let digits = checked::product([coefficients.len(), plan.num_digits_inner])
+                .ok_or_else(overflow)?;
+            let mut out = DeviceBuffer::<F>::zeroed(
+                metal.device(),
+                checked::product([count, row_fields]).ok_or_else(overflow)?,
+            )
+            .map_err(AkitaMetalError::from)?;
+            if plan.log_basis_inner <= i8::MAX_LOG_BASIS {
+                let mut planes = DeviceBuffer::<i8>::zeroed(metal.device(), digits)
+                    .map_err(AkitaMetalError::from)?;
+                decompose(
+                    metal,
+                    &coefficients,
+                    D,
+                    plan.num_digits_inner,
+                    plan.log_basis_inner,
+                    &mut planes,
+                )?;
+                matrix.mat_vec_i8(metal, &planes, plan.log_basis_inner, &mut out)?;
+            } else {
+                let mut planes = DeviceBuffer::<i16>::zeroed(metal.device(), digits)
+                    .map_err(AkitaMetalError::from)?;
+                decompose(
+                    metal,
+                    &coefficients,
+                    D,
+                    plan.num_digits_inner,
+                    plan.log_basis_inner,
+                    &mut planes,
+                )?;
+                matrix.mat_vec_i16(metal, &planes, plan.log_basis_inner, &mut out)?;
+            }
+            rows.extend_from_slice(out.read().map_err(AkitaMetalError::from)?);
+            if count == total_blocks {
+                device_rows = Some(Shared::new(out));
+            }
+            first = checked::sum([first, count]).ok_or_else(overflow)?;
         }
-        drop(coefficients);
-        let rows = split_rows(out.read().map_err(AkitaMetalError::from)?, sources.len(), D)?;
         Ok(MetalInnerImage {
-            rows,
-            device: Some(Shared::new(out)),
+            rows: split_rows(&rows, sources.len(), D)?,
+            device: device_rows,
         })
     }
 
@@ -360,4 +375,49 @@ impl<F: CommitmentField> MetalCommitmentProvider<F> {
             device: Some(Shared::new(out)),
         })
     }
+}
+
+/// The coefficients of global blocks `blocks` (block `g` is block
+/// `g % blocks_per_source` of source `g / blocks_per_source`) on the device,
+/// each `block_fields` long with a short last block zero-padded. Zero
+/// coefficients decompose to zero digits, as the CPU pads its last block.
+fn stage_blocks<F: CommitmentField>(
+    metal: &crate::library::AkitaMetal,
+    slices: &[&[F]],
+    blocks_per_source: usize,
+    block_fields: usize,
+    blocks: std::ops::Range<usize>,
+) -> Result<DeviceBuffer<F>, AkitaError> {
+    let overflow = || AkitaError::InvalidSetup("dense inner shape overflows".into());
+    let locate = |block: usize| {
+        let source = block.checked_div(blocks_per_source)?;
+        let local = block.checked_rem(blocks_per_source)?;
+        Some((
+            slices.get(source)?,
+            checked::product([local, block_fields])?,
+        ))
+    };
+    let count = blocks.len();
+    let last = blocks.end.checked_sub(1).ok_or_else(overflow)?;
+    let (source, start) = locate(blocks.start).ok_or_else(overflow)?;
+    let (last_source, last_start) = locate(last).ok_or_else(overflow)?;
+    // One source's whole blocks are already contiguous.
+    let end = checked::sum([last_start, block_fields]).ok_or_else(overflow)?;
+    if std::ptr::eq(*source, *last_source) {
+        if let Some(contiguous) = source.get(start..end) {
+            return Ok(DeviceBuffer::from_slice(metal.device(), contiguous)
+                .map_err(AkitaMetalError::from)?);
+        }
+    }
+    let mut staged = vec![F::zero(); checked::product([count, block_fields]).ok_or_else(overflow)?];
+    for (block, destination) in blocks.zip(staged.chunks_exact_mut(block_fields)) {
+        let (source, start) = locate(block).ok_or_else(overflow)?;
+        let present = source.get(start..).unwrap_or_default();
+        let present = present.get(..block_fields).unwrap_or(present);
+        destination
+            .get_mut(..present.len())
+            .ok_or_else(overflow)?
+            .copy_from_slice(present);
+    }
+    Ok(DeviceBuffer::from_slice(metal.device(), &staged).map_err(AkitaMetalError::from)?)
 }
