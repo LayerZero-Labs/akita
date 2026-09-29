@@ -35,7 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install taplo
-        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # taplo-cli
+        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # taplo-cli
         with:
           tool: taplo-cli
       - name: Check TOML formatting
@@ -83,7 +83,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Install cargo-machete
-        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # cargo-machete
+        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # cargo-machete
         with:
           tool: cargo-machete
       - name: Check unused dependencies
@@ -128,7 +128,7 @@ jobs:
           add-job-id-key: false
           cache-on-failure: true
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # carg-nextest
+        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # carg-nextest
         with:
           tool: cargo-nextest
       - name: Run tests
@@ -272,7 +272,7 @@ jobs:
         backend: [transcript-blake2b, transcript-keccak]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Audit native proof roundtrips
         run: >-
           cargo test --release -p akita-pcs --test native_port_smoke
@@ -367,6 +367,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check spelling
-        uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b # v1.50.1
+        uses: crate-ci/typos@00f422f3b19c57bc6338715ebfe3316d38768461 # v1.50.3
         with:
           files: .
