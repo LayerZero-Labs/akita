@@ -210,32 +210,37 @@ certified accepted subset also retains at least 128 support bits. The
 records the exact families. The raw shell cardinality cannot replace the
 accepted-support bound for a filtered sampler.
 
-Binary CWSS needs a central accepting vector and one accepting alternative
-for each coordinate, with all other coordinates fixed. For example, two
-coordinates need three children, not merely two different whole vectors.
-Under the matching extraction and composition premises, heterogeneous
-whole-fold accounting would contribute
+Binary CWSS uses a common prechallenge prefix and, for each coordinate,
+a pair of accepting children that agree everywhere else. Each child has
+its own complete accepting subtree for the later ring, range, norm, relation,
+and recursive checks. The later challenges need not agree. These strong
+checks recover exact native-ring identities and verifier-certified response
+bounds below each child. If the children open a common commitment path
+differently, the commitment maps give a scheduled matrix collision.
+Otherwise, subtraction cancels every unchanged fold term. The production
+LS18 check makes the remaining nonzero challenge difference a unit in
+both opening methods, so division recovers that coordinate's weak opening.
+The extracted source need not be the honest canonical digit decomposition.
+To bound a collision, cross-multiply accepted responses and challenge
+differences before centering; division alone does not preserve norms.
+
+The terminal's direct relations authenticate its incoming opening.
+Applying the preceding step backward through the folds extracts the root
+openings or a short collision in a scheduled matrix view. For one fold
+with $W_{j,g}$ coordinates in group $g$, its flat accepting family has
+$1+\sum_g W_{j,g}$ children. Charging one query per *complete fold vector*
+gives the valid whole-fold interactive error
 
 $$
-\varepsilon_{\mathrm{fold}}
-\le \sum_j\sum_g\frac{W_{j,g}}{|C_{j,g}|},
+\varepsilon_{\mathrm{fold}}^{\mathrm{whole}}
+=\sum_j\sum_g\frac{W_{j,g}}{|C_{j,g}|}.
 \tag{5a}
 $$
 
-including terminal folds. Coordinates, groups, and rounds all appear in this
-sum. This is a conditional accounting template for Akita, not a certified
-error estimate for its current schedules. Even with binary folds, the tree's
-branching factors $1+\sum_g W_{j,g}$ multiply across levels. Other challenge
-stages add their own extraction costs and errors.
-
-The crucial premise is that accepting descendants authenticate the folded
-responses and establish their exact relations, ranges, and norms. Only then
-can coordinate subtraction recover a source, or expose a short collision in
-one of the commitment maps. Pairwise unit challenge differences permit
-algebraic division but do not preserve coefficient norms. The extracted
-source need not be the honest canonical digit decomposition. A soundness
-argument must specify its witness relation and collision bounds rather than
-infer them from honest response linearity.
+The sum includes every group and the terminal. Its tree factors multiply
+across folds and with the other challenge stages. The
+[grinding specification](../../../specs/transcript-grinding.md#fold-extraction-from-accepting-children)
+gives the extraction and collision steps in more detail.
 
 ## Fiat-Shamir queries and fold nonces
 
@@ -273,65 +278,88 @@ nonce freedom would count the same work twice. Conversely, the bounded nonce
 field does not justify omitting adversarial trials from $Q$. An adversary
 can also vary earlier messages and start from other transcript prefixes.
 
-A local $1/|C|$ bound has a precise premise: before a fresh uniform
-coordinate is revealed, its bad set must contain at most one value. Uniform
-sampling alone proves no such bound for an arbitrary bad set. Nor can one
-condition on the prover's chosen successful nonce and assume the coordinate
-is still uniform.
+A large challenge support alone does not give a one-value bad-set bound.
+The needed bound comes from the binary matching-input game for the accepting
+fold tree. Fixed operator rejection is uniform on its accepted family
+conditional on sampler success. The tree sampler can program the *complete*
+ideal XOF tape conditional on a prescribed accepted coordinate: it samples
+a successful raw tape, replaces its first accepted shell value, and
+conditionally samples that value's bit encoding. Response admission is
+source dependent and is never treated as another fixed sampler filter.
 
-Fixed operator rejection and response admission play different roles. The
-operator predicate depends only on the challenge and public policy. Bounded
-rejection against it is uniform on its accepted family conditional on sampler
-success. Response admission depends on the source and the complete challenge
-vector. Nonterminal responses must satisfy the scheduled representation and
-range predicates and, on an L2 route, the authenticated physical response
-norm check. The terminal checks its clear response directly. These predicates
-are essential to the collision bound; they do not give a witness-independent
-product support for the outer nonce search.
-
-An indexed-address refinement could charge the fold error by
+Let $Q_{\mathrm{coord}}$ count distinct indexed streams touched by the
+original adversary and $R_{\mathrm{coord}}$ count streams completed only by
+final verification. A selected stream has one address determined by its
+group root and claim-major index. Fix the other oracle answers and the
+suffix sampler's coins, retaining the address selected by the *original*
+execution even if suffix extraction fails. At a nonempty selected-address
+fiber, the binary game loses at most one accepted value out of
+$C_{j,g}$. That fiber can be nonempty only if the original execution
+queried the address or its final proof selects it for verification: if
+neither occurs, changing that answer cannot change the execution.
+Summing these address charges proves
 
 $$
+\varepsilon_{\mathrm{fold}}^{\mathrm{indexed}}
+\le
+\mathbb E\!\left[\sum_a\frac{q_a+r_a}{|C(a)|}\right]
+\le
 \frac{Q_{\mathrm{coord}}+R_{\mathrm{coord}}}{C_{\min}},
-\qquad C_{\min}=\min_{j,g}|C_{j,g}|,
+\qquad
+R_{\mathrm{coord}}\le\sum_{j,g}W_{j,g}.
 \tag{8}
 $$
 
-**provided** a matching-input extraction theorem bounds each selected
-coordinate address's binary-fork loss by $1/|C_{j,g}|$ and composes these
-losses through the accepting descendants. Here $Q_{\mathrm{coord}}$ bounds
-the distinct coordinate addresses touched by the original adversary, and
-$R_{\mathrm{coord}}$ counts untouched addresses completed by the final
-verifier. For one final proof,
-$R_{\mathrm{coord}}\le\sum_{j,g}W_{j,g}$.
-A whole candidate at level $j$ costs $\sum_gW_{j,g}$ coordinate touches;
-$V$ fresh complete candidates cost $V\sum_gW_{j,g}$, plus the transcript/root queries induced by those candidates. Partial evaluations count only the streams touched. Thus indexing
-can change the accounting unit without making geometry disappear.
+Here $q_a$ and $r_a$ mark original queries and untouched verifier
+completions, and $C_{\min}=\min_{j,g}|C_{j,g}|$. The same original selected
+proof is retained through later tree stages, so their weighted bounds
+telescope. One complete fold candidate touches $\sum_gW_{j,g}$ streams;
+indexing changes the query unit without hiding the geometry. A collision
+of two distinct contexts compressed to the same 32-byte root is a
+separate binding event.
 
-Equation (8) is a proof obligation, not a theorem established by the sampler.
-It requires an exact, efficient conditional sampler for the complete ideal
-oracle answer, adaptive matching-input analysis that preserves the originally
-selected context even when suffix extraction fails, and a bound on the full
-extractor's work. Programming a decoded sparse value is not enough. A
-concrete reduction must also handle collisions or aliases in the compressed
-group roots and justify the transcript's ideal-oracle model. One must not
-remove the coordinate factors from (5a) while retaining a budget that counts
-only whole-vector calls.
+All production accepted supports have at least $2^{128}$ elements.
+Consequently each indexed fold address has error weight at most
+$2^{-128}$ with **zero additional fold proof of work**. This proves the
+128-bit *per-address rate* used to price fold work in the classical random
+oracle model. It does not assert that an arbitrary number of addresses
+has aggregate error at most $2^{-128}$.
 
-The plan's `expanded_query_count` is structural bookkeeping for one replay.
-It includes one root plus $W_{j,g}$ coordinates per group and separate nonce
-entries. Its `u32::MAX` limit does not bound the adversary's $Q$, failed
-previews, or searches over other prefixes. The current support and plan
-checks do not certify the full CWSS ledger, extractor cost, or an aggregate
-128-bit knowledge-error bound for a declared adversarial budget.
+For the complete challenge tree, give each field-family address its
+conditional error weight $L_r/(|E_r|2^{g_r})$ and each sparse address
+$1/|C(a)|$. Exact field pricing makes the former at most $2^{-128}$ at
+the typed proof-of-work sites. If the ledger includes every relevant
+stage, the matching-input bound is
 
-Akita currently adds no fold security proof-of-work. This is implementation
-behavior, not a proven conclusion from support size. Establishing that choice
-at a stated security target requires the indexed extraction and composition
-premises above, or a complete whole-fold analysis using (5a) and (6). Even a
-proved $2^{-128}$ rate per counted address would remain budget-dependent
-after aggregation. The 12-bit response search contributes no independent soundness term and
-incurs no separate fixed debit when its trials are already counted in $Q$.
+$$
+\varepsilon_{\mathrm{tree}}
+\le
+\mathbb E\!\left[\sum_a\alpha_a(q_a+r_a)\right]
+\le \rho(Q+R_{\mathrm{field}}+R_{\mathrm{coord}}),
+\qquad \rho=\max_a\alpha_a\le2^{-128}.
+\tag{9}
+$$
+
+$Q$ includes failed work attempts, response-nonce trials, and each
+coordinate stream touched. The final two terms count previously
+untouched verifier completions. Setup distance, root-compression
+collisions, and matrix-collision advantages are additional terms, with
+the latter evaluated at the extractor's actual expected cost. The fold
+tree contributes the factor
+$\prod_j(1+\sum_gW_{j,g})$ to that cost. Expected polynomial extraction
+also requires the full tree product, including nonfold stages, to be
+polynomial in the declared explicit instance length and security
+parameter. The current plan's one-replay query count is not that
+tree-size certificate.
+
+Thus zero fold work meets the same 128-bit per-address rate as the
+priced field challenges. For a particular aggregate target, one must
+insert a declared adversarial query budget and the verifier completion
+counts into (9), then include the other reduction terms. Counting
+response-nonce trials in $Q$ entails no separate fixed 12-bit debit.
+These are classical random-oracle statements, not a QROM theorem.
+The [grinding specification](../../../specs/transcript-grinding.md#indexed-address-fold-bound)
+contains the full fold argument and the exact conditional sampler.
 
 Honest search measures how often the response fits the scheduled cap.
 Under an independent-trial model with per-trial acceptance probability $p$,

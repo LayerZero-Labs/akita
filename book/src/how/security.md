@@ -360,17 +360,18 @@ that coordinate. The production LS18 condition makes every nonzero
 sparse-challenge difference a unit, so subtracting the accepted relations
 algebraically isolates that opening. A binary CWSS extractor would need a
 central accepting vector and one such accepting fork for every claim-major
-coordinate. The existence and authenticated composition of these forks,
-their response bounds, and the aggregate random-oracle budget remain proof
-obligations; see the [soundness boundary](../../../specs/transcript-grinding.md#current-security-conclusion-and-evidence).
+coordinate. Complete accepting descendant trees authenticate the later
+relations and response bounds. The indexed matching-input game bounds failure
+to obtain these forks by charging every queried or verifier-completed
+coordinate address; see the [fold argument](../../../specs/transcript-grinding.md#indexed-address-fold-bound).
 
 The packed consistency equation still gives one polynomial identity in `E[Y]`.
 After including the `(Y^s + 1)Q_pack` term, its degree is at most `2s-1`, so the
 conditional polynomial-check error is `(2s-1)/|E|`. This term must be composed
 with the CWSS, random-oracle, sum-check, collision, and MSIS terms. The active
 [subring coefficient packing design record](../../../specs/subring-coefficient-packing.md)
-gives the algebraic relation and its separate field-check loss; it does not
-certify the complete fold knowledge-error ledger.
+gives the algebraic relation and its separate field-check loss. The fold
+contribution is accounted by the indexed-address theorem above.
 
 The challenge response identity is exact when the accepted challenge has
 scalar covariance. The fixed point operator norm filter is not assumed to have

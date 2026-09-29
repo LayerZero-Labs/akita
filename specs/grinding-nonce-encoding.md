@@ -192,8 +192,8 @@ Depending on the public layout, the plan contains:
   multiplicity covering the group root and every indexed sparse coordinate.
 
 The sparse fold challenges themselves do not receive extra proof-of-work.
-Their certified support and the outstanding fold soundness accounting are
-described in the [transcript grinding specification](transcript-grinding.md#current-security-conclusion-and-evidence).
+Their certified support and the indexed-address soundness bound are
+described in the [transcript grinding specification](transcript-grinding.md#indexed-address-fold-bound).
 
 #### Ring switch and evaluation points
 

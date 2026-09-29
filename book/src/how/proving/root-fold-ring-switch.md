@@ -218,9 +218,9 @@ an EOR payload nor a packing terminal.
 
 This chapter documents the implemented relation and schedule boundary. The
 active design record gives the planner and algebraic soundness requirements.
-Indexed coordinates supply fork structure, while the adaptive extraction and
-schedule-wide CWSS accounting remain proof obligations; see the
-[soundness boundary](../../../../specs/transcript-grinding.md#current-security-conclusion-and-evidence).
+Indexed coordinates supply fork structure for the accepting-tree extractor;
+the [indexed fold bound](../../../../specs/transcript-grinding.md#indexed-address-fold-bound)
+charges every adversarially touched or verifier-completed coordinate stream.
 
 ## The root fold
 

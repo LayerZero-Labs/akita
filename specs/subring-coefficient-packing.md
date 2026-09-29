@@ -832,8 +832,8 @@ The implemented transcript structure is specified normatively in
 and the fixed shared fold-response nonce, coordinate `(claim, block)` is a
 separate indexed random-oracle query. Reprogramming it leaves every other fold
 coordinate and the live transcript state unchanged. This supplies the fork
-structure needed for a coordinatewise CWSS argument; it does not ensure that
-the required accepting siblings exist or establish the extraction bound.
+structure used by the accepting-tree extraction and indexed-address bound in
+the [grinding specification](transcript-grinding.md#fold-extraction-from-accepting-children).
 
 Consider two accepting transcripts with the same pre-challenge commitments and
 different challenge at one claim/block position. Let
@@ -856,21 +856,22 @@ L(G(z - z')) = delta(Y) e_j           in C.
 ```
 
 Because `delta` is a unit in both rings, these equations algebraically
-determine the opened `t_j` and `e_j` from such an accepting fork. A full
-weak-opening/MSIS reduction must also show that the accepting descendants
-authenticate these relations and the scheduled response bounds, and that the
-extracted source meets the required collision radius. Unit division alone
-does not preserve coefficient norms.
+determine the opened `t_j` and `e_j` from such an accepting fork. The complete
+accepting descendant trees authenticate the native relations and scheduled
+response bounds. Cross-multiplying unit differences against those bounded
+responses yields the scheduled short collision if two weak openings disagree;
+unit division alone does not preserve coefficient norms.
 
-A proposed binary CWSS extractor needs one central accepting vector and one
+A binary CWSS extractor uses one central accepting vector and one
 coordinatewise accepting fork for every claim and block position. Its
-whole-fold error ledger must include every coordinate and group. The
-random-oracle reduction must count group-root and indexed-coordinate queries,
-including fresh queries induced by shared fold-response nonce trials.
+whole-fold error ledger includes every coordinate and group. The indexed
+random-oracle reduction instead charges every touched coordinate address and
+every untouched address completed by final verification, including fresh
+queries induced by shared fold-response nonce trials.
 Root collisions, root prequeries, sum-check errors, the `(2s - 1)/|E|`
 ring-switch error, and A/B/D/F/H MSIS terms also belong in the composition.
-The required adaptive extraction and schedule-wide ledger are not yet
-certified; see the [soundness boundary](transcript-grinding.md#current-security-conclusion-and-evidence).
+The [indexed fold bound](transcript-grinding.md#indexed-address-fold-bound)
+gives the adaptive query accounting and its reduction-cost boundary.
 
 ### Ring-switch polynomial check
 
