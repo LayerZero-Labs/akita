@@ -101,10 +101,9 @@ pub(crate) const fn state_allows_terminal_seed(
 /// The bound applies to the Cartesian product over distinct interchangeable
 /// classes. Class multiplicity does not count toward it, so any number of
 /// identical producers fits; three to eight distinct classes do, depending on
-/// the per-class domain sizes. A
-/// larger product removes coefficient-packing root openings for that
-/// dimension, as an unsupported dimension does; evaluation-trace openings are
-/// one per class and remain available.
+/// the per-class domain sizes. A larger product removes coefficient-packing
+/// root openings for that dimension, as an unsupported dimension does;
+/// evaluation-trace openings are one per class and remain available.
 pub(crate) const MAX_PRECOMMIT_OPENING_PRODUCTS: usize = 256;
 
 /// Enumerate the root precommit openings for one shared opening dimension.
