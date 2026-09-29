@@ -219,7 +219,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let fold = |(mut virt, mut rel): (FieldNorm<E, SKIP_LINEAR>, RoundMessage<E>),
                     j_high: usize| {
             let mut inner_virt = ProductNorm::<E, SKIP_LINEAR>::zero();
-            let mut inner_rel = [ProductSum::<E>::zero(); 2];
+            let mut inner_rel = RelationPairAccumulator::<E>::zero();
             let base = j_high * num_first;
 
             for (j_low, &e_in) in e_first.iter().enumerate() {
@@ -240,14 +240,11 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 let (t0, t1) = self.linear_terms.pair_from_flat_index(2 * j);
                 let q0 = p0 + t0;
                 let q1 = p1 + t1;
-                let dq = q1 - q0;
-                inner_rel[0].add(w1, q1);
-                inner_rel[1].add(dw, dq);
+                inner_rel.add_pair(w1, dw, q0, q1);
             }
 
             virt.scaled_add(e_second[j_high], inner_virt.reduce());
-            rel.at_one += inner_rel[0].finish();
-            rel.quadratic += inner_rel[1].finish();
+            rel.add_assign(inner_rel.finish());
 
             (virt, rel)
         };

@@ -262,6 +262,7 @@ fn stage2_eq_block(
 struct ProductSum<E: Unreduced>(E::Product);
 
 impl<E: Unreduced> ProductSum<E> {
+    #[inline(always)]
     fn zero() -> Self {
         Self(E::Product::zero())
     }
@@ -271,8 +272,50 @@ impl<E: Unreduced> ProductSum<E> {
         self.0 += left.mul_unreduced(right);
     }
 
+    #[inline(always)]
     fn finish(self) -> E {
         E::reduce_product(self.0)
+    }
+}
+
+/// Relation message of a run of pairs `w(X) * q(X)` with `w = w0 + X dw` and
+/// `q = q0 + X (q1 - q0)`, where `q` is the relation weight plus the
+/// structured linear term.
+///
+/// Only the value at one, `sum w1 q1`, and the quadratic coefficient,
+/// `sum dw (q1 - q0)`, are accumulated. The sumcheck claim recovers the
+/// constant and the linear coefficient. Every field-valued relation kernel
+/// (dense, compact and folded coefficient, lane rounds) accumulates through
+/// this type and reduces it once per its own task or lane. The signed-digit
+/// kernels keep [`accumulate_relation_eval_coeffs_signed`], whose accumulator
+/// is a pair of unsigned small products per coefficient.
+#[derive(Clone, Copy)]
+struct RelationPairAccumulator<E: Unreduced>([ProductSum<E>; 2]);
+
+impl<E: Unreduced> RelationPairAccumulator<E> {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self([ProductSum::zero(); 2])
+    }
+
+    /// Adds one pair. `dw = w1 - w0` is passed in because the norm
+    /// accumulator of the same scan needs it too.
+    #[inline(always)]
+    fn add_pair(&mut self, w1: E, dw: E, q0: E, q1: E) {
+        self.0[0].add(w1, q1);
+        self.0[1].add(dw, q1 - q0);
+    }
+
+    #[inline(always)]
+    fn finish(self) -> RoundMessage<E>
+    where
+        E: Field,
+    {
+        RoundMessage {
+            at_one: self.0[0].finish(),
+            quadratic: self.0[1].finish(),
+            cubic: E::zero(),
+        }
     }
 }
 

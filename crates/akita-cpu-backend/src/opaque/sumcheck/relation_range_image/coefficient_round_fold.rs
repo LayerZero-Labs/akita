@@ -23,7 +23,7 @@ fn fold_lane_and_compute_next_round<
     let next_coefficient_half = next_coeff_count / 2;
     let equality_address_base = lane * next_coefficient_half;
     let mut virt = FieldNorm::<E, SKIP_LINEAR>::zero();
-    let mut relation = [ProductSum::<E>::zero(); 2];
+    let mut relation = RelationPairAccumulator::<E>::zero();
     let mut blk = 0usize;
 
     while blk < next_coefficient_half {
@@ -58,9 +58,7 @@ fn fold_lane_and_compute_next_round<
                 let (t0, t1) = linear_lane.pair(left);
                 let q0 = p0 + t0;
                 let q1 = p1 + t1;
-                let dq = q1 - q0;
-                relation[0].add(w1, q1);
-                relation[1].add(dw, dq);
+                relation.add_pair(w1, dw, q0, q1);
             }
         }
 
@@ -69,15 +67,7 @@ fn fold_lane_and_compute_next_round<
         blk = blk_end;
     }
 
-    let relation = relation.map(ProductSum::finish);
-    (
-        virt.totals(),
-        RoundMessage {
-            at_one: relation[0],
-            quadratic: relation[1],
-            cubic: E::zero(),
-        },
-    )
+    (virt.totals(), relation.finish())
 }
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {

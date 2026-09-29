@@ -88,7 +88,7 @@ where
     let low_bits = tables.eq_low.len().trailing_zeros();
     let low_mask = tables.eq_low.len() - 1;
     let mut norm = [E::zero(); 3];
-    let mut relation = [ProductSum::<E>::zero(); 2];
+    let mut relation = RelationPairAccumulator::<E>::zero();
     let mut block_start = pairs.start;
     while block_start < pairs.end {
         let high = block_start >> low_bits;
@@ -116,8 +116,7 @@ where
             let dw = w1 - w0;
             let e_in = tables.eq_low[pair & low_mask];
             inner.add(w0, dw, e_in);
-            relation[0].add(w1, q1);
-            relation[1].add(dw, q1 - q0);
+            relation.add_pair(w1, dw, q0, q1);
         }
         let e_out = tables.eq_high[high];
         for (norm, inner) in norm.iter_mut().zip(inner.reduce()) {
@@ -125,15 +124,7 @@ where
         }
         block_start = block_end;
     }
-    let relation = relation.map(ProductSum::finish);
-    (
-        norm,
-        RoundMessage {
-            at_one: relation[0],
-            quadratic: relation[1],
-            cubic: E::zero(),
-        },
-    )
+    (norm, relation.finish())
 }
 
 /// [`lane_product_tile`] with its const parameters chosen at run time.

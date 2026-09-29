@@ -218,7 +218,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             let lane_start = lane * common_alpha_factor.len();
             let lane_values = &folded_witness[lane_start..lane_start + common_alpha_factor.len()];
             let equality_address_base = lane * current_coefficient_half;
-            let mut lane_rel = [ProductSum::<E>::zero(); 2];
+            let mut lane_rel = RelationPairAccumulator::<E>::zero();
             let lane_weight = if SKIP_RELATION {
                 E::zero()
             } else {
@@ -258,9 +258,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                         let (t0, t1) = linear_lane.pair(left);
                         let q0 = p0 + t0;
                         let q1 = p1 + t1;
-                        let dq = q1 - q0;
-                        lane_rel[0].add(w1, q1);
-                        lane_rel[1].add(dw, dq);
+                        lane_rel.add_pair(w1, dw, q0, q1);
                     }
                 }
 
@@ -269,8 +267,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             }
 
             if !SKIP_RELATION {
-                rel.at_one += lane_rel[0].finish();
-                rel.quadratic += lane_rel[1].finish();
+                rel.add_assign(lane_rel.finish());
             }
             (virt, rel)
         };
