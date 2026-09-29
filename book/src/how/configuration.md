@@ -163,13 +163,16 @@ depends on the combined groups, including D widths and ranks, witness lengths,
 relation rows, setup-prefix lengths, response bounds, grinding parameters, and
 proof accounting.
 
-This is a conditional search, not a second global optimizer. It returns
-`AkitaError::UnsupportedSchedule` if the scalar structure cannot support the
-grouped request. Adaptation rejects more than 256 precommitted producers before
-copying request data. Coefficient-packing adaptation also rejects more than 256
-canonical precommit opening products before allocating them. Callers that need
-a different structure can run the exhaustive offline `find_schedule` path
-explicitly.
+This guided search is a conditional search, not a second global optimizer.
+When the scalar structure cannot support the grouped request, adaptation falls
+back to the exhaustive offline `find_schedule` for the same key. It therefore
+fails only when the request is invalid or no schedule exists in the audited
+domain. The fallback costs one full search.
+
+Both searches give every group of an interchangeable class (equal commit-phase
+profile and source contract) the same root opening. Many identical producers,
+such as the chunks of one large object, therefore cost one opening choice
+between them, and planning time grows only slowly with their number.
 
 An adapted row is not trusted merely because planning succeeded. The
 application merges its selected rows, validates them with
