@@ -4,6 +4,7 @@
 //! position-partitioned accumulation strategies, and the final witness
 //! construction used by dense, one-hot, and sparse-ring backends.
 
+mod cached_narrow_accum;
 mod decompose_fold_partitioned;
 mod narrow_accum;
 mod rotated_accum;
