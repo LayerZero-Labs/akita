@@ -105,9 +105,11 @@ they can remain hidden behind smaller compressed payloads. Compressed mode adds
 the two-map commitment chains, their digit witnesses, and their physical rows.
 It does not change what the four semantic relations mean.
 
-Every physical row is lifted from its native ring before the rows are combined
-for Stage 2. This is how one fold supports distinct A, B, and D ring dimensions
-without pretending that all matrices live in one ring.
+The schedule also selects how to check these ring equations: quotient lifting
+adds private quotient digits, while reduced evaluation includes ring reduction
+in public coefficient weights. Each row uses its native ring dimension.
+[Checking ring relations over a field](./ring-relation-checking.md) derives
+both methods and their common handoff to Stage 2.
 
 See [Raw and compressed realizations of an Akita
 fold](./akita-fold-realizations.md).
@@ -115,8 +117,9 @@ fold](./akita-fold-realizations.md).
 ### 6. Form and commit the successor witness
 
 The relation witness contains the response digits, opening digits, inner
-commitment digits, quotient rows, and any compression witness required by the
-selected realization. Ring switching lays these values out as the next
+commitment digits, and any compression witness required by the payload mode.
+It also contains quotient digits when the relation mode is `QuotientLift`.
+Ring switching lays these values out as the next
 field-valued witness. The prover commits to that witness with the parameters of
 the successor level.
 
@@ -174,9 +177,10 @@ The most useful order depends on what you need.
 1. [Field-to-ring evaluation reduction](./field-ring-reduction.md)
 2. [Semantic relations in an Akita fold](./akita-fold.md)
 3. [Raw and compressed realizations](./akita-fold-realizations.md)
-4. [Opening points and digit-innermost layout](./opening-points-layout.md)
-5. [Fold path and field geometry](./fold-path.md)
-6. [Sum-check stages](./sumcheck-stages.md)
+4. [Checking ring relations over a field](./ring-relation-checking.md)
+5. [Opening points and digit-innermost layout](./opening-points-layout.md)
+6. [Fold path and field geometry](./fold-path.md)
+7. [Sum-check stages](./sumcheck-stages.md)
 
 Read [Root fold and ring switching](./root-fold-ring-switch.md) when you want
 the complete coefficient-packing derivation. Read [Extension-opening

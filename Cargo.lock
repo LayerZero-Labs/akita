@@ -248,6 +248,7 @@ dependencies = [
  "criterion",
  "jolt-field",
  "jolt-poly",
+ "num-bigint 0.5.1",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "serde",

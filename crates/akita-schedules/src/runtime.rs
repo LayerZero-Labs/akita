@@ -280,6 +280,17 @@ impl PlannerPolicy {
                 AkitaError::InvalidSetup("challenge field bit width overflow".to_string())
             })
     }
+
+    /// Exact challenge-field order used by transcript grinding plans.
+    pub fn transcript_grinding_order(
+        &self,
+    ) -> Result<akita_types::ChallengeFieldOrder, AkitaError> {
+        akita_types::ChallengeFieldOrder::from_field(
+            self.decomposition.field_bits(),
+            self.chal_ext_degree,
+            self.sis_modulus_profile.modulus(),
+        )
+    }
 }
 
 /// Suffix-DP depth cap shared by planner search and runtime policy validation.
@@ -499,55 +510,6 @@ pub struct CandidateMaterializationCost {
     pub first_direct_setup_field_len: Option<usize>,
 }
 
-fn fold_schedule_from_candidate_parts(
-    folds: &[CandidateFoldStep],
-    terminal_response: &CandidateTerminalResponse,
-) -> Result<FoldSchedule, AkitaError> {
-    let (root, recursive_folds) = folds.split_first().ok_or_else(|| {
-        AkitaError::UnsupportedSchedule(
-            "a fold schedule requires root and terminal folds".to_string(),
-        )
-    })?;
-    Ok(FoldSchedule {
-        root: FoldParams {
-            params: (*root.params).clone(),
-            input_witness_len: root.input_witness_len,
-            output_witness_len: root.output_witness_len,
-        },
-        recursive_folds: recursive_folds
-            .iter()
-            .map(|fold| FoldParams {
-                params: (*fold.params).clone(),
-                input_witness_len: fold.input_witness_len,
-                output_witness_len: fold.output_witness_len,
-            })
-            .collect(),
-        terminal: TerminalFoldParams {
-            fold_challenge_config: terminal_response.sparse_challenge_config,
-            response_shape: terminal_response.response_shape.clone(),
-            input_witness_len: terminal_response.input_witness_len,
-            ..terminal_response.params.clone()
-        },
-    })
-}
-
-/// Price the canonical grinding plan for one complete schedule candidate.
-#[doc(hidden)]
-pub fn candidate_grinding_cost(
-    policy: &PlannerPolicy,
-    root_layout: &OpeningClaimsLayout,
-    folds: &[CandidateFoldStep],
-    terminal_response: &CandidateTerminalResponse,
-) -> Result<akita_types::TranscriptGrindingCost, AkitaError> {
-    let schedule = fold_schedule_from_candidate_parts(folds, terminal_response)?;
-    akita_types::transcript_grinding_cost_for_planner_candidate(
-        &schedule,
-        root_layout,
-        policy.decomposition.field_bits(),
-        policy.claim_ext_degree,
-    )
-}
-
 /// Exact Stage-3 payload induced when `successor` consumes a setup prefix.
 pub fn stage3_payload_bytes_for_successor(
     policy: &PlannerPolicy,
@@ -706,7 +668,7 @@ fn expanded_schedule_proof_components(
     let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
         schedule,
         &key.opening_layout()?,
-        field_bits,
+        policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
     )?;
     let fixed_bytes = total
@@ -770,12 +732,32 @@ pub fn materialize_candidate_schedule(
         num_setup_field_elements: cached_num_setup_field_elements,
         first_direct_setup_field_len: cached_first_direct_setup_field_len,
     } = cached;
-    let schedule = fold_schedule_from_candidate_parts(&folds, &terminal_response)?;
     let (root, recursive_folds) = folds.split_first().ok_or_else(|| {
         AkitaError::UnsupportedSchedule(
             "a fold schedule requires root and terminal folds".to_string(),
         )
     })?;
+    let schedule = FoldSchedule {
+        root: FoldParams {
+            params: (*root.params).clone(),
+            input_witness_len: root.input_witness_len,
+            output_witness_len: root.output_witness_len,
+        },
+        recursive_folds: recursive_folds
+            .iter()
+            .map(|fold| FoldParams {
+                params: (*fold.params).clone(),
+                input_witness_len: fold.input_witness_len,
+                output_witness_len: fold.output_witness_len,
+            })
+            .collect(),
+        terminal: TerminalFoldParams {
+            fold_challenge_config: terminal_response.sparse_challenge_config,
+            response_shape: terminal_response.response_shape.clone(),
+            input_witness_len: terminal_response.input_witness_len,
+            ..terminal_response.params.clone()
+        },
+    };
     let mut estimate = FoldScheduleEstimate {
         native_nonce_max_bytes: 0,
         estimated_root_direct_payload_bytes: root.estimated_direct_payload_bytes,
@@ -800,7 +782,7 @@ pub fn materialize_candidate_schedule(
     let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
         &schedule,
         root_layout,
-        policy.decomposition.field_bits(),
+        policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
     )?;
     if grinding_plan.total_nonce_bits() != cached_grinding_cost.total_nonce_bits
