@@ -722,6 +722,51 @@ where
                 .own_group_mut()
                 .opening
                 .fold_challenge_config = params.own_group_mut().opening.fold_challenge_config;
+        } else {
+            // EvaluationTrace expands the root witness. Retarget the successor's
+            // frozen commitment geometry so structure accepts this test row.
+            let opening_batch = key.opening_layout()?;
+            let output_witness_len = schedule.root.params.output_witness_len_for_field_bits(
+                policy_of::<Self>().decomposition.field_bits(),
+                Self::EXT_DEGREE,
+                &opening_batch,
+            )?;
+            schedule.root.output_witness_len = output_witness_len;
+            let successor = &mut schedule.recursive_folds[0];
+            successor.input_witness_len = output_witness_len;
+            let successor_d_a = successor.params.d_a();
+            let blocks = &mut successor.params.own_group_mut().profile.blocks;
+            blocks.live_ring_elements_per_claim = output_witness_len.div_ceil(successor_d_a);
+            blocks.live_blocks = blocks
+                .live_ring_elements_per_claim
+                .div_ceil(blocks.positions_per_block);
+            let successor_params = &mut successor.params;
+            let dims = successor_params.role_dims();
+            let group = successor_params.own_group_mut();
+            let group_num_vars = group
+                .profile
+                .blocks
+                .live_ring_elements_per_claim
+                .checked_mul(successor_d_a)
+                .and_then(usize::checked_next_power_of_two)
+                .ok_or_else(|| AkitaError::InvalidSetup("early-ET root input overflow".into()))?
+                .trailing_zeros() as usize;
+            group.profile.group = akita_types::PolynomialGroupLayout::singleton(group_num_vars);
+            let outer_width = akita_types::CommitmentSliceGeometry::try_new(
+                group.profile.outer_slice_count,
+                group.profile.blocks.live_blocks,
+                1,
+                group.profile.inner.matrix.output_rank(),
+                group.profile.outer.digits.num_digits,
+                dims.d_a(),
+                dims.d_b(),
+            )?
+            .physical_input_width();
+            group.profile.outer.matrix =
+                akita_types::OuterCommitMatrixParams::try_new_with_min_rank(
+                    group.profile.outer.matrix.sis_table_key(),
+                    outer_width,
+                )?;
         }
         Ok((profiles, schedule))
     }

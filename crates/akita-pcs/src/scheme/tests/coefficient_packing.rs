@@ -281,10 +281,13 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         .is_err());
 
                     macro_rules! early_evaluation_trace_admission_error {
-                        ($config:ty, $context:literal) => {{
+                        ($config:ty, $context:literal, $expected:literal) => {{
                             let row = <$config>::derive_row(&catalog, &key)
                                 .expect(concat!($context, " test row must derive"));
-                            akita_config::ValidatedScheduleCatalog::try_new(
+                            row.1
+                                .validate_structure()
+                                .expect(concat!($context, " test row must be structurally valid"));
+                            let error = akita_config::ValidatedScheduleCatalog::try_new(
                                 <$config>::schedule_family_name(),
                                 [row],
                                 &akita_config::policy_of::<$config>(),
@@ -293,28 +296,27 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                             .expect_err(concat!(
                                 $context,
                                 " must reject at the trusted catalog boundary"
-                            ))
-                            .to_string()
+                            ));
+                            assert!(
+                                matches!(
+                                    &error,
+                                    akita_error::AkitaError::InvalidSetup(message)
+                                        if message == $expected
+                                ),
+                                "unexpected admission error: {error}"
+                            );
                         }};
                     }
 
-                    // Rewriting the root to evaluation trace leaves its output
-                    // length sized for the packing relation block, so this row
-                    // is structurally invalid as well; the rule itself is
-                    // covered by `rejects_evaluation_trace_at_the_root`.
                     early_evaluation_trace_admission_error!(
                         RootEvaluationTraceCfg,
-                        "root EvaluationTrace"
+                        "root EvaluationTrace",
+                        "nonterminal level 0 requires subring coefficient packing"
                     );
-                    // The level-1 row is structurally valid, so admission must
-                    // reject it for its opening method before auditing geometry.
-                    let error = early_evaluation_trace_admission_error!(
+                    early_evaluation_trace_admission_error!(
                         RecursiveEvaluationTraceCfg,
-                        "level-1 EvaluationTrace"
-                    );
-                    assert!(
-                        error.contains("nonterminal level 1 requires subring coefficient packing"),
-                        "unexpected level-1 admission error: {error}"
+                        "level-1 EvaluationTrace",
+                        "nonterminal level 1 requires subring coefficient packing"
                     );
                 }
             }
