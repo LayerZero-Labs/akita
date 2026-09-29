@@ -31,6 +31,64 @@ pub(crate) fn parallel_tasks(per_thread: usize) -> usize {
     }
 }
 
+/// Minimum live pair work per parallel Stage-2 task.
+pub(crate) const MIN_PARALLEL_ROUND_PAIRS: usize = 2048;
+
+/// Fold indexed work items, staying on the caller below two full task grains.
+/// The indexed iterator supplies the item count and owns any disjoint mutable chunks.
+#[cfg(feature = "parallel")]
+pub(crate) fn par_fold_by_grain<I, T, Identity, Fold, Reduce>(
+    items: I,
+    pairs_per_item: usize,
+    identity: Identity,
+    fold: Fold,
+    reduce: Reduce,
+) -> T
+where
+    I: rayon::iter::IndexedParallelIterator,
+    T: Send,
+    Identity: Fn() -> T + Sync + Send,
+    Fold: Fn(T, I::Item) -> T + Sync + Send,
+    Reduce: Fn(T, T) -> T + Sync + Send,
+{
+    use rayon::iter::plumbing::{Producer, ProducerCallback};
+    use rayon::iter::ParallelIterator;
+    struct SerialFold<T, F>(T, F);
+    impl<Item, T, F: Fn(T, Item) -> T> ProducerCallback<Item> for SerialFold<T, F> {
+        type Output = T;
+        fn callback<P: Producer<Item = Item>>(self, producer: P) -> T {
+            producer.into_iter().fold(self.0, self.1)
+        }
+    }
+    let per_task = MIN_PARALLEL_ROUND_PAIRS.div_ceil(pairs_per_item.max(1));
+    if items.len() < 2 * per_task {
+        items.with_producer(SerialFold(identity(), fold))
+    } else {
+        items
+            .with_min_len(per_task)
+            .fold(&identity, fold)
+            .reduce(&identity, reduce)
+    }
+}
+
+/// Serial counterpart of the indexed grain fold when parallelism is disabled.
+#[cfg(not(feature = "parallel"))]
+pub(crate) fn par_fold_by_grain<I, T, Identity, Fold, Reduce>(
+    items: I,
+    _pairs_per_item: usize,
+    identity: Identity,
+    fold: Fold,
+    _reduce: Reduce,
+) -> T
+where
+    I: ExactSizeIterator,
+    Identity: Fn() -> T,
+    Fold: Fn(T, I::Item) -> T,
+    Reduce: Fn(T, T) -> T,
+{
+    items.fold(identity(), fold)
+}
+
 /// Add `right` into `left` element-wise.
 #[inline]
 pub(crate) fn add_assign_all<T: Copy + AddAssign>(left: &mut [T], right: &[T]) {

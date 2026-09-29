@@ -63,8 +63,7 @@ pub(super) struct CompactQuotientPrefix<E: Field> {
     odd_histogram: Vec<E>,
     /// Round-2 equality weight of each odd-minus-even quad digit difference.
     delta_histogram: Vec<E>,
-    alpha_mass: Vec<E>,
-    source_mass: Vec<Vec<E>>,
+    relation_moments: CoefficientRelationMoments<E>,
     /// Folded value of every quad class after the first two challenges.
     quad_fold: Vec<E>,
     challenges: Vec<E>,
@@ -126,8 +125,199 @@ impl<E: Field> ScanTotals<E> {
     }
 }
 
+/// Coefficient-direction contractions shared by compact and ordinary factored rounds.
+pub(super) struct CoefficientRelationMoments<E: Field> {
+    alpha_mass: Vec<E>,
+    source_mass: Vec<Vec<E>>,
+}
+
+impl<E: Field> CoefficientRelationMoments<E> {
+    fn new(alpha_mass: Vec<E>, source_mass: Vec<Vec<E>>) -> Self {
+        Self {
+            alpha_mass,
+            source_mass,
+        }
+    }
+
+    pub(super) fn relation_message(
+        &self,
+        alpha: &[E],
+        linear_terms: &PreparedProverLinearTerms<E>,
+    ) -> RoundMessage<E> {
+        let mut rel = RoundMessage::zero();
+        let masses = std::iter::once((&self.alpha_mass, alpha)).chain(
+            self.source_mass
+                .iter()
+                .zip(linear_terms.sources.iter().map(|source| &source.values[..])),
+        );
+        for (mass, weight) in masses {
+            debug_assert_eq!(mass.len(), weight.len());
+            for (mass, weight) in mass.chunks_exact(2).zip(weight.chunks_exact(2)) {
+                rel.at_one += mass[1] * weight[1];
+                rel.quadratic += (mass[1] - mass[0]) * (weight[1] - weight[0]);
+            }
+        }
+        rel
+    }
+}
+
+impl<E: Field + Fold> CoefficientRelationMoments<E> {
+    pub(super) fn bind(&mut self, challenge: E) {
+        fold_evals_in_place(&mut self.alpha_mass, challenge);
+        for mass in &mut self.source_mass {
+            if !mass.is_empty() {
+                fold_evals_in_place(mass, challenge);
+            }
+        }
+    }
+}
+
+struct CoefficientMassChunk<E: Field> {
+    alpha_mass: Vec<E>,
+    source_mass: Vec<E>,
+}
+
+impl<E: Field> CoefficientMassChunk<E> {
+    fn merge(mut self, other: Self) -> Self {
+        add_assign_all(&mut self.alpha_mass, &other.alpha_mass);
+        add_assign_all(&mut self.source_mass, &other.source_mass);
+        self
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_basis32_lane_range<E: Field + Unreduced + 'static>(
+    witness: PackedSignedDigitView<'_>,
+    lane_weights: &[E],
+    linear_terms: &PreparedProverLinearTerms<E>,
+    source_blocks: &[usize],
+    source_block_count: usize,
+    coeff_count: usize,
+    chunk_lanes: usize,
+    digit_capacity: usize,
+    first_lane: usize,
+    end_lane: usize,
+) -> Option<CoefficientMassChunk<E>> {
+    let mut alpha_mass = WideMass::<E, 32>::new(1, coeff_count, 32);
+    let mut source_mass = WideMass::<E, 32>::new(source_block_count, coeff_count, 32);
+    if first_lane == end_lane {
+        return Some(CoefficientMassChunk {
+            alpha_mass: alpha_mass.finish(),
+            source_mass: source_mass.finish(),
+        });
+    }
+    let mut digits = vec![0i8; digit_capacity];
+    let mut alpha_rows = Vec::with_capacity(chunk_lanes);
+    let mut source_rows = BlockRows::<E, 32>::new(source_block_count);
+    let mut first = first_lane;
+    while first < end_lane {
+        let lanes = (end_lane - first).min(chunk_lanes);
+        let digit_len = lanes * coeff_count;
+        let chunk = &mut digits[..digit_len];
+        witness.decode_range(first * coeff_count, chunk).ok()?;
+        alpha_rows.clear();
+        alpha_rows.extend(
+            lane_weights[first..first + lanes]
+                .iter()
+                .copied()
+                .zip(0u32..),
+        );
+        alpha_mass.add_rows(0, &alpha_rows, chunk);
+        for row in 0..lanes {
+            linear_terms.for_each_source_term(first + row, |factor, source_index, source_lane| {
+                let block = source_blocks[source_index] + source_lane;
+                source_rows.push(block, factor, row as u32);
+            });
+        }
+        source_rows.add_to(&mut source_mass, chunk);
+        first += lanes;
+    }
+    Some(CoefficientMassChunk {
+        alpha_mass: alpha_mass.finish(),
+        source_mass: source_mass.finish(),
+    })
+}
+
+impl<E: Field + Unreduced + 'static> CoefficientRelationMoments<E> {
+    /// Contract a basis-32 packed witness without building any norm-class table.
+    pub(super) fn from_basis32(
+        witness: &PackedSignedDigits,
+        lane_weights: &[E],
+        linear_terms: &PreparedProverLinearTerms<E>,
+        live_lane_count: usize,
+        coeff_count: usize,
+    ) -> Option<Self> {
+        if coeff_count == 0
+            || !coeff_count.is_power_of_two()
+            || linear_terms.coeff_count != coeff_count
+            || matches!(&linear_terms.lane_weights, PreparedLaneWeights::Dense(_))
+            || live_lane_count.checked_mul(coeff_count)? != witness.len()
+            || lane_weights.len() < live_lane_count
+            || !witness.bounds().fits_balanced_log_basis(5)
+        {
+            return None;
+        }
+        let mut source_blocks = Vec::with_capacity(linear_terms.sources.len());
+        let mut source_block_count = 0usize;
+        for source in &linear_terms.sources {
+            source_blocks.push(source_block_count);
+            source_block_count = source_block_count.checked_add(source.lane_count)?;
+        }
+        source_block_count.checked_mul(coeff_count)?;
+        let chunk_lanes = SCAN_CHUNK_LANES;
+        let digit_capacity = chunk_lanes.checked_mul(coeff_count)?;
+
+        let task_lanes = live_lane_count
+            .div_ceil(parallel_tasks(TASKS_PER_THREAD))
+            .max(MIN_SCAN_TASK_LANES);
+        let task_count = live_lane_count.div_ceil(task_lanes).max(1);
+        let witness = witness.view();
+        let scan = |task: usize| {
+            let first_lane = task * task_lanes;
+            let end_lane = first_lane + (live_lane_count - first_lane).min(task_lanes);
+            scan_basis32_lane_range(
+                witness,
+                lane_weights,
+                linear_terms,
+                &source_blocks,
+                source_block_count,
+                coeff_count,
+                chunk_lanes,
+                digit_capacity,
+                first_lane,
+                end_lane,
+            )
+        };
+        #[cfg(feature = "parallel")]
+        let totals = if task_count == 1 {
+            scan(0)?
+        } else {
+            (0..task_count)
+                .into_par_iter()
+                .map(scan)
+                .reduce_with(|left, right| Some(left?.merge(right?)))??
+        };
+        #[cfg(not(feature = "parallel"))]
+        let totals = (0..task_count)
+            .map(scan)
+            .reduce(|left, right| Some(left?.merge(right?)))??;
+        let source_mass = source_blocks
+            .iter()
+            .zip(&linear_terms.sources)
+            .map(|(&block, source)| {
+                let start = block.checked_mul(coeff_count)?;
+                let end = block
+                    .checked_add(source.lane_count)?
+                    .checked_mul(coeff_count)?;
+                Some(totals.source_mass.get(start..end)?.to_vec())
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self::new(totals.alpha_mass, source_mass))
+    }
+}
+
 /// Source-mass rows of one scan chunk, grouped by mass block.
-struct BlockRows<E> {
+struct BlockRows<E, const MAX_DIGIT_BASIS: usize = 8> {
     /// `(block, factor, row)` in visit order.
     visits: Vec<(usize, E, u32)>,
     /// Per-block row count; zero outside [`add_to`](Self::add_to).
@@ -137,7 +327,7 @@ struct BlockRows<E> {
     grouped: Vec<(E, u32)>,
 }
 
-impl<E: Field + Unreduced + 'static> BlockRows<E> {
+impl<E: Field + Unreduced + 'static, const MAX_DIGIT_BASIS: usize> BlockRows<E, MAX_DIGIT_BASIS> {
     fn new(block_count: usize) -> Self {
         Self {
             visits: Vec::new(),
@@ -157,7 +347,7 @@ impl<E: Field + Unreduced + 'static> BlockRows<E> {
     }
 
     /// Add every row to its block of `mass`, one call per block, and clear.
-    fn add_to(&mut self, mass: &mut WideMass<E>, digits: &[i8]) {
+    fn add_to(&mut self, mass: &mut WideMass<E, MAX_DIGIT_BASIS>, digits: &[i8]) {
         // Counting sort: `counts` becomes each block's write cursor.
         let mut start = 0;
         for &block in &self.touched {
@@ -208,7 +398,7 @@ fn scan_lanes<E: Field + Unreduced + 'static, const DIGIT_BITS: usize>(
     let chunk_lanes = SCAN_CHUNK_LANES.min(alpha_mass.max_rows());
     let mut digits = vec![0i8; chunk_lanes * coeff_count];
     let mut alpha_rows = Vec::with_capacity(chunk_lanes);
-    let mut source_rows = BlockRows::new(layout.source_block_count);
+    let mut source_rows = BlockRows::<E>::new(layout.source_block_count);
     let mut even_histogram = vec![E::zero(); layout.class_count];
     let mut odd_histogram = if split_pairs {
         vec![E::zero(); layout.class_count]
@@ -500,8 +690,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             even_histogram,
             odd_histogram,
             delta_histogram: totals.delta_histogram,
-            alpha_mass: totals.alpha_mass,
-            source_mass,
+            relation_moments: CoefficientRelationMoments::new(totals.alpha_mass, source_mass),
             quad_fold: Vec::new(),
             challenges: Vec::new(),
         })
@@ -518,30 +707,12 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
     }
 
     /// Relation and structured-linear message of the current round.
-    pub(super) fn relation_coeffs(
+    pub(super) fn relation_message(
         &self,
         alpha: &[E],
         linear_terms: &PreparedProverLinearTerms<E>,
-    ) -> [E; 3] {
-        let mut rel = [E::zero(); 3];
-        let masses = std::iter::once((&self.alpha_mass, alpha)).chain(
-            self.source_mass
-                .iter()
-                .zip(linear_terms.sources.iter().map(|source| &source.values[..])),
-        );
-        for (mass, weight) in masses {
-            debug_assert_eq!(mass.len(), weight.len());
-            for (mass, weight) in mass.chunks_exact(2).zip(weight.chunks_exact(2)) {
-                accumulate_relation_coeffs(
-                    &mut rel,
-                    mass[0],
-                    mass[1] - mass[0],
-                    weight[0],
-                    weight[1],
-                );
-            }
-        }
-        rel
+    ) -> RoundMessage<E> {
+        self.relation_moments.relation_message(alpha, linear_terms)
     }
 
     /// Range-image message of a round that keeps the witness compact.
@@ -721,12 +892,7 @@ const TASKS_PER_THREAD: usize = 4;
 impl<E: Field + Ring + Unreduced + Fold> CompactQuotientPrefix<E> {
     /// Bind the relation masses and record `r`.
     pub(super) fn bind(&mut self, r: E) {
-        fold_evals_in_place(&mut self.alpha_mass, r);
-        for mass in &mut self.source_mass {
-            if !mass.is_empty() {
-                fold_evals_in_place(mass, r);
-            }
-        }
+        self.relation_moments.bind(r);
         self.challenges.push(r);
         if self.challenges.len() == 2 {
             let half = (self.b / 2) as i64;
@@ -765,18 +931,17 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     /// `(combined, range-image)` messages of a compact-prefix round.
-    pub(super) fn compact_prefix_round_polys(
+    pub(super) fn compact_prefix_round_message(
         &self,
         prefix: &CompactQuotientPrefix<E>,
         weights: &RelationWeightFactorization<E>,
-    ) -> (UnivariatePoly<E>, UnivariatePoly<E>) {
+    ) -> (RoundMessage<E>, UnivariatePoly<E>) {
         let norm = prefix.norm_round(&self.split_eq, self.can_skip_norm_linear_coeff());
         let norm_poly = self.norm_poly_from_prefix(norm);
-        let relation = prefix.relation_coeffs(weights.common_alpha_factor(), &self.linear_terms);
-        (
-            self.combine_polys(&norm_poly, &coeffs_to_poly(relation)),
-            norm_poly,
-        )
+        let mut message =
+            prefix.relation_message(weights.common_alpha_factor(), &self.linear_terms);
+        message.add_assign(RoundMessage::from_polynomial(&norm_poly));
+        (message, norm_poly)
     }
 }
 

@@ -114,7 +114,6 @@ fn new_stage2_test_prover(
             params.live_lane_count,
             1usize << params.coefficient_bits,
         ),
-        F::zero(),
         None,
     )
     .unwrap()
@@ -173,9 +172,8 @@ pub(super) fn new_stage2_test_prover_with_linear_terms(
         params.live_lane_count,
         params.lane_bits,
         params.coefficient_bits,
-        direct.relation,
+        direct.relation + direct.evaluation_trace,
         linear_terms,
-        direct.evaluation_trace,
         None,
     )
     .unwrap()

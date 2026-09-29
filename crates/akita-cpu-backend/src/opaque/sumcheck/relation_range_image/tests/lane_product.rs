@@ -16,6 +16,11 @@ fn stage2_rounds_reach_the_direct_final_evaluation() {
         (0, 1, 8, 6),
         (0, 1, 4, 3),
         (0, 1, 8, 1),
+        // Odd live prefixes straddle the serial/parallel lane-round boundary.
+        (13, 4095, 8, 0),
+        (13, 4097, 8, 0),
+        // A long nonzero weight tail exercises independent tail folding.
+        (16, 4097, 8, 0),
     ] {
         let coeff_count = 1usize << coefficient_bits;
         let num_vars = lane_bits + coefficient_bits;

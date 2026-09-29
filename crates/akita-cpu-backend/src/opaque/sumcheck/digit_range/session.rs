@@ -54,35 +54,35 @@ impl<E: Field + Ring + Fold + Unreduced> ActiveStage<E> {
             Self::Low(p) => {
                 let tau = p.current_tau();
                 (
-                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round)),
+                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round, claim)),
                     Some(tau),
                 )
             }
             Self::Product2(p) => {
                 let tau = p.current_tau();
                 (
-                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round)),
+                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round, claim)),
                     Some(tau),
                 )
             }
             Self::Product4(p) => {
                 let tau = p.current_tau();
                 (
-                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round)),
+                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round, claim)),
                     Some(tau),
                 )
             }
             Self::Product8(p) => {
                 let tau = p.current_tau();
                 (
-                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round)),
+                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round, claim)),
                     Some(tau),
                 )
             }
             Self::Leaf(p) => {
                 let tau = p.current_tau();
                 (
-                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round)),
+                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round, claim)),
                     Some(tau),
                 )
             }
@@ -554,6 +554,8 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
             norm,
             norm_merge: merge,
             input_claim: self.claim,
+            range_claim: range_input_claim,
+            last_range_coefficients: [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
             rounds_completed: 0,
         }));
         self.begin_active();

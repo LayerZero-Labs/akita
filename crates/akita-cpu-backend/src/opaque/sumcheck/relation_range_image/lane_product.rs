@@ -9,6 +9,7 @@
 //! relation terms in the same pass.
 
 use super::*;
+use crate::opaque::sumcheck::{par_fold_by_grain, MIN_PARALLEL_ROUND_PAIRS};
 use std::ops::Range;
 
 pub(super) struct LaneProduct<E: Field> {
@@ -73,7 +74,7 @@ fn lane_product_tile<E, const FOLD: bool, const SKIP_LINEAR: bool>(
     live: usize,
     witness_out: &mut [E],
     weight_out: &mut [E],
-) -> ([E; 3], [E; 3])
+) -> ([E; 3], RoundMessage<E>)
 where
     E: Field + Unreduced + Fold,
 {
@@ -87,7 +88,7 @@ where
     let low_bits = tables.eq_low.len().trailing_zeros();
     let low_mask = tables.eq_low.len() - 1;
     let mut norm = [E::zero(); 3];
-    let mut relation = [ProductSum::<E>::zero(); 3];
+    let mut relation = RelationPairAccumulator::<E>::zero();
     let mut block_start = pairs.start;
     while block_start < pairs.end {
         let high = block_start >> low_bits;
@@ -115,9 +116,7 @@ where
             let dw = w1 - w0;
             let e_in = tables.eq_low[pair & low_mask];
             inner.add(w0, dw, e_in);
-            relation[0].add(w0, q0);
-            relation[1].add(w1, q1);
-            relation[2].add(dw, q1 - q0);
+            relation.add_pair(w1, dw, q0, q1);
         }
         let e_out = tables.eq_high[high];
         for (norm, inner) in norm.iter_mut().zip(inner.reduce()) {
@@ -125,9 +124,7 @@ where
         }
         block_start = block_end;
     }
-    // The linear coefficient is `p(1) - p(0) - p_2`.
-    let [constant, at_one, quadratic] = relation.map(ProductSum::finish);
-    (norm, [constant, at_one - constant - quadratic, quadratic])
+    (norm, relation.finish())
 }
 
 /// [`lane_product_tile`] with its const parameters chosen at run time.
@@ -139,7 +136,7 @@ fn run_lane_product_tile<E: Field + Unreduced + Fold>(
     live: usize,
     witness_out: &mut [E],
     weight_out: &mut [E],
-) -> ([E; 3], [E; 3]) {
+) -> ([E; 3], RoundMessage<E>) {
     let unused = E::precompute(E::zero());
     match (fold, skip_linear) {
         (Some(fold), true) => {
@@ -179,7 +176,7 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
         challenge: Option<E>,
         eq: Option<(&[E], &[E])>,
         skip_linear: bool,
-    ) -> Option<(NormRoundTerms<E>, [E; 3])> {
+    ) -> Option<(NormRoundTerms<E>, RoundMessage<E>)> {
         let fold = challenge.map(E::precompute);
         let Some((eq_low, eq_high)) = eq else {
             let fold = fold.expect("the final lane-product fold requires a challenge");
@@ -198,7 +195,8 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
             witness.len()
         };
         let pair_count = live.div_ceil(2);
-        let tile_pairs = crate::opaque::sumcheck::single_row_tile_pairs(eq_low.len());
+        let tile_pairs = crate::opaque::sumcheck::single_row_tile_pairs(eq_low.len())
+            .max(MIN_PARALLEL_ROUND_PAIRS);
         let tables = LaneTables {
             witness: witness.as_slice(),
             weights: self.weights.as_slice(),
@@ -217,40 +215,55 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
                 weight_out,
             )
         };
-        let parts: Vec<([E; 3], [E; 3])> = if let Some(fold) = &fold {
+        let identity = || ([E::zero(); 3], RoundMessage::zero());
+        let reduce = |mut left, right| {
+            add_round_terms(&mut left, right);
+            left
+        };
+        let (norm, relation) = if let Some(fold) = &fold {
             let weight_len = self.weights.len().div_ceil(2).max(2 * pair_count);
             reuse_buffer(&mut self.witness_scratch, live);
             reuse_buffer(&mut self.weight_scratch, weight_len);
             let (head, tail) = self.weight_scratch.split_at_mut(2 * pair_count);
-            cfg_chunks_mut!(tail, TAIL_FOLD_CHUNK)
-                .enumerate()
-                .for_each(|(chunk, values)| {
-                    let first = 2 * pair_count + chunk * TAIL_FOLD_CHUNK;
-                    for (offset, value) in values.iter_mut().enumerate() {
-                        *value = fold_pair(tables.weights, 2 * (first + offset), fold);
-                    }
-                });
-            cfg_chunks_mut!(self.witness_scratch, 2 * tile_pairs)
-                .zip(cfg_chunks_mut!(head, 2 * tile_pairs))
-                .enumerate()
-                .map(|(task, (witness_out, weight_out))| tile(task, witness_out, weight_out))
-                .collect()
+            let fold_tail = |(chunk, values): (usize, &mut [E])| {
+                let first = 2 * pair_count + chunk * TAIL_FOLD_CHUNK;
+                for (offset, value) in values.iter_mut().enumerate() {
+                    *value = fold_pair(tables.weights, 2 * (first + offset), fold);
+                }
+            };
+            if tail.len() <= TAIL_FOLD_CHUNK {
+                tail.chunks_mut(TAIL_FOLD_CHUNK)
+                    .enumerate()
+                    .for_each(fold_tail);
+            } else {
+                cfg_chunks_mut!(tail, TAIL_FOLD_CHUNK)
+                    .enumerate()
+                    .for_each(fold_tail);
+            }
+            par_fold_by_grain(
+                cfg_chunks_mut!(self.witness_scratch, 2 * tile_pairs)
+                    .zip(cfg_chunks_mut!(head, 2 * tile_pairs))
+                    .enumerate(),
+                tile_pairs,
+                identity,
+                |totals, (task, (witness_out, weight_out))| {
+                    reduce(totals, tile(task, witness_out, weight_out))
+                },
+                reduce,
+            )
         } else {
-            cfg_into_iter!(0..pair_count.div_ceil(tile_pairs))
-                .map(|task| tile(task, &mut [], &mut []))
-                .collect()
+            par_fold_by_grain(
+                cfg_into_iter!(0..pair_count.div_ceil(tile_pairs)),
+                tile_pairs,
+                identity,
+                |totals, task| reduce(totals, tile(task, &mut [], &mut [])),
+                reduce,
+            )
         };
         if fold.is_some() {
             mem::swap(witness, &mut self.witness_scratch);
             mem::swap(&mut self.weights, &mut self.weight_scratch);
         }
-        let (norm, relation) =
-            parts
-                .into_iter()
-                .fold(([E::zero(); 3], [E::zero(); 3]), |mut totals, part| {
-                    add_round_terms(&mut totals, part);
-                    totals
-                });
         let norm = if skip_linear {
             NormRoundTerms::from_totals::<true>(norm)
         } else {
@@ -276,7 +289,9 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
         let terms = lane.round_terms(&mut witness, Some(r), eq, skip_linear);
         self.live_lane_count = self.live_lane_count.div_ceil(2);
         if let Some((norm, relation)) = terms {
-            self.cached_round_poly = Some(self.combine_terms(norm, relation));
+            let (message, norm_poly) = self.combine_terms(norm, relation);
+            self.prev_norm_poly = Some(norm_poly);
+            self.cached_round_message = Some(message);
         }
         Phase::Lane { witness, lane }
     }

@@ -354,6 +354,65 @@ fn prover_adapter_preserves_shared_stage2_semantics() {
 }
 
 #[test]
+fn response_norm_sparse_terms_merge_with_coefficient_packing_support() {
+    let fixture = fixture();
+    let batch = prepare_batch(&fixture);
+    let semantics = &batch.groups()[0];
+    let mut prepared = prepare_coefficient_packing_linear_terms(semantics.clone()).unwrap();
+    let live_lane_count = prepared.live_lane_count;
+    let coeff_count = prepared.coeff_count;
+    let witness_digits = (0..live_lane_count * coeff_count)
+        .map(|index| match index {
+            0 => i8::MIN,
+            _ => (index % 17) as i8 - 8,
+        })
+        .collect::<Vec<_>>();
+    let coefficient_weights = (0..coeff_count)
+        .map(|index| E::from_u64(401 + 7 * index as u64))
+        .collect::<Vec<_>>();
+    let lane_weights = (0..live_lane_count)
+        .map(|index| E::from_u64(503 + 13 * index as u64))
+        .collect::<Vec<_>>();
+    let original = prepared.materialize_dense();
+    let response_norm = PreparedProverLinearTerms::from_response_norm_factors(
+        coefficient_weights.clone(),
+        lane_weights.clone(),
+        live_lane_count,
+        coeff_count,
+    )
+    .unwrap();
+    prepared.merge(response_norm).unwrap();
+
+    let expected = original
+        .chunks_exact(coeff_count)
+        .enumerate()
+        .flat_map(|(lane, existing)| {
+            let factor = lane_weights[lane];
+            existing
+                .iter()
+                .zip(&coefficient_weights)
+                .map(move |(&existing, &coefficient)| existing + factor * coefficient)
+        })
+        .collect::<Vec<_>>();
+    let rank_one_claim = witness_digits
+        .iter()
+        .enumerate()
+        .map(|(index, &digit)| {
+            lane_weights[index / coeff_count]
+                * coefficient_weights[index % coeff_count]
+                * E::from_i64(i64::from(digit))
+        })
+        .sum::<E>();
+    let dense_delta_claim = witness_digits
+        .iter()
+        .zip(original.iter().zip(&expected))
+        .map(|(&digit, (&before, &after))| (after - before) * E::from_i64(i64::from(digit)))
+        .sum::<E>();
+    assert_eq!(rank_one_claim, dense_delta_claim);
+    assert_eq!(prepared.materialize_dense(), expected);
+}
+
+#[test]
 fn prover_adapter_folds_to_shared_stage2_point_evaluation() {
     for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
         let fixture = fixture_for_basis(basis);

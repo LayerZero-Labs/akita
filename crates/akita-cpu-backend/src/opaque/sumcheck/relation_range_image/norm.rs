@@ -11,15 +11,6 @@ impl<E: Field, const SKIP_LINEAR: bool> FieldNorm<E, SKIP_LINEAR> {
     }
 
     #[inline(always)]
-    pub(super) fn add(&mut self, w0: E, dw: E, e_in: E) {
-        self.0[0] += e_in * (w0.square() + w0);
-        if !SKIP_LINEAR {
-            self.0[1] += e_in * (dw * (w0 + w0 + E::one()));
-        }
-        self.0[2] += e_in * dw.square();
-    }
-
-    #[inline(always)]
     pub(super) fn scaled_add(&mut self, e_out: E, inner: [E; 3]) {
         self.0[0] += e_out * inner[0];
         if !SKIP_LINEAR {
@@ -28,7 +19,6 @@ impl<E: Field, const SKIP_LINEAR: bool> FieldNorm<E, SKIP_LINEAR> {
         self.0[2] += e_out * inner[2];
     }
 
-    #[cfg(feature = "parallel")]
     #[inline(always)]
     pub(super) fn merge(&mut self, other: Self) {
         self.0[0] += other.0[0];
