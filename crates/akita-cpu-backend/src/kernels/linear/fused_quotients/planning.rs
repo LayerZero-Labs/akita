@@ -82,11 +82,6 @@ pub(super) fn plan_fused_quotients<
         capacity: u64::from(z_folded_max_abs).max(actual_z_abs_bound),
         lut: actual_z_abs_bound,
     };
-    debug_assert!(
-        centered_rows_within_bound(z_folded_rings, z_len, z_bounds.capacity),
-        "fused quotient centered RHS bound is smaller than the actual max"
-    );
-
     let t_chunk_width = (t_len == 0)
         .then_some(1)
         .or_else(|| safe_crt_chunk_width::<F, W, K, D>(params, t_len, t_digit_abs_bound));
@@ -157,24 +152,4 @@ pub(in crate::kernels::linear) fn fused_test_plan_route<
         ProtocolCrtNttParams::Q64(params) => route!(params),
         ProtocolCrtNttParams::Q128(params) => route!(params),
     }
-}
-
-pub(super) fn centered_rows_within_bound<const D: usize>(
-    rows: &[[i32; D]],
-    len: usize,
-    bound: u64,
-) -> bool {
-    rows.iter()
-        .take(len)
-        .flat_map(|row| row.iter())
-        .all(|&coeff| u64::from(coeff.unsigned_abs()) <= bound)
-}
-
-pub(super) fn centered_rows_abs_bound<const D: usize>(rows: &[[i32; D]], len: usize) -> u64 {
-    rows.iter()
-        .take(len)
-        .flat_map(|row| row.iter())
-        .map(|&coeff| u64::from(coeff.unsigned_abs()))
-        .max()
-        .unwrap_or(0)
 }

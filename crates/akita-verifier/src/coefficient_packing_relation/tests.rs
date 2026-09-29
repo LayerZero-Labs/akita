@@ -5,9 +5,10 @@ use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
 use akita_types::{
     coefficient_packing_fixture, coefficient_packing_multigroup_fixture,
-    prepare_coefficient_packing_batch_semantics, BasisMode, CoefficientPackingFixture,
-    CoefficientPackingGroupSemantics, CoefficientPackingStage2Source,
-    PreparedSubringCoefficientPackingPoint, RelationWeightEvent, SisModulusProfileId,
+    coefficient_packing_relation_events, prepare_coefficient_packing_batch_semantics,
+    validate_coefficient_packing_batch_groups, BasisMode, CoefficientPackingFixture,
+    CoefficientPackingGroupSemantics, PreparedSubringCoefficientPackingPoint, RelationWeightEvent,
+    SisModulusProfileId,
 };
 use jolt_field::{
     Ext2, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring, Zero,
@@ -45,26 +46,108 @@ fn materialize_events<E: Field>(
     dense
 }
 
-fn materialize_stage2<E: Field>(
-    semantics: &CoefficientPackingGroupSemantics<E>,
+pub(crate) fn materialize_stage2<E: Field>(
+    semantics: &CoefficientPackingGroupSemantics<'_, E>,
     padded_len: usize,
 ) -> Vec<E> {
-    let terms = semantics.stage2_terms();
     let mut dense = vec![E::zero(); padded_len];
-    for term in terms.terms() {
-        let source = match term.source() {
-            CoefficientPackingStage2Source::DirectOpening => terms.direct_opening_source(),
-            CoefficientPackingStage2Source::PackingZ => terms.packing_z_source(),
-        };
-        for segment in &terms.segments()[term.segments()] {
-            for (physical, source_index) in segment
-                .physical_coefficients()
-                .zip(segment.source_coefficients())
-            {
-                dense[physical] += term.factor() * source[source_index];
+
+    // This intentionally lives in verifier tests: production verification
+    // consumes compact factors, while this small dense oracle independently
+    // reconstructs the old direct-opening and packing-Z contributions from
+    // the checked group metadata.
+    let geometry = semantics.geometry();
+    let d_d = semantics.d_d();
+    let direct_source = semantics
+        .basis()
+        .iter()
+        .flat_map(|&basis| {
+            semantics
+                .prepared_point()
+                .tail_weights()
+                .iter()
+                .map(move |&tail| basis * tail)
+        })
+        .collect::<Vec<_>>();
+    let segments_per_direct_term = geometry.partial_base_field_width() / d_d;
+    for (claim, &claim_coefficient) in semantics.group_claim_coefficients().iter().enumerate() {
+        for unit in semantics.witness_units() {
+            for global_block in unit.global_block_range() {
+                let block_weight = semantics.prepared_point().live_block_weights()[global_block];
+                for (digit, &gadget) in semantics.opening_gadget().iter().enumerate() {
+                    let factor =
+                        semantics.scalar_claim_weight() * claim_coefficient * block_weight * gadget;
+                    for role_subcolumn in 0..segments_per_direct_term {
+                        let physical_start = unit
+                            .e_coefficient_index(
+                                d_d,
+                                semantics.group_claim_coefficients().len(),
+                                semantics.num_digits_open(),
+                                claim,
+                                global_block,
+                                role_subcolumn,
+                                digit,
+                                0,
+                            )
+                            .unwrap();
+                        let source_start = role_subcolumn * d_d;
+                        for coefficient in 0..d_d {
+                            dense[physical_start + coefficient] +=
+                                factor * direct_source[source_start + coefficient];
+                        }
+                    }
+                }
             }
         }
     }
+
+    let mut packing_z_source = vec![E::zero(); geometry.a_ring_dimension()];
+    for (low_index, &packing_weight) in semantics
+        .prepared_point()
+        .packing_weights()
+        .iter()
+        .enumerate()
+    {
+        for (subring_index, &alpha_power) in semantics.alpha_powers().iter().enumerate() {
+            let physical = geometry
+                .a_ring_coefficient_index(low_index, subring_index)
+                .unwrap();
+            packing_z_source[physical] = packing_weight * alpha_power;
+        }
+    }
+    for unit in semantics.witness_units() {
+        for (position, &position_weight) in semantics
+            .prepared_point()
+            .position_weights()
+            .iter()
+            .enumerate()
+        {
+            for (witness_digit, &witness_weight) in semantics.witness_gadget().iter().enumerate() {
+                for (fold_digit, &fold_weight) in semantics.fold_gadget().iter().enumerate() {
+                    let physical_start = unit
+                        .z_coefficient_index(
+                            geometry.a_ring_dimension(),
+                            semantics.num_positions_per_block(),
+                            semantics.num_digits_inner(),
+                            semantics.num_digits_fold(),
+                            position,
+                            witness_digit,
+                            fold_digit,
+                            0,
+                        )
+                        .unwrap();
+                    let factor = -(semantics.consistency_weight()
+                        * position_weight
+                        * witness_weight
+                        * fold_weight);
+                    for (coefficient, &source) in packing_z_source.iter().enumerate() {
+                        dense[physical_start + coefficient] += factor * source;
+                    }
+                }
+            }
+        }
+    }
+
     dense
 }
 
@@ -98,7 +181,7 @@ fn batch_inputs<'a, Base: Field, Extension: Field>(
     fixture: &'a CoefficientPackingFixture<Base, Extension>,
     points: &'a [(usize, &'a PreparedSubringCoefficientPackingPoint<Extension>)],
     alpha: Extension,
-) -> CoefficientPackingBatchSemanticInputs<'a, Base, Extension> {
+) -> CoefficientPackingBatchSemanticInputs<'a, 'a, 'a, Base, Extension> {
     CoefficientPackingBatchSemanticInputs {
         level_params: &fixture.params,
         opening_batch: &fixture.opening_batch,
@@ -129,13 +212,16 @@ where
             .unwrap()
             .groups()[0]
             .clone();
-    let (events, expanded) =
+    let events = validate_coefficient_packing_batch_groups(
+        &batch_inputs(fixture, &points, alpha),
+        |group| coefficient_packing_relation_events(&group),
+    )
+    .unwrap()
+    .concat();
+    let expanded =
         prepare_coefficient_packing_batch_semantics(batch_inputs(fixture, &points, alpha)).unwrap();
     let semantics = &expanded.groups()[0];
-    let padded_len = semantics
-        .stage2_terms()
-        .physical_field_len()
-        .next_power_of_two();
+    let padded_len = semantics.physical_field_len().next_power_of_two();
     let point = (0..padded_len.trailing_zeros())
         .map(|index| genuine_extension::<Base, Extension>(point_seed + u64::from(index)))
         .collect();
@@ -396,7 +482,12 @@ fn multi_group_compact_factors_follow_relation_group_order() {
         claim_coefficients: &fixture.claim_coefficients,
     };
     let compact_batch = prepare_coefficient_packing_verifier_batch_semantics(inputs()).unwrap();
-    let (events, expanded) = prepare_coefficient_packing_batch_semantics(inputs()).unwrap();
+    let events = validate_coefficient_packing_batch_groups(&inputs(), |group| {
+        coefficient_packing_relation_events(&group)
+    })
+    .unwrap()
+    .concat();
+    let expanded = prepare_coefficient_packing_batch_semantics(inputs()).unwrap();
     assert_eq!(
         compact_batch
             .groups()
@@ -406,7 +497,6 @@ fn multi_group_compact_factors_follow_relation_group_order() {
         vec![1, 0]
     );
     let padded_len = expanded.groups()[0]
-        .stage2_terms()
         .physical_field_len()
         .next_power_of_two();
     let point = (0..u64::from(padded_len.trailing_zeros()))
@@ -417,15 +507,9 @@ fn multi_group_compact_factors_follow_relation_group_order() {
     let mut relation_sum = E::zero();
     for (compact, semantics) in compact_batch.groups().iter().zip(expanded.groups()) {
         assert_eq!(compact.group_index(), semantics.group_index());
+        assert_eq!(compact.group_claim_range(), semantics.group_claim_range());
         assert_eq!(
-            compact.group_claim_range(),
-            semantics.stage2_terms().group_claim_range()
-        );
-        assert_eq!(
-            semantics
-                .stage2_terms()
-                .physical_field_len()
-                .next_power_of_two(),
+            semantics.physical_field_len().next_power_of_two(),
             padded_len
         );
         relation_sum += compact
@@ -437,7 +521,7 @@ fn multi_group_compact_factors_follow_relation_group_order() {
                 .compact_factors()
                 .evaluate_stage2_at_point(&point)
                 .unwrap(),
-            semantics.stage2_terms().evaluate_at_point(&point).unwrap()
+            multilinear_eval(&materialize_stage2(semantics, padded_len), &point).unwrap()
         );
     }
     assert_ne!(relation_sum, E::zero());

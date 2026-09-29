@@ -1,6 +1,5 @@
 //! Prover-owned evaluation-trace support prepared for Stage 2.
 
-use super::fold_two_round_quad;
 use std::num::NonZeroUsize;
 #[cfg(test)]
 use std::ops::Range;
@@ -8,10 +7,11 @@ use std::sync::Arc;
 
 use akita_error::AkitaError;
 
-use akita_types::{
-    basis_weights_prefix, BasisMode, CoefficientPackingStage2Source, CoefficientPackingStage2Terms,
-};
+use akita_types::{basis_weights_prefix, BasisMode};
+use jolt_field::solinas::parallel::*;
 use jolt_field::Field;
+
+use super::coefficient_packing_terms::{CpuCoefficientPackingSource, CpuCoefficientPackingTerms};
 
 /// One contiguous physical opening-digit run for a claim inside one witness chunk.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -221,6 +221,53 @@ pub(crate) struct PreparedProverLinearTerms<E: Field> {
 }
 
 impl<E: Field> PreparedProverLinearTerms<E> {
+    /// Prepare a rank-one response-norm term over validated Stage-2 geometry.
+    pub(crate) fn from_response_norm_factors(
+        coefficient_weights: Vec<E>,
+        lane_weights: Vec<E>,
+        live_lane_count: usize,
+        coeff_count: usize,
+    ) -> Result<Self, AkitaError> {
+        if coeff_count == 0 || !coeff_count.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "response-norm coefficient count must be a nonzero power of two".into(),
+            ));
+        }
+        if coefficient_weights.len() != coeff_count {
+            return Err(AkitaError::InvalidSize {
+                expected: coeff_count,
+                actual: coefficient_weights.len(),
+            });
+        }
+        if lane_weights.len() != live_lane_count {
+            return Err(AkitaError::InvalidSize {
+                expected: live_lane_count,
+                actual: lane_weights.len(),
+            });
+        }
+
+        let mut lane_terms = vec![Vec::new(); live_lane_count];
+        for (lane, &factor) in lane_weights.iter().enumerate() {
+            if !factor.is_zero() {
+                lane_terms[lane].push(PreparedLaneTerm {
+                    factor,
+                    source_index: 0,
+                    lane: 0,
+                });
+            }
+        }
+
+        Ok(Self {
+            lane_weights: PreparedLaneWeights::Sparse(lane_terms),
+            sources: vec![PreparedTraceSource {
+                values: coefficient_weights,
+                lane_count: 1,
+            }],
+            live_lane_count,
+            coeff_count,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn source_count(&self) -> usize {
         self.sources.len()
@@ -469,8 +516,8 @@ impl<E: Field> PreparedProverLinearTerms<E> {
     }
 
     /// Consume canonical coefficient-packing terms into the Stage 2 engine.
-    pub(crate) fn from_coefficient_packing(
-        weights: CoefficientPackingStage2Terms<E>,
+    pub(super) fn from_coefficient_packing(
+        weights: CpuCoefficientPackingTerms<E>,
     ) -> Result<Self, AkitaError> {
         let physical_field_len = weights.physical_field_len();
         let coeff_count = weights.relation_coefficient_block_len();
@@ -506,8 +553,8 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         };
         for term in terms {
             let source_index = match term.source() {
-                CoefficientPackingStage2Source::DirectOpening => 0,
-                CoefficientPackingStage2Source::PackingZ => 1,
+                CpuCoefficientPackingSource::DirectOpening => 0,
+                CpuCoefficientPackingSource::PackingZ => 1,
             };
             let source = sources.get(source_index).ok_or(AkitaError::InvalidProof)?;
             let term_segments = segments
@@ -685,13 +732,59 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         })
     }
 
+    fn packing_as_sparse(
+        packing: &PreparedPackingLaneMap<E>,
+        sources: &[PreparedTraceSource<E>],
+        live_lane_count: usize,
+    ) -> Result<Vec<Vec<PreparedLaneTerm<E>>>, AkitaError> {
+        if packing.lane_to_segment.len() != live_lane_count {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut lane_terms = vec![Vec::new(); live_lane_count];
+        for (lane, terms) in lane_terms.iter_mut().enumerate() {
+            let Some((segment, source_lane)) = packing.source_lane(lane) else {
+                continue;
+            };
+            let source = sources
+                .get(segment.source_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            if source_lane >= source.lane_count {
+                return Err(AkitaError::InvalidProof);
+            }
+            terms.push(PreparedLaneTerm {
+                factor: segment.factor,
+                source_index: segment.source_index,
+                lane: source_lane,
+            });
+        }
+        Ok(lane_terms)
+    }
+
+    fn convert_packing_to_sparse(&mut self) -> Result<(), AkitaError> {
+        let PreparedLaneWeights::Packing(packing) = &self.lane_weights else {
+            return Ok(());
+        };
+        let sparse = Self::packing_as_sparse(packing, &self.sources, self.live_lane_count)?;
+        self.lane_weights = PreparedLaneWeights::Sparse(sparse);
+        Ok(())
+    }
+
     /// Add another checked structured term set over the same witness domain.
-    pub(crate) fn merge(&mut self, other: Self) -> Result<(), AkitaError> {
+    pub(crate) fn merge(&mut self, mut other: Self) -> Result<(), AkitaError> {
         if self.live_lane_count != other.live_lane_count || self.coeff_count != other.coeff_count {
             return Err(AkitaError::InvalidSize {
                 expected: self.live_lane_count * self.coeff_count,
                 actual: other.live_lane_count * other.coeff_count,
             });
+        }
+        match (&self.lane_weights, &other.lane_weights) {
+            (PreparedLaneWeights::Packing(_), PreparedLaneWeights::Sparse(_)) => {
+                self.convert_packing_to_sparse()?;
+            }
+            (PreparedLaneWeights::Sparse(_), PreparedLaneWeights::Packing(_)) => {
+                other.convert_packing_to_sparse()?;
+            }
+            _ => {}
         }
         let Self {
             lane_weights: source_weights,
@@ -775,20 +868,6 @@ impl<E: Field> PreparedProverLinearTerms<E> {
     }
 
     #[inline]
-    pub(crate) fn pair_at_lanes(
-        &self,
-        lane0: usize,
-        lane1: usize,
-        coefficient: usize,
-        coeff_count: usize,
-    ) -> (E, E) {
-        (
-            self.get(lane0, coefficient, coeff_count),
-            self.get(lane1, coefficient, coeff_count),
-        )
-    }
-
-    #[inline]
     pub(crate) fn pair_from_flat_index(&self, index0: usize) -> (E, E) {
         let coeff_count = self.coeff_count;
         debug_assert!(coeff_count.is_power_of_two());
@@ -854,56 +933,27 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         self.coeff_count = next_coeff_count;
     }
 
-    pub(crate) fn fold_two_coefficients(&mut self, r0: E, r1: E) {
-        let coeff_count = self.coeff_count;
-        debug_assert!(coeff_count.is_power_of_two() && coeff_count >= 4);
-        let next_coeff_count = coeff_count / 4;
-        for source in &mut self.sources {
-            for lane in 0..source.lane_count {
-                let source_start = lane * coeff_count;
-                let target_start = lane * next_coeff_count;
-                for coefficient in 0..next_coeff_count {
-                    let base = source_start + 4 * coefficient;
-                    source.values[target_start + coefficient] = fold_two_round_quad(
-                        source.values[base],
-                        source.values[base + 1],
-                        source.values[base + 2],
-                        source.values[base + 3],
-                        r0,
-                        r1,
-                    );
-                }
-            }
-            source.values.truncate(source.lane_count * next_coeff_count);
+    /// Set `weights[lane] = weight_scale * weights[lane] + L(lane)` on every
+    /// live lane of a lane-only table and release the support. The terms are
+    /// empty afterwards, so [`Self::final_value`] rejects.
+    pub(crate) fn drain_into_lane_weights(&mut self, weights: &mut [E], weight_scale: E) {
+        debug_assert_eq!(self.coeff_count, 1);
+        debug_assert_eq!(weights.len(), self.live_lane_count);
+        let this = &*self;
+        if weight_scale == E::one() {
+            cfg_iter_mut!(weights)
+                .enumerate()
+                .for_each(|(lane, weight)| *weight += this.get(lane, 0, 1));
+        } else {
+            cfg_iter_mut!(weights)
+                .enumerate()
+                .for_each(|(lane, weight)| {
+                    *weight = weight_scale * *weight + this.get(lane, 0, 1);
+                });
         }
-        self.coeff_count = next_coeff_count;
-    }
-
-    pub(crate) fn fold_lanes(&mut self, challenge: E) {
-        if !matches!(self.lane_weights, PreparedLaneWeights::Dense(_)) {
-            debug_assert_eq!(self.coeff_count, 1);
-            let dense = (0..self.live_lane_count)
-                .map(|lane| self.get(lane, 0, 1))
-                .collect();
-            self.lane_weights = PreparedLaneWeights::Dense(dense);
-            self.sources.clear();
-        }
-        let next_live_lane_count = self.live_lane_count.div_ceil(2);
-        let PreparedLaneWeights::Dense(values) = &mut self.lane_weights else {
-            unreachable!("lane weights were materialized above");
-        };
-        let even_scale = E::one() - challenge;
-        for target in 0..next_live_lane_count {
-            let source = 2 * target;
-            let left = values[source];
-            values[target] = if let Some(&right) = values.get(source + 1) {
-                left + challenge * (right - left)
-            } else {
-                even_scale * left
-            }
-        }
-        values.truncate(next_live_lane_count);
-        self.live_lane_count = next_live_lane_count;
+        self.lane_weights = PreparedLaneWeights::Dense(Vec::new());
+        self.sources.clear();
+        self.live_lane_count = 0;
     }
 
     #[cfg(test)]
@@ -918,4 +968,4 @@ impl<E: Field> PreparedProverLinearTerms<E> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

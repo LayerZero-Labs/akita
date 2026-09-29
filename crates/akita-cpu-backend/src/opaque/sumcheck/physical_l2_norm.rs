@@ -154,6 +154,8 @@ pub(super) struct FusedRangeNormProver<E: Field> {
     pub(super) norm: PhysicalNormTerm<E>,
     pub(super) norm_merge: E,
     pub(super) input_claim: E,
+    pub(super) range_claim: E,
+    pub(super) last_range_coefficients: [E; RANGE_Q_MAX_DEGREE + 1],
     pub(super) rounds_completed: usize,
 }
 
@@ -172,7 +174,8 @@ impl<E: Field + Ring + Fold + Unreduced> SumcheckInstanceProver<E> for FusedRang
 
     fn compute_round_univariate(&mut self, round: usize, _previous_claim: E) -> UnivariatePoly<E> {
         debug_assert_eq!(round, self.rounds_completed);
-        let q_coefficients = self.range.round_q_coefficients(round);
+        let q_coefficients = self.range.round_q_coefficients(round, self.range_claim);
+        self.last_range_coefficients = q_coefficients;
         let (factor_at_zero, factor_at_one) = self.range.current_full_eq_factor_evals();
         let factor_delta = factor_at_one - factor_at_zero;
         let mut coefficients = [E::zero(); FUSED_MAX_DEGREE + 1];
@@ -194,6 +197,11 @@ impl<E: Field + Ring + Fold + Unreduced> SumcheckInstanceProver<E> for FusedRang
 
     fn ingest_challenge(&mut self, round: usize, challenge: E) {
         debug_assert_eq!(round, self.rounds_completed);
+        self.range_claim = self
+            .last_range_coefficients
+            .iter()
+            .rev()
+            .fold(E::zero(), |acc, &coefficient| acc * challenge + coefficient);
         self.range.ingest_challenge(round, challenge);
         self.norm
             .bind(challenge)

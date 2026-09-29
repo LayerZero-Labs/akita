@@ -53,10 +53,9 @@ pub use coefficient_packing_relation::{
     CoefficientPackingMultigroupFixture,
 };
 pub use coefficient_packing_relation::{
-    prepare_coefficient_packing_batch_semantics, validate_coefficient_packing_batch_groups,
-    CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
-    CoefficientPackingGroupSemantics, CoefficientPackingStage2Segment,
-    CoefficientPackingStage2Source, CoefficientPackingStage2Term, CoefficientPackingStage2Terms,
+    coefficient_packing_relation_events, prepare_coefficient_packing_batch_semantics,
+    validate_coefficient_packing_batch_groups, CoefficientPackingBatchSemanticInputs,
+    CoefficientPackingBatchSemantics, CoefficientPackingGroupSemantics,
     ValidatedCoefficientPackingGroup,
 };
 pub use commitment::{Commitment, CommittedGroup};

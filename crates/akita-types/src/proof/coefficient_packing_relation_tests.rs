@@ -46,10 +46,10 @@ fn packing_rejects_tensor_projected_commitment_source() {
     ));
 }
 
-fn prepare<Base, Extension>(
-    fixture: &Fixture<Base, Extension>,
+fn prepare<'a, Base, Extension>(
+    fixture: &'a Fixture<Base, Extension>,
     alpha: Extension,
-) -> CoefficientPackingGroupSemantics<Extension>
+) -> CoefficientPackingGroupSemantics<'a, Extension>
 where
     Base: Field + CanonicalEncoding + Ring,
     Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + ExtField<Base>,
@@ -81,34 +81,8 @@ fn materialize_events<Extension: Field>(
     dense
 }
 
-fn materialize_stage2_source<Extension: Field>(
-    terms: &CoefficientPackingStage2Terms<Extension>,
-    selected_source: CoefficientPackingStage2Source,
-) -> Vec<Extension> {
-    let mut dense = vec![Extension::zero(); terms.physical_field_len()];
-    let source = match selected_source {
-        CoefficientPackingStage2Source::DirectOpening => terms.direct_opening_source(),
-        CoefficientPackingStage2Source::PackingZ => terms.packing_z_source(),
-    };
-    for term in terms
-        .terms()
-        .iter()
-        .filter(|term| term.source() == selected_source)
-    {
-        for segment in &terms.segments()[term.segments()] {
-            let physical = segment.physical_coefficients();
-            let source_range = segment.source_coefficients();
-            for offset in 0..physical.len() {
-                dense[physical.start + offset] +=
-                    term.factor() * source[source_range.start + offset];
-            }
-        }
-    }
-    dense
-}
-
 #[test]
-fn expanded_consumers_match_dense_event_and_stage2_oracles() {
+fn relation_event_consumer_matches_dense_oracle() {
     let fixture = fixture::<F, E>(
         SisModulusProfileId::Q64Offset59,
         256,
@@ -145,42 +119,15 @@ fn expanded_consumers_match_dense_event_and_stage2_oracles() {
             multilinear_eval(&dense_events, &point).unwrap(),
             "direct-index alpha caching must not depend on event order"
         );
-        let mut dense_stage2 = materialize_stage2_source(
-            semantics.stage2_terms(),
-            CoefficientPackingStage2Source::DirectOpening,
-        );
-        let z = materialize_stage2_source(
-            semantics.stage2_terms(),
-            CoefficientPackingStage2Source::PackingZ,
-        );
-        for (sum, contribution) in dense_stage2.iter_mut().zip(z) {
-            *sum += contribution;
-        }
-        dense_stage2.resize(padded_len, E::zero());
-        assert_eq!(
-            semantics.stage2_terms().evaluate_at_point(&point).unwrap(),
-            multilinear_eval(&dense_stage2, &point).unwrap()
-        );
-        let mut reordered_terms = semantics.stage2_terms().clone();
-        reordered_terms.terms.reverse();
-        assert_eq!(
-            reordered_terms.evaluate_at_point(&point).unwrap(),
-            multilinear_eval(&dense_stage2, &point).unwrap(),
-            "direct-index source caching must not depend on term order"
-        );
         assert!(semantics
             .relation_events()
-            .evaluate_at_point(&point[..point.len() - 1])
-            .is_err());
-        assert!(semantics
-            .stage2_terms()
             .evaluate_at_point(&point[..point.len() - 1])
             .is_err());
     }
 }
 
 #[test]
-fn expanded_consumers_parallel_branch_matches_dense_oracles() {
+fn relation_event_large_batch_matches_dense_oracle() {
     let fixture = fixture::<F, E>(
         SisModulusProfileId::Q64Offset59,
         256,
@@ -201,86 +148,35 @@ fn expanded_consumers_parallel_branch_matches_dense_oracles() {
         .map(|index| E::from_u64(31 + index as u64))
         .collect::<Vec<_>>();
 
-    let mut parallel_events = semantics.relation_events().clone();
-    let event_work = parallel_events
+    let mut repeated_events = semantics.relation_events().clone();
+    let event_work = repeated_events
         .events()
         .iter()
         .map(|event| {
-            event.physical_coefficients().len() / parallel_events.relation_coefficient_block_len()
+            event.physical_coefficients().len() / repeated_events.relation_coefficient_block_len()
         })
         .sum::<usize>();
     let event_repetitions = 1024usize.div_ceil(event_work);
-    let original_events = parallel_events.events.clone();
-    parallel_events.events = original_events
+    let original_events = repeated_events.events.clone();
+    repeated_events.events = original_events
         .iter()
         .cloned()
         .cycle()
         .take(original_events.len() * event_repetitions)
         .collect();
-    let parallel_event_work = parallel_events
+    let repeated_event_work = repeated_events
         .events()
         .iter()
         .map(|event| {
-            event.physical_coefficients().len() / parallel_events.relation_coefficient_block_len()
+            event.physical_coefficients().len() / repeated_events.relation_coefficient_block_len()
         })
         .sum::<usize>();
-    assert!(parallel_event_work >= 1024);
-    let mut dense_events = materialize_events(&parallel_events);
+    assert!(repeated_event_work >= 1024);
+    let mut dense_events = materialize_events(&repeated_events);
     dense_events.resize(padded_len, E::zero());
     assert_eq!(
-        parallel_events.evaluate_at_point(&point).unwrap(),
+        repeated_events.evaluate_at_point(&point).unwrap(),
         multilinear_eval(&dense_events, &point).unwrap()
-    );
-
-    let mut parallel_terms = semantics.stage2_terms().clone();
-    let term_work = parallel_terms
-        .terms()
-        .iter()
-        .map(|term| {
-            parallel_terms.segments()[term.segments()]
-                .iter()
-                .map(|segment| {
-                    segment.physical_coefficients().len()
-                        / parallel_terms.relation_coefficient_block_len
-                })
-                .sum::<usize>()
-        })
-        .sum::<usize>();
-    let term_repetitions = 1024usize.div_ceil(term_work);
-    let original_terms = parallel_terms.terms.clone();
-    parallel_terms.terms = original_terms
-        .iter()
-        .cloned()
-        .cycle()
-        .take(original_terms.len() * term_repetitions)
-        .collect();
-    let parallel_term_work = parallel_terms
-        .terms()
-        .iter()
-        .map(|term| {
-            parallel_terms.segments()[term.segments()]
-                .iter()
-                .map(|segment| {
-                    segment.physical_coefficients().len()
-                        / parallel_terms.relation_coefficient_block_len
-                })
-                .sum::<usize>()
-        })
-        .sum::<usize>();
-    assert!(parallel_term_work >= 1024);
-    let mut dense_stage2 = materialize_stage2_source(
-        &parallel_terms,
-        CoefficientPackingStage2Source::DirectOpening,
-    );
-    let packing_z =
-        materialize_stage2_source(&parallel_terms, CoefficientPackingStage2Source::PackingZ);
-    for (sum, contribution) in dense_stage2.iter_mut().zip(packing_z) {
-        *sum += contribution;
-    }
-    dense_stage2.resize(padded_len, E::zero());
-    assert_eq!(
-        parallel_terms.evaluate_at_point(&point).unwrap(),
-        multilinear_eval(&dense_stage2, &point).unwrap()
     );
 }
 
@@ -300,13 +196,23 @@ fn semantics_bind_partial_blocks_claims_planes_and_positive_q_convention() {
     let alpha = E::from_u64(13);
     let semantics = prepare(&fixture, alpha);
     assert_eq!(semantics.geometry().packing_factor(), 2);
-    assert_eq!(semantics.stage2_terms().group_claim_range(), 0..2);
-    assert_eq!(semantics.stage2_terms().direct_opening_source().len(), 128);
-    assert_eq!(semantics.stage2_terms().packing_z_source().len(), 256);
+    assert_eq!(semantics.group_claim_range(), 0..2);
     assert_eq!(
-        semantics.stage2_terms().scalar_claim_weight(),
+        semantics.group_claim_coefficients(),
+        fixture.claim_coefficients
+    );
+    assert_eq!(
+        semantics.scalar_claim_weight(),
         relation_row_weight(
             fixture.relation_plan.scalar_opening_row_index().unwrap(),
+            &fixture.tau1,
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        semantics.consistency_weight(),
+        relation_row_weight(
+            fixture.relation_plan.consistency_row_index(0).unwrap(),
             &fixture.tau1,
         )
         .unwrap()
@@ -389,64 +295,27 @@ fn semantics_bind_partial_blocks_claims_planes_and_positive_q_convention() {
         -(consistency_weight * E::lift_base(quotient_gadget[0]) * basis[0] * denominator)
     );
 
-    let direct_source = semantics.stage2_terms().direct_opening_source();
-    for (plane, &basis_element) in basis.iter().enumerate() {
-        for (coefficient, &tail_weight) in fixture.prepared_point.tail_weights().iter().enumerate()
-        {
-            assert_eq!(
-                direct_source[plane * geometry.challenge_subring_dimension() + coefficient],
-                basis_element * tail_weight
-            );
-        }
-    }
-    let packing_z_source = semantics.stage2_terms().packing_z_source();
-    for (low, &packing_weight) in fixture.prepared_point.packing_weights().iter().enumerate() {
-        for (coefficient, &alpha_power) in alpha_powers.iter().enumerate() {
-            let physical = geometry.a_ring_coefficient_index(low, coefficient).unwrap();
-            assert_eq!(packing_z_source[physical], packing_weight * alpha_power);
-        }
-    }
-
-    let direct_terms = semantics
-        .stage2_terms()
-        .terms()
-        .iter()
-        .filter(|term| term.source() == CoefficientPackingStage2Source::DirectOpening)
-        .count();
-    let z_terms = semantics
-        .stage2_terms()
-        .terms()
-        .iter()
-        .filter(|term| term.source() == CoefficientPackingStage2Source::PackingZ)
-        .count();
-    assert_eq!(direct_terms, 2 * 2 * depth_open);
+    assert_eq!(semantics.prepared_point(), &fixture.prepared_point);
+    assert_eq!(semantics.witness_units().len(), 1);
+    assert_eq!(semantics.d_d(), fixture.params.role_dims().d_d());
+    assert_eq!(semantics.num_digits_open(), depth_open);
     assert_eq!(
-        z_terms,
-        fixture.params.blocks().positions_per_block
-            * fixture.params.inner().digits.num_digits
-            * fixture.params.num_digits_fold()
+        semantics.num_digits_inner(),
+        fixture.params.inner().digits.num_digits
     );
-    for term in semantics.stage2_terms().terms() {
-        let source_len = match term.source() {
-            CoefficientPackingStage2Source::DirectOpening => {
-                semantics.stage2_terms().direct_opening_source().len()
-            }
-            CoefficientPackingStage2Source::PackingZ => {
-                semantics.stage2_terms().packing_z_source().len()
-            }
-        };
-        for segment in &semantics.stage2_terms().segments()[term.segments()] {
-            assert_eq!(
-                segment.physical_coefficients().len(),
-                segment.source_coefficients().len()
-            );
-            assert!(
-                segment.physical_coefficients().end
-                    <= semantics.stage2_terms().physical_field_len()
-            );
-            assert!(segment.source_coefficients().end <= source_len);
-        }
-    }
+    assert_eq!(
+        semantics.num_digits_fold(),
+        fixture.params.num_digits_fold()
+    );
+    assert_eq!(semantics.alpha_powers(), alpha_powers);
+    assert_eq!(semantics.basis(), basis);
+    assert_eq!(
+        semantics.opening_gadget(),
+        opening_gadget
+            .into_iter()
+            .map(E::lift_base)
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -799,7 +668,7 @@ fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
 }
 
 #[test]
-fn structured_stage2_terms_match_independent_dense_tables() {
+fn packing_metadata_exposes_canonical_backend_factors() {
     type F4 = Prime32Offset99;
     type E4 = FpExt4<F4>;
 
@@ -816,26 +685,12 @@ fn structured_stage2_terms_match_independent_dense_tables() {
     );
     let alpha = E4::from_u64(41);
     let semantics = prepare(&fixture, alpha);
-    let terms = semantics.stage2_terms();
-    let direct_got =
-        materialize_stage2_source(terms, CoefficientPackingStage2Source::DirectOpening);
-    let packing_z_got = materialize_stage2_source(terms, CoefficientPackingStage2Source::PackingZ);
-    let mut direct_expected = vec![E4::zero(); terms.physical_field_len()];
-    let mut packing_z_expected = vec![E4::zero(); terms.physical_field_len()];
 
     let geometry = semantics.geometry();
     assert_eq!(geometry.extension_degree(), 4);
     assert_eq!(geometry.packing_factor(), 4);
     assert_eq!(fixture.prepared_point.num_live_blocks(), 2);
-    assert_eq!(
-        fixture
-            .relation_plan
-            .witness_layout()
-            .units_for_group(0)
-            .unwrap()
-            .count(),
-        2
-    );
+    assert_eq!(semantics.witness_units().len(), 2);
     let basis = canonical_extension_basis::<F4, E4>(4).unwrap();
     let opening_gadget = gadget_row_scalars::<F4>(
         fixture.params.open().digits.num_digits,
@@ -861,96 +716,58 @@ fn structured_stage2_terms_match_independent_dense_tables() {
     .unwrap();
     let d_d = fixture.params.role_dims().d_d();
     let s = geometry.challenge_subring_dimension();
-    let kh = geometry.subring_embedding_stride();
     let alpha_powers = scalar_powers(alpha, s);
-    let units = fixture
-        .relation_plan
-        .witness_layout()
-        .units_for_group(0)
-        .unwrap()
-        .collect::<Vec<_>>();
-
-    for claim in 0..fixture.opening_batch.num_total_polynomials() {
-        for unit in &units {
-            for block in unit.global_block_range() {
-                let block_weight = fixture.prepared_point.live_block_weights()[block];
-                for (digit, &gadget) in opening_gadget.iter().enumerate() {
-                    for (plane, &basis_element) in basis.iter().enumerate() {
-                        for (coefficient, &tail_weight) in
-                            fixture.prepared_point.tail_weights().iter().enumerate()
-                        {
-                            let flat = plane * s + coefficient;
-                            let physical = unit
-                                .e_coefficient_index(
-                                    d_d,
-                                    fixture.opening_batch.num_total_polynomials(),
-                                    fixture.params.open().digits.num_digits,
-                                    claim,
-                                    block,
-                                    flat / d_d,
-                                    digit,
-                                    flat % d_d,
-                                )
-                                .unwrap();
-                            direct_expected[physical] += scalar_weight
-                                * fixture.claim_coefficients[claim]
-                                * block_weight
-                                * E4::lift_base(gadget)
-                                * basis_element
-                                * tail_weight;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    for unit in &units {
-        for (position, &position_weight) in
-            fixture.prepared_point.position_weights().iter().enumerate()
-        {
-            for (witness_digit, &witness_weight) in witness_gadget.iter().enumerate() {
-                for (fold_digit, &fold_weight) in fold_gadget.iter().enumerate() {
-                    let factor = -(consistency_weight
-                        * position_weight
-                        * E4::lift_base(witness_weight)
-                        * E4::lift_base(fold_weight));
-                    for coefficient in 0..geometry.a_ring_dimension() {
-                        let low_index = coefficient % kh;
-                        let subring_index = coefficient / kh;
-                        let source_weight = fixture.prepared_point.packing_weights()[low_index]
-                            * alpha_powers[subring_index];
-                        let physical = unit
-                            .z_coefficient_index(
-                                geometry.a_ring_dimension(),
-                                fixture.params.blocks().positions_per_block,
-                                fixture.params.inner().digits.num_digits,
-                                fixture.params.num_digits_fold(),
-                                position,
-                                witness_digit,
-                                fold_digit,
-                                coefficient,
-                            )
-                            .unwrap();
-                        packing_z_expected[physical] += factor * source_weight;
-                    }
-                }
-            }
-        }
-    }
-
-    assert_eq!(direct_got, direct_expected);
-    assert_eq!(packing_z_got, packing_z_expected);
     assert_eq!(
-        direct_got
-            .iter()
-            .zip(&packing_z_got)
-            .map(|(&direct, &packing_z)| direct + packing_z)
-            .collect::<Vec<_>>(),
-        direct_expected
-            .iter()
-            .zip(&packing_z_expected)
-            .map(|(&direct, &packing_z)| direct + packing_z)
+        semantics.group_claim_range(),
+        0..fixture.opening_batch.num_total_polynomials()
+    );
+    assert_eq!(
+        semantics.group_claim_coefficients(),
+        fixture.claim_coefficients
+    );
+    assert_eq!(semantics.prepared_point(), &fixture.prepared_point);
+    assert_eq!(semantics.consistency_weight(), consistency_weight);
+    assert_eq!(semantics.scalar_claim_weight(), scalar_weight);
+    assert_eq!(semantics.d_d(), d_d);
+    assert_eq!(semantics.num_digits_open(), opening_gadget.len());
+    assert_eq!(semantics.num_digits_inner(), witness_gadget.len());
+    assert_eq!(semantics.num_digits_fold(), fold_gadget.len());
+    assert_eq!(
+        semantics.num_positions_per_block(),
+        fixture.params.blocks().positions_per_block
+    );
+    assert_eq!(
+        semantics.physical_field_len(),
+        fixture.relation_plan.digit_witness_domain().live_len()
+    );
+    assert_eq!(
+        semantics.relation_coefficient_block_len(),
+        fixture
+            .relation_plan
+            .relation_address_geometry()
+            .relation_coefficient_block_len()
+    );
+    assert_eq!(semantics.alpha_powers(), alpha_powers);
+    assert_eq!(semantics.basis(), basis);
+    assert_eq!(
+        semantics.opening_gadget(),
+        opening_gadget
+            .into_iter()
+            .map(E4::lift_base)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        semantics.witness_gadget(),
+        witness_gadget
+            .into_iter()
+            .map(E4::lift_base)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        semantics.fold_gadget(),
+        fold_gadget
+            .into_iter()
+            .map(E4::lift_base)
             .collect::<Vec<_>>()
     );
 }

@@ -365,7 +365,7 @@ where
 fn prepare_relation_sumcheck<'a, F, E, H>(
     lp: &'a CommittedGroupParams,
     opening_batch: &'a OpeningClaimsLayout,
-    opening_semantics: OpeningFamily<(), CoefficientPackingBatchSemantics<E>>,
+    opening_semantics: OpeningFamily<(), CoefficientPackingBatchSemantics<'a, E>>,
     relation_groups: &[crate::backend::PreparedRelationGroupPublic<F, E>],
     evaluation_trace_claim_coefficients: &'a [E],
     evaluation_trace_claim: E,
@@ -389,12 +389,11 @@ where
     .entered();
     match opening_semantics {
         OpeningFamily::SubringCoefficientPacking(batch) => {
-            let mut terms = Vec::new();
             let mut authenticated_opening = E::zero();
             let mut weighted_opening_claim = E::zero();
-            for semantics in batch.into_groups() {
+            for semantics in batch.groups() {
                 let group_index = semantics.group_index();
-                let claim_range = semantics.stage2_terms().group_claim_range();
+                let claim_range = semantics.group_claim_range();
                 let group = relation_groups
                     .get(group_index)
                     .ok_or(AkitaError::InvalidProof)?;
@@ -412,15 +411,13 @@ where
                         sum + opening * coefficient
                     });
                 authenticated_opening += group_opening;
-                weighted_opening_claim +=
-                    semantics.stage2_terms().scalar_claim_weight() * group_opening;
-                terms.push(semantics.into_parts().2);
+                weighted_opening_claim += semantics.scalar_claim_weight() * group_opening;
             }
             if authenticated_opening != evaluation_trace_claim {
                 return Err(AkitaError::InvalidProof);
             }
             Ok((
-                Stage2OpeningDescription::CoefficientPacking(terms),
+                Stage2OpeningDescription::CoefficientPacking(batch),
                 weighted_opening_claim,
             ))
         }

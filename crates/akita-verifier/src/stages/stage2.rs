@@ -348,6 +348,7 @@ where
 mod tests {
     use super::*;
     use crate::coefficient_packing_relation::prepare_coefficient_packing_verifier_batch_semantics;
+    use crate::coefficient_packing_relation::tests::materialize_stage2;
     use crate::protocol::ring_switch::{FlatRelationContext, RelationMatrixEvaluator};
     use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
     use akita_types::{
@@ -495,7 +496,7 @@ mod tests {
             },
         )
         .unwrap();
-        let (_, expanded_oracle) =
+        let expanded_oracle =
             prepare_coefficient_packing_batch_semantics(CoefficientPackingBatchSemanticInputs {
                 level_params: &params,
                 opening_batch: &opening_batch,
@@ -564,10 +565,16 @@ mod tests {
                 .compact_factors()
                 .evaluate_relation_at_point(&point)
                 .unwrap()
-                + expanded_oracle.groups()[0]
-                    .stage2_terms()
-                    .evaluate_at_point(&point)
-                    .unwrap()
+                + akita_algebra::poly::multilinear_eval(
+                    &materialize_stage2(
+                        &expanded_oracle.groups()[0],
+                        expanded_oracle.groups()[0]
+                            .physical_field_len()
+                            .next_power_of_two(),
+                    ),
+                    &point,
+                )
+                .unwrap()
         );
 
         assert!(Stage2OpeningSemantics::packing(

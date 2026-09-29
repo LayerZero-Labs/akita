@@ -245,6 +245,11 @@ serve different purposes.
 
 ### Protected challenge queries
 
+For algebraic loss $L$ over the exact extension field $E$, the plan chooses
+the least nonnegative integer $g$ with $L 2^{128} \le |E| 2^g$. The
+calculation uses integers and the actual prime power, including the deficit
+below a power of two.
+
 At a protected query with grinding target $g>0$, the prover searches a
 nonce whose accepted value must fit $g+7$ bits. Each attempt absorbs the
 canonical nonce, then produces a separate 32-byte predicate. Diagnostic
