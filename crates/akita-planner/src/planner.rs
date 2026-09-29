@@ -44,7 +44,10 @@ type PrecommittedGroupSeed = (GroupCommitPhaseParams, CommittedSourceContract);
 /// assignments considered at the adapted root. When every multiset
 /// assignment would exceed it, the adapted root considers one opening per
 /// class of interchangeable groups instead.
-pub const MAX_ADAPTED_PRECOMMIT_WIDTH: usize = 256;
+///
+/// A grouped opening with one precommitted group per committed-program chunk
+/// (up to 256) plus a program image and advice objects needs more than 256.
+pub const MAX_ADAPTED_PRECOMMIT_WIDTH: usize = 512;
 
 #[derive(Clone, Copy)]
 pub(crate) struct ScheduleSearchOptions<'a> {
