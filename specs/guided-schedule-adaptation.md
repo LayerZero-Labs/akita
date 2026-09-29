@@ -60,6 +60,10 @@ can serve MUST NOT fail because the scalar row's structure does not fit it.
 - **Exact producers.** Each precommitted producer MUST bind one frozen
   `GroupCommitPhaseParams`, one `CommittedSourceContract`, and the matching
   `HonestFoldPolicySpec`. A mismatch MUST return a typed setup error.
+The frozen-structure invariants below constrain the guided search. A row
+returned by the full-search fallback is the full planner's optimum and need
+not retain them.
+
 - **Frozen main root.** The final group's root A/B matrices, blocks, slices,
   digit bases, and opening plan MUST match the scalar row. The fold-owned D
   matrix MUST retain its audited table and ring identity while its grouped input
@@ -89,6 +93,10 @@ can serve MUST NOT fail because the scalar row's structure does not fit it.
 - **No planner-local group limit.** Neither search limits the number of
   precommitted groups. The opening-layout and wire bounds that apply to every
   schedule bound the group count.
+- **Bounded class products.** Both searches MUST bound the per-dimension
+  product of class opening domains at 256 before allocating it. A larger
+  product MUST remove coefficient-packing root openings for that dimension
+  rather than fail the search, so evaluation-trace openings remain available.
 - **Final admission.** An adapted row MUST NOT bypass
   `ValidatedScheduleCatalog::try_new`, challenge-hook validation, duplicate-key
   rejection, row identity, catalog identity, or final `TrustedScheduleCatalog<Cfg>`
@@ -102,8 +110,9 @@ can serve MUST NOT fail because the scalar row's structure does not fit it.
 
 - Runtime schedule search or a process-global schedule registry.
 - Opening assignments that differ within an interchangeable class.
-- A bound on the number of distinct interchangeable classes. The opening
-  domain grows as the product of the per-class domains.
+- Coefficient-packing root openings for requests whose distinct classes
+  exceed the 256-combination product bound. Coordinate-wise search over classes
+  is a follow-up.
 - A proof, transcript, statement, or `.aks` schema change.
 - Authentication of a catalog subset or a new recursion membership proof.
 - Selection of Jolt's reachable profile set or preprocessing representation.

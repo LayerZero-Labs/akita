@@ -10,7 +10,7 @@ pub(crate) fn root_level_candidates_with_fresh_preparation(
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,
     opening: PlannerOpeningCandidate,
-    precommitted_openings: &[PlannerOpeningCandidate],
+    precommitted_class_openings: &[PlannerOpeningCandidate],
     candidate_log_basis_inner: u32,
     candidate_log_basis_open: u32,
     guide: Option<crate::schedule_params::CandidateLayoutGuide>,
@@ -21,7 +21,7 @@ pub(crate) fn root_level_candidates_with_fresh_preparation(
         policy,
         dimensions,
         opening,
-        precommitted_openings,
+        precommitted_class_openings,
         candidate_log_basis_open,
     )?
     else {

@@ -96,6 +96,16 @@ pub(crate) const fn state_allows_terminal_seed(
     !is_root_level && !has_incoming_setup_prefix
 }
 
+/// Maximum number of root precommit opening assignments per opening dimension.
+///
+/// The bound applies to the Cartesian product over distinct interchangeable
+/// classes. Class multiplicity does not count toward it, so any number of
+/// identical producers fits; roughly five to eight distinct classes do. A
+/// larger product removes coefficient-packing root openings for that
+/// dimension, as an unsupported dimension does; evaluation-trace openings are
+/// one per class and remain available.
+pub(crate) const MAX_PRECOMMIT_OPENING_PRODUCTS: usize = 256;
+
 /// Enumerate the root precommit openings for one shared opening dimension.
 ///
 /// Each returned assignment holds one opening per interchangeable precommitted
@@ -103,6 +113,8 @@ pub(crate) const fn state_allows_terminal_seed(
 /// class opens with its class's opening. The domain is the Cartesian product of
 /// the per-class coefficient-packing domains, so its size depends on the
 /// number of distinct classes and not on how many groups each class holds.
+/// A product beyond [`MAX_PRECOMMIT_OPENING_PRODUCTS`] yields an empty domain
+/// before any assignment is allocated.
 pub(crate) fn packing_precommit_opening_products(
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,
@@ -115,36 +127,43 @@ pub(crate) fn packing_precommit_opening_products(
     ) {
         return Ok(Vec::new());
     }
-    let equivalence_classes =
-        precommitted_group_equivalence_classes(&key.precommitteds, precommitted_source_contracts)?;
+    let class_domains =
+        precommitted_group_equivalence_classes(&key.precommitteds, precommitted_source_contracts)?
+            .into_iter()
+            .map(|indices| {
+                let profile = &key.precommitteds[indices[0]];
+                crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
+                    0,
+                    policy.claim_ext_degree,
+                    CommitmentRingDims {
+                        inner: profile.inner.matrix.ring_dimension(),
+                        outer: profile.outer.matrix.ring_dimension(),
+                        opening: dimensions.d_d(),
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+    let Some(product_count) = class_domains.iter().try_fold(1usize, |count, domain| {
+        count
+            .checked_mul(domain.len())
+            .filter(|&count| count <= MAX_PRECOMMIT_OPENING_PRODUCTS)
+    }) else {
+        return Ok(Vec::new());
+    };
 
-    let mut products = vec![Vec::with_capacity(equivalence_classes.len())];
-    for indices in equivalence_classes {
-        let profile = &key.precommitteds[indices[0]];
-        let domain = crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
-            0,
-            policy.claim_ext_degree,
-            CommitmentRingDims {
-                inner: profile.inner.matrix.ring_dimension(),
-                outer: profile.outer.matrix.ring_dimension(),
-                opening: dimensions.d_d(),
-            },
-        )?;
-        let next_len = products.len().checked_mul(domain.len()).ok_or_else(|| {
-            AkitaError::InvalidSetup("root precommit opening search domain overflow".into())
-        })?;
-        let mut next = Vec::new();
-        next.try_reserve_exact(next_len).map_err(|_| {
-            AkitaError::InvalidSetup("root precommit opening search domain is too large".into())
-        })?;
-        for product in &products {
-            for &opening in &domain {
-                let mut extended = product.clone();
-                extended.push(opening);
-                next.push(extended);
-            }
-        }
-        products = next;
+    let mut products = Vec::with_capacity(product_count);
+    products.push(Vec::with_capacity(class_domains.len()));
+    for domain in &class_domains {
+        products = products
+            .iter()
+            .flat_map(|product| {
+                domain.iter().map(move |&opening| {
+                    let mut extended = product.clone();
+                    extended.push(opening);
+                    extended
+                })
+            })
+            .collect();
     }
     Ok(products)
 }

@@ -327,11 +327,13 @@ fn append_fold_queries(
     layout: &OpeningClaimsLayout,
 ) -> Result<(), AkitaError> {
     let groups = params.validated_groups(layout)?;
-    for (group_index, (group_layout, params)) in layout.groups().iter().zip(groups).enumerate() {
+    for (group_index, (group_layout, group_params)) in
+        layout.groups().iter().zip(groups).enumerate()
+    {
         let group = usize_to_u32(group_index, "fold challenge group")?;
         let multiplicity = group_layout
             .num_polynomials()
-            .checked_mul(params.num_live_blocks())
+            .checked_mul(group_params.num_live_blocks())
             .ok_or_else(|| AkitaError::InvalidSetup("fold coordinate count overflow".into()))?;
         sink.push(GrindingRun::fold_challenge_group(
             level,

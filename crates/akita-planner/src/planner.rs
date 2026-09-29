@@ -668,6 +668,9 @@ pub fn find_schedule(
 /// full search fails too, or when the request itself is invalid. Invalid
 /// requests (no precommitted group, a mismatched final group, or a main row
 /// that does not pass audit under `policy`) are rejected without a fallback.
+/// A fallback row is the full search's optimum for the key and need not retain
+/// any part of the main row's skeleton. When both searches fail, the error
+/// carries both reasons.
 ///
 /// The supplied row is expected to come from a caller-approved
 /// [`akita_schedules::ValidatedScheduleCatalog`]. The resulting expanded row must
@@ -690,13 +693,19 @@ pub fn find_adapted_schedule(
         policy,
         &ring_challenge_config,
     ) {
-        Err(AkitaError::UnsupportedSchedule(_)) => find_schedule(
+        Err(AkitaError::UnsupportedSchedule(guided)) => find_schedule(
             &key,
             final_source_contract,
             &precommitted_source_contracts,
             policy,
             ring_challenge_config,
-        ),
+        )
+        .map_err(|error| match error {
+            AkitaError::UnsupportedSchedule(full) => AkitaError::UnsupportedSchedule(format!(
+                "{full}; the guided search was also infeasible: {guided}"
+            )),
+            error => error,
+        }),
         adapted => adapted,
     }
 }

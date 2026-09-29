@@ -727,7 +727,10 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         },
     )
     .expect("precommit opening domain");
-    assert_eq!(precommit_domain.len(), 3);
+    assert!(
+        precommit_domain.len() >= 2,
+        "the fixture needs a choice of precommit openings"
+    );
 
     let product_key = AkitaScheduleLookupKey {
         final_group: grouped_key.final_group,
@@ -807,6 +810,97 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         "distinct source contracts form distinct classes",
     );
     assert!(mixed_products.iter().all(|product| product.len() == 2));
+
+    let packing_method = |opening: PlannerOpeningCandidate| match opening {
+        PlannerOpeningCandidate::SubringCoefficientPacking { geometry } => {
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: geometry.challenge_subring_dimension(),
+            }
+        }
+        PlannerOpeningCandidate::EvaluationTrace { .. } => {
+            unreachable!("the packing domain holds packing openings")
+        }
+    };
+    let other_class = candidates
+        .iter()
+        .map(|(params, _)| synthetic_profile(key.final_group, params))
+        .find(|profile| *profile != frozen_group)
+        .expect("a second root profile");
+    let split_key = AkitaScheduleLookupKey {
+        final_group: grouped_key.final_group,
+        precommitteds: vec![frozen_group, other_class, frozen_group],
+    };
+    let split_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+        &policy,
+        dimensions,
+        &split_key,
+        &[Dense::committed_source_contract().unwrap(); 3],
+    )
+    .expect("split root precommit opening products");
+    let split_product = split_products
+        .iter()
+        .find(|product| product[0] != product[1])
+        .expect("two classes can open differently");
+    let split_candidates = crate::planner::root_level_candidates_with_fresh_preparation(
+        &split_key,
+        Dense::committed_source_contract().unwrap(),
+        &[Dense::committed_source_contract().unwrap(); 3],
+        &policy,
+        dimensions,
+        opening,
+        split_product,
+        Dense::inner_basis_range().0,
+        Dense::opening_basis_range().0,
+        None,
+    )
+    .expect("materialized split root candidate domain");
+    assert!(!split_candidates.is_empty());
+    for (params, _) in split_candidates {
+        let groups = params.precommitted_groups();
+        assert_eq!(groups[0], groups[2], "non-adjacent class members match");
+        assert_eq!(
+            groups[0].opening.opening_method,
+            packing_method(split_product[0])
+        );
+        assert_eq!(
+            groups[1].opening.opening_method,
+            packing_method(split_product[1])
+        );
+    }
+
+    // Distinct group layouts form distinct classes that share one domain.
+    let distinct_classes = |count: usize| AkitaScheduleLookupKey {
+        final_group: grouped_key.final_group,
+        precommitteds: (0..count)
+            .map(|index| GroupCommitPhaseParams {
+                group: PolynomialGroupLayout::singleton(10 + index),
+                ..frozen_group
+            })
+            .collect(),
+    };
+    let mut fitting_classes = 1;
+    while precommit_domain.len().pow(fitting_classes + 1)
+        <= crate::schedule_params::suffix_dp::MAX_PRECOMMIT_OPENING_PRODUCTS
+    {
+        fitting_classes += 1;
+    }
+    let bounded_products = |classes: usize| {
+        crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+            &policy,
+            dimensions,
+            &distinct_classes(classes),
+            &vec![Dense::committed_source_contract().unwrap(); classes],
+        )
+        .expect("bounded root precommit opening products")
+    };
+    assert_eq!(
+        bounded_products(fitting_classes as usize).len(),
+        precommit_domain.len().pow(fitting_classes),
+    );
+    assert!(
+        bounded_products(fitting_classes as usize + 1).is_empty(),
+        "an oversized product removes coefficient-packing root openings",
+    );
 
     let incompatible_products =
         crate::schedule_params::suffix_dp::packing_precommit_opening_products(
