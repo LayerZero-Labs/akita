@@ -6,10 +6,8 @@ use super::exact_prefix::ExactPrefixTable;
 use super::range_class_tables::{
     FoldedRangeImagePairTable, OrderedRangePairCoefficients, SecondRoundRangeQuartetCoefficients,
 };
-#[cfg(debug_assertions)]
-use super::round_accumulation::accumulate_equality_weighted_values;
 use super::round_accumulation::{
-    accumulate_equality_weighted_pair_terms, accumulate_equality_weighted_round,
+    accumulate_equality_weighted_pair_terms, accumulate_equality_weighted_values,
 };
 use super::{
     compose_small_poly_with_affine, MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE,
@@ -46,7 +44,7 @@ fn accumulate_round<E: Field + Unreduced>(
 ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
     let padding_coefficients =
         compose_small_poly_with_affine(polynomial_coefficients, padding_range_image, E::zero());
-    accumulate_equality_weighted_round(
+    accumulate_equality_weighted_values(
         equality_prefix_weights,
         equality_suffix_weights,
         explicit_pair_count,
@@ -219,7 +217,7 @@ impl<E: Field + Ring + Fold + Unreduced> ClassIndexedRangeLeafProver<E> {
                     kernel_strategy = "ordered-pair-coefficients",
                 )
                 .entered();
-                accumulate_equality_weighted_round(
+                accumulate_equality_weighted_values(
                     equality_prefix_weights,
                     equality_suffix_weights,
                     source.pair_count(),
@@ -383,7 +381,7 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
                         &folded_pairs,
                         &self.polynomial_coefficients,
                     );
-                    let coefficients = accumulate_equality_weighted_round(
+                    let coefficients = accumulate_equality_weighted_values(
                         equality_prefix_weights,
                         equality_suffix_weights,
                         source.quartet_count(),

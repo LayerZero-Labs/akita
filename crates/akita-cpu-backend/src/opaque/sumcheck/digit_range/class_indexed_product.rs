@@ -9,9 +9,7 @@ use super::range_class_tables::{
     FoldedProductPairTable, OrderedProductPairCoefficients, ProductNodeTable,
     SecondRoundProductQuartetCoefficients,
 };
-use super::round_accumulation::{
-    accumulate_equality_weighted_round, accumulate_equality_weighted_values,
-};
+use super::round_accumulation::accumulate_equality_weighted_values;
 use super::{MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
@@ -483,7 +481,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                     kernel_strategy = "ordered-pair-coefficients",
                 )
                 .entered();
-                accumulate_equality_weighted_round(
+                accumulate_equality_weighted_values(
                     equality_prefix_weights,
                     equality_suffix_weights,
                     source.pair_count(),
@@ -597,7 +595,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                         );
                         let (equality_prefix_weights, equality_suffix_weights) =
                             self.split_eq.remaining_eq_tables();
-                        Some(accumulate_equality_weighted_round(
+                        Some(accumulate_equality_weighted_values(
                             equality_prefix_weights,
                             equality_suffix_weights,
                             source.quartet_count(),
@@ -768,7 +766,7 @@ mod tests {
                     interpolation,
                 )
             };
-            let expected = accumulate_equality_weighted_round(
+            let expected = accumulate_equality_weighted_values(
                 &first,
                 &second,
                 explicit_pair_count,
