@@ -17,12 +17,13 @@ in all capitals.
 
 ## Summary
 
-Akita applies bounded transcript proof-of-work before Fiat--Shamir queries whose
-algebraic loss makes a bad challenge easier to find than the exact 128-bit
-per-query target permits. It also performs bounded fold-response
-search so an honest folded witness satisfies the scheduled representation and
-norm bounds. These are distinct mechanisms with one public, schedule-derived
-`GrindingPlan` and one plan cursor.
+Akita prices the local bad-set bound of each typed field challenge to a
+128-bit per-query rate by applying bounded transcript proof of work where
+needed. Independently indexed fold coordinates receive a 128-bit
+per-address rate from their accepted challenge support and the extraction
+argument below. Bounded fold-response search lets an honest folded witness
+satisfy the scheduled representation and norm bounds. These mechanisms
+share one public, schedule-derived `GrindingPlan` and one plan cursor.
 
 All nonzero grinding values are inline native Spongefish proof messages. A
 proof-of-work nonce and a fold-response nonce each use the same canonical
@@ -64,12 +65,12 @@ sum_i q_i * 2^-g_i * L_i / |E_i|,
 ```
 
 for queried candidates, under the conditional bad-set premise used by the
-corresponding algebraic check. Fresh checks completed only by the final
-verifier need their own terms. This local search bound is not by itself an
-end-to-end knowledge-extraction theorem. `q_i` includes adversarial candidate
-queries, including fold-response trials. Grinding does not add entropy, prove uniqueness, or establish a QROM
-claim. Accepting any satisfying in-range nonce is sound; the verifier MUST NOT
-require the prover's first solution.
+corresponding algebraic check. Fresh checks completed by the final
+verifier receive their own terms. The complete knowledge-extraction
+calculation appears below. `q_i` includes adversarial candidate queries
+from fold-response trials. The target is a classical random-oracle
+bad-event rate. Accepting any satisfying in-range nonce is sound; the
+verifier MUST NOT require the prover's first solution.
 
 The predicate and protected challenge are distinct random-oracle queries. The
 predicate transition absorbs the candidate nonce and squeezes 32 bytes; after
@@ -328,82 +329,119 @@ coordinate stream it touches is charged as an oracle query.
 
 ### Indexed-address fold bound
 
-For a classical random-oracle adversary, let a denote one complete indexed
-coordinate-stream address, identified by its group root and claim-major
-index. Let C(a)=C[j,g] be its accepted support, q_a indicate that the
-original adversary touched that address, and r_a indicate that final
-verification completes it without such a touch. Set
+In the Fiat–Shamir security game, an adversary can query challenges for
+many proof prefixes and submit one final proof. Interpret each
+protocol-shaped random-oracle query as a verifier challenge at that
+prefix. This is a
+state-restoration view of the adversary's original query trace. The
+extractor replays the adversary with selected answers changed to build
+the accepting tree described above. The address count below already
+charges the adversary's adaptive search; the noninteractive lift adds
+no second query multiplier.
+
+For a classical random-oracle adversary, one fold coordinate address
+$a=(\text{group root},\text{claim-major index})$ names an indexed XOF stream. Reading
+any bytes from that stream touches the address; repeated reads use the
+same answer and count once. Distinct candidate roots give distinct
+addresses outside the root-collision event. Let $q_a$ indicate that the
+original adversary touched $a$ during any attempted proof. Let $r_a$
+indicate that final verification of its selected proof needs $a$ and
+the original adversary did not touch it. These indicators are disjoint.
+Rewound extractor queries affect running time rather than $q_a$.
+
+Let $Q_{\rm coord}$ bound the original adversary's distinct coordinate
+touches in every execution. Let $R_{\rm coord}$ be the maximum number of
+previously untouched coordinate addresses in one final proof under the
+selected schedule. Thus:
 
 $$
-Q_{\rm coord}=\sum_a q_a,\qquad
-R_{\rm coord}=\sum_a r_a\le\sum_{j,g}W[j,g],\qquad
+Q_{\rm coord}\ge\sum_a q_a,\qquad
+R_{\rm coord}\ge\sum_a r_a,\qquad
+R_{\rm coord}\le\sum_{j,g}W[j,g],\qquad
 C_{\min}=\min_{j,g}|C[j,g]|.
 $$
 
-**Indexed fold bound (classical ROM).** With the accepting-tree extraction
-above and exact conditional tapes, the fold family's contribution to
-failure of the matching-input tree sampler is at most
+For example, in a final fold with three coordinates, an adversary that
+read two selected streams leaves one stream for final verification. Those
+addresses contribute two observed touches and one completion. Trying
+another root and reading all three coordinates adds three touches.
+
+**Indexed fold bound (classical ROM).** Assume the accepting-tree extraction
+above, exact conditional tapes for complete indexed XOF streams, and a
+prefix-bound address for every challenge. The fold contribution to failure
+of the matching-input tree sampler is at most
 
 $$
 \mathbb E\!\left[\sum_a\frac{q_a+r_a}{|C(a)|}\right]
 \le \frac{Q_{\rm coord}+R_{\rm coord}}{C_{\min}}.
 $$
 
-Here and below a compressed group-root collision is a separate binding
-event. The bound counts addresses, not complete fold vectors.
+Here $C(a)=C[j,g]$ is the accepted coordinate support at $a$. A
+compressed group-root collision is a separate binding event. The query
+unit in this bound is one distinct coordinate address, rather than a
+complete fold vector or one Keccak permutation.
 
-To see why adaptive root and nonce choices do not invalidate the bound, fix
-the original adversary's coins, all oracle answers except the answer at
-address a, and the suffix sampler's random tape. Keep the address and
-context selected by the *original* run even if suffix extraction fails.
-The binary matching-input game loses at most one accepted challenge value
-out of C(a) on a nonempty selected-address fiber; its other answers and
-later accepting subtrees are held by the conditional sampler. Let H_a mean
-that some answer at a causes the original run to select a. This indicator
-depends only on the fixed other answers. At any fixed oracle table, H_a can
-be nonempty only if the original run queried a or its selected final proof
-requires a during verification. If neither happens, changing only a
-cannot change that run or its selection. Thus H_a is pointwise bounded by
-q_a+r_a. Sum the binary fiber charges and average over the fixed answers.
-The same original selected run is retained through successive tree stages,
-so these address-weighted inequalities telescope; queries made only by
-rewound extractor executions affect running time, not Q_coord.
+The random-oracle step uses the selected run from the original adversary
+execution as the central child of the accepting tree. Fix that adversary's
+coins, every oracle answer except the answer at address $a$, and the
+suffix sampler's random tape. The sampler retains the original selected
+address, prefix, and proof on both success and failure. The prefix-bound
+address makes two matches refer to the same prechallenge transcript. The
+exact conditional sampler then holds the other streams and later subtree
+sampling at their correct distributions while varying the complete answer
+at $a$.
 
-One complete candidate at level j touches sum_g W[j,g] coordinate streams,
-and V fresh complete candidates touch V times that many; a partial
-evaluation counts the streams it actually touches. The fold remains one
-flat coordinate-wise stage with branching factor 1+sum_g W[j,g], rather
-than W[j,g] sequential binary rounds. Root queries and all response-nonce
-trials also count in the adversary's *total* oracle budget. The native
-expanded_query_count is only a one-replay structural count.
+At a selected address, two suitable accepted values yield the missing
+binary coordinate fork. The matching-input failure therefore occupies at
+most one value of $C(a)$. Let $H_a$ mean that varying the answer at $a$
+can select that address in the original run. Once the other answers are
+fixed, $H_a$ is fixed as well. It implies either an original query at
+$a$ or a final proof that needs $a$ during verification: changing an
+unread answer cannot change the original prover's run. Consequently
+$H_a\le q_a+r_a$ pointwise. Sum the resulting
+$1/|C(a)|$ charges over addresses and average over oracle tables.
+Retaining the original selected run through each suffix step lets the
+same argument telescope across the mixed challenge tree.
 
-For comparison, charging one query per complete fold vector gives the
-valid whole-fold interactive term
+One complete candidate at level $j$ touches $\sum_g W[j,g]$ coordinate
+streams. $V$ candidates with distinct roots touch
+$V\sum_g W[j,g]$ addresses. A partial evaluation counts the streams
+it reads. The fold has one flat coordinate-wise stage with branching
+factor $1+\sum_g W[j,g]$. Root queries and response-nonce trials also
+enter the adversary's total oracle budget. The native
+`expanded_query_count` records the structural work of one replay.
+
+For comparison, treating each complete fold vector as one interactive
+verifier challenge gives the whole-vector knowledge-error term
 
 $$
 \varepsilon_{\rm fold}^{\rm whole}
 =\sum_j\sum_g\frac{W[j,g]}{|C[j,g]|}.
 $$
 
-The two conventions must keep their matching query units. Indexed
-accounting moves geometry into the number of touched or verifier-completed
-coordinate addresses; it does not erase geometry or permit one vector
-request to count as one coordinate query.
+Its Fiat–Shamir reduction counts complete-vector oracle queries. Indexed
+accounting instead counts every coordinate address read in each vector
+candidate, so both conventions retain the same fold geometry.
 
-### Work decision and complete reduction boundary
+### Fold work decision and total security accounting
 
 Every production accepted family has at least 2^128 elements, including
 the certified operator-filtered families. Therefore each sparse address
 has weight 1/|C(a)| at most 2^-128 without fold proof-of-work. This is the
 proved reason for a zero-bit FoldChallengeGroup target under the protocol's
-**128-bit per-address rate**. It is not an unconditional 2^-128 bound for
-arbitrarily many queries.
+**128-bit per-address rate**. The aggregate fold term follows by
+multiplying this rate by the charged address count.
 
-For a complete classical-ROM tree, give each field challenge family r with
-conditional numerator L_r, exact field order |E_r|, and work target g_r
-the weight L_r/(|E_r| 2^g_r). Give each sparse coordinate its weight
-1/|C(a)|. If every security-relevant site is in that ledger, the same
-original-run support argument across stages gives
+For a complete classical-ROM tree, let d_r be the proven
+mixed-tree failure debit at field address r, including any branches
+needed to extract all claims protected by that address. If its
+conditional bad-set bound is d_r/|E_r|, its proof-of-work target g_r
+gives weight d_r/(|E_r| 2^g_r). Give each sparse coordinate its
+weight 1/|C(a)|. Once every challenge stage has such a proven weight,
+the same original-run support argument gives the following bound.
+Here a ranges over the disjoint union of field-draw addresses and
+sparse-coordinate addresses, and q_a and r_a mark original touches
+and final-verifier completions in each family:
 
 $$
 \varepsilon_{\rm tree}
@@ -412,63 +450,70 @@ $$
 \rho=\max_a\alpha_a.
 $$
 
-Q counts original-adversary hash evaluations, including rejected work
-candidates, fixed-filter requests, response-nonce trials, and each indexed
-coordinate stream touched by a vector candidate. R_field and R_coord count
-only previously untouched addresses completed by final verification.
-Exact field pricing enforces L_r 2^128 <= |E_r| 2^g_r at the typed
-proof-of-work sites; the sparse support checks enforce the same per-address
-ceiling with g_fold=0. Root collisions, setup sampling distance, and the
-scheduled matrix-collision advantages are separate additive terms. Distinct
-logical contexts that share a 32-byte group root are a compressed-context
-collision; outside that event, (root, index) identifies the selected
-coordinate. In an ideal 256-bit root experiment with M distinct roots
-examined, the collision probability is at most M(M-1)/2^257.
+Here Q is a deterministic upper bound on distinct logical
+random-oracle addresses touched by the original adversary. It includes
+predicate queries for rejected work candidates, root queries for
+response-nonce trials, and each indexed coordinate stream read by a
+vector candidate. R_field and R_coord bound previously untouched
+addresses completed by final verification. One XOF stream address
+counts once however many output blocks are read.
+
+The typed GrindingPlan enforces
+L_r 2^128 <= |E_r| 2^g_r for its stored *local* algebraic loss L_r.
+The complete-tree rate rho <= 2^-128 follows when each field site has
+a proof that d_r <= L_r, or when its target is raised to price d_r.
+For a site that draws several independently labelled field values
+under one predicate, this proof assigns one address to each value
+and establishes the predicate's independent 2^-g_r factor for the
+selected address. It also records the stage's flat or nested tree
+factor separately from the address error weight.
+The sparse fold addresses already satisfy this rate through the
+indexed theorem. Root collisions, setup sampling distance, and
+scheduled matrix-collision advantages enter as additive terms.
+Distinct logical contexts that share a 32-byte group root form a
+compressed-context collision. For at most M distinct root contexts
+materialized across the adversary, final verifier, and extractor
+executions, the ideal 256-bit root collision bound is
+M(M-1)/2^257. A concrete bound on M must cover those executions.
 
 The deterministic extractor's fold branching product is
 B_fold=prod_j(1+sum_g W[j,g]). Its complete tree product B also includes
-the actual flat or nested factors of the other challenge stages. An explicit
+the flat or nested factors of the other challenge stages. An explicit
 expected-cost reduction has the form
 T_E <= B T_0 + (B-1)(Q+1) gamma + T_tree, where gamma includes
 nonmatching replays and the exact conditional samplers. Module-SIS
-advantages must be evaluated at that cost. Expected *polynomial*-time
-knowledge extraction additionally requires B to be polynomial in the
-declared explicit instance length and security parameter. This is a
-tree-size admission condition, not a soundness debit, and the current
-GrindingPlan's structural u32 count does not certify it.
+advantages are evaluated at that cost. Expected *polynomial*-time
+knowledge extraction requires B to be polynomial in the declared
+explicit instance length and security parameter. Certifying B is a
+separate admission check from the plan's structural one-replay count.
 
-For any claimed aggregate target lambda with a declared budget Q_max,
-the displayed rate requires the exact weighted total (and other reduction
-terms) to fit 2^-lambda. Replacing that total by
-(Q_max+R_field+R_coord)2^-128 is conservative. An *absolute* aggregate
-128-bit bound for several completed or queried addresses cannot follow
-from a per-address 128-bit rate alone; it requires additional margin.
-That arithmetic qualification does not undo the indexed theorem or require
-a separate 12-bit debit for the response nonce.
+For an aggregate target lambda, declare Q_max and the verifier-completion
+bounds, prove each full-tree field debit d_r, and require the weighted
+oracle total plus the setup, root-collision, and matrix-collision terms
+to fit 2^-lambda. If every address has weight at most 2^-128, the simpler
+upper bound is (Q_max+R_field+R_coord)2^-128 before those additive terms.
+This equation shows exactly how many extra support bits an aggregate
+target needs for its declared query budget.
 
-### Current security conclusion and evidence
+### Established result and implementation evidence
 
-The fold-specific result above resolves the old inference from support size:
-the one-value loss comes from the binary matching-input tree game and
-descendant-certified fold extraction, while support size supplies its
-denominator. For Akita's indexed streams, each original-adversary coordinate
-touch and each previously untouched final-verifier completion is counted
-separately. The accepted support floor makes zero additional fold work
-sufficient for the 128-bit per-address rate in the classical ROM.
+The fold-specific result combines descendant-certified extraction with the
+binary matching-input game. Each original-adversary coordinate touch and
+each previously untouched final-verifier completion receives its own
+one-value charge. The accepted support floor makes zero additional fold
+work sufficient for the 128-bit per-address rate in the classical ROM.
+The result covers both opening methods, all scheduled groups and
+coordinates, and the terminal.
 
-This result covers both opening methods, all scheduled groups and coordinates,
-and the terminal. The field challenge targets are priced with exact field
-orders by the typed GrindingPlan. The plan does not itself certify a
-schedule-wide extractor tree product, a public adversarial Q_max, or an
-absolute aggregate 128-bit error. A concrete end-to-end claim must use the
-displayed query and completion counts, the actual tree cost, root-compression
-and setup terms, and the relevant Module-SIS advantages. This is an explicit
-quantitative reduction boundary, not a missing fold extraction theorem.
+The typed GrindingPlan prices local field checks with exact field orders.
+A complete end-to-end security claim additionally supplies a full-tree
+field-address ledger, a declared adversarial Q_max, completion and
+root-context bounds, a polynomial tree-size certificate, setup terms,
+and Module-SIS advantages at the extractor's expected cost.
 
-The 12-bit fold-response search is honest-prover rejection sampling.
-Every adversarial trial and its induced root and coordinate queries enter Q.
-There is no separate fixed 12-bit soundness debit for work already counted
-there, and the nonce range does not cap searches over other prefixes.
+The 12-bit fold-response search serves honest-prover response admission.
+Adversarial trials and their root and coordinate queries enter Q; this
+query charge accounts for the nonce freedom.
 
 The implementation evidence for this result is:
 
@@ -484,9 +529,10 @@ The implementation evidence for this result is:
 | [Security model](../book/src/how/security.md) and [subring packing](subring-coefficient-packing.md) | Accepted response-space contract and separate packed relation loss |
 
 The [Book's binding chapter](../book/src/foundations/pcs-and-binding.md)
-explains CWSS and the public classical-ROM references. Distribution, replay,
-and tampering tests check implementation correspondence; they do not prove
-adaptive extraction or its concrete loss.
+explains the coordinate forks, oracle-address accounting, and security
+target for readers. Distribution, replay, and tampering tests check
+implementation correspondence; the accepting-tree and random-oracle
+arguments establish extraction and its concrete loss.
 
 ## Encoding and proof-size accounting
 
