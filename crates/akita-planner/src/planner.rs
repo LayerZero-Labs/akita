@@ -922,8 +922,32 @@ pub(crate) fn find_schedule_in_relation_order(
                 key.final_group.num_polynomials()
             )));
         }
+        let class_count = precommitted_group_equivalence_classes(
+            &key.precommitteds,
+            precommitted_source_contracts,
+        )?
+        .len();
+        let bounded_note = if u32::try_from(class_count)
+            .ok()
+            .and_then(|classes| {
+                akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS
+                    .len()
+                    .checked_pow(classes)
+            })
+            .is_none_or(|products| {
+                products > crate::schedule_params::MAX_PRECOMMIT_OPENING_PRODUCTS
+            }) {
+            format!(
+                "; {class_count} distinct precommitted classes can exceed the {}-assignment \
+                 root opening bound, so some coefficient-packing root openings may not have \
+                 been searched",
+                crate::schedule_params::MAX_PRECOMMIT_OPENING_PRODUCTS
+            )
+        } else {
+            String::new()
+        };
         return Err(AkitaError::UnsupportedSchedule(format!(
-            "no multi-group schedule in the audited fold domain for num_vars={}",
+            "no multi-group schedule in the audited fold domain for num_vars={}{bounded_note}",
             key.final_group.num_vars()
         )));
     };

@@ -100,7 +100,8 @@ pub(crate) const fn state_allows_terminal_seed(
 ///
 /// The bound applies to the Cartesian product over distinct interchangeable
 /// classes. Class multiplicity does not count toward it, so any number of
-/// identical producers fits; roughly five to eight distinct classes do. A
+/// identical producers fits; three to eight distinct classes do, depending on
+/// the per-class domain sizes. A
 /// larger product removes coefficient-packing root openings for that
 /// dimension, as an unsupported dimension does; evaluation-trace openings are
 /// one per class and remain available.
@@ -151,8 +152,7 @@ pub(crate) fn packing_precommit_opening_products(
         return Ok(Vec::new());
     };
 
-    let mut products = Vec::with_capacity(product_count);
-    products.push(Vec::with_capacity(class_domains.len()));
+    let mut products = vec![Vec::with_capacity(class_domains.len())];
     for domain in &class_domains {
         products = products
             .iter()
@@ -165,6 +165,7 @@ pub(crate) fn packing_precommit_opening_products(
             })
             .collect();
     }
+    debug_assert_eq!(products.len(), product_count);
     Ok(products)
 }
 

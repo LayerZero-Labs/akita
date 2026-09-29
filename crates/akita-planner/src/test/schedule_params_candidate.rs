@@ -869,6 +869,8 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     }
 
     // Distinct group layouts form distinct classes that share one domain.
+    // These profiles only feed enumeration, which reads ring dimensions; they
+    // are not valid commit-phase profiles and must not be materialized.
     let distinct_classes = |count: usize| AkitaScheduleLookupKey {
         final_group: grouped_key.final_group,
         precommitteds: (0..count)
@@ -880,7 +882,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     };
     let mut fitting_classes = 1;
     while precommit_domain.len().pow(fitting_classes + 1)
-        <= crate::schedule_params::suffix_dp::MAX_PRECOMMIT_OPENING_PRODUCTS
+        <= crate::schedule_params::MAX_PRECOMMIT_OPENING_PRODUCTS
     {
         fitting_classes += 1;
     }

@@ -54,16 +54,16 @@ can serve MUST NOT fail because the scalar row's structure does not fit it.
 
 ### Invariants
 
+The frozen-structure invariants constrain the guided search. A row returned by
+the full-search fallback is the full planner's optimum and need not retain
+them.
+
 - **Approved input.** Adaptation MUST accept only a scalar
   `ResolvedScheduleRow` that passes the canonical audit under the supplied
   `PlannerPolicy`.
 - **Exact producers.** Each precommitted producer MUST bind one frozen
   `GroupCommitPhaseParams`, one `CommittedSourceContract`, and the matching
   `HonestFoldPolicySpec`. A mismatch MUST return a typed setup error.
-The frozen-structure invariants below constrain the guided search. A row
-returned by the full-search fallback is the full planner's optimum and need
-not retain them.
-
 - **Frozen main root.** The final group's root A/B matrices, blocks, slices,
   digit bases, and opening plan MUST match the scalar row. The fold-owned D
   matrix MUST retain its audited table and ring identity while its grouped input
@@ -101,8 +101,10 @@ not retain them.
   `ValidatedScheduleCatalog::try_new`, challenge-hook validation, duplicate-key
   rejection, row identity, catalog identity, or final `TrustedScheduleCatalog<Cfg>`
   configuration binding.
-- **Oracle preservation.** `find_schedule` MUST remain the unconstrained full-DP
-  correctness and proof-size oracle when no guide is supplied.
+- **Oracle preservation.** `find_schedule` MUST remain the full-DP
+  correctness and proof-size oracle when no guide is supplied. Its only
+  restrictions on the precommit opening domain are one opening per class and
+  the class-product bound.
 - **Offline only.** Setup restoration, commitment, proving, proof decoding,
   verification, and guest execution MUST NOT call either planner entry point.
 
