@@ -2,7 +2,7 @@
 
 use crate::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_types::{FoldSchedule, GrindingPlan, OpeningClaimsLayout};
+use akita_types::{ChallengeFieldOrder, FoldSchedule, GrindingPlan, OpeningClaimsLayout};
 use jolt_field::{CanonicalEncoding, ExtField};
 
 /// Derive the only accepted grinding plan for one effective schedule and call.
@@ -14,16 +14,22 @@ where
     Cfg::Field: CanonicalEncoding,
     Cfg::ExtField: ExtField<Cfg::Field>,
 {
+    Cfg::validate_sis_modulus_profile()?;
     let extension_degree = <Cfg::ExtField as ExtField<Cfg::Field>>::DEGREE;
     if Cfg::EXT_DEGREE != extension_degree {
         return Err(AkitaError::InvalidSetup(
             "grinding plan extension degree does not match the field tower".into(),
         ));
     }
+    let challenge_order = ChallengeFieldOrder::from_field(
+        <Cfg::Field as CanonicalEncoding>::MODULUS_BITS,
+        extension_degree,
+        Cfg::sis_modulus_profile().modulus(),
+    )?;
     akita_types::derive_transcript_grinding_plan_from_public_shape(
         schedule,
         root_layout,
-        <Cfg::Field as CanonicalEncoding>::MODULUS_BITS,
+        challenge_order,
         extension_degree,
     )
 }
@@ -33,7 +39,6 @@ mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
     use akita_types::{GrindingQueryKind, GrindingSite, GRINDING_NONCE_SLACK_BITS};
-    use jolt_field::PseudoMersenne;
 
     #[test]
     fn production_onehot_plan_is_canonical_and_fully_priced() {
@@ -83,10 +88,10 @@ mod tests {
             (
                 43,
                 50,
-                383,
+                400,
                 [
-                    74, 157, 56, 240, 59, 127, 113, 99, 79, 21, 27, 47, 189, 149, 201, 212, 237,
-                    174, 168, 35, 22, 95, 41, 51, 239, 12, 161, 254, 146, 75, 101, 167,
+                    21, 189, 26, 22, 128, 164, 31, 28, 50, 135, 93, 233, 206, 24, 126, 19, 182,
+                    116, 103, 166, 50, 90, 45, 127, 166, 101, 56, 40, 154, 59, 66, 201,
                 ],
             )
         );
@@ -132,22 +137,29 @@ mod tests {
     }
 
     #[test]
-    fn exact_field_orders_report_the_pseudo_mersenne_deficit_without_repricing() {
-        fn exact_order<F: PseudoMersenne>(extension_degree: usize) -> (u32, u128, usize) {
-            (F::MODULUS_BITS, F::OFFSET, extension_degree)
+    fn exact_field_orders_price_pseudo_mersenne_deficits() {
+        fn check<Cfg: CommitmentConfig>()
+        where
+            Cfg::Field: CanonicalEncoding,
+        {
+            Cfg::validate_sis_modulus_profile().unwrap();
+            let order = ChallengeFieldOrder::from_field(
+                <Cfg::Field as CanonicalEncoding>::MODULUS_BITS,
+                Cfg::EXT_DEGREE,
+                Cfg::sis_modulus_profile().modulus(),
+            )
+            .unwrap();
+            for exponent in 0..akita_types::MAX_GRINDING_BITS {
+                assert_eq!(
+                    akita_types::grind_bits_for_loss(1u64 << exponent, order).unwrap(),
+                    exponent + 1,
+                );
+            }
+            assert_eq!(akita_types::grind_bits_for_loss(3, order).unwrap(), 2);
         }
-
-        for (bits, _, degree) in [
-            exact_order::<fp128::Field>(1),
-            exact_order::<crate::proof_optimized::fp64::Field>(2),
-            exact_order::<crate::proof_optimized::fp32::Field>(4),
-        ] {
-            assert_eq!(
-                akita_types::nominal_challenge_capacity_bits(bits, degree).unwrap(),
-                128
-            );
-            assert_eq!(akita_types::grind_bits_for_loss(3, 128).unwrap(), 2);
-        }
+        check::<fp128::OneHot>();
+        check::<crate::proof_optimized::fp64::OneHot>();
+        check::<crate::proof_optimized::fp32::OneHot>();
     }
 
     #[test]

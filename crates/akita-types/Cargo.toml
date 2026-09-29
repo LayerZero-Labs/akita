@@ -45,6 +45,7 @@ logging-transcript = ["akita-transcript/logging-transcript"]
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
+num-bigint = "0.5.1"
 rand = "0.8"
 
 [[bench]]

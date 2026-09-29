@@ -34,7 +34,7 @@ clear response norm directly. See [The proving protocol](./proving.md).
   - [Domain and challenge order](#domain-and-challenge-order)
   - [The verifier](#the-verifier)
 - [Stage 2: fused relation sumcheck](#stage-2-fused-relation-sumcheck)
-  - [Start with the ordinary ring relation](#start-with-the-ordinary-ring-relation)
+  - [Start with the schedule-selected ring relation](#start-with-the-schedule-selected-ring-relation)
   - [Batch the matrix rows](#batch-the-matrix-rows)
   - [Expand the ring elements into one flat witness](#expand-the-ring-elements-into-one-flat-witness)
   - [Raw and compressed relation terms](#raw-and-compressed-relation-terms)
@@ -444,10 +444,11 @@ transcript-grinding plan prices that degree.
 
 ### Start with the schedule-selected ring relation
 
-The physical row families and both ring-relation realizations are derived in
-[Payload and ring-relation realizations of an Akita
-fold](./akita-fold-realizations.md). We first derive the existing quotient-lift
-factorization, then state the reduced-evaluation replacement.
+[Raw and compressed payload realizations](./akita-fold-realizations.md)
+defines the physical rows. [Checking ring relations over a
+field](./ring-relation-checking.md) derives the two ways to turn them into
+field claims. Here we first derive the quotient-lift factorization, then
+state the reduced-evaluation replacement.
 
 Let $w_j(X)$ be the $j$-th ring element encoded by the digit witness, and let
 row $i$ of the ordinary extended fold relation be

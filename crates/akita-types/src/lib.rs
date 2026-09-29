@@ -206,9 +206,9 @@ pub use trace_weight::{
     EvaluationTraceGroupParameters, EvaluationTraceInputs,
 };
 pub use transcript_grinding::{
-    grind_bits_for_loss, multilinear_point_loss_factor, nominal_challenge_capacity_bits,
-    polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
-    GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite, NativeGrindingSumcheckProver,
+    grind_bits_for_loss, multilinear_point_loss_factor, polynomial_identity_loss_factor,
+    powers_batch_loss_factor, ring_switch_alpha_loss_factor, ChallengeFieldOrder, GrindingPlan,
+    GrindingQueryKind, GrindingRun, GrindingSite, NativeGrindingSumcheckProver,
     NativeGrindingSumcheckVerifier, NativeProofAcceptance, NativeProverGrinding,
     NativeVerifierGrinding, SumcheckProtocol, TranscriptGrindingCost,
     FOLD_COORDINATE_ORACLE_REVISION, FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS,
@@ -217,8 +217,7 @@ pub use transcript_grinding::{
     TRANSCRIPT_GRINDING_QUERY_LIMIT, TRANSCRIPT_SECURITY_BITS,
 };
 pub use transcript_grinding_plan::{
-    derive_transcript_grinding_plan_from_public_shape,
-    transcript_grinding_cost_for_planner_candidate, transcript_grinding_cost_for_planner_edge,
+    derive_transcript_grinding_plan_from_public_shape, transcript_grinding_cost_for_planner_edge,
 };
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,

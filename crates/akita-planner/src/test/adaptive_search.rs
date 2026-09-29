@@ -42,22 +42,15 @@ fn assert_selected_grinding_edge_parity(
 
     let schedule = &planned.schedule;
     let root_layout = key.opening_layout().expect("selected root opening layout");
-    let modulus_bits = policy.decomposition.field_bits();
     let extension_degree = policy.claim_ext_degree;
+    let challenge_order = policy.transcript_grinding_order().unwrap();
     let full_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
         schedule,
         &root_layout,
-        modulus_bits,
+        challenge_order,
         extension_degree,
     )
     .expect("selected schedule has a public grinding plan");
-    let candidate = akita_types::transcript_grinding_cost_for_planner_candidate(
-        schedule,
-        &root_layout,
-        modulus_bits,
-        extension_degree,
-    )
-    .expect("selected candidate grinding cost");
 
     let folds = std::iter::once(&schedule.root)
         .chain(&schedule.recursive_folds)
@@ -95,7 +88,7 @@ fn assert_selected_grinding_edge_parity(
             geometry,
             &layout,
             successor,
-            modulus_bits,
+            challenge_order,
             extension_degree,
             u32::try_from(index).expect("selected fold level fits u32"),
         )
@@ -115,7 +108,6 @@ fn assert_selected_grinding_edge_parity(
         previous_rounds = geometry.relation_point_variable_count();
     }
     assert!(edge_sum.expanded_query_count > 0);
-    assert_eq!(edge_sum, candidate);
     assert_eq!(edge_sum.total_nonce_bits, full_plan.total_nonce_bits());
     assert_eq!(
         edge_sum.native_nonce_max_bytes,
@@ -363,7 +355,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     let query_count = akita_types::derive_transcript_grinding_plan_from_public_shape(
         &selected.schedule,
         &lookup_key.opening_layout().unwrap(),
-        policy.decomposition.field_bits(),
+        policy.transcript_grinding_order().unwrap(),
         policy.claim_ext_degree,
     )
     .unwrap()
@@ -386,7 +378,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     let constrained_query_count = akita_types::derive_transcript_grinding_plan_from_public_shape(
         &constrained.schedule,
         &lookup_key.opening_layout().unwrap(),
-        policy.decomposition.field_bits(),
+        policy.transcript_grinding_order().unwrap(),
         policy.claim_ext_degree,
     )
     .unwrap()
