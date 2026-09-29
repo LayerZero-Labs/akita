@@ -131,7 +131,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::GrindingPlan;
+    use crate::{ChallengeFieldOrder, GrindingPlan};
     use akita_transcript::{new_native_prover, new_native_verifier};
     use jolt_field::{FpExt4, Prime32Offset99, Ring};
 
@@ -140,7 +140,11 @@ mod tests {
 
     #[test]
     fn physical_l2_fixed_claim_vectors_roundtrip() {
-        let plan = GrindingPlan::new(Vec::new(), 128).unwrap();
+        let plan = GrindingPlan::new(
+            Vec::new(),
+            ChallengeFieldOrder::from_full_capacity(128).unwrap(),
+        )
+        .unwrap();
         let subclaims = [E::from_u64(3), E::from_u64(5)];
         let virtuals = [E::from_u64(8), E::from_u64(13), E::from_u64(21)];
         let state = new_native_prover(b"native-l2", b"fixture").unwrap();

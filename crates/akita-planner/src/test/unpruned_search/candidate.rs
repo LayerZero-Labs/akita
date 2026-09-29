@@ -258,7 +258,7 @@ pub(super) fn prepend_fold(
         relation_geometry,
         &opening_layout,
         successor,
-        policy.decomposition.field_bits(),
+        policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
         u32::try_from(level)
             .map_err(|_| AkitaError::InvalidSetup("unpruned fold level exceeds u32".into()))?,
@@ -334,7 +334,7 @@ pub(super) fn prepend_root(
         relation_geometry,
         &opening_layout,
         successor,
-        policy.decomposition.field_bits(),
+        policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
         0,
     )?;
@@ -370,16 +370,37 @@ pub(super) fn prepend_root(
         }),
         terminal: Arc::clone(&suffix.terminal),
     };
-    let canonical_cost = akita_schedules::planner_support::candidate_grinding_cost(
-        policy,
+    let mut folds = candidate
+        .folds
+        .to_vec()
+        .into_iter()
+        .map(|fold| akita_types::FoldParams {
+            params: (*fold.params).clone(),
+            input_witness_len: fold.input_witness_len,
+            output_witness_len: fold.output_witness_len,
+        });
+    let schedule = akita_types::FoldSchedule {
+        root: folds.next().ok_or_else(|| {
+            AkitaError::UnsupportedSchedule("oracle candidate has no root fold".into())
+        })?,
+        recursive_folds: folds.collect(),
+        terminal: akita_types::TerminalFoldParams {
+            fold_challenge_config: candidate.terminal.sparse_challenge_config,
+            response_shape: candidate.terminal.response_shape.clone(),
+            input_witness_len: candidate.terminal.input_witness_len,
+            ..candidate.terminal.params.clone()
+        },
+    };
+    let plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
+        &schedule,
         &opening_layout,
-        &candidate.folds.to_vec(),
-        candidate.terminal.as_ref(),
+        policy.transcript_grinding_order()?,
+        policy.claim_ext_degree,
     )?;
     let edge_wise_cost = candidate.cost.grinding_cost();
-    if edge_wise_cost.total_nonce_bits != canonical_cost.total_nonce_bits
-        || edge_wise_cost.native_nonce_max_bytes != canonical_cost.native_nonce_max_bytes
-        || edge_wise_cost.expanded_query_count != canonical_cost.expanded_query_count
+    if edge_wise_cost.total_nonce_bits != plan.total_nonce_bits()
+        || edge_wise_cost.native_nonce_max_bytes != plan.native_nonce_max_bytes()
+        || edge_wise_cost.expanded_query_count != plan.expanded_query_count()
     {
         return Err(AkitaError::InvalidSetup(
             "edge-wise oracle grinding cost disagrees with the canonical complete schedule".into(),

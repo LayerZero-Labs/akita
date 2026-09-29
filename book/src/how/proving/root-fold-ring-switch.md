@@ -217,10 +217,10 @@ recursive folds and the terminal use `EvaluationTrace`; packing adds neither
 an EOR payload nor a packing terminal.
 
 This chapter documents the implemented relation and schedule boundary. The
-active design record gives the formal planner and soundness requirements,
-including the implemented coordinatewise CWSS accounting. The equations here
-are protocol relations; by themselves, they are not an end-to-end soundness
-theorem.
+active design record gives the planner and algebraic soundness requirements.
+Indexed coordinates supply fork structure for the accepting-tree extractor;
+the [indexed fold bound](../../../../specs/transcript-grinding.md#indexed-address-fold-bound)
+charges every adversarially touched or verifier-completed coordinate stream.
 
 ## The root fold
 
