@@ -7,7 +7,9 @@ use super::range_class_tables::{
     product_coefficients, FoldedProductPairTable, OrderedProductPairCoefficients, ProductNodeTable,
     SecondRoundProductQuartetCoefficients,
 };
-use super::round_accumulation::accumulate_equality_weighted_round;
+use super::round_accumulation::{
+    accumulate_equality_weighted_round, fold_and_accumulate_equality_weighted_round,
+};
 use super::{MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
@@ -17,6 +19,9 @@ use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring};
 use jolt_field::{Fold, Unreduced};
 use jolt_poly::OmittedConstantPoly;
+
+#[cfg(test)]
+mod fused_round_tests;
 
 struct CompactProductState<E: Field, const LANES: usize> {
     source: CompactDigitSource,
@@ -67,6 +72,8 @@ pub(super) struct ClassIndexedProductSubcheckProver<E: Field, const LANES: usize
     arity: usize,
     num_rounds: usize,
     rounds_completed: usize,
+    cached_materialized_round: Option<[E; MAX_TREE_STAGE_Q_DEGREE + 1]>,
+    fold_scratch: Vec<[E; LANES]>,
 }
 
 impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, LANES> {
@@ -126,6 +133,8 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
             arity,
             num_rounds: equality_point.len(),
             rounds_completed: 0,
+            cached_materialized_round: None,
+            fold_scratch: Vec::new(),
         })
     }
 
@@ -160,65 +169,69 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
         debug_assert_eq!(round, self.rounds_completed);
         let (equality_prefix_weights, equality_suffix_weights) =
             self.split_eq.remaining_eq_tables();
-        let coefficients = match &self.product_table {
-            ProductTableState::Compact(CompactProductState {
-                source,
-                pair_coefficients,
-                ..
-            }) => {
-                let _span = tracing::info_span!(
-                    "digit_range_product_initial_round",
-                    round = self.rounds_completed,
-                    live_digits = source.live_len(),
-                    explicit_pairs = source.pair_count(),
-                    kernel_strategy = "ordered-pair-coefficients",
-                )
-                .entered();
-                accumulate_equality_weighted_round(
-                    equality_prefix_weights,
-                    equality_suffix_weights,
-                    source.pair_count(),
-                    |pair_index| {
-                        pair_coefficients
-                            .coefficients_by_pair_index(source.ordered_pair_index(pair_index))
-                    },
-                    pair_coefficients.coefficients_by_pair_index(0),
-                )
-            }
-            ProductTableState::FirstChallengeFolded(FirstChallengeFoldedProductState {
-                cached_second_round_coefficients,
-                ..
-            }) => {
-                let _span = tracing::info_span!(
-                    "digit_range_product_initial_round",
-                    round = self.rounds_completed,
-                    kernel_strategy = "cached-second-round",
-                )
-                .entered();
-                *cached_second_round_coefficients
-            }
-            ProductTableState::Materialized(table) => {
-                let _span = tracing::info_span!(
-                    "digit_range_product_materialized_round",
-                    round = self.rounds_completed,
-                    materialized_rows = table.explicit_len(),
-                    domain_len = table.domain_len(),
-                )
-                .entered();
-                accumulate_round(
-                    equality_prefix_weights,
-                    equality_suffix_weights,
-                    table.explicit_len().div_ceil(2),
-                    table.default_value(),
-                    |pair_index| {
-                        (
-                            table.value_or_default(2 * pair_index),
-                            table.value_or_default(2 * pair_index + 1),
-                        )
-                    },
-                    self.arity,
-                    &self.parent_weights,
-                )
+        let coefficients = if let Some(coefficients) = self.cached_materialized_round.take() {
+            coefficients
+        } else {
+            match &self.product_table {
+                ProductTableState::Compact(CompactProductState {
+                    source,
+                    pair_coefficients,
+                    ..
+                }) => {
+                    let _span = tracing::info_span!(
+                        "digit_range_product_initial_round",
+                        round = self.rounds_completed,
+                        live_digits = source.live_len(),
+                        explicit_pairs = source.pair_count(),
+                        kernel_strategy = "ordered-pair-coefficients",
+                    )
+                    .entered();
+                    accumulate_equality_weighted_round(
+                        equality_prefix_weights,
+                        equality_suffix_weights,
+                        source.pair_count(),
+                        |pair_index| {
+                            pair_coefficients
+                                .coefficients_by_pair_index(source.ordered_pair_index(pair_index))
+                        },
+                        pair_coefficients.coefficients_by_pair_index(0),
+                    )
+                }
+                ProductTableState::FirstChallengeFolded(FirstChallengeFoldedProductState {
+                    cached_second_round_coefficients,
+                    ..
+                }) => {
+                    let _span = tracing::info_span!(
+                        "digit_range_product_initial_round",
+                        round = self.rounds_completed,
+                        kernel_strategy = "cached-second-round",
+                    )
+                    .entered();
+                    *cached_second_round_coefficients
+                }
+                ProductTableState::Materialized(table) => {
+                    let _span = tracing::info_span!(
+                        "digit_range_product_materialized_round",
+                        round = self.rounds_completed,
+                        materialized_rows = table.explicit_len(),
+                        domain_len = table.domain_len(),
+                    )
+                    .entered();
+                    accumulate_round(
+                        equality_prefix_weights,
+                        equality_suffix_weights,
+                        table.explicit_len().div_ceil(2),
+                        table.default_value(),
+                        |pair_index| {
+                            (
+                                table.value_or_default(2 * pair_index),
+                                table.value_or_default(2 * pair_index + 1),
+                            )
+                        },
+                        self.arity,
+                        &self.parent_weights,
+                    )
+                }
             }
         };
         OmittedConstantPoly::from_q_coefficients(coefficients[..=self.arity].to_vec())
@@ -396,12 +409,33 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                 lane_count = LANES,
             )
             .entered();
-            let fold_context = E::precompute(challenge);
-            table
-                .fold_in_place(|left, right| {
-                    std::array::from_fn(|lane| E::fold_one(&fold_context, left[lane], right[lane]))
-                })
-                .expect("validated exact-prefix product state can fold");
+            if self.rounds_completed + 1 < self.num_rounds {
+                let fold_context = E::precompute(challenge);
+                let (equality_prefix, equality_suffix) = self.split_eq.remaining_eq_tables();
+                self.cached_materialized_round = Some(fold_and_accumulate_equality_weighted_round(
+                    table,
+                    &mut self.fold_scratch,
+                    equality_prefix,
+                    equality_suffix,
+                    |left, right| {
+                        std::array::from_fn(|lane| {
+                            E::fold_one(&fold_context, left[lane], right[lane])
+                        })
+                    },
+                    |left, right| {
+                        product_coefficients(left, right, self.arity, &self.parent_weights)
+                    },
+                ));
+            } else {
+                let fold_context = E::precompute(challenge);
+                table
+                    .fold_in_place(|left, right| {
+                        std::array::from_fn(|lane| {
+                            E::fold_one(&fold_context, left[lane], right[lane])
+                        })
+                    })
+                    .expect("validated exact-prefix product state can fold");
+            }
         }
         self.rounds_completed += 1;
     }

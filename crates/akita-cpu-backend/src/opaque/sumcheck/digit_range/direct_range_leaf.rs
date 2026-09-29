@@ -175,3 +175,6 @@ pub(crate) mod tests;
 
 #[cfg(test)]
 pub(crate) use tests::pad_compact_witness;
+
+#[cfg(test)]
+mod fold_tests;
