@@ -797,14 +797,26 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     assert!(repeated_products
         .iter()
         .all(|assignment| assignment.len() == 16));
-    let capped_error = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+    let capped_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
         &policy,
         dimensions,
         &repeated_key,
         &vec![Dense::committed_source_contract().unwrap(); 16],
         Some(16),
     )
-    .expect_err("the cap must reject before materializing 17 assignments");
+    .expect("a capped symmetric domain falls back to one opening per class");
+    assert_eq!(capped_products.len(), precommit_domain.len());
+    assert!(capped_products
+        .iter()
+        .all(|assignment| assignment.iter().all(|opening| *opening == assignment[0])));
+    let capped_error = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+        &policy,
+        dimensions,
+        &repeated_key,
+        &vec![Dense::committed_source_contract().unwrap(); 16],
+        Some(1),
+    )
+    .expect_err("a budget below the per-class domain must reject before materializing");
     assert!(matches!(capped_error, AkitaError::UnsupportedSchedule(_)));
 
     let incompatible_products =

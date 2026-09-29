@@ -205,6 +205,61 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
         .expect("adapted lookup key must resolve from the admitted catalog");
 }
 
+/// A committed program opens one precommitted group per bytecode chunk, all
+/// with the same profile, plus a distinct program-image group. At the full
+/// adaptation width the multiset product exceeds the assignment budget, so
+/// the adapted root must search one opening per class instead of rejecting.
+#[test]
+fn adapted_schedule_admits_the_full_width_of_interchangeable_producers() {
+    let policy = policy_of::<Dense>();
+    let main_group = PolynomialGroupLayout::singleton(24);
+    let main_row = scalar_row(main_group).expect("scalar main row");
+    let chunk_profile = scalar_row(PolynomialGroupLayout::singleton(14))
+        .expect("scalar chunk row")
+        .profiles()
+        .final_group;
+    let image_profile = scalar_row(PolynomialGroupLayout::singleton(16))
+        .expect("scalar image row")
+        .profiles()
+        .final_group;
+    let mut precommitteds = vec![chunk_profile; MAX_ADAPTED_PRECOMMIT_WIDTH - 1];
+    precommitteds.push(image_profile);
+    let request = grouped_request::<DenseBounded>(main_group, &precommitteds);
+
+    let adapted = find_adapted_schedule(
+        &main_row,
+        &request,
+        Dense::committed_source_contract().unwrap(),
+        &policy,
+        Dense::ring_challenge_config,
+    )
+    .expect("the full width of interchangeable producers must adapt");
+
+    assert_eq!(
+        adapted.schedule.root.params.precommitted_groups().len(),
+        MAX_ADAPTED_PRECOMMIT_WIDTH
+    );
+    assert_frozen_skeleton(main_row.schedule(), &adapted.schedule);
+    let profiles = CommittedGroupBatchProfile {
+        final_group: main_row.profiles().final_group,
+        precommitteds: precommitteds.clone(),
+    };
+    let catalog = akita_schedules::ValidatedScheduleCatalog::try_new(
+        Dense::schedule_family_name(),
+        [(profiles, adapted.schedule)],
+        &policy,
+        Dense::ring_challenge_config,
+    )
+    .expect("adapted row must pass validated-catalog admission");
+    akita_config::TrustedScheduleCatalog::<Dense>::new(catalog)
+        .expect("adapted row must bind to the final dense catalog")
+        .resolve_key(&AkitaScheduleLookupKey {
+            final_group: main_group,
+            precommitteds,
+        })
+        .expect("adapted lookup key must resolve from the admitted catalog");
+}
+
 #[test]
 fn adapted_schedule_rejects_oversized_precommit_width_before_search() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()

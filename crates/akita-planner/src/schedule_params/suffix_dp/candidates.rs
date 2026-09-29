@@ -115,11 +115,9 @@ pub(crate) fn packing_precommit_opening_products(
     }
     let equivalence_classes =
         precommitted_group_equivalence_classes(&key.precommitteds, precommitted_source_contracts)?;
-
-    let mut products = vec![vec![None; key.precommitteds.len()]];
-    for indices in equivalence_classes {
-        let representative = indices[0];
-        let profile = &key.precommitteds[representative];
+    let mut class_domains = Vec::with_capacity(equivalence_classes.len());
+    for indices in &equivalence_classes {
+        let profile = &key.precommitteds[indices[0]];
         let domain = crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
             0,
             policy.claim_ext_degree,
@@ -132,15 +130,44 @@ pub(crate) fn packing_precommit_opening_products(
         if domain.is_empty() {
             return Ok(Vec::new());
         }
-        if let Some(max_products) = max_products {
-            let remaining_products = max_products / products.len();
-            if !multiset_assignment_count_fits(domain.len(), indices.len(), remaining_products) {
-                return Err(AkitaError::UnsupportedSchedule(format!(
-                    "adapted precommit opening domain exceeds the maximum of {max_products} assignments"
-                )));
-            }
+        class_domains.push(domain);
+    }
+
+    // Every multiset assignment when the product fits the budget; otherwise
+    // one opening shared by each class of interchangeable groups. The
+    // restriction only narrows a guided search, so every schedule it finds is
+    // still admissible, and a product that grows with the number of identical
+    // groups (for example one bytecode chunk per group) no longer turns a
+    // plannable request into a rejection.
+    let uniform = max_products.is_some_and(|max_products| {
+        !multiset_product_fits(&equivalence_classes, &class_domains, max_products)
+    });
+    if let Some(max_products) = max_products.filter(|_| uniform) {
+        let fits = class_domains
+            .iter()
+            .try_fold(1_usize, |count, domain| {
+                count
+                    .checked_mul(domain.len())
+                    .filter(|&count| count <= max_products)
+            })
+            .is_some();
+        if !fits {
+            return Err(AkitaError::UnsupportedSchedule(format!(
+                "adapted precommit opening domain exceeds the maximum of {max_products} assignments"
+            )));
         }
-        let assignments = nondecreasing_opening_assignments(&domain, indices.len());
+    }
+
+    let mut products = vec![vec![None; key.precommitteds.len()]];
+    for (indices, domain) in equivalence_classes.iter().zip(&class_domains) {
+        let assignments = if uniform {
+            domain
+                .iter()
+                .map(|&opening| vec![opening; indices.len()])
+                .collect()
+        } else {
+            nondecreasing_opening_assignments(domain, indices.len())
+        };
         let next_len = products
             .len()
             .checked_mul(assignments.len())
@@ -177,6 +204,28 @@ pub(crate) fn packing_precommit_opening_products(
                 .collect()
         })
         .collect()
+}
+
+/// Return whether the product over classes of their multiset assignment
+/// counts fits within `limit`.
+fn multiset_product_fits(
+    equivalence_classes: &[Vec<usize>],
+    class_domains: &[Vec<crate::schedule_params::PlannerOpeningCandidate>],
+    limit: usize,
+) -> bool {
+    let mut products = 1_usize;
+    for (indices, domain) in equivalence_classes.iter().zip(class_domains) {
+        let remaining = limit / products;
+        if !multiset_assignment_count_fits(domain.len(), indices.len(), remaining) {
+            return false;
+        }
+        let mut count = 1_usize;
+        for index in 1..=indices.len() {
+            count = count * (domain.len() + index - 1) / index;
+        }
+        products *= count;
+    }
+    true
 }
 
 /// Return whether the number of multisets of `width` values drawn from a

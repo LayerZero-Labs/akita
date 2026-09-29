@@ -41,7 +41,9 @@ type PrecommittedGroupSeed = (GroupCommitPhaseParams, CommittedSourceContract);
 /// Maximum number of precommitted producers accepted by guided adaptation.
 ///
 /// This limit also bounds the number of canonical precommit-opening
-/// assignments considered at the adapted root.
+/// assignments considered at the adapted root. When every multiset
+/// assignment would exceed it, the adapted root considers one opening per
+/// class of interchangeable groups instead.
 pub const MAX_ADAPTED_PRECOMMIT_WIDTH: usize = 256;
 
 #[derive(Clone, Copy)]
