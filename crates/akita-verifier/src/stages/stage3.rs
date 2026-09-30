@@ -99,7 +99,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
             grinding,
             level,
         )?;
-        let claim = akita_types::native_stage3_verifier_claim::<F, E>(grinding, level)?;
+        let claim = akita_types::native_stage3_claim::<F, E, _>(grinding, level, E::zero())?;
         let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
             grinding,
             akita_types::SumcheckProtocol::Stage3,
@@ -113,7 +113,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
             akita_sumcheck::NativeSumcheckShape::new(self.rounds, SETUP_SUMCHECK_DEGREE)?,
         )?;
         let setup_prefix_eval =
-            akita_types::native_stage3_verifier_prefix_eval::<F, E>(grinding, level)?;
+            akita_types::native_stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
         let (rho_y, rho_setup_idx) = replay.challenges.split_at(self.ring_bits);
         let setup_index_weight = self
             .setup_index_weight
@@ -170,7 +170,7 @@ where
     slot.id
         .serialize_compressed(&mut encoded_slot)
         .map_err(|_| AkitaError::InvalidProof)?;
-    akita_types::native_stage3_public_slot_verifier(grinding, level, &encoded_slot)
+    akita_types::native_stage3_public_slot(grinding, level, &encoded_slot)
 }
 
 #[cfg(test)]

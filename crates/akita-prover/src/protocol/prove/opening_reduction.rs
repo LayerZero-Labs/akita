@@ -44,11 +44,11 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let prefix = akita_types::native_eor_prover_prefix::<F, E>(
+    let prefix = akita_types::native_eor_prefix::<F, E, _>(
         grinding,
         opening_batch,
         &prepared.openings,
-        &prepared.proof_partials,
+        prepared.proof_partials.clone(),
         level,
     )?;
     let eta = prefix.eta;
@@ -92,7 +92,7 @@ where
         shape,
         akita_types::NATIVE_EOR_SUMCHECK_INVOCATION,
     )?;
-    let final_claims = backend.finish_eor(session)?;
+    let mut final_claims = backend.finish_eor(session)?;
     if final_claims.len() != num_claims
         || final_claims
             .iter()
@@ -123,10 +123,10 @@ where
         final_factors.push(factor);
         protocol_points.push(point);
     }
-    akita_types::native_eor_prover_final_claims::<F, E>(
+    akita_types::native_eor_final_claims::<F, E, _>(
         grinding,
         opening_batch,
-        &final_claims,
+        &mut final_claims,
         level,
     )?;
     Ok(ProvedExtensionOpeningReduction {

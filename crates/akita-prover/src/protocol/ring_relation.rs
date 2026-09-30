@@ -7,6 +7,7 @@ use crate::ProverOpeningData;
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
 use akita_types::dispatch_for_field;
+use akita_types::NativeGrinding;
 #[cfg(test)]
 use akita_types::RingRelationGroupOpening;
 use akita_types::RingVec;

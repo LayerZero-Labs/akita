@@ -101,22 +101,13 @@ pub use layout::{
     SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
 };
 pub use native_eor::{
-    native_eor_prover_final_claims, native_eor_prover_prefix, native_eor_verifier_final_claims,
-    native_eor_verifier_prefix, NativeEorPrefix, NATIVE_EOR_SUMCHECK_INVOCATION,
+    native_eor_final_claims, native_eor_prefix, NativeEorPrefix, NATIVE_EOR_SUMCHECK_INVOCATION,
 };
-pub use native_l2::{
-    native_l2_prover_prefix, native_l2_prover_virtual_evaluations, native_l2_verifier_prefix,
-    native_l2_verifier_virtual_evaluations, NativeL2Prefix,
-};
-pub use native_stage1::{
-    native_stage1_prover_child_claims, native_stage1_prover_range_image,
-    native_stage1_verifier_child_claims, native_stage1_verifier_range_image,
-};
-pub use native_stage2::{native_stage2_prover_w_eval, native_stage2_verifier_w_eval};
+pub use native_l2::{native_l2_prefix, native_l2_virtual_evaluations};
+pub use native_stage1::{native_stage1_child_claims, native_stage1_range_image};
+pub use native_stage2::native_stage2_w_eval;
 pub use native_stage3::{
-    native_stage3_prover_claim, native_stage3_prover_prefix_eval, native_stage3_public_slot_prover,
-    native_stage3_public_slot_verifier, native_stage3_verifier_claim,
-    native_stage3_verifier_prefix_eval,
+    native_stage3_claim, native_stage3_prefix_eval, native_stage3_public_slot,
 };
 pub use ntt_cache::{
     build_riscv64_scalar_q128_cache_artifact, centered_quotient_requires_i16_tail,
@@ -138,11 +129,11 @@ pub use proof::{
     prepare_coefficient_packing_batch_semantics, prepare_opening_point,
     relation_claim_from_compressed_rhs_extension, relation_claim_from_layout_extension,
     relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
-    relation_rhs_row_count, ring_subfield_packed_extension_opening_point, sample_akita_setup_seed,
-    sample_row_coefficients_native, setup_prefix_coverage_eval_len,
+    relation_rhs_row_count, ring_subfield_packed_extension_opening_point, row_coefficients_native,
+    sample_akita_setup_seed, setup_prefix_coverage_eval_len,
     validate_coefficient_packing_batch_groups, validate_public_matrix_matches_seed,
-    verify_row_coefficients_native, AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed,
-    AkitaVerifierSetup, CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
+    AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, AkitaVerifierSetup,
+    CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
     CoefficientPackingChallenges, CoefficientPackingGroupSemantics, Commitment, CommittedGroup,
     CompressionRelationWeights, DigitBlockIter, DigitBlocks, ExtensionOpeningReductionShape,
     GroupBatchStatement, GroupFoldChallenges, NegativeBinarySupport, OpeningClaims, OpeningFamily,
@@ -208,12 +199,12 @@ pub use transcript_grinding::{
     grind_bits_for_loss, independent_batch_loss_factor, multilinear_point_loss_factor,
     polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
     ChallengeFieldOrder, GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite,
-    NativeGrindingSumcheckProver, NativeGrindingSumcheckVerifier, NativeProofAcceptance,
-    NativeProverGrinding, NativeVerifierGrinding, SumcheckProtocol, TranscriptGrindingCost,
-    FOLD_COORDINATE_ORACLE_REVISION, FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS,
-    GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
-    GRINDING_PREDICATE_BYTES, GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS,
-    TRANSCRIPT_GRINDING_QUERY_LIMIT, TRANSCRIPT_SECURITY_BITS,
+    NativeGrinding, NativeGrindingSumcheckProver, NativeGrindingSumcheckVerifier,
+    NativeProofAcceptance, NativeProverGrinding, NativeVerifierGrinding, SumcheckProtocol,
+    TranscriptGrindingCost, FOLD_COORDINATE_ORACLE_REVISION, FOLD_RESPONSE_ATTEMPTS,
+    FOLD_RESPONSE_NONCE_BITS, GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER,
+    GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES, GRINDING_QUERY_POLICY_REVISION,
+    MAX_GRINDING_BITS, TRANSCRIPT_GRINDING_QUERY_LIMIT, TRANSCRIPT_SECURITY_BITS,
 };
 pub use transcript_grinding_plan::{
     derive_transcript_grinding_plan_from_public_shape, transcript_grinding_cost_for_planner_edge,

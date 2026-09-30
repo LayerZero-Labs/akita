@@ -644,8 +644,8 @@ impl GrindingPlanAccumulator {
 #[path = "transcript_grinding/native_replay.rs"]
 mod native_replay;
 pub use native_replay::{
-    NativeGrindingSumcheckProver, NativeGrindingSumcheckVerifier, NativeProofAcceptance,
-    NativeProverGrinding, NativeVerifierGrinding,
+    NativeGrinding, NativeGrindingSumcheckProver, NativeGrindingSumcheckVerifier,
+    NativeProofAcceptance, NativeProverGrinding, NativeVerifierGrinding,
 };
 
 impl GrindingPlan {

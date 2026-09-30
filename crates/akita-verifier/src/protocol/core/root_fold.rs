@@ -1,5 +1,6 @@
 use super::*;
 use akita_types::Commitment;
+use akita_types::NativeGrinding;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn verify_root_native<F, E>(
@@ -54,7 +55,7 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
     }
     for (group_index, group) in claims.groups().iter().enumerate() {
-        akita_transcript::public_native_extensions_verifier::<F, E>(
+        akita_transcript::public_native_extensions::<F, E, _>(
             grinding.state_mut(),
             akita_transcript::ProtocolSiteId {
                 family: akita_transcript::SITE_FAMILY_ROOT_STATEMENT,
@@ -74,7 +75,7 @@ where
         basis,
         root_lp,
     )?;
-    akita_transcript::public_native_extensions_verifier::<F, E>(
+    akita_transcript::public_native_extensions::<F, E, _>(
         grinding.state_mut(),
         akita_transcript::ProtocolSiteId {
             family: akita_transcript::SITE_FAMILY_FOLD_BINDING,

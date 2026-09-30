@@ -1,4 +1,5 @@
 use super::*;
+use akita_types::NativeGrinding;
 use jolt_poly::UnivariatePoly;
 
 struct Stage1EqSumcheck<
@@ -212,7 +213,7 @@ where
                 akita_sumcheck::NativeSumcheckShape::new(rounds, shape.sumcheck_proof.1)?,
                 0,
             )?;
-        let crate::backend::Stage1PublicTransition::ProductChildClaims(child_claims) =
+        let crate::backend::Stage1PublicTransition::ProductChildClaims(mut child_claims) =
             crate::backend::OpaqueStage1Kernel::stage1_public_transition(
                 ctx.backend(),
                 &mut session_handle,
@@ -224,11 +225,11 @@ where
         if child_claims.len() != shape.child_claims {
             return Err(AkitaError::InvalidProof);
         }
-        akita_types::native_stage1_prover_child_claims::<F, E>(
+        akita_types::native_stage1_child_claims::<F, E, _>(
             grinding,
             level,
             stage,
-            &child_claims,
+            &mut child_claims,
         )?;
         let gamma = grinding.grinded_ext_challenge::<F, E>(
             akita_types::GrindingSite::Stage1InterstageBatch { level, stage },
@@ -253,7 +254,7 @@ where
         let step = crate::backend::Stage1Step::FusedRangeNorm;
         let crate::backend::Stage1PublicTransition::PhysicalL2Claims {
             response_l2_sq,
-            subclaims,
+            mut subclaims,
         } = crate::backend::OpaqueStage1Kernel::stage1_public_transition(
             ctx.backend(),
             &mut session_handle,
@@ -271,7 +272,7 @@ where
         {
             return Err(AkitaError::InvalidProof);
         }
-        akita_types::native_l2_prover_prefix::<F, E>(grinding, level, response_l2_sq, &subclaims)?;
+        akita_types::native_l2_prefix::<F, E, _>(grinding, level, response_l2_sq, &mut subclaims)?;
         let norm_claim = if subclaims.is_empty() {
             E::from_u128(response_l2_sq)
         } else {
@@ -329,7 +330,7 @@ where
         final_point = point;
         let crate::backend::Stage1PublicTransition::Final {
             range_image_evaluation,
-            virtual_evaluations,
+            mut virtual_evaluations,
         } = crate::backend::OpaqueStage1Kernel::stage1_public_transition(
             ctx.backend(),
             &mut session_handle,
@@ -341,10 +342,10 @@ where
         if virtual_evaluations.len() != physical.shape().virtual_evaluation_count() {
             return Err(AkitaError::InvalidProof);
         }
-        akita_types::native_l2_prover_virtual_evaluations::<F, E>(
+        akita_types::native_l2_virtual_evaluations::<F, E, _>(
             grinding,
             level,
-            &virtual_evaluations,
+            &mut virtual_evaluations,
         )?;
         (
             range_image_evaluation,
@@ -402,7 +403,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let stage1_point = final_claims.point().to_vec();
-    akita_types::native_stage1_prover_range_image::<F, E>(
+    akita_types::native_stage1_range_image::<F, E, _>(
         grinding,
         level,
         u32::try_from(product_count).map_err(|_| AkitaError::InvalidProof)?,
@@ -642,8 +643,8 @@ where
                 .id
                 .serialize_compressed(&mut encoded_slot)
                 .map_err(|_| AkitaError::InvalidProof)?;
-            akita_types::native_stage3_public_slot_prover(grinding, level, &encoded_slot)?;
-            akita_types::native_stage3_prover_claim::<F, E>(grinding, level, setup_product_claim)?;
+            akita_types::native_stage3_public_slot(grinding, level, &encoded_slot)?;
+            akita_types::native_stage3_claim::<F, E, _>(grinding, level, setup_product_claim)?;
             let mut kernel = Stage3Sumcheck {
                 backend,
                 session: &mut session,
@@ -668,11 +669,7 @@ where
                 0,
             )?;
             let setup_prefix_eval = backend.finish_stage3(session)?;
-            akita_types::native_stage3_prover_prefix_eval::<F, E>(
-                grinding,
-                level,
-                setup_prefix_eval,
-            )?;
+            akita_types::native_stage3_prefix_eval::<F, E, _>(grinding, level, setup_prefix_eval)?;
             Ok(Some(Stage3ProveOutput {
                 setup_prefix_eval,
                 setup_prefix_point,

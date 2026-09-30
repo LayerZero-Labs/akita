@@ -1,5 +1,6 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
 use akita_error::AkitaError;
+use akita_types::NativeGrinding;
 use akita_types::{
     CoefficientPackingBatchSemantics, OpeningFamily, RelationRangeImagePlan, RingRelationInstance,
 };

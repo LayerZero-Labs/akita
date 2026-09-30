@@ -1,5 +1,6 @@
 use super::*;
 use crate::prepared_cache::TerminalNttCache;
+use akita_types::NativeGrinding;
 use akita_types::OpeningClaimsLayout;
 
 pub(super) struct NativeSuffixVerifierState<F: Field, E: Field> {
@@ -144,7 +145,7 @@ where
         let prepared =
             prepare_single_field_suffix_groups::<F, E>(&block_claims, lp, &opening_batch)?;
         for (group_index, point) in group_points.iter().enumerate() {
-            akita_transcript::public_native_extensions_verifier::<F, E>(
+            akita_transcript::public_native_extensions::<F, E, _>(
                 grinding.state_mut(),
                 akita_transcript::ProtocolSiteId {
                     family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
@@ -157,7 +158,7 @@ where
             )
             .map_err(|_| AkitaError::InvalidProof)?;
         }
-        akita_transcript::public_native_extensions_verifier::<F, E>(
+        akita_transcript::public_native_extensions::<F, E, _>(
             grinding.state_mut(),
             akita_transcript::ProtocolSiteId {
                 family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
@@ -402,7 +403,7 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         (group.prepared, group.protocol, replay.final_relation)
     };
-    akita_transcript::public_native_extensions_verifier::<F, E>(
+    akita_transcript::public_native_extensions::<F, E, _>(
         grinding.state_mut(),
         akita_transcript::ProtocolSiteId {
             family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
@@ -414,7 +415,7 @@ where
     )
     .map_err(|_| AkitaError::InvalidProof)?;
     if final_relation.is_none() {
-        akita_transcript::public_native_extensions_verifier::<F, E>(
+        akita_transcript::public_native_extensions::<F, E, _>(
             grinding.state_mut(),
             akita_transcript::ProtocolSiteId {
                 family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
@@ -426,7 +427,7 @@ where
         )
         .map_err(|_| AkitaError::InvalidProof)?;
     }
-    let row_coefficients = akita_types::verify_row_coefficients_native::<F, E>(
+    let row_coefficients = akita_types::row_coefficients_native::<F, E, _>(
         &opening_batch,
         akita_types::GrindingSite::EvaluationBatch { level },
         grinding,
