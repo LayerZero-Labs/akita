@@ -11,13 +11,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  collect:
+  reserve:
     if: >-
+      github.run_attempt == 1 &&
       github.repository == 'LayerZero-Labs/akita' &&
       github.event.issue.pull_request &&
-      github.event.comment.body == '/ai-review' &&
+      github.event.comment.body == '/ai-comment' &&
       github.event.comment.user.id == github.event.issue.user.id &&
       github.event.comment.user.type == 'User'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      ready: ${{ steps.reserve.outputs.ready }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Authorize and reserve one of three attempts
+        id: reserve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ai_review/run.py reserve --directory "$RUNNER_TEMP/ai-review"
+
+  collect:
+    needs: reserve
+    if: needs.reserve.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -46,7 +68,7 @@ jobs:
 
   review:
     needs: collect
-    if: needs.collect.outputs.ready == 'true'
+    if: github.run_attempt == 1 && needs.collect.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     environment: non-main

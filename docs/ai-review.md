@@ -1,19 +1,33 @@
 # Author-requested AI reviews
 
 An author with current repository write, maintain, or admin permission can post
-exactly `/ai-review` on their open, same-repository PR. The workflow posts its
+exactly `/ai-comment` on their open, same-repository PR, with no spaces, newlines
+or additional text. The workflow posts its
 findings inline on the corresponding source lines in the PR diff. It
 does not require the `ai-review` label. Other users, external contributors, forks,
 bots, edited comments and comments containing additional instructions cannot
 trigger it. The workflow must first land on the default branch (`main`), because
 [GitHub runs issue-comment workflows from that branch](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#issue_comment).
 
-Post another `/ai-review` to check fixes, new trusted discussion and changes since
+Post another `/ai-comment` to check fixes, new trusted discussion and changes since
 the previous review. Every earlier finding is reassessed, including previously
 fixed issues that may have regressed. Unresolved findings retain their IDs rather
 than being posted as new issues. Rerunning the same Actions event does not publish
 twice. Review requests serialize per PR; GitHub concurrency may replace an older
 pending request when several commands arrive while a review runs.
+
+Each PR has a lifetime limit of **three attempts**, across all commits. Before
+collection, a separate job reserves a slot in a bot comment showing `1/3`, `2/3`
+or `3/3`. Failed, cancelled and incomplete attempts consume their reserved slot;
+commands rejected before reservation do not. After three reservations, further
+commands stop before collection or OpenAI access. Actions reruns cannot reserve
+or invoke the model again; recovery requires a new author command and an available
+slot. The limit counts review attempts, each of which may use several model turns.
+Force pushes and rebases do not reset the quota because it belongs to the PR
+number, not a commit. A changed head during review prevents publication and still
+consumes the reserved attempt. A new command reviews the rewritten diff against
+the previous reviewed head; if that old commit is unavailable, collection fails
+closed rather than silently dropping review history.
 
 A completed review with no unresolved findings, or only optional nits, posts
 "Recommended for approval" in its review body. New nits still appear inline.
@@ -39,6 +53,7 @@ checkout, so a PR cannot overwrite the trusted scripts or skill.
 
 | Job | Credentials | Allowed work |
 | --- | --- | --- |
+| Reserve | PR write token; no OpenAI key | Revalidate author and write access, count bot reservation markers, reserve one of three attempts |
 | Collect | Read-only GitHub token | Revalidate author and current write access, read trusted comments, collect pinned public git objects |
 | Review | Environment OpenAI key, read-only job permission | Send source evidence to the fixed OpenAI Responses endpoint; offer bounded in-memory source reads/searches |
 | Publish | PR write token; no OpenAI key | Validate the structured result, recheck authorization and snapshot, submit one COMMENT review with new inline findings on the original PR |
@@ -58,6 +73,11 @@ Other bots are excluded. Prior state is accepted only from marked comments by
 `github-actions[bot]`, the trusted publisher identity. This assumes workflows with
 PR write permission are trusted; do not give untrusted workflows that permission.
 All accepted prose, source and prior findings remain untrusted model evidence.
+Quota reservations are excluded from model evidence. Their durable markers count
+even when no review was published; do not edit or delete reservation comments.
+The quota trusts the bot identity and PR-wide workflow concurrency, just like
+review history trusts the publisher. Maintainers who can delete bot comments or
+change the trusted workflow can reset it; it is not an administrator-proof budget.
 Prompt injection can still degrade review quality, so findings require human
 judgment. Credential isolation rests on tool restrictions, not model obedience.
 
@@ -98,8 +118,8 @@ contain public source/review evidence, no credentials, and expire after one day.
 The publisher rejects changes to head, base, branch targets, PR text or eligible
 discussion since collection. Post a fresh command after the PR stabilizes. A
 final check and a GitHub review write cannot be atomic; the review is always
-pinned to its reviewed commit. API write failures are not blindly retried: a rerun checks
-for the original request ID before attempting a write.
+pinned to its reviewed commit. API write failures are not blindly retried; the
+publisher also checks for the original request ID before attempting a write.
 
 The latest state is stored in a hidden marker in the bot review body. Do not edit
 those markers;

@@ -16,6 +16,8 @@ from collect import diff_lines, discussions, previous_state, tree
 from common import GitHub, MARKER, NoRedirect, REPOSITORY, ReviewError, authorize, digest, request, revision
 from model import review, source_tool
 from publish import publish, prepare_review, review_text, validate
+from quota import ATTEMPT_MARKER, reserve
+import run as entrypoint
 
 HEAD = "a" * 40
 BASE = "b" * 40
@@ -27,7 +29,7 @@ EVENT["issue"]["pull_request"] = {"url": "unused"}
 PR = {"number": 7, "state": "open", "user": AUTHOR, "title": "Fix batch", "body": "Details",
       "head": {"sha": HEAD, "ref": "feature", "repo": {"full_name": REPOSITORY}},
       "base": {"sha": BASE, "ref": "main", "repo": {"full_name": REPOSITORY}}}
-COMMAND = {"id": 12, "user": AUTHOR, "body": "/ai-review", "updated_at": "now",
+COMMAND = {"id": 12, "user": AUTHOR, "body": "/ai-comment", "updated_at": "now",
            "issue_url": f"https://api.github.com/repos/{REPOSITORY}/issues/7"}
 
 
@@ -42,6 +44,11 @@ class FakeGitHub:
     def get(self, path, payload=None):
         if payload is not None:
             self.writes.append((path, payload))
+            if path == "issues/7/comments":
+                posted = {"id": 1000 + len(self.comments), "body": payload["body"],
+                          "user": {"login": "github-actions[bot]", "type": "Bot", "id": 1}}
+                self.comments.append(posted)
+                return posted
             posted = {"id": 99, "user": {"login": "github-actions[bot]", "type": "Bot", "id": 1},
                       "body": payload["body"], "submitted_at": "later",
                       "state": "COMMENTED", "commit_id": payload["commit_id"]}
@@ -94,6 +101,16 @@ def proposal(value):
 
 
 class AuthorizationTests(unittest.TestCase):
+    def test_command_must_match_exactly_without_whitespace_or_other_text(self):
+        for body in ("/ai-review", " /ai-comment", "/ai-comment ", "/ai-comment\n",
+                     "\n/ai-comment", "/ai-comment\r\n", "`/ai-comment`", "/AI-COMMENT",
+                     "/ai-comment\nplease review", "/ai-comment\u200b", "/ai-comment\t"):
+            with self.subTest(body=body):
+                gh = FakeGitHub()
+                gh.command["body"] = body
+                with self.assertRaises(ReviewError):
+                    authorize(gh, EVENT)
+
     def test_accepts_only_current_author_with_write_access(self):
         self.assertEqual(authorize(FakeGitHub(), EVENT)["number"], 7)
         for change in ("other-author", "fork", "closed", "read-only", "extra-text", "edited", "wrong-repo",
@@ -131,6 +148,73 @@ class AuthorizationTests(unittest.TestCase):
         gh.comments.append({"id": 51, "user": {"id": 10, "login": "random-bot", "type": "Bot"},
                             "body": MARKER + "evil"})
         self.assertEqual([c["id"] for c in discussions(gh, 7)], [12])
+
+
+class QuotaTests(unittest.TestCase):
+    def test_three_attempts_survive_force_pushes_without_any_successful_review(self):
+        gh = FakeGitHub()
+        for index in range(4):
+            event = copy.deepcopy(EVENT)
+            gh.command["id"] = event["comment"]["id"] = 12 + index
+            gh.pr["head"]["sha"] = str(index) * 40
+            self.assertEqual(reserve(gh, event), index < 3)
+        self.assertEqual(len(gh.writes), 3)
+        self.assertEqual(gh.reviews, [])
+        self.assertIn("3/3", gh.writes[-1][1]["body"])
+        self.assertEqual(len(discussions(gh, 7)), 1)
+
+    def test_replayed_request_does_not_reserve_again(self):
+        gh = FakeGitHub()
+        self.assertTrue(reserve(gh, EVENT))
+        self.assertFalse(reserve(gh, EVENT))
+        self.assertEqual(len(gh.writes), 1)
+
+    def test_fake_markers_are_ignored_and_malformed_bot_state_fails_closed(self):
+        gh = FakeGitHub()
+        for user in (AUTHOR, {"login": "other[bot]", "type": "Bot"},
+                     {"login": "github-actions[bot]", "type": "User"}):
+            gh.comments.append({"id": 99, "user": user, "body": ATTEMPT_MARKER + "12 -->"})
+        self.assertTrue(reserve(gh, EVENT))
+        gh.comments[-1]["body"] = ATTEMPT_MARKER + "invalid"
+        with self.assertRaisesRegex(ReviewError, "Invalid review attempt marker"):
+            reserve(gh, EVENT)
+        self.assertEqual(len(gh.writes), 1)
+
+    def test_unauthorized_requests_cannot_consume_quota(self):
+        gh = FakeGitHub()
+        gh.permission = "read"
+        with self.assertRaises(ReviewError):
+            reserve(gh, EVENT)
+        self.assertEqual(gh.writes, [])
+
+    def test_ambiguous_write_never_signals_ready_or_retries(self):
+        gh = FakeGitHub()
+        original = gh.get
+
+        def fail_after_write(path, payload=None):
+            response = original(path, payload)
+            if payload is not None:
+                raise ReviewError("API request failed or timed out")
+            return response
+
+        with patch.object(gh, "get", side_effect=fail_after_write):
+            with self.assertRaises(ReviewError):
+                reserve(gh, EVENT)
+        self.assertFalse(reserve(gh, EVENT))
+        self.assertEqual(len(gh.writes), 1)
+
+    def test_rerun_cannot_call_model_or_reserve_even_with_old_artifacts(self):
+        for stage in ("reserve", "review"):
+            for attempt in ("2", "3", ""):
+                with self.subTest(stage=stage, attempt=attempt), \
+                        patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": attempt}), \
+                        patch.object(sys, "argv", ["run.py", stage, "--directory", "/unused"]), \
+                        patch.object(entrypoint, "review") as model, \
+                        patch.object(entrypoint, "reserve") as reservation:
+                    with self.assertRaisesRegex(ReviewError, "cannot be rerun"):
+                        entrypoint.main()
+                    model.assert_not_called()
+                    reservation.assert_not_called()
 
 
 class SourceToolTests(unittest.TestCase):

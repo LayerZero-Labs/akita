@@ -4,7 +4,16 @@ This mode applies only when invoked by the trusted `ai-review.yml` workflow.
 It overrides manual label discovery, shell/test execution, publication,
 and approval instructions elsewhere in this skill. Editing or discussing this
 skill does not activate this mode. A validated author command is publication
-authorization for that one PR. No label is required.
+authorization for that one PR. No label is required. The command body must be
+exactly `/ai-comment`, without whitespace, newlines or any additional text.
+
+The workflow permits at most three attempts per PR, including failed or incomplete
+attempts. A keyless job reserves each slot before collection and model access.
+Reruns cannot invoke the model again. Only a new eligible author command can use
+the next slot. Quota markers are excluded from evidence, and model instructions
+or output cannot change this deterministic limit.
+Force pushes and rebases do not reset the PR's quota. A changed head during review
+blocks publication and still consumes the reserved attempt.
 
 Review the supplied PR deeply using the embedded deslop and code-quality passes.
 Check live specifications, regressions, integration, duplicated policy, needless
@@ -72,4 +81,4 @@ It refreshes authorization, revisions and trusted discussions before publication
 It does not edit the PR description, approve, request changes, resolve threads,
 run commands from the model, or write to model-selected destinations. It refuses
 stale snapshots and ambiguous write retries. A rerun of the same event is a no-op
-after successful publication. A new `/ai-review` comment is a new review request.
+after successful publication. A new `/ai-comment` comment is a new review request.

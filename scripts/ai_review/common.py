@@ -108,7 +108,7 @@ def authorize(github, event):
         raise ReviewError("Invalid event identifiers")
     pr = github.get(f"pulls/{number}")
     comment = github.get(f"issues/comments/{comment_id}")
-    if (comment.get("body", "").strip() != "/ai-review"
+    if (comment.get("body", "") != "/ai-comment"
             or comment.get("issue_url") != f"https://api.github.com/repos/{REPOSITORY}/issues/{number}"
             or comment.get("user", {}).get("id") != pr.get("user", {}).get("id")
             or comment.get("user", {}).get("id") != event["comment"].get("user", {}).get("id")

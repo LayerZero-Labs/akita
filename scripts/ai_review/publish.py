@@ -138,7 +138,7 @@ def publish(github, event, snapshot, proposal):
         return "already-published"
     if (revision(pr) != snapshot["revision"] or comments != snapshot["comments"]
             or pr["title"] != snapshot["title"] or (pr.get("body") or "") != snapshot["description"]):
-        raise ReviewError("Review is stale; post a new /ai-review command")
+        raise ReviewError("Review is stale; post a new /ai-comment command")
     posted = github.get(f"pulls/{pr['number']}/reviews", payload)
     verified = github.get(f"pulls/{pr['number']}/reviews/{posted['id']}")
     # The review-specific endpoint returns legacy position-only comment objects.

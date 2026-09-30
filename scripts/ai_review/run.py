@@ -8,17 +8,26 @@ from collect import collect
 from common import GitHub, ReviewError, load_json, save_json
 from model import review
 from publish import publish
+from quota import reserve
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("stage", choices=("collect", "review", "publish"))
+    parser.add_argument("stage", choices=("reserve", "collect", "review", "publish"))
     parser.add_argument("--directory", required=True)
     args = parser.parse_args()
+    # A job rerun can reuse artifacts without rerunning the reservation job.
+    # Require a fresh author command instead, including after an API timeout.
+    if args.stage in ("reserve", "review") and os.environ.get("GITHUB_RUN_ATTEMPT") != "1":
+        raise ReviewError("Review attempts cannot be rerun; post a new /ai-comment command")
     root = args.directory
     os.makedirs(root, exist_ok=True)
     snapshot_path, result_path = f"{root}/snapshot.json", f"{root}/result.json"
-    if args.stage == "collect":
+    if args.stage == "reserve":
+        if reserve(GitHub(os.environ["GH_TOKEN"]), load_json(os.environ["GITHUB_EVENT_PATH"])):
+            with open(os.environ["GITHUB_OUTPUT"], "a") as handle:
+                handle.write("ready=true\n")
+    elif args.stage == "collect":
         snapshot = collect(GitHub(os.environ["GH_TOKEN"]), load_json(os.environ["GITHUB_EVENT_PATH"]))
         if snapshot is not None:
             save_json(snapshot_path, snapshot)
