@@ -100,14 +100,12 @@ where
         grinding.state_mut(),
         eor_site(level, STAGE_OPENINGS),
         openings,
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    )?;
     exchange_native_extension_group::<F, E, _>(
         grinding.state_mut(),
         eor_site(level, STAGE_PARTIALS),
         &mut partials,
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    )?;
     let (eta, claim_coefficients) =
         batch_challenges::<E>(opening_batch, level, split_bits, |site, count| {
             grinding.grinded_ext_challenges::<F, E>(site, count)
@@ -139,7 +137,6 @@ where
         eor_site(level, STAGE_FINAL_CLAIMS),
         final_claims,
     )
-    .map_err(|_| AkitaError::InvalidProof)
 }
 
 #[cfg(test)]

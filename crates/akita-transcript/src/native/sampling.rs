@@ -1,7 +1,8 @@
 //! Exact canonical rejection sampling for native field challenges.
 
-use super::{NativeContextError, NativeProverState, NativeVerifierState};
+use super::{NativeProverState, NativeVerifierState};
 use crate::TranscriptSponge;
+use akita_error::AkitaError;
 use jolt_field::CanonicalEncoding;
 use spongefish::DuplexSpongeInterface;
 
@@ -39,13 +40,13 @@ pub const fn native_field_challenge_bytes<F: CanonicalEncoding>() -> u64 {
 
 fn sample_native_field<F: CanonicalEncoding>(
     sponge: &mut TranscriptSponge,
-) -> Result<F, NativeContextError> {
+) -> Result<F, AkitaError> {
     if !native_field_sampling_is_certified(
         F::NUM_BYTES,
         F::MODULUS_BITS,
         NATIVE_FIELD_SAMPLING_QUERY_LIMIT,
     ) {
-        return Err(NativeContextError);
+        return Err(AkitaError::InvalidProof);
     }
     let mut candidate = [0u8; NATIVE_FIELD_CHALLENGE_BYTES as usize];
     let width = F::NUM_BYTES;
@@ -56,7 +57,7 @@ fn sample_native_field<F: CanonicalEncoding>(
     loop {
         #[cfg(feature = "transcript-keccak")]
         {
-            attempts = attempts.checked_add(1).ok_or(NativeContextError)?;
+            attempts = attempts.checked_add(1).ok_or(AkitaError::InvalidProof)?;
         }
         sponge.squeeze(&mut candidate[..width]);
         if excess_bits != 0 {
@@ -74,18 +75,28 @@ fn sample_native_field<F: CanonicalEncoding>(
 }
 
 /// Draw one exactly uniform base-field challenge by canonical rejection sampling.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidProof`] when `F` is not certified for exact
+/// native sampling.
 pub fn native_prover_field_challenge<F: CanonicalEncoding>(
     state: &mut NativeProverState,
-) -> Result<F, NativeContextError> {
+) -> Result<F, AkitaError> {
     sample_native_field(&mut state.duplex_sponge_state)
 }
 
 /// Draw one exactly uniform base-field challenge by canonical rejection sampling.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidProof`] when `F` is not certified for exact
+/// native sampling or the verifier state is already invalid.
 pub fn native_verifier_field_challenge<F: CanonicalEncoding>(
     state: &mut NativeVerifierState<'_>,
-) -> Result<F, NativeContextError> {
+) -> Result<F, AkitaError> {
     if state.is_invalid() {
-        return Err(NativeContextError);
+        return Err(AkitaError::InvalidProof);
     }
     let result = sample_native_field(state.sponge_mut());
     if result.is_err() {

@@ -1,12 +1,12 @@
 //! Native Spongefish state construction and canonical Akita message codecs.
 
+use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use spongefish::{
     protocol_id, DomainSeparator, DuplexSpongeInterface, Encoding, NargDeserialize, ProverState,
     VerificationError, WithoutInstance,
 };
 use std::marker::PhantomData;
-use std::{error::Error, fmt};
 
 use crate::TranscriptSponge;
 
@@ -162,30 +162,6 @@ impl ProtocolSiteId {
 /// Native Spongefish prover state used by Akita.
 pub type NativeProverState = ProverState<TranscriptSponge>;
 
-/// Failure to construct a native transcript from an unrepresentable public input.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NativeInitializationError;
-
-impl fmt::Display for NativeInitializationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("native transcript input length exceeds u64")
-    }
-}
-
-impl Error for NativeInitializationError {}
-
-/// A public native context cannot be represented by the fixed site grammar.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NativeContextError;
-
-impl fmt::Display for NativeContextError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("native protocol value is unsupported or cannot be represented safely")
-    }
-}
-
-impl Error for NativeContextError {}
-
 #[derive(Clone, Copy)]
 struct FramedBytes<'a> {
     bytes: &'a [u8],
@@ -193,10 +169,10 @@ struct FramedBytes<'a> {
 }
 
 impl<'a> FramedBytes<'a> {
-    fn new(bytes: &'a [u8]) -> Result<Self, NativeInitializationError> {
+    fn new(bytes: &'a [u8]) -> Result<Self, AkitaError> {
         Ok(Self {
             bytes,
-            len: u64::try_from(bytes.len()).map_err(|_| NativeInitializationError)?,
+            len: u64::try_from(bytes.len()).map_err(|_| AkitaError::InvalidProof)?,
         })
     }
 }
@@ -226,7 +202,7 @@ fn native_domain<'a>(
         spongefish::WithInstance<FramedBytes<'a>>,
         spongefish::WithSession<FramedBytes<'a>>,
     >,
-    NativeInitializationError,
+    AkitaError,
 > {
     Ok(
         DomainSeparator::<WithoutInstance>::new(native_protocol_id())
@@ -236,19 +212,26 @@ fn native_domain<'a>(
 }
 
 /// Construct a bound native prover state.
-pub fn new_native_prover(
-    session: &[u8],
-    instance: &[u8],
-) -> Result<NativeProverState, NativeInitializationError> {
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidProof`] when a framed input length exceeds
+/// `u64`.
+pub fn new_native_prover(session: &[u8], instance: &[u8]) -> Result<NativeProverState, AkitaError> {
     Ok(native_domain(session, instance)?.to_prover(TranscriptSponge::default()))
 }
 
 /// Construct a bound native verifier state over one proof byte string.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidProof`] when a framed input length exceeds
+/// `u64`.
 pub fn new_native_verifier<'proof>(
     session: &[u8],
     instance: &[u8],
     proof: &'proof [u8],
-) -> Result<NativeVerifierState<'proof>, NativeInitializationError> {
+) -> Result<NativeVerifierState<'proof>, AkitaError> {
     Ok(NativeVerifierState::new(
         native_domain(session, instance)?.to_verifier(TranscriptSponge::default(), proof),
     ))
@@ -396,7 +379,7 @@ pub fn send_native_field<F: CanonicalEncoding>(state: &mut NativeProverState, va
 /// Receive one canonical field atom, rejecting noncanonical representatives.
 pub fn receive_native_field<F: CanonicalEncoding>(
     state: &mut NativeVerifierState<'_>,
-) -> Result<F, VerificationError> {
+) -> Result<F, AkitaError> {
     state
         .prover_message::<NativeField<F>>()
         .map(NativeField::into_inner)
@@ -412,9 +395,7 @@ where
 }
 
 /// Receive one extension-field proof atom from canonical base coordinates.
-pub fn receive_native_extension<F, E>(
-    state: &mut NativeVerifierState<'_>,
-) -> Result<E, VerificationError>
+pub fn receive_native_extension<F, E>(state: &mut NativeVerifierState<'_>) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
@@ -463,7 +444,7 @@ fn receive_native_byte_chunks<const N: usize>(
     state: &mut NativeVerifierState<'_>,
     len: usize,
     bytes: &mut Vec<u8>,
-) -> Result<usize, VerificationError> {
+) -> Result<usize, AkitaError> {
     for _ in 0..len / N {
         let chunk = state.prover_message::<NativeByteChunk<N>>()?;
         bytes.extend_from_slice(&chunk.0);
@@ -487,11 +468,11 @@ pub fn send_native_bytes(state: &mut NativeProverState, bytes: &[u8]) {
 pub fn receive_native_bytes(
     state: &mut NativeVerifierState<'_>,
     len: usize,
-) -> Result<Vec<u8>, VerificationError> {
+) -> Result<Vec<u8>, AkitaError> {
     let mut bytes = Vec::new();
     bytes
         .try_reserve_exact(len)
-        .map_err(|_| VerificationError)?;
+        .map_err(|_| AkitaError::InvalidProof)?;
     let remaining = receive_native_byte_chunks::<NATIVE_BYTE_CHUNK_BYTES>(state, len, &mut bytes)?;
     let remaining =
         receive_native_byte_chunks::<NATIVE_BYTE_TAIL_CHUNK_BYTES>(state, remaining, &mut bytes)?;
@@ -506,8 +487,8 @@ pub fn send_native_byte_group(
     state: &mut NativeProverState,
     site: ProtocolSiteId,
     bytes: &[u8],
-) -> Result<(), NativeContextError> {
-    let len = u64::try_from(bytes.len()).map_err(|_| NativeContextError)?;
+) -> Result<(), AkitaError> {
+    let len = u64::try_from(bytes.len()).map_err(|_| AkitaError::InvalidProof)?;
     prover_context(
         state,
         ProtocolContextRecord::new(
@@ -527,8 +508,8 @@ pub fn receive_native_byte_group(
     state: &mut NativeVerifierState<'_>,
     site: ProtocolSiteId,
     len: usize,
-) -> Result<Vec<u8>, VerificationError> {
-    let len_u64 = u64::try_from(len).map_err(|_| VerificationError)?;
+) -> Result<Vec<u8>, AkitaError> {
+    let len_u64 = u64::try_from(len).map_err(|_| AkitaError::InvalidProof)?;
     verifier_context(
         state,
         ProtocolContextRecord::new(
@@ -542,32 +523,33 @@ pub fn receive_native_byte_group(
     receive_native_bytes(state, len)
 }
 
+/// Length-atom record and payload site of one bounded byte payload at `site`.
+fn bounded_bytes_sites(site: ProtocolSiteId) -> (ProtocolContextRecord, ProtocolSiteId) {
+    let length_site = ProtocolSiteId { stage: 0, ..site };
+    let length_record = ProtocolContextRecord::new(
+        length_site.to_bytes(),
+        ProtocolMessageKind::ProofLength as u32,
+        1,
+        4,
+        0,
+    );
+    (length_record, ProtocolSiteId { stage: 1, ..site })
+}
+
 /// Emit a bounded variable byte payload with a native `u32` length atom.
 pub fn send_native_bounded_bytes(
     state: &mut NativeProverState,
     site: ProtocolSiteId,
     bytes: &[u8],
     max_len: usize,
-) -> Result<(), NativeContextError> {
+) -> Result<(), AkitaError> {
     if bytes.len() > max_len {
-        return Err(NativeContextError);
+        return Err(AkitaError::InvalidProof);
     }
-    let len = u32::try_from(bytes.len()).map_err(|_| NativeContextError)?;
-    let mut length_site = site;
-    length_site.stage = 0;
-    prover_context(
-        state,
-        ProtocolContextRecord::new(
-            length_site.to_bytes(),
-            ProtocolMessageKind::ProofLength as u32,
-            1,
-            4,
-            0,
-        ),
-    );
+    let len = u32::try_from(bytes.len()).map_err(|_| AkitaError::InvalidProof)?;
+    let (length_record, payload_site) = bounded_bytes_sites(site);
+    prover_context(state, length_record);
     state.prover_message(&len);
-    let mut payload_site = site;
-    payload_site.stage = 1;
     send_native_byte_group(state, payload_site, bytes)
 }
 
@@ -577,38 +559,26 @@ pub fn receive_native_bounded_bytes(
     state: &mut NativeVerifierState<'_>,
     site: ProtocolSiteId,
     max_len: usize,
-) -> Result<Vec<u8>, VerificationError> {
-    let mut length_site = site;
-    length_site.stage = 0;
-    verifier_context(
-        state,
-        ProtocolContextRecord::new(
-            length_site.to_bytes(),
-            ProtocolMessageKind::ProofLength as u32,
-            1,
-            4,
-            0,
-        ),
-    );
+) -> Result<Vec<u8>, AkitaError> {
+    let (length_record, payload_site) = bounded_bytes_sites(site);
+    verifier_context(state, length_record);
     let len = state.prover_message::<u32>()?;
     let len = usize::try_from(len).map_err(|_| {
         state.invalidate();
-        VerificationError
+        AkitaError::InvalidProof
     })?;
     if len > max_len {
         state.invalidate();
-        return Err(VerificationError);
+        return Err(AkitaError::InvalidProof);
     }
-    let mut payload_site = site;
-    payload_site.stage = 1;
     receive_native_byte_group(state, payload_site, len)
 }
 
 fn public_bytes_record(
     site: ProtocolSiteId,
     len: usize,
-) -> Result<ProtocolContextRecord, NativeContextError> {
-    let len = u64::try_from(len).map_err(|_| NativeContextError)?;
+) -> Result<ProtocolContextRecord, AkitaError> {
+    let len = u64::try_from(len).map_err(|_| AkitaError::InvalidProof)?;
     Ok(ProtocolContextRecord::new(
         site.to_bytes(),
         ProtocolMessageKind::PublicValue as u32,
@@ -623,17 +593,14 @@ pub fn public_native_bytes<S: ProofChannel>(
     state: &mut S,
     site: ProtocolSiteId,
     bytes: &[u8],
-) -> Result<(), NativeContextError> {
+) -> Result<(), AkitaError> {
     state.context(public_bytes_record(site, bytes.len())?);
     state.public(bytes);
     Ok(())
 }
 
 /// Draw a context-bound extension-field challenge.
-pub fn native_ext_challenge<F, E, S>(
-    state: &mut S,
-    site: ProtocolSiteId,
-) -> Result<E, NativeContextError>
+pub fn native_ext_challenge<F, E, S>(state: &mut S, site: ProtocolSiteId) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
@@ -642,10 +609,10 @@ where
     let mut coefficients = Vec::new();
     coefficients
         .try_reserve_exact(E::DEGREE)
-        .map_err(|_| NativeContextError)?;
+        .map_err(|_| AkitaError::InvalidProof)?;
     for limb in 0..E::DEGREE {
         let mut limb_site = site;
-        limb_site.limb = u32::try_from(limb).map_err(|_| NativeContextError)?;
+        limb_site.limb = u32::try_from(limb).map_err(|_| AkitaError::InvalidProof)?;
         state.context(ProtocolContextRecord::new(
             limb_site.to_bytes(),
             ProtocolMessageKind::Challenge as u32,
@@ -774,7 +741,7 @@ pub fn native_verifier_fold_root(
     state: &mut NativeVerifierState<'_>,
     record: ProtocolContextRecord,
     payload: &[u8],
-) -> Result<[u8; crate::FOLD_CHALLENGE_SEED_LEN], VerificationError> {
+) -> Result<[u8; crate::FOLD_CHALLENGE_SEED_LEN], AkitaError> {
     verifier_context(state, record);
     state.public_message(payload);
     state.verifier_message()
@@ -784,22 +751,22 @@ fn extension_group_record<F, E>(
     site: ProtocolSiteId,
     kind: ProtocolMessageKind,
     value_count: usize,
-) -> Result<ProtocolContextRecord, NativeContextError>
+) -> Result<ProtocolContextRecord, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     let atom_count = value_count
         .checked_mul(E::DEGREE)
-        .ok_or(NativeContextError)?;
+        .ok_or(AkitaError::InvalidProof)?;
     let encoded_bytes = atom_count
         .checked_mul(F::NUM_BYTES)
-        .ok_or(NativeContextError)?;
+        .ok_or(AkitaError::InvalidProof)?;
     Ok(ProtocolContextRecord::new(
         site.to_bytes(),
         kind as u32,
-        u64::try_from(atom_count).map_err(|_| NativeContextError)?,
-        u64::try_from(encoded_bytes).map_err(|_| NativeContextError)?,
+        u64::try_from(atom_count).map_err(|_| AkitaError::InvalidProof)?,
+        u64::try_from(encoded_bytes).map_err(|_| AkitaError::InvalidProof)?,
         0,
     ))
 }
@@ -808,18 +775,18 @@ fn field_group_record<F>(
     site: ProtocolSiteId,
     kind: ProtocolMessageKind,
     value_count: usize,
-) -> Result<ProtocolContextRecord, NativeContextError>
+) -> Result<ProtocolContextRecord, AkitaError>
 where
     F: CanonicalEncoding,
 {
     let encoded_bytes = value_count
         .checked_mul(F::NUM_BYTES)
-        .ok_or(NativeContextError)?;
+        .ok_or(AkitaError::InvalidProof)?;
     Ok(ProtocolContextRecord::new(
         site.to_bytes(),
         kind as u32,
-        u64::try_from(value_count).map_err(|_| NativeContextError)?,
-        u64::try_from(encoded_bytes).map_err(|_| NativeContextError)?,
+        u64::try_from(value_count).map_err(|_| AkitaError::InvalidProof)?,
+        u64::try_from(encoded_bytes).map_err(|_| AkitaError::InvalidProof)?,
         0,
     ))
 }
@@ -829,7 +796,7 @@ pub fn public_native_fields_prover<F>(
     state: &mut NativeProverState,
     site: ProtocolSiteId,
     values: &[F],
-) -> Result<(), NativeContextError>
+) -> Result<(), AkitaError>
 where
     F: CanonicalEncoding,
 {
@@ -848,7 +815,7 @@ pub fn public_native_fields_verifier<F>(
     state: &mut NativeVerifierState<'_>,
     site: ProtocolSiteId,
     values: &[F],
-) -> Result<(), NativeContextError>
+) -> Result<(), AkitaError>
 where
     F: CanonicalEncoding,
 {
@@ -867,7 +834,7 @@ pub fn send_native_field_group<F>(
     state: &mut NativeProverState,
     site: ProtocolSiteId,
     values: &[F],
-) -> Result<(), NativeContextError>
+) -> Result<(), AkitaError>
 where
     F: CanonicalEncoding,
 {
@@ -886,17 +853,18 @@ pub fn receive_native_field_group<F>(
     state: &mut NativeVerifierState<'_>,
     site: ProtocolSiteId,
     value_count: usize,
-) -> Result<Vec<F>, VerificationError>
+) -> Result<Vec<F>, AkitaError>
 where
     F: CanonicalEncoding,
 {
-    let record = field_group_record::<F>(site, ProtocolMessageKind::ProofAtoms, value_count)
-        .map_err(|_| VerificationError)?;
-    verifier_context(state, record);
+    verifier_context(
+        state,
+        field_group_record::<F>(site, ProtocolMessageKind::ProofAtoms, value_count)?,
+    );
     let mut values = Vec::new();
     values
         .try_reserve_exact(value_count)
-        .map_err(|_| VerificationError)?;
+        .map_err(|_| AkitaError::InvalidProof)?;
     for _ in 0..value_count {
         values.push(receive_native_field(state)?);
     }
@@ -908,7 +876,7 @@ pub fn public_native_extensions<F, E, S>(
     state: &mut S,
     site: ProtocolSiteId,
     values: &[E],
-) -> Result<(), NativeContextError>
+) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
@@ -931,12 +899,12 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`VerificationError`] when the allocation cannot be reserved.
-pub fn native_extension_slots<E: Field>(count: usize) -> Result<Vec<E>, VerificationError> {
+/// Returns [`AkitaError::InvalidProof`] when the allocation cannot be reserved.
+pub fn native_extension_slots<E: Field>(count: usize) -> Result<Vec<E>, AkitaError> {
     let mut values = Vec::new();
     values
         .try_reserve_exact(count)
-        .map_err(|_| VerificationError)?;
+        .map_err(|_| AkitaError::InvalidProof)?;
     values.resize(count, E::zero());
     Ok(values)
 }
@@ -948,22 +916,23 @@ pub fn native_extension_slots<E: Field>(count: usize) -> Result<Vec<E>, Verifica
 ///
 /// # Errors
 ///
-/// Returns [`VerificationError`] when the group record overflows or the
-/// verifier cannot decode an atom.
+/// Returns [`AkitaError::InvalidProof`] when the group record overflows or
+/// the verifier cannot decode an atom.
 pub fn exchange_native_extension_group<F, E, S>(
     state: &mut S,
     site: ProtocolSiteId,
     values: &mut [E],
-) -> Result<(), VerificationError>
+) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
     S: ProofChannel,
 {
-    let record =
-        extension_group_record::<F, E>(site, ProtocolMessageKind::ProofAtoms, values.len())
-            .map_err(|_| VerificationError)?;
-    state.context(record);
+    state.context(extension_group_record::<F, E>(
+        site,
+        ProtocolMessageKind::ProofAtoms,
+        values.len(),
+    )?);
     for value in values {
         let mut atom = NativeExtension::<F, E>::new(*value);
         state.exchange(&mut atom)?;
@@ -1021,7 +990,7 @@ pub fn receive_native_grinding_nonce(
     state: &mut NativeVerifierState<'_>,
     nonce_record: ProtocolContextRecord,
     predicate_record: ProtocolContextRecord,
-) -> Result<(u32, [u8; crate::GRINDING_PREDICATE_LEN]), VerificationError> {
+) -> Result<(u32, [u8; crate::GRINDING_PREDICATE_LEN]), AkitaError> {
     verifier_context(state, nonce_record);
     let nonce = state.prover_message::<NativeNonce>()?.into_inner();
     verifier_context(state, predicate_record);

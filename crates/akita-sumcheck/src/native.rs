@@ -333,10 +333,7 @@ where
             .try_reserve_exact(degree_bound)
             .map_err(|_| AkitaError::InvalidProof)?;
         for _ in 0..degree_bound {
-            coefficients.push(
-                receive_native_extension::<F, E>(channel.state_mut())
-                    .map_err(|_| AkitaError::InvalidProof)?,
-            );
+            coefficients.push(receive_native_extension::<F, E>(channel.state_mut())?);
         }
         let compressed = CompressedPoly::new(coefficients);
         let challenge = channel.round_challenge(invocation, round_id)?;
@@ -472,10 +469,7 @@ where
             .try_reserve_exact(degree_bound)
             .map_err(|_| AkitaError::InvalidProof)?;
         for _ in 0..degree_bound {
-            coefficients.push(
-                receive_native_extension::<F, E>(channel.state_mut())
-                    .map_err(|_| AkitaError::InvalidProof)?,
-            );
+            coefficients.push(receive_native_extension::<F, E>(channel.state_mut())?);
         }
         let poly = OmittedConstantPoly::new(coefficients);
         let challenge = channel.round_challenge(invocation, round_id)?;
@@ -658,7 +652,7 @@ mod tests {
                     native_field_challenge_bytes::<F>(),
                 ),
             );
-            native_prover_field_challenge(&mut self.state).map_err(|_| AkitaError::InvalidProof)
+            native_prover_field_challenge(&mut self.state)
         }
     }
 
@@ -825,7 +819,7 @@ mod tests {
                     native_field_challenge_bytes::<F>(),
                 ),
             );
-            native_verifier_field_challenge(&mut self.state).map_err(|_| AkitaError::InvalidProof)
+            native_verifier_field_challenge(&mut self.state)
         }
     }
 

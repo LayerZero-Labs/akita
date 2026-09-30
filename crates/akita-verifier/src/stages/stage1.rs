@@ -108,8 +108,7 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
                 0,
             )?;
             let mut child_claims =
-                akita_transcript::native_extension_slots::<E>(expected.child_claims)
-                    .map_err(|_| AkitaError::InvalidProof)?;
+                akita_transcript::native_extension_slots::<E>(expected.child_claims)?;
             akita_types::native_stage1_child_claims::<F, E, _>(
                 grinding,
                 level,

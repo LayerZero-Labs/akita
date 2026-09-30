@@ -86,17 +86,13 @@ where
     }
     akita_transcript::public_native_fields_verifier(
         grinding.state_mut(),
-        akita_transcript::ProtocolSiteId {
-            family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+        akita_types::NativeFoldSite::WitnessCommitment {
             level,
-            stage: 3,
-            detail: u32::try_from(payload_geometry.transcript_ring_dimension())
-                .map_err(|_| AkitaError::InvalidProof)?,
-            ..akita_transcript::ProtocolSiteId::default()
-        },
+            ring_dimension: payload_geometry.transcript_ring_dimension(),
+        }
+        .id()?,
         current_state.witness.coeffs(),
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    )?;
     let recursive_num_vars = lp.recursive_opening_num_vars()?;
     if current_state.opening_point.len() > recursive_num_vars {
         return Err(AkitaError::InvalidProof);
@@ -147,28 +143,19 @@ where
         for (group_index, point) in group_points.iter().enumerate() {
             akita_transcript::public_native_extensions::<F, E, _>(
                 grinding.state_mut(),
-                akita_transcript::ProtocolSiteId {
-                    family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+                akita_types::NativeFoldSite::GroupPoint {
                     level,
-                    stage: 1,
-                    group: u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?,
-                    ..akita_transcript::ProtocolSiteId::default()
-                },
+                    group: group_index,
+                }
+                .id()?,
                 point,
-            )
-            .map_err(|_| AkitaError::InvalidProof)?;
+            )?;
         }
         akita_transcript::public_native_extensions::<F, E, _>(
             grinding.state_mut(),
-            akita_transcript::ProtocolSiteId {
-                family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
-                level,
-                stage: 2,
-                ..akita_transcript::ProtocolSiteId::default()
-            },
+            akita_types::NativeFoldSite::Openings { level }.id()?,
             &openings,
-        )
-        .map_err(|_| AkitaError::InvalidProof)?;
+        )?;
         FoldClaimMaterial {
             prepared_points: prepared
                 .into_iter()
@@ -193,17 +180,14 @@ where
     let opening_geometry = relation_geometry.rhs_layout().opening_payload_geometry()?;
     let opening_payload = akita_transcript::receive_native_field_group::<F>(
         grinding.state_mut(),
-        akita_transcript::ProtocolSiteId {
-            family: akita_transcript::SITE_FAMILY_OPENING_PAYLOAD,
+        akita_types::NativeFoldSite::OpeningPayload {
             level,
-            detail: u32::try_from(opening_geometry.transcript_ring_dimension())
-                .map_err(|_| AkitaError::InvalidProof)?,
-            ..akita_transcript::ProtocolSiteId::default()
-        },
+            ring_dimension: opening_geometry.transcript_ring_dimension(),
+        }
+        .id()?,
         opening_geometry.transmitted_coefficients(),
     )
-    .map(RingVec::from_coeffs)
-    .map_err(|_| AkitaError::InvalidProof)?;
+    .map(RingVec::from_coeffs)?;
     let prefix = finalize_native_claims::<F, E>(&opening_batch, material, grinding, level)?;
     let commitment_payloads =
         suffix_commitment_payloads::<F, E>(setup, lp, &opening_batch, &current_state.witness)?;
@@ -355,15 +339,9 @@ where
     }
     akita_transcript::public_native_fields_verifier(
         grinding.state_mut(),
-        akita_transcript::ProtocolSiteId {
-            family: akita_transcript::SITE_FAMILY_TERMINAL,
-            level,
-            stage: 2,
-            ..akita_transcript::ProtocolSiteId::default()
-        },
+        akita_types::NativeFoldSite::TerminalTFields { level }.id()?,
         current_state.witness.coeffs(),
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    )?;
     let recursive_num_vars = scheduled.recursive_opening_num_vars()?;
     if current_state.opening_point.len() > recursive_num_vars {
         return Err(AkitaError::InvalidProof);
@@ -405,27 +383,15 @@ where
     };
     akita_transcript::public_native_extensions::<F, E, _>(
         grinding.state_mut(),
-        akita_transcript::ProtocolSiteId {
-            family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
-            level,
-            stage: 5,
-            ..akita_transcript::ProtocolSiteId::default()
-        },
+        akita_types::NativeFoldSite::TerminalPoint { level }.id()?,
         &protocol_point,
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    )?;
     if final_relation.is_none() {
         akita_transcript::public_native_extensions::<F, E, _>(
             grinding.state_mut(),
-            akita_transcript::ProtocolSiteId {
-                family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
-                level,
-                stage: 4,
-                ..akita_transcript::ProtocolSiteId::default()
-            },
+            akita_types::NativeFoldSite::TerminalOpening { level }.id()?,
             std::slice::from_ref(&current_state.opening),
-        )
-        .map_err(|_| AkitaError::InvalidProof)?;
+        )?;
     }
     let row_coefficients = akita_types::row_coefficients_native::<F, E, _>(
         &opening_batch,
@@ -437,16 +403,10 @@ where
     }
     let e_fields = akita_transcript::receive_native_field_group::<F>(
         grinding.state_mut(),
-        akita_transcript::ProtocolSiteId {
-            family: akita_transcript::SITE_FAMILY_TERMINAL,
-            level,
-            stage: 1,
-            ..akita_transcript::ProtocolSiteId::default()
-        },
+        akita_types::NativeFoldSite::TerminalEFields { level }.id()?,
         group.e_field_elems,
     )
-    .map(RingVec::from_coeffs)
-    .map_err(|_| AkitaError::InvalidProof)?;
+    .map(RingVec::from_coeffs)?;
     grinding.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
     let operator_rejection = if scheduled.response_l2_sq_cap().is_some() {
         Some(
@@ -475,15 +435,9 @@ where
     grinding.record_fold_challenges(level, 0, scheduled.blocks.live_blocks)?;
     let z_payload = akita_transcript::receive_native_bounded_bytes(
         grinding.state_mut(),
-        akita_transcript::ProtocolSiteId {
-            family: akita_transcript::SITE_FAMILY_TERMINAL,
-            level,
-            round: 3,
-            ..akita_transcript::ProtocolSiteId::default()
-        },
+        akita_types::NativeFoldSite::TerminalZPayload { level }.id()?,
         group.z_payload_bytes,
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    )?;
     scheduled.validate_terminal_linf_cap(group.z_linf_cap)?;
     let terminal_response = akita_types::TerminalResponse {
         layout: scheduled.response_shape.layout.clone(),

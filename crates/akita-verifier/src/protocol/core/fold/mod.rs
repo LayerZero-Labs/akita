@@ -443,30 +443,25 @@ where
             }
             akita_transcript::receive_native_field_group::<F>(
                 grinding.state_mut(),
-                akita_transcript::ProtocolSiteId {
-                    family: akita_transcript::SITE_FAMILY_NEXT_WITNESS,
+                akita_types::NativeFoldSite::NextWitnessPayload {
                     level: prepared.level,
-                    stage: 1,
-                    ..akita_transcript::ProtocolSiteId::default()
-                },
+                }
+                .id()?,
                 coefficient_count,
             )
         }
         NativeNextWitnessPlan::TerminalT { coefficient_count } => {
             akita_transcript::receive_native_field_group::<F>(
                 grinding.state_mut(),
-                akita_transcript::ProtocolSiteId {
-                    family: akita_transcript::SITE_FAMILY_NEXT_WITNESS,
+                akita_types::NativeFoldSite::NextWitnessInnerState {
                     level: prepared.level,
-                    stage: 2,
-                    ..akita_transcript::ProtocolSiteId::default()
-                },
+                }
+                .id()?,
                 coefficient_count,
             )
         }
     }
-    .map(RingVec::from_coeffs)
-    .map_err(|_| AkitaError::InvalidProof)?;
+    .map(RingVec::from_coeffs)?;
     if prepared.next_witness_ring_dim == 0
         || matches!(
             prepared.next_witness,

@@ -50,8 +50,7 @@ impl<'proof> NativeSumcheckVerifierChannel<'proof, F> for FuzzVerifierChannel<'p
                 native_field_challenge_bytes::<F>(),
             ),
         );
-        let challenge =
-            native_verifier_field_challenge(&mut self.state).map_err(|_| AkitaError::InvalidProof)?;
+        let challenge = native_verifier_field_challenge(&mut self.state)?;
         self.challenges += 1;
         Ok(challenge)
     }

@@ -255,16 +255,13 @@ impl RingRelationProver {
         }
         akita_transcript::send_native_field_group(
             grinding.state_mut(),
-            akita_transcript::ProtocolSiteId {
-                family: akita_transcript::SITE_FAMILY_OPENING_PAYLOAD,
+            akita_types::NativeFoldSite::OpeningPayload {
                 level,
-                detail: u32::try_from(opening_payload_ring_dimension)
-                    .map_err(|_| AkitaError::InvalidSetup("ring dimension exceeds u32".into()))?,
-                ..akita_transcript::ProtocolSiteId::default()
-            },
+                ring_dimension: opening_payload_ring_dimension,
+            }
+            .id()?,
             opening_payload.coeffs(),
-        )
-        .map_err(|_| AkitaError::InvalidProof)?;
+        )?;
         drop(opening_rows_span);
 
         // Native public claim batching is intentionally delayed until every

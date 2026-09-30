@@ -108,28 +108,19 @@ where
     for group_index in 0..opening_batch.num_groups() {
         akita_transcript::public_native_extensions::<F, E, _>(
             grinding.state_mut(),
-            akita_transcript::ProtocolSiteId {
-                family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+            akita_types::NativeFoldSite::GroupPoint {
                 level,
-                stage: 1,
-                group: u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?,
-                ..akita_transcript::ProtocolSiteId::default()
-            },
+                group: group_index,
+            }
+            .id()?,
             claims.group_point(group_index)?,
-        )
-        .map_err(|_| AkitaError::InvalidProof)?;
+        )?;
     }
     akita_transcript::public_native_extensions::<F, E, _>(
         grinding.state_mut(),
-        akita_transcript::ProtocolSiteId {
-            family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
-            level,
-            stage: 2,
-            ..akita_transcript::ProtocolSiteId::default()
-        },
+        akita_types::NativeFoldSite::Openings { level }.id()?,
         openings,
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    )?;
     Ok(FoldClaimMaterial {
         prepared_points,
         openings: openings.to_vec(),

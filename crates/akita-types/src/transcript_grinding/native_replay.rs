@@ -186,8 +186,7 @@ pub trait NativeGrinding {
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
-        let result = native_ext_challenge::<F, E, _>(self.state_mut(), site)
-            .map_err(|_| AkitaError::InvalidProof);
+        let result = native_ext_challenge::<F, E, _>(self.state_mut(), site);
         if result.is_err() {
             self.poison();
         }
@@ -465,8 +464,7 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
         let (nonce_record, predicate_record) =
             grinding_records(site, entry.grind_bits, entry.nonce_bits);
         let (nonce, predicate) =
-            receive_native_grinding_nonce(&mut self.state, nonce_record, predicate_record)
-                .map_err(|_| AkitaError::InvalidProof)?;
+            receive_native_grinding_nonce(&mut self.state, nonce_record, predicate_record)?;
         if !value_fits(nonce, entry.nonce_bits) || !grinding_predicate_accepts(&predicate, bits) {
             return Err(AkitaError::InvalidProof);
         }
@@ -495,8 +493,7 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
         let counter = self
             .state
             .prover_message::<NativeNonce>()
-            .map(NativeNonce::into_inner)
-            .map_err(|_| AkitaError::InvalidProof)?;
+            .map(NativeNonce::into_inner)?;
         if !value_fits(counter, entry.nonce_bits) {
             return Err(AkitaError::InvalidProof);
         }
@@ -539,10 +536,29 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
             native_nonce_bytes_actual = self.serialized_nonce_bytes,
             "native proof nonce bytes"
         );
-        self.state
-            .check_eof()
-            .map_err(|_| AkitaError::InvalidProof)?;
+        self.state.check_eof()?;
         Ok(NativeProofAcceptance { _private: () })
+    }
+}
+
+/// Site of one grinding-backed standard-sumcheck atom, shared by both roles.
+fn grinding_sumcheck_site(
+    protocol: super::SumcheckProtocol,
+    level: u32,
+    stage: u32,
+    invocation: u32,
+    round: u32,
+    role: NativeSumcheckRole,
+) -> ProtocolSiteId {
+    ProtocolSiteId {
+        family: SITE_FAMILY_SUMCHECK,
+        invocation: protocol.tag(),
+        level,
+        stage,
+        round,
+        group: invocation,
+        detail: role as u32,
+        ..ProtocolSiteId::default()
     }
 }
 
@@ -589,16 +605,14 @@ where
         round: u32,
         role: NativeSumcheckRole,
     ) -> ProtocolSiteId {
-        ProtocolSiteId {
-            family: SITE_FAMILY_SUMCHECK,
-            invocation: self.protocol.tag(),
-            level: self.level,
-            stage: self.stage,
+        grinding_sumcheck_site(
+            self.protocol,
+            self.level,
+            self.stage,
+            invocation,
             round,
-            group: invocation,
-            detail: role as u32,
-            ..ProtocolSiteId::default()
-        }
+            role,
+        )
     }
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
@@ -659,16 +673,14 @@ where
         round: u32,
         role: NativeSumcheckRole,
     ) -> ProtocolSiteId {
-        ProtocolSiteId {
-            family: SITE_FAMILY_SUMCHECK,
-            invocation: self.protocol.tag(),
-            level: self.level,
-            stage: self.stage,
+        grinding_sumcheck_site(
+            self.protocol,
+            self.level,
+            self.stage,
+            invocation,
             round,
-            group: invocation,
-            detail: role as u32,
-            ..ProtocolSiteId::default()
-        }
+            role,
+        )
     }
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {

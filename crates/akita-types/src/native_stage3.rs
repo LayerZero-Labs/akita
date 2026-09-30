@@ -32,7 +32,6 @@ pub fn native_stage3_public_slot<G: NativeGrinding>(
         site(level, ROLE_SETUP_SLOT),
         encoded_slot,
     )
-    .map_err(|_| AkitaError::InvalidProof)
 }
 
 /// Exchange the setup-product input claim before sumcheck challenges.
@@ -73,8 +72,7 @@ where
         grinding.state_mut(),
         site,
         slice::from_mut(&mut value),
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    )?;
     Ok(value)
 }
 

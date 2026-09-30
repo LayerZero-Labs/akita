@@ -33,15 +33,14 @@ pub use native::{
     receive_native_bytes, receive_native_extension, receive_native_field,
     receive_native_field_group, receive_native_grinding_nonce, search_native_grinding_nonce,
     send_native_bounded_bytes, send_native_byte_group, send_native_bytes, send_native_extension,
-    send_native_field, send_native_field_group, verifier_context, NativeContextError,
-    NativeExtension, NativeField, NativeFoldPreview, NativeInitializationError, NativeNonce,
-    NativeProverState, NativeU128, NativeVerifierState, ProofChannel, ProtocolContextRecord,
-    ProtocolMessageKind, ProtocolSiteId, NATIVE_CONTEXT_DOMAIN, NATIVE_FIELD_CHALLENGE_BYTES,
-    NATIVE_FIELD_SAMPLING_QUERY_LIMIT, NATIVE_PROTOCOL_VERSION,
-    SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_FOLD_CHALLENGE,
-    SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_PHYSICAL_L2,
-    SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_STAGE3,
-    SITE_FAMILY_SUMCHECK, SITE_FAMILY_TERMINAL,
+    send_native_field, send_native_field_group, verifier_context, NativeExtension, NativeField,
+    NativeFoldPreview, NativeNonce, NativeProverState, NativeU128, NativeVerifierState,
+    ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
+    NATIVE_CONTEXT_DOMAIN, NATIVE_FIELD_CHALLENGE_BYTES, NATIVE_FIELD_SAMPLING_QUERY_LIMIT,
+    NATIVE_PROTOCOL_VERSION, SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_FOLD_BINDING,
+    SITE_FAMILY_FOLD_CHALLENGE, SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD,
+    SITE_FAMILY_PHYSICAL_L2, SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2,
+    SITE_FAMILY_STAGE3, SITE_FAMILY_SUMCHECK, SITE_FAMILY_TERMINAL,
 };
 pub use sponge::TranscriptSponge;
 

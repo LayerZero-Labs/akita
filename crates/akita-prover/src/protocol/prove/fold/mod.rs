@@ -211,17 +211,13 @@ where
         if pad_base_evals {
             akita_transcript::public_native_extensions::<F, E, _>(
                 grinding.state_mut(),
-                akita_transcript::ProtocolSiteId {
-                    family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+                akita_types::NativeFoldSite::GroupPoint {
                     level,
-                    stage: 1,
-                    group: u32::try_from(group_index)
-                        .map_err(|_| AkitaError::InvalidSetup("group index exceeds u32".into()))?,
-                    ..akita_transcript::ProtocolSiteId::default()
-                },
+                    group: group_index,
+                }
+                .id()?,
                 group_protocol_point,
-            )
-            .map_err(|_| AkitaError::InvalidProof)?;
+            )?;
         }
         scalar_openings.extend_from_slice(prepared.scalar_openings());
         prepared_group_openings.push(prepared);
@@ -229,15 +225,9 @@ where
     if reduction.is_none() {
         akita_transcript::public_native_extensions::<F, E, _>(
             grinding.state_mut(),
-            akita_transcript::ProtocolSiteId {
-                family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
-                level,
-                stage: 2,
-                ..akita_transcript::ProtocolSiteId::default()
-            },
+            akita_types::NativeFoldSite::Openings { level }.id()?,
             &scalar_openings,
-        )
-        .map_err(|_| AkitaError::InvalidProof)?;
+        )?;
     }
     let crate::protocol::ring_relation::PreparedRingRelationOutput {
         relation:
@@ -461,7 +451,7 @@ where
 fn commit_next_witness<F, E, B>(
     backend: &B,
     grinding: &mut akita_types::NativeProverGrinding<'_>,
-    level: usize,
+    level: u32,
     next_params: FoldSuccessorParams<'_>,
     expected_output_witness_len: usize,
     next_witness_binding: akita_types::NextWitnessBindingPolicy,
@@ -513,15 +503,9 @@ where
         ) => {
             akita_transcript::send_native_field_group(
                 grinding.state_mut(),
-                akita_transcript::ProtocolSiteId {
-                    family: akita_transcript::SITE_FAMILY_NEXT_WITNESS,
-                    level: u32::try_from(level).map_err(|_| AkitaError::InvalidProof)?,
-                    stage: 1,
-                    ..akita_transcript::ProtocolSiteId::default()
-                },
+                akita_types::NativeFoldSite::NextWitnessPayload { level }.id()?,
                 public_commitment.coeffs(),
-            )
-            .map_err(|_| AkitaError::InvalidProof)?;
+            )?;
             NextWitnessState::OuterPayload(public_commitment)
         }
         (
@@ -530,15 +514,9 @@ where
         ) => {
             akita_transcript::send_native_field_group(
                 grinding.state_mut(),
-                akita_transcript::ProtocolSiteId {
-                    family: akita_transcript::SITE_FAMILY_NEXT_WITNESS,
-                    level: u32::try_from(level).map_err(|_| AkitaError::InvalidProof)?,
-                    stage: 2,
-                    ..akita_transcript::ProtocolSiteId::default()
-                },
+                akita_types::NativeFoldSite::NextWitnessInnerState { level }.id()?,
                 message.fields(),
-            )
-            .map_err(|_| AkitaError::InvalidProof)?;
+            )?;
             NextWitnessState::TerminalInnerState
         }
         _ => return Err(AkitaError::InvalidProof),
@@ -617,6 +595,8 @@ where
         row_coefficients,
     } = prepared_fold;
     let next_opening_ring_dim = next_params.inner_ring_dimension();
+    let fold_level = u32::try_from(level)
+        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
     let CommittedNextWitness {
         committed_witness_len,
         witness_handle: mut next_witness,
@@ -625,14 +605,12 @@ where
     } = commit_next_witness::<F, E, B>(
         backend,
         grinding,
-        level,
+        fold_level,
         next_params,
         expected_output_witness_len,
         next_witness_binding,
         witness_handle,
     )?;
-    let fold_level = u32::try_from(level)
-        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
     let consumer = backend;
     let consumer_ctx = OperationCtx::new(
         backend,

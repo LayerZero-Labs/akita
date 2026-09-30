@@ -72,8 +72,7 @@ where
         partial_count: usize,
         split_bits: usize,
     ) -> Result<EorPrefix<E>, AkitaError> {
-        let partials = akita_transcript::native_extension_slots::<E>(partial_count)
-            .map_err(|_| AkitaError::InvalidProof)?;
+        let partials = akita_transcript::native_extension_slots::<E>(partial_count)?;
         let prefix = akita_types::native_eor_prefix::<F, E, _>(
             self.grinding,
             opening_batch,
@@ -116,8 +115,7 @@ where
 
     fn final_claims(&mut self, opening_batch: &OpeningClaimsLayout) -> Result<Vec<E>, AkitaError> {
         let mut final_claims =
-            akita_transcript::native_extension_slots::<E>(opening_batch.num_total_polynomials())
-                .map_err(|_| AkitaError::InvalidProof)?;
+            akita_transcript::native_extension_slots::<E>(opening_batch.num_total_polynomials())?;
         akita_types::native_eor_final_claims::<F, E, _>(
             self.grinding,
             opening_batch,
@@ -258,16 +256,13 @@ where
     for (group_index, protocol_point) in protocol_points.iter().enumerate() {
         akita_transcript::public_native_extensions::<F, E, _>(
             grinding.state_mut(),
-            akita_transcript::ProtocolSiteId {
-                family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+            akita_types::NativeFoldSite::GroupPoint {
                 level,
-                stage: 1,
-                group: u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?,
-                ..akita_transcript::ProtocolSiteId::default()
-            },
+                group: group_index,
+            }
+            .id()?,
             protocol_point,
-        )
-        .map_err(|_| AkitaError::InvalidProof)?;
+        )?;
     }
     Ok(FoldClaimMaterial {
         prepared_points,
