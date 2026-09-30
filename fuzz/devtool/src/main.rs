@@ -228,6 +228,23 @@ pub fn seeds(out: &Path) {
         );
         write(&out.join("schedule_artifact"), family, &bytes);
     }
+
+    // Inputs of fixed findings stay covered as seeds (`regressions/README.md`);
+    // unfixed ones live under `regressions/pending/` and are skipped.
+    let regressions = Path::new(env!("CARGO_MANIFEST_DIR")).join("../regressions");
+    for (name, _) in targets::ALL {
+        let Ok(entries) = std::fs::read_dir(regressions.join(name)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let bytes = std::fs::read(entry.path()).expect("read regression input");
+            write(
+                &out.join(name),
+                &format!("regression-{}", entry.file_name().to_string_lossy()),
+                &bytes,
+            );
+        }
+    }
 }
 
 fn registry_for(limits: Limits) -> akita_fuzz::pcs::Registry {

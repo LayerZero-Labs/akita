@@ -27,7 +27,12 @@ parallel lane uses 2 internal threads.
 
 ## F-6 (Low, robustness): artifact admission scans an artifact-supplied digit count
 
-Fix: draft PR #113 (`fix/digit-series-saturation`).
+Fixed upstream: PR #113 (`fix/digit-series-saturation`), merged as
+`cc264576`; campaign builds from v13 on include it. A second campaign sample
+(`timeout-schedule_artifact-351cbaccbc1e`) reached the same helpers through a
+recursive fold group (`num_digits_fold = 4.6·10^18` in `fp32_dense_recursive`
+row 2); with the fix both samples and the regression input replay in about
+1 ms. The regression input is now a `schedule_artifact` seed.
 
 `balanced_digit_max`, `balanced_digit_abs_max`, and
 `balanced_digit_interval_diameter`
