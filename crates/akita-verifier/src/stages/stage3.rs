@@ -26,7 +26,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 ///
 /// Construct with [`SetupSumcheckVerifier::new`], which derives the
 /// setup-index weight polynomial and sumcheck round count from the ring-switch
-/// row evaluation, then call [`verify_stage3`](Self::verify_stage3)
+/// row evaluation, then call [`verify`](Self::verify)
 /// with the proof and transcript.
 struct SetupSumcheckVerifier<E: Field> {
     setup_index_weight: SetupIndexWeightMle<E>,
@@ -47,7 +47,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
     /// Derives the setup-contribution plan, and from it the setup-index weight
     /// polynomial and per-round shape, from the relation-matrix evaluation;
     /// must be called before
-    /// [`verify_stage3`](Self::verify_stage3).
+    /// [`verify`](Self::verify).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<F>(
         relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
@@ -74,7 +74,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
     }
 
     /// Replay stage 3 directly from the Spongefish stream.
-    pub(crate) fn verify_stage3<F>(
+    pub(crate) fn verify<F>(
         &self,
         setup: &AkitaVerifierSetup<F>,
         next_fold_level_params: &CommittedGroupParams,
@@ -158,7 +158,7 @@ where
         setup_x_challenges,
         rs.alpha,
     )?;
-    verifier.verify_stage3::<F>(setup, next_params, grinding, level)
+    verifier.verify::<F>(setup, next_params, grinding, level)
 }
 
 fn setup_eval_len<F>(
