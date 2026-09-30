@@ -344,7 +344,7 @@ folding, ring-relation, sumcheck, and Fiat–Shamir bounds.
   coordinates distinct oracle inputs.
 - `crates/akita-types/src/instance_descriptor/` binds schedule identity and
   the protocol-wide grinding contract.
-- `crates/akita-verifier/src/protocol/core/terminal_direct.rs` checks the
+- `crates/akita-verifier/src/terminal/direct.rs` checks the
   final response norm and direct relations.
 - `crates/akita-pcs/tests/fold_linf.rs` and
   `crates/akita-pcs/tests/transcript_hardening.rs` provide regression checks

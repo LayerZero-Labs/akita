@@ -250,9 +250,11 @@ still enforce their explicit minimum contraction policy.
   successor's physical witness, commitment, or terminal inner state.
 - `crates/akita-types/src/proof/levels.rs` defines the level records and
   successor-binding variants.
-- `crates/akita-verifier/src/protocol/core/fold/mod.rs` binds the successor
+- `crates/akita-verifier/src/fold/mod.rs` binds the successor
   before replaying ring switching and the sumcheck stages.
-- `crates/akita-verifier/src/protocol/core/suffix.rs` carries the resulting
-  point and value into the next fold and validates terminal-state identity.
+- `crates/akita-verifier/src/fold/suffix.rs` carries the resulting
+  point and value into the next fold, and
+  `crates/akita-verifier/src/fold/terminal.rs` validates terminal-state
+  identity.
 - `crates/akita-pcs/tests/transcript_hardening.rs` checks transcript agreement
   and the ordering of the final witness binding.

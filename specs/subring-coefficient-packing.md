@@ -1639,7 +1639,7 @@ open review blockers are resolved.
   current high-half, consistency, and A quotient construction.
 - [`crates/akita-prover/src/protocol/ring_switch/relation_weights.rs`](../crates/akita-prover/src/protocol/ring_switch/relation_weights.rs),
   current structured relation weights and challenge reuse.
-- [`crates/akita-verifier/src/protocol/ring_switch.rs`](../crates/akita-verifier/src/protocol/ring_switch.rs),
+- [`crates/akita-verifier/src/relation/mod.rs`](../crates/akita-verifier/src/relation/mod.rs),
   current `c_alphas` preparation.
-- [`crates/akita-verifier/src/protocol/evaluation_trace.rs`](../crates/akita-verifier/src/protocol/evaluation_trace.rs),
+- [`crates/akita-verifier/src/relation/evaluation_trace.rs`](../crates/akita-verifier/src/relation/evaluation_trace.rs),
   current trace-based scalar-opening contraction.

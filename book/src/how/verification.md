@@ -71,7 +71,7 @@ typed prepared state and return errors for any remaining mismatch.
 
 ## Per-level replay
 
-`batched_verify` (in `crates/akita-verifier/src/protocol/core/verify.rs`) receives
+`batched_verify` (in `crates/akita-verifier/src/fold/verify.rs`) receives
 a `TrustedScheduleCatalog<Cfg>` already validated and bound to the verifier's
 exact config. The catalog is a trusted verifier parameter. It is loaded before
 proof parsing and is not read from the proof.
@@ -84,13 +84,35 @@ At a high level:
    before the
    ordered `GroupCommitPhaseParams` values are compared with the resolved row.
    The verifier never runs planner search.
-3. **Replay the structural folds** in `protocol/core`: the root fold followed by
+3. **Replay the structural folds** in `fold/`: the root fold followed by
    every recursive fold, using the schedule-selected `CommittedGroupParams`.
 4. **Check the terminal witness directly** against its predecessor-bound `t`
    state. The terminal relation is `consistency | A`; it has no outer `u`, B
    block, D block, or quotient sumcheck. If the terminal A matrix uses an L2
    route, the verifier also computes the decoded response's exact integer
    squared norm and compares it with the scheduled cap.
+
+The verifier source follows this split. `fold/` holds orchestration: the root
+and suffix walks, the fold-challenge draw, the fold's public relation instance,
+and terminal dispatch. `verify_fold_native` in `fold/mod.rs` runs one
+nonterminal fold as a sequence of stage calls in transcript order:
+
+1. check the opening and commitment payload shapes, then read the fold
+   response and draw the fold challenges;
+2. assemble the ring-relation instance and receive the successor witness;
+3. replay the ring switch (`stages/ring_switch.rs`) and derive the relation
+   claim and range-image plan (`stages/relation_claim.rs`);
+4. replay Stage 1 (`stages/stage1.rs`), then prepare the Stage 2 opening
+   semantics (`stages/opening_semantics.rs`);
+5. replay the Stage 2 rounds (`stages/stage2.rs`), then Stage 3 when the
+   successor defers the setup contribution (`stages/stage3.rs`);
+6. check the Stage 2 output claim, which needs the Stage 3 setup claim.
+
+Each stage returns a typed replay output that the next call consumes. The
+Stage 2 round replay and output check are separate calls because Stage 3 sits
+between them in the transcript. `relation/` holds the prepared relation
+evaluator, the relation point, and the evaluation trace. `terminal/` holds the
+direct terminal checks and the exact A-product evaluation.
 
 At each nonterminal fold, the verifier checks fixed 128-byte `p_H` and `p_F`
 payload shapes, reconstructs the B, D, F, and H relation right hand sides, and

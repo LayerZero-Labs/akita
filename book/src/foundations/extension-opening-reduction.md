@@ -506,10 +506,10 @@ form instead identifies a future small-space execution strategy; see the
   records the terminal products. The
   [proof type](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/levels.rs)
   carries `partials`, `sumcheck`, and `final_claims`.
-- [Verifier replay](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/protocol/core/fold/extension_claim.rs)
+- [Verifier replay](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/opening_claims/extension_claim.rs)
   checks the required payload and shape, recombines partials to $v$, and
   reconstructs the same row claims and public factors.
-  [Fold claim preparation](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/protocol/core/fold/mod.rs)
+  [Fold claim preparation](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/opening_claims/mod.rs)
   applies the factors to the later evaluation-trace weights.
 
 The [tensor and sumcheck tests](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/tests/extension_opening_reduction_tests.rs)

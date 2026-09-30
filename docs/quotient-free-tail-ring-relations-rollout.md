@@ -220,7 +220,7 @@ Archive it after the durable content is fully folded, following
 | Shared residue algebra | `crates/akita-algebra/src/ring/` |
 | Prover quotient removal | `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`, `ring_switch/coeffs.rs` |
 | Prover Stage-2 weights | `crates/akita-prover/src/protocol/ring_switch/relation_weights/`, `sumcheck/relation_range_image/` |
-| Verifier terminal MLE | `crates/akita-verifier/src/protocol/ring_switch/prepared_relation_point.rs`, `relation_evaluation.rs` |
+| Verifier terminal MLE | `crates/akita-verifier/src/relation/prepared_point.rs`, `relation/evaluation.rs` |
 | Fused direct setup scan | `crates/akita-types/src/setup_contribution/plan/` |
 | Compression reduced transpose | `crates/akita-types/src/proof/compression_relation_weights.rs`, prover/verifier ring-switch compression paths |
 | Planner state and cutover | `crates/akita-planner/src/schedule_params/suffix_dp/`, recursive candidate materialization, response model |

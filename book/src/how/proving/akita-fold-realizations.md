@@ -792,7 +792,7 @@ its witness:
 Full opening points are not owned by `RingRelationInstance`. They are prepared
 separately by the scheduled opening method. The verifier consumes evaluation
 trace points through
-[`evaluation_trace.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/protocol/evaluation_trace.rs)
+[`evaluation_trace.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/relation/evaluation_trace.rs)
 and coefficient-packing points through its compact packing relation path. Only
 the projections needed by the physical consistency relation remain in this
 instance.
@@ -826,10 +826,10 @@ to `WitnessLayout`.
 
 The verifier does not receive a serialized `RingRelationInstance` or any
 `RingRelationWitness`. In
-[`verify_fold`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/protocol/core/fold/mod.rs),
+[`verify_fold_native`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/fold/mod.rs),
 it reconstructs the public instance from the schedule-selected payload and
 transcript data, then calls
-[`ring_switch_verifier`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/protocol/ring_switch.rs):
+[`ring_switch_verifier_native`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/ring_switch.rs):
 
 ```text
 schedule-selected payload mode
