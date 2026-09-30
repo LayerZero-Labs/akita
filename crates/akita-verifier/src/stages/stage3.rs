@@ -91,7 +91,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
                 "Stage 3 setup ring dimension must be nonzero".into(),
             ));
         }
-        validate_and_absorb_setup_prefix_slot_native(
+        bind_setup_prefix_slot(
             setup,
             next_fold_level_params,
             geometry.natural_field_len(),
@@ -136,7 +136,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
 /// The coverage length returned by [`setup_prefix_coverage_eval_len`] is not
 /// needed: it equals the projection geometry's `setup_index_len` because the
 /// common base ring dimension is a power of two.
-fn validate_and_absorb_setup_prefix_slot_native<F>(
+fn bind_setup_prefix_slot<F>(
     setup: &AkitaVerifierSetup<F>,
     next_fold_level_params: &CommittedGroupParams,
     natural_field_len: usize,
