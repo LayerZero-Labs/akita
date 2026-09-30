@@ -41,7 +41,8 @@ tools cannot fetch URLs, traverse the filesystem, invoke a shell, or write to
 GitHub. HTTP redirects are refused. The publisher fixes the repository, PR and
 operation and allowed diff coordinates; model output is never an API path, workflow command, shell argument or
 executable code. Model prose is escaped to prevent injected HTML, Markdown images
-and user mentions. Errors avoid remote response bodies and credential-bearing
+and user mentions, while preserving matched inline code spans. Errors avoid
+remote response bodies and credential-bearing
 tracebacks in public logs.
 
 Human discussion, review summaries and inline replies are included only after a
