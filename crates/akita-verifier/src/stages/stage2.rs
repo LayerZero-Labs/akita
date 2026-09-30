@@ -3,8 +3,8 @@
 use crate::coefficient_packing_relation::{
     CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
 };
-use crate::protocol::evaluation_trace::PreparedEvaluationTrace;
-use crate::protocol::ring_switch::{PreparedRelationGroups, RelationMatrixEvaluator};
+use crate::relation::evaluation_trace::PreparedEvaluationTrace;
+use crate::relation::{PreparedRelationGroups, RelationMatrixEvaluator};
 use akita_algebra::{
     eq_poly::EqPolynomial,
     offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily},
@@ -349,7 +349,7 @@ mod tests {
     use super::*;
     use crate::coefficient_packing_relation::prepare_coefficient_packing_verifier_batch_semantics;
     use crate::coefficient_packing_relation::tests::materialize_stage2;
-    use crate::protocol::ring_switch::{FlatRelationContext, RelationMatrixEvaluator};
+    use crate::relation::{FlatRelationContext, RelationMatrixEvaluator};
     use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
     use akita_types::{
         prepare_coefficient_packing_batch_semantics, relation_rhs_coeff_len, AkitaSetupDescriptor,
@@ -510,7 +510,7 @@ mod tests {
             .unwrap();
         let evaluator = RelationMatrixEvaluator {
             relation_address_geometry,
-            groups: crate::protocol::ring_switch::PreparedRelationGroups::QuotientLift(Vec::new()),
+            groups: crate::relation::PreparedRelationGroups::QuotientLift(Vec::new()),
             log_basis: params.open().digits.log_basis,
             eq_tau1: Arc::from(Vec::<E>::new()),
             flat_context: FlatRelationContext {

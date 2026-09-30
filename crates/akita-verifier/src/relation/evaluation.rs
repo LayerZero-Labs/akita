@@ -10,7 +10,7 @@
 //! reduced-plus-deferred combination is rejected before any setup planning.
 
 use super::{
-    prepared_relation_point::{PreparedLiftedRelationPoint, PreparedReducedRelationPoint},
+    prepared_point::{PreparedLiftedRelationPoint, PreparedReducedRelationPoint},
     PreparedRelationGroups, QuotientRelationMultipliers, ReducedRelationMultipliers,
     RelationMatrixEvaluator, RelationMatrixGroupEvaluator,
 };
@@ -114,7 +114,7 @@ where
 /// The setup-contribution plan is returned beside it by `prepare`: the
 /// deferred path evaluates the plan in closed form, and the direct path hands
 /// it to the [`DirectScan`] that owns it from then on.
-pub(super) struct QuotientRelation<'a, E: Field> {
+pub(crate) struct QuotientRelation<'a, E: Field> {
     evaluator: &'a RelationMatrixEvaluator<E>,
     groups: &'a [RelationMatrixGroupEvaluator<QuotientRelationMultipliers<E>>],
     point: PreparedLiftedRelationPoint<E>,
@@ -122,7 +122,7 @@ pub(super) struct QuotientRelation<'a, E: Field> {
 }
 
 /// Reduced-evaluation relation state; it has only a direct path.
-pub(super) struct ReducedRelation<'a, E: Field> {
+pub(crate) struct ReducedRelation<'a, E: Field> {
     groups: &'a [RelationMatrixGroupEvaluator<ReducedRelationMultipliers<E>>],
     point: PreparedReducedRelationPoint<E>,
 }
@@ -244,7 +244,7 @@ impl<'a, E: Field> ReducedRelation<'a, E> {
 
 /// A relation prepared for direct evaluation, together with the scan that
 /// owns its setup-contribution plan.
-pub(super) enum PreparedDirectRelation<'a, E: Field> {
+pub(crate) enum PreparedDirectRelation<'a, E: Field> {
     Quotient {
         relation: QuotientRelation<'a, E>,
         scan: DirectScan<E>,
@@ -256,7 +256,7 @@ pub(super) enum PreparedDirectRelation<'a, E: Field> {
 }
 
 impl<'a, E: Field> PreparedDirectRelation<'a, E> {
-    pub(super) fn prepare<F>(
+    pub(crate) fn prepare<F>(
         evaluator: &'a RelationMatrixEvaluator<E>,
         point: &[E],
         alpha: E,
@@ -288,7 +288,7 @@ impl<'a, E: Field> PreparedDirectRelation<'a, E> {
     }
 
     #[cfg(any(test, feature = "benchmark-support"))]
-    pub(super) fn setup_field_len(&self) -> usize {
+    pub(crate) fn setup_field_len(&self) -> usize {
         match self {
             Self::Quotient { scan, .. } | Self::Reduced { scan, .. } => scan.plan(),
         }
@@ -296,7 +296,7 @@ impl<'a, E: Field> PreparedDirectRelation<'a, E> {
         .natural_field_len()
     }
 
-    pub(super) fn evaluate_setup<F>(&self, setup: &AkitaExpandedSetup<F>) -> Result<E, AkitaError>
+    pub(crate) fn evaluate_setup<F>(&self, setup: &AkitaExpandedSetup<F>) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F> + MulBaseUnreduced<F>,
@@ -310,7 +310,7 @@ impl<'a, E: Field> PreparedDirectRelation<'a, E> {
         }
     }
 
-    pub(super) fn evaluate_structured<F>(&self) -> Result<E, AkitaError>
+    pub(crate) fn evaluate_structured<F>(&self) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: FpExtEncoding<F> + Ring + ExtField<F>,
@@ -337,7 +337,7 @@ impl<'a, E: Field> PreparedDirectRelation<'a, E> {
         }
     }
 
-    pub(super) fn evaluate_quotient_tail<F>(&self) -> Result<E, AkitaError>
+    pub(crate) fn evaluate_quotient_tail<F>(&self) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: FpExtEncoding<F> + Ring + ExtField<F>,
@@ -348,7 +348,7 @@ impl<'a, E: Field> PreparedDirectRelation<'a, E> {
         }
     }
 
-    pub(super) fn evaluate_relation_weight<F>(&self) -> Result<E, AkitaError>
+    pub(crate) fn evaluate_relation_weight<F>(&self) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: FpExtEncoding<F> + Ring + ExtField<F>,

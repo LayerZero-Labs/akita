@@ -445,7 +445,7 @@ where
         e_fields,
         t_fields: current_state.witness.clone(),
     };
-    super::terminal_direct::verify_terminal_ring_relations(
+    crate::terminal::direct::verify_terminal_ring_relations(
         terminal_ntt,
         &challenges,
         &prepared_point.ring_multiplier_point,
@@ -459,7 +459,7 @@ where
         ),
         None => (current_state.opening, E::one()),
     };
-    super::terminal_direct::verify_terminal_trace(
+    crate::terminal::direct::verify_terminal_trace(
         &prepared_point.ring_multiplier_point,
         scheduled,
         &terminal_response,

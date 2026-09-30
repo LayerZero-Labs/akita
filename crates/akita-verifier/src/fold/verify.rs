@@ -1,4 +1,4 @@
-use super::root_fold::verify_root_native;
+use super::root::verify_root_native;
 use super::suffix::{verify_suffix_native, NativeSuffixVerifierState};
 // Top-level batched verifier orchestration once a schedule is selected.
 

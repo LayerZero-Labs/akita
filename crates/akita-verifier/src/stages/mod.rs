@@ -1,5 +1,6 @@
 //! Akita-specific sumcheck verifier stages.
 
+pub(crate) mod opening_claims;
 pub(crate) mod physical_l2_norm;
 pub(crate) mod stage1;
 pub(crate) mod stage2;

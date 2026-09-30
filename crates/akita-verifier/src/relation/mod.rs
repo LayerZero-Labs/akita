@@ -1,4 +1,4 @@
-//! Verifier-side ring-switch replay.
+//! Verifier-side ring-switch replay and the prepared relation evaluator.
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
@@ -17,20 +17,21 @@ use akita_types::{
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::sync::Arc;
 
-use super::validate_log_basis;
-
-#[cfg(feature = "benchmark-support")]
-mod benchmark_support;
-mod prepared_relation_point;
-mod relation_evaluation;
+pub(crate) mod evaluation;
+pub(crate) mod evaluation_trace;
+mod prepared_point;
 #[cfg(test)]
 mod tests;
 
-#[cfg(feature = "benchmark-support")]
-pub use benchmark_support::{
-    relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
-    RelationEvaluatorBenchmarkCase,
-};
+#[inline]
+pub(crate) fn validate_log_basis(log_basis: u32) -> Result<(), AkitaError> {
+    if log_basis == 0 || log_basis >= 128 {
+        return Err(AkitaError::InvalidSetup(
+            "log_basis must be in 1..128 for verifier gadget evaluation".to_string(),
+        ));
+    }
+    Ok(())
+}
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.

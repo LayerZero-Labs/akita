@@ -1,7 +1,7 @@
 //! Verifier for the setup-product sumcheck — the verifier counterpart to the
 //! prover-side `AkitaStage3Prover`.
 
-use crate::protocol::ring_switch::RelationMatrixEvaluator;
+use crate::relation::RelationMatrixEvaluator;
 use crate::SetupIndexWeightMle;
 #[cfg(test)]
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
