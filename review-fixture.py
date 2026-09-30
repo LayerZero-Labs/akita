@@ -2,6 +2,8 @@
 
 Contract: first_or_none returns the first item, or None for an empty list.
 Contract: last_or_none returns the last item, or None for an empty list.
+Contract: index_or_none accepts a nonnegative index and returns None when
+the index is at or beyond the list length, otherwise the indexed item.
 This file will be removed with the test branch; it is not production code.
 """
 
@@ -15,4 +17,8 @@ def first_or_none(items):
 
 
 def last_or_none(items):
-    return items[0] if items else None
+    return items[-1] if items else None
+
+
+def index_or_none(items, index):
+    return items[index] if index <= len(items) else None
