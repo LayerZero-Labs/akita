@@ -11,7 +11,7 @@ use akita_types::{AkitaExpandedSetup, FoldSchedule, OpeningClaimsLayout, SetupPr
 use core::marker::PhantomData;
 use jolt_field::{CanonicalEncoding, Field};
 use std::collections::BTreeMap;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
 enum SetupPrefixCacheState<T> {
     Computing,
@@ -42,6 +42,43 @@ impl<T> Default for SetupPrefixCache<T> {
         Self {
             entries: Mutex::new(BTreeMap::new()),
         }
+    }
+}
+
+/// Owns a `Computing` slot while its derivation runs.
+///
+/// Dropping it without publishing a value, whether by an error return or by
+/// unwinding out of `derive`, marks the slot failed, evicts it, and wakes every
+/// waiter so one of them retries. Without this, a panic in `derive` would leave
+/// the slot `Computing` and block every later caller for that id forever.
+struct PendingSetupPrefix<'a, T> {
+    cache: &'a SetupPrefixCache<T>,
+    id: &'a SetupPrefixSlotId,
+    cell: &'a Arc<SetupPrefixCacheCell<T>>,
+}
+
+impl<T> Drop for PendingSetupPrefix<'_, T> {
+    fn drop(&mut self) {
+        // Neither lock is held across `derive`, so poisoning can only come from
+        // an unrelated panic; recover the guard rather than skip the cleanup.
+        let mut state = self
+            .cell
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *state = SetupPrefixCacheState::Failed;
+        let mut cache = self
+            .cache
+            .entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if cache
+            .get(self.id)
+            .is_some_and(|current| Arc::ptr_eq(current, self.cell))
+        {
+            cache.remove(self.id);
+        }
+        self.cell.ready.notify_all();
     }
 }
 
@@ -76,34 +113,20 @@ impl<T: Send + Sync> SetupPrefixCache<T> {
                         "setup prefix cache derivation was already consumed".into(),
                     )
                 })?;
-                match derive() {
-                    Ok(value) => {
-                        let value = Arc::new(value);
-                        let mut state = cell.state.lock().map_err(|_| {
-                            AkitaError::InvalidSetup("setup prefix slot lock poisoned".into())
-                        })?;
-                        *state = SetupPrefixCacheState::Ready(Arc::clone(&value));
-                        cell.ready.notify_all();
-                        return Ok(value);
-                    }
-                    Err(error) => {
-                        let mut state = cell.state.lock().map_err(|_| {
-                            AkitaError::InvalidSetup("setup prefix slot lock poisoned".into())
-                        })?;
-                        *state = SetupPrefixCacheState::Failed;
-                        let mut cache = self.entries.lock().map_err(|_| {
-                            AkitaError::InvalidSetup("setup prefix cache lock poisoned".into())
-                        })?;
-                        if cache
-                            .get(id)
-                            .is_some_and(|current| Arc::ptr_eq(current, &cell))
-                        {
-                            cache.remove(id);
-                        }
-                        cell.ready.notify_all();
-                        return Err(error);
-                    }
-                }
+                let pending = PendingSetupPrefix {
+                    cache: self,
+                    id,
+                    cell: &cell,
+                };
+                let value = Arc::new(derive()?);
+                let mut state = cell.state.lock().map_err(|_| {
+                    AkitaError::InvalidSetup("setup prefix slot lock poisoned".into())
+                })?;
+                *state = SetupPrefixCacheState::Ready(Arc::clone(&value));
+                cell.ready.notify_all();
+                drop(state);
+                core::mem::forget(pending);
+                return Ok(value);
             }
 
             let mut state = cell
