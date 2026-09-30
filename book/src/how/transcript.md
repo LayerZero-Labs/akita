@@ -245,10 +245,16 @@ serve different purposes.
 
 ### Protected challenge queries
 
-For algebraic loss $L$ over the exact extension field $E$, the plan chooses
-the least nonnegative integer $g$ with $L 2^{128} \le |E| 2^g$. The
-calculation uses integers and the actual prime power, including the deficit
-below a power of two.
+Each field challenge site has a *loss* $L$. The security argument allows at
+most $L$ of the $|E|$ possible challenge values to be bad for the verifier, so
+one attempt at the challenge lands on a bad value with probability at most
+$L/|E|$. The next subsection shows where a loss comes from for one family of
+sites.
+
+Grinding makes each attempt cost $2^g$ hash queries on average. The plan
+chooses the least nonnegative integer $g$ with $L 2^{128} \le |E| 2^g$, which
+keeps the chance per query at most $2^{-128}$. The calculation uses integers
+and the actual prime power, including the deficit below a power of two.
 
 At a protected query with grinding target $g>0$, the prover searches a
 nonce whose accepted value must fit $g+7$ bits. Each attempt absorbs the
@@ -267,6 +273,68 @@ width is still checked from the public plan. Schedule selection adds the
 per-message native maxima, `ceil(semantic_nonce_width / 7)`. This deterministic
 cost is not the realized LEB128 wire size. The verifier safety bound is derived
 separately from the complete native grammar.
+
+### The loss of a claim-batching challenge
+
+**The problem.** A fold often opens several polynomials at once. The prover
+states $N$ claimed values $v_1,\dots,v_N$, one per polynomial, and the
+verifier checks them together instead of one at a time. It draws
+coefficients $\eta_1,\dots,\eta_N$ from $E$, one fresh value per claim, and
+the rest of the fold proves the single combined claim
+$\sum_k \eta_k v_k$. The question is how many bad values this draw has, that
+is, what loss to price it at.
+
+**The tempting answer, $L=1$.** Write $u_k$ for the true value of the $k$th
+polynomial and $\delta_k = v_k - u_k$ for the error in its claim. The
+combined claim is correct exactly when $\sum_k \eta_k \delta_k = 0$. If some
+$\delta_k$ is nonzero and the errors are fixed before the coefficients are
+drawn, this is one nonzero linear equation in the $\eta_k$, and a random draw
+satisfies it with probability at most $1/|E|$. That suggests $L = 1$.
+
+**Why the security argument cannot use it.** Knowledge soundness is proved
+with an extractor: a procedure that reruns a prover that makes the verifier
+accept and recovers the committed polynomials from its answers. The true
+values $u_k$ are evaluations of those recovered polynomials, and the
+extractor only obtains them from the part of the proof that comes after
+this challenge. Commitment binding does not help. It says an efficient
+prover cannot produce two different openings of one commitment; it does not
+hand the argument a single opening, and hence fixed errors $\delta_k$, before
+the coefficients are drawn. So the argument must work from accepting runs
+alone.
+
+**What the extractor does.** It reruns the prover from this challenge with
+$N+1$ coefficient vectors: a base vector $\eta$, and for each $k$ a vector
+$\eta^{(k)}$ that differs from $\eta$ only in coordinate $k$. The claims
+$v_k$ were sent before the challenge, so they are the same in every run.
+Every run also opens the same committed polynomials, or the extractor has found a commitment
+collision, so every run has the same errors $\delta_k$. The base run gives
+$\sum_j \eta_j \delta_j = 0$, and run $k$ gives the same sum with $\eta_k$
+replaced by $\eta^{(k)}_k$. Subtracting the two leaves
+$(\eta^{(k)}_k - \eta_k)\,\delta_k = 0$, so $\delta_k = 0$.
+
+For example, with $N = 2$ the extractor uses three runs, with coefficient
+vectors $(a, b)$, $(a', b)$ and $(a, b')$ where $a' \ne a$ and $b' \ne b$.
+The first two runs give $(a - a')\,\delta_1 = 0$, and the first and third
+give $(b - b')\,\delta_2 = 0$. Both claims are therefore correct.
+
+**The resulting loss.** The extractor fails only if, for some coordinate
+$k$, the prover succeeds with one value of $\eta_k$ and with no other value,
+the other coordinates held fixed. That costs at most one bad value per
+coordinate, $N$ in all, so the site has loss $L = N$. Other sites in Akita
+batch claims with powers $1, \gamma, \dots, \gamma^{N-1}$ of one scalar. That
+check is a nonzero polynomial of degree at most $N-1$ in $\gamma$, so those
+sites have loss $N-1$.
+
+In the production field, $|E| = (2^{64}-59)^2$ is slightly below $2^{128}$.
+One polynomial draws no coefficients and has no site. Nine polynomials give
+$L = 9$, and $9 \cdot 2^{128}/|E|$ lies between 8 and 16, so the site needs
+$g = 4$, where $L = 1$ would give $g = 1$.
+
+Two sites have this form: the evaluation batch of each fold, and the batch
+of reduction claims in extension-opening reduction.
+`independent_batch_loss_factor` in `akita-types` prices both. The
+[grinding nonce specification](../../../specs/grinding-nonce-encoding.md#claim-batching-sites)
+records the contract.
 
 ### Fold-response search
 

@@ -101,7 +101,6 @@ where
                 "selected schedule row does not fit this verifier's setup".to_string(),
             ));
         }
-        schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
         let (grinding_plan, descriptor_bytes) = transcript_instance_descriptor::<Cfg::Field, Cfg>(
             &setup.expanded().descriptor,
             &opening_batch,

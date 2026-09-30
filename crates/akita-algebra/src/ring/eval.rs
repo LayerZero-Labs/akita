@@ -2,7 +2,7 @@
 
 use super::CyclotomicRing;
 use crate::fft::field_pow;
-use akita_error::AkitaError;
+use akita_error::{narrowing::usize_to_u64, AkitaError};
 #[cfg(test)]
 use jolt_field::ExtField;
 use jolt_field::Unreduced;
@@ -37,8 +37,7 @@ pub fn scalar_powers_with_stride<F: Field>(
     if len <= 1 {
         return Ok(scalar_powers(alpha, len));
     }
-    let exponent = u64::try_from(stride)
-        .map_err(|_| AkitaError::InvalidInput("power stride does not fit u64".into()))?;
+    let exponent = usize_to_u64(stride, "power stride")?;
     Ok(scalar_powers(field_pow(alpha, exponent), len))
 }
 
