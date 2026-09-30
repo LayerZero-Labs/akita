@@ -21,12 +21,14 @@ use crate::descriptor_bytes::{
     digest_descriptor_bytes, sis_modulus_profile_tag, DescriptorDigest,
     AKITA_INSTANCE_DESCRIPTOR_VERSION,
 };
-use crate::narrowing::{usize_to_u32, usize_to_u8};
 use crate::{
     AkitaSetupSeed, BasisMode, CompressionPolicyId, DecompositionParams, FoldSchedule,
     OpeningClaimsLayout, SisModulusProfileId, COMPRESSION_POLICY,
 };
-use akita_error::AkitaError;
+use akita_error::{
+    narrowing::{usize_to_u32, usize_to_u8},
+    AkitaError,
+};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
     DEFAULT_MAX_SEQUENCE_LEN,

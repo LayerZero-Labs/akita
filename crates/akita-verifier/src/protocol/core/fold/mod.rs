@@ -7,6 +7,7 @@ mod single_field;
 use super::*;
 use crate::stages::stage2::{Stage2CompressionOracle, Stage2OpeningSemantics};
 use akita_algebra::offset_eq::EqPairTensorFamily;
+use akita_types::NativeGrinding;
 use akita_types::{
     batch_l2_virtual_evaluations, dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan,
     OpeningFamily, RingRelationGroupOpening,
@@ -57,7 +58,7 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let row_coefficients = akita_types::verify_row_coefficients_native::<F, E>(
+    let row_coefficients = akita_types::row_coefficients_native::<F, E, _>(
         opening_shape,
         akita_types::GrindingSite::EvaluationBatch { level },
         grinding,
@@ -267,7 +268,7 @@ where
         input_claim,
         shape,
     )?;
-    let witness_eval = akita_types::native_stage2_verifier_w_eval::<F, E>(grinding, level)?;
+    let witness_eval = akita_types::native_stage2_w_eval::<F, E, _>(grinding, level, E::zero())?;
     Ok(Stage2RoundReplay {
         output_claim: replay.output_claim,
         challenges: replay.challenges,

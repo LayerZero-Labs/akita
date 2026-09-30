@@ -12,7 +12,9 @@ use crate::TranscriptSponge;
 
 mod nonce;
 pub use nonce::{native_nonce_encoded_len, native_nonce_max_bytes, NativeNonce};
+mod channel;
 mod sampling;
+pub use channel::ProofChannel;
 pub use sampling::{
     native_field_challenge_bytes, native_field_sampling_is_certified,
     native_prover_field_challenge, native_verifier_field_challenge, NATIVE_FIELD_CHALLENGE_BYTES,
@@ -616,36 +618,26 @@ fn public_bytes_record(
     ))
 }
 
-/// Absorb one public byte string and record its diagnostic site on the prover side.
-pub fn public_native_bytes_prover(
-    state: &mut NativeProverState,
+/// Absorb one public byte string and record its diagnostic site.
+pub fn public_native_bytes<S: ProofChannel>(
+    state: &mut S,
     site: ProtocolSiteId,
     bytes: &[u8],
 ) -> Result<(), NativeContextError> {
-    prover_context(state, public_bytes_record(site, bytes.len())?);
-    state.public_message(bytes);
+    state.context(public_bytes_record(site, bytes.len())?);
+    state.public(bytes);
     Ok(())
 }
 
-/// Absorb one public byte string and record its diagnostic site on the verifier side.
-pub fn public_native_bytes_verifier(
-    state: &mut NativeVerifierState<'_>,
-    site: ProtocolSiteId,
-    bytes: &[u8],
-) -> Result<(), NativeContextError> {
-    verifier_context(state, public_bytes_record(site, bytes.len())?);
-    state.public_message(bytes);
-    Ok(())
-}
-
-/// Draw a context-bound extension-field challenge on the prover side.
-pub fn native_prover_ext_challenge<F, E>(
-    state: &mut NativeProverState,
+/// Draw a context-bound extension-field challenge.
+pub fn native_ext_challenge<F, E, S>(
+    state: &mut S,
     site: ProtocolSiteId,
 ) -> Result<E, NativeContextError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
+    S: ProofChannel,
 {
     let mut coefficients = Vec::new();
     coefficients
@@ -654,48 +646,14 @@ where
     for limb in 0..E::DEGREE {
         let mut limb_site = site;
         limb_site.limb = u32::try_from(limb).map_err(|_| NativeContextError)?;
-        prover_context(
-            state,
-            ProtocolContextRecord::new(
-                limb_site.to_bytes(),
-                ProtocolMessageKind::Challenge as u32,
-                0,
-                0,
-                native_field_challenge_bytes::<F>(),
-            ),
-        );
-        coefficients.push(native_prover_field_challenge(state)?);
-    }
-    Ok(E::from_base_slice(&coefficients))
-}
-
-/// Draw a context-bound extension-field challenge on the verifier side.
-pub fn native_verifier_ext_challenge<F, E>(
-    state: &mut NativeVerifierState<'_>,
-    site: ProtocolSiteId,
-) -> Result<E, NativeContextError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    let mut coefficients = Vec::new();
-    coefficients
-        .try_reserve_exact(E::DEGREE)
-        .map_err(|_| NativeContextError)?;
-    for limb in 0..E::DEGREE {
-        let mut limb_site = site;
-        limb_site.limb = u32::try_from(limb).map_err(|_| NativeContextError)?;
-        verifier_context(
-            state,
-            ProtocolContextRecord::new(
-                limb_site.to_bytes(),
-                ProtocolMessageKind::Challenge as u32,
-                0,
-                0,
-                native_field_challenge_bytes::<F>(),
-            ),
-        );
-        coefficients.push(native_verifier_field_challenge(state)?);
+        state.context(ProtocolContextRecord::new(
+            limb_site.to_bytes(),
+            ProtocolMessageKind::Challenge as u32,
+            0,
+            0,
+            native_field_challenge_bytes::<F>(),
+        ));
+        coefficients.push(state.field_challenge()?);
     }
     Ok(E::from_base_slice(&coefficients))
 }
@@ -946,90 +904,72 @@ where
 }
 
 /// Absorb a fixed-count group of public extension-field values.
-pub fn public_native_extensions_prover<F, E>(
-    state: &mut NativeProverState,
+pub fn public_native_extensions<F, E, S>(
+    state: &mut S,
     site: ProtocolSiteId,
     values: &[E],
 ) -> Result<(), NativeContextError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
+    S: ProofChannel,
 {
-    prover_context(
-        state,
-        extension_group_record::<F, E>(site, ProtocolMessageKind::PublicValue, values.len())?,
-    );
+    state.context(extension_group_record::<F, E>(
+        site,
+        ProtocolMessageKind::PublicValue,
+        values.len(),
+    )?);
     for value in values {
         for coefficient in value.to_base_vec() {
-            state.public_message(&NativeField::new(coefficient));
+            state.public(&NativeField::new(coefficient));
         }
     }
     Ok(())
 }
 
-/// Absorb a fixed-count group of public extension-field values.
-pub fn public_native_extensions_verifier<F, E>(
-    state: &mut NativeVerifierState<'_>,
-    site: ProtocolSiteId,
-    values: &[E],
-) -> Result<(), NativeContextError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    verifier_context(
-        state,
-        extension_group_record::<F, E>(site, ProtocolMessageKind::PublicValue, values.len())?,
-    );
-    for value in values {
-        for coefficient in value.to_base_vec() {
-            state.public_message(&NativeField::new(coefficient));
-        }
-    }
-    Ok(())
-}
-
-/// Emit a fixed-count group of extension-field proof values.
-pub fn send_native_extension_group<F, E>(
-    state: &mut NativeProverState,
-    site: ProtocolSiteId,
-    values: &[E],
-) -> Result<(), NativeContextError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    prover_context(
-        state,
-        extension_group_record::<F, E>(site, ProtocolMessageKind::ProofAtoms, values.len())?,
-    );
-    for &value in values {
-        send_native_extension::<F, E>(state, value);
-    }
-    Ok(())
-}
-
-/// Receive a schedule-fixed group of extension-field proof values.
-pub fn receive_native_extension_group<F, E>(
-    state: &mut NativeVerifierState<'_>,
-    site: ProtocolSiteId,
-    value_count: usize,
-) -> Result<Vec<E>, VerificationError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    let record = extension_group_record::<F, E>(site, ProtocolMessageKind::ProofAtoms, value_count)
-        .map_err(|_| VerificationError)?;
-    verifier_context(state, record);
+/// Allocate `count` zeroed extension slots for an in-place exchange.
+///
+/// # Errors
+///
+/// Returns [`VerificationError`] when the allocation cannot be reserved.
+pub fn native_extension_slots<E: Field>(count: usize) -> Result<Vec<E>, VerificationError> {
     let mut values = Vec::new();
     values
-        .try_reserve_exact(value_count)
+        .try_reserve_exact(count)
         .map_err(|_| VerificationError)?;
-    for _ in 0..value_count {
-        values.push(receive_native_extension::<F, E>(state)?);
-    }
+    values.resize(count, E::zero());
     Ok(values)
+}
+
+/// Exchange a schedule-fixed group of extension-field proof values in place.
+///
+/// The prover emits `values`; the verifier overwrites them with the received
+/// atoms. The group length is public and comes from the schedule.
+///
+/// # Errors
+///
+/// Returns [`VerificationError`] when the group record overflows or the
+/// verifier cannot decode an atom.
+pub fn exchange_native_extension_group<F, E, S>(
+    state: &mut S,
+    site: ProtocolSiteId,
+    values: &mut [E],
+) -> Result<(), VerificationError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    S: ProofChannel,
+{
+    let record =
+        extension_group_record::<F, E>(site, ProtocolMessageKind::ProofAtoms, values.len())
+            .map_err(|_| VerificationError)?;
+    state.context(record);
+    for value in values {
+        let mut atom = NativeExtension::<F, E>::new(*value);
+        state.exchange(&mut atom)?;
+        *value = atom.into_inner();
+    }
+    Ok(())
 }
 
 /// Preview the native predicate produced by a candidate grinding nonce.
@@ -1204,7 +1144,7 @@ mod tests {
 
             let mut chunked = new_native_prover(b"chunked-bytes", b"instance").unwrap();
             send_native_bytes(&mut chunked, &bytes);
-            public_native_bytes_prover(&mut chunked, site, &bytes).unwrap();
+            public_native_bytes(&mut chunked, site, &bytes).unwrap();
             let chunked_challenge = chunked.verifier_message::<[u8; 32]>();
 
             let mut bytewise = new_native_prover(b"chunked-bytes", b"instance").unwrap();
@@ -1227,7 +1167,7 @@ mod tests {
             let proof = chunked.narg_string().to_vec();
             let mut verifier = new_native_verifier(b"chunked-bytes", b"instance", &proof).unwrap();
             assert_eq!(receive_native_bytes(&mut verifier, len).unwrap(), bytes);
-            public_native_bytes_verifier(&mut verifier, site, &bytes).unwrap();
+            public_native_bytes(&mut verifier, site, &bytes).unwrap();
             assert_eq!(
                 verifier.verifier_message::<[u8; 32]>().unwrap(),
                 chunked_challenge
@@ -1253,9 +1193,10 @@ mod tests {
             ..ProtocolSiteId::default()
         };
         let mut prover = new_native_prover(b"groups", b"fixture").unwrap();
-        public_native_extensions_prover::<F, E>(&mut prover, public_site, &public).unwrap();
-        send_native_extension_group::<F, E>(&mut prover, private_site, &private).unwrap();
-        let prover_challenge = native_prover_ext_challenge::<F, E>(
+        public_native_extensions::<F, E, _>(&mut prover, public_site, &public).unwrap();
+        let mut sent = private;
+        exchange_native_extension_group::<F, E, _>(&mut prover, private_site, &mut sent).unwrap();
+        let prover_challenge = native_ext_challenge::<F, E, _>(
             &mut prover,
             ProtocolSiteId {
                 family: 27,
@@ -1268,13 +1209,12 @@ mod tests {
         assert_eq!(proof.len(), private.len() * E::DEGREE * F::NUM_BYTES);
 
         let mut verifier = new_native_verifier(b"groups", b"fixture", &proof).unwrap();
-        public_native_extensions_verifier::<F, E>(&mut verifier, public_site, &public).unwrap();
-        assert_eq!(
-            receive_native_extension_group::<F, E>(&mut verifier, private_site, private.len())
-                .unwrap(),
-            private
-        );
-        let verifier_challenge = native_verifier_ext_challenge::<F, E>(
+        public_native_extensions::<F, E, _>(&mut verifier, public_site, &public).unwrap();
+        let mut received = [<E as jolt_field::Zero>::zero(); 2];
+        exchange_native_extension_group::<F, E, _>(&mut verifier, private_site, &mut received)
+            .unwrap();
+        assert_eq!(received, private);
+        let verifier_challenge = native_ext_challenge::<F, E, _>(
             &mut verifier,
             ProtocolSiteId {
                 family: 27,

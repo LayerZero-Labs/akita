@@ -111,11 +111,11 @@ fn prove_eor(
     let prepared = <CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(
         backend, session, context, layout, groups,
     )?;
-    let prefix = native_eor_prover_prefix::<F, E>(
+    let prefix = native_eor_prefix::<F, E, _>(
         grinding,
         layout,
         &prepared.openings,
-        &prepared.proof_partials,
+        prepared.proof_partials.clone(),
         1,
     )?;
     let (claim, mut session) = <CpuBackend as OpaqueEorKernel<F, E>>::begin_eor(
@@ -145,7 +145,7 @@ fn prove_eor(
         )?,
         NATIVE_EOR_SUMCHECK_INVOCATION,
     )?;
-    let final_claims = <CpuBackend as OpaqueEorKernel<F, E>>::finish_eor(backend, session)?;
+    let mut final_claims = <CpuBackend as OpaqueEorKernel<F, E>>::finish_eor(backend, session)?;
     if final_claims
         .iter()
         .zip(&prefix.claim_coefficients)
@@ -154,7 +154,7 @@ fn prove_eor(
     {
         return Err(AkitaError::InvalidProof);
     }
-    native_eor_prover_final_claims::<F, E>(grinding, layout, &final_claims, 1)?;
+    native_eor_final_claims::<F, E, _>(grinding, layout, &mut final_claims, 1)?;
     Ok(ProvedReduction {
         partials: prepared.proof_partials,
         final_claims,
@@ -474,8 +474,14 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
             let native =
                 new_native_verifier(b"test/mixed-eor-dense-oracle", b"test", &proof_bytes).unwrap();
             let mut replay = NativeVerifierGrinding::new(native, &plan);
-            let eor_prefix =
-                native_eor_verifier_prefix::<F, E>(&mut replay, &layout, &openings, 1).unwrap();
+            let eor_prefix = native_eor_prefix::<F, E, _>(
+                &mut replay,
+                &layout,
+                &openings,
+                vec![E::zero(); partials.len()],
+                1,
+            )
+            .unwrap();
             assert_eq!(eor_prefix.partials, partials);
             let eta = eor_prefix.eta[0];
             let coefficients = eor_prefix.claim_coefficients;
@@ -509,8 +515,8 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
             .unwrap();
             let claim = rounds.output_claim;
             let rho = rounds.challenges;
-            let final_claims =
-                native_eor_verifier_final_claims::<F, E>(&mut replay, &layout, 1).unwrap();
+            let mut final_claims = vec![E::zero(); layout.num_total_polynomials()];
+            native_eor_final_claims::<F, E, _>(&mut replay, &layout, &mut final_claims, 1).unwrap();
             replay.finish().unwrap();
             assert_eq!(rho, proved.rho);
             let expected = terms

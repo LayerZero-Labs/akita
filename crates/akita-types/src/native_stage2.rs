@@ -1,10 +1,9 @@
 //! Native proof-stream atoms emitted after stage-2 sumcheck challenges.
 
-use crate::{NativeProverGrinding, NativeVerifierGrinding};
+use crate::NativeGrinding;
 use akita_error::AkitaError;
-use akita_transcript::{
-    receive_native_extension_group, send_native_extension_group, ProtocolSiteId, SITE_FAMILY_STAGE2,
-};
+use akita_transcript::{exchange_native_extension_group, ProtocolSiteId, SITE_FAMILY_STAGE2};
+use core::slice;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 fn witness_evaluation_site(level: u32) -> ProtocolSiteId {
@@ -16,48 +15,35 @@ fn witness_evaluation_site(level: u32) -> ProtocolSiteId {
     }
 }
 
-/// Emit the stage-2 witness evaluation after all sumcheck challenges.
-pub fn native_stage2_prover_w_eval<F, E>(
-    grinding: &mut NativeProverGrinding<'_>,
+/// Exchange the stage-2 witness evaluation after all sumcheck challenges.
+///
+/// The prover emits `evaluation`; the verifier passes a placeholder and gets
+/// the received value back.
+pub fn native_stage2_w_eval<F, E, G>(
+    grinding: &mut G,
     level: u32,
-    evaluation: E,
-) -> Result<(), AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    send_native_extension_group::<F, E>(
-        grinding.state_mut(),
-        witness_evaluation_site(level),
-        &[evaluation],
-    )
-    .map_err(|_| AkitaError::InvalidProof)
-}
-
-/// Receive the stage-2 witness evaluation after replaying all sumcheck rounds.
-pub fn native_stage2_verifier_w_eval<F, E>(
-    grinding: &mut NativeVerifierGrinding<'_, '_>,
-    level: u32,
+    mut evaluation: E,
 ) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
+    G: NativeGrinding,
 {
-    let mut values = receive_native_extension_group::<F, E>(
+    exchange_native_extension_group::<F, E, _>(
         grinding.state_mut(),
         witness_evaluation_site(level),
-        1,
+        slice::from_mut(&mut evaluation),
     )
     .map_err(|_| AkitaError::InvalidProof)?;
-    values.pop().ok_or(AkitaError::InvalidProof)
+    Ok(evaluation)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ChallengeFieldOrder, GrindingPlan};
+    use crate::{ChallengeFieldOrder, GrindingPlan, NativeProverGrinding, NativeVerifierGrinding};
     use akita_transcript::{new_native_prover, new_native_verifier};
-    use jolt_field::{CanonicalBytes, FpExt4, Prime32Offset99, Ring};
+    use jolt_field::{CanonicalBytes, FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;
@@ -72,14 +58,14 @@ mod tests {
         let state = new_native_prover(b"native-stage2", b"fixture").unwrap();
         let mut prover = NativeProverGrinding::new(state, &plan);
         let evaluation = E::from_u64(42);
-        native_stage2_prover_w_eval::<F, E>(&mut prover, 7, evaluation).unwrap();
+        native_stage2_w_eval::<F, E, _>(&mut prover, 7, evaluation).unwrap();
         let proof = prover.finish().unwrap();
         assert_eq!(proof.len(), E::DEGREE * F::NUM_BYTES);
 
         let state = new_native_verifier(b"native-stage2", b"fixture", &proof).unwrap();
         let mut verifier = NativeVerifierGrinding::new(state, &plan);
         assert_eq!(
-            native_stage2_verifier_w_eval::<F, E>(&mut verifier, 7).unwrap(),
+            native_stage2_w_eval::<F, E, _>(&mut verifier, 7, E::zero()).unwrap(),
             evaluation
         );
         verifier.finish().unwrap();

@@ -38,12 +38,6 @@ pub(crate) use root_candidates::{
 
 type PrecommittedGroupSeed = (GroupCommitPhaseParams, CommittedSourceContract);
 
-/// Maximum number of precommitted producers accepted by guided adaptation.
-///
-/// This limit also bounds the number of canonical precommit-opening
-/// assignments considered at the adapted root.
-pub const MAX_ADAPTED_PRECOMMIT_WIDTH: usize = 256;
-
 #[derive(Clone, Copy)]
 pub(crate) struct ScheduleSearchOptions<'a> {
     pub(crate) relation_traversal_order: super::schedule_params::RelationTraversalOrder,
@@ -67,8 +61,13 @@ impl ScheduleSearchOptions<'_> {
     }
 }
 
-/// Partition precommitted groups whose opening choices may be permuted without
-/// changing feasibility or any numeric planner objective.
+/// Partition precommitted groups into interchangeable classes: groups with
+/// equal commit-phase profiles and equal source contracts.
+///
+/// Root planning assigns one opening to each class, and every group of the
+/// class opens with it. Groups of one class therefore materialize to identical
+/// parameters, and the opening search grows with the number of classes rather
+/// than with the number of groups.
 pub(crate) fn precommitted_group_equivalence_classes(
     profiles: &[GroupCommitPhaseParams],
     source_contracts: &[CommittedSourceContract],
@@ -92,43 +91,6 @@ pub(crate) fn precommitted_group_equivalence_classes(
         }
     }
     Ok(classes)
-}
-
-fn canonicalize_interchangeable_precommitted_groups(
-    groups: &mut [GroupOpenPhaseParams],
-    equivalence_classes: &[Vec<usize>],
-) -> Result<(), AkitaError> {
-    for indices in equivalence_classes {
-        let mut canonical = indices
-            .iter()
-            .map(|&index| {
-                let group = groups[index];
-                (group.canonical_descriptor_bytes(), group)
-            })
-            .collect::<Vec<_>>();
-        let Some(descriptor_len) = canonical.first().map(|(descriptor, _)| descriptor.len()) else {
-            continue;
-        };
-        // Equal profiles and the root's shared opening method make every
-        // descriptor in one class the same width. The earliest class slot at
-        // which two representatives differ therefore decides the complete
-        // schedule descriptor even when the class indices are non-adjacent.
-        // Reject future variable-width encodings instead of applying a local
-        // comparator that cannot account for bytes between those indices.
-        if canonical
-            .iter()
-            .any(|(descriptor, _)| descriptor.len() != descriptor_len)
-        {
-            return Err(AkitaError::InvalidSetup(
-                "interchangeable precommitted group descriptors must have one width".into(),
-            ));
-        }
-        canonical.sort_by(|(left, _), (right, _)| left.cmp(right));
-        for (&index, (_, group)) in indices.iter().zip(canonical) {
-            groups[index] = group;
-        }
-    }
-    Ok(())
 }
 
 fn materialize_precommitted_group_for_open_basis(
@@ -253,16 +215,22 @@ struct RootFinalGroupCandidateInput<'a> {
 
 fn precommitted_groups_for_open_basis(
     seeds: &[PrecommittedGroupSeed],
-    openings: &[PlannerOpeningCandidate],
     equivalence_classes: &[Vec<usize>],
+    class_openings: &[PlannerOpeningCandidate],
     policy: &PlannerPolicy,
     shared_opening_ring_dimension: usize,
     log_basis_open: u32,
 ) -> Result<Option<(Vec<GroupOpenPhaseParams>, usize)>, AkitaError> {
-    let mut groups = Vec::with_capacity(seeds.len());
-    for (group, opening) in seeds.iter().zip(openings.iter().copied()) {
+    if class_openings.len() != equivalence_classes.len() {
+        return Err(AkitaError::InvalidSetup(
+            "root precommit opening candidate count mismatch".into(),
+        ));
+    }
+    let mut groups = vec![None; seeds.len()];
+    let mut d_width = 0usize;
+    for (indices, &opening) in equivalence_classes.iter().zip(class_openings) {
         let Some(materialized) = materialize_precommitted_group_for_open_basis(
-            group,
+            &seeds[indices[0]],
             policy,
             opening,
             shared_opening_ring_dimension,
@@ -271,17 +239,24 @@ fn precommitted_groups_for_open_basis(
         else {
             return Ok(None);
         };
-        groups.push(materialized);
+        d_width = checked::mul_add(
+            materialized.d_segment_width(policy.claim_ext_degree, shared_opening_ring_dimension)?,
+            indices.len(),
+            d_width,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
+        for &index in indices {
+            groups[index] = Some(materialized);
+        }
     }
-    canonicalize_interchangeable_precommitted_groups(&mut groups, equivalence_classes)?;
-    let mut d_width = 0usize;
-    for group in &groups {
-        d_width = d_width
-            .checked_add(
-                group.d_segment_width(policy.claim_ext_degree, shared_opening_ring_dimension)?,
+    let groups = groups
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "precommitted equivalence classes must cover every group".into(),
             )
-            .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
-    }
+        })?;
     Ok(Some((groups, d_width)))
 }
 
@@ -312,7 +287,7 @@ impl PreparedRootProducers {
         policy: &PlannerPolicy,
         dimensions: CommitmentRingDims,
         opening: PlannerOpeningCandidate,
-        precommitted_openings: &[PlannerOpeningCandidate],
+        precommitted_class_openings: &[PlannerOpeningCandidate],
         candidate_log_basis_open: u32,
     ) -> Result<Option<Self>, AkitaError> {
         dimensions.validate_role_projection()?;
@@ -325,12 +300,7 @@ impl PreparedRootProducers {
             &key.precommitteds,
             precommitted_source_contracts,
         )?;
-        if precommitted_openings.len() != key.precommitteds.len() {
-            return Err(AkitaError::InvalidSetup(
-                "root precommit opening candidate count mismatch".into(),
-            ));
-        }
-        if precommitted_openings
+        if precommitted_class_openings
             .iter()
             .any(|candidate| candidate.is_coefficient_packing() != opening.is_coefficient_packing())
         {
@@ -351,8 +321,8 @@ impl PreparedRootProducers {
             .collect::<Vec<PrecommittedGroupSeed>>();
         let Some((groups, d_width)) = precommitted_groups_for_open_basis(
             &seeds,
-            precommitted_openings,
             &equivalence_classes,
+            precommitted_class_openings,
             policy,
             shared_opening_ring_dimension,
             candidate_log_basis_open,
@@ -686,16 +656,21 @@ pub fn find_schedule(
 ///
 /// The main row's root A/B geometry and opening plan are frozen. Its recursive
 /// depth, per-level dimensions, block split, slicing, bases, opening family,
-/// payload/relation phases, and direct-vs-offloaded edges form a fail-closed
-/// guide. The grouped root's shared D matrix and every length-, setup-, rank-,
-/// response-, and relation-derived suffix value are rebuilt under `policy`.
-/// Adaptation fails when that frozen skeleton is no longer feasible. This is a
-/// conditional search, not the globally optimal search performed by
-/// [`find_schedule`].
-/// Adaptation accepts at most [`MAX_ADAPTED_PRECOMMIT_WIDTH`] precommitted
-/// producers and the same number of canonical precommit-opening assignments,
-/// so producer-controlled group counts cannot create unbounded allocation or
-/// recreate an unbounded Cartesian product.
+/// payload/relation phases, and direct-vs-offloaded edges form a guide. The
+/// grouped root's shared D matrix and every length-, setup-, rank-, response-,
+/// and relation-derived suffix value are rebuilt under `policy`. This guided
+/// search is a conditional search, not the globally optimal search performed
+/// by [`find_schedule`].
+///
+/// When that frozen skeleton is no longer feasible, the guided search reports
+/// [`AkitaError::UnsupportedSchedule`] and adaptation falls back to
+/// [`find_schedule`] for the same key. Adaptation therefore fails only when the
+/// full search fails too, or when the request itself is invalid. Invalid
+/// requests (no precommitted group, a mismatched final group, or a main row
+/// that does not pass audit under `policy`) are rejected without a fallback.
+/// A fallback row is the full search's optimum for the key and need not retain
+/// any part of the main row's skeleton. When both searches fail, the error
+/// carries both reasons.
 ///
 /// The supplied row is expected to come from a caller-approved
 /// [`akita_schedules::ValidatedScheduleCatalog`]. The resulting expanded row must
@@ -708,22 +683,31 @@ pub fn find_adapted_schedule(
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
-    let producer_count = request.precommitted_producers().len();
-    if producer_count > MAX_ADAPTED_PRECOMMIT_WIDTH {
-        return Err(AkitaError::UnsupportedSchedule(format!(
-            "adapted planning supports at most {MAX_ADAPTED_PRECOMMIT_WIDTH} precommitted producers, got {producer_count}"
-        )));
-    }
     let key = request.key();
     let precommitted_source_contracts = request.source_contracts();
-    find_adapted_schedule_for_key(
+    match find_adapted_schedule_for_key(
         main_row,
         &key,
         final_source_contract,
         &precommitted_source_contracts,
         policy,
-        ring_challenge_config,
-    )
+        &ring_challenge_config,
+    ) {
+        Err(AkitaError::UnsupportedSchedule(guided)) => find_schedule(
+            &key,
+            final_source_contract,
+            &precommitted_source_contracts,
+            policy,
+            ring_challenge_config,
+        )
+        .map_err(|error| match error {
+            AkitaError::UnsupportedSchedule(full) => AkitaError::UnsupportedSchedule(format!(
+                "{full}; the guided search was also infeasible: {guided}"
+            )),
+            error => error,
+        }),
+        adapted => adapted,
+    }
 }
 
 fn find_adapted_schedule_for_key(
@@ -938,8 +922,32 @@ pub(crate) fn find_schedule_in_relation_order(
                 key.final_group.num_polynomials()
             )));
         }
+        let class_count = precommitted_group_equivalence_classes(
+            &key.precommitteds,
+            precommitted_source_contracts,
+        )?
+        .len();
+        let bounded_note = if u32::try_from(class_count)
+            .ok()
+            .and_then(|classes| {
+                akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS
+                    .len()
+                    .checked_pow(classes)
+            })
+            .is_none_or(|products| {
+                products > crate::schedule_params::MAX_PRECOMMIT_OPENING_PRODUCTS
+            }) {
+            format!(
+                "; {class_count} distinct precommitted classes can exceed the {}-assignment \
+                 root opening bound, so some coefficient-packing root openings may not have \
+                 been searched",
+                crate::schedule_params::MAX_PRECOMMIT_OPENING_PRODUCTS
+            )
+        } else {
+            String::new()
+        };
         return Err(AkitaError::UnsupportedSchedule(format!(
-            "no multi-group schedule in the audited fold domain for num_vars={}",
+            "no multi-group schedule in the audited fold domain for num_vars={}{bounded_note}",
             key.final_group.num_vars()
         )));
     };

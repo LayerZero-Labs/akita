@@ -6,11 +6,12 @@ use akita_sumcheck::{
     NativeSumcheckProverChannel, NativeSumcheckRole, NativeSumcheckVerifierChannel,
 };
 use akita_transcript::{
-    commit_native_grinding_nonce, grinding_predicate_accepts, native_nonce_encoded_len,
-    native_nonce_max_bytes, native_prover_ext_challenge, native_verifier_ext_challenge,
-    prover_context, receive_native_grinding_nonce, search_native_grinding_nonce, verifier_context,
-    NativeFoldPreview, NativeNonce, NativeProverState, NativeVerifierState, ProtocolContextRecord,
-    ProtocolMessageKind, ProtocolSiteId, GRINDING_PREDICATE_LEN, SITE_FAMILY_SUMCHECK,
+    commit_native_grinding_nonce, grinding_predicate_accepts, native_ext_challenge,
+    native_nonce_encoded_len, native_nonce_max_bytes, prover_context,
+    receive_native_grinding_nonce, search_native_grinding_nonce, verifier_context,
+    NativeFoldPreview, NativeNonce, NativeProverState, NativeVerifierState, ProofChannel,
+    ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, GRINDING_PREDICATE_LEN,
+    SITE_FAMILY_SUMCHECK,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
@@ -143,6 +144,148 @@ fn fold_response_record(site: GrindingSite, nonce_bits: u8) -> ProtocolContextRe
     )
 }
 
+/// One side of native grinding-plan replay.
+///
+/// Scheduled-query code written against this trait runs unchanged for the
+/// prover and the verifier. Every failure poisons the owner so its `finish`
+/// boundary rejects even if a caller drops the error.
+pub trait NativeGrinding {
+    /// The role-specific native transcript state.
+    type State: ProofChannel;
+
+    /// Borrow the native state for ordinary protocol messages and challenges.
+    ///
+    /// Callers must propagate errors from operations on this borrow before
+    /// `finish`; the verifier state also records them itself.
+    fn state_mut(&mut self) -> &mut Self::State;
+
+    /// Mark this replay as failed.
+    fn poison(&mut self);
+
+    /// Apply one scheduled proof-of-work query: the prover searches and emits
+    /// the nonce, the verifier receives and checks it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError`] when `site` is not the next plan entry, the
+    /// search is exhausted, or the received nonce is invalid.
+    fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError>;
+
+    /// Draw a context-bound extension challenge after its governing grinding
+    /// query has already been consumed.
+    ///
+    /// Some Akita query sites protect a vector of independent field draws with
+    /// one proof-of-work nonce. Callers must supply a distinct, public
+    /// schedule-derived `site` for every draw.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when challenge sampling fails.
+    fn ext_challenge_at<F, E>(&mut self, site: ProtocolSiteId) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        let result = native_ext_challenge::<F, E, _>(self.state_mut(), site)
+            .map_err(|_| AkitaError::InvalidProof);
+        if result.is_err() {
+            self.poison();
+        }
+        result
+    }
+
+    /// Apply scheduled work and draw the site's extension-field challenge.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`NativeGrinding::grind_query`] and
+    /// [`NativeGrinding::ext_challenge_at`] failures.
+    fn grinded_ext_challenge<F, E>(&mut self, site: GrindingSite) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        self.grind_query(site)?;
+        self.ext_challenge_at::<F, E>(site.native_site_id(u32::default()))
+    }
+
+    /// Apply one scheduled grinding query and draw `count` independently
+    /// context-bound extension challenges protected by that query.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`NativeGrinding::grind_query`] and
+    /// [`NativeGrinding::ext_challenge_at`] failures and rejects counts that
+    /// cannot be allocated or indexed.
+    fn grinded_ext_challenges<F, E>(
+        &mut self,
+        site: GrindingSite,
+        count: usize,
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        self.grind_query(site)?;
+        let mut challenges = Vec::new();
+        if challenges.try_reserve_exact(count).is_err() {
+            self.poison();
+            return Err(AkitaError::InvalidProof);
+        }
+        for index in 0..count {
+            let mut challenge_site = site.native_site_id(u32::default());
+            let Ok(group) = u32::try_from(index) else {
+                self.poison();
+                return Err(AkitaError::InvalidProof);
+            };
+            challenge_site.group = group;
+            challenges.push(self.ext_challenge_at::<F, E>(challenge_site)?);
+        }
+        Ok(challenges)
+    }
+}
+
+impl NativeGrinding for NativeProverGrinding<'_> {
+    type State = NativeProverState;
+
+    fn state_mut(&mut self) -> &mut NativeProverState {
+        &mut self.state
+    }
+
+    fn poison(&mut self) {
+        self.invalid = true;
+    }
+
+    fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
+        let result = self.grind_query_inner(site);
+        if result.is_err() {
+            self.poison();
+        }
+        result
+    }
+}
+
+impl<'proof> NativeGrinding for NativeVerifierGrinding<'proof, '_> {
+    type State = NativeVerifierState<'proof>;
+
+    fn state_mut(&mut self) -> &mut NativeVerifierState<'proof> {
+        &mut self.state
+    }
+
+    fn poison(&mut self) {
+        self.invalid = true;
+        self.state.invalidate();
+    }
+
+    fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
+        let result = self.grind_query_inner(site);
+        if result.is_err() {
+            self.poison();
+        }
+        result
+    }
+}
+
 /// Prover-side native state paired with exact grinding-plan progress.
 pub struct NativeProverGrinding<'plan> {
     state: NativeProverState,
@@ -163,94 +306,6 @@ impl<'plan> NativeProverGrinding<'plan> {
             serialized_nonce_bytes: 0,
             invalid: false,
         }
-    }
-
-    /// Borrow the native state for ordinary protocol messages and challenges.
-    ///
-    /// Operations performed through this raw role-specific state are outside
-    /// replay poisoning. Callers must propagate their errors before `finish`;
-    /// the completion boundary certifies only plan exhaustion and proof EOF.
-    pub fn state_mut(&mut self) -> &mut NativeProverState {
-        &mut self.state
-    }
-
-    /// Search, emit, and verify one scheduled proof-of-work nonce.
-    pub fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
-        let result = self.grind_query_inner(site);
-        self.invalid |= result.is_err();
-        result
-    }
-
-    /// Apply scheduled work and draw the site's extension-field challenge.
-    pub fn grinded_ext_challenge<F, E>(&mut self, site: GrindingSite) -> Result<E, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F>,
-    {
-        self.grind_query(site)?;
-        let result =
-            native_prover_ext_challenge(&mut self.state, site.native_site_id(u32::default()))
-                .map_err(|_| AkitaError::InvalidProof);
-        self.invalid |= result.is_err();
-        result
-    }
-
-    /// Apply one scheduled grinding query and draw `count` independently
-    /// context-bound extension challenges protected by that query.
-    pub fn grinded_ext_challenges<F, E>(
-        &mut self,
-        site: GrindingSite,
-        count: usize,
-    ) -> Result<Vec<E>, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F>,
-    {
-        let result = self.grinded_ext_challenges_inner::<F, E>(site, count);
-        self.invalid |= result.is_err();
-        result
-    }
-
-    fn grinded_ext_challenges_inner<F, E>(
-        &mut self,
-        site: GrindingSite,
-        count: usize,
-    ) -> Result<Vec<E>, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F>,
-    {
-        self.grind_query(site)?;
-        let mut challenges = Vec::new();
-        challenges
-            .try_reserve_exact(count)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        for index in 0..count {
-            let mut challenge_site = site.native_site_id(u32::default());
-            challenge_site.group = u32::try_from(index).map_err(|_| AkitaError::InvalidProof)?;
-            challenges.push(self.ext_challenge_at::<F, E>(challenge_site)?);
-        }
-        Ok(challenges)
-    }
-
-    /// Draw a context-bound extension challenge after its governing grinding
-    /// query has already been consumed.
-    ///
-    /// Some Akita query sites protect a vector of independent field draws with
-    /// one proof-of-work nonce. Callers must supply a distinct, public
-    /// schedule-derived `site` for every draw.
-    pub fn ext_challenge_at<F, E>(
-        &mut self,
-        site: akita_transcript::ProtocolSiteId,
-    ) -> Result<E, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F>,
-    {
-        let result = native_prover_ext_challenge(&mut self.state, site)
-            .map_err(|_| AkitaError::InvalidProof);
-        self.invalid |= result.is_err();
-        result
     }
 
     fn grind_query_inner(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
@@ -389,11 +444,6 @@ pub struct NativeProofAcceptance {
 }
 
 impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
-    fn invalidate(&mut self) {
-        self.invalid = true;
-        self.state.invalidate();
-    }
-
     /// Attach a native verifier state to its public grinding plan.
     #[must_use]
     pub const fn new(state: NativeVerifierState<'proof>, plan: &'plan GrindingPlan) -> Self {
@@ -403,98 +453,6 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
             serialized_nonce_bytes: 0,
             invalid: false,
         }
-    }
-
-    /// Borrow the native state for ordinary protocol receipt and challenges.
-    ///
-    /// The Akita state owner records every decoding or bounded-receipt failure,
-    /// including errors returned through this borrow. Callers must still
-    /// propagate errors so algebraic verification stops at the failing step.
-    pub fn state_mut(&mut self) -> &mut NativeVerifierState<'proof> {
-        &mut self.state
-    }
-
-    /// Receive and validate one scheduled proof-of-work nonce.
-    pub fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
-        let result = self.grind_query_inner(site);
-        if result.is_err() {
-            self.invalidate();
-        }
-        result
-    }
-
-    /// Verify scheduled work and draw the site's extension-field challenge.
-    pub fn grinded_ext_challenge<F, E>(&mut self, site: GrindingSite) -> Result<E, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F>,
-    {
-        self.grind_query(site)?;
-        let result =
-            native_verifier_ext_challenge(&mut self.state, site.native_site_id(u32::default()))
-                .map_err(|_| AkitaError::InvalidProof);
-        if result.is_err() {
-            self.invalidate();
-        }
-        result
-    }
-
-    /// Verify one scheduled grinding query and draw `count` independently
-    /// context-bound extension challenges protected by that query.
-    pub fn grinded_ext_challenges<F, E>(
-        &mut self,
-        site: GrindingSite,
-        count: usize,
-    ) -> Result<Vec<E>, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F>,
-    {
-        let result = self.grinded_ext_challenges_inner::<F, E>(site, count);
-        if result.is_err() {
-            self.invalidate();
-        }
-        result
-    }
-
-    fn grinded_ext_challenges_inner<F, E>(
-        &mut self,
-        site: GrindingSite,
-        count: usize,
-    ) -> Result<Vec<E>, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F>,
-    {
-        self.grind_query(site)?;
-        let mut challenges = Vec::new();
-        challenges
-            .try_reserve_exact(count)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        for index in 0..count {
-            let mut challenge_site = site.native_site_id(u32::default());
-            challenge_site.group = u32::try_from(index).map_err(|_| AkitaError::InvalidProof)?;
-            challenges.push(self.ext_challenge_at::<F, E>(challenge_site)?);
-        }
-        Ok(challenges)
-    }
-
-    /// Draw a context-bound extension challenge after its governing grinding
-    /// query has already been consumed.
-    pub fn ext_challenge_at<F, E>(
-        &mut self,
-        site: akita_transcript::ProtocolSiteId,
-    ) -> Result<E, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F>,
-    {
-        let result = native_verifier_ext_challenge(&mut self.state, site)
-            .map_err(|_| AkitaError::InvalidProof);
-        if result.is_err() {
-            self.invalidate();
-        }
-        result
     }
 
     fn grind_query_inner(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
@@ -523,7 +481,7 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
     pub fn read_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
         let result = self.read_fold_response_inner(site);
         if result.is_err() {
-            self.invalidate();
+            self.poison();
         }
         result
     }
@@ -566,7 +524,7 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
                 )
             });
         if result.is_err() {
-            self.invalidate();
+            self.poison();
         }
         result
     }
