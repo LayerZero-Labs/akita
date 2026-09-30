@@ -47,7 +47,8 @@ class FakeGitHub:
                       "state": "COMMENTED", "commit_id": payload["commit_id"]}
             self.reviews.append(posted)
             self.inline.extend({**c, "original_line": c["line"], "id": 200 + i,
-                                "user": posted["user"]} for i, c in enumerate(payload["comments"]))
+                                "user": posted["user"], "pull_request_review_id": posted["id"]}
+                               for i, c in enumerate(payload["comments"]))
             return posted
         if path == "pulls/7/reviews/99":
             return self.reviews[-1]

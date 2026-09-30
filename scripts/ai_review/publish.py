@@ -112,9 +112,11 @@ def publish(github, event, snapshot, proposal):
         raise ReviewError("Review is stale; post a new /ai-review command")
     posted = github.get(f"pulls/{pr['number']}/reviews", payload)
     verified = github.get(f"pulls/{pr['number']}/reviews/{posted['id']}")
-    inline = github.pages(f"pulls/{pr['number']}/reviews/{posted['id']}/comments")
+    # The review-specific endpoint returns legacy position-only comment objects.
+    inline = [c for c in github.pages(f"pulls/{pr['number']}/comments")
+              if c.get("pull_request_review_id") == posted["id"]]
     expected = {(c["path"], c["line"], c["side"], c["body"]) for c in payload["comments"]}
-    actual = {(c["path"], c.get("original_line"), c["side"], c["body"]) for c in inline}
+    actual = {(c.get("path"), c.get("original_line"), c.get("side"), c.get("body")) for c in inline}
     if (verified.get("body") != payload["body"] or verified.get("commit_id") != payload["commit_id"]
             or verified.get("state") != "COMMENTED" or actual != expected):
         raise ReviewError("Published review could not be verified; do not blindly retry")
