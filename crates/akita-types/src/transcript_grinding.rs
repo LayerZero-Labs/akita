@@ -641,6 +641,7 @@ impl GrindingPlanAccumulator {
     }
 }
 
+#[path = "transcript_grinding/native_replay.rs"]
 mod replay;
 pub use replay::{
     GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProofAcceptance,
