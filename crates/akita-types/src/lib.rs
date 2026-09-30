@@ -21,7 +21,6 @@ pub mod field_reduction;
 pub mod golomb_rice;
 pub mod instance_descriptor;
 pub mod layout;
-pub(crate) mod narrowing;
 mod native_eor;
 mod native_l2;
 mod native_stage1;

@@ -1,18 +1,14 @@
 use super::*;
+use akita_error::checked;
 use jolt_poly::UnivariatePoly;
 
 fn stage2_geometry(
     lane_bits: usize,
     coefficient_bits: usize,
 ) -> Result<(usize, usize), AkitaError> {
-    let lane_bits_u32 = u32::try_from(lane_bits)
-        .map_err(|_| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
-    let coefficient_bits_u32 = u32::try_from(coefficient_bits)
-        .map_err(|_| AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string()))?;
-    let lane_capacity = 1usize
-        .checked_shl(lane_bits_u32)
+    let lane_capacity = checked::pow2(lane_bits)
         .ok_or_else(|| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
-    let coeff_count = 1usize.checked_shl(coefficient_bits_u32).ok_or_else(|| {
+    let coeff_count = checked::pow2(coefficient_bits).ok_or_else(|| {
         AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
     })?;
     Ok((lane_capacity, coeff_count))

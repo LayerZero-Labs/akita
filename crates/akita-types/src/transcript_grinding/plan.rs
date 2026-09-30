@@ -1,6 +1,5 @@
 //! Schedule-owned grinding-plan derivation from public geometry.
 
-use crate::narrowing::{usize_to_u32, usize_to_u64};
 use crate::transcript_grinding::{GrindingPlanAccumulator, GrindingPlanSink, SumcheckRoundBatch};
 use crate::{
     multilinear_point_loss_factor, polynomial_identity_loss_factor, powers_batch_loss_factor,
@@ -8,7 +7,10 @@ use crate::{
     FoldSchedule, FoldSuccessor, GrindingPlan, GrindingRun, GrindingSite, OpeningClaimsLayout,
     PolynomialGroupLayout, SumcheckProtocol, TranscriptGrindingCost,
 };
-use akita_error::AkitaError;
+use akita_error::{
+    narrowing::{usize_to_u32, usize_to_u64},
+    AkitaError,
+};
 
 fn validate_claim_extension_degree(extension_degree: usize) -> Result<(), AkitaError> {
     if extension_degree == 0 || !extension_degree.is_power_of_two() {
