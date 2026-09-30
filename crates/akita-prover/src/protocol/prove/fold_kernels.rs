@@ -77,7 +77,7 @@ pub(in crate::protocol) fn prepare_evaluation_trace_claim<F, E>(
     reduction: &Option<ExtensionOpeningReduction<E>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
-    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
 ) -> Result<(PreparedEvaluationTraceClaim<E>, Vec<E>), AkitaError>
 where
@@ -90,7 +90,7 @@ where
             actual: openings.len(),
         });
     }
-    let row_coefficients = akita_types::row_coefficients_native::<F, E, _>(
+    let row_coefficients = akita_types::row_coefficients::<F, E, _>(
         opening_batch,
         akita_types::GrindingSite::EvaluationBatch { level },
         grinding,

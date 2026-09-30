@@ -7,7 +7,7 @@ use crate::ProverOpeningData;
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
 use akita_types::dispatch_for_field;
-use akita_types::NativeGrinding;
+use akita_types::GrindingReplay;
 #[cfg(test)]
 use akita_types::RingRelationGroupOpening;
 use akita_types::RingVec;
@@ -146,7 +146,7 @@ impl RingRelationProver {
             F,
         >,
         lp: CommittedGroupParams,
-        grinding: &mut akita_types::NativeProverGrinding<'_>,
+        grinding: &mut akita_types::ProverGrinding<'_>,
         level: u32,
         reduction: &Option<crate::protocol::prove::ExtensionOpeningReduction<PointF>>,
         scalar_openings: &[PointF],
@@ -253,9 +253,9 @@ impl RingRelationProver {
         {
             return Err(AkitaError::InvalidProof);
         }
-        akita_transcript::send_native_field_group(
+        akita_transcript::send_field_group(
             grinding.state_mut(),
-            akita_types::NativeFoldSite::OpeningPayload {
+            akita_types::FoldSite::OpeningPayload {
                 level,
                 ring_dimension: opening_payload_ring_dimension,
             }
@@ -264,7 +264,7 @@ impl RingRelationProver {
         )?;
         drop(opening_rows_span);
 
-        // Native public claim batching is intentionally delayed until every
+        // Public claim batching is intentionally delayed until every
         // opening digit has been bound through the complete D/H payload above.
         // Extension EOR supplies its already-bound coefficients because its
         // shared reduced point and final relation depend on that earlier batch.

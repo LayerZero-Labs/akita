@@ -1,13 +1,9 @@
-use super::{
-    verify_fold_native, NativeFoldVerifyOutput, NativeNextWitnessPlan, NativePreparedFoldReplay,
-};
-use crate::stages::opening_claims::{
-    finalize_native_claims, verify_coefficient_packing_root_prefix,
-};
+use super::{verify_fold, FoldVerifyOutput, NextWitnessPlan, PreparedFoldReplay};
+use crate::stages::opening_claims::{finalize_claims, verify_coefficient_packing_root_prefix};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_types::Commitment;
-use akita_types::NativeGrinding;
+use akita_types::GrindingReplay;
 use akita_types::{
     AkitaVerifierSetup, BasisMode, CommittedGroupParams, FoldParams, FpExtEncoding, OpeningClaims,
     OpeningClaimsLayout, RelationWitnessGeometry, RingVec, SetupContributionMode,
@@ -16,16 +12,16 @@ use akita_types::{
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn verify_root_native<F, E>(
+pub(super) fn verify_root<F, E>(
     setup: &AkitaVerifierSetup<F>,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
     next_fold_params: Option<&FoldParams>,
     terminal: &TerminalFoldParams,
-) -> Result<NativeFoldVerifyOutput<F, E>, AkitaError>
+) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
@@ -54,9 +50,9 @@ where
             .last()
             .ok_or(AkitaError::InvalidProof)?
             .ring_dimension();
-        akita_transcript::public_native_fields_verifier(
+        akita_transcript::public_fields_verifier(
             grinding.state_mut(),
-            akita_types::NativeFoldSite::RootCommitment {
+            akita_types::FoldSite::RootCommitment {
                 group: group_index,
                 ring_dimension: ring_dim,
             }
@@ -65,9 +61,9 @@ where
         )?;
     }
     for (group_index, group) in claims.groups().iter().enumerate() {
-        akita_transcript::public_native_extensions::<F, E, _>(
+        akita_transcript::public_extensions::<F, E, _>(
             grinding.state_mut(),
-            akita_types::NativeFoldSite::RootPoint { group: group_index }.id()?,
+            akita_types::FoldSite::RootPoint { group: group_index }.id()?,
             group.point(),
         )?;
     }
@@ -79,15 +75,15 @@ where
         basis,
         root_lp,
     )?;
-    akita_transcript::public_native_extensions::<F, E, _>(
+    akita_transcript::public_extensions::<F, E, _>(
         grinding.state_mut(),
-        akita_types::NativeFoldSite::Openings { level: 0 }.id()?,
+        akita_types::FoldSite::Openings { level: 0 }.id()?,
         &openings,
     )?;
     let payload_geometry = relation_layout.opening_payload_geometry()?;
-    let opening_payload = akita_transcript::receive_native_field_group::<F>(
+    let opening_payload = akita_transcript::receive_field_group::<F>(
         grinding.state_mut(),
-        akita_types::NativeFoldSite::OpeningPayload {
+        akita_types::FoldSite::OpeningPayload {
             level: 0,
             ring_dimension: payload_geometry.transcript_ring_dimension(),
         }
@@ -95,7 +91,7 @@ where
         payload_geometry.transmitted_coefficients(),
     )
     .map(RingVec::from_coeffs)?;
-    let prefix = finalize_native_claims::<F, E>(opening_batch, material, grinding, 0)?;
+    let prefix = finalize_claims::<F, E>(opening_batch, material, grinding, 0)?;
     let order = opening_batch.root_group_order()?;
     let commitment_payloads = order
         .into_iter()
@@ -111,7 +107,7 @@ where
                 .transmitted_coefficients();
             let committed_len = akita_types::witness_commitment_domain_len(witness_len, ring_dim)?;
             (
-                NativeNextWitnessPlan::OuterPayload { coefficient_count },
+                NextWitnessPlan::OuterPayload { coefficient_count },
                 ring_dim,
                 committed_len / ring_dim,
                 matches!(
@@ -131,7 +127,7 @@ where
                 .t_field_elems;
             let committed_len = akita_types::witness_commitment_domain_len(witness_len, ring_dim)?;
             (
-                NativeNextWitnessPlan::TerminalT { coefficient_count },
+                NextWitnessPlan::TerminalT { coefficient_count },
                 ring_dim,
                 committed_len / ring_dim,
                 None,
@@ -143,7 +139,7 @@ where
                 .map_err(|_| AkitaError::InvalidSetup("extension degree overflow".into()))?,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("challenge field width overflow".into()))?;
-    let level_layout = akita_types::native_nonterminal_level_layout(
+    let level_layout = akita_types::nonterminal_level_layout(
         F::MODULUS_BITS,
         challenge_field_bits,
         root_lp,
@@ -155,10 +151,10 @@ where
         )?,
         next_fold_params.map(|next| &next.params),
     )?;
-    verify_fold_native(
+    verify_fold(
         setup,
         grinding,
-        NativePreparedFoldReplay {
+        PreparedFoldReplay {
             lp: root_lp,
             level: 0,
             opening_payload,

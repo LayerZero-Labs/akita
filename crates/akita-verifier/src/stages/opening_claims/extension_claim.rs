@@ -3,7 +3,7 @@
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_types::NativeGrinding;
+use akita_types::GrindingReplay;
 use akita_types::{
     canonical_extension_opening_reduction_shape,
     derive_tensor_extension_opening_claim_from_partials, prepare_opening_point,
@@ -64,12 +64,12 @@ where
 
     fn final_claims(&mut self, opening_batch: &OpeningClaimsLayout) -> Result<Vec<E>, AkitaError>;
 }
-struct NativeEorVerifierStream<'a, 'proof, 'plan> {
-    grinding: &'a mut akita_types::NativeVerifierGrinding<'proof, 'plan>,
+struct GrindingEorVerifierStream<'a, 'proof, 'plan> {
+    grinding: &'a mut akita_types::VerifierGrinding<'proof, 'plan>,
     level: u32,
 }
 
-impl<F, E> EorVerifierStream<F, E> for NativeEorVerifierStream<'_, '_, '_>
+impl<F, E> EorVerifierStream<F, E> for GrindingEorVerifierStream<'_, '_, '_>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
@@ -81,8 +81,8 @@ where
         partial_count: usize,
         split_bits: usize,
     ) -> Result<EorPrefix<E>, AkitaError> {
-        let partials = akita_transcript::native_extension_slots::<E>(partial_count)?;
-        let prefix = akita_types::native_eor_prefix::<F, E, _>(
+        let partials = akita_transcript::extension_slots::<E>(partial_count)?;
+        let prefix = akita_types::eor_prefix::<F, E, _>(
             self.grinding,
             opening_batch,
             openings,
@@ -104,17 +104,17 @@ where
         input_claim: E,
         num_rounds: usize,
     ) -> Result<(E, Vec<E>), AkitaError> {
-        let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
+        let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
             self.grinding,
             akita_types::SumcheckProtocol::ExtensionOpeningReduction,
             self.level,
             0,
         );
-        let replay = akita_sumcheck::verify_sumcheck_rounds_native::<F, E, _>(
+        let replay = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
             &mut channel,
-            akita_types::NATIVE_EOR_SUMCHECK_INVOCATION,
+            akita_types::EOR_SUMCHECK_INVOCATION,
             input_claim,
-            akita_sumcheck::NativeSumcheckShape::new(
+            akita_sumcheck::SumcheckShape::new(
                 num_rounds,
                 akita_types::EXTENSION_OPENING_REDUCTION_DEGREE,
             )?,
@@ -124,8 +124,8 @@ where
 
     fn final_claims(&mut self, opening_batch: &OpeningClaimsLayout) -> Result<Vec<E>, AkitaError> {
         let mut final_claims =
-            akita_transcript::native_extension_slots::<E>(opening_batch.num_total_polynomials())?;
-        akita_types::native_eor_final_claims::<F, E, _>(
+            akita_transcript::extension_slots::<E>(opening_batch.num_total_polynomials())?;
+        akita_types::eor_final_claims::<F, E, _>(
             self.grinding,
             opening_batch,
             &mut final_claims,
@@ -176,12 +176,12 @@ where
         })
         .collect()
 }
-fn verify_eor_sumcheck_native<F, E>(
+fn verify_eor_sumcheck<F, E>(
     group_points: &[&[E]],
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     requires_reduction: bool,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
 ) -> Result<Option<EorSumcheckReplay<E>>, AkitaError>
 where
@@ -192,7 +192,7 @@ where
         return Ok(None);
     }
     let shape = eor_reduction_shape::<F, E>(opening_batch)?;
-    let mut stream = NativeEorVerifierStream { grinding, level };
+    let mut stream = GrindingEorVerifierStream { grinding, level };
     verify_eor_sumcheck_with_stream::<F, E, _>(
         group_points,
         openings,
@@ -204,20 +204,20 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_extension_claim_suffix_prefix_native<F, E>(
+pub(crate) fn verify_extension_claim_suffix_prefix<F, E>(
     group_points: &[&[E]],
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     lp: &CommittedGroupParams,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
 ) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
 {
-    let replay = verify_eor_sumcheck_native::<F, E>(
+    let replay = verify_eor_sumcheck::<F, E>(
         group_points,
         openings,
         opening_batch,
@@ -263,9 +263,9 @@ where
         protocol_points.push(protocol_point);
     }
     for (group_index, protocol_point) in protocol_points.iter().enumerate() {
-        akita_transcript::public_native_extensions::<F, E, _>(
+        akita_transcript::public_extensions::<F, E, _>(
             grinding.state_mut(),
-            akita_types::NativeFoldSite::GroupPoint {
+            akita_types::FoldSite::GroupPoint {
                 level,
                 group: group_index,
             }
@@ -281,20 +281,20 @@ where
     })
 }
 
-pub(crate) fn verify_extension_claim_terminal_suffix_native<F, E>(
+pub(crate) fn verify_extension_claim_terminal_suffix<F, E>(
     opening_point: &[E],
     opening: E,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     params: &TerminalFoldParams,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
 {
-    let replay = verify_eor_sumcheck_native::<F, E>(
+    let replay = verify_eor_sumcheck::<F, E>(
         &[opening_point],
         &[opening],
         opening_batch,
@@ -455,7 +455,7 @@ mod tests {
     use super::*;
 
     use akita_sumcheck::SumcheckInstanceProver;
-    use akita_transcript::{new_native_prover, new_native_verifier};
+    use akita_transcript::{new_prover_channel, new_verifier_channel};
     use akita_types::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
     use jolt_field::{FpExt4, Prime32Offset99, Zero};
     use jolt_poly::UnivariatePoly;
@@ -502,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn native_eor_verifier_replays_stream_and_checks_eof() {
+    fn eor_verifier_replays_stream_and_checks_eof() {
         const NUM_VARS: usize = 12;
         let level = 1;
         let opening_batch =
@@ -541,9 +541,9 @@ mod tests {
             akita_types::GrindingPlan::new(runs, challenge_order).unwrap()
         };
 
-        let state = new_native_prover(b"native-eor-verifier", b"fixture").unwrap();
-        let mut prover = akita_types::NativeProverGrinding::new(state, &plan);
-        akita_types::native_eor_prefix::<F, E, _>(
+        let state = new_prover_channel(b"native-eor-verifier", b"fixture").unwrap();
+        let mut prover = akita_types::ProverGrinding::new(state, &plan);
+        akita_types::eor_prefix::<F, E, _>(
             &mut prover,
             &opening_batch,
             &openings,
@@ -552,25 +552,23 @@ mod tests {
         )
         .unwrap();
         let mut sumcheck = ZeroEorProver { rounds };
-        let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+        let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
             &mut prover,
             akita_types::SumcheckProtocol::ExtensionOpeningReduction,
             level,
             0,
         );
-        let shape = akita_sumcheck::NativeSumcheckShape::new(
-            sumcheck.num_rounds(),
-            sumcheck.degree_bound(),
-        )
-        .unwrap();
-        akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
+        let shape =
+            akita_sumcheck::SumcheckShape::new(sumcheck.num_rounds(), sumcheck.degree_bound())
+                .unwrap();
+        akita_sumcheck::prove_sumcheck::<F, E, _, _>(
             &mut akita_sumcheck::InfallibleSumcheck(&mut sumcheck),
             &mut channel,
             shape,
-            akita_types::NATIVE_EOR_SUMCHECK_INVOCATION,
+            akita_types::EOR_SUMCHECK_INVOCATION,
         )
         .unwrap();
-        akita_types::native_eor_final_claims::<F, E, _>(
+        akita_types::eor_final_claims::<F, E, _>(
             &mut prover,
             &opening_batch,
             &mut [E::zero()],
@@ -579,9 +577,9 @@ mod tests {
         .unwrap();
         let proof = prover.finish().unwrap();
 
-        let state = new_native_verifier(b"native-eor-verifier", b"fixture", &proof).unwrap();
-        let mut verifier = akita_types::NativeVerifierGrinding::new(state, &plan);
-        let replay = verify_eor_sumcheck_native::<F, E>(
+        let state = new_verifier_channel(b"native-eor-verifier", b"fixture", &proof).unwrap();
+        let mut verifier = akita_types::VerifierGrinding::new(state, &plan);
+        let replay = verify_eor_sumcheck::<F, E>(
             &group_points,
             &openings,
             &opening_batch,

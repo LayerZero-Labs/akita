@@ -222,7 +222,7 @@ explains how they use the predecessor's binding.
 
 ## Proof anatomy and schedule ownership
 
-The proof is one native Spongefish argument stream. The validated schedule
+The proof is one Spongefish argument stream. The validated schedule
 fixes the messages for one root fold, zero or more recursive folds, and one
 terminal fold. Each nonterminal level emits its opening payload, Stage 1 and
 Stage 2 data, and optional Stage 3 data in protocol order. Extension-opening

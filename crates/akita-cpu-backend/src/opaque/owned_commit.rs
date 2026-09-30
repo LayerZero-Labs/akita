@@ -145,7 +145,7 @@ mod tests {
     use crate::{AkitaProverSetup, DensePoly};
     use akita_config::proof_optimized::fp64;
     use akita_prover::CommitmentHandleMetadata;
-    use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout};
+    use akita_types::{OpeningClaimsLayout, ScheduleLookupKey};
     use jolt_field::Ring;
 
     type Cfg = fp64::Dense;
@@ -161,7 +161,7 @@ mod tests {
                 let schedules =
                     akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
                 let layout = OpeningClaimsLayout::new(NUM_VARS, 1).unwrap();
-                let key = AkitaScheduleLookupKey::single(layout.root_final_group_layout().unwrap());
+                let key = ScheduleLookupKey::single(layout.root_final_group_layout().unwrap());
                 let profile = schedules.resolve_key(&key).unwrap().profiles().final_group;
                 let capacity =
                     akita_config::SetupRequirements::from_catalog::<Cfg>(&schedules, NUM_VARS, 1)

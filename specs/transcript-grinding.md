@@ -25,12 +25,12 @@ argument below. Bounded fold-response search lets an honest folded witness
 satisfy the scheduled representation and norm bounds. These mechanisms
 share one public, schedule-derived `GrindingPlan` and one plan cursor.
 
-All nonzero grinding values are inline native Spongefish proof messages. A
+All nonzero grinding values are inline Spongefish proof messages. A
 proof-of-work nonce and a fold-response nonce each use the same canonical
 unsigned LEB128 codec under distinct context kinds. There is no nonce prefix,
 bit-packed stream, proof shape, or separate replay transcript. Zero-bit
 proof-of-work sites emit no nonce and make no grinding-specific state
-transition. Native receipt, absorption, challenge extraction, and EOF checking
+transition. Receipt, absorption, challenge extraction, and EOF checking
 are authoritative.
 
 The sparse fold sampler derives every claim-major block coordinate from an
@@ -79,10 +79,10 @@ drawn separately. The predicate bytes MUST NOT be reused as the protocol
 challenge. The versioned protocol identifier and descriptor bind the positional
 grammar; context records are diagnostics and are not absorbed.
 
-Native field challenges use exact canonical rejection sampling. Each attempt
+Field challenges use exact canonical rejection sampling. Each attempt
 squeezes the field's canonical byte width, clears unused high bits, and accepts
 only a canonical representative. Consequently there is no modular-reduction
-bias or statistical-distance budget. The admitted native codec supports fields
+bias or statistical-distance budget. The admitted codec supports fields
 up to 64 bytes; production fields use 4, 8, or 16 bytes.
 
 ## Public plan
@@ -114,17 +114,17 @@ match the next entry exactly. Optional protocol branches come only from the
 validated public schedule. Success requires complete cursor consumption; an
 omitted, duplicated, reordered, or unexpected site rejects.
 
-## Native proof-of-work transition
+## Proof-of-work transition
 
 For every proof-of-work entry with `g > 0`:
 
 1. Record diagnostic metadata for the canonical plan site, target, nonce width,
    and `GrindingNonce` kind when transcript logging is enabled.
 2. For each candidate in `[0, 2^(g+7))`, clone only the public duplex state,
-   absorb the canonical native nonce, and squeeze 32 predicate bytes.
+   absorb the canonical nonce, and squeeze 32 predicate bytes.
 3. Select a candidate exactly when the first `g` bits, read low bit first, are
    zero. Exhaustion returns an error.
-4. Commit the winner once with native `prover_message`. The verifier receives
+4. Commit the winner once with `prover_message`. The verifier receives
    the nonce, range-checks it against `g+7`, reproduces the predicate, and
    rejects a failed predicate.
 5. Record the protected challenge's diagnostic site and draw the challenge.
@@ -155,7 +155,7 @@ For candidate `c`:
 The prover commits the accepted nonce once, then repeats the same group sequence
 on the live state. The verifier receives and range-checks the nonce, reproduces
 all roots in the same order, and performs the same response checks. The nonce
-is not repeated inside individual group payloads because the shared native
+is not repeated inside individual group payloads because the shared
 state already binds it.
 
 Fold-response search is honest-prover rejection sampling. It does not repair a
@@ -408,7 +408,7 @@ streams. $V$ candidates with distinct roots touch
 $V\sum_g W[j,g]$ addresses. A partial evaluation counts the streams
 it reads. The fold has one flat coordinate-wise stage with branching
 factor $1+\sum_g W[j,g]$. Root queries and response-nonce trials also
-enter the adversary's total oracle budget. The native
+enter the adversary's total oracle budget. The
 `expanded_query_count` records the structural work of one replay.
 
 For comparison, treating each complete fold vector as one interactive
@@ -541,16 +541,16 @@ LEB128 length of its accepted nonce. Context records are diagnostic only;
 public values are absorbed with `public_message`. Neither contributes proof
 bytes.
 
-Schedule selection prices every present nonce at its canonical native LEB128
+Schedule selection prices every present nonce at its canonical LEB128
 maximum, `ceil(semantic_nonce_width / 7)`, and adds those per-message maxima.
-This is a deterministic native-format objective, not an estimate of the
+This is a deterministic format objective, not an estimate of the
 winning nonces' realized wire lengths. It MUST NOT be used as a nonce range or
-security bound. The full native parser bound is derived separately because it
+security bound. The full parser bound is derived separately because it
 also includes every non-nonce message and terminal framing. Schedule artifacts
 MUST be regenerated from this objective; generated files MUST NOT be copied or
 hand-edited to manufacture a desired result.
 
-Native nonce decoding MUST reject unterminated, overflowing, and redundant
+Nonce decoding MUST reject unterminated, overflowing, and redundant
 unsigned LEB128 encodings without advancing the input cursor. The verifier
 checks the scheduled range after receipt. Truncation, trailing argument bytes,
 out-of-range nonces, wrong context/order, failed predicates, and incomplete
@@ -561,14 +561,14 @@ allocate from a proof-controlled length.
 
 | Component | Responsibility |
 |---|---|
-| Spongefish | Native state, argument bytes, nonce receipt/absorption, challenge squeeze, EOF |
-| `akita-transcript` | Native positional codecs, diagnostic context records, public-state previews, predicate and bounded search primitive |
-| `akita-types` | Grinding sites, policy, plan, cursor, native plan-owning adapters |
+| Spongefish | State, argument bytes, nonce receipt/absorption, challenge squeeze, EOF |
+| `akita-transcript` | Positional codecs, diagnostic context records, public-state previews, predicate and bounded search primitive |
+| `akita-types` | Grinding sites, policy, plan, cursor, plan-owning adapters |
 | `akita-config` | Derive and descriptor-bind the public plan |
 | `akita-prover` | Fold-response candidate computation and honest bounded search |
 | `akita-verifier` | Nonce ranges, predicates, response equations, plan completion |
 | `akita-challenges` | Indexed sparse expansion and distribution checks |
-| `akita-planner` | Query accounting and native-maximum schedule objective |
+| `akita-planner` | Query accounting and maximum schedule objective |
 
 There is one production proof path. A separate packed nonce codec, nonce prefix,
 structured proof replay, or alternate verifier is prohibited.

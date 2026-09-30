@@ -15,8 +15,8 @@ use akita_config::{
 use akita_cpu_backend::{CpuBackend, DensePoly, OneHotPoly};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_types::{
-    AkitaScheduleLookupKey, BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
-    PolynomialGroupLayout,
+    BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, PolynomialGroupLayout,
+    ScheduleLookupKey,
 };
 
 /// Single-group recursive roundtrip: one two-polynomial final group at `nv=32`, no
@@ -43,7 +43,7 @@ where
         let scheme = load_workspace_scheme::<RecursiveCommitmentConfig<BaseCfg>>()
             .expect("workspace schedule artifact");
         let schedule_key =
-            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE));
+            ScheduleLookupKey::single(PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE));
         let opening_layout = schedule_key.opening_layout().expect("opening layout");
         let schedule = scheme
             .schedules()
@@ -310,7 +310,7 @@ where
             )
             .expect("final commit");
 
-        let schedule_key = AkitaScheduleLookupKey {
+        let schedule_key = ScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(final_nv, 1),
             precommitteds: vec![pre_commitment.profile],
         };

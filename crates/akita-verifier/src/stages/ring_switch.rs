@@ -5,7 +5,7 @@ use crate::relation::{
     prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
 };
 use akita_error::AkitaError;
-use akita_types::NativeGrinding;
+use akita_types::GrindingReplay;
 use akita_types::{
     build_compression_relation_weights, build_reduced_compression_relation_weights,
     CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
@@ -57,11 +57,11 @@ where
     fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError>;
 }
 
-struct NativeRingSwitchChallenges<'a, 'proof, 'plan>(
-    &'a mut akita_types::NativeVerifierGrinding<'proof, 'plan>,
+struct RingSwitchChallenges<'a, 'proof, 'plan>(
+    &'a mut akita_types::VerifierGrinding<'proof, 'plan>,
 );
 
-impl<F, E> RingSwitchChallengeSource<F, E> for NativeRingSwitchChallenges<'_, '_, '_>
+impl<F, E> RingSwitchChallengeSource<F, E> for RingSwitchChallenges<'_, '_, '_>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
@@ -82,17 +82,17 @@ where
     }
 }
 
-pub(crate) fn ring_switch_verifier_native<F, E>(
+pub(crate) fn ring_switch_verifier<F, E>(
     replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
 {
-    let mut challenges = NativeRingSwitchChallenges(grinding);
+    let mut challenges = RingSwitchChallenges(grinding);
     ring_switch_verifier_with_challenges::<F, E, _>(replay, w_len, &mut challenges, level)
 }
 

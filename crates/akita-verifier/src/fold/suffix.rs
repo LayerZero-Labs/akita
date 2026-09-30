@@ -1,16 +1,13 @@
-use super::terminal::verify_terminal_suffix_native;
-use super::{
-    verify_fold_native, NativeNextWitnessPlan, NativePreparedFoldReplay, SetupPrefixOpening,
-};
+use super::terminal::verify_terminal_suffix;
+use super::{verify_fold, NextWitnessPlan, PreparedFoldReplay, SetupPrefixOpening};
 use crate::prepared_cache::TerminalNttCache;
 use crate::stages::opening_claims::{
-    finalize_native_claims, prepare_single_field_suffix_groups,
-    verify_coefficient_packing_suffix_prefix_native, verify_extension_claim_suffix_prefix_native,
-    FoldClaimMaterial, PreparedFoldOpeningPoint,
+    finalize_claims, prepare_single_field_suffix_groups, verify_coefficient_packing_suffix_prefix,
+    verify_extension_claim_suffix_prefix, FoldClaimMaterial, PreparedFoldOpeningPoint,
 };
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_types::NativeGrinding;
+use akita_types::GrindingReplay;
 use akita_types::{
     AkitaVerifierSetup, BasisMode, CommittedGroupParams, FoldParams, FoldSchedule, FpExtEncoding,
     OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, RelationWitnessGeometry, RingVec,
@@ -18,7 +15,7 @@ use akita_types::{
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 
-pub(super) struct NativeSuffixVerifierState<F: Field, E: Field> {
+pub(super) struct SuffixVerifierState<F: Field, E: Field> {
     pub opening_point: Vec<E>,
     pub opening: E,
     pub witness: RingVec<F>,
@@ -81,16 +78,16 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_fold_replay_native<'a, F, E>(
+fn prepare_fold_replay<'a, F, E>(
     setup: &'a AkitaVerifierSetup<F>,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
-    current_state: &NativeSuffixVerifierState<F, E>,
+    current_state: &SuffixVerifierState<F, E>,
     lp: &'a CommittedGroupParams,
     output_witness_len: usize,
     next_params: Option<&'a FoldParams>,
     terminal: &TerminalFoldParams,
-) -> Result<NativePreparedFoldReplay<'a, F, E>, AkitaError>
+) -> Result<PreparedFoldReplay<'a, F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
@@ -99,9 +96,9 @@ where
     if current_state.witness.coeff_len() != payload_geometry.transmitted_coefficients() {
         return Err(AkitaError::InvalidProof);
     }
-    akita_transcript::public_native_fields_verifier(
+    akita_transcript::public_fields_verifier(
         grinding.state_mut(),
-        akita_types::NativeFoldSite::WitnessCommitment {
+        akita_types::FoldSite::WitnessCommitment {
             level,
             ring_dimension: payload_geometry.transcript_ring_dimension(),
         }
@@ -143,7 +140,7 @@ where
         lp.opening_method(),
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
     ) {
-        verify_coefficient_packing_suffix_prefix_native::<F, E>(
+        verify_coefficient_packing_suffix_prefix::<F, E>(
             &block_claims,
             &openings,
             &opening_batch,
@@ -156,9 +153,9 @@ where
         let prepared =
             prepare_single_field_suffix_groups::<F, E>(&block_claims, lp, &opening_batch)?;
         for (group_index, point) in group_points.iter().enumerate() {
-            akita_transcript::public_native_extensions::<F, E, _>(
+            akita_transcript::public_extensions::<F, E, _>(
                 grinding.state_mut(),
-                akita_types::NativeFoldSite::GroupPoint {
+                akita_types::FoldSite::GroupPoint {
                     level,
                     group: group_index,
                 }
@@ -166,9 +163,9 @@ where
                 point,
             )?;
         }
-        akita_transcript::public_native_extensions::<F, E, _>(
+        akita_transcript::public_extensions::<F, E, _>(
             grinding.state_mut(),
-            akita_types::NativeFoldSite::Openings { level }.id()?,
+            akita_types::FoldSite::Openings { level }.id()?,
             &openings,
         )?;
         FoldClaimMaterial {
@@ -181,7 +178,7 @@ where
             reduction_factors: None,
         }
     } else {
-        verify_extension_claim_suffix_prefix_native::<F, E>(
+        verify_extension_claim_suffix_prefix::<F, E>(
             &group_points,
             &openings,
             &opening_batch,
@@ -193,9 +190,9 @@ where
     };
     let relation_geometry = RelationWitnessGeometry::for_level(lp, &opening_batch, E::DEGREE)?;
     let opening_geometry = relation_geometry.rhs_layout().opening_payload_geometry()?;
-    let opening_payload = akita_transcript::receive_native_field_group::<F>(
+    let opening_payload = akita_transcript::receive_field_group::<F>(
         grinding.state_mut(),
-        akita_types::NativeFoldSite::OpeningPayload {
+        akita_types::FoldSite::OpeningPayload {
             level,
             ring_dimension: opening_geometry.transcript_ring_dimension(),
         }
@@ -203,7 +200,7 @@ where
         opening_geometry.transmitted_coefficients(),
     )
     .map(RingVec::from_coeffs)?;
-    let prefix = finalize_native_claims::<F, E>(&opening_batch, material, grinding, level)?;
+    let prefix = finalize_claims::<F, E>(&opening_batch, material, grinding, level)?;
     let commitment_payloads =
         suffix_commitment_payloads::<F, E>(setup, lp, &opening_batch, &current_state.witness)?;
     let (next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
@@ -216,7 +213,7 @@ where
             let committed_len =
                 akita_types::witness_commitment_domain_len(output_witness_len, ring_dim)?;
             (
-                NativeNextWitnessPlan::OuterPayload { coefficient_count },
+                NextWitnessPlan::OuterPayload { coefficient_count },
                 ring_dim,
                 committed_len / ring_dim,
                 matches!(
@@ -237,7 +234,7 @@ where
             let committed_len =
                 akita_types::witness_commitment_domain_len(output_witness_len, ring_dim)?;
             (
-                NativeNextWitnessPlan::TerminalT { coefficient_count },
+                NextWitnessPlan::TerminalT { coefficient_count },
                 ring_dim,
                 committed_len / ring_dim,
                 None,
@@ -249,7 +246,7 @@ where
                 .map_err(|_| AkitaError::InvalidSetup("extension degree overflow".into()))?,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("challenge field width overflow".into()))?;
-    let level_layout = akita_types::native_nonterminal_level_layout(
+    let level_layout = akita_types::nonterminal_level_layout(
         F::MODULUS_BITS,
         challenge_field_bits,
         lp,
@@ -261,7 +258,7 @@ where
         )?,
         next_params.map(|next| &next.params),
     )?;
-    Ok(NativePreparedFoldReplay {
+    Ok(PreparedFoldReplay {
         lp,
         level,
         opening_payload,
@@ -278,12 +275,12 @@ where
     })
 }
 
-pub(super) fn verify_suffix_native<F, E>(
+pub(super) fn verify_suffix<F, E>(
     setup: &AkitaVerifierSetup<F>,
     terminal_ntt: &TerminalNttCache,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     schedule: &FoldSchedule,
-    mut current_state: NativeSuffixVerifierState<F, E>,
+    mut current_state: SuffixVerifierState<F, E>,
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
@@ -295,7 +292,7 @@ where
             return Err(AkitaError::InvalidProof);
         }
         let next = schedule.recursive_folds.get(offset + 1);
-        let prepared = prepare_fold_replay_native::<F, E>(
+        let prepared = prepare_fold_replay::<F, E>(
             setup,
             grinding,
             level,
@@ -305,8 +302,8 @@ where
             next,
             &schedule.terminal,
         )?;
-        let output = verify_fold_native(setup, grinding, prepared)?;
-        current_state = NativeSuffixVerifierState {
+        let output = verify_fold(setup, grinding, prepared)?;
+        current_state = SuffixVerifierState {
             opening_point: output.challenges,
             opening: output.opening,
             witness: output.next_witness,
@@ -315,7 +312,7 @@ where
             setup_prefix_opening: output.setup_prefix_opening,
         };
     }
-    verify_terminal_suffix_native(
+    verify_terminal_suffix(
         terminal_ntt,
         grinding,
         u32::try_from(schedule.recursive_folds.len() + 1).map_err(|_| AkitaError::InvalidProof)?,

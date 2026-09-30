@@ -23,9 +23,9 @@ mod common;
 use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_types::{
-    setup_matrix_capacity_for_schedule, verifier_setup_matrix_capacity_for_schedule,
-    AkitaScheduleLookupKey, FoldSchedule, OpeningMethod, PolynomialGroupLayout,
-    SetupContributionMode, SubringCoefficientPackingGeometry,
+    setup_matrix_capacity_for_schedule, verifier_setup_matrix_capacity_for_schedule, FoldSchedule,
+    OpeningMethod, PolynomialGroupLayout, ScheduleLookupKey, SetupContributionMode,
+    SubringCoefficientPackingGeometry,
 };
 use common::*;
 
@@ -34,14 +34,14 @@ const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
 fn w8r2_profiling_key(
     base_catalog: &akita_config::TrustedScheduleCatalog<fp128::OneHotMultiChunk>,
-) -> AkitaScheduleLookupKey {
+) -> ScheduleLookupKey {
     let pre_group = PolynomialGroupLayout::new(16, 1);
     let precommitted = base_catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(pre_group))
+        .resolve_key(&ScheduleLookupKey::single(pre_group))
         .expect("independent row")
         .profiles()
         .final_group;
-    AkitaScheduleLookupKey {
+    ScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![precommitted, precommitted],
     }

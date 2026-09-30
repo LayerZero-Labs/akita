@@ -11,26 +11,26 @@ use akita_types::{
 use jolt_field::{Ring, Zero};
 
 #[test]
-fn dense_fp128_native_roundtrip() {
+fn dense_fp128_roundtrip() {
     std::thread::Builder::new()
         .stack_size(512 * 1024 * 1024)
-        .spawn(dense_fp128_native_roundtrip_inner)
+        .spawn(dense_fp128_roundtrip_inner)
         .unwrap()
         .join()
         .unwrap();
 }
 
 #[test]
-fn onehot_fp32_native_roundtrip() {
+fn onehot_fp32_roundtrip() {
     std::thread::Builder::new()
         .stack_size(512 * 1024 * 1024)
-        .spawn(onehot_fp32_native_roundtrip_inner)
+        .spawn(onehot_fp32_roundtrip_inner)
         .unwrap()
         .join()
         .unwrap();
 }
 
-fn onehot_fp32_native_roundtrip_inner() {
+fn onehot_fp32_roundtrip_inner() {
     type Cfg = fp32::OneHot;
     type F = <Cfg as CommitmentConfig>::Field;
     type E = <Cfg as CommitmentConfig>::ExtField;
@@ -101,7 +101,7 @@ fn onehot_fp32_native_roundtrip_inner() {
         .unwrap();
 }
 
-fn dense_fp128_native_roundtrip_inner() {
+fn dense_fp128_roundtrip_inner() {
     type Cfg = fp128::Dense;
     type F = <Cfg as CommitmentConfig>::Field;
     const NV: usize = 14;

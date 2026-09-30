@@ -114,7 +114,7 @@ struct RootCandidate<'a> {
 
 fn consider_complete_schedule(
     policy: &PlannerPolicy,
-    schedule_key: &akita_types::AkitaScheduleLookupKey,
+    schedule_key: &akita_types::ScheduleLookupKey,
     root: RootCandidate<'_>,
     suffix: &ScheduleCandidate,
     complete_schedules: &std::cell::Cell<usize>,
@@ -174,7 +174,7 @@ pub(super) fn find_schedule(
     let mut work = OracleWork::default();
     let mut memo = OracleMemo::new();
     let complete_schedules = std::cell::Cell::new(0usize);
-    let schedule_key = akita_types::AkitaScheduleLookupKey::single(key);
+    let schedule_key = akita_types::ScheduleLookupKey::single(key);
     let ctx = UnprunedCtx {
         policy,
         ring_challenge_config: &ring_challenge_config,

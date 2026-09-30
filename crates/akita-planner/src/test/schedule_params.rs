@@ -1,11 +1,11 @@
 use super::*;
 
 #[test]
-fn native_proof_cost_is_additive() {
+fn proof_cost_is_additive() {
     let mut costs = Vec::new();
     for payload_bytes in 0..=3 {
         for nonce_bytes in 0..=4 {
-            costs.push(NativeProofCost::new(payload_bytes, nonce_bytes, 0, 0).unwrap());
+            costs.push(ProofCost::new(payload_bytes, nonce_bytes, 0, 0).unwrap());
         }
     }
 
@@ -25,8 +25,8 @@ fn native_proof_cost_is_additive() {
 
 #[test]
 fn proof_and_work_tradeoff_preserves_order_under_a_common_parent() {
-    let cheaper_proof = NativeProofCost::new(100, 0, 0, 34_000_000).unwrap();
-    let less_work = NativeProofCost::new(101, 0, 0, 0).unwrap();
+    let cheaper_proof = ProofCost::new(100, 0, 0, 34_000_000).unwrap();
+    let less_work = ProofCost::new(101, 0, 0, 0).unwrap();
     assert!(less_work.strictly_better(cheaper_proof));
 
     let cheaper_proof_with_parent = cheaper_proof.checked_prepend(20, 1, 0, 0, 500).unwrap();
@@ -47,15 +47,15 @@ fn direct_setup_scan_work_prices_fields_and_ring_count() {
 }
 
 #[test]
-fn native_proof_cost_tracks_query_budget_exhaustion() {
+fn proof_cost_tracks_query_budget_exhaustion() {
     let limit = akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT;
-    let empty = NativeProofCost::new(0, 0, 0, 0).unwrap();
+    let empty = ProofCost::new(0, 0, 0, 0).unwrap();
     assert!(!empty
         .checked_prepend(0, 0, 0, limit, 0)
         .unwrap()
         .fits_query_limit());
 
-    let individually_valid_suffix = NativeProofCost::new(0, 0, limit - 2, 0).unwrap();
+    let individually_valid_suffix = ProofCost::new(0, 0, limit - 2, 0).unwrap();
     assert!(!individually_valid_suffix
         .checked_prepend(0, 0, 0, 2, 0)
         .unwrap()
@@ -65,7 +65,7 @@ fn native_proof_cost_tracks_query_budget_exhaustion() {
         Err(AkitaError::InvalidSetup(_))
     ));
     assert!(matches!(
-        NativeProofCost::new(usize::MAX, 0, 0, 0)
+        ProofCost::new(usize::MAX, 0, 0, 0)
             .unwrap()
             .checked_prepend(1, 0, 0, limit, 0),
         Err(AkitaError::InvalidSetup(_))
@@ -75,7 +75,7 @@ fn native_proof_cost_tracks_query_budget_exhaustion() {
 #[test]
 fn oversized_candidate_is_skipped_while_valid_alternative_is_retained() {
     let limit = akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT;
-    let suffix = NativeProofCost::new(0, 0, 0, 0).unwrap();
+    let suffix = ProofCost::new(0, 0, 0, 0).unwrap();
     let selected = [(10, limit), (20, 1)]
         .into_iter()
         .filter_map(|(payload_bytes, queries)| {
@@ -86,7 +86,7 @@ fn oversized_candidate_is_skipped_while_valid_alternative_is_retained() {
         })
         .min_by_key(|cost| cost.proof_bytes());
 
-    assert_eq!(selected, Some(NativeProofCost::new(20, 0, 1, 0).unwrap()));
+    assert_eq!(selected, Some(ProofCost::new(20, 0, 1, 0).unwrap()));
     assert!([limit, limit + 1].into_iter().all(|queries| {
         !suffix
             .checked_prepend(0, 0, 0, queries, 0)
@@ -96,9 +96,9 @@ fn oversized_candidate_is_skipped_while_valid_alternative_is_retained() {
 }
 
 #[test]
-fn unconstrained_native_proof_cost_dominance_ignores_queries() {
-    let smaller_proof_more_queries = NativeProofCost::new(9, 0, 11, 0).unwrap();
-    let larger_proof_fewer_queries = NativeProofCost::new(10, 0, 10, 0).unwrap();
+fn unconstrained_proof_cost_dominance_ignores_queries() {
+    let smaller_proof_more_queries = ProofCost::new(9, 0, 11, 0).unwrap();
+    let larger_proof_fewer_queries = ProofCost::new(10, 0, 10, 0).unwrap();
 
     assert!(smaller_proof_more_queries.never_worse(larger_proof_fewer_queries));
     assert!(smaller_proof_more_queries.strictly_better(larger_proof_fewer_queries));

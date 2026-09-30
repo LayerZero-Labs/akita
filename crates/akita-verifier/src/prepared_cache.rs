@@ -234,8 +234,8 @@ mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128::OneHot;
     use akita_types::{
-        prepared_verifier_ntt_cache_metadata, AkitaExpandedSetup, AkitaScheduleLookupKey,
-        AkitaSetupDescriptor, FlatMatrix, PolynomialGroupLayout, SetupPrefixVerifierRegistry,
+        prepared_verifier_ntt_cache_metadata, AkitaExpandedSetup, AkitaSetupDescriptor, FlatMatrix,
+        PolynomialGroupLayout, ScheduleLookupKey, SetupPrefixVerifierRegistry,
     };
     use jolt_field::{Prime128Offset275 as F, Ring};
     use std::sync::Arc;
@@ -255,7 +255,7 @@ mod tests {
         let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
             .expect("workspace schedule catalog");
         let row = catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+            .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
                 15, 1,
             )))
             .expect("workspace fp128 schedule");

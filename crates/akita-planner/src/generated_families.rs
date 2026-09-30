@@ -18,9 +18,7 @@ use crate::{find_schedule, EmitSpec, PlannerPolicy};
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_types::sis::CommittedSourceContract;
-use akita_types::{
-    AkitaScheduleLookupKey, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
-};
+use akita_types::{FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout, ScheduleLookupKey};
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
@@ -279,7 +277,7 @@ impl GeneratedFamily {
 /// Returns an error if key enumeration fails.
 pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<PolynomialGroupLayout>, AkitaError> {
     let mut keys = family.scalar_keys.to_vec();
-    keys.sort_by_cached_key(|key| AkitaScheduleLookupKey::single(*key).canonical_order_key());
+    keys.sort_by_cached_key(|key| ScheduleLookupKey::single(*key).canonical_order_key());
     keys.dedup();
     Ok(keys)
 }
@@ -293,7 +291,7 @@ pub fn emitted_scalar_keys(
 }
 
 fn plan_regen<Cfg: CommitmentConfig>(
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
     precommitted_source_contracts: &[CommittedSourceContract],
 ) -> Result<FoldSchedule, AkitaError> {
     let planned = find_schedule(
@@ -309,7 +307,7 @@ fn plan_regen<Cfg: CommitmentConfig>(
 
 /// Pure DP regeneration for `Cfg` — never consults the checked-in artifact.
 fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
-    plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
+    plan_regen::<Cfg>(&ScheduleLookupKey::single(key), &[])
 }
 
 /// Frozen profile a group commits with when it has no precommitted groups.

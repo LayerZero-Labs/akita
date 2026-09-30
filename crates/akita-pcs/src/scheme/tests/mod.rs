@@ -57,7 +57,7 @@ fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
         workspace_catalog.catalog_digest()
     );
     let key =
-        akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
+        akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
     assert_eq!(
         scheme
             .schedules()
@@ -203,7 +203,7 @@ fn catalog_root_layout<C: CommitmentConfig>(
     num_vars: usize,
     num_polynomials: usize,
 ) -> CommittedGroupParams {
-    let key = akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(
+    let key = akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(
         num_vars,
         num_polynomials,
     ));
@@ -223,7 +223,7 @@ fn catalog_profile<C: CommitmentConfig>(
 ) -> akita_types::GroupCommitPhaseParams {
     scheme
         .schedules
-        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(group))
+        .resolve_key(&akita_types::ScheduleLookupKey::single(group))
         .expect("catalog profile")
         .profiles()
         .final_group

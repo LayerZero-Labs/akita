@@ -826,10 +826,10 @@ to `WitnessLayout`.
 
 The verifier does not receive a serialized `RingRelationInstance` or any
 `RingRelationWitness`. In
-[`verify_fold_native`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/fold/mod.rs),
+[`verify_fold`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/fold/mod.rs),
 it reconstructs the public instance from the schedule-selected payload and
 transcript data, then calls
-[`ring_switch_verifier_native`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/ring_switch.rs):
+[`ring_switch_verifier`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/ring_switch.rs):
 
 ```text
 schedule-selected payload mode

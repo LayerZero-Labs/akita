@@ -1,23 +1,23 @@
 //! Terminal fold dispatch: replay the terminal transcript and hand the revealed
 //! response to the direct terminal checks.
 
-use super::suffix::NativeSuffixVerifierState;
+use super::suffix::SuffixVerifierState;
 use crate::prepared_cache::TerminalNttCache;
-use crate::stages::opening_claims::verify_extension_claim_terminal_suffix_native;
+use crate::stages::opening_claims::verify_extension_claim_terminal_suffix;
 use akita_challenges::FoldDraw;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_types::NativeGrinding;
+use akita_types::GrindingReplay;
 use akita_types::{
     prepare_opening_point, FpExtEncoding, OpeningClaimsLayout, RingVec, TerminalFoldParams,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 
-pub(super) fn verify_terminal_suffix_native<F, E>(
+pub(super) fn verify_terminal_suffix<F, E>(
     terminal_ntt: &TerminalNttCache,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
-    current_state: &NativeSuffixVerifierState<F, E>,
+    current_state: &SuffixVerifierState<F, E>,
     scheduled: &TerminalFoldParams,
 ) -> Result<(), AkitaError>
 where
@@ -41,9 +41,9 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    akita_transcript::public_native_fields_verifier(
+    akita_transcript::public_fields_verifier(
         grinding.state_mut(),
-        akita_types::NativeFoldSite::TerminalTFields { level }.id()?,
+        akita_types::FoldSite::TerminalTFields { level }.id()?,
         current_state.witness.coeffs(),
     )?;
     let recursive_num_vars = scheduled.recursive_opening_num_vars()?;
@@ -69,7 +69,7 @@ where
         )?;
         (prepared, current_state.opening_point.clone(), None)
     } else {
-        let replay = verify_extension_claim_terminal_suffix_native::<F, E>(
+        let replay = verify_extension_claim_terminal_suffix::<F, E>(
             &current_state.opening_point,
             current_state.opening,
             &opening_batch,
@@ -85,19 +85,19 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         (group.prepared, group.protocol, replay.final_relation)
     };
-    akita_transcript::public_native_extensions::<F, E, _>(
+    akita_transcript::public_extensions::<F, E, _>(
         grinding.state_mut(),
-        akita_types::NativeFoldSite::TerminalPoint { level }.id()?,
+        akita_types::FoldSite::TerminalPoint { level }.id()?,
         &protocol_point,
     )?;
     if final_relation.is_none() {
-        akita_transcript::public_native_extensions::<F, E, _>(
+        akita_transcript::public_extensions::<F, E, _>(
             grinding.state_mut(),
-            akita_types::NativeFoldSite::TerminalOpening { level }.id()?,
+            akita_types::FoldSite::TerminalOpening { level }.id()?,
             std::slice::from_ref(&current_state.opening),
         )?;
     }
-    let row_coefficients = akita_types::row_coefficients_native::<F, E, _>(
+    let row_coefficients = akita_types::row_coefficients::<F, E, _>(
         &opening_batch,
         akita_types::GrindingSite::EvaluationBatch { level },
         grinding,
@@ -105,9 +105,9 @@ where
     if row_coefficients.as_slice() != [E::one()] {
         return Err(AkitaError::InvalidProof);
     }
-    let e_fields = akita_transcript::receive_native_field_group::<F>(
+    let e_fields = akita_transcript::receive_field_group::<F>(
         grinding.state_mut(),
-        akita_types::NativeFoldSite::TerminalEFields { level }.id()?,
+        akita_types::FoldSite::TerminalEFields { level }.id()?,
         group.e_field_elems,
     )
     .map(RingVec::from_coeffs)?;
@@ -124,8 +124,7 @@ where
         None
     };
     let challenges = {
-        let mut draw =
-            akita_challenges::NativeVerifierFoldDraw::new(grinding.state_mut(), level, 0);
+        let mut draw = akita_challenges::VerifierFoldDraw::new(grinding.state_mut(), level, 0);
         draw.draw_folding_challenges_with_rejection(
             akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
             scheduled.d_a(),
@@ -137,9 +136,9 @@ where
         )?
     };
     grinding.record_fold_challenges(level, 0, scheduled.blocks.live_blocks)?;
-    let z_payload = akita_transcript::receive_native_bounded_bytes(
+    let z_payload = akita_transcript::receive_bounded_bytes(
         grinding.state_mut(),
-        akita_types::NativeFoldSite::TerminalZPayload { level }.id()?,
+        akita_types::FoldSite::TerminalZPayload { level }.id()?,
         group.z_payload_bytes,
     )?;
     scheduled.validate_terminal_linf_cap(group.z_linf_cap)?;

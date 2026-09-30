@@ -619,7 +619,7 @@ const fn domain_order(domain: NttTransformDomain) -> u8 {
 mod tests {
     use super::*;
     use akita_config::proof_optimized::{fp128, fp32, fp64};
-    use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+    use akita_types::{PolynomialGroupLayout, ScheduleLookupKey};
 
     #[test]
     fn recursive_signed_commit_domains_match_runtime_kernels() {
@@ -856,7 +856,7 @@ mod tests {
         let catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::OneHot>()
             .expect("workspace schedule catalog");
         let schedule = catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+            .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
                 32, 1,
             )))
             .expect("generated schedule")
@@ -909,7 +909,7 @@ mod tests {
         let catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::OneHot>()
             .expect("workspace schedule catalog");
         let schedule = catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+            .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
                 32, 1,
             )))
             .expect("generated schedule")
@@ -931,7 +931,7 @@ mod tests {
         let catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::OneHot>()
             .expect("workspace schedule catalog");
         let schedule = catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+            .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
                 32, 1,
             )))
             .expect("workspace schedule")
@@ -963,7 +963,7 @@ mod tests {
         let catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>()
             .expect("workspace schedule catalog");
         let schedule = catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(
+            .resolve_key(&ScheduleLookupKey::single(
                 PolynomialGroupLayout::singleton(26),
             ))
             .expect("generated dense schedule")
@@ -1004,7 +1004,7 @@ mod tests {
             .expect("workspace schedule catalog");
         for num_vars in [26, 28, 30] {
             let schedule = catalog
-                .resolve_key(&AkitaScheduleLookupKey::single(
+                .resolve_key(&ScheduleLookupKey::single(
                     PolynomialGroupLayout::singleton(num_vars),
                 ))
                 .expect("generated dense schedule")
@@ -1046,14 +1046,14 @@ mod tests {
             .expect("fp64 workspace schedule catalog");
         for schedule in [
             fp32_catalog
-                .resolve_key(&AkitaScheduleLookupKey::single(
+                .resolve_key(&ScheduleLookupKey::single(
                     PolynomialGroupLayout::singleton(26),
                 ))
                 .expect("generated fp32 dense schedule")
                 .schedule()
                 .clone(),
             fp64_catalog
-                .resolve_key(&AkitaScheduleLookupKey::single(
+                .resolve_key(&ScheduleLookupKey::single(
                     PolynomialGroupLayout::singleton(26),
                 ))
                 .expect("generated fp64 dense schedule")

@@ -41,8 +41,8 @@ mod tests {
     use akita_config::proof_optimized::fp128::OneHot;
     use akita_types::{
         ntt_cache_requires_exactness_tail, prepare_ntt_cache, AkitaExpandedSetup,
-        AkitaScheduleLookupKey, AkitaSetupDescriptor, AkitaVerifierSetup, FlatMatrix, NttCacheMode,
-        PolynomialGroupLayout, SetupPrefixVerifierRegistry,
+        AkitaSetupDescriptor, AkitaVerifierSetup, FlatMatrix, NttCacheMode, PolynomialGroupLayout,
+        ScheduleLookupKey, SetupPrefixVerifierRegistry,
     };
     use jolt_field::Ring;
     use jolt_field::{Prime128Offset275 as F, Prime32Offset99 as F32, Prime64Offset59 as F64};
@@ -294,7 +294,7 @@ mod tests {
             .expect("workspace schedule catalog");
         let group = PolynomialGroupLayout::new(15, 1);
         let schedule = catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(group))
+            .resolve_key(&ScheduleLookupKey::single(group))
             .expect("adaptive schedule")
             .schedule()
             .clone();

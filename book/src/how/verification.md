@@ -94,7 +94,7 @@ At a high level:
 
 The verifier source follows this split. `fold/` holds orchestration: the root
 and suffix walks, the fold-challenge draw, the fold's public relation instance,
-and terminal dispatch. `verify_fold_native` in `fold/mod.rs` runs one
+and terminal dispatch. `verify_fold` in `fold/mod.rs` runs one
 nonterminal fold as a sequence of stage calls in transcript order:
 
 1. check the opening and commitment payload shapes, then read the fold

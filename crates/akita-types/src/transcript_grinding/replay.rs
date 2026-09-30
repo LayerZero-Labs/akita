@@ -1,16 +1,13 @@
-//! Inline native Spongefish nonce replay for transcript grinding.
+//! Inline Spongefish nonce replay for transcript grinding.
 
 use super::{GrindingPlan, GrindingQueryKind, GrindingSite};
 use akita_error::AkitaError;
-use akita_sumcheck::{
-    NativeSumcheckProverChannel, NativeSumcheckRole, NativeSumcheckVerifierChannel,
-};
+use akita_sumcheck::{SumcheckProverChannel, SumcheckRole, SumcheckVerifierChannel};
 use akita_transcript::{
-    commit_native_grinding_nonce, grinding_predicate_accepts, native_ext_challenge,
-    native_nonce_encoded_len, native_nonce_max_bytes, prover_context,
-    receive_native_grinding_nonce, search_native_grinding_nonce, verifier_context,
-    NativeFoldPreview, NativeNonce, NativeProverState, NativeVerifierState, ProofChannel,
-    ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, GRINDING_PREDICATE_LEN,
+    commit_grinding_nonce, ext_challenge, grinding_predicate_accepts, nonce_encoded_len,
+    nonce_max_bytes, prover_context, receive_grinding_nonce, search_grinding_nonce,
+    verifier_context, FoldPreview, NonceAtom, ProofChannel, ProtocolContextRecord,
+    ProtocolMessageKind, ProtocolSiteId, ProverChannel, VerifierChannel, GRINDING_PREDICATE_LEN,
     SITE_FAMILY_SUMCHECK,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
@@ -115,13 +112,13 @@ fn grinding_records(
     nonce_bits: u8,
 ) -> (ProtocolContextRecord, ProtocolContextRecord) {
     let detail = u32::from(grind_bits) | (u32::from(nonce_bits) << 8);
-    let site_id = site.native_site_id(detail).to_bytes();
+    let site_id = site.site_id(detail).to_bytes();
     (
         ProtocolContextRecord::new(
             site_id,
             ProtocolMessageKind::GrindingNonce as u32,
             1,
-            native_nonce_max_bytes(nonce_bits) as u64,
+            nonce_max_bytes(nonce_bits) as u64,
             0,
         ),
         ProtocolContextRecord::new(
@@ -136,24 +133,24 @@ fn grinding_records(
 
 fn fold_response_record(site: GrindingSite, nonce_bits: u8) -> ProtocolContextRecord {
     ProtocolContextRecord::new(
-        site.native_site_id(u32::from(nonce_bits)).to_bytes(),
+        site.site_id(u32::from(nonce_bits)).to_bytes(),
         ProtocolMessageKind::FoldResponseNonce as u32,
         1,
-        native_nonce_max_bytes(nonce_bits) as u64,
+        nonce_max_bytes(nonce_bits) as u64,
         0,
     )
 }
 
-/// One side of native grinding-plan replay.
+/// One side of grinding-plan replay.
 ///
 /// Scheduled-query code written against this trait runs unchanged for the
 /// prover and the verifier. Every failure poisons the owner so its `finish`
 /// boundary rejects even if a caller drops the error.
-pub trait NativeGrinding {
-    /// The role-specific native transcript state.
+pub trait GrindingReplay {
+    /// The role-specific proof channel state.
     type State: ProofChannel;
 
-    /// Borrow the native state for ordinary protocol messages and challenges.
+    /// Borrow the state for ordinary protocol messages and challenges.
     ///
     /// Callers must propagate errors from operations on this borrow before
     /// `finish`; the verifier state also records them itself.
@@ -186,7 +183,7 @@ pub trait NativeGrinding {
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
-        let result = native_ext_challenge::<F, E, _>(self.state_mut(), site);
+        let result = ext_challenge::<F, E, _>(self.state_mut(), site);
         if result.is_err() {
             self.poison();
         }
@@ -197,15 +194,15 @@ pub trait NativeGrinding {
     ///
     /// # Errors
     ///
-    /// Propagates [`NativeGrinding::grind_query`] and
-    /// [`NativeGrinding::ext_challenge_at`] failures.
+    /// Propagates [`GrindingReplay::grind_query`] and
+    /// [`GrindingReplay::ext_challenge_at`] failures.
     fn grinded_ext_challenge<F, E>(&mut self, site: GrindingSite) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
         self.grind_query(site)?;
-        self.ext_challenge_at::<F, E>(site.native_site_id(u32::default()))
+        self.ext_challenge_at::<F, E>(site.site_id(u32::default()))
     }
 
     /// Apply one scheduled grinding query and draw `count` independently
@@ -213,8 +210,8 @@ pub trait NativeGrinding {
     ///
     /// # Errors
     ///
-    /// Propagates [`NativeGrinding::grind_query`] and
-    /// [`NativeGrinding::ext_challenge_at`] failures and rejects counts that
+    /// Propagates [`GrindingReplay::grind_query`] and
+    /// [`GrindingReplay::ext_challenge_at`] failures and rejects counts that
     /// cannot be allocated or indexed.
     fn grinded_ext_challenges<F, E>(
         &mut self,
@@ -232,7 +229,7 @@ pub trait NativeGrinding {
             return Err(AkitaError::InvalidProof);
         }
         for index in 0..count {
-            let mut challenge_site = site.native_site_id(u32::default());
+            let mut challenge_site = site.site_id(u32::default());
             let Ok(group) = u32::try_from(index) else {
                 self.poison();
                 return Err(AkitaError::InvalidProof);
@@ -244,10 +241,10 @@ pub trait NativeGrinding {
     }
 }
 
-impl NativeGrinding for NativeProverGrinding<'_> {
-    type State = NativeProverState;
+impl GrindingReplay for ProverGrinding<'_> {
+    type State = ProverChannel;
 
-    fn state_mut(&mut self) -> &mut NativeProverState {
+    fn state_mut(&mut self) -> &mut ProverChannel {
         &mut self.state
     }
 
@@ -264,10 +261,10 @@ impl NativeGrinding for NativeProverGrinding<'_> {
     }
 }
 
-impl<'proof> NativeGrinding for NativeVerifierGrinding<'proof, '_> {
-    type State = NativeVerifierState<'proof>;
+impl<'proof> GrindingReplay for VerifierGrinding<'proof, '_> {
+    type State = VerifierChannel<'proof>;
 
-    fn state_mut(&mut self) -> &mut NativeVerifierState<'proof> {
+    fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
         &mut self.state
     }
 
@@ -285,18 +282,18 @@ impl<'proof> NativeGrinding for NativeVerifierGrinding<'proof, '_> {
     }
 }
 
-/// Prover-side native state paired with exact grinding-plan progress.
-pub struct NativeProverGrinding<'plan> {
-    state: NativeProverState,
+/// Prover-side state paired with exact grinding-plan progress.
+pub struct ProverGrinding<'plan> {
+    state: ProverChannel,
     cursor: GrindingPlanCursor<'plan>,
     serialized_nonce_bytes: usize,
     invalid: bool,
 }
 
-impl<'plan> NativeProverGrinding<'plan> {
-    /// Attach a native prover state to its public grinding plan.
+impl<'plan> ProverGrinding<'plan> {
+    /// Attach a prover channel to its public grinding plan.
     #[must_use]
-    pub fn new(state: NativeProverState, plan: &'plan GrindingPlan) -> Self {
+    pub fn new(state: ProverChannel, plan: &'plan GrindingPlan) -> Self {
         #[cfg(feature = "logging-transcript")]
         akita_transcript::clear_thread_events();
         Self {
@@ -317,21 +314,21 @@ impl<'plan> NativeProverGrinding<'plan> {
         let (nonce_record, predicate_record) =
             grinding_records(site, entry.grind_bits, entry.nonce_bits);
         let (nonce, winning_predicate) =
-            search_native_grinding_nonce(&self.state, entry.grind_bits, entry.nonce_bits)
+            search_grinding_nonce(&self.state, entry.grind_bits, entry.nonce_bits)
                 .ok_or_else(|| AkitaError::InvalidInput("transcript grinding exhausted".into()))?;
         let predicate =
-            commit_native_grinding_nonce(&mut self.state, nonce_record, nonce, predicate_record);
+            commit_grinding_nonce(&mut self.state, nonce_record, nonce, predicate_record);
         if winning_predicate != predicate || !grinding_predicate_accepts(&predicate, bits) {
             return Err(AkitaError::InvalidProof);
         }
         self.serialized_nonce_bytes = self
             .serialized_nonce_bytes
-            .checked_add(native_nonce_encoded_len(nonce))
+            .checked_add(nonce_encoded_len(nonce))
             .ok_or(AkitaError::InvalidProof)?;
         Ok(())
     }
 
-    /// Emit the next scheduled fold-response nonce as a canonical native message.
+    /// Emit the next scheduled fold-response nonce as a canonical message.
     pub fn commit_fold_response(
         &mut self,
         site: GrindingSite,
@@ -355,10 +352,10 @@ impl<'plan> NativeProverGrinding<'plan> {
             &mut self.state,
             fold_response_record(site, entry.nonce_bits),
         );
-        self.state.prover_message(&NativeNonce::new(counter));
+        self.state.prover_message(&NonceAtom::new(counter));
         self.serialized_nonce_bytes = self
             .serialized_nonce_bytes
-            .checked_add(native_nonce_encoded_len(counter))
+            .checked_add(nonce_encoded_len(counter))
             .ok_or(AkitaError::InvalidProof)?;
         tracing::info!(
             role = "prover",
@@ -366,19 +363,19 @@ impl<'plan> NativeProverGrinding<'plan> {
             accepted_nonce = counter,
             rejected_attempts = counter,
             attempts = u64::from(counter) + 1,
-            encoded_bytes = native_nonce_encoded_len(counter),
+            encoded_bytes = nonce_encoded_len(counter),
             "native fold response nonce"
         );
         Ok(())
     }
 
-    /// Preview a fold-response candidate from the current native public state
+    /// Preview a fold-response candidate from the current public state
     /// without advancing either the live state or the grinding plan.
     pub fn preview_fold_response(
         &self,
         site: GrindingSite,
         counter: u32,
-    ) -> Result<NativeFoldPreview, AkitaError> {
+    ) -> Result<FoldPreview, AkitaError> {
         let entry = self.cursor.peek().ok_or(AkitaError::InvalidProof)?;
         if entry.site != site
             || site.kind() != GrindingQueryKind::FoldResponse
@@ -386,7 +383,7 @@ impl<'plan> NativeProverGrinding<'plan> {
         {
             return Err(AkitaError::InvalidProof);
         }
-        Ok(NativeFoldPreview::new(&self.state, counter))
+        Ok(FoldPreview::new(&self.state, counter))
     }
 
     /// Consume the plan entries for one sparse fold group.
@@ -420,32 +417,32 @@ impl<'plan> NativeProverGrinding<'plan> {
             "native proof nonce bytes"
         );
         #[cfg(feature = "logging-transcript")]
-        akita_transcript::finish_native_proof_ranges(&self.state);
+        akita_transcript::finish_proof_ranges(&self.state);
         Ok(self.state.narg_string().to_vec())
     }
 }
 
-/// Verifier-side native state paired with exact grinding-plan progress.
-pub struct NativeVerifierGrinding<'proof, 'plan> {
-    state: NativeVerifierState<'proof>,
+/// Verifier-side state paired with exact grinding-plan progress.
+pub struct VerifierGrinding<'proof, 'plan> {
+    state: VerifierChannel<'proof>,
     cursor: GrindingPlanCursor<'plan>,
     serialized_nonce_bytes: usize,
     invalid: bool,
 }
 
-/// Evidence that native replay consumed the complete grinding plan and proof.
+/// Evidence that replay consumed the complete grinding plan and proof.
 ///
 /// The private field makes this value constructible only by the consuming
 /// verifier finish boundary.
 #[derive(Debug)]
-pub struct NativeProofAcceptance {
+pub struct ProofAcceptance {
     _private: (),
 }
 
-impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
-    /// Attach a native verifier state to its public grinding plan.
+impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
+    /// Attach a verifier channel to its public grinding plan.
     #[must_use]
-    pub const fn new(state: NativeVerifierState<'proof>, plan: &'plan GrindingPlan) -> Self {
+    pub const fn new(state: VerifierChannel<'proof>, plan: &'plan GrindingPlan) -> Self {
         Self {
             state,
             cursor: GrindingPlanCursor::new(plan),
@@ -464,13 +461,13 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
         let (nonce_record, predicate_record) =
             grinding_records(site, entry.grind_bits, entry.nonce_bits);
         let (nonce, predicate) =
-            receive_native_grinding_nonce(&mut self.state, nonce_record, predicate_record)?;
+            receive_grinding_nonce(&mut self.state, nonce_record, predicate_record)?;
         if !value_fits(nonce, entry.nonce_bits) || !grinding_predicate_accepts(&predicate, bits) {
             return Err(AkitaError::InvalidProof);
         }
         self.serialized_nonce_bytes = self
             .serialized_nonce_bytes
-            .checked_add(native_nonce_encoded_len(nonce))
+            .checked_add(nonce_encoded_len(nonce))
             .ok_or(AkitaError::InvalidProof)?;
         Ok(())
     }
@@ -492,14 +489,14 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
         );
         let counter = self
             .state
-            .prover_message::<NativeNonce>()
-            .map(NativeNonce::into_inner)?;
+            .prover_message::<NonceAtom>()
+            .map(NonceAtom::into_inner)?;
         if !value_fits(counter, entry.nonce_bits) {
             return Err(AkitaError::InvalidProof);
         }
         self.serialized_nonce_bytes = self
             .serialized_nonce_bytes
-            .checked_add(native_nonce_encoded_len(counter))
+            .checked_add(nonce_encoded_len(counter))
             .ok_or(AkitaError::InvalidProof)?;
         Ok(counter)
     }
@@ -527,7 +524,7 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
     }
 
     /// Require grinding-plan completion and consume the verifier for EOF.
-    pub fn finish(self) -> Result<NativeProofAcceptance, AkitaError> {
+    pub fn finish(self) -> Result<ProofAcceptance, AkitaError> {
         if self.invalid || !self.cursor.is_finished() {
             return Err(AkitaError::InvalidProof);
         }
@@ -537,7 +534,7 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
             "native proof nonce bytes"
         );
         self.state.check_eof()?;
-        Ok(NativeProofAcceptance { _private: () })
+        Ok(ProofAcceptance { _private: () })
     }
 }
 
@@ -548,7 +545,7 @@ fn grinding_sumcheck_site(
     stage: u32,
     invocation: u32,
     round: u32,
-    role: NativeSumcheckRole,
+    role: SumcheckRole,
 ) -> ProtocolSiteId {
     ProtocolSiteId {
         family: SITE_FAMILY_SUMCHECK,
@@ -562,20 +559,20 @@ fn grinding_sumcheck_site(
     }
 }
 
-/// Standard-sumcheck channel borrowing a native prover grinding context.
-pub struct NativeGrindingSumcheckProver<'context, 'plan, F, E> {
-    grinding: &'context mut NativeProverGrinding<'plan>,
+/// Standard-sumcheck channel borrowing a prover grinding context.
+pub struct GrindingSumcheckProver<'context, 'plan, F, E> {
+    grinding: &'context mut ProverGrinding<'plan>,
     protocol: super::SumcheckProtocol,
     level: u32,
     stage: u32,
     _fields: PhantomData<fn() -> (F, E)>,
 }
 
-impl<'context, 'plan, F, E> NativeGrindingSumcheckProver<'context, 'plan, F, E> {
+impl<'context, 'plan, F, E> GrindingSumcheckProver<'context, 'plan, F, E> {
     /// Bind one sumcheck invocation to its scheduled grinding-site coordinates.
     #[must_use]
     pub fn new(
-        grinding: &'context mut NativeProverGrinding<'plan>,
+        grinding: &'context mut ProverGrinding<'plan>,
         protocol: super::SumcheckProtocol,
         level: u32,
         stage: u32,
@@ -590,21 +587,16 @@ impl<'context, 'plan, F, E> NativeGrindingSumcheckProver<'context, 'plan, F, E> 
     }
 }
 
-impl<F, E> NativeSumcheckProverChannel<E> for NativeGrindingSumcheckProver<'_, '_, F, E>
+impl<F, E> SumcheckProverChannel<E> for GrindingSumcheckProver<'_, '_, F, E>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
-    fn state_mut(&mut self) -> &mut NativeProverState {
+    fn state_mut(&mut self) -> &mut ProverChannel {
         self.grinding.state_mut()
     }
 
-    fn sumcheck_site(
-        &self,
-        invocation: u32,
-        round: u32,
-        role: NativeSumcheckRole,
-    ) -> ProtocolSiteId {
+    fn sumcheck_site(&self, invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
         grinding_sumcheck_site(
             self.protocol,
             self.level,
@@ -629,20 +621,20 @@ where
     }
 }
 
-/// Standard-sumcheck channel borrowing a native verifier grinding context.
-pub struct NativeGrindingSumcheckVerifier<'context, 'proof, 'plan, F, E> {
-    grinding: &'context mut NativeVerifierGrinding<'proof, 'plan>,
+/// Standard-sumcheck channel borrowing a verifier grinding context.
+pub struct GrindingSumcheckVerifier<'context, 'proof, 'plan, F, E> {
+    grinding: &'context mut VerifierGrinding<'proof, 'plan>,
     protocol: super::SumcheckProtocol,
     level: u32,
     stage: u32,
     _fields: PhantomData<fn() -> (F, E)>,
 }
 
-impl<'context, 'proof, 'plan, F, E> NativeGrindingSumcheckVerifier<'context, 'proof, 'plan, F, E> {
+impl<'context, 'proof, 'plan, F, E> GrindingSumcheckVerifier<'context, 'proof, 'plan, F, E> {
     /// Bind one sumcheck invocation to its scheduled grinding-site coordinates.
     #[must_use]
     pub fn new(
-        grinding: &'context mut NativeVerifierGrinding<'proof, 'plan>,
+        grinding: &'context mut VerifierGrinding<'proof, 'plan>,
         protocol: super::SumcheckProtocol,
         level: u32,
         stage: u32,
@@ -657,22 +649,17 @@ impl<'context, 'proof, 'plan, F, E> NativeGrindingSumcheckVerifier<'context, 'pr
     }
 }
 
-impl<'proof, F, E> NativeSumcheckVerifierChannel<'proof, E>
-    for NativeGrindingSumcheckVerifier<'_, 'proof, '_, F, E>
+impl<'proof, F, E> SumcheckVerifierChannel<'proof, E>
+    for GrindingSumcheckVerifier<'_, 'proof, '_, F, E>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
-    fn state_mut(&mut self) -> &mut NativeVerifierState<'proof> {
+    fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
         self.grinding.state_mut()
     }
 
-    fn sumcheck_site(
-        &self,
-        invocation: u32,
-        round: u32,
-        role: NativeSumcheckRole,
-    ) -> ProtocolSiteId {
+    fn sumcheck_site(&self, invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
         grinding_sumcheck_site(
             self.protocol,
             self.level,
@@ -702,12 +689,10 @@ mod tests {
     use super::*;
     use crate::{ChallengeFieldOrder, GrindingRun};
     use akita_challenges::{
-        FoldChallengeDrawDomain, FoldDraw, NativePreviewFoldDraw, NativeProverFoldDraw,
-        NativeVerifierFoldDraw, SparseChallengeConfig,
+        FoldChallengeDrawDomain, FoldDraw, PreviewFoldDraw, ProverFoldDraw, SparseChallengeConfig,
+        VerifierFoldDraw,
     };
-    use akita_transcript::{
-        new_native_prover, new_native_verifier, preview_native_grinding_predicate,
-    };
+    use akita_transcript::{new_prover_channel, new_verifier_channel, preview_grinding_predicate};
     use jolt_field::Prime128Offset275 as F;
 
     fn plan() -> GrindingPlan {
@@ -728,10 +713,10 @@ mod tests {
     }
 
     #[test]
-    fn native_grinding_roundtrip_uses_inline_canonical_nonces_and_eof() {
+    fn grinding_roundtrip_uses_inline_canonical_nonces_and_eof() {
         let plan = plan();
-        let state = new_native_prover(b"native-grinding", b"fixture").unwrap();
-        let mut prover = NativeProverGrinding::new(state, &plan);
+        let state = new_prover_channel(b"native-grinding", b"fixture").unwrap();
+        let mut prover = ProverGrinding::new(state, &plan);
         let prover_challenge = prover
             .grinded_ext_challenge::<F, F>(GrindingSite::EvaluationBatch { level: 0 })
             .unwrap();
@@ -743,9 +728,9 @@ mod tests {
 
         // One PoW nonce and one response nonce; public context records occupy
         // no argument bytes.
-        assert!(proof.len() <= plan.native_nonce_max_bytes());
-        let state = new_native_verifier(b"native-grinding", b"fixture", &proof).unwrap();
-        let mut verifier = NativeVerifierGrinding::new(state, &plan);
+        assert!(proof.len() <= plan.nonce_max_bytes());
+        let state = new_verifier_channel(b"native-grinding", b"fixture", &proof).unwrap();
+        let mut verifier = VerifierGrinding::new(state, &plan);
         let verifier_challenge = verifier
             .grinded_ext_challenge::<F, F>(GrindingSite::EvaluationBatch { level: 0 })
             .unwrap();
@@ -769,28 +754,28 @@ mod tests {
             order,
         )
         .unwrap();
-        let mut state = new_native_prover(b"native-long-nonce", b"fixture").unwrap();
+        let mut state = new_prover_channel(b"native-long-nonce", b"fixture").unwrap();
         let nonce = (128..=u8::MAX as u32)
             .find(|&candidate| {
                 grinding_predicate_accepts(
-                    &preview_native_grinding_predicate(&state, candidate),
+                    &preview_grinding_predicate(&state, candidate),
                     NonZeroU8::new(1).unwrap(),
                 )
             })
             .expect("the two-byte half of an 8-bit nonce domain must contain a winner");
         let (nonce_record, predicate_record) = grinding_records(site, 1, 8);
-        let _ = commit_native_grinding_nonce(&mut state, nonce_record, nonce, predicate_record);
+        let _ = commit_grinding_nonce(&mut state, nonce_record, nonce, predicate_record);
         let proof = state.narg_string().to_vec();
         assert_eq!(proof.len(), 2);
 
-        let state = new_native_verifier(b"native-long-nonce", b"fixture", &proof).unwrap();
-        let mut verifier = NativeVerifierGrinding::new(state, &plan);
+        let state = new_verifier_channel(b"native-long-nonce", b"fixture", &proof).unwrap();
+        let mut verifier = VerifierGrinding::new(state, &plan);
         verifier.grinded_ext_challenge::<F, F>(site).unwrap();
         verifier.finish().unwrap();
     }
 
     #[test]
-    fn one_native_grinding_query_can_protect_multiple_draws() {
+    fn one_grinding_query_can_protect_multiple_draws() {
         let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
         let plan = GrindingPlan::new(
             vec![GrindingRun::proof_of_work(
@@ -802,16 +787,16 @@ mod tests {
             order,
         )
         .unwrap();
-        let state = new_native_prover(b"native-vector-grinding", b"fixture").unwrap();
-        let mut prover = NativeProverGrinding::new(state, &plan);
+        let state = new_prover_channel(b"native-vector-grinding", b"fixture").unwrap();
+        let mut prover = ProverGrinding::new(state, &plan);
         let prover_challenges = prover
             .grinded_ext_challenges::<F, F>(GrindingSite::ExtensionOpeningPoint { level: 4 }, 3)
             .unwrap();
         let proof = prover.finish().unwrap();
-        assert!(proof.len() <= plan.native_nonce_max_bytes());
+        assert!(proof.len() <= plan.nonce_max_bytes());
 
-        let state = new_native_verifier(b"native-vector-grinding", b"fixture", &proof).unwrap();
-        let mut verifier = NativeVerifierGrinding::new(state, &plan);
+        let state = new_verifier_channel(b"native-vector-grinding", b"fixture", &proof).unwrap();
+        let mut verifier = VerifierGrinding::new(state, &plan);
         let verifier_challenges = verifier
             .grinded_ext_challenges::<F, F>(GrindingSite::ExtensionOpeningPoint { level: 4 }, 3)
             .unwrap();
@@ -820,14 +805,14 @@ mod tests {
     }
 
     #[test]
-    fn native_grinding_rejects_out_of_range_response_and_incomplete_plan() {
+    fn grinding_rejects_out_of_range_response_and_incomplete_plan() {
         let plan = GrindingPlan::new(
             vec![GrindingRun::fold_response(0)],
             ChallengeFieldOrder::from_full_capacity(128).unwrap(),
         )
         .unwrap();
-        let state = new_native_prover(b"native-grinding", b"fixture").unwrap();
-        let mut prover = NativeProverGrinding::new(state, &plan);
+        let state = new_prover_channel(b"native-grinding", b"fixture").unwrap();
+        let mut prover = ProverGrinding::new(state, &plan);
         assert_eq!(
             prover.commit_fold_response(
                 GrindingSite::FoldResponse { level: 0 },
@@ -842,8 +827,8 @@ mod tests {
             (&[0x80, 0x20][..], Err(AkitaError::InvalidProof)),
         ] {
             let should_accept = expected.is_ok();
-            let state = new_native_verifier(b"native-grinding", b"fixture", proof).unwrap();
-            let mut verifier = NativeVerifierGrinding::new(state, &plan);
+            let state = new_verifier_channel(b"native-grinding", b"fixture", proof).unwrap();
+            let mut verifier = VerifierGrinding::new(state, &plan);
             assert_eq!(
                 verifier.read_fold_response(GrindingSite::FoldResponse { level: 0 }),
                 expected
@@ -867,16 +852,16 @@ mod tests {
         )
         .unwrap();
 
-        let state = new_native_prover(b"native-poison", b"fixture").unwrap();
-        let mut prover = NativeProverGrinding::new(state, &plan);
+        let state = new_prover_channel(b"native-poison", b"fixture").unwrap();
+        let mut prover = ProverGrinding::new(state, &plan);
         assert_eq!(
             prover.grinded_ext_challenges::<F, F>(site, usize::MAX),
             Err(AkitaError::InvalidProof)
         );
         assert_eq!(prover.finish(), Err(AkitaError::InvalidProof));
 
-        let state = new_native_verifier(b"native-poison", b"fixture", &[]).unwrap();
-        let mut verifier = NativeVerifierGrinding::new(state, &plan);
+        let state = new_verifier_channel(b"native-poison", b"fixture", &[]).unwrap();
+        let mut verifier = VerifierGrinding::new(state, &plan);
         assert_eq!(
             verifier.grinded_ext_challenges::<F, F>(site, usize::MAX),
             Err(AkitaError::InvalidProof)
@@ -896,7 +881,7 @@ mod tests {
     }
 
     #[test]
-    fn native_fold_candidate_replays_all_groups_as_one_transaction() {
+    fn fold_candidate_replays_all_groups_as_one_transaction() {
         let plan = GrindingPlan::new(
             vec![
                 GrindingRun::fold_response(3),
@@ -909,11 +894,11 @@ mod tests {
         let config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
         let site = GrindingSite::FoldResponse { level: 3 };
         let nonce = 7;
-        let state = new_native_prover(b"native-fold-transaction", b"fixture").unwrap();
-        let mut prover = NativeProverGrinding::new(state, &plan);
+        let state = new_prover_channel(b"native-fold-transaction", b"fixture").unwrap();
+        let mut prover = ProverGrinding::new(state, &plan);
         let (preview_first, preview_second) = {
             let mut preview_state = prover.preview_fold_response(site, nonce).unwrap();
-            let first = NativePreviewFoldDraw::new(&mut preview_state)
+            let first = PreviewFoldDraw::new(&mut preview_state)
                 .draw_folding_challenges_with_rejection(
                     FoldChallengeDrawDomain::EvaluationTrace,
                     64,
@@ -924,7 +909,7 @@ mod tests {
                     None,
                 )
                 .unwrap();
-            let second = NativePreviewFoldDraw::new(&mut preview_state)
+            let second = PreviewFoldDraw::new(&mut preview_state)
                 .draw_folding_challenges_with_rejection(
                     FoldChallengeDrawDomain::EvaluationTrace,
                     64,
@@ -938,7 +923,7 @@ mod tests {
             (first, second)
         };
         prover.commit_fold_response(site, nonce).unwrap();
-        let live_first = NativeProverFoldDraw::new(prover.state_mut(), 3, 0)
+        let live_first = ProverFoldDraw::new(prover.state_mut(), 3, 0)
             .draw_folding_challenges_with_rejection(
                 FoldChallengeDrawDomain::EvaluationTrace,
                 64,
@@ -950,7 +935,7 @@ mod tests {
             )
             .unwrap();
         prover.record_fold_challenges(3, 0, 2).unwrap();
-        let live_second = NativeProverFoldDraw::new(prover.state_mut(), 3, 1)
+        let live_second = ProverFoldDraw::new(prover.state_mut(), 3, 1)
             .draw_folding_challenges_with_rejection(
                 FoldChallengeDrawDomain::EvaluationTrace,
                 64,
@@ -968,10 +953,10 @@ mod tests {
         );
         let proof = prover.finish().unwrap();
 
-        let state = new_native_verifier(b"native-fold-transaction", b"fixture", &proof).unwrap();
-        let mut verifier = NativeVerifierGrinding::new(state, &plan);
+        let state = new_verifier_channel(b"native-fold-transaction", b"fixture", &proof).unwrap();
+        let mut verifier = VerifierGrinding::new(state, &plan);
         assert_eq!(verifier.read_fold_response(site).unwrap(), nonce);
-        let verified_first = NativeVerifierFoldDraw::new(verifier.state_mut(), 3, 0)
+        let verified_first = VerifierFoldDraw::new(verifier.state_mut(), 3, 0)
             .draw_folding_challenges_with_rejection(
                 FoldChallengeDrawDomain::EvaluationTrace,
                 64,
@@ -983,7 +968,7 @@ mod tests {
             )
             .unwrap();
         verifier.record_fold_challenges(3, 0, 2).unwrap();
-        let verified_second = NativeVerifierFoldDraw::new(verifier.state_mut(), 3, 1)
+        let verified_second = VerifierFoldDraw::new(verifier.state_mut(), 3, 1)
             .draw_folding_challenges_with_rejection(
                 FoldChallengeDrawDomain::EvaluationTrace,
                 64,

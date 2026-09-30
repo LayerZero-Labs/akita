@@ -3,7 +3,7 @@
 //! `verify` selects the root and suffix paths, `root` and `suffix` prepare
 //! each fold's replay inputs, `challenges` draws the fold challenges,
 //! `relation_instance` builds the fold's public ring relation, and `terminal`
-//! dispatches the terminal fold. [`verify_fold_native`] runs the per-fold
+//! dispatches the terminal fold. [`verify_fold`] runs the per-fold
 //! stage checks from [`crate::stages`] in transcript order. FoldSchedule and
 //! config dispatch stay with the scheme crate until the verifier-facing
 //! config boundary is extracted.
@@ -19,24 +19,24 @@ use crate::relation::RingSwitchReplay;
 use crate::stages::opening_claims::FoldPrefix;
 use crate::stages::opening_semantics::{prepare_opening_semantics, OpeningSemanticsInput};
 use crate::stages::relation_claim::prepare_relation_claim;
-use crate::stages::ring_switch::ring_switch_verifier_native;
-use crate::stages::stage1::verify_stage1_native;
-use crate::stages::stage2::{replay_stage2_native, validate_stage2_replay};
+use crate::stages::ring_switch::ring_switch_verifier;
+use crate::stages::stage1::verify_stage1;
+use crate::stages::stage2::{replay_stage2, validate_stage2_replay};
 use crate::stages::stage3::verify_stage3;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_types::NativeGrinding;
+use akita_types::GrindingReplay;
 use akita_types::{
     AkitaVerifierSetup, BasisMode, CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout,
     RingVec,
 };
-use challenges::derive_multi_group_stage1_challenges_native;
+use challenges::derive_multi_group_stage1_challenges;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use relation_instance::{assemble_relation_instance, validate_fold_payloads};
 
 pub(crate) type SetupPrefixOpening<E> = (Vec<E>, E);
 
-pub(crate) struct NativePreparedFoldReplay<'a, F: Field, E: Field> {
+pub(crate) struct PreparedFoldReplay<'a, F: Field, E: Field> {
     pub(crate) lp: &'a CommittedGroupParams,
     pub(crate) level: u32,
     pub(crate) opening_payload: RingVec<F>,
@@ -44,8 +44,8 @@ pub(crate) struct NativePreparedFoldReplay<'a, F: Field, E: Field> {
     pub(crate) commitment_payloads: Vec<RingVec<F>>,
     pub(crate) prefix: FoldPrefix<F, E>,
     pub(crate) w_len: usize,
-    pub(crate) level_layout: akita_types::NativeNonterminalLevelLayout,
-    pub(crate) next_witness: NativeNextWitnessPlan,
+    pub(crate) level_layout: akita_types::NonterminalLevelLayout,
+    pub(crate) next_witness: NextWitnessPlan,
     pub(crate) next_witness_ring_dim: usize,
     pub(crate) next_opening_source_len: usize,
     pub(crate) stage3: Option<&'a CommittedGroupParams>,
@@ -53,29 +53,29 @@ pub(crate) struct NativePreparedFoldReplay<'a, F: Field, E: Field> {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum NativeNextWitnessPlan {
+pub(crate) enum NextWitnessPlan {
     OuterPayload { coefficient_count: usize },
     TerminalT { coefficient_count: usize },
 }
 
-pub(crate) struct NativeFoldVerifyOutput<F: Field, E: Field> {
+pub(crate) struct FoldVerifyOutput<F: Field, E: Field> {
     pub(crate) challenges: Vec<E>,
     pub(crate) setup_prefix_opening: Option<SetupPrefixOpening<E>>,
     pub(crate) next_witness: RingVec<F>,
     pub(crate) opening: E,
 }
 
-/// Replay one complete fold directly from the native Spongefish argument.
+/// Replay one complete fold directly from the Spongefish argument.
 ///
 /// Stage order is the transcript order: fold response, fold challenges,
 /// successor witness, ring switch, Stage 1, Stage 2 rounds, Stage 3, and the
 /// Stage 2 output check, which needs the Stage 3 setup claim.
 #[inline(never)]
-pub(crate) fn verify_fold_native<F, E>(
+pub(crate) fn verify_fold<F, E>(
     setup: &AkitaVerifierSetup<F>,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
-    prepared: NativePreparedFoldReplay<'_, F, E>,
-) -> Result<NativeFoldVerifyOutput<F, E>, AkitaError>
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    prepared: PreparedFoldReplay<'_, F, E>,
+) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
@@ -83,7 +83,7 @@ where
     let level = prepared.level;
     let relation_geometry = validate_fold_payloads(&prepared)?;
     grinding.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
-    let group_challenges = derive_multi_group_stage1_challenges_native::<F, E>(
+    let group_challenges = derive_multi_group_stage1_challenges::<F, E>(
         grinding,
         level,
         &prepared.opening_shape,
@@ -92,7 +92,7 @@ where
     let relation_instance =
         assemble_relation_instance(&prepared, &relation_geometry, group_challenges)?;
     let next_witness = receive_next_witness(grinding, &prepared)?;
-    let rs = ring_switch_verifier_native::<F, E>(
+    let rs = ring_switch_verifier::<F, E>(
         &RingSwitchReplay {
             setup: setup.expanded(),
             relation: &relation_instance,
@@ -112,7 +112,7 @@ where
         &prepared.prefix,
         &rs,
     )?;
-    let stage1 = verify_stage1_native::<F, E>(
+    let stage1 = verify_stage1::<F, E>(
         &rs,
         prepared.lp,
         &relation.range_image_plan,
@@ -138,7 +138,7 @@ where
         &rs,
         &relation,
     )?;
-    let stage2_rounds = replay_stage2_native::<F, E>(
+    let stage2_rounds = replay_stage2::<F, E>(
         grinding,
         level,
         &stage1,
@@ -166,7 +166,7 @@ where
         stage2_rounds,
     )?;
     drop(stage2_span);
-    Ok(NativeFoldVerifyOutput {
+    Ok(FoldVerifyOutput {
         challenges: stage2.point,
         setup_prefix_opening: stage3.map(|replay| (replay.challenges, replay.setup_prefix_eval)),
         next_witness,
@@ -176,33 +176,33 @@ where
 
 /// Receive the successor witness payload for the next fold or the terminal.
 fn receive_next_witness<F, E>(
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
-    prepared: &NativePreparedFoldReplay<'_, F, E>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    prepared: &PreparedFoldReplay<'_, F, E>,
 ) -> Result<RingVec<F>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: Field,
 {
     let next_witness = match prepared.next_witness {
-        NativeNextWitnessPlan::OuterPayload { coefficient_count } => {
+        NextWitnessPlan::OuterPayload { coefficient_count } => {
             if coefficient_count != prepared.level_layout.next_outer_payload_coeffs() {
                 return Err(AkitaError::InvalidSetup(
                     "native successor payload disagrees with the level grammar".into(),
                 ));
             }
-            akita_transcript::receive_native_field_group::<F>(
+            akita_transcript::receive_field_group::<F>(
                 grinding.state_mut(),
-                akita_types::NativeFoldSite::NextWitnessPayload {
+                akita_types::FoldSite::NextWitnessPayload {
                     level: prepared.level,
                 }
                 .id()?,
                 coefficient_count,
             )
         }
-        NativeNextWitnessPlan::TerminalT { coefficient_count } => {
-            akita_transcript::receive_native_field_group::<F>(
+        NextWitnessPlan::TerminalT { coefficient_count } => {
+            akita_transcript::receive_field_group::<F>(
                 grinding.state_mut(),
-                akita_types::NativeFoldSite::NextWitnessInnerState {
+                akita_types::FoldSite::NextWitnessInnerState {
                     level: prepared.level,
                 }
                 .id()?,
@@ -212,10 +212,8 @@ where
     }
     .map(RingVec::from_coeffs)?;
     if prepared.next_witness_ring_dim == 0
-        || matches!(
-            prepared.next_witness,
-            NativeNextWitnessPlan::TerminalT { .. }
-        ) && !next_witness.can_decode_vec(prepared.next_witness_ring_dim)
+        || matches!(prepared.next_witness, NextWitnessPlan::TerminalT { .. })
+            && !next_witness.can_decode_vec(prepared.next_witness_ring_dim)
     {
         return Err(AkitaError::InvalidProof);
     }

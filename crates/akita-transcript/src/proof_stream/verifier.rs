@@ -2,17 +2,17 @@ use crate::TranscriptSponge;
 use akita_error::AkitaError;
 use spongefish::{Decoding, Encoding, NargDeserialize, VerifierState};
 
-/// Akita's fail-closed native Spongefish verifier state.
+/// Akita's fail-closed Spongefish verifier state.
 ///
 /// Receipt failures poison this owner permanently. Keeping the underlying
 /// Spongefish state private prevents protocol callers from consuming malformed
 /// input and later obtaining a successful EOF result by ignoring the error.
-pub struct NativeVerifierState<'proof> {
+pub struct VerifierChannel<'proof> {
     inner: VerifierState<'proof, TranscriptSponge>,
     invalid: bool,
 }
 
-impl<'proof> NativeVerifierState<'proof> {
+impl<'proof> VerifierChannel<'proof> {
     pub(super) const fn new(inner: VerifierState<'proof, TranscriptSponge>) -> Self {
         Self {
             inner,
@@ -49,7 +49,7 @@ impl<'proof> NativeVerifierState<'proof> {
         self.inner.public_message(message);
     }
 
-    /// Draw one verifier message from the native transcript.
+    /// Draw one verifier message from the proof channel.
     ///
     /// # Errors
     ///

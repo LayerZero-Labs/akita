@@ -25,7 +25,7 @@ fn materialized_first_direct_setup_capacity(
 ) -> usize {
     akita_schedules::planner_support::first_direct_setup_capacity_for_schedule(
         &planned.schedule,
-        &akita_types::AkitaScheduleLookupKey::single(key)
+        &akita_types::ScheduleLookupKey::single(key)
             .opening_layout()
             .expect("opening layout"),
     )
@@ -35,7 +35,7 @@ fn materialized_first_direct_setup_capacity(
 #[cfg(feature = "catalog-gen")]
 fn assert_selected_grinding_edge_parity(
     planned: &PlannedFoldSchedule,
-    key: &akita_types::AkitaScheduleLookupKey,
+    key: &akita_types::ScheduleLookupKey,
     policy: &PlannerPolicy,
 ) {
     use akita_types::{FoldSuccessor, TranscriptGrindingCost};
@@ -58,7 +58,7 @@ fn assert_selected_grinding_edge_parity(
     let mut previous_rounds = 0;
     let mut edge_sum = TranscriptGrindingCost {
         total_nonce_bits: 0,
-        native_nonce_max_bytes: 0,
+        nonce_max_bytes: 0,
         expanded_query_count: 0,
     };
     for (index, fold) in folds.iter().enumerate() {
@@ -101,18 +101,15 @@ fn assert_selected_grinding_edge_parity(
             .expanded_query_count
             .checked_add(edge.expanded_query_count)
             .expect("selected query sum");
-        edge_sum.native_nonce_max_bytes = edge_sum
-            .native_nonce_max_bytes
-            .checked_add(edge.native_nonce_max_bytes)
+        edge_sum.nonce_max_bytes = edge_sum
+            .nonce_max_bytes
+            .checked_add(edge.nonce_max_bytes)
             .expect("selected native nonce-byte sum");
         previous_rounds = geometry.relation_point_variable_count();
     }
     assert!(edge_sum.expanded_query_count > 0);
     assert_eq!(edge_sum.total_nonce_bits, full_plan.total_nonce_bits());
-    assert_eq!(
-        edge_sum.native_nonce_max_bytes,
-        full_plan.native_nonce_max_bytes()
-    );
+    assert_eq!(edge_sum.nonce_max_bytes, full_plan.nonce_max_bytes());
     assert_eq!(
         edge_sum.expanded_query_count,
         full_plan.expanded_query_count()
@@ -129,7 +126,7 @@ fn find_schedule(
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     dimensions.validate_for_policy(policy)?;
     crate::planner::find_schedule(
-        &akita_types::AkitaScheduleLookupKey::single(key),
+        &akita_types::ScheduleLookupKey::single(key),
         source_contract,
         &[],
         policy,
@@ -296,7 +293,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
         OneHot::ring_challenge_config,
     )
     .unwrap();
-    let lookup_key = akita_types::AkitaScheduleLookupKey::single(onehot_group(14, 1));
+    let lookup_key = akita_types::ScheduleLookupKey::single(onehot_group(14, 1));
     assert_selected_grinding_edge_parity(&selected, &lookup_key, &policy);
     assert!(
         selected.schedule.recursive_folds.len() < unpruned_search::MAX_ORACLE_RECURSION_DEPTH,
@@ -344,8 +341,8 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     assert!(terminal_eor > 0, "the ET terminal must retain its EOR");
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        akita_schedules::expanded_schedule_native_proof_estimate_bytes(
-            &akita_types::AkitaScheduleLookupKey::single(onehot_group(14, 1)),
+        akita_schedules::expanded_schedule_proof_estimate_bytes(
+            &akita_types::ScheduleLookupKey::single(onehot_group(14, 1)),
             &selected.schedule,
             &policy,
         )
@@ -869,7 +866,7 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
     }
     let score = |schedule: &akita_types::PlannedFoldSchedule| {
         let proof_bytes = schedule.estimate.estimated_proof_payload_bytes().unwrap();
-        let root_layout = akita_types::AkitaScheduleLookupKey::single(onehot_group(36, 1))
+        let root_layout = akita_types::ScheduleLookupKey::single(onehot_group(36, 1))
             .opening_layout()
             .unwrap();
         let work: u128 = std::iter::once(&schedule.schedule.root)
@@ -972,7 +969,7 @@ fn adaptive_search_supports_direct_multi_chunk_policy() {
         OneHot::ring_challenge_config,
     )
     .unwrap();
-    let lookup_key = akita_types::AkitaScheduleLookupKey::single(onehot_group(16, 1));
+    let lookup_key = akita_types::ScheduleLookupKey::single(onehot_group(16, 1));
     assert_selected_grinding_edge_parity(&schedule, &lookup_key, &policy);
     assert!(!schedule.schedule.recursive_folds.is_empty());
     assert_eq!(schedule.schedule.root.params.witness_chunk.num_chunks, 8);
