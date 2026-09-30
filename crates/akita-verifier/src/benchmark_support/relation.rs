@@ -1,4 +1,4 @@
-//! Feature-gated fixtures for benchmarking the production relation evaluator.
+//! Fixtures for benchmarking the production relation evaluator.
 
 use crate::relation::evaluation::PreparedDirectRelation;
 use crate::relation::{

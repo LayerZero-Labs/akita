@@ -22,7 +22,7 @@
 //! `benchmark-support` relation-evaluator bench drives directly, and
 //! [`AkitaStage1Verifier`], which downstream range-proof lanes reuse.
 
-#[cfg(feature = "benchmark-support")]
+#[cfg(any(test, feature = "benchmark-support"))]
 mod benchmark_support;
 mod coefficient_packing_relation;
 mod fold;
@@ -33,16 +33,14 @@ mod stages;
 mod terminal;
 mod verifier;
 
+#[cfg(any(test, feature = "benchmark-support"))]
+pub use benchmark_support::{evaluation_trace_benchmark_case, EvaluationTraceBenchmarkCase};
 #[cfg(feature = "benchmark-support")]
 pub use benchmark_support::{
     relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
     RelationEvaluatorBenchmarkCase,
 };
 pub use prepared_cache::build_riscv64_terminal_ntt_cache;
-#[cfg(any(test, feature = "benchmark-support"))]
-pub use relation::evaluation_trace::{
-    evaluation_trace_benchmark_case, EvaluationTraceBenchmarkCase,
-};
 pub use relation::RelationMatrixEvaluator;
 pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};
 pub use stages::stage1::AkitaStage1Verifier;
