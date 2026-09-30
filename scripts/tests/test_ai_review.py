@@ -271,6 +271,20 @@ class ModelTests(unittest.TestCase):
         with self.assertRaises(ReviewError):
             review(snapshot(), "secret", "test-model", lambda *a: {"status": "incomplete"})
 
+    def test_bad_structured_result_gets_only_two_correction_attempts(self):
+        calls = []
+
+        def api(*args):
+            calls.append(args[-1])
+            invalid = proposal(snapshot())["result"]
+            invalid["coverage"] = ["prose instead of a path"]
+            return {"status": "completed", "output": [{"type": "message", "content": [
+                {"type": "output_text", "text": json.dumps(invalid)}]}]}
+
+        with self.assertRaisesRegex(ReviewError, "two corrections"):
+            review(snapshot(), "secret", "test-model", api)
+        self.assertEqual(len(calls), 3)
+
 
 class WorkflowTests(unittest.TestCase):
     def test_every_external_action_is_pinned_to_a_full_commit(self):
