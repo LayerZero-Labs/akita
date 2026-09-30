@@ -12,10 +12,10 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ai_review"))
-from collect import discussions, previous_state, tree
+from collect import diff_lines, discussions, previous_state, tree
 from common import GitHub, MARKER, NoRedirect, REPOSITORY, ReviewError, authorize, digest, request, revision
 from model import review, source_tool
-from publish import publish, render, validate
+from publish import publish, prepare_review, validate
 
 HEAD = "a" * 40
 BASE = "b" * 40
@@ -43,9 +43,14 @@ class FakeGitHub:
         if payload is not None:
             self.writes.append((path, payload))
             posted = {"id": 99, "user": {"login": "github-actions[bot]", "type": "Bot", "id": 1},
-                      "body": payload["body"], "updated_at": "later"}
-            self.comments.append(posted)
+                      "body": payload["body"], "submitted_at": "later",
+                      "state": "COMMENTED", "commit_id": payload["commit_id"]}
+            self.reviews.append(posted)
+            self.inline.extend({**c, "original_line": c["line"], "id": 200 + i,
+                                "user": posted["user"]} for i, c in enumerate(payload["comments"]))
             return posted
+        if path == "pulls/7/reviews/99":
+            return self.reviews[-1]
         if path == "pulls/7":
             return self.pr
         if path.startswith("issues/comments/"):
@@ -58,7 +63,7 @@ class FakeGitHub:
 
     def pages(self, path):
         return {"issues/7/comments": self.comments, "pulls/7/reviews": self.reviews,
-                "pulls/7/comments": self.inline}[path]
+                "pulls/7/comments": self.inline, "pulls/7/reviews/99/comments": self.inline}[path]
 
 
 def snapshot(github=None):
@@ -67,6 +72,7 @@ def snapshot(github=None):
              "revision": revision(github.pr), "merge_base": BASE,
              "title": "Fix batch", "description": "Details", "prior": None,
              "comments": discussions(github, 7), "changed": ["src/a.py"], "diff": "diff", "delta": "",
+             "anchors": {"src/a.py": {"head": [1, 2], "base": [1, 2]}},
              "trees": {"head": {"files": {"src/a.py": "blob"}, "excluded": []},
                        "base": {"files": {"src/a.py": "blob"}, "excluded": []}},
              "blobs": {"blob": "def first(items):\n    return items[0]\n"}}
@@ -168,6 +174,24 @@ class SourceToolTests(unittest.TestCase):
 
 
 class PublicationTests(unittest.TestCase):
+    def test_inline_anchors_include_correct_sides_and_reject_off_diff_lines(self):
+        patch_text = "--- a/x\n+++ b/x\n@@ -10,2 +10,2 @@\n same\n-old\n+new\n"
+        self.assertEqual(diff_lines(patch_text), {"base": [10, 11], "head": [10, 11]})
+        self.assertEqual(diff_lines("@@ -0,0 +1 @@\n+new\n"), {"base": [], "head": [1]})
+        self.assertEqual(diff_lines("@@ -1 +0,0 @@\n-old\n"), {"base": [1], "head": []})
+        value = snapshot()
+        value["anchors"]["src/a.py"]["head"] = [1]
+        seal(value)
+        with self.assertRaises(ReviewError):
+            prepare_review(value, proposal(value))
+
+    def test_removed_lines_are_published_on_left_side(self):
+        value = snapshot()
+        result = proposal(value)
+        result["reads"] = [["base", "src/a.py"]]
+        result["result"]["findings"][0]["revision"] = "base"
+        self.assertEqual(prepare_review(value, result)["comments"][0]["side"], "LEFT")
+
     def test_publishes_and_duplicate_event_is_noop(self):
         gh = FakeGitHub()
         value = snapshot(gh)
@@ -175,7 +199,9 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(publish(gh, EVENT, value, result), "published")
         self.assertEqual(publish(gh, EVENT, value, result), "already-published")
         self.assertEqual(len(gh.writes), 1)
-        self.assertEqual(gh.writes[0][0], "issues/7/comments")
+        self.assertEqual(gh.writes[0][0], "pulls/7/reviews")
+        self.assertEqual(gh.writes[0][1]["comments"][0]["side"], "RIGHT")
+        self.assertNotIn("###", gh.writes[0][1]["body"])
 
     def test_stale_head_base_discussion_description_and_revoked_access_stop_writes(self):
         for change in ("head", "base", "discussion", "description", "permission"):
@@ -201,7 +227,7 @@ class PublicationTests(unittest.TestCase):
             result = proposal(value)
             result["result"]["findings"][0][field] = bad
             with self.assertRaises(ReviewError):
-                render(value, result)
+                prepare_review(value, result)
 
     def test_digest_and_coverage_and_reads_are_required(self):
         for change in ("digest", "coverage", "reads"):
@@ -220,7 +246,7 @@ class PublicationTests(unittest.TestCase):
         value = snapshot()
         result = proposal(value)
         result["result"]["findings"][0]["body"] = "doesn't ![click](https://evil.test) <img src=x> @maintainer"
-        body = render(value, result)
+        body = prepare_review(value, result)["comments"][0]["body"]
         self.assertNotIn("![click]", body)
         self.assertNotIn("<img", body)
         self.assertNotIn("@maintainer", body)
@@ -228,7 +254,7 @@ class PublicationTests(unittest.TestCase):
 
     def test_every_previous_finding_must_be_reassessed_and_can_regress(self):
         value = snapshot()
-        body = render(value, proposal(value))
+        body = prepare_review(value, proposal(value))["body"]
         state = previous_state([{"id": 99, "own": True, "body": body}], 7)
         value["prior"] = state
         seal(value)

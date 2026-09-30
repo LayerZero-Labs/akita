@@ -1,10 +1,8 @@
-"""Validate model output and publish one idempotent, immutable PR conversation comment."""
+"""Validate model output and publish an idempotent review with inline findings."""
 
 import base64
 import html
 import json
-import re
-from urllib.parse import quote
 
 from collect import discussions, previous_state
 from common import MARKER, REPOSITORY, ReviewError, authorize, digest, revision
@@ -64,7 +62,8 @@ def validate(snapshot, proposal):
         path, rev, line = finding["path"], finding["revision"], finding["line"]
         files = snapshot["trees"][rev]["files"]
         if (path not in snapshot["changed"] or path not in files or (rev, path) not in reads
-                or type(line) is not int or not 1 <= line <= len(snapshot["blobs"][files[path]].splitlines())):
+                or type(line) is not int or not 1 <= line <= len(snapshot["blobs"][files[path]].splitlines())
+                or line not in snapshot["anchors"].get(path, {}).get(rev, [])):
             raise ReviewError("Finding lacks a verified source location")
         bounded_text(finding["body"], 2000)
         root = bounded_text(finding["root_cause"], 300)
@@ -78,37 +77,29 @@ def validate(snapshot, proposal):
     return findings
 
 
-def render(snapshot, proposal):
+def prepare_review(snapshot, proposal):
     findings = validate(snapshot, proposal)
     result = proposal["result"]
     state = {"repository": REPOSITORY, "number": snapshot["number"], "request": snapshot["request"],
-             "head": snapshot["revision"]["head"], "findings": findings}
+             "head": snapshot["revision"]["head"], "findings": findings,
+             "complete": result["complete"], "limitations": result["limitations"]}
     encoded = base64.b64encode(json.dumps(state).encode()).decode()
-    lines = [f"{MARKER}{encoded} -->", "### AI review", "",
-             f"Reviewed `{snapshot['revision']['head']}`. Automated source review; no PR code was executed.", ""]
+    body = f"{MARKER}{encoded} -->"
+    comments = []
     previous = {f["id"] for f in (snapshot["prior"] or {}).get("findings", [])}
     for finding in findings:
-        if finding["id"] in previous:
-            lines.append(f"- Previous `{finding['id']}`: **{finding['status']}** — {plain(finding['evidence'])}")
-        else:
-            url = (f"https://github.com/{REPOSITORY}/blob/{finding['commit']}/"
-                   f"{quote(finding['path'], safe='/')}#L{finding['line']}")
-            lines += [f"- **[{finding['priority']}]** [{plain(finding['path'])}:{finding['line']}]({url}) "
-                      f"(`{finding['id']}`): {plain(finding['body'])}"]
-    if not result["complete"]:
-        lines += ["", "**Incomplete review.** " + plain(result["limitations"] or "Coverage could not be established.")]
-    elif not findings or all(f["status"] == "fixed" for f in findings):
-        lines += ["No new findings; previous findings, if any, were assessed as fixed. This is not a merge approval."]
-    if result["complete"] and result["limitations"]:
-        lines += ["", "Limitations: " + plain(result["limitations"])]
-    body = "\n".join(lines)
+        if finding["id"] not in previous:
+            comments.append({"path": finding["path"], "line": finding["line"],
+                             "side": "RIGHT" if finding["revision"] == "head" else "LEFT",
+                             "body": f"[{finding['priority']}] {plain(finding['body'])}\n\n"
+                                     f"<!-- akita-ai-review-finding:{finding['id']} -->"})
     if len(body.encode()) > 60_000:
         raise ReviewError("Published review exceeds comment size limit")
-    return body
+    return {"commit_id": snapshot["revision"]["head"], "event": "COMMENT", "body": body, "comments": comments}
 
 
 def publish(github, event, snapshot, proposal):
-    body = render(snapshot, proposal)
+    payload = prepare_review(snapshot, proposal)
     pr = authorize(github, event)
     if snapshot["number"] != pr["number"] or snapshot["request"] != event["comment"]["id"]:
         raise ReviewError("Review does not belong to this request")
@@ -119,8 +110,12 @@ def publish(github, event, snapshot, proposal):
     if (revision(pr) != snapshot["revision"] or comments != snapshot["comments"]
             or pr["title"] != snapshot["title"] or (pr.get("body") or "") != snapshot["description"]):
         raise ReviewError("Review is stale; post a new /ai-review command")
-    posted = github.get(f"issues/{pr['number']}/comments", {"body": body})
-    verified = github.get(f"issues/comments/{posted['id']}")
-    if verified.get("body") != body:
-        raise ReviewError("Published comment could not be verified; do not blindly retry")
+    posted = github.get(f"pulls/{pr['number']}/reviews", payload)
+    verified = github.get(f"pulls/{pr['number']}/reviews/{posted['id']}")
+    inline = github.pages(f"pulls/{pr['number']}/reviews/{posted['id']}/comments")
+    expected = {(c["path"], c["line"], c["side"], c["body"]) for c in payload["comments"]}
+    actual = {(c["path"], c.get("original_line"), c["side"], c["body"]) for c in inline}
+    if (verified.get("body") != payload["body"] or verified.get("commit_id") != payload["commit_id"]
+            or verified.get("state") != "COMMENTED" or actual != expected):
+        raise ReviewError("Published review could not be verified; do not blindly retry")
     return "published"

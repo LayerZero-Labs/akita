@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from common import ReviewError, request
-from publish import render
+from publish import prepare_review
 
 
 def object_schema(properties):
@@ -124,7 +124,7 @@ def review(snapshot, api_key, model, api=request):
         proposal = {"snapshot_digest": snapshot["digest"], "result": json.loads(texts[0]),
                     "reads": sorted(reads)}
         try:
-            render(snapshot, proposal)
+            prepare_review(snapshot, proposal)
         except ReviewError as exc:
             corrections += 1
             if corrections > 2:

@@ -29,7 +29,7 @@ def discussions(github, number):
         for comment in github.pages(endpoint):
             user = comment.get("user") or {}
             # Only our state comments from the Actions bot bypass human membership.
-            own = (kind == "discussion" and user.get("login") == "github-actions[bot]"
+            own = (kind in ("discussion", "review") and user.get("login") == "github-actions[bot]"
                    and user.get("type") == "Bot" and comment.get("body", "").startswith(MARKER))
             uid = user.get("id")
             if not own and uid not in permissions:
@@ -38,6 +38,7 @@ def discussions(github, number):
                 continue
             result.append({"kind": kind, "id": comment["id"], "user": user.get("login"),
                            "body": comment.get("body") or "", "own": own,
+                           "created_at": comment.get("created_at", comment.get("submitted_at")),
                            "updated_at": comment.get("updated_at", comment.get("submitted_at")),
                            "path": comment.get("path"), "line": comment.get("line"),
                            "original_line": comment.get("original_line"),
@@ -53,7 +54,7 @@ def previous_state(comments, number):
     for comment in comments:
         if not comment["own"]:
             continue
-        match = re.match(re.escape(MARKER) + r"([A-Za-z0-9+/=]+) -->\n", comment["body"])
+        match = re.match(re.escape(MARKER) + r"([A-Za-z0-9+/=]+) -->(?:\n|$)", comment["body"])
         if not match:
             raise ReviewError("Malformed previous review state")
         try:
@@ -68,8 +69,29 @@ def previous_state(comments, number):
                     raise ValueError()
         except (ValueError, KeyError, TypeError):
             raise ReviewError("Invalid previous review state") from None
-        states.append((comment["id"], state))
-    return max(states, default=(0, None))[1]
+        states.append((comment.get("created_at") or comment.get("updated_at") or "", comment["id"], state))
+    return max(states, default=("", 0, None))[2]
+
+
+def diff_lines(patch):
+    """Map valid LEFT/RIGHT review coordinates from one file's unified diff."""
+    result = {"base": [], "head": []}
+    old = new = None
+    for line in patch.splitlines():
+        hunk = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
+        if hunk:
+            old, new = map(int, hunk.groups())
+        elif old is not None and line.startswith(" "):
+            result["base"].append(old)
+            result["head"].append(new)
+            old, new = old + 1, new + 1
+        elif old is not None and line.startswith("-"):
+            result["base"].append(old)
+            old += 1
+        elif new is not None and line.startswith("+"):
+            result["head"].append(new)
+            new += 1
+    return result
 
 
 def tree(commit, blobs):
@@ -112,12 +134,15 @@ def collect(github, event):
         git("fetch", "--no-tags", "--no-recurse-submodules",
             f"https://github.com/{REPOSITORY}.git", sha(commit))
     merge_base = git("merge-base", revisions["base"], revisions["head"]).decode().strip()
-    changed = git("diff", "--name-only", "-z", merge_base, revisions["head"]).decode().split("\0")[:-1]
+    changed = git("diff", "--no-renames", "--name-only", "-z", merge_base, revisions["head"]).decode().split("\0")[:-1]
     diff = git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", merge_base, revisions["head"]).decode()
     delta = (git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", prior["head"], revisions["head"]).decode()
              if prior else "")
     if len(diff) + len(delta) > 300_000 or len(changed) > 150:
         raise ReviewError("Diff exceeds automated review budget; use a manual review")
+    anchors = {path: diff_lines(git("diff", "--no-ext-diff", "--no-textconv", "--no-renames",
+                                    "--unified=3", merge_base, revisions["head"], "--", path).decode())
+               for path in changed}
     blobs = {}
     trees = {name: tree(commit, blobs) for name, commit in
              {"head": revisions["head"], "base": merge_base,
@@ -125,7 +150,8 @@ def collect(github, event):
     snapshot = {"repository": REPOSITORY, "number": number, "request": event["comment"]["id"],
                 "revision": revisions, "merge_base": merge_base, "title": pr["title"],
                 "description": pr.get("body") or "", "comments": comments, "prior": prior,
-                "diff": diff, "delta": delta, "changed": changed, "trees": trees, "blobs": blobs}
+                "diff": diff, "delta": delta, "changed": changed, "anchors": anchors,
+                "trees": trees, "blobs": blobs}
     fresh = authorize(github, event)
     if revision(fresh) != revisions or discussions(github, number) != comments:
         raise ReviewError("PR changed during collection; post a new command")

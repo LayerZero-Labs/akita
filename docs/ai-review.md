@@ -2,7 +2,7 @@
 
 An author with current repository write, maintain, or admin permission can post
 exactly `/ai-review` on their open, same-repository PR. The workflow posts its
-findings in the PR conversation, with links to the reviewed source lines. It
+findings inline on the corresponding source lines in the PR diff. It
 does not require the `ai-review` label. Other users, external contributors, forks,
 bots, edited comments and comments containing additional instructions cannot
 trigger it. The workflow must first land on the default branch (`main`), because
@@ -34,12 +34,12 @@ checkout, so a PR cannot overwrite the trusted scripts or skill.
 | --- | --- | --- |
 | Collect | Read-only GitHub token | Revalidate author and current write access, read trusted comments, collect pinned public git objects |
 | Review | Environment OpenAI key, read-only job permission | Send source evidence to the fixed OpenAI Responses endpoint; offer bounded in-memory source reads/searches |
-| Publish | PR write token; no OpenAI key | Validate the structured result, recheck authorization and snapshot, post one comment on the original PR |
+| Publish | PR write token; no OpenAI key | Validate the structured result, recheck authorization and snapshot, submit one COMMENT review with new inline findings on the original PR |
 
 The model receives neither credential nor process/environment access. The source
 tools cannot fetch URLs, traverse the filesystem, invoke a shell, or write to
 GitHub. HTTP redirects are refused. The publisher fixes the repository, PR and
-operation; model output is never an API path, workflow command, shell argument or
+operation and allowed diff coordinates; model output is never an API path, workflow command, shell argument or
 executable code. Model prose is escaped to prevent injected HTML, Markdown images
 and user mentions. Errors avoid remote response bodies and credential-bearing
 tracebacks in public logs.
@@ -89,13 +89,17 @@ contain public source/review evidence, no credentials, and expire after one day.
 
 The publisher rejects changes to head, base, branch targets, PR text or eligible
 discussion since collection. Post a fresh command after the PR stabilizes. A
-final check and a GitHub comment write cannot be atomic; the comment always names
-its reviewed commit. API write failures are not blindly retried: a rerun checks
+final check and a GitHub review write cannot be atomic; the review is always
+pinned to its reviewed commit. API write failures are not blindly retried: a rerun checks
 for the original request ID before attempting a write.
 
-The latest state is stored in the bot comment. Do not delete or edit those markers;
-malformed state fails closed and deletion loses that historical baseline. Fixed
-findings stay in history so later regressions can be recognized. An external
+The latest state is stored in a hidden marker in the bot review body. Do not edit
+those markers;
+malformed state fails closed and removal loses that historical baseline. Fixed
+findings stay in history so later regressions can be recognized. A review with no
+new findings carries only this hidden marker; no visible summary is posted.
+Prior thread resolution is left to humans. Review artifacts retain coverage and
+limitations, including issues that cannot be anchored in the current diff. An external
 comment cannot spoof state by copying a marker.
 
 Run local adversarial and regression tests with:

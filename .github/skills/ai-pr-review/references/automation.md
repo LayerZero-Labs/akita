@@ -1,7 +1,7 @@
 # Author-requested automation
 
 This mode applies only when invoked by the trusted `ai-review.yml` workflow.
-It overrides manual label discovery, shell/test execution, inline publication,
+It overrides manual label discovery, shell/test execution, publication,
 and approval instructions elsewhere in this skill. Editing or discussing this
 skill does not activate this mode. A validated author command is publication
 authorization for that one PR. No label is required.
@@ -44,14 +44,23 @@ On every repeated request:
 4. Review the full current PR diff as well as the delta for newly introduced or
    newly exposed issues. Return only genuinely new findings in `findings`, with
    a stable, short `root_cause`, priority, concrete trigger, consequence, and fix
-   direction. Read the cited file first and anchor honestly in `base` or `head`.
+   direction. Read the cited file first and anchor honestly in `base` or `head`, at a line
+   listed in `anchors[path][revision]`. Never invent an off-diff anchor; record
+   unanchorable issues as incomplete coverage in `limitations`.
 5. Return the required JSON result. Set `complete=false` for material coverage
    gaps or unresolved uncertainty. Never invent issues or claim unavailable
    evidence was checked. Keep speculative questions in `limitations`.
 
-The deterministic publisher posts one conversation comment per author command,
-with new findings, source links, and prior-finding dispositions. It validates the
-model output and refreshes authorization, revisions and trusted discussions first.
+The deterministic publisher submits a COMMENT review with only new inline
+findings. Use one short paragraph per root cause and omit the priority prefix
+from `body` because the publisher adds it. It verifies both the source location
+and LEFT/RIGHT diff coordinates. Its review body contains only a hidden state
+marker with prior-finding dispositions and coverage; no visible summary comment
+is posted. On a new request with no new findings, a marker-only COMMENT review
+persists the reassessment without repeating inline comments. This is not an
+approval or readiness declaration. Coverage and limits remain in review artifacts.
+
+It refreshes authorization, revisions and trusted discussions before publication.
 It does not edit the PR description, approve, request changes, resolve threads,
 run commands from the model, or write to model-selected destinations. It refuses
 stale snapshots and ambiguous write retries. A rerun of the same event is a no-op

@@ -29,7 +29,8 @@ def main():
         proposal = review(load_json(snapshot_path), os.environ["OPENAI_API_KEY"],
                           os.environ.get("AI_REVIEW_MODEL", "gpt-5.4"))
         save_json(result_path, proposal)
-        print("Model review complete")
+        coverage = "complete" if proposal["result"]["complete"] else "incomplete"
+        print(f"Prepared {len(proposal['result']['findings'])} inline findings; coverage {coverage}")
     else:
         status = publish(GitHub(os.environ["GH_TOKEN"]), load_json(os.environ["GITHUB_EVENT_PATH"]),
                          load_json(snapshot_path), load_json(result_path))
