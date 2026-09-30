@@ -178,7 +178,8 @@ When the opening method and extension degree require a reduction, the plan
 contains:
 
 - one complete extension-opening point draw;
-- an optional reduction-claim batching challenge; and
+- an optional reduction-claim batching challenge (see
+  [claim batching](#claim-batching-sites)); and
 - one distinct proof-of-work site for every extension-opening-reduction
   sumcheck round.
 
@@ -186,7 +187,8 @@ contains:
 
 Depending on the public layout, the plan contains:
 
-- an optional evaluation/row batching challenge;
+- an optional evaluation/row batching challenge (see
+  [claim batching](#claim-batching-sites));
 - exactly one 12-bit fold-response search for the level; and
 - one zero-width fold-challenge-group entry per commitment group, with
   multiplicity covering the group root and every indexed sparse coordinate.
@@ -233,6 +235,23 @@ The plan contains:
 - one site for every Stage 2 sumcheck round; and
 - for a recursive successor with a setup prefix, one site for every Stage 3
   sumcheck round.
+
+#### Claim-batching sites
+
+The evaluation/row batching challenge and the reduction-claim batching
+challenge each draw one independent, unnormalized coefficient per opened
+polynomial. A layout with a single polynomial draws nothing and has no plan
+entry. For `N > 1` polynomials, each site has loss factor `N`, not one.
+
+The loss of one would be the one-shot bound for a discrepancy vector fixed
+before the draw. Knowledge extraction instead separates the claims with a
+coordinate-wise tree: one base coefficient vector plus one sibling per
+coordinate, `N + 1` children in total. The opening is recovered from the
+subtree below this challenge, so the site is priced at the tree charge
+`N / |E|`. For example, nine polynomials over `|E| = (2^64 - 59)^2` need
+`g = 4`, because `9 * 2^128 / |E|` lies in `(8, 16]`.
+
+#### Loss-one sites
 
 Some named sites have loss factor one. In the production field towers they
 have `g = 1`, because the exact challenge-set cardinality is below `2^128`.

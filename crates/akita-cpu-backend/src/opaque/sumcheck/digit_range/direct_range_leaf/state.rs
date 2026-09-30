@@ -1,4 +1,5 @@
 use super::*;
+use akita_error::checked;
 
 impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     /// Build the low-basis prover from the compact witness table.
@@ -33,10 +34,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidInput("stage-1 challenge width overflow".to_string())
         })?;
-        let col_bits_u32 = u32::try_from(col_bits)
-            .map_err(|_| AkitaError::InvalidInput("stage-1 column width overflow".to_string()))?;
-        let x_len = 1usize
-            .checked_shl(col_bits_u32)
+        let x_len = checked::pow2(col_bits)
             .ok_or_else(|| AkitaError::InvalidInput("stage-1 column width overflow".to_string()))?;
         if live_x_cols == 0 || live_x_cols > x_len {
             return Err(AkitaError::InvalidSize {
@@ -44,10 +42,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 actual: live_x_cols,
             });
         }
-        let ring_bits_u32 = u32::try_from(ring_bits)
-            .map_err(|_| AkitaError::InvalidInput("stage-1 ring width overflow".to_string()))?;
-        let y_len = 1usize
-            .checked_shl(ring_bits_u32)
+        let y_len = checked::pow2(ring_bits)
             .ok_or_else(|| AkitaError::InvalidInput("stage-1 ring width overflow".to_string()))?;
         let expected = live_x_cols
             .checked_mul(y_len)

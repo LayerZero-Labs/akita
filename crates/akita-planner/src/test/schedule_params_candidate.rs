@@ -717,27 +717,6 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         .is_empty()
     );
 
-    let product_key = AkitaScheduleLookupKey {
-        final_group: grouped_key.final_group,
-        precommitteds: vec![frozen_group, frozen_group],
-    };
-    let opening_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
-        &policy,
-        dimensions,
-        &product_key,
-        &[Dense::committed_source_contract().unwrap(); 2],
-        None,
-    )
-    .expect("root precommit opening products");
-    assert_eq!(opening_products.len(), 3);
-    assert!(opening_products
-        .iter()
-        .all(|assignment| assignment.len() == 2));
-    assert!(opening_products.iter().flatten().all(|opening| matches!(
-        opening.method(),
-        OpeningMethod::SubringCoefficientPacking { .. }
-    )));
-
     let precommit_domain = PlannerOpeningCandidate::coefficient_packing_domain(
         0,
         policy.claim_ext_degree,
@@ -748,64 +727,182 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         },
     )
     .expect("precommit opening domain");
-    let exhaustive_products = precommit_domain
-        .iter()
-        .flat_map(|&left| precommit_domain.iter().map(move |&right| vec![left, right]))
-        .collect::<Vec<_>>();
-    let materialized_root_domain = |products: &[Vec<PlannerOpeningCandidate>]| {
-        products
-            .iter()
-            .flat_map(|product| {
-                crate::planner::root_level_candidates_with_fresh_preparation(
-                    &product_key,
-                    Dense::committed_source_contract().unwrap(),
-                    &[Dense::committed_source_contract().unwrap(); 2],
-                    &policy,
-                    dimensions,
-                    opening,
-                    product,
-                    Dense::inner_basis_range().0,
-                    Dense::opening_basis_range().0,
-                    None,
-                )
-                .expect("materialized root candidate domain")
-            })
-            .map(|(params, output_witness_len)| {
-                (params.canonical_descriptor_bytes(), output_witness_len)
-            })
-            .collect::<std::collections::BTreeSet<_>>()
-    };
-    assert_eq!(
-        materialized_root_domain(&opening_products),
-        materialized_root_domain(&exhaustive_products),
-        "one canonical representative per multiset must preserve the exhaustive root domain"
+    assert!(
+        precommit_domain.len() >= 2,
+        "the fixture needs a choice of precommit openings"
     );
+
+    let product_key = AkitaScheduleLookupKey {
+        final_group: grouped_key.final_group,
+        precommitteds: vec![frozen_group, frozen_group],
+    };
+    let opening_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+        &policy,
+        dimensions,
+        &product_key,
+        &[Dense::committed_source_contract().unwrap(); 2],
+    )
+    .expect("root precommit opening products");
+    assert_eq!(
+        opening_products,
+        precommit_domain
+            .iter()
+            .map(|&opening| vec![opening])
+            .collect::<Vec<_>>(),
+        "interchangeable groups share one opening per class",
+    );
+    for product in &opening_products {
+        let candidates = crate::planner::root_level_candidates_with_fresh_preparation(
+            &product_key,
+            Dense::committed_source_contract().unwrap(),
+            &[Dense::committed_source_contract().unwrap(); 2],
+            &policy,
+            dimensions,
+            opening,
+            product,
+            Dense::inner_basis_range().0,
+            Dense::opening_basis_range().0,
+            None,
+        )
+        .expect("materialized root candidate domain");
+        for (params, _) in candidates {
+            let groups = params.precommitted_groups();
+            assert_eq!(groups.len(), 2);
+            assert_eq!(groups[0], groups[1], "one class materializes one group");
+        }
+    }
 
     let repeated_key = AkitaScheduleLookupKey {
         final_group: grouped_key.final_group,
-        precommitteds: vec![frozen_group; 16],
+        precommitteds: vec![frozen_group; 256],
     };
     let repeated_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
         &policy,
         dimensions,
         &repeated_key,
-        &vec![Dense::committed_source_contract().unwrap(); 16],
-        None,
+        &vec![Dense::committed_source_contract().unwrap(); 256],
     )
     .expect("symmetric root precommit opening products");
-    assert_eq!(repeated_products.len(), 17);
-    assert!(repeated_products
-        .iter()
-        .all(|assignment| assignment.len() == 16));
-    let capped_error = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+    assert_eq!(
+        repeated_products, opening_products,
+        "the opening domain does not grow with the class multiplicity",
+    );
+
+    let one_hot_contract =
+        akita_config::proof_optimized::fp64::OneHot::committed_source_contract().unwrap();
+    let mixed_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
         &policy,
         dimensions,
-        &repeated_key,
-        &vec![Dense::committed_source_contract().unwrap(); 16],
-        Some(16),
+        &AkitaScheduleLookupKey {
+            final_group: grouped_key.final_group,
+            precommitteds: vec![frozen_group; 3],
+        },
+        &[
+            Dense::committed_source_contract().unwrap(),
+            one_hot_contract,
+            Dense::committed_source_contract().unwrap(),
+        ],
     )
-    .expect_err("the cap must reject before materializing 17 assignments");
-    assert!(matches!(capped_error, AkitaError::UnsupportedSchedule(_)));
+    .expect("two-class root precommit opening products");
+    assert_eq!(
+        mixed_products.len(),
+        precommit_domain.len() * precommit_domain.len(),
+        "distinct source contracts form distinct classes",
+    );
+    assert!(mixed_products.iter().all(|product| product.len() == 2));
+
+    let packing_method = |opening: PlannerOpeningCandidate| match opening {
+        PlannerOpeningCandidate::SubringCoefficientPacking { geometry } => {
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: geometry.challenge_subring_dimension(),
+            }
+        }
+        PlannerOpeningCandidate::EvaluationTrace { .. } => {
+            unreachable!("the packing domain holds packing openings")
+        }
+    };
+    let other_class = candidates
+        .iter()
+        .map(|(params, _)| synthetic_profile(key.final_group, params))
+        .find(|profile| *profile != frozen_group)
+        .expect("a second root profile");
+    let split_key = AkitaScheduleLookupKey {
+        final_group: grouped_key.final_group,
+        precommitteds: vec![frozen_group, other_class, frozen_group],
+    };
+    let split_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+        &policy,
+        dimensions,
+        &split_key,
+        &[Dense::committed_source_contract().unwrap(); 3],
+    )
+    .expect("split root precommit opening products");
+    let split_product = split_products
+        .iter()
+        .find(|product| product[0] != product[1])
+        .expect("two classes can open differently");
+    let split_candidates = crate::planner::root_level_candidates_with_fresh_preparation(
+        &split_key,
+        Dense::committed_source_contract().unwrap(),
+        &[Dense::committed_source_contract().unwrap(); 3],
+        &policy,
+        dimensions,
+        opening,
+        split_product,
+        Dense::inner_basis_range().0,
+        Dense::opening_basis_range().0,
+        None,
+    )
+    .expect("materialized split root candidate domain");
+    assert!(!split_candidates.is_empty());
+    for (params, _) in split_candidates {
+        let groups = params.precommitted_groups();
+        assert_eq!(groups[0], groups[2], "non-adjacent class members match");
+        assert_eq!(
+            groups[0].opening.opening_method,
+            packing_method(split_product[0])
+        );
+        assert_eq!(
+            groups[1].opening.opening_method,
+            packing_method(split_product[1])
+        );
+    }
+
+    // Distinct group layouts form distinct classes that share one domain.
+    // These profiles only feed enumeration, which reads ring dimensions; they
+    // are not valid commit-phase profiles and must not be materialized.
+    let distinct_classes = |count: usize| AkitaScheduleLookupKey {
+        final_group: grouped_key.final_group,
+        precommitteds: (0..count)
+            .map(|index| GroupCommitPhaseParams {
+                group: PolynomialGroupLayout::singleton(10 + index),
+                ..frozen_group
+            })
+            .collect(),
+    };
+    let mut fitting_classes = 1;
+    while precommit_domain.len().pow(fitting_classes + 1)
+        <= crate::schedule_params::MAX_PRECOMMIT_OPENING_PRODUCTS
+    {
+        fitting_classes += 1;
+    }
+    let bounded_products = |classes: usize| {
+        crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+            &policy,
+            dimensions,
+            &distinct_classes(classes),
+            &vec![Dense::committed_source_contract().unwrap(); classes],
+        )
+        .expect("bounded root precommit opening products")
+    };
+    assert_eq!(
+        bounded_products(fitting_classes as usize).len(),
+        precommit_domain.len().pow(fitting_classes),
+    );
+    assert!(
+        bounded_products(fitting_classes as usize + 1).is_empty(),
+        "an oversized product removes coefficient-packing root openings",
+    );
 
     let incompatible_products =
         crate::schedule_params::suffix_dp::packing_precommit_opening_products(
@@ -817,7 +914,6 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             },
             &product_key,
             &[Dense::committed_source_contract().unwrap(); 2],
-            None,
         )
         .expect("incompatible shared opening dimension is an empty candidate domain");
     assert!(incompatible_products.is_empty());

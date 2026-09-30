@@ -61,7 +61,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
     let grinding_plan = GrindingPlan::new(
         vec![GrindingRun::proof_of_work(
             GrindingSite::EvaluationBatch { level: 0 },
-            1,
+            opening_batch.num_total_polynomials() as u64,
             ChallengeFieldOrder::from_full_capacity(128).unwrap(),
         )
         .expect("sample grinding run")],
