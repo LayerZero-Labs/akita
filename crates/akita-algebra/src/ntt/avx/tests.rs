@@ -428,11 +428,13 @@ fn avx512_ntt_i32_transforms_match_scalar() {
     assert_ntt_i32_transforms_match_scalar_all_sizes(true);
 }
 
-/// The fused signed-digit and centered-i16 forward transforms agree with
-/// converting through `from_canonical` and running the scalar reference.
+/// The fused signed-digit (negacyclic and cyclic) and centered-i16 forward
+/// transforms agree with converting through `from_canonical` and running the
+/// scalar reference.
 fn assert_fused_transforms_match_scalar<W: PrimeWidth, const D: usize>(
     prime: NttPrime<W>,
     digits_entry: FusedTransform<'_, W, i8, D>,
+    cyclic_digits_entry: FusedTransform<'_, W, i8, D>,
     centered_entry: FusedTransform<'_, W, i16, D>,
     context: &str,
 ) {
@@ -459,6 +461,18 @@ fn assert_fused_transforms_match_scalar<W: PrimeWidth, const D: usize>(
         .iter()
         .all(|x| (0..prime.p.to_i64()).contains(&x.raw().to_i64())));
 
+    cyclic_digits_entry(&mut actual, &digits, prime, &tw);
+    let mut expected_cyclic = digits.map(|x| prime.from_canonical(W::from_i64(i64::from(x))));
+    scalar_forward_ntt_cyclic(&mut expected_cyclic, prime, &tw);
+    assert_eq!(
+        canonical(&actual, prime.p),
+        canonical(&expected_cyclic, prime.p),
+        "cyclic digits, {context}"
+    );
+    assert!(actual
+        .iter()
+        .all(|x| (0..prime.p.to_i64()).contains(&x.raw().to_i64())));
+
     centered_entry(&mut actual, &coefficients, prime, &tw);
     assert_eq!(
         canonical(&actual, prime.p),
@@ -476,6 +490,9 @@ fn assert_fused_ntt_i32_matches_scalar<const D: usize>(use_avx512: bool) {
         assert_fused_transforms_match_scalar::<i32, D>(
             NttPrime::compute(raw_prime),
             &|a, digits, prime, tw| unsafe { forward_ntt_i8_i32(a, digits, prime, tw, use_avx512) },
+            &|a, digits, prime, tw| unsafe {
+                forward_ntt_cyclic_i8_i32(a, digits, prime, tw, use_avx512)
+            },
             &|a, coefficients, prime, tw| unsafe {
                 forward_ntt_centered_i16_i32(a, coefficients, prime, tw, use_avx512)
             },
@@ -529,6 +546,7 @@ fn assert_ntt_i16_transforms_match_scalar<const D: usize>() {
         assert_fused_transforms_match_scalar::<i16, D>(
             prime,
             &|a, digits, prime, tw| unsafe { forward_ntt_i8_i16(a, digits, prime, tw) },
+            &|a, digits, prime, tw| unsafe { forward_ntt_cyclic_i8_i16(a, digits, prime, tw) },
             &|a, coefficients, prime, tw| unsafe {
                 forward_ntt_centered_i16_i16(a, coefficients, prime, tw)
             },

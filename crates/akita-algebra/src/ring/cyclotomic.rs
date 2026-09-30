@@ -1,6 +1,7 @@
 //! Cyclotomic ring `Z_q[X]/(X^D + 1)` in coefficient form.
 
 mod decomposition;
+mod shift_windows;
 #[cfg(test)]
 mod tests;
 mod traits;
@@ -17,13 +18,11 @@ use std::io::{Read, Write};
 use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-#[cfg(test)]
-pub(crate) use decomposition::center_for_decomposition;
 pub use decomposition::{
     balanced_decompose_coefficients_pow2_i8_into, decompose_centering_threshold,
-    peel_first_balanced_digit, try_balanced_decompose_coefficients_pow2_i8_u64_into,
     BalancedDecomposePow2Params,
 };
+pub use shift_windows::NegacyclicShiftWindows;
 pub use wide::WideCyclotomicRing;
 
 /// Element of the cyclotomic ring `Z_q[X]/(X^D + 1)`.
@@ -313,10 +312,35 @@ impl<F: Field, const D: usize> CyclotomicRing<F, D> {
     pub fn is_zero(&self) -> bool {
         self.coeffs.iter().all(|c| c.is_zero())
     }
+
+    /// Extension seam: constant-term helpers shared with the zero-knowledge
+    /// building blocks tracked in LayerZero-Labs/akita#120.
+    ///
+    /// The constant coefficient `a_0` (zero when `D == 0`).
+    #[inline]
+    pub fn constant_term(&self) -> F {
+        self.coeffs.first().copied().unwrap_or_else(F::zero)
+    }
+
+    /// Extension seam: constant-term helpers shared with the zero-knowledge
+    /// building blocks tracked in LayerZero-Labs/akita#120.
+    ///
+    /// The coefficient inner product `sum_i a_i b_i`. This equals the
+    /// constant coefficient of `self * other.sigma_m1()`, because
+    /// `X^i X^{-j}` has a nonzero constant coefficient only when `i == j`,
+    /// but it costs `D` multiplications instead of a ring product.
+    #[inline]
+    pub fn coefficient_inner_product(&self, other: &Self) -> F {
+        self.coeffs
+            .iter()
+            .zip(other.coeffs.iter())
+            .fold(F::zero(), |acc, (a, b)| a.mul_add(*b, acc))
+    }
 }
 
 impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
-    pub(crate) fn centered_coefficients_i128(&self) -> [i128; D] {
+    /// Coefficients as centered integers in `(-q/2, q/2]`.
+    pub fn centered_coefficients_i128(&self) -> [i128; D] {
         let modulus = (-F::one())
             .to_u128_checked()
             .expect("Akita field element must fit in u128")

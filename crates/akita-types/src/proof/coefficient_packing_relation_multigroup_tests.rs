@@ -42,10 +42,7 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
             })
             .unwrap();
         assert_eq!(semantics.group_index(), group_index);
-        assert_eq!(
-            semantics.stage2_terms().group_claim_range(),
-            group.claim_range()
-        );
+        assert_eq!(semantics.group_claim_range(), group.claim_range());
         let padded_len = semantics
             .relation_events()
             .physical_field_len()

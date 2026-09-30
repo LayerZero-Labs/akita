@@ -132,12 +132,9 @@ where
     E: FpExtEncoding<F>,
 {
     if <E as ExtField<F>>::DEGREE == 1 {
-        return (*folded_ring * prepared_point.packed_inner_trusted::<D>()?.sigma_m1())
-            .coefficients()
-            .first()
-            .copied()
-            .map(E::lift_base)
-            .ok_or_else(|| AkitaError::InvalidInput("empty folded opening ring".to_string()));
+        return Ok(E::lift_base(folded_ring.coefficient_inner_product(
+            prepared_point.packed_inner_trusted::<D>()?,
+        )));
     }
     if !D.is_multiple_of(<E as ExtField<F>>::DEGREE)
         || !(D / <E as ExtField<F>>::DEGREE).is_power_of_two()

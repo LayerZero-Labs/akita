@@ -438,23 +438,25 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         )
         .expect("batched onehot prove");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            b"test/batched-onehot-shape",
-            selected_statement::<OneHotCfg>(
-                &scheme,
-                OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                    point,
-                    openings,
-                    &commitments[0],
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/batched-onehot-shape",
+                selected_statement::<OneHotCfg>(
+                    &scheme,
+                    OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                        point,
+                        openings,
+                        &commitments[0],
+                    )
+                    .expect("valid one-hot verifier group")])
+                    .expect("valid one-hot verifier claims"),
                 )
-                .expect("valid one-hot verifier group")])
-                .expect("valid one-hot verifier claims"),
+                .expect("valid one-hot verifier statement"),
+                BasisMode::Lagrange,
             )
-            .expect("valid one-hot verifier statement"),
-            BasisMode::Lagrange,
-        )
+        })
         .expect("batched onehot verify");
 }
 

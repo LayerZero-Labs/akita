@@ -51,55 +51,104 @@ fn accumulate_small_signed<F: Field + Ring>(dst: &mut F, value: F, coeff: i64) {
     }
 }
 
-/// Add only the high-half quotient contribution of `challenge * ring`.
-///
-/// Skips the first `D - pos` coefficients per challenge term that cannot
-/// contribute (degree < D), cutting iteration count roughly in half.
-#[inline(always)]
-fn add_sparse_ring_product_high_half<
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    const D: usize,
->(
-    quotient: &mut [F],
-    challenge: &SparseChallenge,
-    ring: &CyclotomicRing<F, D>,
-) {
-    let rc = ring.coefficients();
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        let p = pos as usize;
-        for s in (D - p)..D {
-            accumulate_small_signed(&mut quotient[p + s - D], rc[s], i64::from(coeff));
-        }
+/// Batch block-major A-row products and an optional consistency product in
+/// one challenge traversal. Per-lane scratch is bounded by `(rank + 1) * D`.
+fn parallel_high_half_accumulate_a_rows<F, const D: usize>(
+    challenges: &Challenges,
+    relation_rows: &[CyclotomicRing<F, D>],
+    row_rank: usize,
+    consistency_rows: Option<&[CyclotomicRing<F, D>]>,
+) -> Result<Vec<[F; D]>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Send + Sync,
+{
+    let challenge_count = challenges.len();
+    let expected_relation_rows = challenge_count
+        .checked_mul(row_rank)
+        .ok_or(AkitaError::InvalidProof)?;
+    if row_rank == 0
+        || relation_rows.len() != expected_relation_rows
+        || consistency_rows.is_some_and(|rows| rows.len() < challenge_count)
+        || challenges.as_slice().iter().any(|challenge| {
+            challenge.positions.len() != challenge.coeffs.len()
+                || challenge
+                    .positions
+                    .iter()
+                    .any(|&position| position as usize >= D)
+        })
+    {
+        return Err(AkitaError::InvalidProof);
     }
+    let output_rows = row_rank
+        .checked_add(usize::from(consistency_rows.is_some()))
+        .ok_or(AkitaError::InvalidProof)?;
+    let output = cfg_fold_reduce!(
+        0..challenge_count,
+        || Ok::<_, AkitaError>(vec![[F::zero(); D]; output_rows]),
+        |acc: Result<Vec<[F; D]>, AkitaError>, challenge_index| {
+            acc.and_then(|mut acc| {
+                let start = challenge_index
+                    .checked_mul(row_rank)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let end = start
+                    .checked_add(row_rank)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let rows = relation_rows
+                    .get(start..end)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let challenge = challenges
+                    .as_slice()
+                    .get(challenge_index)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let consistency = consistency_rows.and_then(|rows| rows.get(challenge_index));
+                add_sparse_ring_products_high_half::<F, D>(&mut acc, challenge, rows, consistency);
+                Ok(acc)
+            })
+        },
+        |left: Result<Vec<[F; D]>, AkitaError>, right: Result<Vec<[F; D]>, AkitaError>| {
+            match (left, right) {
+                (Ok(mut left), Ok(right)) => {
+                    for (left_row, right_row) in left.iter_mut().zip(right) {
+                        for (left, right) in left_row.iter_mut().zip(right_row) {
+                            *left += right;
+                        }
+                    }
+                    Ok(left)
+                }
+                (Err(error), _) => Err(error),
+                (_, Err(error)) => Err(error),
+            }
+        }
+    )?;
+    Ok(output)
 }
 
-fn parallel_high_half_accumulate<F, R, const D: usize>(
-    challenges: &Challenges,
-    ring_fn: R,
-) -> Result<Vec<F>, AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Send + Sync,
-    R: Fn(usize) -> Option<CyclotomicRing<F, D>> + Sync,
-{
-    let total = challenges.len();
-    let out = cfg_fold_reduce!(
-        0..total,
-        || vec![F::zero(); D],
-        |mut acc: Vec<F>, i: usize| {
-            let Some(ring) = ring_fn(i) else {
-                return acc;
-            };
-            add_sparse_ring_product_high_half::<F, D>(&mut acc, &challenges.as_slice()[i], &ring);
-            acc
-        },
-        |mut a: Vec<F>, b: Vec<F>| {
-            for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                *ai += *bi;
+/// Apply one sparse challenge to several rings while walking its positions and
+/// nonzero coefficients only once.
+#[inline(always)]
+fn add_sparse_ring_products_high_half<F: Field + Ring, const D: usize>(
+    outputs: &mut [[F; D]],
+    challenge: &SparseChallenge,
+    relation_rows: &[CyclotomicRing<F, D>],
+    consistency: Option<&CyclotomicRing<F, D>>,
+) {
+    for (&position, &coefficient) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        let position = position as usize;
+        let coefficient = i64::from(coefficient);
+        for (output, ring) in outputs
+            .iter_mut()
+            .zip(consistency.into_iter().chain(relation_rows))
+        {
+            if let (Some(destinations), Some(sources)) = (
+                output.get_mut(..position),
+                ring.coefficients().get(D - position..),
+            ) {
+                for (destination, &value) in destinations.iter_mut().zip(sources) {
+                    accumulate_small_signed(destination, value, coefficient);
+                }
             }
-            a
         }
-    );
-    Ok(out)
+    }
 }
 
 /// Relation quotient `r` returned by [`compute_multi_group_relation_quotient`].
@@ -193,21 +242,25 @@ where
     if group.fold.response_coefficient_len() != inner_width * D {
         return Err(AkitaError::InvalidProof);
     }
-    let evaluation_trace = match &group.folded_opening {
-        OpeningFamily::EvaluationTrace(_)
+    let (evaluation_trace, consistency_rows, packing_product) = match &group.folded_opening {
+        OpeningFamily::EvaluationTrace(e_folded)
             if group_opening.coefficient_packing_geometry().is_none() =>
         {
-            Some((
-                group_opening.evaluation_trace_multiplier_point()?,
-                group.params.num_positions_per_block(),
-                group.params.num_digits_inner(),
-                group.params.log_basis_inner(),
-            ))
+            (
+                Some((
+                    group_opening.evaluation_trace_multiplier_point()?,
+                    group.params.num_positions_per_block(),
+                    group.params.num_digits_inner(),
+                    group.params.log_basis_inner(),
+                )),
+                Some(e_folded.as_ring_slice::<D>()?),
+                None,
+            )
         }
         OpeningFamily::SubringCoefficientPacking(product)
             if Some(product.geometry()) == group_opening.coefficient_packing_geometry() =>
         {
-            None
+            (None, None, Some(product))
         }
         _ => {
             return Err(AkitaError::InvalidSetup(
@@ -236,26 +289,32 @@ where
         }
     };
 
-    let consistency_quotient = match &group.folded_opening {
-        OpeningFamily::EvaluationTrace(e_folded)
-            if group_opening.coefficient_packing_geometry().is_none() =>
-        {
-            let e_folded = e_folded.as_ring_slice::<D>()?;
-            let consistency_z_quotient = CyclotomicRing::<F, D>::from_slice(
+    if a_quotients.len() != n_a {
+        return Err(AkitaError::InvalidProof);
+    }
+    let products = parallel_high_half_accumulate_a_rows::<F, D>(
+        challenges,
+        recomposed_inner_rows,
+        n_a,
+        consistency_rows,
+    )?;
+    let consistency_quotient = match packing_product {
+        None => {
+            let [consistency_product, ..] = products.as_slice() else {
+                return Err(AkitaError::InvalidProof);
+            };
+            let mut coefficients = *consistency_product;
+            for (destination, &source) in coefficients.iter_mut().zip(
                 z_consistency
                     .as_ref()
                     .ok_or(AkitaError::InvalidProof)?
                     .coefficients(),
-            );
-            let quotient =
-                parallel_high_half_accumulate::<F, _, D>(challenges, |i| e_folded.get(i).copied())?;
-            let mut consistency_quotient = CyclotomicRing::from_slice(&quotient);
-            consistency_quotient -= consistency_z_quotient;
-            RelationQuotientOutput::row_from_ring(consistency_quotient)?
+            ) {
+                *destination -= source;
+            }
+            RelationQuotientOutput::row_from_ring(CyclotomicRing::from_coefficients(coefficients))?
         }
-        OpeningFamily::SubringCoefficientPacking(product)
-            if Some(product.geometry()) == group_opening.coefficient_packing_geometry() =>
-        {
+        Some(product) => {
             if z_consistency.is_some() {
                 return Err(AkitaError::InvalidProof);
             }
@@ -268,29 +327,22 @@ where
                 product.quotient_high_half_base_field_coordinates().to_vec(),
             )?
         }
-        _ => {
-            return Err(AkitaError::InvalidSetup(
-                "relation quotient opening method and witness disagree".into(),
-            ));
-        }
     };
 
-    let num_live_blocks_per_claim = group.params.num_live_blocks();
+    let a_product_offset = usize::from(consistency_rows.is_some());
     let mut a_rows = Vec::with_capacity(n_a);
     for (a_idx, a_q) in a_quotients.iter().enumerate() {
-        let mut quotient = parallel_high_half_accumulate::<F, _, D>(challenges, |i| {
-            let claim_idx = i / num_live_blocks_per_claim;
-            let block_idx = i % num_live_blocks_per_claim;
-            let inner_idx = claim_idx * num_live_blocks_per_claim + block_idx;
-            recomposed_inner_rows
-                .get(inner_idx.checked_mul(n_a)?.checked_add(a_idx)?)
-                .copied()
-        })?;
-        for (dst, src) in quotient.iter_mut().zip(a_q.coefficients()) {
-            *dst -= *src;
+        let product_index = a_product_offset
+            .checked_add(a_idx)
+            .ok_or(AkitaError::InvalidProof)?;
+        let mut coefficients = *products
+            .get(product_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        for (destination, &source) in coefficients.iter_mut().zip(a_q.coefficients()) {
+            *destination -= source;
         }
         a_rows.push(RelationQuotientOutput::row_from_ring(
-            CyclotomicRing::<F, D>::from_slice(&quotient),
+            CyclotomicRing::<F, D>::from_coefficients(coefficients),
         )?);
     }
     Ok((consistency_quotient, a_rows))
@@ -709,92 +761,5 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use akita_challenges::SparseChallenge;
-    use jolt_field::Prime128OffsetA7F7 as F;
-    use jolt_field::Zero;
-
-    fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
-        CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
-            F::from_u64(offset + idx as u64 + 1)
-        }))
-    }
-
-    fn sparse_challenge_as_ring<const D: usize>(
-        challenge: &SparseChallenge,
-    ) -> CyclotomicRing<F, D> {
-        let mut coeffs = [F::zero(); D];
-        for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-            coeffs[pos as usize] += F::from_i64(i64::from(coeff));
-        }
-        CyclotomicRing::from_coefficients(coeffs)
-    }
-
-    fn add_ring_product_reference_high_half<const D: usize>(
-        quotient: &mut [F],
-        challenge: &CyclotomicRing<F, D>,
-        ring: &CyclotomicRing<F, D>,
-    ) {
-        let rc = ring.coefficients();
-        for (p, &c) in challenge.coefficients().iter().enumerate() {
-            for s in (D - p)..D {
-                quotient[p + s - D] += c * rc[s];
-            }
-        }
-    }
-
-    #[test]
-    fn sparse_high_half_streaming_matches_ring_multiplication_reference() {
-        const D: usize = 8;
-        let sparse = vec![
-            SparseChallenge {
-                positions: vec![0, 7].into(),
-                coeffs: vec![1, -1].into(),
-            },
-            SparseChallenge {
-                positions: vec![2, 4].into(),
-                coeffs: vec![1, 2].into(),
-            },
-            SparseChallenge {
-                positions: vec![1].into(),
-                coeffs: vec![-1].into(),
-            },
-            SparseChallenge {
-                positions: vec![3, 6].into(),
-                coeffs: vec![1, 1].into(),
-            },
-        ];
-        let rings = (0..sparse.len())
-            .map(|idx| (idx != 3).then(|| ring::<D>(10 * idx as u64)))
-            .collect::<Vec<_>>();
-        let challenges = Challenges::from_sparse(sparse.clone(), sparse.len(), 1).unwrap();
-
-        let got = parallel_high_half_accumulate::<F, _, D>(&challenges, |idx| rings[idx]).unwrap();
-        let mut expected = vec![F::zero(); D];
-        for (idx, ring) in rings.iter().enumerate() {
-            if let Some(ring) = ring {
-                let challenge = sparse_challenge_as_ring::<D>(&sparse[idx]);
-                add_ring_product_reference_high_half::<D>(&mut expected, &challenge, ring);
-            }
-        }
-
-        assert_eq!(got, expected);
-    }
-
-    #[test]
-    fn physical_quotient_row_preserves_packing_planes_and_rejects_bad_width() {
-        let geometry = RelationRowGeometry::new(64, 2).unwrap();
-        let coordinates = (0..128)
-            .map(|index| F::from_u64(index as u64 + 1))
-            .collect::<Vec<_>>();
-        let row = RelationQuotientOutput::from_physical_coordinates(geometry, coordinates.clone())
-            .unwrap();
-        assert_eq!(row.geometry(), geometry);
-        assert_eq!(row.coeffs(), coordinates);
-        assert!(
-            RelationQuotientOutput::from_physical_coordinates(geometry, vec![F::zero(); 64],)
-                .is_err()
-        );
-    }
-}
+#[path = "relation_quotient/tests.rs"]
+mod tests;

@@ -101,5 +101,9 @@ name = "trinomial_relation"
 harness = false
 required-features = ["labinius-trinomial"]
 
+[[bench]]
+name = "quotient_kernels"
+harness = false
+
 [lints]
 workspace = true

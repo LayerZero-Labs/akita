@@ -230,7 +230,7 @@ panic.
 | Enable the recursive catalog | `crates/akita-config/src/recursive_commitment.rs` |
 | Search direct and offloaded suffixes | `crates/akita-planner/src/schedule_params/suffix_dp/` |
 | Build recursive candidates and prefix requirements | `crates/akita-planner/src/schedule_params/candidate/recursive.rs` and `candidate/setup_prefix.rs` |
-| Define prefix identities and proof data | `crates/akita-types/src/proof/setup_prefix.rs` |
+| Define prefix identities and proof data | `crates/akita-types/src/layout/setup_prefix_slots.rs` and `crates/akita-types/src/proof/setup_prefix.rs` |
 | Build the shared setup contribution plan | `crates/akita-types/src/setup_contribution/` |
 | Evaluate the setup contribution at the Stage 2 point | `crates/akita-verifier/src/setup_contribution/` |
 | Materialize required prefix commitments | `crates/akita-setup/src/recursive_prefixes.rs` |

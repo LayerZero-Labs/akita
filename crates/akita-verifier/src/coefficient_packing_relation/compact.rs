@@ -367,7 +367,7 @@ fn extend_point<E: Field>(target: &mut Vec<E>, point: &[E]) -> Result<(), AkitaE
 }
 
 pub(super) fn prepare_compact_factors<F: Field, E: Field>(
-    group: &ValidatedCoefficientPackingGroup<'_, F, E>,
+    group: &ValidatedCoefficientPackingGroup<'_, '_, F, E>,
 ) -> Result<CoefficientPackingCompactFactors<E>, AkitaError> {
     let s = group.geometry().challenge_subring_dimension();
     let k = group.geometry().extension_degree();

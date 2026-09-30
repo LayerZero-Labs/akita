@@ -17,7 +17,10 @@ mod transcript_grinding_binding;
 
 pub use transcript_grinding_binding::TranscriptGrindingBinding;
 
-use crate::descriptor_bytes::sis_modulus_profile_tag;
+use crate::descriptor_bytes::{
+    digest_descriptor_bytes, sis_modulus_profile_tag, DescriptorDigest,
+    AKITA_INSTANCE_DESCRIPTOR_VERSION,
+};
 use crate::narrowing::{usize_to_u32, usize_to_u8};
 use crate::{
     AkitaSetupSeed, BasisMode, CompressionPolicyId, DecompositionParams, FoldSchedule,
@@ -28,16 +31,8 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
     DEFAULT_MAX_SEQUENCE_LEN,
 };
-use blake2::digest::consts::U32;
-use blake2::{Blake2b, Digest};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::io::{Read, Write};
-
-/// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 5;
-
-/// Fixed-size Blake2b digest used inside the descriptor.
-pub type DescriptorDigest = [u8; 32];
 
 /// Compute the descriptor digest for a public matrix identity.
 ///
@@ -272,14 +267,14 @@ pub fn digest_serializable<S: AkitaSerialize>(
 ) -> Result<DescriptorDigest, SerializationError> {
     let mut bytes = Vec::with_capacity(value.uncompressed_size());
     value.serialize_uncompressed(&mut bytes)?;
-    Ok(blake2b_256(&bytes))
+    Ok(digest_descriptor_bytes(&bytes))
 }
 
 /// Digest the final effective runtime verifier schedule.
 pub fn digest_effective_schedule(schedule: &FoldSchedule) -> DescriptorDigest {
     let mut bytes = Vec::new();
     schedule.append_descriptor_bytes(&mut bytes);
-    blake2b_256(&bytes)
+    digest_descriptor_bytes(&bytes)
 }
 
 impl Valid for AkitaInstanceDescriptor {
@@ -743,23 +738,6 @@ impl AkitaDeserialize for CallSection {
 
 fn modulus_be_32<F: Field + CanonicalEncoding>() -> Result<[u8; 32], AkitaError> {
     crate::field_modulus_be_bytes::<F>()
-}
-
-fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
-    type Blake2b256 = Blake2b<U32>;
-    let digest = Blake2b256::digest(bytes);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest);
-    out
-}
-
-/// Hash canonical descriptor bytes with Akita's Blake2b-256 primitive.
-///
-/// Domain separation and version bytes are owned by the caller's canonical
-/// descriptor. This shared primitive prevents catalog and transcript identity
-/// code from implementing divergent hash truncation rules.
-pub fn digest_descriptor_bytes(bytes: &[u8]) -> DescriptorDigest {
-    blake2b_256(bytes)
 }
 
 fn read_digest<R: Read>(mut reader: R) -> Result<DescriptorDigest, SerializationError> {

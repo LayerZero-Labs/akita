@@ -13,8 +13,11 @@
 ## Summary
 
 This document explains Akita's transcript grinding from first principles and
-then compares the packed nonce representation on `origin/main` with the inline
-unsigned LEB128 representation in PR #37.
+then compares the historical packed nonce representation with the current inline
+unsigned LEB128 representation introduced in PR #37. References to main's
+packed format in Sections 3 and 4 describe that historical comparison; the
+current protocol uses inline nonces. Sections 1 and 2 use the current exact
+field-cardinality pricing policy.
 
 The two encodings do not define grinding security. They transport the bounded
 integer selected by grinding. The public grinding plan, nonce range, predicate,
@@ -55,24 +58,19 @@ d / |E|
 where `E` is the challenge field. More generally, Akita assigns a public loss
 factor `L` to a challenge site whose bad fraction is at most `L / |E|`.
 
-For the production profiles, the nominal challenge capacity is 128 bits. A
-loss factor larger than one would reduce the classical work needed to search
-for a bad challenge by approximately `log2(L)` bits. Akita restores that work
-factor with transcript proof-of-work.
-
-For nominal challenge capacity `C`, Akita computes:
+The production challenge fields have cardinality just below `2^128`. A
+loss factor larger than one, and even the small field-order deficit at loss
+one, must be included in the work calculation. Akita chooses the least
+nonnegative integer `g` satisfying:
 
 ```text
-loss_bits = ceil(log2(L))
-g = max(0, 128 + loss_bits - C)
+L * 2^128 <= |E| * 2^g
 ```
 
-`g` is the number of *grind bits*. With the production convention `C = 128`,
-this simplifies to:
-
-```text
-g = ceil(log2(L))
-```
+The comparison uses exact integer arithmetic with `|E| = p^e`, where `p` is
+the base modulus and `e` is the challenge extension degree. In the supported
+128-bit towers, a power-of-two loss requires one more bit than its binary
+logarithm. The nominal modulus bit width cannot replace the field cardinality.
 
 Before drawing the protected challenge, the prover searches for a nonce whose
 separate 32-byte predicate begins with `g` zero bits, read low bit first. One
@@ -146,13 +144,13 @@ The 12-bit nonce is therefore honest-prover rejection sampling. It does not add
 verifier's response checks. Every adversarial trial is still included in
 Akita's random-oracle query accounting.
 
-## 2. Where `origin/main` uses grinding
+## 2. Where Akita uses grinding
 
 The grinding plan is derived only from trusted public data:
 
 - the selected fold schedule;
 - the normalized opening layout;
-- field modulus bits and extension degree; and
+- the validated base-field modulus and challenge extension degree; and
 - protocol policy and loss bounds.
 
 Its digest is bound into the instance descriptor. Proof bytes do not choose the
@@ -193,8 +191,9 @@ Depending on the public layout, the plan contains:
 - one zero-width fold-challenge-group entry per commitment group, with
   multiplicity covering the group root and every indexed sparse coordinate.
 
-The sparse fold challenges themselves do not receive extra proof-of-work. Their
-certified challenge support is accounted for separately.
+The sparse fold challenges themselves do not receive extra proof-of-work.
+Their certified support and the indexed-address soundness bound are
+described in the [transcript grinding specification](transcript-grinding.md#indexed-address-fold-bound).
 
 #### Ring switch and evaluation points
 
@@ -235,9 +234,10 @@ The plan contains:
 - for a recursive successor with a setup prefix, one site for every Stage 3
   sumcheck round.
 
-Some named sites have loss factor one. In a 128-bit-capacity profile they have
-`g = 0`, so they consume no nonce bits and do no PoW transition. They remain in
-the plan to keep the query catalog and replay order complete.
+Some named sites have loss factor one. In the production field towers they
+have `g = 1`, because the exact challenge-set cardinality is below `2^128`.
+Their semantic nonce width is eight bits. A genuinely zero-bit site in a
+larger challenge field remains in the plan and emits no nonce.
 
 ### 2.2 Terminal level
 
@@ -257,26 +257,26 @@ prover sends a new round polynomial before each round challenge. That polynomial
 fixes a new conditional bad set, so two rounds cannot be merged into one
 security event merely because they belong to the same sumcheck.
 
-For a sumcheck round with declared polynomial degree `d`, main uses:
+For a sumcheck round with declared polynomial degree `d`, Akita uses:
 
 ```text
 L = max(d, 1)
-g = max(0, 128 + ceil(log2(L)) - C)
+g = least nonnegative integer with L * 2^128 <= |E| * 2^g
 ```
 
-For production profiles with `C = 128`:
+For the production field towers with exact cardinality just below `2^128`:
 
 | Round degree | Loss factor | Grind bits | Nonce width |
 | ---: | ---: | ---: | ---: |
-| 1 | 1 | 0 | 0 |
-| 2 | 2 | 1 | 8 |
+| 1 | 1 | 1 | 8 |
+| 2 | 2 | 2 | 9 |
 | 3 | 3 | 2 | 9 |
-| 4 | 4 | 2 | 9 |
-| 5–8 | 5–8 | 3 | 10 |
+| 4 | 4 | 3 | 10 |
+| 5–7 | 5–7 | 3 | 10 |
+| 8 | 8 | 4 | 11 |
 
-Consequently, yes: ordinary degree-2 or degree-3 sumcheck rounds have their own
-nonzero proof-of-work nonce. A degree-1 round still has its own plan entry but
-needs no proof bytes.
+Consequently, every degree-1, degree-2, or degree-3 sumcheck round in these
+production towers has its own nonzero proof-of-work nonce.
 
 In the current plan builder:
 

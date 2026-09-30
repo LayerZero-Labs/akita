@@ -16,6 +16,32 @@ pub(super) fn is_zero_plane<const D: usize>(plane: &[i8; D]) -> bool {
     plane.iter().all(|&d| d == 0)
 }
 
+/// Splits `columns` into runs of consecutive nonzero columns, each at most
+/// `batch` wide, so one lazy pointwise dot covers each run.
+#[inline]
+pub(super) fn for_each_nonzero_column_run(
+    columns: std::ops::Range<usize>,
+    batch: usize,
+    is_zero: impl Fn(usize) -> bool,
+    mut run: impl FnMut(std::ops::Range<usize>),
+) {
+    let mut start = columns.start;
+    for column in columns.clone() {
+        if is_zero(column) {
+            if start < column {
+                run(start..column);
+            }
+            start = column + 1;
+        } else if column + 1 - start == batch {
+            run(start..column + 1);
+            start = column + 1;
+        }
+    }
+    if start < columns.end {
+        run(start..columns.end);
+    }
+}
+
 #[inline]
 pub(super) fn is_zero_centered_row<const D: usize>(row: &[i32; D]) -> bool {
     row.iter().all(|&d| d == 0)
@@ -78,10 +104,26 @@ pub(super) fn digit_rows_within_digit_bound<const D: usize>(
     digit_bound: u64,
 ) -> bool {
     let bound = i16::try_from(digit_bound).unwrap_or(i16::MAX);
-    rows.iter()
-        .take(len)
-        .flat_map(|row| row.iter())
-        .all(|&coeff| (-bound..bound).contains(&i16::from(coeff)))
+    // A branch-free min/max reduction vectorizes; a short-circuiting scan
+    // tests one coefficient at a time.
+    let (low, high) = rows[..len.min(rows.len())]
+        .as_flattened()
+        .iter()
+        .fold((i8::MAX, i8::MIN), |(low, high), &coeff| {
+            (low.min(coeff), high.max(coeff))
+        });
+    -bound <= i16::from(low) && i16::from(high) < bound
+}
+
+/// Largest coefficient magnitude in the first `len` rows.
+#[inline]
+pub(crate) fn centered_rows_abs_bound<const D: usize>(rows: &[[i32; D]], len: usize) -> u64 {
+    u64::from(
+        rows[..len.min(rows.len())]
+            .as_flattened()
+            .iter()
+            .fold(0, |bound, &coeff| bound.max(coeff.unsigned_abs())),
+    )
 }
 
 #[inline]
@@ -92,12 +134,7 @@ pub(super) fn validate_digit_rows_for_log_basis<const D: usize>(
     context: &str,
 ) -> Result<(), AkitaError> {
     let bound = 1i16 << (log_basis - 1);
-    if rows
-        .iter()
-        .take(len)
-        .flat_map(|row| row.iter())
-        .all(|&coeff| (-bound..bound).contains(&i16::from(coeff)))
-    {
+    if digit_rows_within_digit_bound(rows, len, bound as u64) {
         Ok(())
     } else {
         let offending = rows

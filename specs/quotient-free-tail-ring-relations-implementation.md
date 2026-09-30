@@ -7,7 +7,7 @@
 | Status        | active |
 | Parent        | [quotient-free-tail-ring-relations.md](quotient-free-tail-ring-relations.md) |
 | PR            | [#466](https://github.com/LayerZero-Labs/akita/pull/466) |
-| Book-chapter  | book/src/how/proving/akita-fold-realizations.md |
+| Book-chapter  | book/src/how/proving/ring-relation-checking.md |
 
 This is the normative implementation, evaluation, and risk companion to the
 quotient-free tail protocol specification. The parent owns the protocol

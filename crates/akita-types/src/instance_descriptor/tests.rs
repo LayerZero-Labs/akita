@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, FoldParams, FoldSchedule, GrindingPlan, GrindingRun, GrindingSite,
-    InnerCommitMatrixParams, OpeningClaimsLayout, OpeningScheduleSelection, ScheduleRowDigest,
-    TerminalFoldParams, TerminalResponseShape,
+    ChallengeFieldOrder, CommittedGroupParams, FoldParams, FoldSchedule, GrindingPlan, GrindingRun,
+    GrindingSite, InnerCommitMatrixParams, OpeningClaimsLayout, OpeningScheduleSelection,
+    ScheduleRowDigest, TerminalFoldParams, TerminalResponseShape,
 };
 use akita_challenges::SparseChallengeConfig;
 use jolt_field::Prime32Offset99;
@@ -59,11 +59,13 @@ fn sample_selection() -> OpeningScheduleSelection {
 fn sample_descriptor() -> AkitaInstanceDescriptor {
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("valid opening batch");
     let grinding_plan = GrindingPlan::new(
-        vec![
-            GrindingRun::proof_of_work(GrindingSite::EvaluationBatch { level: 0 }, 1, 128)
-                .expect("sample grinding run"),
-        ],
-        128,
+        vec![GrindingRun::proof_of_work(
+            GrindingSite::EvaluationBatch { level: 0 },
+            1,
+            ChallengeFieldOrder::from_full_capacity(128).unwrap(),
+        )
+        .expect("sample grinding run")],
+        ChallengeFieldOrder::from_full_capacity(128).unwrap(),
     )
     .expect("sample grinding plan");
     AkitaInstanceDescriptor::new(

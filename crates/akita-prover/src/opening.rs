@@ -21,11 +21,12 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
         if claims.num_groups() != handles.len() {
             return Err(AkitaError::InvalidProof);
         }
-        let profile = CommittedGroupBatchProfile::from_ordered_groups(
+        let profile = CommittedGroupBatchProfile::from_profiles(
             claims
                 .groups()
                 .iter()
-                .map(PolynomialGroupClaims::commitment),
+                .map(|group| *group.commitment().profile())
+                .collect(),
         )?;
         let selection = schedules.resolve_profiles(&profile)?.selection();
         let opening_layout = claims.committed_layout()?;

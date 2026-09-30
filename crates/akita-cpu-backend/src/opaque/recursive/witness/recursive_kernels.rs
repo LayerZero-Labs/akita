@@ -173,14 +173,15 @@ where
         let [partials] = partials_by_claim.as_slice() else {
             return Err(AkitaError::InvalidProof);
         };
-        let scalar = akita_types::coefficient_packing_scalar_opening::<F, E>(
-            geometry,
-            point.num_live_blocks(),
-            core::slice::from_ref(partials),
-            &[E::one()],
-            point.live_block_weights(),
-            point.tail_weights(),
-        )?;
+        let scalar =
+            crate::arithmetic::coefficient_packing_fold::coefficient_packing_scalar_opening::<F, E>(
+                geometry,
+                point.num_live_blocks(),
+                core::slice::from_ref(partials),
+                &[E::one()],
+                point.live_block_weights(),
+                point.tail_weights(),
+            )?;
         return Ok(crate::opaque::prepared_opening::coefficient_packing(
             binding,
             opening_source,
@@ -221,12 +222,7 @@ where
         )?;
     let inner_point = &protocol_point[..protocol_point.len().min(alpha_bits)];
     let scalar = if E::DEGREE == 1 {
-        (eval * point.packed_inner_trusted::<D>()?.sigma_m1())
-            .coefficients()
-            .first()
-            .copied()
-            .map(E::lift_base)
-            .ok_or_else(|| AkitaError::InvalidInput("empty folded opening ring".into()))?
+        E::lift_base(eval.coefficient_inner_product(point.packed_inner_trusted::<D>()?))
     } else {
         if !D.is_multiple_of(E::DEGREE) || !(D / E::DEGREE).is_power_of_two() {
             return Err(AkitaError::InvalidInput(

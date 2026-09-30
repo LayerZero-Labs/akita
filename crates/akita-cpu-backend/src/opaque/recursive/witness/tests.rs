@@ -132,16 +132,17 @@ fn two_round_relation_session() -> ConsumerStage2Session<F> {
     let values = witness.map(|value| F::from_i64(i64::from(value)));
     let range_image = values.map(|value| value * (value + F::one()));
     let evaluation = akita_algebra::poly::multilinear_eval(&range_image, &point).unwrap();
-    let prover = super::super::relation_range_image::RelationRangeImageProver::new_virtual_only(
-        witness.to_vec(),
-        &point,
-        evaluation,
-        8,
-        2,
-        1,
-        1,
-    )
-    .unwrap();
+    let prover =
+        crate::opaque::sumcheck::relation_range_image::RelationRangeImageProver::new_virtual_only(
+            witness.to_vec(),
+            &point,
+            evaluation,
+            8,
+            2,
+            1,
+            1,
+        )
+        .unwrap();
     let claim = akita_sumcheck::SumcheckInstanceProver::input_claim(&prover);
     ConsumerStage2Session::for_test(prover, claim)
 }
