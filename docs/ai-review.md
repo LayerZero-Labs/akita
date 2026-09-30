@@ -118,8 +118,11 @@ An environment secret alone does not restrict which workflow can use it;
 [environment branch rules control eligible workflow refs](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
 Keep the key out of repository-level secrets. Use an OpenAI project with an
 appropriate spend limit. `AI_REVIEW_MODEL` is an optional repository/environment
-variable, defaulting to `gpt-5.4`; the selected model must support Responses,
-function tools, high reasoning effort and structured output.
+variable, defaulting to `gpt-6-astra`. Requests explicitly set
+`reasoning.effort` to `high`; this is a request parameter, not a model-name suffix.
+The selected model must support Responses, function tools, high reasoning effort
+and structured output, as documented for
+[GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra).
 
 No remote dependency installation is needed: the runner uses Python's standard
 library and the [Responses API](https://developers.openai.com/api/docs/guides/function-calling)

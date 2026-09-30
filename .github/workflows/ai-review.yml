@@ -86,7 +86,7 @@ jobs:
       - name: Review through bounded source tools
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          AI_REVIEW_MODEL: ${{ vars.AI_REVIEW_MODEL || 'gpt-5.4' }}
+          AI_REVIEW_MODEL: ${{ vars.AI_REVIEW_MODEL || 'gpt-6-astra' }}
         run: python3 scripts/ai_review/run.py review --directory "$RUNNER_TEMP/ai-review"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

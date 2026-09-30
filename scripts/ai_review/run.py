@@ -36,7 +36,7 @@ def main():
         print("Collection complete" if snapshot else "Request already reviewed")
     elif args.stage == "review":
         proposal = review(load_json(snapshot_path), os.environ["OPENAI_API_KEY"],
-                          os.environ.get("AI_REVIEW_MODEL", "gpt-5.4"))
+                          os.environ.get("AI_REVIEW_MODEL", "gpt-6-astra"))
         save_json(result_path, proposal)
         coverage = "complete" if proposal["result"]["complete"] else "incomplete"
         print(f"Prepared {len(proposal['result']['findings'])} inline findings; coverage {coverage}")
