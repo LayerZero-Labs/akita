@@ -185,9 +185,7 @@ fn production_selector_has_measured_regions_and_explicit_boundaries() {
 
 #[test]
 fn retained_sweeps_handle_oversized_and_empty_blocks() {
-    use super::super::column_sweep::{
-        bucketed_sweep_tile, direct_sweep_tile, merge_sweep_tile, MERGE_COL_CHUNK,
-    };
+    use super::super::column_sweep::{bucketed_sweep_tile, direct_sweep_tile, merge_sweep_tile};
 
     type F = Prime128Offset275;
     const D: usize = 64;
@@ -208,13 +206,17 @@ fn retained_sweeps_handle_oversized_and_empty_blocks() {
     let small = (0..97)
         .map(|pos| block_entry(pos * 11, pos % D))
         .collect::<Vec<_>>();
-    let blocks = super::super::test_helpers::from_buckets(vec![big, small, Vec::new()]);
+    // Several shifts per column, as when a ring packs multiple one-hot rows,
+    // with enough runs to cross the accumulation budget between runs.
+    let runs = (0..F::MAX_COMMIT_ACCUMULATIONS / 5 + 3)
+        .flat_map(|pos| (0..7).map(move |shift| block_entry(pos, (pos + 9 * shift) % D)))
+        .collect::<Vec<_>>();
+    let blocks = super::super::test_helpers::from_buckets(vec![big, small, Vec::new(), runs]);
     let views = (0..blocks.num_live_blocks())
         .map(|block| blocks.block(block))
         .collect::<Vec<_>>();
 
-    let mut chunk_buf = vec![WideCyclotomicRing::zero(); MERGE_COL_CHUNK];
-    let merge = merge_sweep_tile(&a_view, &views, n_a, active_a_cols, 1, &mut chunk_buf);
+    let merge = merge_sweep_tile(&a_view, &views, n_a, active_a_cols, 1);
     let direct = direct_sweep_tile(&a_view, &views, 1);
     let bucketed = bucketed_sweep_tile(&a_view, &views, n_a, active_a_cols, 1);
     assert_eq!(merge, direct);
@@ -248,17 +250,19 @@ where
     samples[2].as_secs_f64() * 1_000.0
 }
 
-fn benchmark_sweep_case<const D: usize>(
+fn benchmark_sweep_case<F, const D: usize>(
     label: &str,
     onehot_k: usize,
     positions_per_block: usize,
     blocks_per_poly: usize,
     num_polys: usize,
     hot_stride: usize,
-) {
+) where
+    F: Field + CanonicalEncoding + WithCommitAccumulator,
+    F::Wide: AdditiveGroup + From<F>,
+{
     use super::super::column_sweep::OneHotSweep;
 
-    type F = Prime128Offset275;
     let n_a = 4;
     let field_elems_per_poly = blocks_per_poly * positions_per_block * D;
     let num_chunks = field_elems_per_poly / onehot_k;
@@ -307,18 +311,25 @@ fn benchmark_sweep_case<const D: usize>(
 #[test]
 #[ignore = "manual one hot sweep benchmark"]
 fn benchmark_production_sweep_matrix() {
-    benchmark_sweep_case::<64>("tiny_single", 256, 4, 1, 1, 1);
-    benchmark_sweep_case::<64>("tiny_pair", 256, 4, 2, 1, 1);
-    benchmark_sweep_case::<64>("tiny_4", 256, 4, 4, 1, 1);
-    benchmark_sweep_case::<64>("tiny_8", 256, 4, 8, 1, 1);
-    benchmark_sweep_case::<64>("small_single", 256, 64, 16, 1, 1);
-    benchmark_sweep_case::<64>("small_sparse", 256, 64, 64, 1, 16);
-    benchmark_sweep_case::<64>("large_single", 256, 64, 512, 1, 1);
-    benchmark_sweep_case::<64>("large_group4", 256, 64, 512, 4, 1);
-    benchmark_sweep_case::<128>("equal_group2", 128, 64, 256, 2, 1);
-    benchmark_sweep_case::<256>("k_lt_d_group4", 64, 64, 128, 4, 1);
-    benchmark_sweep_case::<256>("equal_group8", 256, 64, 128, 8, 1);
-    benchmark_sweep_case::<64>("wide_group29", 256, 64, 64, 29, 1);
-    benchmark_sweep_case::<64>("dense_columns", 64, 4096, 64, 4, 1);
-    benchmark_sweep_case::<64>("sparse_wide_columns", 256, 4096, 64, 4, 64);
+    type F32 = jolt_field::Prime32Offset99;
+    type F64 = jolt_field::Prime64Offset59;
+    type F128 = Prime128Offset275;
+    // Root one-hot shapes of the Fp32 and Fp64 CI profiles.
+    benchmark_sweep_case::<F32, 2048>("fp32_root", 256, 64, 64, 1, 1);
+    benchmark_sweep_case::<F64, 512>("fp64_root", 256, 64, 64, 1, 1);
+    benchmark_sweep_case::<F128, 64>("tiny_single", 256, 4, 1, 1, 1);
+    benchmark_sweep_case::<F128, 64>("tiny_pair", 256, 4, 2, 1, 1);
+    benchmark_sweep_case::<F128, 64>("tiny_4", 256, 4, 4, 1, 1);
+    benchmark_sweep_case::<F128, 64>("tiny_8", 256, 4, 8, 1, 1);
+    benchmark_sweep_case::<F128, 64>("small_single", 256, 64, 16, 1, 1);
+    benchmark_sweep_case::<F128, 64>("small_sparse", 256, 64, 64, 1, 16);
+    benchmark_sweep_case::<F128, 64>("large_single", 256, 64, 512, 1, 1);
+    benchmark_sweep_case::<F128, 64>("large_group4", 256, 64, 512, 4, 1);
+    benchmark_sweep_case::<F128, 128>("equal_group2", 128, 64, 256, 2, 1);
+    benchmark_sweep_case::<F128, 256>("k_lt_d_group4", 64, 64, 128, 4, 1);
+    benchmark_sweep_case::<F128, 512>("jolt_trace_k16", 16, 64, 64, 4, 3);
+    benchmark_sweep_case::<F128, 256>("equal_group8", 256, 64, 128, 8, 1);
+    benchmark_sweep_case::<F128, 64>("wide_group29", 256, 64, 64, 29, 1);
+    benchmark_sweep_case::<F128, 64>("dense_columns", 64, 4096, 64, 4, 1);
+    benchmark_sweep_case::<F128, 64>("sparse_wide_columns", 256, 4096, 64, 4, 64);
 }

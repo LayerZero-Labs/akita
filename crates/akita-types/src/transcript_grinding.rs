@@ -21,7 +21,7 @@ pub const FOLD_RESPONSE_ATTEMPTS: u32 = 1 << FOLD_RESPONSE_NONCE_BITS;
 /// Transcript-grinding binding encoding revision.
 pub const GRINDING_ENCODING_VERSION: u16 = 3;
 /// Query catalog and loss-policy revision.
-pub const GRINDING_QUERY_POLICY_REVISION: u16 = 3;
+pub const GRINDING_QUERY_POLICY_REVISION: u16 = 4;
 /// Indexed fold-coordinate oracle revision.
 pub const FOLD_COORDINATE_ORACLE_REVISION: u16 = 1;
 /// Exclusive upper bound on expanded transcript queries in a complete plan.
@@ -738,6 +738,20 @@ pub fn multilinear_point_loss_factor(coordinates: usize) -> Result<u64, AkitaErr
 pub fn powers_batch_loss_factor(values: usize) -> Result<u64, AkitaError> {
     u64::try_from(values.saturating_sub(1).max(1))
         .map_err(|_| AkitaError::InvalidSetup("powers batch length exceeds u64".into()))
+}
+
+/// Loss for batching `values` claims with independently sampled coefficients.
+///
+/// Each of the `values` coefficients is a fresh, unnormalized field draw. The
+/// knowledge extractor separates the batched claims with a coordinate-wise
+/// tree: one base coefficient vector plus one sibling that changes a single
+/// coordinate, for `values + 1` children. That tree charges `values / |E|`.
+/// The one-shot bound `1 / |E|` for a fixed discrepancy vector does not price
+/// this site, because the extractor recovers each opening from the subtree
+/// below the challenge rather than fixing it before the draw.
+pub fn independent_batch_loss_factor(values: usize) -> Result<u64, AkitaError> {
+    u64::try_from(values.max(1))
+        .map_err(|_| AkitaError::InvalidSetup("independent batch length exceeds u64".into()))
 }
 
 /// Canonical ring-switch polynomial loss for one opening method.
