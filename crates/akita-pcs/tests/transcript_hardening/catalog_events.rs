@@ -11,7 +11,10 @@
 //! - the number of committed groups, and whether any group batches more than
 //!   one polynomial;
 //! - for every nonterminal fold level, in order, its payload mode, ring
-//!   relation mode, and whether it commits a multi-chunk witness.
+//!   relation mode, whether it commits a multi-chunk witness, whether its own
+//!   group opens by subring coefficient packing, its norm route (L-infinity
+//!   digit range, direct L2, or limb-Gram L2), and whether it consumes a setup
+//!   prefix, which makes its predecessor run Stage 3.
 //!
 //! These are the schedule facts that choose which proof-stream sites a proof
 //! emits. Rows of one shape differ only in sizes, digit counts, and matrix
@@ -35,7 +38,8 @@ use akita_schedules::ResolvedScheduleRow;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::{
     BasisMode, CommitmentPayloadMode, FpExtEncoding, GroupBatchStatement, GroupCommitPhaseParams,
-    OpeningClaims, PolynomialGroupClaims, RingRelationMode,
+    InnerCommitSecurityRoute, OpeningClaims, OpeningMethod, PhysicalL2NormProofShape,
+    PolynomialGroupClaims, RingRelationMode,
 };
 use jolt_field::{
     CanonicalBytes, CanonicalEncoding, ExtField, Fold, PseudoMersenne, Ring, Unreduced,
@@ -48,12 +52,47 @@ use std::time::Instant;
 const MAX_LOG_COMMITTED_COEFFS: u32 = 28;
 const LABEL: &[u8] = b"hardening/catalog-event-sequence";
 
+/// Norm proof a fold level's inner commitment route selects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum NormRoute {
+    Linf,
+    L2Direct,
+    L2LimbGram,
+}
+
+impl From<InnerCommitSecurityRoute> for NormRoute {
+    fn from(route: InnerCommitSecurityRoute) -> Self {
+        match route {
+            InnerCommitSecurityRoute::Linf(_) => Self::Linf,
+            InnerCommitSecurityRoute::L2 {
+                norm_proof_shape: PhysicalL2NormProofShape::Direct { .. },
+                ..
+            } => Self::L2Direct,
+            InnerCommitSecurityRoute::L2 {
+                norm_proof_shape: PhysicalL2NormProofShape::LimbGram { .. },
+                ..
+            } => Self::L2LimbGram,
+        }
+    }
+}
+
+/// Site-selecting facts of one nonterminal fold level; see the module docs.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct LevelShape {
+    payload_mode: CommitmentPayloadMode,
+    ring_relation_mode: RingRelationMode,
+    multi_chunk: bool,
+    coefficient_packing: bool,
+    norm_route: NormRoute,
+    consumes_setup_prefix: bool,
+}
+
 /// Proof-stream shape of one catalog row; see the module docs.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ScheduleShape {
     groups: usize,
     batched_group: bool,
-    levels: Vec<(CommitmentPayloadMode, RingRelationMode, bool)>,
+    levels: Vec<LevelShape>,
 }
 
 fn schedule_shape(row: &ResolvedScheduleRow) -> ScheduleShape {
@@ -67,12 +106,16 @@ fn schedule_shape(row: &ResolvedScheduleRow) -> ScheduleShape {
         .any(|profile| profile.group.num_polynomials() > 1);
     let levels = std::iter::once(&schedule.root)
         .chain(&schedule.recursive_folds)
-        .map(|fold| {
-            (
-                fold.params.payload_mode,
-                fold.params.ring_relation_mode,
-                fold.params.witness_chunk.num_chunks > 1,
-            )
+        .map(|fold| LevelShape {
+            payload_mode: fold.params.payload_mode,
+            ring_relation_mode: fold.params.ring_relation_mode,
+            multi_chunk: fold.params.witness_chunk.num_chunks > 1,
+            coefficient_packing: matches!(
+                fold.params.opening_method(),
+                OpeningMethod::SubringCoefficientPacking { .. }
+            ),
+            norm_route: fold.params.inner().matrix.security_route().into(),
+            consumes_setup_prefix: fold.incoming_setup_prefix().is_some(),
         })
         .collect();
     ScheduleShape {
@@ -411,6 +454,39 @@ where
             started.elapsed()
         );
         covered.push(label);
+    }
+}
+
+/// The fp64 dense 26- and 28-variable single-polynomial rows share every other
+/// key field, but the 28-variable row switches to physical L2 one level
+/// earlier. Both fit the cap, so both must be proved.
+#[test]
+fn norm_route_separates_fp64_dense_single_polynomial_rows() {
+    let scheme = load_workspace_scheme::<fp64::Dense>().expect("workspace schedule catalog");
+    let single = |num_vars: usize| {
+        scheme
+            .schedules()
+            .rows()
+            .find(|row| {
+                let profiles = row.profiles();
+                profiles.precommitteds.is_empty()
+                    && profiles.final_group.group.num_polynomials() == 1
+                    && profiles.final_group.group.num_vars() == num_vars
+            })
+            .unwrap_or_else(|| panic!("fp64 dense {num_vars}-variable row"))
+    };
+    let (small, large) = (single(26), single(28));
+    assert!(log_committed_coeffs(large) <= MAX_LOG_COMMITTED_COEFFS);
+    let (small_shape, large_shape) = (schedule_shape(small), schedule_shape(large));
+    assert_ne!(small_shape, large_shape);
+    let representatives = representative_rows(scheme.schedules());
+    for shape in [small_shape, large_shape] {
+        assert!(
+            representatives
+                .iter()
+                .any(|row| schedule_shape(row) == shape),
+            "{shape:?} has no representative"
+        );
     }
 }
 
