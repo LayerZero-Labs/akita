@@ -29,7 +29,7 @@ EVENT["issue"]["pull_request"] = {"url": "unused"}
 PR = {"number": 7, "state": "open", "user": AUTHOR, "title": "Fix batch", "body": "Details",
       "head": {"sha": HEAD, "ref": "feature", "repo": {"full_name": REPOSITORY}},
       "base": {"sha": BASE, "ref": "main", "repo": {"full_name": REPOSITORY}}}
-COMMAND = {"id": 12, "user": AUTHOR, "body": "/ai-comment", "updated_at": "now",
+COMMAND = {"id": 12, "user": AUTHOR, "body": "/ai-review", "updated_at": "now",
            "issue_url": f"https://api.github.com/repos/{REPOSITORY}/issues/7"}
 
 
@@ -102,9 +102,9 @@ def proposal(value):
 
 class AuthorizationTests(unittest.TestCase):
     def test_command_must_match_exactly_without_whitespace_or_other_text(self):
-        for body in ("/ai-review", " /ai-comment", "/ai-comment ", "/ai-comment\n",
-                     "\n/ai-comment", "/ai-comment\r\n", "`/ai-comment`", "/AI-COMMENT",
-                     "/ai-comment\nplease review", "/ai-comment\u200b", "/ai-comment\t"):
+        for body in ("/ai-comment", " /ai-review", "/ai-review ", "/ai-review\n",
+                     "\n/ai-review", "/ai-review\r\n", "`/ai-review`", "/AI-REVIEW",
+                     "/ai-review\nplease review", "/ai-review\u200b", "/ai-review\t"):
             with self.subTest(body=body):
                 gh = FakeGitHub()
                 gh.command["body"] = body

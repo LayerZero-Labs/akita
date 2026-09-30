@@ -1,7 +1,7 @@
 # Author-requested AI reviews
 
 An author with current repository write, maintain, or admin permission can post
-exactly `/ai-comment` on their open, same-repository PR, with no spaces, newlines
+exactly `/ai-review` on their open, same-repository PR, with no spaces, newlines
 or additional text. The workflow posts its
 findings inline on the corresponding source lines in the PR diff. It
 does not require the `ai-review` label. Other users, external contributors, forks,
@@ -9,7 +9,7 @@ bots, edited comments and comments containing additional instructions cannot
 trigger it. The workflow must first land on the default branch (`main`), because
 [GitHub runs issue-comment workflows from that branch](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#issue_comment).
 
-Post another `/ai-comment` to check fixes, new trusted discussion and changes since
+Post another `/ai-review` to check fixes, new trusted discussion and changes since
 the previous review. Every earlier finding is reassessed, including previously
 fixed issues that may have regressed. Unresolved findings retain their IDs rather
 than being posted as new issues. Rerunning the same Actions event does not publish

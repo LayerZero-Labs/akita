@@ -16,7 +16,7 @@ jobs:
       github.run_attempt == 1 &&
       github.repository == 'LayerZero-Labs/akita' &&
       github.event.issue.pull_request &&
-      github.event.comment.body == '/ai-comment' &&
+      github.event.comment.body == '/ai-review' &&
       github.event.comment.user.id == github.event.issue.user.id &&
       github.event.comment.user.type == 'User'
     runs-on: ubuntu-latest

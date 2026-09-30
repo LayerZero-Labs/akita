@@ -19,7 +19,7 @@ def main():
     # A job rerun can reuse artifacts without rerunning the reservation job.
     # Require a fresh author command instead, including after an API timeout.
     if args.stage in ("reserve", "review") and os.environ.get("GITHUB_RUN_ATTEMPT") != "1":
-        raise ReviewError("Review attempts cannot be rerun; post a new /ai-comment command")
+        raise ReviewError("Review attempts cannot be rerun; post a new /ai-review command")
     root = args.directory
     os.makedirs(root, exist_ok=True)
     snapshot_path, result_path = f"{root}/snapshot.json", f"{root}/result.json"
