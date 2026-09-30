@@ -94,8 +94,8 @@ the final point instead of adding a physical matrix row and quotient digits.
 
 Subring coefficient packing has two contributions: the packed E and Q relation
 weights, and two ordered structured sources, packing-Z and direct opening.
-The prover expands both into explicit tables
-(`CoefficientPackingRelationEvents` and `CoefficientPackingStage2Terms`). The
+The CPU prover expands both into explicit relation events and Stage 2 term
+tables from the checked group semantics. The
 verifier never builds those tables. It builds `CoefficientPackingCompactFactors`
 from the same validated packing groups, a small set of tensor families over the
 block point, tail point, extension basis coordinates, and opening digit

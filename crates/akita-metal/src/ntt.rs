@@ -121,7 +121,7 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
         let gamma = params
             .primes
             .iter()
-            .zip(&params.garner.gamma)
+            .zip(params.garner.gamma())
             .flat_map(|(prime, row)| {
                 row.iter().map(|&inverse| {
                     // Garner inverses are canonical residues below p < 2^30.

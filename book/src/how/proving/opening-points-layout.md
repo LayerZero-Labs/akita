@@ -73,7 +73,7 @@ recursive handoff, and verification. Units are ordered by chunk and then
 authenticated relation group. Each unit records its exact
 `global_block_start`, `num_live_blocks`, and coefficient ranges.
 
-The complete physical order depends on the realization:
+In `QuotientLift` mode, the complete physical order depends on the payload:
 
 ```text
 raw:
@@ -93,8 +93,15 @@ compressed:
   [suffix alignment to the common relation coefficient block]
 ```
 
-Thus `r_hat` is logically one quotient family in relation-row order, but its
-compression rows are physically interleaved with the corresponding digit
+In `ReducedEvaluation` mode, omit every ordinary and F/H quotient row from
+these diagrams. The Z/E/T units and any compression digits remain.
+`WitnessLayout` computes the required alignment for the selected mode; it does
+not reserve placeholder ranges for omitted quotients. The [ring-checking
+chapter](./ring-relation-checking.md#what-enters-the-next-witness) explains
+why the two methods need different witnesses.
+
+In quotient-lift mode, `r_hat` is logically one quotient family in
+relation-row order, but its compression rows are physically interleaved with the corresponding digit
 layer rather than stored in one contiguous quotient tail. Every alignment
 range is zero. Boolean padding, if needed by a later flat-table sumcheck, is a
 separate zero suffix after the complete live witness.

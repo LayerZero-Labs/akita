@@ -492,7 +492,7 @@ where
             ));
         }
 
-        let coeff_accum = packed_tight_digit_fold_partitioned::<F, D>(
+        let coeff_accum = packed_tight_digit_fold_partitioned::<D>(
             self.digits,
             self.live_ring_elems,
             challenges,
@@ -530,7 +530,7 @@ where
                     .min(self.live_ring_elems);
                 let digit_start = ring_start.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
                 let digit_end = ring_end.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
-                let coefficients = packed_tight_digit_fold_partitioned::<F, D>(
+                let coefficients = packed_tight_digit_fold_partitioned::<D>(
                     self.digits.slice(digit_start..digit_end)?,
                     ring_end - ring_start,
                     challenges

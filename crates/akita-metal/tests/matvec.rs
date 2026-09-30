@@ -5,12 +5,15 @@
 
 mod support;
 
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::{CanonicalEncoding, CyclotomicRing, Field, Zero};
 use akita_cpu_backend::benchmark_support::mat_vec_mul_ntt_digits_i8;
 use akita_metal::decompose::decompose;
 use akita_metal::matvec::DeviceNttMatrix;
 use akita_metal::{AkitaMetal, AkitaMetalError, DeviceDigitPlanes};
-use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode, PreparedNttCache};
+use akita_types::{
+    prepare_joined_exact_ntt_cache, prepare_ntt_cache, FlatMatrix, NttCacheMode, PreparedNttCache,
+};
 use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
 use jolt_metal::runtime::DeviceBuffer;
 use jolt_metal::MetalField;
@@ -53,7 +56,18 @@ fn prepare_with<F: Field + CanonicalEncoding, const D: usize>(
     mode: NttCacheMode,
 ) -> PreparedNttCache<D> {
     let flat = FlatMatrix::from_ring_slice(matrix);
-    prepare_ntt_cache(flat.ring_view::<D>(rows, cols).expect("view"), mode).expect("prepare")
+    let view = flat.ring_view::<D>(rows, cols).expect("view");
+    // The device matrix uploads the field-sized base domains. A prover exact
+    // cache may use the limb-split representation instead, so exact modes
+    // request the joined cache, which always keeps the base domains.
+    match mode {
+        NttCacheMode::ExactNegacyclic {
+            width,
+            rhs_abs_bound,
+        } => prepare_joined_exact_ntt_cache(view, width, rhs_abs_bound),
+        _ => prepare_ntt_cache(view, mode),
+    }
+    .expect("prepare")
 }
 
 /// Balanced digits in `[-2^(b-1), 2^(b-1))`; the first plane of each block
@@ -319,11 +333,12 @@ fn decomposed_planes_feed_matvec_without_relabeling() {
         .expect("decompose");
     assert_eq!(planes.log_basis(), 16);
 
+    let decompose_params = BalancedDecomposePow2Params::new(LEVELS, 16);
     let expected_planes = source
         .iter()
         .flat_map(|ring| {
             let mut digits = vec![[0i16; DEGREE]; LEVELS];
-            ring.balanced_decompose_pow2_i16_into(&mut digits, 16);
+            ring.balanced_decompose_pow2_i16_into(&mut digits, &decompose_params);
             digits
         })
         .collect::<Vec<_>>();

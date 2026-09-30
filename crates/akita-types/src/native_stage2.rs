@@ -55,7 +55,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::GrindingPlan;
+    use crate::{ChallengeFieldOrder, GrindingPlan};
     use akita_transcript::{new_native_prover, new_native_verifier};
     use jolt_field::{CanonicalBytes, FpExt4, Prime32Offset99, Ring};
 
@@ -64,7 +64,11 @@ mod tests {
 
     #[test]
     fn stage2_witness_evaluation_is_one_native_extension_atom() {
-        let plan = GrindingPlan::new(Vec::new(), 128).unwrap();
+        let plan = GrindingPlan::new(
+            Vec::new(),
+            ChallengeFieldOrder::from_full_capacity(128).unwrap(),
+        )
+        .unwrap();
         let state = new_native_prover(b"native-stage2", b"fixture").unwrap();
         let mut prover = NativeProverGrinding::new(state, &plan);
         let evaluation = E::from_u64(42);

@@ -378,9 +378,9 @@ impl InfinityWidthRow {
         "policy,modulus_profile,d,rank,coeff_linf_bound,max_width,scalar_n,search_cap,hit_cap,profile,target_bits,max_adps16_quantum_rop_log2,next_adps16_quantum_rop_log2,max_beta,max_zeta,next_beta,next_zeta,cutoff_kind"
     }
 
-    /// Format a deterministic audit row.
+    /// Format a deterministic audit row with round-trip precision for costs.
     pub fn to_csv_record(&self) -> String {
-        self.to_record(cost_log2_text)
+        self.to_record(cost_log2_record_text)
     }
 
     /// Decode one audit CSV record produced by [`Self::to_csv_record`].
@@ -445,7 +445,7 @@ impl InfinityWidthRow {
         format!(
             "{}\n{}\n",
             Self::WORK_RESULT_SCHEMA,
-            self.to_record(cost_log2_work_text)
+            self.to_record(cost_log2_record_text)
         )
     }
 
@@ -546,6 +546,7 @@ pub fn infinity_width_work_items(
         );
     }
     work.sort_unstable();
+    work.dedup();
     Ok(work)
 }
 
@@ -1062,19 +1063,7 @@ fn invalid_config<T>(field: &'static str, reason: &str) -> Result<T> {
     })
 }
 
-fn cost_log2_text(value: Option<CostValue>) -> String {
-    match value {
-        Some(CostValue::Finite(cost)) if cost.log2.is_finite() => format!("{:.12}", cost.log2),
-        Some(CostValue::ProvenAboveTarget(lower_bound)) => {
-            format!("above-target:{:.12}", lower_bound.log2)
-        }
-        Some(CostValue::Infinity) => "unclassified-infinity".to_string(),
-        Some(CostValue::Finite(_)) => "non-finite".to_string(),
-        None => String::new(),
-    }
-}
-
-fn cost_log2_work_text(value: Option<CostValue>) -> String {
+fn cost_log2_record_text(value: Option<CostValue>) -> String {
     match value {
         Some(CostValue::Finite(cost)) if cost.log2.is_finite() => cost.log2.to_string(),
         Some(CostValue::ProvenAboveTarget(lower_bound)) => {

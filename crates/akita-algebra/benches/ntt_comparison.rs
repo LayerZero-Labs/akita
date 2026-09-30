@@ -75,8 +75,9 @@ fn run_crt_matvec_into<const K: usize, const D: usize>(
         return;
     }
 
+    let mut transformed = CyclotomicCrtNtt::zero();
     for (column, digits) in rhs.iter().enumerate() {
-        let transformed = CyclotomicCrtNtt::from_i8_with_lut(digits, params, lut);
+        transformed.assign_i8_with_lut(digits, params, lut);
         for (accumulator, matrix_row) in accumulators.iter_mut().zip(matrix_rows) {
             accumulator.add_assign_pointwise_mul(&matrix_row[column], &transformed, params);
         }
@@ -154,7 +155,8 @@ fn bench_crt<F, const K: usize, const D: usize>(
     );
     let digit_lut = DigitMontLut::new_with_digit_bound(&params, 64);
     let lhs_ntt = CyclotomicCrtNtt::from_ring(&lhs, &params);
-    let rhs_ntt = CyclotomicCrtNtt::from_i8_with_lut(&rhs_digits, &params, &digit_lut);
+    let mut rhs_ntt = CyclotomicCrtNtt::zero();
+    rhs_ntt.assign_i8_with_lut(&rhs_digits, &params, &digit_lut);
     let mut product_ntt = CyclotomicCrtNtt::zero();
     product_ntt.add_assign_pointwise_mul(&lhs_ntt, &rhs_ntt, &params);
     assert_eq!(product_ntt.to_ring::<F>(&params), lhs * rhs);
@@ -168,7 +170,8 @@ fn bench_crt<F, const K: usize, const D: usize>(
         |bench, _| {
             bench.iter(|| {
                 let lhs_ntt = CyclotomicCrtNtt::from_ring(black_box(&lhs), black_box(&params));
-                let rhs_ntt = CyclotomicCrtNtt::from_i8_with_lut(
+                let mut rhs_ntt = CyclotomicCrtNtt::zero();
+                rhs_ntt.assign_i8_with_lut(
                     black_box(&rhs_digits),
                     black_box(&params),
                     black_box(&digit_lut),
@@ -184,7 +187,8 @@ fn bench_crt<F, const K: usize, const D: usize>(
         &label,
         |bench, _| {
             bench.iter(|| {
-                let rhs_ntt = CyclotomicCrtNtt::from_i8_with_lut(
+                let mut rhs_ntt = CyclotomicCrtNtt::zero();
+                rhs_ntt.assign_i8_with_lut(
                     black_box(&rhs_digits),
                     black_box(&params),
                     black_box(&digit_lut),
@@ -200,11 +204,13 @@ fn bench_crt<F, const K: usize, const D: usize>(
         &label,
         |bench, _| {
             bench.iter(|| {
-                black_box(CyclotomicCrtNtt::from_i8_with_lut(
+                let mut rhs_ntt = CyclotomicCrtNtt::zero();
+                rhs_ntt.assign_i8_with_lut(
                     black_box(&rhs_digits),
                     black_box(&params),
                     black_box(&digit_lut),
-                ))
+                );
+                black_box(rhs_ntt)
             })
         },
     );

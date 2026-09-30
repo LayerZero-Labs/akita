@@ -716,6 +716,56 @@ fn mat_vec_mul_digits_i8_sparse_ragged_tail_matches_schoolbook() {
 }
 
 #[test]
+fn mat_vec_mul_digits_i8_ragged_sparse_batches_match_schoolbook() {
+    type F = Fp64<4294967197>;
+    const D: usize = 64;
+    let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..5)
+        .map(|row| {
+            (0..9)
+                .map(|col| {
+                    CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+                        F::from_i64(((row * 13 + col * 7 + index) % 9) as i64 - 4)
+                    }))
+                })
+                .collect()
+        })
+        .collect();
+    let plane = |seed: usize| std::array::from_fn(|index| (((seed + index) % 7) as i8) - 3);
+    // A full batch, partial batch, and empty block share the same reusable
+    // transform slots; zero planes switch between dense and sparse order.
+    let blocks = vec![
+        vec![
+            plane(0),
+            [0; D],
+            plane(2),
+            plane(3),
+            plane(4),
+            plane(5),
+            plane(6),
+            plane(7),
+            plane(8),
+        ],
+        vec![plane(9), plane(10), plane(11)],
+        vec![],
+    ];
+    let block_slices = blocks.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    let expected = schoolbook_digit_mat_vec(&mat, &blocks);
+    let params = match select_crt_ntt_params::<F, D>().unwrap() {
+        ProtocolCrtNttParams::Q32(params) => params,
+        _ => panic!("unexpected parameter family"),
+    };
+    let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+    let ntt_mat = ntt_mat_vecs.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    let actual = mat_vec_mul_digits_i8_with_params_for_log_basis::<F, i32, Q32_NUM_PRIMES, D>(
+        &ntt_mat,
+        &block_slices,
+        3,
+        &params,
+    );
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn mat_vec_mul_i8_block_parallel_path_matches_predecomposed_digits() {
     type F = Fp64<4294967197>;
     const D: usize = 64;

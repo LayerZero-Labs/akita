@@ -362,7 +362,7 @@ pub(crate) fn derive_selected_suffix_schedule(
             || derive_selected_suffix_schedule(ctx, memo, state, depth, QuerySearch::Unconstrained),
             Ok,
         )?;
-        if prefix.admits_result(policy, &cached)? {
+        if prefix.admits_result(policy, ctx.challenge_order, &cached)? {
             if let Some(diagnostics) = ctx.diagnostics {
                 diagnostics.record_memo_result(relation_phase, true);
             }

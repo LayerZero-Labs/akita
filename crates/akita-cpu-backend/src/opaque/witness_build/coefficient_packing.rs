@@ -1,5 +1,8 @@
 //! Consumer-owned construction of coefficient-packing opening material.
 
+use crate::arithmetic::coefficient_packing_fold::{
+    fold_coefficient_packing_partials, CoefficientPackingFoldProduct,
+};
 use crate::opaque::SubringCoefficientPackingPartials;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
@@ -7,8 +10,7 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
 use akita_types::{
-    fold_coefficient_packing_partials, CoefficientPackingFoldProduct, CommittedGroupParams,
-    DigitBlocks, OpeningClaimsLayout, OpeningMethod, RelationWitnessGeometry,
+    CommittedGroupParams, DigitBlocks, OpeningClaimsLayout, OpeningMethod, RelationWitnessGeometry,
     SubringCoefficientPackingGeometry,
 };
 use jolt_field::{CanonicalEncoding, Field};
@@ -179,11 +181,7 @@ pub(crate) fn materialize_coefficient_packing_d_input<
             AkitaError::InvalidInput("coefficient-packing digit plane count overflow".into())
         })?;
     let mut digits = DigitBlocks::zeroed(vec![planes_per_block; semantic_blocks], D_D)?;
-    let q = (-F::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
-    let params = BalancedDecomposePow2Params::new(num_digits_open, log_basis_open, q);
+    let params = BalancedDecomposePow2Params::new(num_digits_open, log_basis_open);
     let typed_planes = digits.typed_planes_mut::<D_D>()?;
 
     for (claim_index, partials) in partials_by_claim.iter().enumerate() {

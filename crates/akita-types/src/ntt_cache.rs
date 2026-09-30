@@ -15,29 +15,30 @@ use akita_error::AkitaError;
 #[allow(unused_imports)]
 use jolt_field::solinas::parallel::*;
 use jolt_field::{cfg_iter, CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
-use std::any::Any;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 use crate::dispatch::compression_ring_dim_supported_for_tier;
 use crate::{
     balanced_signed_digit_abs_bound, field_modulus, ntt_max_ring_d, ntt_min_ring_d,
-    ntt_ring_degree_supported_for_field, protocol_dispatch_tier, AkitaExpandedSetup,
-    ProtocolRingDispatchTierId, RingMatrixView, SisModulusProfileId,
+    ntt_ring_degree_supported_for_field, protocol_dispatch_tier, ProtocolRingDispatchTierId,
+    RingMatrixView, SisModulusProfileId,
 };
 
 mod exact;
+mod limbs;
 mod prepared_artifact;
 
 #[cfg(test)]
 use exact::ifma52_cache_enabled;
 pub use exact::ntt_cache_requires_exactness_tail;
-use exact::{exact_cache_plan, ifma52_cache_enabled_for_ring_dimension, prepare_exact_ntt_cache};
-pub(crate) use prepared_artifact::decode_riscv64_scalar_q128_cache;
+use exact::{
+    base_exact_cache_plan, ifma52_cache_enabled_for_ring_dimension, prepare_exact_ntt_cache,
+    prover_exact_cache_plan,
+};
+use limbs::PreparedLimbMatrix;
 pub use prepared_artifact::{
-    build_riscv64_scalar_q128_cache_artifact, prepared_verifier_ntt_cache_metadata,
-    PreparedVerifierNttCacheBinding, PreparedVerifierNttCacheMetadata,
-    PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
+    build_riscv64_scalar_q128_cache_artifact, decode_riscv64_scalar_q128_cache,
+    prepared_verifier_ntt_cache_metadata, PreparedVerifierNttCacheBinding,
+    PreparedVerifierNttCacheMetadata, PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
 };
 
 /// Transform representation stored by one exact-prefix NTT cache entry.
@@ -242,28 +243,31 @@ fn select_crt_ntt_params_for_modulus<F: Field + CanonicalEncoding, const D: usiz
     )))
 }
 
+/// Whether an exact accumulation over `params` needs the i16 tail, or `None`
+/// when it exceeds the base plus tail capacity.
 fn required_profile_for_params<F, W, const K: usize, const D: usize>(
     params: &CrtNttParamSet<W, K, D>,
     width: usize,
     rhs_abs_bound: u64,
-) -> Result<bool, AkitaError>
+) -> Option<bool>
 where
     F: Field + CanonicalEncoding,
     W: PrimeWidth,
 {
     let capacity = params.crt_capacity();
     if capacity.supports::<F, D>(width, rhs_abs_bound) {
-        return Ok(false);
+        return Some(false);
     }
-    if capacity
+    capacity
         .with_prime_modulus(I16_TAIL_PRIME.p as u128)
         .supports::<F, D>(width, rhs_abs_bound)
-    {
-        return Ok(true);
-    }
-    Err(AkitaError::InvalidSetup(format!(
+        .then_some(true)
+}
+
+fn exact_capacity_error<const D: usize>(width: usize, rhs_abs_bound: u64) -> AkitaError {
+    AkitaError::InvalidSetup(format!(
         "CRT accumulation exceeds base plus i16-tail capacity for D={D}, width={width}, rhs_abs_bound={rhs_abs_bound}"
-    )))
+    ))
 }
 
 /// Whether a centered ring-switch product term needs the 14-bit exactness
@@ -355,6 +359,7 @@ pub fn centered_quotient_requires_i16_tail_for_field<
             required_profile_for_params::<F, _, Q128_NUM_PRIMES, D>(&params, 1, rhs_abs_bound)
         }
     }
+    .ok_or_else(|| exact_capacity_error::<D>(1, rhs_abs_bound))
 }
 
 /// NTT representations requested by protocol and backend consumers.
@@ -508,7 +513,9 @@ enum PreparedNttCacheRepr<const D: usize> {
         exact: bool,
     },
     #[non_exhaustive]
-    Q64Ifma52 { neg: Ifma52NttMatrix<2, D> },
+    Q64Ifma52 {
+        neg: Ifma52NttMatrix<2, D>,
+    },
     #[non_exhaustive]
     Q128 {
         neg: Option<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
@@ -522,6 +529,7 @@ enum PreparedNttCacheRepr<const D: usize> {
         neg: Ifma52NttMatrix<3, D>,
         tail: Option<Q128Ifma52Tail<D>>,
     },
+    Limbs(PreparedLimbMatrix<D>),
 }
 
 impl<const D: usize> PreparedNttCacheRepr<D> {
@@ -619,6 +627,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                     ));
                 }
             }
+            Self::Limbs(neg) => neg.validate()?,
         }
         Ok(())
     }
@@ -656,6 +665,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                         Some(Q128Ifma52Tail::I32(tail)) => tail.cache_bytes(),
                     }
             }
+            Self::Limbs(neg) => neg.cache_bytes(),
         }
     }
 
@@ -669,7 +679,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             Self::Q64 { cyc, .. } => cyc.is_some(),
             Self::Q64Ifma52 { .. } => false,
             Self::Q128 { cyc, .. } => cyc.is_some(),
-            Self::Q128Ifma52 { .. } => false,
+            Self::Q128Ifma52 { .. } | Self::Limbs(_) => false,
         }
     }
 
@@ -683,7 +693,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             Self::Q64 { neg, .. } => neg.is_some(),
             Self::Q64Ifma52 { .. } => true,
             Self::Q128 { neg, .. } => neg.is_some(),
-            Self::Q128Ifma52 { .. } => true,
+            Self::Q128Ifma52 { .. } | Self::Limbs(_) => true,
         }
     }
 
@@ -698,6 +708,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             Self::Q64Ifma52 { .. } => false,
             Self::Q128 { tail, .. } => tail.is_some(),
             Self::Q128Ifma52 { tail, .. } => tail.is_some(),
+            Self::Limbs(_) => false,
         }
     }
 
@@ -719,6 +730,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             Self::Q32 { .. } | Self::Q32Ifma52 { .. } => ProtocolRingDispatchTierId::Fp32,
             Self::Q64 { .. } | Self::Q64Ifma52 { .. } => ProtocolRingDispatchTierId::Fp64,
             Self::Q128 { .. } | Self::Q128Ifma52 { .. } => ProtocolRingDispatchTierId::Fp128,
+            Self::Limbs(neg) => neg.tier(),
         };
         if protocol_dispatch_tier::<F>() != prepared_tier {
             return Err(AkitaError::InvalidSetup(
@@ -813,6 +825,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                     }
                 }
             }
+            Self::Limbs(neg) => neg.mat_vec_i16(log_basis, num_rows, rhs),
         }
     }
 }
@@ -845,12 +858,19 @@ impl<const D: usize> PreparedNttCache<D> {
     /// Whether this exact cache uses the AVX-512IFMA residue representation.
     #[must_use]
     pub const fn uses_ifma52(&self) -> bool {
-        matches!(
-            self.0,
+        match &self.0 {
             PreparedNttCacheRepr::Q32Ifma52 { .. }
-                | PreparedNttCacheRepr::Q64Ifma52 { .. }
-                | PreparedNttCacheRepr::Q128Ifma52 { .. }
-        )
+            | PreparedNttCacheRepr::Q64Ifma52 { .. }
+            | PreparedNttCacheRepr::Q128Ifma52 { .. } => true,
+            PreparedNttCacheRepr::Limbs(neg) => neg.uses_ifma52(),
+            _ => false,
+        }
+    }
+
+    /// Whether this exact cache stores field entries as balanced limb rows.
+    #[must_use]
+    pub const fn uses_limb_split(&self) -> bool {
+        matches!(self.0, PreparedNttCacheRepr::Limbs(_))
     }
 
     /// Borrow the Q32 i32 base domains and their bound parameters.
@@ -945,7 +965,8 @@ where
     }
     let width = rhs.len();
     let rhs_abs_bound = validate_i16_rhs(log_basis, rhs)?;
-    let needs_tail = required_profile_for_params::<F, _, K, D>(params, width, rhs_abs_bound)?;
+    let needs_tail = required_profile_for_params::<F, _, K, D>(params, width, rhs_abs_bound)
+        .ok_or_else(|| exact_capacity_error::<D>(width, rhs_abs_bound))?;
     if needs_tail {
         let tail = tail.ok_or_else(|| {
             AkitaError::InvalidSetup("prepared exact NTT cache is missing its required tail".into())
@@ -1008,7 +1029,48 @@ pub fn prepare_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     mode: NttCacheMode,
 ) -> Result<PreparedNttCache<D>, AkitaError> {
-    prepare_ntt_cache_with_tail_prefix(matrix, mode, None, select_crt_ntt_params::<F, D>()?)
+    let selected = select_crt_ntt_params::<F, D>()?;
+    let NttCacheMode::ExactNegacyclic {
+        width,
+        rhs_abs_bound,
+    } = mode
+    else {
+        return prepare_transform_ntt_cache(matrix, mode, selected);
+    };
+    validate_cache_mode(mode)?;
+    let entries = matrix.as_slice().len();
+    if width > entries {
+        return Err(AkitaError::InvalidSetup(
+            "exact negacyclic NTT matrix is shorter than its row width".into(),
+        ));
+    }
+    let plan = prover_exact_cache_plan::<F, D>(selected, width, rhs_abs_bound, entries)?;
+    prepare_exact_ntt_cache(matrix, None, plan)
+}
+
+/// Prepare an exact cache whose rows can be reused at narrower widths.
+///
+/// A joined verifier terminal cache must keep the field-sized representation:
+/// the prover's limb-split plan fixes the prepared row width and cannot serve
+/// a narrower terminal product from the same matrix prefix.
+pub fn prepare_joined_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
+    matrix: RingMatrixView<'_, F, D>,
+    width: usize,
+    rhs_abs_bound: u64,
+) -> Result<PreparedNttCache<D>, AkitaError> {
+    validate_cache_mode(NttCacheMode::ExactNegacyclic {
+        width,
+        rhs_abs_bound,
+    })?;
+    if width > matrix.as_slice().len() {
+        return Err(AkitaError::InvalidSetup(
+            "exact negacyclic NTT matrix is shorter than its row width".into(),
+        ));
+    }
+    let plan =
+        base_exact_cache_plan::<F, D>(select_crt_ntt_params::<F, D>()?, width, rhs_abs_bound)?
+            .ok_or_else(|| exact_capacity_error::<D>(width, rhs_abs_bound))?;
+    prepare_exact_ntt_cache(matrix, None, plan)
 }
 
 /// Prepare the exact-prefix paired-transform cache used by compressed commitments.
@@ -1023,10 +1085,9 @@ pub fn prepare_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
 pub fn prepare_compression_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
 ) -> Result<PreparedNttCache<D>, AkitaError> {
-    prepare_ntt_cache_with_tail_prefix(
+    prepare_transform_ntt_cache(
         matrix,
         NttCacheMode::BothTransforms,
-        None,
         select_compression_crt_ntt_params::<F, D>()?,
     )
 }
@@ -1044,40 +1105,21 @@ pub fn prepare_compression_ntt_cache<F: Field + CanonicalEncoding, const D: usiz
 pub fn prepare_reduced_compression_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
 ) -> Result<PreparedNttCache<D>, AkitaError> {
-    prepare_ntt_cache_with_tail_prefix(
+    prepare_transform_ntt_cache(
         matrix,
         NttCacheMode::Negacyclic,
-        None,
         select_compression_crt_ntt_params::<F, D>()?,
     )
 }
 
-fn prepare_ntt_cache_with_tail_prefix<F: Field + CanonicalEncoding, const D: usize>(
+/// Prepare a non-exact transform cache; exact caches are planned by their
+/// prover or verifier entry point.
+fn prepare_transform_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     mode: NttCacheMode,
-    tail_prefix_len: Option<usize>,
     selected: ProtocolCrtNttParams<D>,
 ) -> Result<PreparedNttCache<D>, AkitaError> {
     validate_cache_mode(mode)?;
-    if matches!(mode, NttCacheMode::ExactNegacyclic { width, .. } if width > matrix.as_slice().len())
-    {
-        return Err(AkitaError::InvalidSetup(
-            "exact negacyclic NTT matrix is shorter than its row width".into(),
-        ));
-    }
-    if tail_prefix_len.is_some_and(|len| len > matrix.as_slice().len()) {
-        return Err(AkitaError::InvalidSetup(
-            "i16-tail NTT prefix exceeds the prepared base prefix".into(),
-        ));
-    }
-    if let NttCacheMode::ExactNegacyclic {
-        width,
-        rhs_abs_bound,
-    } = mode
-    {
-        let plan = exact_cache_plan::<F, D>(selected, width, rhs_abs_bound)?;
-        return prepare_exact_ntt_cache(matrix, tail_prefix_len, plan);
-    }
     macro_rules! prepare {
         ($params:expr, $variant:ident) => {{
             let params = $params;
@@ -1157,202 +1199,6 @@ where
     cfg_iter!(mat.as_slice())
         .map(|ring| CyclotomicCrtNtt::from_ring_pair_with_params(ring, params))
         .unzip()
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct VerifierNttCacheKey {
-    ring_d: usize,
-    width: usize,
-    rhs_abs_bound: u64,
-}
-
-struct ErasedVerifierNttCache {
-    ring_d: usize,
-    base_prefix_len: usize,
-    tail_prefix_len: usize,
-    cache_bytes: usize,
-    cache: Arc<dyn Any + Send + Sync>,
-}
-
-impl core::fmt::Debug for ErasedVerifierNttCache {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter
-            .debug_struct("ErasedVerifierNttCache")
-            .field("ring_d", &self.ring_d)
-            .field("base_prefix_len", &self.base_prefix_len)
-            .field("tail_prefix_len", &self.tail_prefix_len)
-            .field("cache_bytes", &self.cache_bytes)
-            .finish_non_exhaustive()
-    }
-}
-
-/// Derived verifier cache. It is deliberately excluded from setup serialization and equality.
-#[derive(Default)]
-pub(crate) struct VerifierNttCache {
-    slots: Mutex<HashMap<VerifierNttCacheKey, Arc<ErasedVerifierNttCache>>>,
-}
-
-impl core::fmt::Debug for VerifierNttCache {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self.slots.lock() {
-            Ok(slots) => formatter
-                .debug_struct("VerifierNttCache")
-                .field("keys", &slots.keys().collect::<Vec<_>>())
-                .field(
-                    "cache_bytes",
-                    &slots.values().map(|slot| slot.cache_bytes).sum::<usize>(),
-                )
-                .finish(),
-            Err(_) => formatter
-                .debug_struct("VerifierNttCache")
-                .field("state", &"poisoned")
-                .finish(),
-        }
-    }
-}
-
-impl VerifierNttCache {
-    pub(crate) fn cache_bytes(&self) -> Result<usize, AkitaError> {
-        let slots = self
-            .slots
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("verifier NTT cache lock poisoned".into()))?;
-        Ok(slots.values().map(|slot| slot.cache_bytes).sum())
-    }
-
-    pub(crate) fn install_trusted<const D: usize>(
-        &self,
-        metadata: PreparedVerifierNttCacheMetadata,
-        prepared: PreparedNttCache<D>,
-    ) -> Result<(), AkitaError> {
-        if metadata.ring_dimension != D
-            || !prepared.has_negacyclic()
-            || prepared.has_cyclic()
-            || prepared.has_exactness_tail() != (metadata.tail_prefix_len > 0)
-        {
-            return Err(AkitaError::InvalidSetup(
-                "trusted prepared verifier cache has inconsistent geometry".into(),
-            ));
-        }
-        let key = VerifierNttCacheKey {
-            ring_d: D,
-            width: metadata.width,
-            rhs_abs_bound: metadata.rhs_abs_bound,
-        };
-        let prepared = Arc::new(prepared);
-        let built = Arc::new(ErasedVerifierNttCache {
-            ring_d: D,
-            base_prefix_len: metadata.base_prefix_len,
-            tail_prefix_len: metadata.tail_prefix_len,
-            cache_bytes: prepared.cache_bytes(),
-            cache: prepared,
-        });
-        self.slots
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("verifier NTT cache lock poisoned".into()))?
-            .insert(key, built);
-        Ok(())
-    }
-
-    /// Build, erase, and atomically install an entry when needed.
-    pub(crate) fn prepare<F: Field + CanonicalEncoding, const D: usize>(
-        &self,
-        expanded: &AkitaExpandedSetup<F>,
-        matrix: NttCacheKey,
-        tail_prefix_len: usize,
-        mode: NttCacheMode,
-    ) -> Result<Arc<PreparedNttCache<D>>, AkitaError> {
-        let NttCacheMode::ExactNegacyclic {
-            width,
-            rhs_abs_bound,
-        } = mode
-        else {
-            return Err(AkitaError::InvalidSetup(
-                "verifier NTT cache requires exact negacyclic mode".into(),
-            ));
-        };
-        if matrix.ring_d != D {
-            return Err(AkitaError::InvalidSetup(format!(
-                "verifier NTT cache ring_d mismatch: key {}, requested {D}",
-                matrix.ring_d
-            )));
-        }
-        let with_exactness_tail = ntt_cache_requires_exactness_tail::<F, D>(width, rhs_abs_bound)?;
-        if with_exactness_tail != (tail_prefix_len > 0) {
-            return Err(AkitaError::InvalidSetup(
-                "verifier tail prefix disagrees with exactness requirement".into(),
-            ));
-        }
-        if tail_prefix_len > matrix.num_ring_elements {
-            return Err(AkitaError::InvalidSetup(
-                "verifier tail prefix exceeds its base prefix".into(),
-            ));
-        }
-        if width > matrix.num_ring_elements {
-            return Err(AkitaError::InvalidSetup(
-                "verifier NTT matrix prefix is shorter than its row width".into(),
-            ));
-        }
-        let key = VerifierNttCacheKey {
-            ring_d: D,
-            width,
-            rhs_abs_bound,
-        };
-        let mut slots = self
-            .slots
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("verifier NTT cache lock poisoned".into()))?;
-        if let Some(slot) = slots.get(&key) {
-            if slot.base_prefix_len >= matrix.num_ring_elements
-                && slot.tail_prefix_len >= tail_prefix_len
-            {
-                return downcast_verifier_cache::<D>(Arc::clone(slot));
-            }
-        }
-        let base_prefix_len = slots.get(&key).map_or(matrix.num_ring_elements, |slot| {
-            slot.base_prefix_len.max(matrix.num_ring_elements)
-        });
-        let tail_prefix_len = slots.get(&key).map_or(tail_prefix_len, |slot| {
-            slot.tail_prefix_len.max(tail_prefix_len)
-        });
-        let view = expanded
-            .shared_matrix()
-            .ring_view::<D>(1, base_prefix_len)?;
-        let prepared = Arc::new(prepare_ntt_cache_with_tail_prefix(
-            view,
-            mode,
-            Some(tail_prefix_len),
-            select_crt_ntt_params::<F, D>()?,
-        )?);
-        if prepared.has_exactness_tail() != (tail_prefix_len > 0) {
-            return Err(AkitaError::InvalidSetup(
-                "prepared verifier NTT layout disagrees with exactness selection".into(),
-            ));
-        }
-        let built = Arc::new(ErasedVerifierNttCache {
-            ring_d: D,
-            base_prefix_len,
-            tail_prefix_len,
-            cache_bytes: prepared.cache_bytes(),
-            cache: prepared,
-        });
-        slots.insert(key, Arc::clone(&built));
-        downcast_verifier_cache::<D>(built)
-    }
-}
-
-fn downcast_verifier_cache<const D: usize>(
-    erased: Arc<ErasedVerifierNttCache>,
-) -> Result<Arc<PreparedNttCache<D>>, AkitaError> {
-    if erased.ring_d != D {
-        return Err(AkitaError::InvalidSetup(format!(
-            "prepared verifier NTT ring_d mismatch: stored {}, requested {D}",
-            erased.ring_d
-        )));
-    }
-    Arc::clone(&erased.cache)
-        .downcast::<PreparedNttCache<D>>()
-        .map_err(|_| AkitaError::InvalidSetup("prepared verifier NTT type mismatch".into()))
 }
 
 #[cfg(test)]

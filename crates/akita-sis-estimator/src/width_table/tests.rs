@@ -152,6 +152,22 @@ fn work_results_round_trip_and_bind_the_planned_item() {
 
     let other = InfinityWidthWorkItem { rank: 2, ..item };
     assert!(decoded.validate_for_work_item(other, &config).is_err());
+
+    let below_target = f64::from_bits(128.0_f64.to_bits() - 1);
+    for rop in [
+        CostValue::finite_log2(below_target),
+        CostValue::ProvenAboveTarget(crate::cost::LogCost::new(below_target)),
+    ] {
+        let mut near_target = row.clone();
+        near_target.max_costs.as_mut().unwrap().adps16_quantum.rop = rop;
+        let decoded = InfinityWidthRow::from_csv_record(&near_target.to_csv_record()).unwrap();
+        assert_eq!(decoded, near_target);
+        assert!(!security_met(
+            decoded.max_costs.as_ref().unwrap().adps16_quantum.rop,
+            128.0
+        ));
+        assert!(decoded.validate_for_work_item(item, &config).is_err());
+    }
 }
 
 #[test]
@@ -333,6 +349,8 @@ fn explicit_origins_are_opt_in_and_reject_empty_coverage() {
     config.explicit_origins = Some(vec![origin]);
     let items = infinity_width_work_items(&config).unwrap();
     assert_eq!(items.len(), 1);
+    config.explicit_origins = Some(vec![origin, origin]);
+    assert_eq!(infinity_width_work_items(&config).unwrap(), items);
     assert!(origin_is_requested(&config, items[0]));
     assert!(!origin_is_requested(
         &config,

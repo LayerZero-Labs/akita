@@ -36,16 +36,16 @@ pub struct RingSwitchOutput<E: Field, RelationHandle> {
 
 /// Transcript-complete ring-switch state and the exact relation authority
 /// compiled from its freshly sampled challenges.
-pub(crate) struct RingSwitchFinalization<E: Field, RelationHandle> {
+pub(crate) struct RingSwitchFinalization<'a, E: Field, RelationHandle> {
     pub(crate) output: RingSwitchOutput<E, RelationHandle>,
     pub(crate) relation_plan: RelationRangeImagePlan,
-    pub(crate) opening_semantics: OpeningFamily<(), CoefficientPackingBatchSemantics<E>>,
+    pub(crate) opening_semantics: OpeningFamily<(), CoefficientPackingBatchSemantics<'a, E>>,
 }
 
 /// Sample the relation challenges and prepare its opaque witness state.
 #[tracing::instrument(skip_all, name = "ring_switch_finalize")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn ring_switch_finalize<F, E, B>(
+pub(crate) fn ring_switch_finalize<'a, F, E, B>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
     instance: &RingRelationInstance<F>,
     grinding: &mut akita_types::NativeProverGrinding<'_>,
@@ -55,9 +55,9 @@ pub(crate) fn ring_switch_finalize<F, E, B>(
     opening_source_len: usize,
     opening_ring_dim: usize,
     gamma: Option<&[E]>,
-    opening_claim_coefficients: &[E],
-    prepared_relation_groups: &[crate::backend::PreparedRelationGroupPublic<F, E>],
-) -> Result<RingSwitchFinalization<E, B::RelationHandle>, AkitaError>
+    opening_claim_coefficients: &'a [E],
+    prepared_relation_groups: &'a [crate::backend::PreparedRelationGroupPublic<F, E>],
+) -> Result<RingSwitchFinalization<'a, E, B::RelationHandle>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
@@ -160,7 +160,7 @@ where
                     OpeningFamily::EvaluationTrace(_) => Err(AkitaError::InvalidProof),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let (_, semantics) = akita_types::prepare_coefficient_packing_batch_semantics(
+            let semantics = akita_types::prepare_coefficient_packing_batch_semantics(
                 akita_types::CoefficientPackingBatchSemanticInputs {
                     level_params: lp,
                     opening_batch,

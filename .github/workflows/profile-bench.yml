@@ -25,7 +25,7 @@ env:
   #
   # Ring-degree choice differs by field:
   # - Small prime fields use generated adaptive catalogs. fp32 admits A through
-  #   D1024 with a D64/D128 suffix; fp64 admits A through D512 with a D64 suffix.
+  #   D1024 with a D64/D128 suffix; fp64 admits A through D2048 with a D64/D128 suffix.
   # - fp128: `onehot_fp128` is the canonical direct one-hot profile. Recursive
   #   and distributed profiles use the corresponding adaptive catalogs.
   AKITA_BENCH_MODE: onehot_fp128
@@ -176,7 +176,7 @@ jobs:
       # CPU in that fleet supports AVX2, so `x86-64-v3` is a deterministic
       # floor that still keeps SIMD enabled so bench wall-time stays within the
       # hosted-runner budget.
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           rustflags: -D warnings -C target-cpu=x86-64-v3
           cache: false

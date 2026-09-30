@@ -76,6 +76,7 @@ fn offloaded_witness_contracts(
 
 struct ChildEdge<'a> {
     policy: &'a PlannerPolicy,
+    challenge_order: akita_types::ChallengeFieldOrder,
     diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
     opening_layout: &'a OpeningClaimsLayout,
     level: u32,
@@ -104,7 +105,7 @@ impl ChildEdge<'_> {
             relation_geometry,
             self.opening_layout,
             successor,
-            self.policy.decomposition.field_bits(),
+            self.challenge_order,
             self.policy.claim_ext_degree,
             self.level,
         )
@@ -140,6 +141,7 @@ impl PendingQueryEdge {
     fn grinding_cost(
         &self,
         policy: &PlannerPolicy,
+        challenge_order: akita_types::ChallengeFieldOrder,
         successor: akita_types::FoldSuccessor<'_>,
     ) -> Result<akita_types::TranscriptGrindingCost, AkitaError> {
         let payload = akita_schedules::planner_support::nonterminal_level_payload_bytes(
@@ -154,7 +156,7 @@ impl PendingQueryEdge {
             payload.relation_geometry,
             &self.opening_layout,
             successor,
-            policy.decomposition.field_bits(),
+            challenge_order,
             policy.claim_ext_degree,
             self.level,
         )
@@ -163,13 +165,14 @@ impl PendingQueryEdge {
     fn candidate_grinding_cost(
         &self,
         policy: &PlannerPolicy,
+        challenge_order: akita_types::ChallengeFieldOrder,
         candidate: &ScheduleCandidate,
     ) -> Result<akita_types::TranscriptGrindingCost, AkitaError> {
         let successor = candidate.folds.first().map_or_else(
             || akita_types::FoldSuccessor::Terminal(&candidate.terminal.params),
             |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
         );
-        self.grinding_cost(policy, successor)
+        self.grinding_cost(policy, challenge_order, successor)
     }
 }
 
@@ -185,9 +188,12 @@ impl QueryPrefix {
     fn admits(
         &self,
         policy: &PlannerPolicy,
+        challenge_order: akita_types::ChallengeFieldOrder,
         candidate: &ScheduleCandidate,
     ) -> Result<bool, AkitaError> {
-        let edge = self.incoming.candidate_grinding_cost(policy, candidate)?;
+        let edge = self
+            .incoming
+            .candidate_grinding_cost(policy, challenge_order, candidate)?;
         let total = self
             .finalized_query_count
             .checked_add(edge.expanded_query_count)
@@ -199,12 +205,15 @@ impl QueryPrefix {
     fn advance(
         &self,
         policy: &PlannerPolicy,
+        challenge_order: akita_types::ChallengeFieldOrder,
         successor: &CommittedGroupParams,
         incoming: PendingQueryEdge,
     ) -> Result<Option<Self>, AkitaError> {
-        let edge = self
-            .incoming
-            .grinding_cost(policy, akita_types::FoldSuccessor::Recursive(successor))?;
+        let edge = self.incoming.grinding_cost(
+            policy,
+            challenge_order,
+            akita_types::FoldSuccessor::Recursive(successor),
+        )?;
         let finalized_query_count = self
             .finalized_query_count
             .checked_add(edge.expanded_query_count)
@@ -221,10 +230,11 @@ impl QueryPrefix {
     fn admits_result(
         &self,
         policy: &PlannerPolicy,
+        challenge_order: akita_types::ChallengeFieldOrder,
         result: &SuffixResult,
     ) -> Result<bool, AkitaError> {
         for candidate in result.payload_candidates().chain(result.setup_candidates()) {
-            if !self.admits(policy, candidate)? {
+            if !self.admits(policy, challenge_order, candidate)? {
                 return Ok(false);
             }
         }
@@ -261,7 +271,7 @@ impl QuerySearch {
                 let incoming =
                     PendingQueryEdge::new(state, opening_layout, params, next_witness_len)?;
                 prefix
-                    .advance(ctx.policy, params, incoming)
+                    .advance(ctx.policy, ctx.challenge_order, params, incoming)
                     .map(|next| next.map(Self::Restricted))
             }
         }
@@ -270,11 +280,12 @@ impl QuerySearch {
     fn admits_terminal(
         &self,
         policy: &PlannerPolicy,
+        challenge_order: akita_types::ChallengeFieldOrder,
         candidate: &ScheduleCandidate,
     ) -> Result<bool, AkitaError> {
         match self {
             Self::Unconstrained | Self::Root(_) => Ok(true),
-            Self::Restricted(prefix) => prefix.admits(policy, candidate),
+            Self::Restricted(prefix) => prefix.admits(policy, challenge_order, candidate),
         }
     }
 }
@@ -762,7 +773,7 @@ fn price_terminal_candidate(
         folds: super::CandidateFoldChain::default(),
         terminal: Arc::new(direct_step),
     };
-    if !query_search.admits_terminal(policy, &candidate)? {
+    if !query_search.admits_terminal(policy, ctx.challenge_order, &candidate)? {
         return Ok(());
     }
     frontiers.projected.consider_candidate(
@@ -804,6 +815,7 @@ fn price_level_candidate_with_children(
     let level_setup_field_elements = level_setup_field_elements(candidate_params)?;
     let direct_edge = ChildEdge {
         policy,
+        challenge_order: ctx.challenge_order,
         diagnostics: ctx.diagnostics,
         opening_layout,
         level: u32::try_from(state.level)

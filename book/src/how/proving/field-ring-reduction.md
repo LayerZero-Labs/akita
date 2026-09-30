@@ -451,7 +451,10 @@ $$
 This is the evaluation-correctness relation consumed by the later sumcheck
 protocol. It is already a field-valued linear relation on the committed
 witness. It therefore needs neither evaluation at $\alpha$ nor a ring-switch
-quotient.
+quotient. This fact concerns only the scalar opening row. [Quotient-free
+ring checking](./ring-relation-checking.md#quotient-free-checking-by-reduced-evaluation)
+is a separate method for converting the physical ring equations into field
+claims. Those equations must still bind the partials to the committed source.
 
 
 ## Subring coefficient packing: shorter partials
@@ -675,8 +678,9 @@ $$
 
 [Semantic relations in an Akita fold](./akita-fold.md#the-folded-response-and-its-digitization)
 derives both relations. In particular, it explains why the packing challenges
-must act only on the retained $j$ axis. Quotients and evaluation at the
-ring-switch challenge come later, after this semantic relation is established.
+must act only on the retained $j$ axis. [Checking ring relations over a
+field](./ring-relation-checking.md) comes later, after this semantic relation
+and its physical rows are established.
 [Sumcheck stages](./sumcheck-stages.md#add-the-opening-claim-consistency)
 explains how the method-selected scalar relation is row-batched and fused with
 the other Stage-2 terms.
@@ -800,7 +804,7 @@ The implementation follows the same derivation in three stages:
    $\beta_t I_j^{\mathrm{tail}}$ to rebuild each extension-valued coefficient.
 
 The reference tests in
-[`subring_coefficient_packing_reference_tests.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/subring_coefficient_packing_reference_tests.rs)
+[`coefficient_packing_fold_tests.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/arithmetic/coefficient_packing_fold_tests.rs)
 compare the direct partial and scalar formulas with the flat factorization.
 The Stage-2 tests in
 [`coefficient_packing_relation_tests.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/coefficient_packing_relation_tests.rs)

@@ -128,7 +128,20 @@ retained CPU choices are:
 * Bucketed sweep. Entries are grouped by active matrix column, then every
   matrix row is scanned once.
 * Merge sweep. Sorted block cursors are advanced while a bounded group of
-  active columns is widened once.
+  active columns is loaded once.
+
+Both sweeps load a matrix entry `a` as `NegacyclicShiftWindows`: the canonical
+16-bit lanes of `[-a, a]`, so coefficient `j` of `a * X^k` is entry
+`D + j - k`. When a ring holds several one-hot rows (`K < D`), one block adds
+several shifts of the same entry. The windows read each shift as one
+contiguous window and add up to eight windows per pass over the wide
+destination, instead of updating the whole destination once per shift. The
+kernel runs over the flat 16-bit and 32-bit lane slices that `jolt-field`
+exposes, so each vector instruction widens and adds whole lanes rather than
+shuffling per-coefficient lane groups. Each shift adds a value
+below `2^16` to each signed 32-bit lane, so the field's commit accumulation
+budget bounds the shifts between reductions. On x86-64 the kernel dispatches
+at runtime to an AVX2 build of the same loop.
 
 Both sweeps consume the same flat sparse entries and produce the same rows.
 The private selector uses total block count, active column count, and worker
@@ -205,15 +218,30 @@ does it materialize the exact folded table, now one quarter of the original
 Boolean domain. The final range leaf uses the same class-indexed machinery; the
 basis-16 leaf has the dedicated two-round quartet path.
 
-On the coefficient-bound route, the direct basis-4 and basis-8 leaves go one
-round further. When there are at least three ring variables, a bivariate prefix
-reconstructs the first two sumcheck messages from the compact digits. The third
-message is computed from compact octets, and the prover materializes the range
-image only after the third challenge, at one eighth of its original length.
-The basis-8 kernel caches the value and first three normalized derivatives of
-its quartic at every folded quad, so evaluating `Q(a+dT)` needs only powers of
-`d` and a few field multiplications. A Euclidean fold instead uses the
-class-indexed leaf described below because the norm term shares its rounds.
+On the coefficient-bound route, the direct basis-4 and basis-8 leaves keep the
+digits packed for four rounds. The first three rounds bind the position of an
+entry inside an aligned octet of the flat table, so until the fourth round every
+folded entry depends only on the classes of its octet's eight entries. Before the
+first round the prover scans the packed digits once, reading each octet's class
+directly from its packed bytes, and adds the fourth round's equality weight of
+each live pair of adjacent octets to two tables indexed by octet class: one for
+the pair's even octet and one for its odd octet. Each table has at most `2^16`
+entries. Blending the two tables with the fourth round's equality coordinate
+gives the third round's weight of each octet class. The quad-class marginals of
+that blend give a bivariate prefix that reconstructs the first two sumcheck
+messages, and the third message is a sum over octet classes.
+
+The fourth message pairs adjacent octets. Its linear sum, the weighted
+difference of the two range values across each pair, separates over the two
+octet classes, so it is a sum over octet classes of the range value times the
+difference of the two tables. The higher coefficients read, per octet class, the
+folded value and two Taylor factors of the range polynomial at that value. The
+equality weight multiplies the squared difference once, so a basis-8 pair costs
+one squaring, two multiplications, and three unreduced multiplications, and a
+basis-4 pair one squaring and one unreduced multiplication. The prover
+materializes the range image only after the fourth challenge, at one sixteenth
+of its original length, and computes the fifth message in the same pass. A Euclidean fold instead uses
+the class-indexed leaf described below because the norm term shares its rounds.
 
 These are prover-only representations. The transcript contains the same stage
 claims and sumcheck polynomials defined by the protocol, and the verifier does

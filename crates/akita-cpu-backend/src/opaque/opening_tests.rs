@@ -162,10 +162,11 @@ fn prove_eor(
     })
 }
 fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPlan {
+    let challenge_order = akita_types::ChallengeFieldOrder::from_full_capacity(128).unwrap();
     let mut runs = vec![akita_types::GrindingRun::proof_of_work(
         akita_types::GrindingSite::ExtensionOpeningPoint { level: 1 },
         1,
-        128,
+        challenge_order,
     )
     .unwrap()];
     if batches_claims {
@@ -173,7 +174,7 @@ fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPl
             akita_types::GrindingRun::proof_of_work(
                 akita_types::GrindingSite::ExtensionOpeningClaimBatch { level: 1 },
                 1,
-                128,
+                challenge_order,
             )
             .unwrap(),
         );
@@ -188,12 +189,12 @@ fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPl
                     round: u32::try_from(round).unwrap(),
                 },
                 1,
-                128,
+                challenge_order,
             )
             .unwrap(),
         );
     }
-    akita_types::GrindingPlan::new(runs, 128).unwrap()
+    akita_types::GrindingPlan::new(runs, challenge_order).unwrap()
 }
 
 fn direct_eq_at_boolean<E: Field>(point: &[E], index: usize) -> E {

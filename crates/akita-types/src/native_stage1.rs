@@ -99,7 +99,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GrindingPlan, GrindingRun, GrindingSite};
+    use crate::{ChallengeFieldOrder, GrindingPlan, GrindingRun, GrindingSite};
     use akita_transcript::{new_native_prover, new_native_verifier};
     use jolt_field::{FpExt4, Prime32Offset99, Ring};
 
@@ -114,10 +114,10 @@ mod tests {
             vec![GrindingRun::proof_of_work(
                 GrindingSite::Stage1InterstageBatch { level, stage },
                 1,
-                128,
+                ChallengeFieldOrder::from_full_capacity(128).unwrap(),
             )
             .unwrap()],
-            128,
+            ChallengeFieldOrder::from_full_capacity(128).unwrap(),
         )
         .unwrap();
         let claims = [E::from_u64(3), E::from_u64(5), E::from_u64(8)];
