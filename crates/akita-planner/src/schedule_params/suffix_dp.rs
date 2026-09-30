@@ -36,6 +36,7 @@ mod terminal;
 pub(super) use candidates::packing_precommit_opening_products;
 #[cfg(test)]
 pub(super) use candidates::state_allows_terminal_seed;
+pub(crate) use candidates::MAX_PRECOMMIT_OPENING_PRODUCTS;
 use frontier::{consider_child_suffixes, price_child_edge, ProjectedFrontier, Projection};
 pub(crate) use search::derive_selected_suffix_schedule;
 use source::attach_source_moments;

@@ -176,13 +176,15 @@ fn append_nonterminal(
     sink.push(GrindingRun::fold_response(level))?;
     append_fold_queries(sink, level, params, layout)?;
 
-    let alpha_loss = (0..layout.num_groups()).try_fold(1u64, |largest, group_index| {
-        let group = params.group_params(layout, group_index)?;
-        Ok::<_, AkitaError>(largest.max(ring_switch_alpha_loss_factor(
-            group.opening_method(),
-            group.inner_commit_matrix_params().ring_dimension(),
-        )?))
-    })?;
+    let alpha_loss = params
+        .validated_groups(layout)?
+        .iter()
+        .try_fold(1u64, |largest, group| {
+            Ok::<_, AkitaError>(largest.max(ring_switch_alpha_loss_factor(
+                group.opening_method(),
+                group.inner_commit_matrix_params().ring_dimension(),
+            )?))
+        })?;
     sink.push(GrindingRun::proof_of_work(
         GrindingSite::RingSwitchAlpha { level },
         alpha_loss,
@@ -324,12 +326,14 @@ fn append_fold_queries(
     params: &CommittedGroupParams,
     layout: &OpeningClaimsLayout,
 ) -> Result<(), AkitaError> {
-    for (group_index, group_layout) in layout.groups().iter().enumerate() {
+    let groups = params.validated_groups(layout)?;
+    for (group_index, (group_layout, group_params)) in
+        layout.groups().iter().zip(groups).enumerate()
+    {
         let group = usize_to_u32(group_index, "fold challenge group")?;
-        let params = params.group_params(layout, group_index)?;
         let multiplicity = group_layout
             .num_polynomials()
-            .checked_mul(params.num_live_blocks())
+            .checked_mul(group_params.num_live_blocks())
             .ok_or_else(|| AkitaError::InvalidSetup("fold coordinate count overflow".into()))?;
         sink.push(GrindingRun::fold_challenge_group(
             level,
