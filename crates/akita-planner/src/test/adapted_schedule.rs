@@ -632,7 +632,7 @@ fn benchmark_interchangeable_producer_scaling() {
         .profiles()
         .final_group;
 
-    eprintln!("chunks\tadapted_millis\tfull_millis\tfull_root_opening_method");
+    eprintln!("chunks\tadapted_millis\tfull_millis");
     for chunks in [1usize, 2, 4, 8, 16, 64, 256] {
         let mut precommitteds = vec![chunk_profile; chunks];
         precommitteds.push(image_profile);
@@ -648,7 +648,7 @@ fn benchmark_interchangeable_producer_scaling() {
         .expect("adapted schedule");
         let adapted_millis = started.elapsed().as_millis();
         let started = std::time::Instant::now();
-        let full = find_schedule(
+        find_schedule(
             &request.key(),
             Dense::committed_source_contract().unwrap(),
             &request.source_contracts(),
@@ -656,12 +656,7 @@ fn benchmark_interchangeable_producer_scaling() {
             Dense::ring_challenge_config,
         )
         .expect("full schedule");
-        eprintln!(
-            "{chunks}\t{adapted_millis}\t{}\t{:?}",
-            started.elapsed().as_millis(),
-            full.schedule.root.params.precommitted_groups()[0]
-                .opening
-                .opening_method,
-        );
+        let full_millis = started.elapsed().as_millis();
+        eprintln!("{chunks}\t{adapted_millis}\t{full_millis}");
     }
 }
