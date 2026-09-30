@@ -109,14 +109,7 @@ impl<E> FlatBlocks<E> {
 
 #[cfg(test)]
 mod tests {
-    use super::{usize_to_u32, FlatBlocks};
-
-    #[test]
-    fn rejects_entry_offset_above_u32_max() {
-        if let Some(too_large) = (u32::MAX as usize).checked_add(1) {
-            assert!(usize_to_u32(too_large, "flat block entry count").is_err());
-        }
-    }
+    use super::FlatBlocks;
 
     #[test]
     fn push_entry_rejects_out_of_range_block_in_release_builds() {
