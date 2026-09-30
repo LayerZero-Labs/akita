@@ -1,0 +1,133 @@
+"""Collect immutable git objects; never check out or execute PR content."""
+
+import base64
+import json
+import os
+import re
+import subprocess
+
+from common import MARKER, REPOSITORY, ReviewError, authorize, digest, revision, sha
+
+
+def git(*args):
+    # No credential, hook, pager, textconv, external diff, or PR-owned config.
+    env = {"PATH": os.environ["PATH"], "HOME": "/nonexistent", "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"}
+    result = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *args],
+                            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if result.returncode:
+        raise ReviewError("Pinned git object could not be read or fetched")
+    return result.stdout
+
+
+def discussions(github, number):
+    result = []
+    permissions = {}
+    for kind, endpoint in (("discussion", f"issues/{number}/comments"),
+                           ("review", f"pulls/{number}/reviews"),
+                           ("inline", f"pulls/{number}/comments")):
+        for comment in github.pages(endpoint):
+            user = comment.get("user") or {}
+            # Only our state comments from the Actions bot bypass human membership.
+            own = (kind == "discussion" and user.get("login") == "github-actions[bot]"
+                   and user.get("type") == "Bot" and comment.get("body", "").startswith(MARKER))
+            uid = user.get("id")
+            if not own and uid not in permissions:
+                permissions[uid] = github.writer(user)
+            if not own and not permissions.get(uid):
+                continue
+            result.append({"kind": kind, "id": comment["id"], "user": user.get("login"),
+                           "body": comment.get("body") or "", "own": own,
+                           "updated_at": comment.get("updated_at", comment.get("submitted_at")),
+                           "path": comment.get("path"), "line": comment.get("line"),
+                           "original_line": comment.get("original_line"),
+                           "in_reply_to_id": comment.get("in_reply_to_id"),
+                           "commit_id": comment.get("commit_id")})
+    if len(json.dumps(result)) > 300_000:
+        raise ReviewError("Discussion exceeds review budget")
+    return result
+
+
+def previous_state(comments, number):
+    states = []
+    for comment in comments:
+        if not comment["own"]:
+            continue
+        match = re.match(re.escape(MARKER) + r"([A-Za-z0-9+/=]+) -->\n", comment["body"])
+        if not match:
+            raise ReviewError("Malformed previous review state")
+        try:
+            state = json.loads(base64.b64decode(match[1], validate=True))
+            if state["repository"] != REPOSITORY or state["number"] != number:
+                raise ValueError()
+            sha(state["head"])
+            if len(state["findings"]) > 100 or type(state["request"]) is not int:
+                raise ValueError()
+            for finding in state["findings"]:
+                if not re.fullmatch(r"[0-9a-f]{16}", finding["id"]):
+                    raise ValueError()
+        except (ValueError, KeyError, TypeError):
+            raise ReviewError("Invalid previous review state") from None
+        states.append((comment["id"], state))
+    return max(states, default=(0, None))[1]
+
+
+def tree(commit, blobs):
+    files, excluded = {}, []
+    for entry in git("ls-tree", "-r", "-z", "-l", sha(commit)).split(b"\0"):
+        if not entry:
+            continue
+        info, raw_path = entry.split(b"\t", 1)
+        mode, kind, oid, size = info.split()
+        path = raw_path.decode("utf-8", errors="strict")
+        if (mode not in (b"100644", b"100755") or kind != b"blob"
+                or int(size) > 250_000):
+            excluded.append(path)
+            continue
+        key = oid.decode()
+        if key not in blobs:
+            raw = git("cat-file", "blob", key)
+            try:
+                text = raw.decode("utf-8")
+                if "\x00" in text:
+                    raise ValueError()
+            except (UnicodeDecodeError, ValueError):
+                excluded.append(path)
+                continue
+            blobs[key] = text
+        files[path] = key
+    return {"files": files, "excluded": excluded}
+
+
+def collect(github, event):
+    pr = authorize(github, event)
+    number = pr["number"]
+    comments = discussions(github, number)
+    prior = previous_state(comments, number)
+    if any(c["own"] and previous_state([c], number)["request"] == event["comment"]["id"]
+           for c in comments):
+        return None  # Idempotent re-run of this exact command, even after newer reviews.
+    revisions = revision(pr)
+    for commit in {revisions["head"], revisions["base"]} | ({prior["head"]} if prior else set()):
+        git("fetch", "--no-tags", "--no-recurse-submodules",
+            f"https://github.com/{REPOSITORY}.git", sha(commit))
+    merge_base = git("merge-base", revisions["base"], revisions["head"]).decode().strip()
+    changed = git("diff", "--name-only", "-z", merge_base, revisions["head"]).decode().split("\0")[:-1]
+    diff = git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", merge_base, revisions["head"]).decode()
+    delta = (git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", prior["head"], revisions["head"]).decode()
+             if prior else "")
+    if len(diff) + len(delta) > 300_000 or len(changed) > 150:
+        raise ReviewError("Diff exceeds automated review budget; use a manual review")
+    blobs = {}
+    trees = {name: tree(commit, blobs) for name, commit in
+             {"head": revisions["head"], "base": merge_base,
+              **({"previous": prior["head"]} if prior else {})}.items()}
+    snapshot = {"repository": REPOSITORY, "number": number, "request": event["comment"]["id"],
+                "revision": revisions, "merge_base": merge_base, "title": pr["title"],
+                "description": pr.get("body") or "", "comments": comments, "prior": prior,
+                "diff": diff, "delta": delta, "changed": changed, "trees": trees, "blobs": blobs}
+    fresh = authorize(github, event)
+    if revision(fresh) != revisions or discussions(github, number) != comments:
+        raise ReviewError("PR changed during collection; post a new command")
+    snapshot["digest"] = digest(snapshot)
+    return snapshot
