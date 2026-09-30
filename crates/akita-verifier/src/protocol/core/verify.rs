@@ -108,8 +108,7 @@ where
             schedule,
             basis,
         )?;
-        let state = akita_transcript::new_native_verifier(session, &descriptor_bytes, proof)
-            .map_err(|_| AkitaError::InvalidProof)?;
+        let state = akita_transcript::new_native_verifier(session, &descriptor_bytes, proof)?;
         let mut grinding = akita_types::NativeVerifierGrinding::new(state, &grinding_plan);
         let raw_groups = claims
             .groups()

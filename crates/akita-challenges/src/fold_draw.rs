@@ -247,7 +247,6 @@ impl FoldDraw for NativeVerifierFoldDraw<'_, '_> {
             native_fold_record(self.level, self.group, payload.len()),
             payload,
         )
-        .map_err(|_| AkitaError::InvalidProof)
     }
 }
 

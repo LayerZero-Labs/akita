@@ -1,5 +1,6 @@
 use crate::TranscriptSponge;
-use spongefish::{Decoding, Encoding, NargDeserialize, VerificationError, VerifierState};
+use akita_error::AkitaError;
+use spongefish::{Decoding, Encoding, NargDeserialize, VerifierState};
 
 /// Akita's fail-closed native Spongefish verifier state.
 ///
@@ -20,14 +21,22 @@ impl<'proof> NativeVerifierState<'proof> {
     }
 
     /// Read and absorb one prover message, recording every decoding failure.
-    pub fn prover_message<T>(&mut self) -> Result<T, VerificationError>
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when an earlier receipt failed or
+    /// the next message is missing or noncanonical.
+    pub fn prover_message<T>(&mut self) -> Result<T, AkitaError>
     where
         T: Encoding<[u8]> + NargDeserialize,
     {
         if self.invalid {
-            return Err(VerificationError);
+            return Err(AkitaError::InvalidProof);
         }
-        let result = self.inner.prover_message::<T>();
+        let result = self
+            .inner
+            .prover_message::<T>()
+            .map_err(|_| AkitaError::InvalidProof);
         self.invalid |= result.is_err();
         result
     }
@@ -41,19 +50,28 @@ impl<'proof> NativeVerifierState<'proof> {
     }
 
     /// Draw one verifier message from the native transcript.
-    pub fn verifier_message<T: Decoding<[u8]>>(&mut self) -> Result<T, VerificationError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when an earlier receipt failed.
+    pub fn verifier_message<T: Decoding<[u8]>>(&mut self) -> Result<T, AkitaError> {
         if self.invalid {
-            return Err(VerificationError);
+            return Err(AkitaError::InvalidProof);
         }
         Ok(self.inner.verifier_message())
     }
 
     /// Finish only if no earlier receipt failed and no proof bytes remain.
-    pub fn check_eof(self) -> Result<(), VerificationError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when an earlier receipt failed or
+    /// proof bytes remain.
+    pub fn check_eof(self) -> Result<(), AkitaError> {
         if self.invalid {
-            return Err(VerificationError);
+            return Err(AkitaError::InvalidProof);
         }
-        self.inner.check_eof()
+        self.inner.check_eof().map_err(|_| AkitaError::InvalidProof)
     }
 
     pub(super) fn sponge_mut(&mut self) -> &mut TranscriptSponge {

@@ -163,15 +163,9 @@ where
         .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
     akita_transcript::public_native_fields_prover(
         grinding.state_mut(),
-        akita_transcript::ProtocolSiteId {
-            family: akita_transcript::SITE_FAMILY_TERMINAL,
-            level: fold_level,
-            stage: 2,
-            ..akita_transcript::ProtocolSiteId::default()
-        },
+        akita_types::NativeFoldSite::TerminalTFields { level: fold_level }.id()?,
         terminal_message.fields(),
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    )?;
     let t_state = crate::backend::TerminalCommitmentMaterialKernel::consume_terminal_row(
         backend,
         commitment_material,
@@ -222,15 +216,9 @@ where
         };
         akita_transcript::public_native_extensions::<F, E, _>(
             grinding.state_mut(),
-            akita_transcript::ProtocolSiteId {
-                family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
-                level: fold_level,
-                stage: 5,
-                ..akita_transcript::ProtocolSiteId::default()
-            },
+            akita_types::NativeFoldSite::TerminalPoint { level: fold_level }.id()?,
             &protocol_point,
-        )
-        .map_err(|_| AkitaError::InvalidProof)?;
+        )?;
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
@@ -264,15 +252,9 @@ where
                 if reduction.is_none() {
                     akita_transcript::public_native_extensions::<F, E, _>(
                         grinding.state_mut(),
-                        akita_transcript::ProtocolSiteId {
-                            family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
-                            level: fold_level,
-                            stage: 4,
-                            ..akita_transcript::ProtocolSiteId::default()
-                        },
+                        akita_types::NativeFoldSite::TerminalOpening { level: fold_level }.id()?,
                         &scalar_openings,
-                    )
-                    .map_err(|_| AkitaError::InvalidProof)?;
+                    )?;
                 }
                 let trace = crate::protocol::prove::prepare_evaluation_trace_claim::<F, E>(
                     &reduction,
@@ -299,15 +281,9 @@ where
                     .ok_or(AkitaError::InvalidProof)?;
                 akita_transcript::send_native_field_group(
                     grinding.state_mut(),
-                    akita_transcript::ProtocolSiteId {
-                        family: akita_transcript::SITE_FAMILY_TERMINAL,
-                        level: fold_level,
-                        stage: 1,
-                        ..akita_transcript::ProtocolSiteId::default()
-                    },
+                    akita_types::NativeFoldSite::TerminalEFields { level: fold_level }.id()?,
                     e_folded.coeffs(),
-                )
-                .map_err(|_| AkitaError::InvalidProof)?;
+                )?;
                 let output = crate::protocol::fold_grind::sample_terminal_fold_response::<
                     F,
                     E,
@@ -353,16 +329,10 @@ where
     );
     akita_transcript::send_native_bounded_bytes(
         grinding.state_mut(),
-        akita_transcript::ProtocolSiteId {
-            family: akita_transcript::SITE_FAMILY_TERMINAL,
-            level: fold_level,
-            round: 3,
-            ..akita_transcript::ProtocolSiteId::default()
-        },
+        akita_types::NativeFoldSite::TerminalZPayload { level: fold_level }.id()?,
         z_payload,
         group.z_payload_bytes,
     )
-    .map_err(|_| AkitaError::InvalidProof)
 }
 #[allow(clippy::too_many_arguments)]
 fn prepare_suffix<F, E, B>(
@@ -472,21 +442,17 @@ where
     materials.push(witness_material);
     akita_transcript::public_native_fields_prover(
         grinding.state_mut(),
-        akita_transcript::ProtocolSiteId {
-            family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+        akita_types::NativeFoldSite::WitnessCommitment {
             level: fold_level,
-            stage: 3,
-            detail: u32::try_from(geometry.transcript_ring_dimension())
-                .map_err(|_| AkitaError::InvalidProof)?,
-            ..akita_transcript::ProtocolSiteId::default()
-        },
+            ring_dimension: geometry.transcript_ring_dimension(),
+        }
+        .id()?,
         claims
             .opening_claims()
             .group_commitment(witness_index)?
             .rows()
             .coeffs(),
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    )?;
     let prepared = prepare_fold::<F, E, B>(
         backend,
         claims,

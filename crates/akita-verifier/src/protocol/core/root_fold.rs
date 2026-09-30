@@ -43,29 +43,20 @@ where
             .ring_dimension();
         akita_transcript::public_native_fields_verifier(
             grinding.state_mut(),
-            akita_transcript::ProtocolSiteId {
-                family: akita_transcript::SITE_FAMILY_ROOT_STATEMENT,
-                stage: 1,
-                group: u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?,
-                detail: u32::try_from(ring_dim).map_err(|_| AkitaError::InvalidProof)?,
-                ..akita_transcript::ProtocolSiteId::default()
-            },
+            akita_types::NativeFoldSite::RootCommitment {
+                group: group_index,
+                ring_dimension: ring_dim,
+            }
+            .id()?,
             commitment.rows().coeffs(),
-        )
-        .map_err(|_| AkitaError::InvalidProof)?;
+        )?;
     }
     for (group_index, group) in claims.groups().iter().enumerate() {
         akita_transcript::public_native_extensions::<F, E, _>(
             grinding.state_mut(),
-            akita_transcript::ProtocolSiteId {
-                family: akita_transcript::SITE_FAMILY_ROOT_STATEMENT,
-                stage: 2,
-                group: u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?,
-                ..akita_transcript::ProtocolSiteId::default()
-            },
+            akita_types::NativeFoldSite::RootPoint { group: group_index }.id()?,
             group.point(),
-        )
-        .map_err(|_| AkitaError::InvalidProof)?;
+        )?;
     }
     let openings = claims.flat_evaluations();
     let material = verify_coefficient_packing_root_prefix::<F, E>(
@@ -77,27 +68,20 @@ where
     )?;
     akita_transcript::public_native_extensions::<F, E, _>(
         grinding.state_mut(),
-        akita_transcript::ProtocolSiteId {
-            family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
-            stage: 2,
-            ..akita_transcript::ProtocolSiteId::default()
-        },
+        akita_types::NativeFoldSite::Openings { level: 0 }.id()?,
         &openings,
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    )?;
     let payload_geometry = relation_layout.opening_payload_geometry()?;
     let opening_payload = akita_transcript::receive_native_field_group::<F>(
         grinding.state_mut(),
-        akita_transcript::ProtocolSiteId {
-            family: akita_transcript::SITE_FAMILY_OPENING_PAYLOAD,
-            detail: u32::try_from(payload_geometry.transcript_ring_dimension())
-                .map_err(|_| AkitaError::InvalidProof)?,
-            ..akita_transcript::ProtocolSiteId::default()
-        },
+        akita_types::NativeFoldSite::OpeningPayload {
+            level: 0,
+            ring_dimension: payload_geometry.transcript_ring_dimension(),
+        }
+        .id()?,
         payload_geometry.transmitted_coefficients(),
     )
-    .map(RingVec::from_coeffs)
-    .map_err(|_| AkitaError::InvalidProof)?;
+    .map(RingVec::from_coeffs)?;
     let prefix = finalize_native_claims::<F, E>(opening_batch, material, grinding, 0)?;
     let order = opening_batch.root_group_order()?;
     let commitment_payloads = order

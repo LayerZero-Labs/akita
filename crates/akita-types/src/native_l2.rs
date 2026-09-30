@@ -45,11 +45,8 @@ where
         0,
     ));
     let mut integer = NativeU128::new(response_l2_sq);
-    state
-        .exchange(&mut integer)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    exchange_native_extension_group::<F, E, _>(state, site(level, ROLE_SUBCLAIMS), subclaims)
-        .map_err(|_| AkitaError::InvalidProof)?;
+    state.exchange(&mut integer)?;
+    exchange_native_extension_group::<F, E, _>(state, site(level, ROLE_SUBCLAIMS), subclaims)?;
     Ok(integer.into_inner())
 }
 
@@ -69,7 +66,6 @@ where
         site(level, ROLE_VIRTUAL_EVALUATIONS),
         evaluations,
     )
-    .map_err(|_| AkitaError::InvalidProof)
 }
 
 #[cfg(test)]

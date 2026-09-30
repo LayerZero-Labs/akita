@@ -22,6 +22,7 @@ pub mod golomb_rice;
 pub mod instance_descriptor;
 pub mod layout;
 mod native_eor;
+mod native_fold;
 mod native_l2;
 mod native_stage1;
 mod native_stage2;
@@ -103,6 +104,7 @@ pub use layout::{
 pub use native_eor::{
     native_eor_final_claims, native_eor_prefix, NativeEorPrefix, NATIVE_EOR_SUMCHECK_INVOCATION,
 };
+pub use native_fold::NativeFoldSite;
 pub use native_l2::{native_l2_prefix, native_l2_virtual_evaluations};
 pub use native_stage1::{native_stage1_child_claims, native_stage1_range_image};
 pub use native_stage2::native_stage2_w_eval;

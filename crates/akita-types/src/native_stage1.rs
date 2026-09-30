@@ -39,7 +39,6 @@ where
         stage1_site(level, stage, ROLE_CHILD_CLAIMS),
         claims,
     )
-    .map_err(|_| AkitaError::InvalidProof)
 }
 
 /// Exchange the final range-image evaluation after leaf sumcheck challenges.
@@ -58,8 +57,7 @@ where
         grinding.state_mut(),
         stage1_site(level, stage, ROLE_RANGE_IMAGE),
         slice::from_mut(&mut evaluation),
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    )?;
     Ok(evaluation)
 }
 

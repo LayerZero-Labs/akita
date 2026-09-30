@@ -2,11 +2,11 @@
 
 use super::{
     native_prover_field_challenge, native_verifier_field_challenge, prover_context,
-    verifier_context, NativeContextError, NativeProverState, NativeVerifierState,
-    ProtocolContextRecord,
+    verifier_context, NativeProverState, NativeVerifierState, ProtocolContextRecord,
 };
+use akita_error::AkitaError;
 use jolt_field::CanonicalEncoding;
-use spongefish::{Encoding, NargDeserialize, VerificationError};
+use spongefish::{Encoding, NargDeserialize};
 
 /// One party's end of the Akita proof channel.
 ///
@@ -29,20 +29,20 @@ pub trait ProofChannel {
     ///
     /// # Errors
     ///
-    /// Returns [`VerificationError`] when the verifier cannot decode the next
-    /// message. The prover never fails.
+    /// Returns [`AkitaError::InvalidProof`] when the verifier cannot decode the
+    /// next message. The prover never fails.
     fn exchange<T: Encoding<[u8]> + NargDeserialize>(
         &mut self,
         message: &mut T,
-    ) -> Result<(), VerificationError>;
+    ) -> Result<(), AkitaError>;
 
     /// Draw one exactly uniform base-field challenge.
     ///
     /// # Errors
     ///
-    /// Returns [`NativeContextError`] when rejection sampling exhausts its
-    /// budget or the verifier state is already invalid.
-    fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, NativeContextError>;
+    /// Returns [`AkitaError::InvalidProof`] when the field cannot be sampled
+    /// exactly or the verifier state is already invalid.
+    fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, AkitaError>;
 }
 
 impl ProofChannel for NativeProverState {
@@ -58,12 +58,12 @@ impl ProofChannel for NativeProverState {
     fn exchange<T: Encoding<[u8]> + NargDeserialize>(
         &mut self,
         message: &mut T,
-    ) -> Result<(), VerificationError> {
+    ) -> Result<(), AkitaError> {
         self.prover_message(message);
         Ok(())
     }
 
-    fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, NativeContextError> {
+    fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, AkitaError> {
         native_prover_field_challenge(self)
     }
 }
@@ -81,12 +81,12 @@ impl ProofChannel for NativeVerifierState<'_> {
     fn exchange<T: Encoding<[u8]> + NargDeserialize>(
         &mut self,
         message: &mut T,
-    ) -> Result<(), VerificationError> {
+    ) -> Result<(), AkitaError> {
         *message = self.prover_message::<T>()?;
         Ok(())
     }
 
-    fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, NativeContextError> {
+    fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, AkitaError> {
         native_verifier_field_challenge(self)
     }
 }

@@ -33,8 +33,7 @@ where
         grinding.state_mut(),
         witness_evaluation_site(level),
         slice::from_mut(&mut evaluation),
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    )?;
     Ok(evaluation)
 }
 

@@ -232,8 +232,7 @@ where
             (layout.subclaim_count(), layout.limb_count())
         }
     };
-    let mut subclaims = akita_transcript::native_extension_slots::<E>(subclaim_count)
-        .map_err(|_| AkitaError::InvalidProof)?;
+    let mut subclaims = akita_transcript::native_extension_slots::<E>(subclaim_count)?;
     let response_l2_sq =
         akita_types::native_l2_prefix::<F, E, _>(grinding, level, 0, &mut subclaims)?;
     let mut subclaim_weights = Vec::new();
@@ -272,8 +271,7 @@ where
             range.leaf_coefficients.len(),
         )?,
     )?;
-    let mut virtual_evaluations = akita_transcript::native_extension_slots::<E>(virtual_count)
-        .map_err(|_| AkitaError::InvalidProof)?;
+    let mut virtual_evaluations = akita_transcript::native_extension_slots::<E>(virtual_count)?;
     akita_types::native_l2_virtual_evaluations::<F, E, _>(
         grinding,
         level,
