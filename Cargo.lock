@@ -297,6 +297,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-zk-prover"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "jolt-field",
+ "rand 0.8.8",
+ "rand_core 0.6.4",
+]
+
+[[package]]
+name = "akita-zk-verifier"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-error",
+ "jolt-field",
+ "rand 0.8.8",
+]
+
+[[package]]
 name = "alloca"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

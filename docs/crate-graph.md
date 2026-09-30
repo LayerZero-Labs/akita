@@ -30,6 +30,8 @@ orchestration lives in `akita-pcs`.
 | `akita-prover` | Generic protocol sequencing and opaque backend contracts |
 | `akita-cpu-backend` | Owning CPU sources, commitments, witness arithmetic, and caches |
 | `akita-pcs` | Umbrella orchestration, examples, integration tests |
+| `akita-zk-verifier` (`dev`) | Verifier-side zero-knowledge building blocks (#120); no proof path depends on it |
+| `akita-zk-prover` (`dev`) | Prover-side zero-knowledge building blocks (#120); no proof path depends on it |
 
 ## Dependency Layers
 

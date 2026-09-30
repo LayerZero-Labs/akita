@@ -1,0 +1,25 @@
+[package]
+name = "akita-zk-verifier"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "Apache-2.0 OR MIT"
+description = "Verifier-side building blocks for zero-knowledge Akita openings"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+
+# Nothing on the Akita proof path depends on this crate. It holds the
+# verifier-side pieces of the zero-knowledge extension tracked in
+# LayerZero-Labs/akita#120, and it must never depend on a prover crate.
+[dependencies]
+akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-error = { version = "0.1.0", path = "../akita-error" }
+
+[dev-dependencies]
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c7c2d08d5bb0c7c80501f29f723e595af7fcff3c", default-features = false, features = [
+  "solinas",
+] }
+rand = "0.8"
+
+[lints]
+workspace = true
