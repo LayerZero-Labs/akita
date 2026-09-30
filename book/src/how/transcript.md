@@ -250,6 +250,19 @@ the least nonnegative integer $g$ with $L 2^{128} \le |E| 2^g$. The
 calculation uses integers and the actual prime power, including the deficit
 below a power of two.
 
+The loss is the site's charge in the knowledge-extraction argument, which can
+exceed the chance that one honest draw fails. A claim-batching challenge shows
+the difference. It draws an independent coefficient for each of $N$ opened
+polynomials. If the claimed discrepancies were fixed before the draw, one
+random combination would miss them with probability at most $1/|E|$. The
+extractor cannot assume that, because it recovers the openings from the
+proof steps after this challenge. It varies the coefficients one coordinate
+at a time instead, and each of the $N$ coordinates can land on a bad value, so
+the site has $L = N$. Nine polynomials over $|E| = (2^{64}-59)^2$ need $g = 4$
+rather than $g = 1$. The
+[grinding nonce specification](../../../specs/grinding-nonce-encoding.md#claim-batching-sites)
+lists both claim-batching sites.
+
 At a protected query with grinding target $g>0$, the prover searches a
 nonce whose accepted value must fit $g+7$ bits. Each attempt absorbs the
 canonical nonce, then produces a separate 32-byte predicate. Diagnostic
