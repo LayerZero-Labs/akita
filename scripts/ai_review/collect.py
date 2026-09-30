@@ -12,7 +12,7 @@ from common import MARKER, REPOSITORY, ReviewError, authorize, digest, revision,
 def git(*args):
     # No credential, hook, pager, textconv, external diff, or PR-owned config.
     env = {"PATH": os.environ["PATH"], "HOME": "/nonexistent", "GIT_CONFIG_NOSYSTEM": "1",
-           "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"}
+           "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0", "GIT_LITERAL_PATHSPECS": "1"}
     result = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *args],
                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if result.returncode:

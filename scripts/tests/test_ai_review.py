@@ -262,6 +262,7 @@ class PublicationTests(unittest.TestCase):
         result["result"]["findings"] = []
         with self.assertRaises(ReviewError):
             validate(value, result)
+
         finding = state["findings"][0]
         for status in ("fixed", "open", "uncertain"):
             result["result"]["previous"] = [{"id": finding["id"], "status": status,
@@ -270,6 +271,18 @@ class PublicationTests(unittest.TestCase):
         result["result"]["findings"] = proposal(snapshot())["result"]["findings"]
         with self.assertRaises(ReviewError):
             validate(value, result)
+
+    def test_state_order_uses_time_across_comment_and_review_id_spaces(self):
+        value = snapshot()
+        older = prepare_review(value, proposal(value))["body"]
+        value["request"] = 13
+        seal(value)
+        newer = prepare_review(value, proposal(value))["body"]
+        state = previous_state([
+            {"id": 9_000_000, "own": True, "body": older, "created_at": "2026-09-30T01:00:00Z"},
+            {"id": 100, "own": True, "body": newer, "created_at": "2026-09-30T02:00:00Z"},
+        ], 7)
+        self.assertEqual(state["request"], 13)
 
 
 class ModelTests(unittest.TestCase):
