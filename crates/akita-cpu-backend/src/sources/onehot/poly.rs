@@ -1,4 +1,5 @@
 use super::*;
+use akita_error::checked;
 
 /// Borrowed one-hot commitment source independent of [`OneHotPoly`] ownership.
 #[derive(Debug, Clone, Copy)]
@@ -24,10 +25,7 @@ impl<'a, I: OneHotIndex> OneHotSource<'a, I> {
                 self.chunk_size
             )));
         }
-        let shift = u32::try_from(self.num_vars)
-            .map_err(|_| AkitaError::InvalidInput("onehot arity exceeds u32".into()))?;
-        let field_len = 1usize
-            .checked_shl(shift)
+        let field_len = checked::pow2(self.num_vars)
             .ok_or_else(|| AkitaError::InvalidInput("onehot arity overflow".into()))?;
         if !field_len.is_multiple_of(ring_d) {
             return Err(AkitaError::InvalidInput(format!(

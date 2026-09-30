@@ -2,7 +2,7 @@
 
 use crate::wire_limits::{checked_shape_len, checked_shape_sequence_len};
 use crate::InnerCommitSecurityRoute;
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_serialization::{SerializationError, Valid};
 use akita_sumcheck::{EqFactoredSumcheckProofShape, SumcheckProofShape};
 use jolt_field::{Field, Ring};
@@ -26,10 +26,7 @@ impl FlatBooleanDomain {
     /// Returns an error if the domain width overflows, the live prefix is
     /// empty, or the live prefix exceeds the Boolean domain.
     pub fn new(live_len: usize, num_vars: usize) -> Result<Self, AkitaError> {
-        let shift = u32::try_from(num_vars)
-            .map_err(|_| AkitaError::InvalidInput("Boolean domain width overflow".to_string()))?;
-        let domain_len = 1usize
-            .checked_shl(shift)
+        let domain_len = checked::pow2(num_vars)
             .ok_or_else(|| AkitaError::InvalidInput("Boolean domain width overflow".to_string()))?;
         if live_len == 0 || live_len > domain_len {
             return Err(AkitaError::InvalidSize {
