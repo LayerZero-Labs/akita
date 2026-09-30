@@ -333,22 +333,38 @@ where
     }
 }
 
+/// Stage 2 sumcheck rounds and the prover's witness evaluation, before the
+/// output claim is checked.
 pub(crate) struct Stage2RoundReplay<E: Field> {
     pub(crate) output_claim: E,
     pub(crate) challenges: Vec<E>,
     pub(crate) witness_eval: E,
 }
 
+/// Checked Stage 2 output: the fold's next opening point and claim.
+pub(crate) struct Stage2Output<E: Field> {
+    pub(crate) point: Vec<E>,
+    pub(crate) witness_eval: E,
+}
+
+/// Replay the Stage 2 rounds from the batched Stage 1, relation, opening, and
+/// physical L2 input claims.
 pub(crate) fn replay_stage2_native<F, E>(
     grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
     level: u32,
-    input_claim: E,
+    stage1: &Stage1Replay<'_, E>,
+    relation_claim: E,
+    opening_semantics: &Stage2OpeningSemantics<'_, E>,
     shape: akita_sumcheck::NativeSumcheckShape,
 ) -> Result<Stage2RoundReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
+    let input_claim = stage1.batching_coeff * stage1.range_image_evaluation
+        + relation_claim
+        + opening_semantics.opening_claim()
+        + stage1.physical_l2_claim;
     let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
         grinding,
         akita_types::SumcheckProtocol::Stage2,
@@ -369,7 +385,7 @@ where
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Check the Stage 2 output claim once the Stage 3 setup claim is known.
 pub(crate) fn validate_stage2_replay<F, E>(
     setup: &AkitaVerifierSetup<F>,
     stage1: Stage1Replay<'_, E>,
@@ -377,7 +393,7 @@ pub(crate) fn validate_stage2_replay<F, E>(
     setup_claim: Option<E>,
     opening_semantics: Stage2OpeningSemantics<'_, E>,
     replay: Stage2RoundReplay<E>,
-) -> Result<Vec<E>, AkitaError>
+) -> Result<Stage2Output<E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
@@ -405,7 +421,10 @@ where
     if replay.output_claim != expected {
         return Err(AkitaError::InvalidProof);
     }
-    Ok(replay.challenges)
+    Ok(Stage2Output {
+        point: replay.challenges,
+        witness_eval,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
