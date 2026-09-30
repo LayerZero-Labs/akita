@@ -1,12 +1,15 @@
 use super::*;
-use jolt_field::{Fp128x8i32, Fp64x4i32, WithCommitAccumulator};
-use jolt_field::{Fp64, Prime128Offset275, Prime32Offset99};
+use jolt_field::{Fp128x8i32, Fp32x2i32, Fp64x4i32, WithCommitAccumulator};
+use jolt_field::{Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 type F64 = Fp64<4294967197>;
 type F128 = Prime128Offset275;
 type F32 = Prime32Offset99;
+/// Production 64-bit prime: unlike `F64`, its canonical values fill all four
+/// 16-bit commit lanes.
+type F64Full = Prime64Offset59;
 const D: usize = 64;
 
 #[test]
@@ -308,27 +311,48 @@ fn shift_windows_match_wide_accumulation() {
     check_shift_windows_match_wide_accumulation::<F32, 512>(0x52);
     check_shift_windows_match_wide_accumulation::<F64, 64>(0x53);
     check_shift_windows_match_wide_accumulation::<F64, 512>(0x54);
+    check_shift_windows_match_wide_accumulation::<F64Full, 64>(0x59);
+    check_shift_windows_match_wide_accumulation::<F64Full, 512>(0x5a);
     check_shift_windows_match_wide_accumulation::<F128, 64>(0x55);
     check_shift_windows_match_wide_accumulation::<F128, 128>(0x56);
     check_shift_windows_match_wide_accumulation::<F128, 256>(0x57);
     check_shift_windows_match_wide_accumulation::<F128, 512>(0x58);
 }
 
-#[test]
-fn shift_windows_stay_exact_at_commit_budget() {
+fn check_shift_windows_stay_exact_at_commit_budget<F>()
+where
+    F: Field + WithCommitAccumulator,
+{
     // `-1` has the largest canonical lanes; shift 0 reads it through the
     // positive half and shift `D - 1` of `1` reads it through the negative half.
-    let budget = <F128 as WithCommitAccumulator>::MAX_COMMIT_ACCUMULATIONS;
-    for (value, shift) in [(-F128::one(), 0), (F128::one(), D - 1)] {
-        let src = CyclotomicRing::<F128, D>::from_coefficients([value; D]);
-        let mut windows = NegacyclicShiftWindows::<F128, D>::default();
+    let budget = <F as WithCommitAccumulator>::MAX_COMMIT_ACCUMULATIONS;
+    for (value, shift) in [(-F::one(), 0), (F::one(), D - 1)] {
+        let src = CyclotomicRing::<F, D>::from_coefficients([value; D]);
+        let mut windows = NegacyclicShiftWindows::<F, D>::default();
         windows.load(&src);
-        let mut wide = WideCyclotomicRing::<Fp128x8i32, D>::zero();
+        let mut wide = WideCyclotomicRing::<F::Wide, D>::zero();
         windows.accumulate_shifts_into(&mut wide, &vec![shift; budget]);
 
         let expected = src
             .negacyclic_shift(shift)
-            .scale(&F128::from_u64(budget as u64));
-        assert_eq!(wide.reduce::<F128>(), expected, "shift={shift}");
+            .scale(&F::from_u64(budget as u64));
+        assert_eq!(wide.reduce::<F>(), expected, "shift={shift}");
     }
+}
+
+#[test]
+fn shift_windows_stay_exact_at_commit_budget() {
+    check_shift_windows_stay_exact_at_commit_budget::<F32>();
+    check_shift_windows_stay_exact_at_commit_budget::<F64Full>();
+    check_shift_windows_stay_exact_at_commit_budget::<F128>();
+}
+
+#[test]
+#[should_panic(expected = "out of range")]
+fn shift_windows_reject_shift_of_d() {
+    let src = CyclotomicRing::<F32, D>::one();
+    let mut windows = NegacyclicShiftWindows::<F32, D>::default();
+    windows.load(&src);
+    let mut wide = WideCyclotomicRing::<Fp32x2i32, D>::zero();
+    windows.accumulate_shifts_into(&mut wide, &[D]);
 }

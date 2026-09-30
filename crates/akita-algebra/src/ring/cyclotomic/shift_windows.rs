@@ -45,9 +45,12 @@ impl<F: WithCommitAccumulator, const D: usize> NegacyclicShiftWindows<F, D> {
 
     /// `dst += a · Σ_{k ∈ shifts} X^k` for the held element `a`.
     ///
-    /// Requires every `k < D`; shifts may repeat and come in any order. Each
-    /// shift is one addition against
-    /// [`WithCommitAccumulator::MAX_COMMIT_ACCUMULATIONS`] for `dst`.
+    /// Shifts may repeat and come in any order. Each shift is one addition
+    /// against [`WithCommitAccumulator::MAX_COMMIT_ACCUMULATIONS`] for `dst`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any shift is at least `D`.
     #[inline]
     pub fn accumulate_shifts_into(
         &self,
@@ -81,14 +84,21 @@ impl<F: WithCommitAccumulator, const D: usize> NegacyclicShiftWindows<F, D> {
         dst: &mut WideCyclotomicRing<F::Wide, D>,
         shifts: &[usize],
     ) {
-        debug_assert!(shifts.iter().all(|&shift| shift < D));
         // Flat lanes widen and add one vector at a time; per-coefficient lane
         // structs would make the vectorizer shuffle lanes across coefficients.
         let lanes = F::flatten_commit_lanes(&self.lanes);
         let out = F::flatten_wide_mut(&mut dst.coeffs);
         let len = out.len();
+        debug_assert_eq!(lanes.len(), 2 * len);
         let width = len / D;
-        let window = |shift: usize| &lanes[(D - shift) * width..][..len];
+        let window = |shift: usize| {
+            // `shift == D` would otherwise read the negative half as `-a`.
+            assert!(
+                shift < D,
+                "negacyclic shift {shift} out of range for D = {D}"
+            );
+            &lanes[(D - shift) * width..][..len]
+        };
         let mut rest = shifts;
         while let Some((group, tail)) = rest.split_first_chunk::<GROUP>() {
             add_windows(out, group.map(window));
