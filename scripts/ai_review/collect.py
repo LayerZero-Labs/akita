@@ -8,6 +8,10 @@ import subprocess
 
 from common import MARKER, REPOSITORY, ReviewError, authorize, digest, revision, sha
 
+# GitHub-issued identities, verified via /users/cursor[bot] and /apps/cursor.
+# Keep this allowlist in trusted workflow code, never in PR-controlled config.
+REVIEW_BOTS = {"cursor[bot]": (206951365, 1210556, "cursor")}
+
 
 def git(*args):
     # No credential, hook, pager, textconv, external diff, or PR-owned config.
@@ -28,13 +32,19 @@ def discussions(github, number):
                            ("inline", f"pulls/{number}/comments")):
         for comment in github.pages(endpoint):
             user = comment.get("user") or {}
-            # Only our state comments from the Actions bot bypass human membership.
+            # Bot evidence never becomes prior-review state or an instruction.
             own = (kind in ("discussion", "review") and user.get("login") == "github-actions[bot]"
                    and user.get("type") == "Bot" and comment.get("body", "").startswith(MARKER))
             uid = user.get("id")
-            if not own and uid not in permissions:
+            allowed = REVIEW_BOTS.get(user.get("login"))
+            app = comment.get("performed_via_github_app")
+            bot = (user.get("type") == "Bot" and allowed is not None and uid == allowed[0]
+                   and (app is None or (app.get("id"), app.get("slug")) == allowed[1:]))
+            # Inline/review endpoints omit app metadata; the immutable bot user ID
+            # is still supplied by GitHub. Validate app identity when provided.
+            if not own and not bot and uid not in permissions:
                 permissions[uid] = github.writer(user)
-            if not own and not permissions.get(uid):
+            if not own and not bot and not permissions.get(uid):
                 continue
             result.append({"kind": kind, "id": comment["id"], "user": user.get("login"),
                            "body": comment.get("body") or "", "own": own,

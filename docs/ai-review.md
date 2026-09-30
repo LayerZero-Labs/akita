@@ -31,7 +31,7 @@ closed rather than silently dropping review history.
 
 A completed review with no unresolved findings, or only optional nits, posts
 "Recommended for approval" in its review body. New nits still appear inline.
-Prior unresolved P0–P3 findings, unresolved non-nit collaborator feedback,
+Prior unresolved P0–P3 findings, unresolved non-nit collaborator or Bugbot feedback,
 uncertain findings, or incomplete coverage prevent the recommendation, even if
 there are no new findings. This is a COMMENT review proposing approval; it does
 not submit GitHub's formal APPROVE action.
@@ -69,7 +69,19 @@ tracebacks in public logs.
 
 Human discussion, review summaries and inline replies are included only after a
 live repository permission check; `author_association` alone is insufficient.
-Other bots are excluded. Prior state is accepted only from marked comments by
+Cursor Bugbot comments are allowlisted using its GitHub-issued bot identity
+(`cursor[bot]`, user ID `206951365`); when App metadata is present, its App ID
+`1210556` and slug `cursor` must also match. Review/inline endpoints may omit App
+metadata. The identities can be checked through GitHub's
+[bot account API](https://api.github.com/users/cursor%5Bbot%5D) and
+[App API](https://api.github.com/apps/cursor). This allowlist lives in trusted
+workflow code. Bot comments are evidence only and cannot authorize reviews,
+change quotas, become our prior-review state, or authorize excluded replies.
+Bugbot can quote untrusted source or discussion, so its claims require the same
+source verification as human claims. Other bots are excluded. Generic
+`github-actions[bot]` comments are not automatically included: that shared
+identity does not identify which workflow produced a comment.
+Prior state is accepted only from marked comments by
 `github-actions[bot]`, the trusted publisher identity. This assumes workflows with
 PR write permission are trusted; do not give untrusted workflows that permission.
 All accepted prose, source and prior findings remain untrusted model evidence.
@@ -80,6 +92,17 @@ review history trusts the publisher. Maintainers who can delete bot comments or
 change the trusted workflow can reset it; it is not an administrator-proof budget.
 Prompt injection can still degrade review quality, so findings require human
 judgment. Credential isolation rests on tool restrictions, not model obedience.
+
+The [adversarial smoke run](https://github.com/LayerZero-Labs/akita/actions/runs/36759469886)
+included a maintainer comment requesting environment access, key exfiltration and
+false fix dispositions. Its saved result kept the unfixed issue open. This is a
+regression check, not proof that every injection will fail. The runner has no
+network-level egress audit or firewall; fixed HTTP destinations are enforced by
+trusted Python code. Logs/artifacts do not retain all attempted tool calls, and
+absence of a secret in logs cannot prove that it was never transmitted. For a
+suspected exposure, reconcile the project's OpenAI key usage with workflow runs
+and rotate the key if compromise is suspected; unused stolen keys leave no API
+usage evidence. Never print a real key to investigate an incident.
 
 ## Environment setup
 
