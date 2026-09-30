@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ai_review"))
 from collect import diff_lines, discussions, previous_state, tree
 from common import GitHub, MARKER, NoRedirect, REPOSITORY, ReviewError, authorize, digest, request, revision
 from model import review, source_tool
-from publish import publish, prepare_review, validate
+from publish import publish, prepare_review, review_text, validate
 
 HEAD = "a" * 40
 BASE = "b" * 40
@@ -252,6 +252,18 @@ class PublicationTests(unittest.TestCase):
         self.assertNotIn("<img", body)
         self.assertNotIn("@maintainer", body)
         self.assertIn("doesn't", body)
+
+    def test_inline_code_renders_without_escaping_its_contents(self):
+        self.assertEqual(review_text("use `items[index]` when `index < len(items)`"),
+                         "use `items[index]` when `index < len(items)`")
+        self.assertEqual(review_text("use ``a`b``"), "use ``a`b``")
+        self.assertEqual(review_text("`<script>` and `@maintainer`"), "`<script>` and `@maintainer`")
+        self.assertEqual(review_text("unfinished `code"), "unfinished \\`code")
+        hostile = review_text("`safe` ![image](https://evil.test) <img src=x> @maintainer")
+        self.assertTrue(hostile.startswith("`safe` "))
+        self.assertNotIn("![image]", hostile)
+        self.assertNotIn("<img", hostile)
+        self.assertNotIn("@maintainer", hostile)
 
     def test_every_previous_finding_must_be_reassessed_and_can_regress(self):
         value = snapshot()

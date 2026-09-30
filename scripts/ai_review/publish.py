@@ -3,6 +3,7 @@
 import base64
 import html
 import json
+import re
 
 from collect import discussions, previous_state
 from common import MARKER, REPOSITORY, ReviewError, authorize, digest, revision
@@ -14,12 +15,30 @@ def bounded_text(value, limit):
     return value
 
 
-def plain(value):
-    # Render model prose as text, not Markdown links, images, HTML or mentions.
-    value = html.escape(value, quote=False).replace("@", "@\u200b")
-    for char in "\\`*_{}[]()#+-.!|>~":
-        value = value.replace(char, "\\" + char)
-    return value.replace("\n", " ").replace("\r", " ")
+def review_text(value):
+    """Keep matched CommonMark code spans; escape all other model Markdown."""
+    value = value.replace("\n", " ").replace("\r", " ")
+    runs = list(re.finditer(r"`+", value))
+    pieces, cursor, index = [], 0, 0
+    while index < len(runs):
+        opening = runs[index]
+        closing = next((j for j in range(index + 1, len(runs))
+                        if runs[j].group() == opening.group()), None)
+        if closing is None:
+            index += 1
+            continue
+        pieces.append((False, value[cursor:opening.start()]))
+        pieces.append((True, value[opening.start():runs[closing].end()]))
+        cursor, index = runs[closing].end(), closing + 1
+    pieces.append((False, value[cursor:]))
+    output = []
+    for is_code, piece in pieces:
+        if not is_code:
+            piece = html.escape(piece, quote=False).replace("@", "@\u200b")
+            for char in "\\`*_{}[]()#+-.!|>~":
+                piece = piece.replace(char, "\\" + char)
+        output.append(piece)
+    return "".join(output)
 
 
 def validate(snapshot, proposal):
@@ -91,7 +110,7 @@ def prepare_review(snapshot, proposal):
         if finding["id"] not in previous:
             comments.append({"path": finding["path"], "line": finding["line"],
                              "side": "RIGHT" if finding["revision"] == "head" else "LEFT",
-                             "body": f"[{finding['priority']}] {plain(finding['body'])}\n\n"
+                             "body": f"[{finding['priority']}] {review_text(finding['body'])}\n\n"
                                      f"<!-- akita-ai-review-finding:{finding['id']} -->"})
     if len(body.encode()) > 60_000:
         raise ReviewError("Published review exceeds comment size limit")
