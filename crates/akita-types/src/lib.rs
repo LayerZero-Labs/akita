@@ -206,11 +206,11 @@ pub use trace_weight::{
     EvaluationTraceGroupParameters, EvaluationTraceInputs,
 };
 pub use transcript_grinding::{
-    grind_bits_for_loss, multilinear_point_loss_factor, polynomial_identity_loss_factor,
-    powers_batch_loss_factor, ring_switch_alpha_loss_factor, ChallengeFieldOrder, GrindingPlan,
-    GrindingQueryKind, GrindingRun, GrindingSite, NativeGrindingSumcheckProver,
-    NativeGrindingSumcheckVerifier, NativeProofAcceptance, NativeProverGrinding,
-    NativeVerifierGrinding, SumcheckProtocol, TranscriptGrindingCost,
+    grind_bits_for_loss, independent_batch_loss_factor, multilinear_point_loss_factor,
+    polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
+    ChallengeFieldOrder, GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite,
+    NativeGrindingSumcheckProver, NativeGrindingSumcheckVerifier, NativeProofAcceptance,
+    NativeProverGrinding, NativeVerifierGrinding, SumcheckProtocol, TranscriptGrindingCost,
     FOLD_COORDINATE_ORACLE_REVISION, FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS,
     GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
     GRINDING_PREDICATE_BYTES, GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS,

@@ -3,10 +3,11 @@
 use crate::narrowing::{usize_to_u32, usize_to_u64};
 use crate::transcript_grinding::{GrindingPlanAccumulator, GrindingPlanSink, SumcheckRoundBatch};
 use crate::{
-    multilinear_point_loss_factor, polynomial_identity_loss_factor, powers_batch_loss_factor,
-    ring_switch_alpha_loss_factor, ChallengeFieldOrder, CommittedGroupParams, DigitRangePlan,
-    FoldSchedule, FoldSuccessor, GrindingPlan, GrindingRun, GrindingSite, OpeningClaimsLayout,
-    PolynomialGroupLayout, SumcheckProtocol, TranscriptGrindingCost,
+    independent_batch_loss_factor, multilinear_point_loss_factor, polynomial_identity_loss_factor,
+    powers_batch_loss_factor, ring_switch_alpha_loss_factor, ChallengeFieldOrder,
+    CommittedGroupParams, DigitRangePlan, FoldSchedule, FoldSuccessor, GrindingPlan, GrindingRun,
+    GrindingSite, OpeningClaimsLayout, PolynomialGroupLayout, SumcheckProtocol,
+    TranscriptGrindingCost,
 };
 use akita_error::AkitaError;
 
@@ -165,13 +166,12 @@ fn append_nonterminal(
         append_eor(sink, challenge_order, extension_degree, level, layout)?;
     }
 
-    if layout.requires_row_batch_challenge() {
-        sink.push(GrindingRun::proof_of_work(
-            GrindingSite::EvaluationBatch { level },
-            1,
-            challenge_order,
-        )?)?;
-    }
+    append_claim_batch(
+        sink,
+        challenge_order,
+        GrindingSite::EvaluationBatch { level },
+        layout,
+    )?;
 
     sink.push(GrindingRun::fold_response(level))?;
     append_fold_queries(sink, level, params, layout)?;
@@ -358,13 +358,12 @@ fn append_eor(
         multilinear_point_loss_factor(split_bits)?,
         challenge_order,
     )?)?;
-    if layout.requires_row_batch_challenge() {
-        sink.push(GrindingRun::proof_of_work(
-            GrindingSite::ExtensionOpeningClaimBatch { level },
-            1,
-            challenge_order,
-        )?)?;
-    }
+    append_claim_batch(
+        sink,
+        challenge_order,
+        GrindingSite::ExtensionOpeningClaimBatch { level },
+        layout,
+    )?;
     sink.sumcheck_rounds(SumcheckRoundBatch {
         challenge_order,
         protocol: SumcheckProtocol::ExtensionOpeningReduction,
@@ -373,6 +372,24 @@ fn append_eor(
         rounds: layout.max_num_vars() - split_bits,
         degree: 2,
     })?;
+    Ok(())
+}
+
+/// Price a claim batch that draws one independent coefficient per opened
+/// polynomial. A single claim draws nothing and has no plan entry.
+fn append_claim_batch(
+    sink: &mut impl GrindingPlanSink,
+    challenge_order: ChallengeFieldOrder,
+    site: GrindingSite,
+    layout: &OpeningClaimsLayout,
+) -> Result<(), AkitaError> {
+    if layout.requires_row_batch_challenge() {
+        sink.push(GrindingRun::proof_of_work(
+            site,
+            independent_batch_loss_factor(layout.num_total_polynomials())?,
+            challenge_order,
+        )?)?;
+    }
     Ok(())
 }
 
@@ -700,6 +717,130 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    fn claim_batch_runs(runs: &[GrindingRun]) -> Vec<GrindingRun> {
+        runs.iter()
+            .copied()
+            .filter(|run| {
+                matches!(
+                    run.site(),
+                    GrindingSite::EvaluationBatch { .. }
+                        | GrindingSite::ExtensionOpeningClaimBatch { .. }
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn claim_batches_price_independent_coefficients_at_tree_charge() {
+        // Quadratic extension of the 64-bit field: |E| = (2^64 - 59)^2 < 2^128.
+        let challenge_order =
+            ChallengeFieldOrder::from_field(64, 2, SisModulusProfileId::Q64Offset59.modulus())
+                .unwrap();
+        // Nine polynomials in groups of 1, 1, 4, and 3: loss 9 lies in (8, 16].
+        let layout = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(10, 1),
+            PolynomialGroupLayout::new(10, 1),
+            PolynomialGroupLayout::new(10, 4),
+            PolynomialGroupLayout::new(10, 3),
+        ])
+        .unwrap();
+        assert_eq!(layout.num_total_polynomials(), 9);
+        let singleton = OpeningClaimsLayout::new(10, 1).unwrap();
+
+        for site in [
+            GrindingSite::EvaluationBatch { level: 0 },
+            GrindingSite::ExtensionOpeningClaimBatch { level: 0 },
+        ] {
+            let mut runs = Vec::new();
+            append_claim_batch(
+                &mut |run| {
+                    runs.push(run);
+                    Ok(())
+                },
+                challenge_order,
+                site,
+                &layout,
+            )
+            .unwrap();
+            assert_eq!(runs.len(), 1);
+            assert_eq!(runs[0].site(), site);
+            assert_eq!(runs[0].loss_factor(), 9);
+            assert_eq!(runs[0].grind_bits(), 4);
+
+            let mut singleton_runs = Vec::new();
+            append_claim_batch(
+                &mut |run| {
+                    singleton_runs.push(run);
+                    Ok(())
+                },
+                challenge_order,
+                site,
+                &singleton,
+            )
+            .unwrap();
+            assert!(singleton_runs.is_empty(), "one claim draws no coefficient");
+        }
+
+        let mut eor_runs = Vec::new();
+        append_eor(
+            &mut |run| {
+                eor_runs.push(run);
+                Ok(())
+            },
+            challenge_order,
+            2,
+            0,
+            &layout,
+        )
+        .unwrap();
+        let eor_batches = claim_batch_runs(&eor_runs);
+        assert_eq!(eor_batches.len(), 1);
+        assert_eq!(
+            eor_batches[0].site(),
+            GrindingSite::ExtensionOpeningClaimBatch { level: 0 }
+        );
+        assert_eq!(eor_batches[0].grind_bits(), 4);
+    }
+
+    #[test]
+    fn nonterminal_evaluation_batch_charges_every_independent_coefficient() {
+        let challenge_order =
+            ChallengeFieldOrder::from_field(64, 2, SisModulusProfileId::Q64Offset59.modulus())
+                .unwrap();
+        let current = params(64);
+        let successor = params(128);
+        for (polynomials, expected) in [(1usize, None), (2, Some((2, 2))), (9, Some((9, 4)))] {
+            let layout = OpeningClaimsLayout::new(6, polynomials).unwrap();
+            let mut runs = Vec::new();
+            append_nonterminal(
+                &mut |run| {
+                    runs.push(run);
+                    Ok(())
+                },
+                challenge_order,
+                1,
+                0,
+                &current,
+                7,
+                &layout,
+                FoldSuccessor::Recursive(&successor),
+            )
+            .unwrap();
+            let batches = claim_batch_runs(&runs)
+                .into_iter()
+                .map(|run| {
+                    assert_eq!(run.site(), GrindingSite::EvaluationBatch { level: 0 });
+                    (run.loss_factor(), run.grind_bits())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                batches,
+                expected.into_iter().collect::<Vec<_>>(),
+                "polynomials={polynomials}"
+            );
         }
     }
 
