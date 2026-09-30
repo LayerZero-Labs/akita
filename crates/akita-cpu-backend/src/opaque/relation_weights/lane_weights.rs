@@ -21,6 +21,13 @@ pub(crate) struct RelationLaneWeights<E: Field> {
     setup_is_deferred: bool,
 }
 
+/// Rank-one response-norm weights in low coefficient and high lane coordinates.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ResponseNormFactors<E: Field> {
+    pub(crate) coefficient_weights: Vec<E>,
+    pub(crate) lane_weights: Vec<E>,
+}
+
 /// Exact common-alpha factorization of the padded relation-weight table.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RelationWeightFactorization<E: Field> {

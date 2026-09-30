@@ -198,6 +198,13 @@ fn class_from_index(index: usize, class_count: usize) -> RangeImageClass {
     )
 }
 
+/// Batched round coefficients `sum_p w_p prod_c (left_c + X (right_c - left_c))`
+/// over the `arity` child lanes of each parent `p`.
+///
+/// The first interstage weight is always one, so only later parents pay for
+/// their weight, and they pay on a quadratic half-product rather than on the
+/// full product.
+#[inline]
 pub(super) fn product_coefficients<E: Field, const LANES: usize>(
     left: [E; LANES],
     right: [E; LANES],
@@ -209,67 +216,58 @@ pub(super) fn product_coefficients<E: Field, const LANES: usize>(
     let mut batched = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
     for (parent_index, &weight) in parent_weights.iter().enumerate() {
         let first_lane = parent_index * arity;
-        let polynomial = match arity {
-            2 => quadratic_affine_product(
-                [left[first_lane], left[first_lane + 1]],
-                [right[first_lane], right[first_lane + 1]],
-            ),
-            4 => quartic_affine_product(
-                [
-                    left[first_lane],
-                    left[first_lane + 1],
-                    left[first_lane + 2],
-                    left[first_lane + 3],
-                ],
-                [
-                    right[first_lane],
-                    right[first_lane + 1],
-                    right[first_lane + 2],
-                    right[first_lane + 3],
-                ],
-            ),
-            _ => unreachable!("validated range-product arity"),
-        };
-        if parent_weights.len() == 1 && weight == E::one() {
-            batched = polynomial;
-        } else {
-            for degree in 0..=arity {
-                batched[degree] += weight * polynomial[degree];
+        let mut head = quadratic_affine_product(
+            [left[first_lane], left[first_lane + 1]],
+            [right[first_lane], right[first_lane + 1]],
+        );
+        if weight != E::one() {
+            head = head.map(|coefficient| weight * coefficient);
+        }
+        match arity {
+            2 => {
+                for (destination, source) in batched.iter_mut().zip(head) {
+                    *destination += source;
+                }
             }
+            4 => {
+                let tail = quadratic_affine_product(
+                    [left[first_lane + 2], left[first_lane + 3]],
+                    [right[first_lane + 2], right[first_lane + 3]],
+                );
+                for (destination, source) in batched.iter_mut().zip(quadratic_product(head, tail)) {
+                    *destination += source;
+                }
+            }
+            _ => unreachable!("validated range-product arity"),
         }
     }
     batched
 }
 
+/// Coefficients of `(l0 + X s0)(l1 + X s1)` with `s = right - left`, using
+/// `(l0 + s0)(l1 + s1) = right0 * right1` for the middle term.
 #[inline(always)]
-fn quadratic_affine_product<E: Field>(
-    left: [E; 2],
-    right: [E; 2],
-) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
-    let first_slope = right[0] - left[0];
-    let second_slope = right[1] - left[1];
-    [
-        left[0] * left[1],
-        left[0] * second_slope + first_slope * left[1],
-        first_slope * second_slope,
-        E::zero(),
-        E::zero(),
-    ]
+fn quadratic_affine_product<E: Field>(left: [E; 2], right: [E; 2]) -> [E; 3] {
+    let constant = left[0] * left[1];
+    let leading = (right[0] - left[0]) * (right[1] - left[1]);
+    [constant, right[0] * right[1] - constant - leading, leading]
 }
 
+/// Product of two quadratics with six multiplications (Karatsuba).
 #[inline(always)]
-fn quartic_affine_product<E: Field>(
-    left: [E; 4],
-    right: [E; 4],
-) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
-    let first = quadratic_affine_product([left[0], left[1]], [right[0], right[1]]);
-    let second = quadratic_affine_product([left[2], left[3]], [right[2], right[3]]);
+fn quadratic_product<E: Field>(first: [E; 3], second: [E; 3]) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
+    let low = first[0] * second[0];
+    let middle = first[1] * second[1];
+    let high = first[2] * second[2];
+    let low_middle = (first[0] + first[1]) * (second[0] + second[1]);
+    let middle_high = (first[1] + first[2]) * (second[1] + second[2]);
+    let low_high = (first[0] + first[2]) * (second[0] + second[2]);
     [
-        first[0] * second[0],
-        first[0] * second[1] + first[1] * second[0],
-        first[0] * second[2] + first[1] * second[1] + first[2] * second[0],
-        first[1] * second[2] + first[2] * second[1],
-        first[2] * second[2],
+        low,
+        low_middle - low - middle,
+        low_high - low - high + middle,
+        middle_high - middle - high,
+        high,
     ]
 }
 
