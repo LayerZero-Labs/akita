@@ -797,7 +797,7 @@ fn assert_rejected_as_invalid_setup<Cfg: CommitmentConfig>(bytes: &[u8], what: &
 
 #[test]
 fn unsupported_terminal_inner_log_basis_is_rejected_not_panicking() {
-    for log_basis in [0, 128] {
+    for log_basis in [0, 17, 128] {
         let bytes = edited_artifact::<fp128::Dense>(|value| {
             value["rows"][0]["schedule"]["terminal"]["inner"]["digits"]["log_basis"] =
                 log_basis.into();
@@ -809,7 +809,7 @@ fn unsupported_terminal_inner_log_basis_is_rejected_not_panicking() {
 #[test]
 fn unsupported_fold_group_log_basis_is_rejected_not_panicking() {
     type Cfg = RecursiveCommitmentConfig<akita_config::proof_optimized::fp32::Dense>;
-    for log_basis in [0, 128] {
+    for log_basis in [0, 17, 128] {
         let outer = edited_artifact::<Cfg>(|value| {
             first_recursive_group(value)["profile"]["outer"]["digits"]["log_basis"] =
                 log_basis.into();
@@ -819,5 +819,29 @@ fn unsupported_fold_group_log_basis_is_rejected_not_panicking() {
             first_recursive_group(value)["opening"]["log_basis_open"] = log_basis.into();
         });
         assert_rejected_as_invalid_setup::<Cfg>(&opening, "fold opening log_basis");
+    }
+}
+
+/// A depth beyond the field decomposition is rejected before any digit formula
+/// reads it. `u64::MAX` once made admission iterate the balanced-digit series
+/// for as many rounds as the artifact asked.
+#[test]
+fn out_of_range_digit_depths_are_rejected_before_digit_formulas() {
+    let root_fold = edited_artifact::<fp128::Dense>(|value| {
+        value["rows"][0]["schedule"]["root"]["params"]["groups"]["entries"][0]["opening"]
+            ["num_digits_fold"] = u64::MAX.into();
+    });
+    assert_rejected_as_invalid_setup::<fp128::Dense>(&root_fold, "root fold digit depth");
+    let terminal_fold = edited_artifact::<fp128::Dense>(|value| {
+        value["rows"][0]["schedule"]["terminal"]["fold"]["num_digits"] = u64::MAX.into();
+    });
+    assert_rejected_as_invalid_setup::<fp128::Dense>(&terminal_fold, "terminal fold digit depth");
+
+    type Cfg = RecursiveCommitmentConfig<akita_config::proof_optimized::fp32::Dense>;
+    for key in ["num_digits_open", "num_digits_fold"] {
+        let bytes = edited_artifact::<Cfg>(|value| {
+            first_recursive_group(value)["opening"][key] = u64::MAX.into();
+        });
+        assert_rejected_as_invalid_setup::<Cfg>(&bytes, key);
     }
 }
