@@ -125,7 +125,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::GrindingPlan;
+    use crate::{ChallengeFieldOrder, GrindingPlan};
     use akita_transcript::{new_native_prover, new_native_verifier};
     use jolt_field::{FpExt4, Prime32Offset99, Ring};
 
@@ -134,7 +134,11 @@ mod tests {
 
     #[test]
     fn stage3_public_slot_and_late_prefix_eval_roundtrip() {
-        let plan = GrindingPlan::new(Vec::new(), 128).unwrap();
+        let plan = GrindingPlan::new(
+            Vec::new(),
+            ChallengeFieldOrder::from_full_capacity(128).unwrap(),
+        )
+        .unwrap();
         let slot = b"canonical setup slot";
         let claim = E::from_u64(17);
         let prefix_eval = E::from_u64(29);

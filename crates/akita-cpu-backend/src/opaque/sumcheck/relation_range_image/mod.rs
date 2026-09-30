@@ -27,9 +27,9 @@
 //! `y_alpha = [0,`
 //! `           u_0(alpha), ..., u_{N_B-1}(alpha),`
 //! `           v_0(alpha), ..., v_{N_D-1}(alpha)]`
-//! `           for physical quotient rows only;`
+//! `           for quotient relation rows only;`
 //!
-//! then the linear relation claim over physical quotient rows is
+//! then the linear relation claim over quotient relation rows is
 //!
 //! `relation_claim = sum_i eq(tau1, i) * y_alpha[i]`
 //! `               = sum_address digit_witness(address) * p(address)`.
@@ -51,6 +51,11 @@
 //! paths). It reuses the existing row-index challenge (`tau1`) and adds no extra
 //! Fiat-Shamir challenge at terminal folds (`batching_coeff = 0` there).
 //!
+//! The response-norm binding term contributes `C_bind` to the combined linear
+//! claim. Its weights are absorbed into the reduced relation table, prepared as
+//! a rank-one linear source, or retained as sparse additional terms. These are
+//! equivalent representations of the same binding term.
+//!
 //! Stage 1 supplies the carried virtual claim
 //!
 //! `range_image_evaluation`
@@ -59,7 +64,8 @@
 //! for the multilinear extension of the pointwise Boolean range-image table. Away from
 //! Boolean points this is not generally `w(stage1_point) * (w(stage1_point) + 1)`.
 //! With `gamma = batching_coeff`, the
-//! exact identity established by this sumcheck is
+//! identity below shows the EvaluationTrace case before adding the response-norm
+//! binding and other optional terms:
 //!
 //! `gamma * range_image_evaluation + relation_claim + eq(tau1, EvaluationTrace_row_index) * trace_target =`
 //! `sum_address [ gamma * eq(stage1_point, address)`
@@ -78,14 +84,6 @@
 //! the virtual, relation, and EvaluationTrace terms around the same local `w0` /
 //! `dw` scan so the witness-side work is shared.
 
-use crate::opaque::sumcheck::fold_prefix_pair_with_zero_padding as fold_folded_lane_pair;
-use crate::opaque::sumcheck::two_round_prefix::{
-    build_stage2_prefix_cache, can_use_stage2_two_round_prefix, Stage2PrefixCache,
-};
-use crate::opaque::sumcheck::two_round_prefix::{
-    stage2_b4_lookup_index_from_digits, stage2_b4_w_digit, stage2_b8_lookup_index_from_digits,
-    stage2_b8_w_digit,
-};
 use akita_algebra::poly::trim_trailing_zeros;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
@@ -97,40 +95,39 @@ use jolt_field::{Field, Ring, Zero};
 use jolt_field::{Fold, Unreduced};
 use jolt_poly::UnivariatePoly;
 use std::mem;
-use std::time::Instant;
 
 use crate::opaque::relation_weights::RelationWeightFactorization;
-use crate::sources::packed_digits::{
-    PackedSignedDigitIter, PackedSignedDigitView, PackedSignedDigits,
-};
+use crate::opaque::sumcheck::add_assign_all;
+use crate::sources::packed_digits::{PackedSignedDigitView, PackedSignedDigits};
 
 enum WitnessState<E: Field> {
     CompactPrefix(PackedSignedDigits),
     FoldedSuffix(Vec<E>),
 }
 
-struct DeferredCompactPrefix<E: Field> {
-    cache: Stage2PrefixCache<E>,
-    phase: DeferredCompactPrefixPhase<E>,
+enum CoefficientRelation<E: Field> {
+    Factored(RelationWeightFactorization<E>),
+    ReducedDense(DenseRelationWeights<E>),
 }
 
-enum DeferredCompactPrefixPhase<E: Field> {
-    Round0,
-    Round1 { first_challenge: E },
-}
-
-enum QuotientPrefixState<E: Field> {
-    Disabled,
-    Deferred(DeferredCompactPrefix<E>),
-}
-
-enum RelationRoundState<E: Field> {
-    QuotientFactored {
+/// State required to serve exactly one kind of Stage 2 round.
+enum Phase<E: Field> {
+    /// Rounds served by the compact quotient prefix engine.
+    CompactPrefix {
+        witness: PackedSignedDigits,
         weights: RelationWeightFactorization<E>,
-        prefix: QuotientPrefixState<E>,
+        engine: Box<CompactQuotientPrefix<E>>,
     },
-    ReducedDense {
-        weights: DenseRelationWeights<E>,
+    /// Coefficient rounds outside the compact prefix.
+    Coefficient {
+        witness: WitnessState<E>,
+        relation: CoefficientRelation<E>,
+        relation_moments: Option<CoefficientRelationMoments<E>>,
+    },
+    /// Lane rounds on the folded witness.
+    Lane {
+        witness: Vec<E>,
+        lane: LaneProduct<E>,
     },
 }
 
@@ -140,22 +137,76 @@ enum NormRoundTerms<E: Field> {
     SkipLinear([E; 2]),
 }
 
-type CompactVirtAccum<E> = [<E as Unreduced>::SmallProduct; 4];
-type CompactVirtSkipLinearAccum<E> = [<E as Unreduced>::SmallProduct; 2];
-type CompactRelAccum<E> = [<E as Unreduced>::SmallProduct; 6];
+impl<E: Field> NormRoundTerms<E> {
+    #[inline(always)]
+    fn from_totals<const SKIP_LINEAR: bool>(totals: [E; 3]) -> Self {
+        if SKIP_LINEAR {
+            Self::SkipLinear([totals[0], totals[2]])
+        } else {
+            Self::Full(totals)
+        }
+    }
+}
+
+type CompactRelAccum<E> = [<E as Unreduced>::SmallProduct; 4];
+
+/// Internal round state stores the message value at one and its top two
+/// coefficients. The sumcheck claim recovers the constant, and the value at
+/// one then recovers the linear coefficient at emission.
+#[derive(Clone, Copy)]
+struct RoundMessage<E: Field> {
+    at_one: E,
+    quadratic: E,
+    cubic: E,
+}
+
+impl<E: Field> RoundMessage<E> {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self {
+            at_one: E::zero(),
+            quadratic: E::zero(),
+            cubic: E::zero(),
+        }
+    }
+
+    #[inline(always)]
+    fn add_assign(&mut self, other: Self) {
+        self.at_one += other.at_one;
+        self.quadratic += other.quadratic;
+        self.cubic += other.cubic;
+    }
+
+    #[inline]
+    fn from_polynomial(polynomial: &UnivariatePoly<E>) -> Self {
+        Self::from_coefficients(polynomial.coefficients())
+    }
+
+    #[inline]
+    fn from_coefficients(coefficients: &[E]) -> Self {
+        debug_assert!(coefficients.len() <= 4);
+        Self {
+            at_one: coefficients.iter().copied().sum(),
+            quadratic: coefficients.get(2).copied().unwrap_or_else(E::zero),
+            cubic: coefficients.get(3).copied().unwrap_or_else(E::zero),
+        }
+    }
+
+    #[inline]
+    fn into_polynomial(self, previous_claim: E) -> UnivariatePoly<E> {
+        let constant = previous_claim - self.at_one;
+        let linear = self.at_one - constant - self.quadratic - self.cubic;
+        let mut coefficients = vec![constant, linear, self.quadratic, self.cubic];
+        trim_trailing_zeros(&mut coefficients);
+        UnivariatePoly::new(coefficients)
+    }
+}
 
 #[inline]
 fn coeffs_to_poly<E: Field>(coeffs: [E; 3]) -> UnivariatePoly<E> {
     let mut coeffs = vec![coeffs[0], coeffs[1], coeffs[2]];
     trim_trailing_zeros(&mut coeffs);
     UnivariatePoly::new(coeffs)
-}
-
-#[inline]
-fn fold_two_round_quad<E: Field>(v00: E, v10: E, v01: E, v11: E, r0: E, r1: E) -> E {
-    let x0 = v00 + r0 * (v10 - v00);
-    let x1 = v01 + r0 * (v11 - v01);
-    x0 + r1 * (x1 - x0)
 }
 
 #[inline]
@@ -177,31 +228,12 @@ fn accum_small_signed<E: Field + Unreduced>(
 }
 
 #[inline]
-fn reduce_compact_virt<E: Field + Unreduced>(virt: CompactVirtAccum<E>) -> [E; 3] {
-    [
-        E::reduce_small_product(virt[0]),
-        reduce_signed_accum::<E>(virt[1], virt[2]),
-        E::reduce_small_product(virt[3]),
-    ]
-}
-
-#[inline]
-fn reduce_compact_virt_skip_linear<E: Field + Unreduced>(
-    virt: CompactVirtSkipLinearAccum<E>,
-) -> [E; 2] {
-    [
-        E::reduce_small_product(virt[0]),
-        E::reduce_small_product(virt[1]),
-    ]
-}
-
-#[inline]
-fn reduce_compact_rel<E: Field + Unreduced>(rel: CompactRelAccum<E>) -> [E; 3] {
-    [
-        reduce_signed_accum::<E>(rel[0], rel[1]),
-        reduce_signed_accum::<E>(rel[2], rel[3]),
-        reduce_signed_accum::<E>(rel[4], rel[5]),
-    ]
+fn reduce_compact_rel<E: Field + Unreduced>(rel: CompactRelAccum<E>) -> RoundMessage<E> {
+    RoundMessage {
+        at_one: reduce_signed_accum::<E>(rel[0], rel[1]),
+        quadratic: reduce_signed_accum::<E>(rel[2], rel[3]),
+        cubic: E::zero(),
+    }
 }
 
 #[inline]
@@ -221,27 +253,91 @@ fn stage2_eq_block(
     (j_high, blk_end)
 }
 
-#[inline]
-pub(crate) fn accumulate_relation_coeffs<E: Field>(rel: &mut [E; 3], w0: E, dw: E, p0: E, p1: E) {
-    let dp = p1 - p0;
-    rel[0] += w0 * p0;
-    rel[1] += w0 * dp + dw * p0;
-    rel[2] += dw * dp;
+/// Sum of field products reduced once.
+///
+/// Every field's product accumulator reduces a sum of fewer than `2^61`
+/// widening products exactly (`Fp128` slots hold `2^64 - 1`), far more terms
+/// than a round sums.
+#[derive(Clone, Copy)]
+struct ProductSum<E: Unreduced>(E::Product);
+
+impl<E: Unreduced> ProductSum<E> {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self(E::Product::zero())
+    }
+
+    #[inline(always)]
+    fn add(&mut self, left: E, right: E) {
+        self.0 += left.mul_unreduced(right);
+    }
+
+    #[inline(always)]
+    fn finish(self) -> E {
+        E::reduce_product(self.0)
+    }
+}
+
+/// Relation message of a run of pairs `w(X) * q(X)` with `w = w0 + X dw` and
+/// `q = q0 + X (q1 - q0)`, where `q` is the relation weight plus the
+/// structured linear term.
+///
+/// Only the value at one, `sum w1 q1`, and the quadratic coefficient,
+/// `sum dw (q1 - q0)`, are accumulated. The sumcheck claim recovers the
+/// constant and the linear coefficient. Every field-valued relation kernel
+/// (dense, compact and folded coefficient, lane rounds) accumulates through
+/// this type and reduces it once per its own task or lane. The signed-digit
+/// kernels keep [`accumulate_relation_eval_coeffs_signed`], whose accumulator
+/// is a pair of unsigned small products per coefficient.
+#[derive(Clone, Copy)]
+struct RelationPairAccumulator<E: Unreduced>([ProductSum<E>; 2]);
+
+impl<E: Unreduced> RelationPairAccumulator<E> {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self([ProductSum::zero(); 2])
+    }
+
+    /// Adds one pair. `dw = w1 - w0` is passed in because the norm
+    /// accumulator of the same scan needs it too.
+    #[inline(always)]
+    fn add_pair(&mut self, w1: E, dw: E, q0: E, q1: E) {
+        self.0[0].add(w1, q1);
+        self.0[1].add(dw, q1 - q0);
+    }
+
+    #[inline(always)]
+    fn finish(self) -> RoundMessage<E>
+    where
+        E: Field,
+    {
+        RoundMessage {
+            at_one: self.0[0].finish(),
+            quadratic: self.0[1].finish(),
+            cubic: E::zero(),
+        }
+    }
+}
+
+fn add_round_terms<E: Field>(
+    left: &mut ([E; 3], RoundMessage<E>),
+    right: ([E; 3], RoundMessage<E>),
+) {
+    add_assign_all(&mut left.0, &right.0);
+    left.1.add_assign(right.1);
 }
 
 #[inline]
-pub(crate) fn accumulate_relation_coeffs_signed<E: Field + Unreduced>(
-    rel: &mut [E::SmallProduct; 6],
+pub(crate) fn accumulate_relation_eval_coeffs_signed<E: Field + Unreduced>(
+    rel: &mut [E::SmallProduct; 4],
     w0: i64,
     dw: i64,
     p0: E,
     p1: E,
 ) {
     let dp = p1 - p0;
-    accum_small_signed::<E>(rel, 0, p0, w0);
-    accum_small_signed::<E>(rel, 2, dp, w0);
-    accum_small_signed::<E>(rel, 2, p0, dw);
-    accum_small_signed::<E>(rel, 4, dp, dw);
+    accum_small_signed::<E>(rel, 0, p1, w0 + dw);
+    accum_small_signed::<E>(rel, 2, dp, dw);
 }
 
 /// Fused relation, structured-linear, and range-image sumcheck prover.
@@ -252,12 +348,10 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: Field + Unreduced>(
 /// the round polynomial is:
 /// `batching_coeff * virtual_round(t) + relation_round(t)`.
 pub(crate) struct RelationRangeImageProver<E: Field> {
-    witness_state: WitnessState<E>,
-    b: usize,
+    phase: Option<Phase<E>>,
     input_claim: E,
     split_eq: GruenSplitEq<E>,
 
-    relation_state: RelationRoundState<E>,
     additional_relation_terms: Option<AdditionalRelationTerms<E>>,
     linear_terms: PreparedProverLinearTerms<E>,
     live_lane_count: usize,
@@ -265,72 +359,56 @@ pub(crate) struct RelationRangeImageProver<E: Field> {
     num_vars: usize,
     prev_norm_claim: E,
     prev_norm_poly: Option<UnivariatePoly<E>>,
-    cached_round_poly: Option<UnivariatePoly<E>>,
+    cached_round_message: Option<RoundMessage<E>>,
 
-    scan_time_total: f64,
-    fold_time_total: f64,
     rounds_completed: usize,
 }
 
 mod additional_terms;
-#[cfg(test)]
 mod coefficient_packing_terms;
 mod coefficient_prefix;
 mod coefficient_round_fold;
-mod compact_prefix;
 mod dense_terms;
 mod evaluation_trace;
-mod lane_prefix;
+mod lane_product;
 mod lifecycle;
+mod norm;
+use norm::{CompactNorm, FieldNorm, ProductNorm};
+mod prefix_cache;
 mod prepared_linear_lane;
+mod quotient_prefix;
 mod round_flow;
 mod weight_oracle;
+mod wide_mass;
 
 pub(crate) use additional_terms::AdditionalRelationTerms;
+pub(crate) use coefficient_packing_terms::prepare_coefficient_packing_linear_terms;
 #[allow(unused_imports)]
 pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProverLinearTerms};
 #[cfg(test)]
 pub(crate) use evaluation_trace::{
     StructuredLinearSegment, StructuredLinearTerm, StructuredLinearWeights,
 };
+use lane_product::LaneProduct;
 pub(crate) use prepared_linear_lane::PreparedLinearLane;
+use quotient_prefix::{CoefficientRelationMoments, CompactQuotientPrefix};
 pub(crate) use weight_oracle::{DenseRelationWeights, RelationWeightOracle};
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[cfg(test)]
     #[inline]
-    fn common_alpha_factor(&self) -> Option<&[E]> {
-        self.quotient_weights()
-            .map(RelationWeightFactorization::common_alpha_factor)
-    }
-
-    #[cfg(test)]
-    #[inline]
-    fn relation_lane_weights(&self) -> Option<&[E]> {
-        self.quotient_weights()
-            .map(RelationWeightFactorization::relation_lane_weights)
-    }
-
-    #[cfg(test)]
-    #[inline]
     fn quotient_weights(&self) -> Option<&RelationWeightFactorization<E>> {
-        match &self.relation_state {
-            RelationRoundState::QuotientFactored { weights, .. } => Some(weights),
-            RelationRoundState::ReducedDense { .. } => None,
-        }
-    }
-
-    #[cfg(test)]
-    fn replace_common_alpha_factor(&mut self, replacement: Vec<E>) {
-        if let RelationRoundState::QuotientFactored { weights, .. } = &mut self.relation_state {
-            *weights.components_mut().0 = replacement;
-        }
-    }
-
-    #[cfg(test)]
-    fn replace_relation_lane_weights(&mut self, replacement: Vec<E>) {
-        if let RelationRoundState::QuotientFactored { weights, .. } = &mut self.relation_state {
-            *weights.components_mut().1 = replacement;
+        match self.phase.as_ref()? {
+            Phase::CompactPrefix { weights, .. } => Some(weights),
+            Phase::Coefficient {
+                relation: CoefficientRelation::Factored(weights),
+                ..
+            } => Some(weights),
+            Phase::Coefficient {
+                relation: CoefficientRelation::ReducedDense(_),
+                ..
+            }
+            | Phase::Lane { .. } => None,
         }
     }
 
@@ -340,24 +418,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn accumulate_fused_relation_linear(
-        &self,
-        rel: &mut [E; 3],
-        w0: E,
-        dw: E,
-        witness_idx0: usize,
-        p0: E,
-        p1: E,
-    ) {
-        let (t0, t1) = self.linear_terms.pair_from_flat_index(witness_idx0);
-        accumulate_relation_coeffs(rel, w0, dw, p0 + t0, p1 + t1);
-    }
-
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn accumulate_fused_relation_linear_signed(
         &self,
-        rel: &mut [E::SmallProduct; 6],
+        rel: &mut [E::SmallProduct; 4],
         w0: i64,
         dw: i64,
         witness_idx0: usize,
@@ -365,16 +428,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         p1: E,
     ) {
         let (t0, t1) = self.linear_terms.pair_from_flat_index(witness_idx0);
-        accumulate_relation_coeffs_signed(rel, w0, dw, p0 + t0, p1 + t1);
-    }
-
-    #[inline]
-    pub(super) fn fold_linear_terms_for_current_round(&mut self, challenge: E) {
-        if self.in_coefficient_round() {
-            self.linear_terms.fold_coefficients(challenge);
-        } else {
-            self.linear_terms.fold_lanes(challenge);
-        }
+        accumulate_relation_eval_coeffs_signed(rel, w0, dw, p0 + t0, p1 + t1);
     }
 }
 

@@ -25,8 +25,8 @@ pub use types::{
     SetupContributionGroupInputs, SetupContributionGroupPlan, SetupContributionPlan,
 };
 
-use super::geometry::SetupProjectionGroupGeometry;
-use super::{checked_slice, SetupProjectionGeometry};
+use super::checked_slice;
+use crate::layout::setup_projection::{SetupProjectionGeometry, SetupProjectionGroupGeometry};
 use crate::layout::CommittedGroupParams;
 use crate::{OpeningClaimsLayout, RelationAddressGeometry, WitnessLayout};
 use akita_error::{checked, AkitaError};

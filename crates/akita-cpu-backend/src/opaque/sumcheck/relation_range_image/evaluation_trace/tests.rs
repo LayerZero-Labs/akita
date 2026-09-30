@@ -21,16 +21,13 @@ fn fold_prepared_trace_at_point<E: Field>(
     point: &[E],
 ) -> E {
     let coefficient_bits = coeff_count.trailing_zeros() as usize;
-    let mut live_lanes = live_len / coeff_count;
     for &challenge in &point[..coefficient_bits] {
         trace.fold_coefficients(challenge);
     }
-    for &challenge in &point[coefficient_bits..] {
-        trace.fold_lanes(challenge);
-        live_lanes = live_lanes.div_ceil(2);
-    }
-    assert_eq!(live_lanes, 1);
-    trace.get(0, 0, 1)
+    let lane_point = &point[coefficient_bits..];
+    let mut lanes = vec![E::zero(); 1 << lane_point.len()];
+    trace.drain_into_lane_weights(&mut lanes[..live_len / coeff_count], E::one());
+    multilinear_eval(&lanes, lane_point).unwrap()
 }
 
 fn materialize_semantic_trace_oracle<E: Field>(
@@ -289,19 +286,62 @@ fn coefficient_folds_reuse_prepared_source_buffers() {
         .iter()
         .map(|source| (source.values.as_ptr(), source.values.capacity()))
         .collect::<Vec<_>>();
-    two_round.fold_two_coefficients(r0, r1);
+    two_round.fold_coefficients(r0);
+    two_round.fold_coefficients(r1);
     for (source, &(pointer, capacity)) in two_round.sources.iter().zip(&two_round_allocations) {
         assert_eq!(source.values.as_ptr(), pointer);
         assert_eq!(source.values.capacity(), capacity);
     }
-    let expected_two_round = dense
-        .chunks_exact(coeff_count)
-        .flat_map(|lane| {
-            lane.chunks_exact(4)
-                .map(|quad| fold_two_round_quad(quad[0], quad[1], quad[2], quad[3], r0, r1))
-        })
+    let expected_two_round = expected_one_round
+        .chunks_exact(2)
+        .map(|pair| pair[0] + r1 * (pair[1] - pair[0]))
         .collect::<Vec<_>>();
     assert_eq!(two_round.materialize_dense(), expected_two_round);
+}
+
+#[test]
+fn response_norm_linear_source_matches_dense_table_and_signed_claim() {
+    let coeff_count = 4;
+    let live_lane_count = 3;
+    let coefficient_weights = (0..coeff_count)
+        .map(|index| F::from_u64(43 + 11 * index as u64))
+        .collect::<Vec<_>>();
+    let lane_weights = (0..live_lane_count)
+        .map(|index| F::from_u64(71 + 13 * index as u64))
+        .collect::<Vec<_>>();
+    let prepared = PreparedProverLinearTerms::from_response_norm_factors(
+        coefficient_weights.clone(),
+        lane_weights.clone(),
+        live_lane_count,
+        coeff_count,
+    )
+    .expect("valid rank-one source");
+    let expected = (0..live_lane_count)
+        .flat_map(|lane| {
+            let factor = lane_weights[lane];
+            coefficient_weights
+                .iter()
+                .map(move |&coefficient| factor * coefficient)
+        })
+        .collect::<Vec<_>>();
+    let actual = prepared.materialize_dense();
+    let digits = [i8::MIN, -7, 0, 4, 9, -3, 2, -1, 11, 5, -8, 6];
+    let actual_claim = digits
+        .iter()
+        .zip(&actual)
+        .map(|(&digit, &weight)| F::from_i64(i64::from(digit)) * weight)
+        .sum::<F>();
+    let expected_claim = digits
+        .iter()
+        .enumerate()
+        .map(|(index, &digit)| {
+            F::from_i64(i64::from(digit))
+                * lane_weights[index / coeff_count]
+                * coefficient_weights[index % coeff_count]
+        })
+        .sum::<F>();
+    assert_eq!(actual, expected);
+    assert_eq!(actual_claim, expected_claim);
 }
 
 #[test]
@@ -356,4 +396,40 @@ fn structured_linear_terms_reject_malformed_arena_and_incompatible_merge() {
     let mut prepared = PreparedProverLinearTerms::from_structured_weights(&valid, 4).unwrap();
     let incompatible = PreparedProverLinearTerms::from_dense(vec![F::one(); 8], 4, 2);
     assert!(prepared.merge(incompatible).is_err());
+}
+
+/// A nonempty semantic trace source sharing every live response-norm lane.
+pub(crate) fn response_norm_trace_fixture<E: Field>(
+    live_lane_count: usize,
+    coeff_count: usize,
+) -> (PreparedProverLinearTerms<E>, Vec<E>) {
+    let lane_bits = live_lane_count.next_power_of_two().trailing_zeros() as usize;
+    let weights = EvaluationTraceWeights {
+        terms: vec![EvaluationTraceTerm {
+            coefficient: E::from_u64(3),
+            block_opening_point: vec![E::from_u64(5); lane_bits].into(),
+            basis: BasisMode::Lagrange,
+            group_block_count: live_lane_count,
+            source_ring_dimension: coeff_count,
+            opening_ring_dimension: coeff_count,
+            coefficient_block_len: coeff_count,
+            opening_digit_weights: vec![E::from_u64(7)].into(),
+            inner_trace: (0..coeff_count)
+                .map(|i| E::from_u64(11 + i as u64))
+                .collect::<Vec<_>>()
+                .into(),
+            segments: vec![EvaluationTraceSegment {
+                physical_coefficient_start: 0,
+                global_block_start: 0,
+                block_count: live_lane_count,
+            }],
+        }],
+        physical_field_len: live_lane_count * coeff_count,
+        num_vars: lane_bits + coeff_count.trailing_zeros() as usize,
+    };
+    let dense = materialize_semantic_trace_oracle(&weights, E::one());
+    let prepared =
+        PreparedProverLinearTerms::from_evaluation_trace(&weights, coeff_count, E::one()).unwrap();
+    assert!(!prepared.sources.is_empty());
+    (prepared, dense)
 }

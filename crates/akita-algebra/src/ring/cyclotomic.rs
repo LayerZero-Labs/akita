@@ -1,6 +1,7 @@
 //! Cyclotomic ring `Z_q[X]/(X^D + 1)` in coefficient form.
 
 mod decomposition;
+mod shift_windows;
 #[cfg(test)]
 mod tests;
 mod traits;
@@ -17,13 +18,11 @@ use std::io::{Read, Write};
 use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-#[cfg(test)]
-pub(crate) use decomposition::center_for_decomposition;
 pub use decomposition::{
     balanced_decompose_coefficients_pow2_i8_into, decompose_centering_threshold,
-    peel_first_balanced_digit, try_balanced_decompose_coefficients_pow2_i8_u64_into,
     BalancedDecomposePow2Params,
 };
+pub use shift_windows::NegacyclicShiftWindows;
 pub use wide::WideCyclotomicRing;
 
 /// Element of the cyclotomic ring `Z_q[X]/(X^D + 1)`.
@@ -340,7 +339,8 @@ impl<F: Field, const D: usize> CyclotomicRing<F, D> {
 }
 
 impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
-    pub(crate) fn centered_coefficients_i128(&self) -> [i128; D] {
+    /// Coefficients as centered integers in `(-q/2, q/2]`.
+    pub fn centered_coefficients_i128(&self) -> [i128; D] {
         let modulus = (-F::one())
             .to_u128_checked()
             .expect("Akita field element must fit in u128")

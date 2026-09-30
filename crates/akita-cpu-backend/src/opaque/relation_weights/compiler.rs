@@ -7,7 +7,7 @@ use akita_types::{
 pub(super) struct RelationWeightCompilation<'a, F: Field, E: Field> {
     pub(super) plan: RelationWeightCompilationPlan<E>,
     pub(super) setup_sources: Option<RelationWeightSetupSources<'a, F>>,
-    pub(super) group_sources: Vec<RelationWeightGroupSources<'a, F>>,
+    group_sources: Vec<RelationWeightGroupSources<'a, F>>,
     pub(super) witness_layout: WitnessLayout,
     pub(super) relation_geometry: RelationWitnessGeometry,
     pub(super) row_families: Vec<RelationRowFamily>,
@@ -17,7 +17,7 @@ pub(super) struct RelationWeightCompilation<'a, F: Field, E: Field> {
 }
 
 pub(super) struct RelationWeightGroupSources<'a, F: Field> {
-    pub(super) group_index: usize,
+    group_index: usize,
     pub(super) challenges: &'a akita_challenges::Challenges,
     pub(super) opening: OpeningFamily<&'a RingMultiplierOpeningPoint<F>, ()>,
 }
@@ -215,7 +215,7 @@ where
 pub(super) struct RelationWeightCompilationPlan<E> {
     pub(super) groups: Vec<RelationWeightGroupPlan<E>>,
     pub(super) d_row_weights: Vec<(usize, Vec<E>)>,
-    pub(super) d_column_count: usize,
+    d_column_count: usize,
 }
 
 pub(super) struct RelationWeightGroupPlan<E> {
@@ -277,7 +277,7 @@ struct RelationWeightCompilationInputs<'a, E> {
 }
 
 impl<E: Field> RelationWeightCompilationPlan<E> {
-    pub(super) fn new<F>(
+    fn new<F>(
         lp: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
         relation_plan: &RelationRangeImagePlan,
@@ -520,7 +520,7 @@ pub(super) struct RelationWeightGroupSetupSources<'a, F: Field> {
 }
 
 impl<'a, F: Field> RelationWeightSetupSources<'a, F> {
-    pub(super) fn new<E: Field>(
+    fn new<E: Field>(
         setup: &'a AkitaExpandedSetup<F>,
         lp: &CommittedGroupParams,
         compilation: &RelationWeightCompilationPlan<E>,
@@ -582,165 +582,4 @@ impl<'a, F: Field> RelationWeightSetupSources<'a, F> {
             .find(|group| group.group_index == group_index)
             .ok_or(AkitaError::InvalidProof)
     }
-}
-
-pub(super) trait EtWeightSink<E> {
-    fn add_e(
-        &mut self,
-        physical_start: usize,
-        challenge_index: usize,
-        role_subcolumn: usize,
-        setup_column: usize,
-        constraint_scale: E,
-    ) -> Result<(), AkitaError>;
-
-    fn add_t(
-        &mut self,
-        physical_start: usize,
-        challenge_index: usize,
-        role_subcolumn: usize,
-        slice_index: usize,
-        setup_column: usize,
-        constraint_scale: E,
-    ) -> Result<(), AkitaError>;
-}
-
-pub(super) trait ZWeightSink<E> {
-    fn add_z(
-        &mut self,
-        physical_start: usize,
-        position: usize,
-        setup_column: usize,
-        constraint_scale: E,
-        setup_scale: E,
-    ) -> Result<(), AkitaError>;
-}
-
-pub(super) fn compile_group_et_addresses<E: Field>(
-    plan: &RelationWeightGroupPlan<E>,
-    witness_layout: &WitnessLayout,
-    sink: &mut impl EtWeightSink<E>,
-) -> Result<(), AkitaError> {
-    for claim in 0..plan.witness.num_claims {
-        for block in 0..plan.witness.num_live_blocks {
-            let unit = witness_layout.unit_for_block(plan.group_index, block)?;
-            let challenge_index = claim
-                .checked_mul(plan.witness.num_live_blocks)
-                .and_then(|base| base.checked_add(block))
-                .ok_or(AkitaError::InvalidProof)?;
-            let (slice_index, slice_block) =
-                plan.witness.slice_geometry.block_coordinates(block)?;
-            for (digit, &gadget) in plan.gadgets.opening_gadget.iter().enumerate() {
-                for role_subcolumn in 0..plan.roles.d_subcolumns {
-                    let physical_start = unit.e_coefficient_index(
-                        plan.roles.d_d,
-                        plan.witness.num_claims,
-                        plan.witness.depth_open,
-                        claim,
-                        block,
-                        role_subcolumn,
-                        digit,
-                        0,
-                    )?;
-                    let logical_block = claim * plan.witness.num_live_blocks + block;
-                    let setup_column = logical_block
-                        .checked_mul(plan.roles.d_subcolumns)
-                        .and_then(|base| base.checked_add(role_subcolumn))
-                        .and_then(|base| base.checked_mul(plan.witness.depth_open))
-                        .and_then(|base| base.checked_add(digit))
-                        .ok_or(AkitaError::InvalidProof)?;
-                    sink.add_e(
-                        physical_start,
-                        challenge_index,
-                        role_subcolumn,
-                        setup_column,
-                        plan.rows.consistency_weight * gadget,
-                    )?;
-                }
-            }
-            for a_row in 0..plan.witness.n_a {
-                for (digit, &gadget) in plan.gadgets.commitment_gadget.iter().enumerate() {
-                    let block_claim = plan
-                        .witness
-                        .slice_geometry
-                        .max_blocks_per_slice()
-                        .checked_mul(claim)
-                        .and_then(|base| base.checked_add(slice_block))
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let row_block_claim = plan
-                        .witness
-                        .n_a
-                        .checked_mul(block_claim)
-                        .and_then(|base| base.checked_add(a_row))
-                        .ok_or(AkitaError::InvalidProof)?;
-                    for role_subcolumn in 0..plan.roles.b_subcolumns {
-                        let setup_column = row_block_claim
-                            .checked_mul(plan.roles.b_subcolumns)
-                            .and_then(|base| base.checked_add(role_subcolumn))
-                            .and_then(|base| base.checked_mul(plan.witness.depth_commit))
-                            .and_then(|base| base.checked_add(digit))
-                            .ok_or(AkitaError::InvalidProof)?;
-                        let physical_start = unit.t_coefficient_index(
-                            plan.roles.d_a,
-                            plan.roles.d_b,
-                            plan.witness.num_claims,
-                            plan.witness.n_a,
-                            plan.witness.depth_commit,
-                            claim,
-                            block,
-                            a_row,
-                            role_subcolumn,
-                            digit,
-                            0,
-                        )?;
-                        sink.add_t(
-                            physical_start,
-                            challenge_index,
-                            role_subcolumn,
-                            slice_index,
-                            setup_column,
-                            plan.rows.a_row_weights[a_row] * gadget,
-                        )?;
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn compile_group_z_addresses<E: Field>(
-    plan: &RelationWeightGroupPlan<E>,
-    witness_layout: &WitnessLayout,
-    sink: &mut impl ZWeightSink<E>,
-) -> Result<(), AkitaError> {
-    for unit in witness_layout.units_for_group(plan.group_index)? {
-        for position in 0..plan.witness.num_positions {
-            for (witness_digit, &witness_scale) in plan.gadgets.witness_gadget.iter().enumerate() {
-                let setup_column = position
-                    .checked_mul(plan.witness.depth_witness)
-                    .and_then(|base| base.checked_add(witness_digit))
-                    .ok_or(AkitaError::InvalidProof)?;
-                for (fold_digit, &fold_scale) in plan.gadgets.fold_gadget.iter().enumerate() {
-                    sink.add_z(
-                        unit.z_coefficient_index(
-                            plan.roles.d_a,
-                            plan.witness.num_positions,
-                            plan.witness.depth_witness,
-                            plan.witness.depth_fold,
-                            position,
-                            witness_digit,
-                            fold_digit,
-                            0,
-                        )?,
-                        position,
-                        setup_column,
-                        -(plan.rows.consistency_weight * witness_scale * fold_scale),
-                        -fold_scale,
-                    )?;
-                }
-            }
-        }
-    }
-    Ok(())
 }

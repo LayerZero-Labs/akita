@@ -730,7 +730,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::GrindingRun;
+    use crate::{ChallengeFieldOrder, GrindingRun};
     use akita_challenges::{
         FoldChallengeDrawDomain, FoldDraw, NativePreviewFoldDraw, NativeProverFoldDraw,
         NativeVerifierFoldDraw, SparseChallengeConfig,
@@ -743,12 +743,16 @@ mod tests {
     fn plan() -> GrindingPlan {
         GrindingPlan::new(
             vec![
-                GrindingRun::proof_of_work(GrindingSite::EvaluationBatch { level: 0 }, 3, 128)
-                    .unwrap(),
+                GrindingRun::proof_of_work(
+                    GrindingSite::EvaluationBatch { level: 0 },
+                    3,
+                    ChallengeFieldOrder::from_full_capacity(128).unwrap(),
+                )
+                .unwrap(),
                 GrindingRun::fold_response(0),
                 GrindingRun::fold_challenge_group(0, 0, 2).unwrap(),
             ],
-            128,
+            ChallengeFieldOrder::from_full_capacity(128).unwrap(),
         )
         .unwrap()
     }
@@ -788,9 +792,13 @@ mod tests {
 
     #[test]
     fn verifier_accepts_a_valid_nonminimal_two_byte_pow_nonce() {
+        let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
         let site = GrindingSite::EvaluationBatch { level: 0 };
-        let plan = GrindingPlan::new(vec![GrindingRun::proof_of_work(site, 2, 128).unwrap()], 128)
-            .unwrap();
+        let plan = GrindingPlan::new(
+            vec![GrindingRun::proof_of_work(site, 2, order).unwrap()],
+            order,
+        )
+        .unwrap();
         let mut state = new_native_prover(b"native-long-nonce", b"fixture").unwrap();
         let nonce = (128..=u8::MAX as u32)
             .find(|&candidate| {
@@ -813,14 +821,15 @@ mod tests {
 
     #[test]
     fn one_native_grinding_query_can_protect_multiple_draws() {
+        let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
         let plan = GrindingPlan::new(
             vec![GrindingRun::proof_of_work(
                 GrindingSite::ExtensionOpeningPoint { level: 4 },
                 2,
-                128,
+                order,
             )
             .unwrap()],
-            128,
+            order,
         )
         .unwrap();
         let state = new_native_prover(b"native-vector-grinding", b"fixture").unwrap();
@@ -842,7 +851,11 @@ mod tests {
 
     #[test]
     fn native_grinding_rejects_out_of_range_response_and_incomplete_plan() {
-        let plan = GrindingPlan::new(vec![GrindingRun::fold_response(0)], 128).unwrap();
+        let plan = GrindingPlan::new(
+            vec![GrindingRun::fold_response(0)],
+            ChallengeFieldOrder::from_full_capacity(128).unwrap(),
+        )
+        .unwrap();
         let state = new_native_prover(b"native-grinding", b"fixture").unwrap();
         let mut prover = NativeProverGrinding::new(state, &plan);
         assert_eq!(
@@ -876,9 +889,13 @@ mod tests {
 
     #[test]
     fn replay_poison_survives_post_advance_allocation_failure() {
+        let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
         let site = GrindingSite::ExtensionOpeningPoint { level: 9 };
-        let plan = GrindingPlan::new(vec![GrindingRun::proof_of_work(site, 1, 128).unwrap()], 128)
-            .unwrap();
+        let plan = GrindingPlan::new(
+            vec![GrindingRun::proof_of_work(site, 1, order).unwrap()],
+            order,
+        )
+        .unwrap();
 
         let state = new_native_prover(b"native-poison", b"fixture").unwrap();
         let mut prover = NativeProverGrinding::new(state, &plan);
@@ -916,7 +933,7 @@ mod tests {
                 GrindingRun::fold_challenge_group(3, 0, 2).unwrap(),
                 GrindingRun::fold_challenge_group(3, 1, 2).unwrap(),
             ],
-            128,
+            ChallengeFieldOrder::from_full_capacity(128).unwrap(),
         )
         .unwrap();
         let config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();

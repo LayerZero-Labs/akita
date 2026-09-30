@@ -108,12 +108,10 @@ where
 /// centering convention is written once: a canonical
 /// residue at or below `centering_threshold` is the positive side, anything above
 /// it is negative with magnitude `modulus - canonical`. That is the same split
-/// `akita_algebra::ring::cyclotomic::center_for_decomposition` applies. We track
-/// the magnitude directly rather than calling that helper because it is
-/// `pub(crate)` to `akita-algebra` and returns an `i128` centered value, which
-/// cannot hold the largest negative magnitude a full-width residue reaches
-/// (`modulus - canonical` can exceed `i128::MAX`); the range check needs the
-/// `u128` magnitude on each side.
+/// `akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params` applies when
+/// it selects the bias for a residue. The range check tracks the `u128`
+/// magnitude on each side because `modulus - canonical` can exceed `i128::MAX`
+/// for a full-width residue.
 ///
 /// This runs over the whole committed span before any commitment arithmetic, so
 /// at `nv = 26` it is ~2^26 canonical reductions. The rest of the commit path is

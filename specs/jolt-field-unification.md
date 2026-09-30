@@ -401,9 +401,26 @@ and Fiat-Shamir schedule while bounding decoder allocation from trusted shape.
 
 Akita consumes `jolt-field` from either a standalone registry release or an
 immutable full upstream Jolt Git revision. During stacked review it pins
-upstream commit `e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c`, the merge commit of
-Jolt PR #1810. That revision includes the merged field stack and kernel work
-from Jolt PRs #1792 and #1794.
+upstream commit `1618f4b6dc97effcec3568ca7cf2b7420ac9e75f`, the merge commit of
+Jolt PR #1942 on Jolt `main`. That revision includes the merged field stack,
+kernel work, and coefficient access from Jolt PRs #1792, #1794, and #1810.
+
+Audit delta from the previous pin `e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c`
+to `1618f4b6dc97effcec3568ca7cf2b7420ac9e75f` in `crates/jolt-field`:
+
+- Jolt PR #1799 makes the `from_canonical_*` constructors `unsafe`, with the
+  existing `x < P` precondition as the safety contract; their behavior is
+  unchanged. It also adds proved Fp64 assembly kernels and a build-matrix check.
+  The kernels are compiled only under the `fp64-proof-linkage` feature, which
+  Akita does not enable, so Akita's Fp64 arithmetic is unchanged.
+- Jolt PR #1942 adds `WithCommitAccumulator::CommitLanes` (`[u16; N]`) with
+  `flatten_commit_lanes` and `flatten_wide_mut`. The lanes are the existing
+  16-bit split of a canonical element, and `Wide` values built from an element
+  are unchanged.
+- Jolt PR #1945 changes documentation and tests only.
+
+No change in this delta affects field arithmetic results, canonical
+encodings, or serialization.
 
 Jolt itself uses the local `crates/jolt-field` workspace member. When Jolt later
 consumes the migrated Akita revision, PR C must use a root Cargo source patch or

@@ -601,7 +601,11 @@ mod tests {
             self.split.current_tau()
         }
 
-        fn compute_round_eq_factored(&mut self, _round: usize) -> OmittedConstantPoly<F> {
+        fn compute_round_eq_factored(
+            &mut self,
+            _round: usize,
+            _claim: F,
+        ) -> OmittedConstantPoly<F> {
             OmittedConstantPoly::from_q_coefficients(self.coefficients.clone())
         }
 
@@ -769,7 +773,7 @@ mod tests {
             self.split.current_tau()
         }
 
-        fn compute_round_eq_factored(&mut self, round: usize) -> OmittedConstantPoly<F> {
+        fn compute_round_eq_factored(&mut self, round: usize, _claim: F) -> OmittedConstantPoly<F> {
             let [a, b, c, d] = self.coefficients;
             let coefficients = if round == 0 {
                 vec![a + c * self.equality[1], b + d * self.equality[1]]

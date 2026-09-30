@@ -106,8 +106,13 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
             make_onehot_poly::<BaseCfg>(FINAL_NV, 0x0bee_fcaf_2026_1000 + poly_idx as u64)
         })
         .collect();
-    let precommitteds = PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
-        .expect("nonempty precommitted groups");
+    let precommitteds = PrecommittedGroupProfiles::from_profiles(
+        pre_commitments
+            .iter()
+            .map(|group| *group.profile())
+            .collect(),
+    )
+    .expect("nonempty precommitted groups");
     let akita_cpu_backend::CommitOutput {
         committed_group: final_commitment,
         private_handle: final_hint,
@@ -199,13 +204,15 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
     };
 
     recursive_scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            transcript_domain,
-            verify_claims(final_openings.clone()),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                transcript_domain,
+                verify_claims(final_openings.clone()),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("generated-profile recursive verify");
 
     if let Some(alternate_verifier_setup) = verifier_setup_with_alternate_full_prefix(
@@ -213,13 +220,16 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
         &verifier_setup,
         &first_setup_prefix_slot(&schedule),
     ) {
-        let alternate_result = recursive_scheme.batched_verify(
-            &proof,
-            &alternate_verifier_setup,
-            transcript_domain,
-            verify_claims(final_openings.clone()),
-            BasisMode::Lagrange,
-        );
+        let alternate_result = recursive_scheme
+            .verifier(alternate_verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    transcript_domain,
+                    verify_claims(final_openings.clone()),
+                    BasisMode::Lagrange,
+                )
+            });
         assert!(
             alternate_result.is_err(),
             "successor grouped opening must reject a full-prefix commitment whose active prefix agrees but tail differs"
@@ -227,13 +237,16 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
     }
 
     let reject_stage3_tamper = |tampered_proof: Vec<u8>, label: &str| {
-        let result = recursive_scheme.batched_verify(
-            &tampered_proof,
-            &verifier_setup,
-            transcript_domain,
-            verify_claims(final_openings.clone()),
-            BasisMode::Lagrange,
-        );
+        let result = recursive_scheme
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &tampered_proof,
+                    transcript_domain,
+                    verify_claims(final_openings.clone()),
+                    BasisMode::Lagrange,
+                )
+            });
         assert!(
             result.is_err(),
             "{label} must be rejected without panicking"
@@ -263,13 +276,16 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
 
     let mut tampered = final_openings;
     tampered[0] += F::from_u128_reduced(1);
-    let tampered_result = recursive_scheme.batched_verify(
-        &proof,
-        &verifier_setup,
-        transcript_domain,
-        verify_claims(tampered),
-        BasisMode::Lagrange,
-    );
+    let tampered_result = recursive_scheme
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                transcript_domain,
+                verify_claims(tampered),
+                BasisMode::Lagrange,
+            )
+        });
     assert!(
         tampered_result.is_err(),
         "recursive verify must reject a tampered final opening"

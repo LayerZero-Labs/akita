@@ -4,7 +4,7 @@
 
 mod support;
 
-use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
+use akita_algebra::ring::cyclotomic::{decompose_centering_threshold, BalancedDecomposePow2Params};
 use akita_algebra::{CanonicalEncoding, CyclotomicRing, Field};
 use akita_cpu_backend::benchmark_support::decompose_rows_i8_into;
 use akita_metal::decompose::decompose;
@@ -86,11 +86,12 @@ fn check_i8<F: MetalField + CanonicalEncoding>(metal: &AkitaMetal, levels: usize
 
 fn check_i16<F: MetalField + CanonicalEncoding>(metal: &AkitaMetal, levels: usize, log_basis: u32) {
     let input = coefficients::<F>(levels, log_basis, levels as u64 * 37 + u64::from(log_basis));
+    let params = BalancedDecomposePow2Params::<F>::new(levels, log_basis);
     let expected = rings(&input)
         .iter()
         .flat_map(|ring| {
             let mut planes = vec![[0i16; D]; levels];
-            ring.balanced_decompose_pow2_i16_into(&mut planes, log_basis);
+            ring.balanced_decompose_pow2_i16_into(&mut planes, &params);
             planes
         })
         .collect::<Vec<_>>();

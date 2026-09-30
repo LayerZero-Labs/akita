@@ -25,11 +25,18 @@ impl ResolvedScheduleRow {
     /// provenance. Admission happens when callers construct a
     /// [`ValidatedScheduleCatalog`](crate::ValidatedScheduleCatalog) from an
     /// application-chosen trusted source.
+    ///
+    /// The row must use only opening methods that proving and verification
+    /// execute: coefficient packing at levels 0 and 1, evaluation trace at later
+    /// nonterminal levels. A row that would open by extension opening reduction
+    /// at level 0 or 1 is rejected here, before its geometry is audited, rather
+    /// than on the first proof.
     pub fn try_new(
         profiles: CommittedGroupBatchProfile,
         schedule: FoldSchedule,
         policy: &PlannerPolicy,
     ) -> Result<Self, AkitaError> {
+        schedule.validate_nonterminal_opening_execution(policy.claim_ext_degree)?;
         audit_resolved_schedule(&profiles, &schedule, policy)?;
         validate_schedule_ring_dims(&schedule)?;
         validate_canonical_transition_lengths(&profiles, &schedule, policy)?;

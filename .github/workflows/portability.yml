@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Check verifier with portable CPU target
         run: RUSTFLAGS="-D warnings -C target-cpu=x86-64" cargo check --release -p akita-verifier --no-default-features --features transcript-blake2b
       - name: Test binary arithmetic and exact-cache boundary
@@ -33,17 +33,17 @@ jobs:
           cargo test --release -p akita-verifier --lib terminal_ntt
 
   aarch64-neon:
-    name: Native AArch64 NEON exact NTT
+    name: Native AArch64 NEON kernels
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Require native AArch64 NEON
         run: |
           test "$(uname -m)" = "aarch64"
           grep -Eq '(^|[[:space:]])(asimd|neon)([[:space:]]|$)' /proc/cpuinfo
           grep -Eq '(^|[[:space:]])pmull([[:space:]]|$)' /proc/cpuinfo
-      - name: Run architecture-specific arithmetic tests
+      - name: Run architecture-specific arithmetic and wide-mass tests
         env:
           RUSTFLAGS: -D warnings -C target-cpu=native
         run: |
@@ -51,13 +51,14 @@ jobs:
           cargo test --release -p akita-algebra --lib ntt
           cargo test --release -p akita-types --lib ntt_cache
           cargo test --release -p akita-verifier --lib terminal_ntt
+          cargo test --release -p akita-cpu-backend --lib wide_mass::tests
 
   avx512-ifma:
     name: AVX-512 IFMA exact NTT (emulated)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Install Intel Software Development Emulator
         run: |
           curl --fail --location --silent --show-error --output /tmp/intel-sde.tar.xz https://downloadmirror.intel.com/924984/sde-external-10.13.1-2026-07-28-lin.tar.xz
@@ -80,7 +81,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
       - name: Check serialization on wasm
