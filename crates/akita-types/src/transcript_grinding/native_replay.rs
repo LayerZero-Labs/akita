@@ -9,7 +9,7 @@ use akita_transcript::{
     commit_native_grinding_nonce, grinding_predicate_accepts, native_ext_challenge,
     native_nonce_encoded_len, native_nonce_max_bytes, prover_context,
     receive_native_grinding_nonce, search_native_grinding_nonce, verifier_context,
-    NativeFoldPreview, NativeNonce, NativeProverState, NativeTranscript, NativeVerifierState,
+    NativeFoldPreview, NativeNonce, NativeProverState, NativeVerifierState, ProofChannel,
     ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, GRINDING_PREDICATE_LEN,
     SITE_FAMILY_SUMCHECK,
 };
@@ -151,7 +151,7 @@ fn fold_response_record(site: GrindingSite, nonce_bits: u8) -> ProtocolContextRe
 /// boundary rejects even if a caller drops the error.
 pub trait NativeGrinding {
     /// The role-specific native transcript state.
-    type State: NativeTranscript;
+    type State: ProofChannel;
 
     /// Borrow the native state for ordinary protocol messages and challenges.
     ///

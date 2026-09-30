@@ -1,4 +1,4 @@
-//! Role-generic access to the native proof stream.
+//! Role-generic access to one end of the proof channel.
 
 use super::{
     native_prover_field_challenge, native_verifier_field_challenge, prover_context,
@@ -8,13 +8,17 @@ use super::{
 use jolt_field::CanonicalEncoding;
 use spongefish::{Encoding, NargDeserialize, VerificationError};
 
-/// One side of the native Akita proof stream.
+/// One party's end of the Akita proof channel.
+///
+/// The prover writes proof bytes into the Fiat-Shamir state and the verifier
+/// reads them back, so the two ends are not interchangeable the way a
+/// symmetric absorb/squeeze transcript is.
 ///
 /// Protocol-site code written against this trait runs unchanged for the prover
 /// and the verifier. A proof message is exchanged in place: the prover emits
 /// the value it holds and leaves it unchanged, and the verifier overwrites the
 /// slot with the decoded atom.
-pub trait NativeTranscript {
+pub trait ProofChannel {
     /// Record diagnostic metadata for the next message or challenge group.
     fn context(&mut self, record: ProtocolContextRecord);
 
@@ -41,7 +45,7 @@ pub trait NativeTranscript {
     fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, NativeContextError>;
 }
 
-impl NativeTranscript for NativeProverState {
+impl ProofChannel for NativeProverState {
     #[inline(always)]
     fn context(&mut self, record: ProtocolContextRecord) {
         prover_context(self, record);
@@ -64,7 +68,7 @@ impl NativeTranscript for NativeProverState {
     }
 }
 
-impl NativeTranscript for NativeVerifierState<'_> {
+impl ProofChannel for NativeVerifierState<'_> {
     #[inline(always)]
     fn context(&mut self, record: ProtocolContextRecord) {
         verifier_context(self, record);

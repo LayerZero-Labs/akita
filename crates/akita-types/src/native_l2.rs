@@ -3,7 +3,7 @@
 use crate::NativeGrinding;
 use akita_error::AkitaError;
 use akita_transcript::{
-    exchange_native_extension_group, NativeTranscript, NativeU128, ProtocolContextRecord,
+    exchange_native_extension_group, NativeU128, ProofChannel, ProtocolContextRecord,
     ProtocolMessageKind, ProtocolSiteId, SITE_FAMILY_PHYSICAL_L2,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};

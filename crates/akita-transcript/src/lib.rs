@@ -35,7 +35,7 @@ pub use native::{
     send_native_bounded_bytes, send_native_byte_group, send_native_bytes, send_native_extension,
     send_native_field, send_native_field_group, verifier_context, NativeContextError,
     NativeExtension, NativeField, NativeFoldPreview, NativeInitializationError, NativeNonce,
-    NativeProverState, NativeTranscript, NativeU128, NativeVerifierState, ProtocolContextRecord,
+    NativeProverState, NativeU128, NativeVerifierState, ProofChannel, ProtocolContextRecord,
     ProtocolMessageKind, ProtocolSiteId, NATIVE_CONTEXT_DOMAIN, NATIVE_FIELD_CHALLENGE_BYTES,
     NATIVE_FIELD_SAMPLING_QUERY_LIMIT, NATIVE_PROTOCOL_VERSION,
     SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_FOLD_CHALLENGE,

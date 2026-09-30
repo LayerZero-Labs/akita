@@ -12,14 +12,14 @@ use crate::TranscriptSponge;
 
 mod nonce;
 pub use nonce::{native_nonce_encoded_len, native_nonce_max_bytes, NativeNonce};
+mod channel;
 mod sampling;
-mod transcript;
+pub use channel::ProofChannel;
 pub use sampling::{
     native_field_challenge_bytes, native_field_sampling_is_certified,
     native_prover_field_challenge, native_verifier_field_challenge, NATIVE_FIELD_CHALLENGE_BYTES,
     NATIVE_FIELD_SAMPLING_QUERY_LIMIT,
 };
-pub use transcript::NativeTranscript;
 mod verifier;
 pub use verifier::NativeVerifierState;
 mod site;
@@ -619,7 +619,7 @@ fn public_bytes_record(
 }
 
 /// Absorb one public byte string and record its diagnostic site.
-pub fn public_native_bytes<S: NativeTranscript>(
+pub fn public_native_bytes<S: ProofChannel>(
     state: &mut S,
     site: ProtocolSiteId,
     bytes: &[u8],
@@ -637,7 +637,7 @@ pub fn native_ext_challenge<F, E, S>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    S: NativeTranscript,
+    S: ProofChannel,
 {
     let mut coefficients = Vec::new();
     coefficients
@@ -912,7 +912,7 @@ pub fn public_native_extensions<F, E, S>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    S: NativeTranscript,
+    S: ProofChannel,
 {
     state.context(extension_group_record::<F, E>(
         site,
@@ -958,7 +958,7 @@ pub fn exchange_native_extension_group<F, E, S>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    S: NativeTranscript,
+    S: ProofChannel,
 {
     let record =
         extension_group_record::<F, E>(site, ProtocolMessageKind::ProofAtoms, values.len())
