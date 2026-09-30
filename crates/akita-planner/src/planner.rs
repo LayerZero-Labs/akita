@@ -868,6 +868,7 @@ pub(crate) fn find_schedule_in_relation_order(
     })?;
     let suffix_ctx = SuffixCtx {
         policy: active_policy,
+        challenge_order: active_policy.transcript_grinding_order()?,
         diagnostics,
         ring_challenge_config,
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),

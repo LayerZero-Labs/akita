@@ -92,7 +92,7 @@ fn check_configuration(coefficient_bits: usize, live_lanes: usize, mode: WeightM
             }
         })
         .collect::<Vec<_>>();
-    let relation_claim = witness
+    let relation_claim: F = witness
         .iter()
         .zip(&relation)
         .map(|(&w, &p)| F::from_i64(i64::from(w)) * p)
@@ -144,6 +144,9 @@ fn check_configuration(coefficient_bits: usize, live_lanes: usize, mode: WeightM
         )
         .unwrap()
     });
+    let additional_claim = additional
+        .as_ref()
+        .map_or_else(F::zero, |terms| terms.input_claim(&packed_witness));
     let mut prover = RelationRangeImageProver::new(
         gamma,
         packed_witness,
@@ -154,9 +157,8 @@ fn check_configuration(coefficient_bits: usize, live_lanes: usize, mode: WeightM
         live_lanes,
         lane_bits,
         coefficient_bits,
-        relation_claim,
+        relation_claim + direct.evaluation_trace + additional_claim,
         structured,
-        direct.evaluation_trace,
         additional,
     )
     .unwrap();
@@ -217,4 +219,172 @@ fn stage2_every_phase_matches_boolean_hypercube_reference() {
             }
         }
     }
+}
+
+#[test]
+fn factored_response_norm_source_matches_dense_reference_through_all_transitions() {
+    for (basis, with_trace) in [
+        (4, false),
+        (8, false),
+        (32, false),
+        (4, true),
+        (8, true),
+        (32, true),
+    ] {
+        check_response_norm_source(basis, with_trace, false);
+    }
+    // Retain the original out-of-range compact-prefix fallback coverage.
+    check_response_norm_source(8, false, true);
+}
+
+fn check_response_norm_source(basis: usize, with_trace: bool, wide_digits: bool) {
+    let coefficient_bits = 3usize;
+    let coeff_count = 1usize << coefficient_bits;
+    let lane_bits = 3usize;
+    let live_lane_count = 6usize;
+    let domain_len = 1usize << (coefficient_bits + lane_bits);
+    let witness = (0..live_lane_count * coeff_count)
+        .map(|index| {
+            if wide_digits {
+                match index {
+                    0 => i8::MIN,
+                    1 => -1,
+                    _ => ((index * 7 + 3) % 13) as i8 - 6,
+                }
+            } else {
+                ((index * 7 + 3) % basis) as i8 - (basis / 2) as i8
+            }
+        })
+        .collect::<Vec<_>>();
+    let packed_witness = packed(&witness);
+    let point = (0..coefficient_bits + lane_bits)
+        .map(|index| F::from_u64(109 + 17 * index as u64))
+        .collect::<Vec<_>>();
+    let batching = F::from_u64(131);
+    let common_alpha_factor = (0..coeff_count)
+        .map(|index| F::from_u64(149 + 11 * index as u64))
+        .collect::<Vec<_>>();
+    let relation_lane_weights = (0..1usize << lane_bits)
+        .map(|index| F::from_u64(173 + 13 * index as u64))
+        .collect::<Vec<_>>();
+    let coefficient_weights = EqPolynomial::evals(&point[..coefficient_bits]).unwrap();
+    let norm_lane_weights = (0..live_lane_count)
+        .map(|lane| {
+            let high_point = &point[coefficient_bits..];
+            let equality = EqPolynomial::evals(high_point).unwrap();
+            equality[lane]
+        })
+        .collect::<Vec<_>>();
+    let mut linear = (0..live_lane_count)
+        .flat_map(|lane| {
+            let lane_factor = norm_lane_weights[lane];
+            coefficient_weights
+                .iter()
+                .map(move |&coefficient| lane_factor * coefficient)
+        })
+        .collect::<Vec<_>>();
+    let trace = with_trace.then(|| {
+        super::super::evaluation_trace::tests::response_norm_trace_fixture::<F>(
+            live_lane_count,
+            coeff_count,
+        )
+    });
+    if let Some((_, trace_weights)) = &trace {
+        for (weight, trace_weight) in linear.iter_mut().zip(trace_weights) {
+            *weight += *trace_weight;
+        }
+    }
+    linear.resize(domain_len, F::zero());
+    let linear_claim = witness
+        .iter()
+        .zip(&linear)
+        .map(|(&digit, &weight)| F::from_i64(i64::from(digit)) * weight)
+        .sum::<F>();
+
+    let padded_witness =
+        pad_compact_witness(&witness, live_lane_count, lane_bits, coefficient_bits);
+    let mut relation = (0..domain_len)
+        .map(|index| {
+            common_alpha_factor[index % coeff_count] * relation_lane_weights[index / coeff_count]
+        })
+        .collect::<Vec<_>>();
+    let base_relation_claim = padded_witness
+        .iter()
+        .zip(&relation)
+        .map(|(&digit, &weight)| F::from_i64(i64::from(digit)) * weight)
+        .sum::<F>();
+    for (weight, &linear_weight) in relation.iter_mut().zip(&linear) {
+        *weight += linear_weight;
+    }
+    let equality = EqPolynomial::evals(&point).unwrap();
+    let range_image_evaluation = padded_witness
+        .iter()
+        .zip(&equality)
+        .map(|(&digit, &eq)| {
+            let digit = F::from_i64(i64::from(digit));
+            eq * digit * (digit + F::one())
+        })
+        .sum::<F>();
+    let range = equality
+        .into_iter()
+        .map(|eq| batching * eq)
+        .collect::<Vec<_>>();
+    let mut reference = Reference {
+        witness: padded_witness
+            .into_iter()
+            .map(|digit| F::from_i64(i64::from(digit)))
+            .collect(),
+        linear: relation,
+        range,
+    };
+    let relation_factorization =
+        RelationWeightFactorization::new(common_alpha_factor, relation_lane_weights).unwrap();
+    let mut linear_terms = PreparedProverLinearTerms::from_response_norm_factors(
+        coefficient_weights,
+        norm_lane_weights,
+        live_lane_count,
+        coeff_count,
+    )
+    .unwrap();
+    if let Some((trace, _)) = trace {
+        linear_terms.merge(trace).unwrap();
+    }
+    let mut prover = RelationRangeImageProver::new(
+        batching,
+        packed_witness,
+        &point,
+        range_image_evaluation,
+        basis,
+        RelationWeightOracle::QuotientFactored(relation_factorization),
+        live_lane_count,
+        lane_bits,
+        coefficient_bits,
+        base_relation_claim + linear_claim,
+        linear_terms,
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(
+        prover.compact_quotient_prefix().is_some(),
+        basis != 32 && !wide_digits
+    );
+    if basis == 32 {
+        assert!(live_lane_count < (1 << lane_bits));
+        assert!(prover.has_factored_relation_moments());
+    }
+    let mut claim = reference.claim();
+    assert_eq!(prover.input_claim(), claim);
+    for round in 0..coefficient_bits + lane_bits {
+        let expected = reference.round();
+        let actual = prover.compute_round_univariate(round, claim);
+        assert_eq!(actual, expected, "round {round}");
+        let challenge = F::from_u64(211 + 19 * round as u64);
+        claim = expected.evaluate(challenge);
+        reference.bind(challenge);
+        prover.ingest_challenge(round, challenge);
+        assert_eq!(reference.claim(), claim, "fold {round}");
+    }
+    assert_eq!(prover.final_w_eval(), reference.witness[0]);
+    assert_eq!(prover.expected_final_claim().unwrap(), reference.claim());
 }

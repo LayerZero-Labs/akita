@@ -502,10 +502,12 @@ mod tests {
         let rounds = NUM_VARS - split_bits;
         let partials = vec![E::zero(); width];
         let plan = {
+            let challenge_order =
+                akita_types::ChallengeFieldOrder::from_full_capacity(128).unwrap();
             let mut runs = vec![akita_types::GrindingRun::proof_of_work(
                 akita_types::GrindingSite::ExtensionOpeningPoint { level },
                 1,
-                128,
+                challenge_order,
             )
             .unwrap()];
             for round in 0..rounds {
@@ -518,12 +520,12 @@ mod tests {
                             round: u32::try_from(round).unwrap(),
                         },
                         1,
-                        128,
+                        challenge_order,
                     )
                     .unwrap(),
                 );
             }
-            akita_types::GrindingPlan::new(runs, 128).unwrap()
+            akita_types::GrindingPlan::new(runs, challenge_order).unwrap()
         };
 
         let state = new_native_prover(b"native-eor-verifier", b"fixture").unwrap();

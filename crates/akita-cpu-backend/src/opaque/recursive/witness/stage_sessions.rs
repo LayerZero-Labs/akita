@@ -283,9 +283,7 @@ where
             round,
             previous_claim,
         );
-        if polynomial.degree() > 3
-            || polynomial.evaluate(E::zero()) + polynomial.evaluate(E::one()) != previous_claim
-        {
+        if polynomial.degree() > 3 {
             return Err(AkitaError::InvalidInput(
                 "relation session returned an invalid round polynomial".into(),
             ));
@@ -366,11 +364,8 @@ where
                 )
             })
             .transpose()?;
-        let ordinary_claim = plan.relation_claim() + plan.physical_l2_claim()
-            - additional.as_ref().map_or_else(
-                E::zero,
-                relation_range_image::AdditionalRelationTerms::input_claim,
-            );
+        let relation_linear_claim =
+            plan.relation_claim() + plan.physical_l2_claim() + plan.linear_opening_claim();
         let relation_weights = match weights.ordinary {
             crate::opaque::RelationWeightDescription::QuotientFactored(weights) => {
                 relation_range_image::RelationWeightOracle::QuotientFactored(weights)
@@ -389,8 +384,7 @@ where
         let live_lane_count = plan.live_lane_count();
         let lane_bits = plan.lane_bits();
         let coefficient_bits = plan.coefficient_bits();
-        let linear_opening_claim = plan.linear_opening_claim();
-        let linear_terms = match plan.into_linear_terms() {
+        let mut linear_terms = match plan.into_linear_terms() {
             crate::opaque::Stage2OpeningDescription::EvaluationTrace {
                 trace,
                 output_scale,
@@ -416,6 +410,16 @@ where
                 prepared
             }
         };
+        if let Some(factors) = weights.response_norm {
+            linear_terms.merge(
+                relation_range_image::PreparedProverLinearTerms::from_response_norm_factors(
+                    factors.coefficient_weights,
+                    factors.lane_weights,
+                    live_lane_count,
+                    1usize << coefficient_bits,
+                )?,
+            )?;
+        }
         let prover = relation_range_image::RelationRangeImageProver::new(
             batching_coefficient,
             witness.packed,
@@ -426,9 +430,8 @@ where
             live_lane_count,
             lane_bits,
             coefficient_bits,
-            ordinary_claim,
+            relation_linear_claim,
             linear_terms,
-            linear_opening_claim,
             additional,
         )?;
         let claim = akita_sumcheck::SumcheckInstanceProver::input_claim(&prover);

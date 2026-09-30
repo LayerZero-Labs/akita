@@ -353,23 +353,25 @@ condition used for unit pairwise challenge differences. This fact belongs to
 the field and challenge security review. It is not planner metadata and does
 not require a per-schedule certificate.
 
-For CWSS extraction, fix the transcript prefix, group root, shared fold-response
-nonce, and all coordinate-oracle answers except one. Reprogramming coordinate
-`j` gives two accepting transcripts whose challenge difference is zero outside
-`j`. The production LS18 condition makes every nonzero sparse-challenge
-difference a unit, so subtracting the accepted relations isolates that opening.
-The extractor uses the central accepting vector and one such fork for every
-claim-major coordinate. The random-oracle reduction charges all root and
-coordinate queries, including the jointly searched fold nonce. It does not
-assume that two arbitrary full-vector forks are enough.
+For a coordinatewise fork, fix the transcript prefix, group root, shared
+fold-response nonce, and all coordinate-oracle answers except one. If both
+forks yield accepting transcripts, their challenge difference is zero outside
+that coordinate. The production LS18 condition makes every nonzero
+sparse-challenge difference a unit, so subtracting the accepted relations
+algebraically isolates that opening. A binary CWSS extractor would need a
+central accepting vector and one such accepting fork for every claim-major
+coordinate. Complete accepting descendant trees authenticate the later
+relations and response bounds. The indexed matching-input game bounds failure
+to obtain these forks by charging every queried or verifier-completed
+coordinate address; see the [fold argument](../../../specs/transcript-grinding.md#indexed-address-fold-bound).
 
 The packed consistency equation still gives one polynomial identity in `E[Y]`.
 After including the `(Y^s + 1)Q_pack` term, its degree is at most `2s-1`, so the
-conditional polynomial-check error is `(2s-1)/|E|`. This term is added to the
-existing CWSS, random-oracle forking, sum-check, collision, and MSIS terms. See
-the active
+conditional polynomial-check error is `(2s-1)/|E|`. This term must be composed
+with the CWSS, random-oracle, sum-check, collision, and MSIS terms. The active
 [subring coefficient packing design record](../../../specs/subring-coefficient-packing.md)
-for the complete accounting.
+gives the algebraic relation and its separate field-check loss. The fold
+contribution is accounted by the indexed-address theorem above.
 
 The challenge response identity is exact when the accepted challenge has
 scalar covariance. The fixed point operator norm filter is not assumed to have

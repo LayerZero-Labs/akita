@@ -9,12 +9,15 @@
 use jolt_field::{Field, Unreduced, Zero};
 
 /// Largest digit basis the scan serves.
-pub(super) const MAX_DIGIT_BASIS: usize = 8;
+const DEFAULT_MAX_DIGIT_BASIS: usize = 8;
 
 /// Mass slots in blocks that always receive whole digit rows.
 ///
 /// A block is reduced before any of its `i32` lanes can overflow.
-pub(super) struct WideMass<E: Field + Unreduced> {
+pub(super) struct WideMass<
+    E: Field + Unreduced,
+    const MAX_DIGIT_BASIS: usize = DEFAULT_MAX_DIGIT_BASIS,
+> {
     wide: Vec<E::Wide>,
     reduced: Vec<E>,
     pending: Vec<usize>,
@@ -26,9 +29,13 @@ pub(super) struct WideMass<E: Field + Unreduced> {
     force_portable: bool,
 }
 
-impl<E: Field + Unreduced> WideMass<E> {
+impl<E: Field + Unreduced, const MAX_DIGIT_BASIS: usize> WideMass<E, MAX_DIGIT_BASIS> {
     pub(super) fn new(block_count: usize, block_len: usize, b: usize) -> Self {
-        debug_assert!(b.is_power_of_two() && (2..=MAX_DIGIT_BASIS).contains(&b));
+        debug_assert!(
+            MAX_DIGIT_BASIS.is_power_of_two()
+                && b.is_power_of_two()
+                && (2..=MAX_DIGIT_BASIS).contains(&b)
+        );
         Self {
             wide: vec![E::Wide::zero(); block_count * block_len],
             reduced: vec![E::zero(); block_count * block_len],
@@ -66,7 +73,7 @@ impl<E: Field + Unreduced> WideMass<E> {
         let block_len = self.block_len;
         let slots = block * block_len..(block + 1) * block_len;
         #[cfg(target_arch = "aarch64")]
-        let use_neon = block_len.is_multiple_of(neon::TILE);
+        let use_neon = self.half < 8 && block_len.is_multiple_of(neon::TILE);
         #[cfg(all(test, target_arch = "aarch64"))]
         let use_neon = use_neon && !self.force_portable;
         #[cfg(target_arch = "aarch64")]
@@ -81,7 +88,7 @@ impl<E: Field + Unreduced> WideMass<E> {
         let masses = &mut self.wide[slots];
         for &(factor, row) in rows {
             let row = row as usize;
-            add_row(
+            add_row::<E, MAX_DIGIT_BASIS>(
                 masses,
                 self.half,
                 factor,
@@ -116,7 +123,7 @@ impl<E: Field + Unreduced> WideMass<E> {
 
 /// Add `factor * digits[i]` to `masses[i]`.
 #[inline]
-fn add_row<E: Field + Unreduced>(
+fn add_row<E: Field + Unreduced, const MAX_DIGIT_BASIS: usize>(
     masses: &mut [E::Wide],
     half: usize,
     factor: E,
@@ -277,13 +284,17 @@ mod neon {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Prime128Offset275, Prime64Offset59};
+    use jolt_field::{Ext2, Prime128Offset275, Prime64Offset59};
 
     /// Rows added in shuffled groups match the direct field sum, across
     /// overflow flushes and with extreme factor limbs and digits.
-    fn check<E: Field + Unreduced + 'static>(b: usize, block_len: usize) {
+    fn check<E: Field + Unreduced + 'static, const MAX_BASIS: usize>(
+        b: usize,
+        block_len: usize,
+        force_portable: bool,
+    ) {
         let half = (b / 2) as i8;
-        let row_count = 2 * WideMass::<E>::new(1, block_len, b).max_rows() + 37;
+        let row_count = 2 * WideMass::<E, MAX_BASIS>::new(1, block_len, b).max_rows() + 37;
         let digits = (0..row_count * block_len)
             .map(|index| match index % 5 {
                 0 | 2 => -half,
@@ -299,7 +310,8 @@ mod tests {
             .map(|row| (row * 7919) % row_count as u32)
             .collect::<Vec<_>>();
 
-        let mut mass = WideMass::<E>::new(2, block_len, b);
+        let mut mass = WideMass::<E, MAX_BASIS>::new(2, block_len, b);
+        mass.force_portable = force_portable;
         let rows = order
             .iter()
             .map(|&row| (factors[row as usize], row))
@@ -361,11 +373,21 @@ mod tests {
     }
 
     #[test]
+    fn basis32_rows_match_direct_sum_across_flushes() {
+        for block_len in [4, 8, 64] {
+            for portable in [false, true] {
+                check::<Prime128Offset275, 32>(32, block_len, portable);
+                check::<Ext2<Prime64Offset59>, 32>(32, block_len, portable);
+            }
+        }
+    }
+
+    #[test]
     fn grouped_rows_match_direct_sum() {
         for block_len in [4, 8, 64] {
-            check::<Prime128Offset275>(8, block_len);
-            check::<Prime128Offset275>(4, block_len);
-            check::<Prime64Offset59>(8, block_len);
+            check::<Prime128Offset275, 8>(8, block_len, false);
+            check::<Prime128Offset275, 8>(4, block_len, false);
+            check::<Prime64Offset59, 8>(8, block_len, false);
         }
     }
 }

@@ -200,7 +200,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GrindingPlan, GrindingRun, PolynomialGroupLayout};
+    use crate::{ChallengeFieldOrder, GrindingPlan, GrindingRun, PolynomialGroupLayout};
     use akita_transcript::{new_native_prover, new_native_verifier};
     use jolt_field::{FpExt4, Prime32Offset99, Ring};
 
@@ -216,16 +216,20 @@ mod tests {
         .unwrap();
         let plan = GrindingPlan::new(
             vec![
-                GrindingRun::proof_of_work(GrindingSite::ExtensionOpeningPoint { level }, 1, 128)
-                    .unwrap(),
+                GrindingRun::proof_of_work(
+                    GrindingSite::ExtensionOpeningPoint { level },
+                    1,
+                    ChallengeFieldOrder::from_full_capacity(128).unwrap(),
+                )
+                .unwrap(),
                 GrindingRun::proof_of_work(
                     GrindingSite::ExtensionOpeningClaimBatch { level },
                     1,
-                    128,
+                    ChallengeFieldOrder::from_full_capacity(128).unwrap(),
                 )
                 .unwrap(),
             ],
-            128,
+            ChallengeFieldOrder::from_full_capacity(128).unwrap(),
         )
         .unwrap();
         let openings = (1..=layout.num_total_polynomials())

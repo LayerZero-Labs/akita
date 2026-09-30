@@ -7,7 +7,7 @@ pub type Field = Prime64Offset59;
 /// ring-subfield used for fp64 public claims and Fiat-Shamir challenges.
 pub type ExtensionField = Ext2<Field>;
 
-const SUFFIX_RING_DIMENSIONS: &[usize] = &[64];
+const SUFFIX_RING_DIMENSIONS: &[usize] = &[64, 128];
 const A_RING_DIMENSIONS: &[usize] = &[64, 128, 256, 512, 1024, 2048];
 const B_RING_DIMENSIONS: &[usize] = &[64, 128, 256];
 const D_RING_DIMENSIONS: &[usize] = &[64, 128, 256];

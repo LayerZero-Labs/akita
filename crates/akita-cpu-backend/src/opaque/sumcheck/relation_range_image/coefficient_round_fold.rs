@@ -1,7 +1,12 @@
 use super::*;
+use crate::opaque::sumcheck::par_fold_by_grain;
 
 #[allow(clippy::too_many_arguments)]
-fn fold_lane_and_compute_next_round<E: Field + Ring + Unreduced, const SKIP_LINEAR: bool>(
+fn fold_lane_and_compute_next_round<
+    E: Field + Ring + Unreduced,
+    const SKIP_LINEAR: bool,
+    const SKIP_RELATION: bool,
+>(
     linear_lane: &PreparedLinearLane<'_, E>,
     source: &[E],
     target: &mut [E],
@@ -13,12 +18,12 @@ fn fold_lane_and_compute_next_round<E: Field + Ring + Unreduced, const SKIP_LINE
     e_second: &[E],
     first_bits: usize,
     block_size: usize,
-) -> ([E; 3], [E; 3]) {
+) -> ([E; 3], RoundMessage<E>) {
     let next_coeff_count = target.len();
     let next_coefficient_half = next_coeff_count / 2;
     let equality_address_base = lane * next_coefficient_half;
     let mut virt = FieldNorm::<E, SKIP_LINEAR>::zero();
-    let mut rel = [E::zero(); 3];
+    let mut relation = RelationPairAccumulator::<E>::zero();
     let mut blk = 0usize;
 
     while blk < next_coefficient_half {
@@ -30,7 +35,7 @@ fn fold_lane_and_compute_next_round<E: Field + Ring + Unreduced, const SKIP_LINE
             block_size,
             next_coefficient_half,
         );
-        let mut inner_virt = FieldNorm::<E, SKIP_LINEAR>::zero();
+        let mut inner_virt = ProductNorm::<E, SKIP_LINEAR>::zero();
 
         for coefficient_pair in blk..blk_end {
             let left = 2 * coefficient_pair;
@@ -47,18 +52,22 @@ fn fold_lane_and_compute_next_round<E: Field + Ring + Unreduced, const SKIP_LINE
             let e_in = e_first[j_low];
             inner_virt.add(w0, dw, e_in);
 
-            let p0 = next_alpha_factor[left] * lane_weight;
-            let p1 = next_alpha_factor[left + 1] * lane_weight;
-            let (t0, t1) = linear_lane.pair(left);
-            accumulate_relation_coeffs(&mut rel, w0, dw, p0 + t0, p1 + t1);
+            if !SKIP_RELATION {
+                let p0 = next_alpha_factor[left] * lane_weight;
+                let p1 = next_alpha_factor[left + 1] * lane_weight;
+                let (t0, t1) = linear_lane.pair(left);
+                let q0 = p0 + t0;
+                let q1 = p1 + t1;
+                relation.add_pair(w1, dw, q0, q1);
+            }
         }
 
         let e_out = e_second[j_high];
-        virt.scaled_add(e_out, inner_virt.totals());
+        virt.scaled_add(e_out, inner_virt.reduce());
         blk = blk_end;
     }
 
-    (virt.totals(), rel)
+    (virt.totals(), relation.finish())
 }
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
@@ -72,16 +81,16 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         weights: &RelationWeightFactorization<E>,
         next_alpha_factor: &[E],
         challenge: E,
-    ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
+    ) -> (Vec<E>, NormRoundTerms<E>, RoundMessage<E>) {
         if self.can_skip_norm_linear_coeff() {
-            self.fuse_folded_coefficients_with::<true>(
+            self.fuse_folded_coefficients_with::<true, false>(
                 folded_witness,
                 weights,
                 next_alpha_factor,
                 challenge,
             )
         } else {
-            self.fuse_folded_coefficients_with::<false>(
+            self.fuse_folded_coefficients_with::<false, false>(
                 folded_witness,
                 weights,
                 next_alpha_factor,
@@ -90,13 +99,38 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         }
     }
 
-    fn fuse_folded_coefficients_with<const SKIP_LINEAR: bool>(
+    pub(super) fn fuse_folded_coefficients_and_compute_next_round_norm_terms(
         &self,
         folded_witness: &[E],
         weights: &RelationWeightFactorization<E>,
         next_alpha_factor: &[E],
         challenge: E,
-    ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
+    ) -> (Vec<E>, NormRoundTerms<E>) {
+        let (output, norm, _) = if self.can_skip_norm_linear_coeff() {
+            self.fuse_folded_coefficients_with::<true, true>(
+                folded_witness,
+                weights,
+                next_alpha_factor,
+                challenge,
+            )
+        } else {
+            self.fuse_folded_coefficients_with::<false, true>(
+                folded_witness,
+                weights,
+                next_alpha_factor,
+                challenge,
+            )
+        };
+        (output, norm)
+    }
+
+    fn fuse_folded_coefficients_with<const SKIP_LINEAR: bool, const SKIP_RELATION: bool>(
+        &self,
+        folded_witness: &[E],
+        weights: &RelationWeightFactorization<E>,
+        next_alpha_factor: &[E],
+        challenge: E,
+    ) -> (Vec<E>, NormRoundTerms<E>, RoundMessage<E>) {
         debug_assert!(self.in_coefficient_round());
         debug_assert!(self.current_coefficient_width() >= 2);
         let old_coeff_count = weights.common_alpha_factor().len();
@@ -109,34 +143,45 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let next_coefficient_half = next_coeff_count / 2;
         let block_size = e_first.len().min(next_coefficient_half);
         let mut output = vec![E::zero(); self.live_lane_count * next_coeff_count];
-        let totals = cfg_fold_reduce!(
+        let identity = || ([E::zero(); 3], RoundMessage::zero());
+        let fold = |mut totals, (lane, target)| {
+            let source_start = lane * old_coeff_count;
+            let source = &folded_witness[source_start..source_start + old_coeff_count];
+            let lane_weight = if SKIP_RELATION {
+                E::zero()
+            } else {
+                weights.relation_lane_weights()[lane]
+            };
+            let linear_lane = if SKIP_RELATION {
+                PreparedLinearLane::zero()
+            } else {
+                self.linear_terms.resolve_lane(lane)
+            };
+            let terms = fold_lane_and_compute_next_round::<E, SKIP_LINEAR, SKIP_RELATION>(
+                &linear_lane,
+                source,
+                target,
+                next_alpha_factor,
+                lane,
+                lane_weight,
+                challenge,
+                e_first,
+                e_second,
+                first_bits,
+                block_size,
+            );
+            add_round_terms(&mut totals, terms);
+            totals
+        };
+        let totals = par_fold_by_grain(
             cfg_chunks_mut!(output, next_coeff_count).enumerate(),
-            || ([E::zero(); 3], [E::zero(); 3]),
-            |mut totals, (lane, target)| {
-                let source_start = lane * old_coeff_count;
-                let source = &folded_witness[source_start..source_start + old_coeff_count];
-                let lane_weight = weights.relation_lane_weights()[lane];
-                let linear_lane = self.linear_terms.resolve_lane(lane);
-                let terms = fold_lane_and_compute_next_round::<E, SKIP_LINEAR>(
-                    &linear_lane,
-                    source,
-                    target,
-                    next_alpha_factor,
-                    lane,
-                    lane_weight,
-                    challenge,
-                    e_first,
-                    e_second,
-                    first_bits,
-                    block_size,
-                );
-                add_round_terms(&mut totals, terms);
-                totals
-            },
+            next_coefficient_half,
+            identity,
+            fold,
             |mut left, right| {
                 add_round_terms(&mut left, right);
                 left
-            }
+            },
         );
         (
             output,

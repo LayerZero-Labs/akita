@@ -140,9 +140,9 @@ fn consider_complete_schedule(
     else {
         return Ok(());
     };
-    if !policy
+    if policy
         .setup_field_budget
-        .is_none_or(|budget| candidate.setup_field_elements <= budget)
+        .is_some_and(|budget| candidate.setup_field_elements > budget)
     {
         return Ok(());
     }
