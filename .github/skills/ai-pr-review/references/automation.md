@@ -10,7 +10,8 @@ Review the supplied PR deeply using the embedded deslop and code-quality passes.
 Check live specifications, regressions, integration, duplicated policy, needless
 indirection, error paths and missing tests. Use the pinned source tools to inspect
 complete affected functions, their callers, tests, relevant docs, and repository
-contracts. Account for every changed file in `coverage`. Excluded binary, large,
+contracts. Set `coverage` to exactly the changed-file paths, once each, without
+prose or descriptions. Excluded binary, large,
 symlink and submodule content is not available: identify affected coverage gaps.
 Do not claim tests ran. This automated mode cannot execute code, inspect external
 services, read linked URLs or reconstruct other PR stacks. State relevant limits;

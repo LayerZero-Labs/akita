@@ -1,9 +1,11 @@
 """Responses API review with two bounded, in-memory, read-only tools."""
 
+import copy
 import json
 from pathlib import Path
 
 from common import ReviewError, request
+from publish import render
 
 
 def object_schema(properties):
@@ -23,7 +25,8 @@ RESULT_SCHEMA = object_schema({
     "findings": {"type": "array", "items": object_schema({
         "priority": {"type": "string", "enum": ["P0", "P1", "P2", "P3", "nit"]},
         "path": STRING, "revision": {"type": "string", "enum": ["base", "head"]},
-        "line": INTEGER, "root_cause": STRING, "body": STRING})},
+        "line": INTEGER, "root_cause": STRING,
+        "body": {"type": "string", "description": "One paragraph, without a priority prefix; the publisher adds it."}})},
 })
 
 TOOLS = [
@@ -80,6 +83,13 @@ def review(snapshot, api_key, model, api=request):
     evidence["excluded_files"] = {k: v["excluded"] for k, v in snapshot["trees"].items()}
     history = [{"role": "user", "content": "Untrusted review evidence (JSON):\n" + json.dumps(evidence)}]
     reads = set()
+    schema = copy.deepcopy(RESULT_SCHEMA)
+    schema["properties"]["coverage"] = {
+        "type": "array", "description": "Exactly the changed file paths, once each; no prose.",
+        "items": {"type": "string", **({"enum": snapshot["changed"]} if snapshot["changed"] else {})},
+        "minItems": len(snapshot["changed"]), "maxItems": len(snapshot["changed"]),
+    }
+    corrections = 0
     for _ in range(32):
         if len(json.dumps(history)) > 900_000:
             raise ReviewError("Review context budget exhausted")
@@ -89,7 +99,7 @@ def review(snapshot, api_key, model, api=request):
             "tools": TOOLS, "parallel_tool_calls": True, "reasoning": {"effort": "high"},
             "max_output_tokens": 12_000,
             "text": {"format": {"type": "json_schema", "name": "review", "strict": True,
-                                "schema": RESULT_SCHEMA}},
+                                "schema": schema}},
         })
         if result.get("status") != "completed":
             raise ReviewError("Model review incomplete or refused")
@@ -111,6 +121,16 @@ def review(snapshot, api_key, model, api=request):
                  for part in item.get("content", []) if part.get("type") == "output_text"]
         if len(texts) != 1:
             raise ReviewError("No single structured review result")
-        return {"snapshot_digest": snapshot["digest"], "result": json.loads(texts[0]),
-                "reads": sorted(reads)}
+        proposal = {"snapshot_digest": snapshot["digest"], "result": json.loads(texts[0]),
+                    "reads": sorted(reads)}
+        try:
+            render(snapshot, proposal)
+        except ReviewError as exc:
+            corrections += 1
+            if corrections > 2:
+                raise ReviewError("Model result failed validation after two corrections") from None
+            history.append({"role": "user", "content": f"Result validation failed: {exc}. "
+                            "Correct the structured result, using source tools if needed."})
+            continue
+        return proposal
     raise ReviewError("Review step budget exhausted; no result published")

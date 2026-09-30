@@ -9,10 +9,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ai_review"))
 from collect import discussions, previous_state, tree
-from common import MARKER, REPOSITORY, ReviewError, authorize, digest, revision
+from common import GitHub, MARKER, NoRedirect, REPOSITORY, ReviewError, authorize, digest, request, revision
 from model import review, source_tool
 from publish import publish, render, validate
 
@@ -278,6 +279,35 @@ class WorkflowTests(unittest.TestCase):
             for action in re.findall(r"\buses:\s*([^\s#]+)", path.read_text()):
                 if not action.startswith("./"):
                     self.assertRegex(action, r"^[\w./-]+@[0-9a-f]{40}$", str(path))
+
+
+class TransportTests(unittest.TestCase):
+    def test_pagination_reads_all_pages_and_refuses_truncation(self):
+        github = GitHub("secret")
+        with patch.object(github, "get", side_effect=[list(range(100)), [100]]) as api:
+            self.assertEqual(len(github.pages("issues/7/comments")), 101)
+            self.assertIn("page=2", api.call_args.args[0])
+        with patch.object(github, "get", return_value=list(range(100))):
+            with self.assertRaises(ReviewError):
+                github.pages("issues/7/comments")
+
+    def test_writer_uses_live_permission_and_identity_not_association(self):
+        github = GitHub("secret")
+        for permission, uid, expected in (("write", 42, True), ("admin", 42, True),
+                                          ("maintain", 42, True), ("read", 42, False),
+                                          ("write", 9, False)):
+            with patch.object(github, "get", return_value={"permission": permission, "user": {"id": uid}}):
+                self.assertEqual(github.writer(AUTHOR), expected)
+
+    def test_no_redirect_or_model_selected_origin_can_receive_credentials(self):
+        with self.assertRaises(ReviewError):
+            NoRedirect().redirect_request(None, None, 302, "", {}, "https://evil.test")
+        with patch("urllib.request.build_opener") as opener:
+            with self.assertRaises(ReviewError):
+                request("https://evil.test", "/", "secret")
+            with self.assertRaises(ReviewError):
+                request("https://api.github.com", "//evil.test", "secret")
+            opener.assert_not_called()
 
 
 if __name__ == "__main__":
