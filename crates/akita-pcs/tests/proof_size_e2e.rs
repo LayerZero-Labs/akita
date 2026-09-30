@@ -233,11 +233,11 @@ fn point<E: Field + Ring>(nv: usize) -> Vec<E> {
 
 fn dense_group<F: Field + Ring + CanonicalEncoding>(
     nv: usize,
-    salt: u64,
+    eval_mask: u64,
 ) -> Group<DensePoly<F>, F> {
     let point = point::<F>(nv);
     let evals: Vec<F> = (0..(1u64 << nv))
-        .map(|index| F::from_u64(index ^ salt))
+        .map(|index| F::from_u64(index ^ eval_mask))
         .collect();
     let opening = lagrange_weights(&point)
         .expect("weights")
