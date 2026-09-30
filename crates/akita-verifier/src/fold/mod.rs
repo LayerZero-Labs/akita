@@ -1,8 +1,12 @@
-//! Root and suffix fold verifier replay for Akita proofs.
+//! Fold orchestration for Akita proofs.
 //!
-//! This module owns the shared per-fold replay engine plus path-specific prep
-//! in `verify`, `root`, and `suffix`. FoldSchedule/config dispatch stays with
-//! the scheme crate until the verifier-facing config boundary is extracted.
+//! `verify` selects the root and suffix paths, `root` and `suffix` prepare
+//! each fold's replay inputs, `challenges` draws the fold challenges,
+//! `relation_instance` builds the fold's public ring relation, and `terminal`
+//! dispatches the terminal fold. [`verify_fold_native`] runs the per-fold
+//! stage checks from [`crate::stages`] in transcript order. FoldSchedule and
+//! config dispatch stay with the scheme crate until the verifier-facing
+//! config boundary is extracted.
 
 mod challenges;
 mod relation_instance;
@@ -12,12 +16,7 @@ mod terminal;
 mod verify;
 
 use crate::relation::RingSwitchReplay;
-use crate::stages::opening_claims::{
-    finalize_native_claims, prepare_single_field_suffix_groups,
-    verify_coefficient_packing_root_prefix, verify_coefficient_packing_suffix_prefix_native,
-    verify_extension_claim_suffix_prefix_native, FoldClaimMaterial, FoldPrefix,
-    PreparedFoldOpeningPoint,
-};
+use crate::stages::opening_claims::FoldPrefix;
 use crate::stages::opening_semantics::{prepare_opening_semantics, OpeningSemanticsInput};
 use crate::stages::relation_claim::prepare_relation_claim;
 use crate::stages::ring_switch::ring_switch_verifier_native;
@@ -28,12 +27,11 @@ use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_types::NativeGrinding;
 use akita_types::{
-    AkitaVerifierSetup, BasisMode, CommittedGroupParams, FoldParams, FoldSchedule, FpExtEncoding,
-    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, RelationWitnessGeometry, RingVec,
-    SetupContributionMode, TerminalFoldParams,
+    AkitaVerifierSetup, BasisMode, CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout,
+    RingVec,
 };
 use challenges::derive_multi_group_stage1_challenges_native;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use relation_instance::{assemble_relation_instance, validate_fold_payloads};
 
 pub(crate) type SetupPrefixOpening<E> = (Vec<E>, E);

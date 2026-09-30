@@ -1,8 +1,22 @@
 use super::terminal::verify_terminal_suffix_native;
-use super::*;
+use super::{
+    verify_fold_native, NativeNextWitnessPlan, NativePreparedFoldReplay, SetupPrefixOpening,
+};
 use crate::prepared_cache::TerminalNttCache;
+use crate::stages::opening_claims::{
+    finalize_native_claims, prepare_single_field_suffix_groups,
+    verify_coefficient_packing_suffix_prefix_native, verify_extension_claim_suffix_prefix_native,
+    FoldClaimMaterial, PreparedFoldOpeningPoint,
+};
+use akita_error::AkitaError;
+use akita_serialization::AkitaSerialize;
 use akita_types::NativeGrinding;
-use akita_types::OpeningClaimsLayout;
+use akita_types::{
+    AkitaVerifierSetup, BasisMode, CommittedGroupParams, FoldParams, FoldSchedule, FpExtEncoding,
+    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, RelationWitnessGeometry, RingVec,
+    SetupContributionMode, TerminalFoldParams,
+};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 
 pub(super) struct NativeSuffixVerifierState<F: Field, E: Field> {
     pub opening_point: Vec<E>,
