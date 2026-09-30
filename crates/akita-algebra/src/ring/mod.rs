@@ -12,7 +12,8 @@ pub use crt_ntt_repr::{
     I16TailParams,
 };
 pub use cyclotomic::{
-    balanced_decompose_coefficients_pow2_i8_into, CyclotomicRing, WideCyclotomicRing,
+    balanced_decompose_coefficients_pow2_i8_into, CyclotomicRing, NegacyclicShiftWindows,
+    WideCyclotomicRing,
 };
 pub use eval::{
     eval_flat_ring_at_pows_fast, eval_ring_at, eval_ring_at_pows_fast, evaluate_power_sequence_mle,

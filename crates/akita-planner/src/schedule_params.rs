@@ -81,7 +81,7 @@ pub(crate) use relation_transition::{
 pub(crate) use setup_score::{level_setup_field_elements, terminal_setup_field_elements};
 pub(crate) use suffix_dp::{
     derive_selected_suffix_schedule, QuerySearch, ScheduleMemo, SuffixCtx, SuffixState,
-    SuffixTopology,
+    SuffixTopology, MAX_PRECOMMIT_OPENING_PRODUCTS,
 };
 
 pub(crate) fn root_inner_basis_source(

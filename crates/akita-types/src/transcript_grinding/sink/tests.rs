@@ -4,7 +4,7 @@ use crate::transcript_grinding::{
     GrindingPlanAccumulator, GrindingRun, GrindingSite, SumcheckProtocol,
 };
 use crate::ChallengeFieldOrder;
-use akita_error::AkitaError;
+use akita_error::{narrowing::usize_to_u32, AkitaError};
 
 fn batch(rounds: usize) -> SumcheckRoundBatch {
     SumcheckRoundBatch {
@@ -26,7 +26,7 @@ fn explicit_runs(batch: SumcheckRoundBatch) -> Result<Vec<GrindingRun>, AkitaErr
                     protocol: batch.protocol,
                     level: batch.level,
                     stage: batch.stage,
-                    round: crate::narrowing::usize_to_u32(round, "sumcheck grinding round")?,
+                    round: usize_to_u32(round, "sumcheck grinding round")?,
                 },
                 polynomial_identity_loss_factor(batch.degree)?,
                 batch.challenge_order,
