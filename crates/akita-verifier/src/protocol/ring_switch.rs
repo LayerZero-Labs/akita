@@ -4,14 +4,16 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
+use akita_params::{
+    dispatch_for_field, CommittedGroupParams, OpeningClaimsLayout, RelationAddressGeometry,
+    RelationWitnessGeometry, RingRelationMode, WitnessLayout,
+};
 use akita_types::{
     build_compression_relation_weights, build_reduced_compression_relation_weights,
-    dispatch_for_field, shared_setup_fold_gadget, AkitaExpandedSetup, CommittedGroupParams,
-    CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport, OpeningClaimsLayout,
-    OpeningFamily, PreparedRelationAddress, PreparedRingMultiplier,
-    ReducedCompressionRelationWeights, RelationAddressGeometry, RelationWitnessGeometry,
-    RingMultiplierOpeningPoint, RingRelationGroupOpeningView, RingRelationInstance,
-    RingRelationMode, SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+    shared_setup_fold_gadget, AkitaExpandedSetup, CompressionRelationWeights, FpExtEncoding,
+    NegativeBinarySupport, OpeningFamily, PreparedRelationAddress, PreparedRingMultiplier,
+    ReducedCompressionRelationWeights, RingMultiplierOpeningPoint, RingRelationGroupOpeningView,
+    RingRelationInstance, SetupContributionGroupInputs, SetupContributionPlan,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::sync::Arc;
@@ -147,17 +149,17 @@ where
 {
     fn alpha(&mut self, level: u32) -> Result<E, AkitaError> {
         self.0
-            .grinded_ext_challenge::<F, E>(akita_types::GrindingSite::RingSwitchAlpha { level })
+            .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::RingSwitchAlpha { level })
     }
 
     fn tau0(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
         self.0
-            .grinded_ext_challenges::<F, E>(akita_types::GrindingSite::Tau0Point { level }, count)
+            .grinded_ext_challenges::<F, E>(akita_params::GrindingSite::Tau0Point { level }, count)
     }
 
     fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
         self.0
-            .grinded_ext_challenges::<F, E>(akita_types::GrindingSite::Tau1Point { level }, count)
+            .grinded_ext_challenges::<F, E>(akita_params::GrindingSite::Tau1Point { level }, count)
     }
 }
 pub(crate) fn ring_switch_verifier_native<F, E>(
@@ -498,7 +500,7 @@ where
                 .into_iter()
                 .map(|group| {
                     let multipliers = dispatch_for_field!(
-                        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+                        akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
                         F,
                         group.d_a,
                         |D_GROUP| {

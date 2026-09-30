@@ -2,7 +2,7 @@
 mod common;
 
 use akita_cpu_backend::CpuBackend;
-use akita_types::OpeningClaimsLayout;
+use akita_params::OpeningClaimsLayout;
 use common::*;
 use proptest::prelude::*;
 
@@ -28,7 +28,7 @@ fn native_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         OpeningClaimsLayout::new(num_vars, total_claims).expect("valid opening batch");
     let layout = scheme
         .schedules()
-        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+        .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
             opening_batch
                 .root_final_group_layout()
                 .expect("batched group layout"),

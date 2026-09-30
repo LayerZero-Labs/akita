@@ -777,9 +777,9 @@ indexing that has not already been bounded; malformed input is rejected with
 
 ## Implementation map
 
-- `crates/akita-types/src/witness.rs` owns physical chunk, group, and segment
+- `crates/akita-params/src/witness.rs` owns physical chunk, group, and segment
   addresses.
-- `crates/akita-types/src/witness/chunk_partition.rs` owns the exact dyadic
+- `crates/akita-params/src/witness/chunk_partition.rs` owns the exact dyadic
   block ranges.
 - `crates/akita-types/src/setup_contribution/` prepares the shared A, B, and D
   setup contribution.

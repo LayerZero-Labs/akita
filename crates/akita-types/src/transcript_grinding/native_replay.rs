@@ -1,7 +1,7 @@
 //! Inline native Spongefish nonce replay for transcript grinding.
 
-use super::{GrindingPlan, GrindingQueryKind, GrindingSite};
 use akita_error::AkitaError;
+use akita_params::{GrindingPlan, GrindingQueryKind, GrindingSite};
 use akita_sumcheck::{
     NativeSumcheckProverChannel, NativeSumcheckRole, NativeSumcheckVerifierChannel,
 };
@@ -591,7 +591,7 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
 /// Standard-sumcheck channel borrowing a native prover grinding context.
 pub struct NativeGrindingSumcheckProver<'context, 'plan, F, E> {
     grinding: &'context mut NativeProverGrinding<'plan>,
-    protocol: super::SumcheckProtocol,
+    protocol: akita_params::SumcheckProtocol,
     level: u32,
     stage: u32,
     _fields: PhantomData<fn() -> (F, E)>,
@@ -602,7 +602,7 @@ impl<'context, 'plan, F, E> NativeGrindingSumcheckProver<'context, 'plan, F, E> 
     #[must_use]
     pub fn new(
         grinding: &'context mut NativeProverGrinding<'plan>,
-        protocol: super::SumcheckProtocol,
+        protocol: akita_params::SumcheckProtocol,
         level: u32,
         stage: u32,
     ) -> Self {
@@ -660,7 +660,7 @@ where
 /// Standard-sumcheck channel borrowing a native verifier grinding context.
 pub struct NativeGrindingSumcheckVerifier<'context, 'proof, 'plan, F, E> {
     grinding: &'context mut NativeVerifierGrinding<'proof, 'plan>,
-    protocol: super::SumcheckProtocol,
+    protocol: akita_params::SumcheckProtocol,
     level: u32,
     stage: u32,
     _fields: PhantomData<fn() -> (F, E)>,
@@ -671,7 +671,7 @@ impl<'context, 'proof, 'plan, F, E> NativeGrindingSumcheckVerifier<'context, 'pr
     #[must_use]
     pub fn new(
         grinding: &'context mut NativeVerifierGrinding<'proof, 'plan>,
-        protocol: super::SumcheckProtocol,
+        protocol: akita_params::SumcheckProtocol,
         level: u32,
         stage: u32,
     ) -> Self {
@@ -730,11 +730,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ChallengeFieldOrder, GrindingRun};
     use akita_challenges::{
         FoldChallengeDrawDomain, FoldDraw, NativePreviewFoldDraw, NativeProverFoldDraw,
         NativeVerifierFoldDraw, SparseChallengeConfig,
     };
+    use akita_params::{ChallengeFieldOrder, GrindingRun};
     use akita_transcript::{
         new_native_prover, new_native_verifier, preview_native_grinding_predicate,
     };
@@ -861,7 +861,7 @@ mod tests {
         assert_eq!(
             prover.commit_fold_response(
                 GrindingSite::FoldResponse { level: 0 },
-                super::super::FOLD_RESPONSE_ATTEMPTS,
+                akita_params::FOLD_RESPONSE_ATTEMPTS,
             ),
             Err(AkitaError::InvalidProof)
         );

@@ -3,11 +3,10 @@ use akita_config::{
     CommitmentConfig,
 };
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext, OneHotPoly};
+use akita_params::{lagrange_weights, BasisMode};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
-use akita_types::{
-    lagrange_weights, BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
-};
+use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::{Ring, Zero};
 
 #[test]

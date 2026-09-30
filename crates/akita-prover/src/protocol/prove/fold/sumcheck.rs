@@ -201,7 +201,7 @@ where
         };
         let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
             grinding,
-            akita_types::SumcheckProtocol::Stage1,
+            akita_params::SumcheckProtocol::Stage1,
             level,
             stage,
         );
@@ -231,7 +231,7 @@ where
             &child_claims,
         )?;
         let gamma = grinding.grinded_ext_challenge::<F, E>(
-            akita_types::GrindingSite::Stage1InterstageBatch { level, stage },
+            akita_params::GrindingSite::Stage1InterstageBatch { level, stage },
         )?;
         let weights = plan
             .digit_range_plan()
@@ -276,7 +276,7 @@ where
             E::from_u128(response_l2_sq)
         } else {
             let gamma = grinding.grinded_ext_challenge::<F, E>(
-                akita_types::GrindingSite::L2SubclaimBatch { level },
+                akita_params::GrindingSite::L2SubclaimBatch { level },
             )?;
             crate::backend::OpaqueStage1Kernel::bind_stage1_batch_challenge(
                 ctx.backend(),
@@ -292,7 +292,7 @@ where
             })
         };
         let merge = grinding
-            .grinded_ext_challenge::<F, E>(akita_types::GrindingSite::L2NormMerge { level })?;
+            .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::L2NormMerge { level })?;
         crate::backend::OpaqueStage1Kernel::bind_stage1_batch_challenge(
             ctx.backend(),
             &mut session_handle,
@@ -312,7 +312,7 @@ where
         };
         let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
             grinding,
-            akita_types::SumcheckProtocol::PhysicalL2,
+            akita_params::SumcheckProtocol::PhysicalL2,
             level,
             0,
         );
@@ -365,7 +365,7 @@ where
         };
         let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
             grinding,
-            akita_types::SumcheckProtocol::Stage1,
+            akita_params::SumcheckProtocol::Stage1,
             level,
             stage,
         );
@@ -545,7 +545,7 @@ where
     };
     let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
         grinding,
-        akita_types::SumcheckProtocol::Stage2,
+        akita_params::SumcheckProtocol::Stage2,
         level,
         0,
     );
@@ -580,7 +580,7 @@ pub(super) fn prove_stage3<F, E, B>(
     tau1: &[E],
     alpha: E,
     sumcheck_challenges: &[E],
-    relation_address_geometry: akita_types::RelationAddressGeometry,
+    relation_address_geometry: akita_params::RelationAddressGeometry,
     grinding: &mut akita_types::NativeProverGrinding<'_>,
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
@@ -654,7 +654,7 @@ where
             };
             let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
                 grinding,
-                akita_types::SumcheckProtocol::Stage3,
+                akita_params::SumcheckProtocol::Stage3,
                 level,
                 0,
             );
@@ -663,7 +663,7 @@ where
                 &mut channel,
                 akita_sumcheck::NativeSumcheckShape::new(
                     prefix_len.trailing_zeros() as usize,
-                    akita_types::SETUP_SUMCHECK_DEGREE,
+                    akita_params::SETUP_SUMCHECK_DEGREE,
                 )?,
                 0,
             )?;
@@ -698,7 +698,7 @@ impl<F: Field, E: Field, B: crate::backend::OpaqueStage3Kernel<F, E>>
         self.rounds
     }
     fn degree_bound(&self) -> usize {
-        akita_types::SETUP_SUMCHECK_DEGREE
+        akita_params::SETUP_SUMCHECK_DEGREE
     }
     fn input_claim(&self) -> E {
         self.claim

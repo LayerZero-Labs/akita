@@ -1,4 +1,4 @@
-use akita_types::{GrindingPlan, GrindingQueryKind, GrindingSite, SumcheckProtocol};
+use akita_params::{GrindingPlan, GrindingQueryKind, GrindingSite, SumcheckProtocol};
 
 struct SiteReport {
     component: &'static str,

@@ -7,9 +7,9 @@ mod single_field;
 use super::*;
 use crate::stages::stage2::{Stage2CompressionOracle, Stage2OpeningSemantics};
 use akita_algebra::offset_eq::EqPairTensorFamily;
+use akita_params::{dispatch_for_field, DigitRangePlan};
 use akita_types::{
-    batch_l2_virtual_evaluations, dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan,
-    OpeningFamily, RingRelationGroupOpening,
+    batch_l2_virtual_evaluations, DigitRangeEqualityPoint, OpeningFamily, RingRelationGroupOpening,
 };
 
 pub(in crate::protocol::core) use coefficient_packing::{
@@ -59,7 +59,7 @@ where
     }
     let row_coefficients = akita_types::verify_row_coefficients_native::<F, E>(
         opening_shape,
-        akita_types::GrindingSite::EvaluationBatch { level },
+        akita_params::GrindingSite::EvaluationBatch { level },
         grinding,
     )?;
     let trace_claim_coefficients = material.reduction_factors.as_ref().map_or_else(
@@ -99,7 +99,7 @@ pub(in crate::protocol::core) struct NativePreparedFoldReplay<'a, F: Field, E: F
     pub(in crate::protocol::core) commitment_payloads: Vec<RingVec<F>>,
     pub(in crate::protocol::core) prefix: FoldPrefix<F, E>,
     pub(in crate::protocol::core) w_len: usize,
-    pub(in crate::protocol::core) level_layout: akita_types::NativeNonterminalLevelLayout,
+    pub(in crate::protocol::core) level_layout: akita_params::NativeNonterminalLevelLayout,
     pub(in crate::protocol::core) next_witness: NativeNextWitnessPlan,
     pub(in crate::protocol::core) next_witness_ring_dim: usize,
     pub(in crate::protocol::core) next_opening_source_len: usize,
@@ -135,7 +135,7 @@ fn verify_stage1_native<'a, F, E>(
     relation_plan: &RelationRangeImagePlan,
     grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
     level: u32,
-    layout: &akita_types::NativeNonterminalLevelLayout,
+    layout: &akita_params::NativeNonterminalLevelLayout,
 ) -> Result<Stage1Replay<'a, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
@@ -194,7 +194,7 @@ where
     ) {
         (Some(evaluations), Some(plan)) => {
             let eta = grinding.grinded_ext_challenge::<F, E>(
-                akita_types::GrindingSite::L2VirtualBatch { level },
+                akita_params::GrindingSite::L2VirtualBatch { level },
             )?;
             let (claim, batching) = batch_l2_virtual_evaluations(eta, &evaluations);
             (claim, plan.virtualization_families(&batching)?)
@@ -213,7 +213,7 @@ where
             weights,
             support,
             binary_batching: grinding.grinded_ext_challenge::<F, E>(
-                akita_types::GrindingSite::CompressionBinary { level },
+                akita_params::GrindingSite::CompressionBinary { level },
             )?,
         },
         crate::protocol::ring_switch::PreparedStage2Compression::ReducedEvaluation {
@@ -223,12 +223,12 @@ where
             weights,
             support,
             binary_batching: grinding.grinded_ext_challenge::<F, E>(
-                akita_types::GrindingSite::CompressionBinary { level },
+                akita_params::GrindingSite::CompressionBinary { level },
             )?,
         },
     };
-    let batching_coeff =
-        grinding.grinded_ext_challenge::<F, E>(akita_types::GrindingSite::Stage2Batch { level })?;
+    let batching_coeff = grinding
+        .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::Stage2Batch { level })?;
     Ok(Stage1Replay {
         batching_coeff,
         compression,
@@ -257,7 +257,7 @@ where
 {
     let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
         grinding,
-        akita_types::SumcheckProtocol::Stage2,
+        akita_params::SumcheckProtocol::Stage2,
         level,
         0,
     );
@@ -359,7 +359,7 @@ where
     if prefix.prepared_points.len() != num_groups {
         return Err(AkitaError::InvalidProof);
     }
-    grinding.read_fold_response(akita_types::GrindingSite::FoldResponse {
+    grinding.read_fold_response(akita_params::GrindingSite::FoldResponse {
         level: prepared.level,
     })?;
     let group_challenges = derive_multi_group_stage1_challenges_native::<F, E>(

@@ -13,11 +13,9 @@ use akita_config::{
     recursive_commitment::RecursiveScheduleConfig, CommitmentConfig, RecursiveCommitmentConfig,
 };
 use akita_cpu_backend::{CpuBackend, DensePoly, OneHotPoly};
+use akita_params::{AkitaScheduleLookupKey, BasisMode, PolynomialGroupLayout};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_types::{
-    AkitaScheduleLookupKey, BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
-    PolynomialGroupLayout,
-};
+use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 
 /// Single-group recursive roundtrip: one two-polynomial final group at `nv=32`, no
 /// user precommitted groups. Uses `RecursiveCommitmentConfig<BaseCfg>` so the proof

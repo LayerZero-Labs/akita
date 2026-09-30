@@ -2,11 +2,12 @@
 
 #![allow(missing_docs)]
 
-use akita_types::{
+use akita_params::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, CommittedGroupParams,
-    FoldParams, FoldSchedule, RingView, SisModulusProfileId, TailSegmentGroupLayout,
-    TailSegmentLayout, TerminalFoldParams, TerminalResponseShape,
+    FoldParams, FoldSchedule, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalFoldParams, TerminalResponseShape,
 };
+use akita_types::RingView;
 use jolt_field::Prime128OffsetA7F7 as F;
 use jolt_field::Zero;
 

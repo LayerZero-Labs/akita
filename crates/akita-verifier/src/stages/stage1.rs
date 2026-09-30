@@ -7,11 +7,9 @@
 
 use akita_challenges::NativeVerifierFoldDraw;
 use akita_error::AkitaError;
+use akita_params::{CommittedGroupParams, DigitRangePlan, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
-use akita_types::{
-    draw_group_fold_challenges, CommittedGroupParams, DigitRangeEqualityPoint, DigitRangePlan,
-    GroupFoldChallenges, OpeningClaimsLayout,
-};
+use akita_types::{draw_group_fold_challenges, DigitRangeEqualityPoint, GroupFoldChallenges};
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 pub(crate) struct NativeStage1VerifyOutput<E: Field> {
     pub(crate) point: Vec<E>,
@@ -95,7 +93,7 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
             let stage = u32::try_from(stage_index).map_err(|_| AkitaError::InvalidProof)?;
             let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
                 grinding,
-                akita_types::SumcheckProtocol::Stage1,
+                akita_params::SumcheckProtocol::Stage1,
                 level,
                 stage,
             );
@@ -126,7 +124,7 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
                 return Err(AkitaError::InvalidProof);
             }
             let gamma = grinding.grinded_ext_challenge::<F, E>(
-                akita_types::GrindingSite::Stage1InterstageBatch { level, stage },
+                akita_params::GrindingSite::Stage1InterstageBatch { level, stage },
             )?;
             current_weights = self
                 .plan
@@ -149,7 +147,7 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
         grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
         physical_l2: Option<(
             &akita_types::PhysicalResponsePlan,
-            akita_types::SisModulusProfileId,
+            akita_params::SisModulusProfileId,
             u128,
         )>,
         level: u32,
@@ -184,7 +182,7 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
         let degree_bound = leaf.polynomial_coefficients.len().saturating_sub(1);
         let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
             grinding,
-            akita_types::SumcheckProtocol::Stage1,
+            akita_params::SumcheckProtocol::Stage1,
             level,
             stage,
         );

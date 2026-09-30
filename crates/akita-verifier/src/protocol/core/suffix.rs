@@ -1,6 +1,6 @@
 use super::*;
 use crate::prepared_cache::TerminalNttCache;
-use akita_types::OpeningClaimsLayout;
+use akita_params::OpeningClaimsLayout;
 
 pub(super) struct NativeSuffixVerifierState<F: Field, E: Field> {
     pub opening_point: Vec<E>,
@@ -129,7 +129,7 @@ where
         .collect::<Result<Vec<_>, _>>()?;
     let material = if matches!(
         lp.opening_method(),
-        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+        akita_params::OpeningMethod::SubringCoefficientPacking { .. }
     ) {
         verify_coefficient_packing_suffix_prefix_native::<F, E>(
             &block_claims,
@@ -214,7 +214,7 @@ where
                 .outer_payload_geometry()?
                 .transmitted_coefficients();
             let committed_len =
-                akita_types::witness_commitment_domain_len(output_witness_len, ring_dim)?;
+                akita_params::witness_commitment_domain_len(output_witness_len, ring_dim)?;
             (
                 NativeNextWitnessPlan::OuterPayload { coefficient_count },
                 ring_dim,
@@ -235,7 +235,7 @@ where
                 .ok_or(AkitaError::InvalidProof)?
                 .t_field_elems;
             let committed_len =
-                akita_types::witness_commitment_domain_len(output_witness_len, ring_dim)?;
+                akita_params::witness_commitment_domain_len(output_witness_len, ring_dim)?;
             (
                 NativeNextWitnessPlan::TerminalT { coefficient_count },
                 ring_dim,
@@ -249,7 +249,7 @@ where
                 .map_err(|_| AkitaError::InvalidSetup("extension degree overflow".into()))?,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("challenge field width overflow".into()))?;
-    let level_layout = akita_types::native_nonterminal_level_layout(
+    let level_layout = akita_params::native_nonterminal_level_layout(
         F::MODULUS_BITS,
         challenge_field_bits,
         lp,
@@ -370,7 +370,7 @@ where
     let opening_batch = OpeningClaimsLayout::new(current_state.opening_point.len(), 1)?;
     let (prepared_point, protocol_point, final_relation) = if const { <E as ExtField<F>>::DEGREE == 1 }
     {
-        let prepared = akita_types::dispatch_for_field!(
+        let prepared = akita_params::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
             scheduled.d_a(),
@@ -428,7 +428,7 @@ where
     }
     let row_coefficients = akita_types::verify_row_coefficients_native::<F, E>(
         &opening_batch,
-        akita_types::GrindingSite::EvaluationBatch { level },
+        akita_params::GrindingSite::EvaluationBatch { level },
         grinding,
     )?;
     if row_coefficients.as_slice() != [E::one()] {
@@ -446,7 +446,7 @@ where
     )
     .map(RingVec::from_coeffs)
     .map_err(|_| AkitaError::InvalidProof)?;
-    grinding.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
+    grinding.read_fold_response(akita_params::GrindingSite::FoldResponse { level })?;
     let operator_rejection = if scheduled.response_l2_sq_cap().is_some() {
         Some(
             akita_challenges::selective_l2_operator_norm_rejection(

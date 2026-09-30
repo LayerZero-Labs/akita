@@ -81,11 +81,11 @@ pub(crate) fn exhaustive_root_candidates_for_reference(
     for block_index_bits in (min_split..=max_split).rev() {
         let position_index_bits = reduced_vars - block_index_bits;
         let num_live_blocks = 1usize << block_index_bits;
-        for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+        for outer_slice_count in akita_params::CommitmentSliceCount::ALL {
             if outer_slice_count
                 .validate_for_commitment(
                     0,
-                    akita_types::CommitmentPayloadMode::Compressed,
+                    akita_params::CommitmentPayloadMode::Compressed,
                     num_live_blocks,
                 )
                 .is_err()
@@ -127,7 +127,7 @@ pub(crate) fn exhaustive_root_candidates_for_reference(
 fn interchangeable_groups_follow_the_materialized_descriptor_order() {
     let fold_challenge_config = akita_challenges::SparseChallengeConfig::pm1_only(3);
     let params = CommittedGroupParams::params_only(
-        akita_types::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::SisModulusProfileId::Q128OffsetA7F7,
         256,
         3,
         2,
@@ -142,15 +142,15 @@ fn interchangeable_groups_follow_the_materialized_descriptor_order() {
         group: PolynomialGroupLayout::singleton(16),
         blocks: params.blocks(),
         outer_slice_count: params.outer_slice_count(),
-        inner: akita_types::RoleParams::new(
-            akita_types::GadgetDigits::new(
+        inner: akita_params::RoleParams::new(
+            akita_params::GadgetDigits::new(
                 params.inner().digits.log_basis,
                 params.inner().digits.num_digits,
             ),
             params.inner().matrix,
         ),
-        outer: akita_types::RoleParams::new(
-            akita_types::GadgetDigits::new(
+        outer: akita_params::RoleParams::new(
+            akita_params::GadgetDigits::new(
                 params.outer().digits.log_basis,
                 params.outer().digits.num_digits,
             ),
@@ -159,8 +159,8 @@ fn interchangeable_groups_follow_the_materialized_descriptor_order() {
     };
     let group = |challenge_subring_dimension| GroupOpenPhaseParams {
         profile,
-        opening: akita_types::GroupOpeningPlan {
-            opening_method: akita_types::OpeningMethod::SubringCoefficientPacking {
+        opening: akita_params::GroupOpeningPlan {
+            opening_method: akita_params::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
             },
             fold_challenge_config:
@@ -194,10 +194,10 @@ fn interchangeable_groups_follow_the_materialized_descriptor_order() {
     let dimensions = groups
         .iter()
         .map(|group| match group.opening.opening_method {
-            akita_types::OpeningMethod::SubringCoefficientPacking {
+            akita_params::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
             } => challenge_subring_dimension,
-            akita_types::OpeningMethod::EvaluationTrace => {
+            akita_params::OpeningMethod::EvaluationTrace => {
                 panic!("fixture must remain coefficient packing")
             }
         })
@@ -234,7 +234,7 @@ fn interchangeable_groups_follow_the_materialized_descriptor_order() {
     );
 
     let mut variable_width = vec![group(64), group(256)];
-    variable_width[1].opening.opening_method = akita_types::OpeningMethod::EvaluationTrace;
+    variable_width[1].opening.opening_method = akita_params::OpeningMethod::EvaluationTrace;
     assert!(matches!(
         canonicalize_interchangeable_precommitted_groups(&mut variable_width, &[vec![0, 1]]),
         Err(AkitaError::InvalidSetup(message))

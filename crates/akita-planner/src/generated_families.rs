@@ -17,8 +17,8 @@ pub use crate::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use crate::{find_schedule, EmitSpec, PlannerPolicy};
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::sis::CommittedSourceContract;
-use akita_types::{
+use akita_params::sis::CommittedSourceContract;
+use akita_params::{
     AkitaScheduleLookupKey, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
 

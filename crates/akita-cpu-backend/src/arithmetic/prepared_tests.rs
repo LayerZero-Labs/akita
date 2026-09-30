@@ -4,10 +4,9 @@ use crate::opaque::{ComputeBackendSetup, DigitRowsComputeBackend};
 use crate::opaque::{RingSwitchRelationKernel, RingSwitchRelationPlan};
 use crate::AkitaProverSetup;
 use akita_challenges::SparseChallengeConfig;
-use akita_types::MAX_I8_LOG_BASIS;
-use akita_types::{
-    CommittedGroupParams, NttCacheKey, NttTransformDomain, SetupMatrixCapacity, SisModulusProfileId,
-};
+use akita_params::MAX_I8_LOG_BASIS;
+use akita_params::{CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId};
+use akita_types::{NttCacheKey, NttTransformDomain};
 use jolt_field::Prime64Offset59;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;

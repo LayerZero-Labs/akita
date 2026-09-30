@@ -5,7 +5,7 @@ use super::{
 use jolt_poly::UnivariatePoly;
 
 use akita_error::AkitaError;
-use akita_types::OpeningClaimsLayout;
+use akita_params::OpeningClaimsLayout;
 use jolt_field::{CanonicalEncoding, Field};
 
 pub struct EorGroupRequest<'a, E: Field, C, W> {

@@ -2,7 +2,7 @@
 
 use super::super::*;
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
-use akita_types::{dispatch_for_field, TerminalFoldParams};
+use akita_params::{dispatch_for_field, TerminalFoldParams};
 
 pub(in crate::protocol::core) struct PreparedProtocolPoint<F: Field, E: Field> {
     pub(in crate::protocol::core) prepared: PreparedOpeningPoint<F, E>,
@@ -94,7 +94,7 @@ where
     ) -> Result<(E, Vec<E>), AkitaError> {
         let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
             self.grinding,
-            akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+            akita_params::SumcheckProtocol::ExtensionOpeningReduction,
             self.level,
             0,
         );
@@ -104,7 +104,7 @@ where
             input_claim,
             akita_sumcheck::NativeSumcheckShape::new(
                 num_rounds,
-                akita_types::EXTENSION_OPENING_REDUCTION_DEGREE,
+                akita_params::EXTENSION_OPENING_REDUCTION_DEGREE,
             )?,
         )?;
         Ok((replay.output_claim, replay.challenges))
@@ -441,9 +441,9 @@ where
 mod tests {
     use super::*;
 
+    use akita_params::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
     use akita_sumcheck::SumcheckInstanceProver;
     use akita_transcript::{new_native_prover, new_native_verifier};
-    use akita_types::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
     use jolt_field::{FpExt4, Prime32Offset99, Zero};
     use jolt_poly::UnivariatePoly;
 
@@ -503,18 +503,18 @@ mod tests {
         let partials = vec![E::zero(); width];
         let plan = {
             let challenge_order =
-                akita_types::ChallengeFieldOrder::from_full_capacity(128).unwrap();
-            let mut runs = vec![akita_types::GrindingRun::proof_of_work(
-                akita_types::GrindingSite::ExtensionOpeningPoint { level },
+                akita_params::ChallengeFieldOrder::from_full_capacity(128).unwrap();
+            let mut runs = vec![akita_params::GrindingRun::proof_of_work(
+                akita_params::GrindingSite::ExtensionOpeningPoint { level },
                 1,
                 challenge_order,
             )
             .unwrap()];
             for round in 0..rounds {
                 runs.push(
-                    akita_types::GrindingRun::proof_of_work(
-                        akita_types::GrindingSite::SumcheckRound {
-                            protocol: akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+                    akita_params::GrindingRun::proof_of_work(
+                        akita_params::GrindingSite::SumcheckRound {
+                            protocol: akita_params::SumcheckProtocol::ExtensionOpeningReduction,
                             level,
                             stage: 0,
                             round: u32::try_from(round).unwrap(),
@@ -525,7 +525,7 @@ mod tests {
                     .unwrap(),
                 );
             }
-            akita_types::GrindingPlan::new(runs, challenge_order).unwrap()
+            akita_params::GrindingPlan::new(runs, challenge_order).unwrap()
         };
 
         let state = new_native_prover(b"native-eor-verifier", b"fixture").unwrap();
@@ -541,7 +541,7 @@ mod tests {
         let mut sumcheck = ZeroEorProver { rounds };
         let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
             &mut prover,
-            akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+            akita_params::SumcheckProtocol::ExtensionOpeningReduction,
             level,
             0,
         );

@@ -73,6 +73,7 @@ search_files() {
 proof_input_roots=(
     crates/akita-transcript/src
     crates/akita-types/src
+    crates/akita-params/src
     crates/akita-challenges/src
     crates/akita-sumcheck/src
     crates/akita-prover/src/protocol

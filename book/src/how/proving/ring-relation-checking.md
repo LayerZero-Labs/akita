@@ -505,7 +505,7 @@ outer commitment payload.
 
 ## Code reference
 
-- [`ring_relation_mode.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/ring_relation_mode.rs)
+- [`ring_relation_mode.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-params/src/ring_relation_mode.rs)
   defines both modes and the allowed transition. `FoldSchedule::validate_structure`
   enforces the complete schedule restrictions.
 - [`witness_build/finalize.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/witness_build/finalize.rs)

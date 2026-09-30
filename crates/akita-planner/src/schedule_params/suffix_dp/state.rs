@@ -61,8 +61,8 @@ enum GrindingSuccessorKey {
 impl ParentObservableKey {
     pub(super) fn new(
         policy: &PlannerPolicy,
-        recursive: Option<&akita_types::CommittedGroupParams>,
-        terminal: Option<&akita_types::TerminalFoldParams>,
+        recursive: Option<&akita_params::CommittedGroupParams>,
+        terminal: Option<&akita_params::TerminalFoldParams>,
     ) -> Result<Self, AkitaError> {
         if recursive.is_some() == terminal.is_some() {
             return Err(AkitaError::InvalidSetup(
@@ -90,7 +90,7 @@ impl ParentObservableKey {
         let payload = first.outer_payload_geometry()?;
         let outer_payload_bytes = payload
             .transmitted_coefficients()
-            .checked_mul(akita_types::layout::proof_size::field_bytes(
+            .checked_mul(akita_params::layout::proof_size::field_bytes(
                 policy.decomposition.field_bits(),
             ))
             .ok_or_else(|| AkitaError::InvalidSetup("outer payload byte count overflow".into()))?;
@@ -99,7 +99,7 @@ impl ParentObservableKey {
             setup_prefix_payload_bytes:
                 akita_schedules::planner_support::stage3_payload_bytes_for_successor(
                     policy,
-                    akita_types::FoldSuccessor::Recursive(first),
+                    akita_params::FoldSuccessor::Recursive(first),
                 )?,
             grinding_successor: GrindingSuccessorKey::Recursive {
                 d_a: first.d_a(),
@@ -265,7 +265,7 @@ pub(super) fn empty_suffix_result() -> Arc<SuffixResult> {
 #[derive(Clone, Copy)]
 pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
-    pub(crate) challenge_order: akita_types::ChallengeFieldOrder,
+    pub(crate) challenge_order: akita_params::ChallengeFieldOrder,
     pub(crate) diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
     pub(crate) ring_challenge_config:
         &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
@@ -280,9 +280,9 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) root_main_constraint: Option<&'a CommittedGroupParams>,
     /// Approved scalar schedule whose structural suffix choices guide adapted
     /// planning. All length-, rank-, and security-derived values are rebuilt.
-    pub(crate) adaptation_guide: Option<&'a akita_types::FoldSchedule>,
-    pub(crate) root_source_contract: Option<akita_types::sis::CommittedSourceContract>,
-    pub(crate) precommitted_source_contracts: &'a [akita_types::sis::CommittedSourceContract],
+    pub(crate) adaptation_guide: Option<&'a akita_params::FoldSchedule>,
+    pub(crate) root_source_contract: Option<akita_params::sis::CommittedSourceContract>,
+    pub(crate) precommitted_source_contracts: &'a [akita_params::sis::CommittedSourceContract],
     pub(crate) level_zero_is_root: bool,
     pub(crate) relation_traversal_order: RelationTraversalOrder,
     pub(crate) relation_mode_filter: RelationModeFilter,
@@ -303,7 +303,7 @@ pub(crate) struct SuffixState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum SuffixTopology {
     Direct {
-        payload_phase: akita_types::CommitmentPayloadPhase,
+        payload_phase: akita_params::CommitmentPayloadPhase,
         relation_phase: RingRelationPhase,
     },
     SetupPrefixed {
@@ -321,17 +321,17 @@ impl SuffixTopology {
     }
 
     #[must_use]
-    pub(crate) const fn payload_phase(self) -> akita_types::CommitmentPayloadPhase {
+    pub(crate) const fn payload_phase(self) -> akita_params::CommitmentPayloadPhase {
         match self {
             Self::Direct { payload_phase, .. } => payload_phase,
-            Self::SetupPrefixed { .. } => akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            Self::SetupPrefixed { .. } => akita_params::CommitmentPayloadPhase::CompressedPrefix,
         }
     }
 
     pub(crate) fn relation_domain(
         self,
         absolute_fold_level: usize,
-        opening: akita_types::OpeningMethod,
+        opening: akita_params::OpeningMethod,
         diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
     ) -> Result<RelationSearchDomain, AkitaError> {
         let (relation_phase, consumes_setup_prefix) = match self {
@@ -357,8 +357,8 @@ impl SuffixTopology {
     #[must_use]
     pub(crate) const fn direct_successor(
         self,
-        payload_mode: akita_types::CommitmentPayloadMode,
-        transition: akita_types::RingRelationMode,
+        payload_mode: akita_params::CommitmentPayloadMode,
+        transition: akita_params::RingRelationMode,
     ) -> Self {
         Self::Direct {
             payload_phase: self.payload_phase().after(payload_mode),
@@ -368,8 +368,8 @@ impl SuffixTopology {
 
     #[must_use]
     pub(crate) const fn offloaded_successor(
-        transition: akita_types::RingRelationMode,
-        payload_mode: akita_types::CommitmentPayloadMode,
+        transition: akita_params::RingRelationMode,
+        payload_mode: akita_params::CommitmentPayloadMode,
         natural_len: usize,
     ) -> Option<Self> {
         if !transition.is_reduced_evaluation() && payload_mode.is_compressed() {

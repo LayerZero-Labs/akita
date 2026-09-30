@@ -1,10 +1,10 @@
 use super::*;
-use crate::{
+use akita_challenges::SparseChallengeConfig;
+use akita_params::{
     ChallengeFieldOrder, CommittedGroupParams, FoldParams, FoldSchedule, GrindingPlan, GrindingRun,
     GrindingSite, InnerCommitMatrixParams, OpeningClaimsLayout, OpeningScheduleSelection,
     ScheduleRowDigest, TerminalFoldParams, TerminalResponseShape,
 };
-use akita_challenges::SparseChallengeConfig;
 use jolt_field::Prime32Offset99;
 
 // `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
@@ -372,7 +372,7 @@ fn role_local_ring_dimension_changes_plan_binding() {
 fn ring_relation_mode_changes_plan_and_transcript_preamble_binding() {
     let first = sample_schedule();
     let mut second = first.clone();
-    second.root.params.ring_relation_mode = crate::RingRelationMode::ReducedEvaluation;
+    second.root.params.ring_relation_mode = akita_params::RingRelationMode::ReducedEvaluation;
     let first_plan = PlanSection::from_schedule(sample_selection(), &first);
     let second_plan = PlanSection::from_schedule(sample_selection(), &second);
     assert_ne!(first_plan, second_plan);

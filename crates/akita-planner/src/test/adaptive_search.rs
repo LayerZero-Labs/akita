@@ -4,14 +4,14 @@ mod relation_cutover;
 #[path = "adaptive_search/selective_l2.rs"]
 mod selective_l2;
 #[cfg(feature = "catalog-gen")]
-use akita_types::extension_opening_reduction_level_bytes;
+use akita_params::extension_opening_reduction_level_bytes;
 
 fn onehot_group(num_vars: usize, num_polynomials: usize) -> PolynomialGroupLayout {
     PolynomialGroupLayout::new(num_vars, num_polynomials)
 }
 
 fn estimated_first_direct_setup_capacity(planned: &PlannedFoldSchedule) -> usize {
-    akita_types::padded_setup_prefix_len(
+    akita_params::padded_setup_prefix_len(
         planned
             .estimate
             .first_direct_setup_field_len
@@ -25,7 +25,7 @@ fn materialized_first_direct_setup_capacity(
 ) -> usize {
     akita_schedules::planner_support::first_direct_setup_capacity_for_schedule(
         &planned.schedule,
-        &akita_types::AkitaScheduleLookupKey::single(key)
+        &akita_params::AkitaScheduleLookupKey::single(key)
             .opening_layout()
             .expect("opening layout"),
     )
@@ -35,16 +35,16 @@ fn materialized_first_direct_setup_capacity(
 #[cfg(feature = "catalog-gen")]
 fn assert_selected_grinding_edge_parity(
     planned: &PlannedFoldSchedule,
-    key: &akita_types::AkitaScheduleLookupKey,
+    key: &akita_params::AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
 ) {
-    use akita_types::{FoldSuccessor, TranscriptGrindingCost};
+    use akita_params::{FoldSuccessor, TranscriptGrindingCost};
 
     let schedule = &planned.schedule;
     let root_layout = key.opening_layout().expect("selected root opening layout");
     let extension_degree = policy.claim_ext_degree;
     let challenge_order = policy.transcript_grinding_order().unwrap();
-    let full_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
+    let full_plan = akita_params::derive_transcript_grinding_plan_from_public_shape(
         schedule,
         &root_layout,
         challenge_order,
@@ -83,7 +83,7 @@ fn assert_selected_grinding_edge_parity(
                 fold.output_witness_len,
             )
             .expect("selected relation geometry");
-        let edge = akita_types::transcript_grinding_cost_for_planner_edge(
+        let edge = akita_params::transcript_grinding_cost_for_planner_edge(
             &fold.params,
             geometry,
             &layout,
@@ -123,13 +123,13 @@ fn assert_selected_grinding_edge_parity(
 fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
-    source_contract: akita_types::sis::CommittedSourceContract,
+    source_contract: akita_params::sis::CommittedSourceContract,
     dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     dimensions.validate_for_policy(policy)?;
     crate::planner::find_schedule(
-        &akita_types::AkitaScheduleLookupKey::single(key),
+        &akita_params::AkitaScheduleLookupKey::single(key),
         source_contract,
         &[],
         policy,
@@ -296,7 +296,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
         OneHot::ring_challenge_config,
     )
     .unwrap();
-    let lookup_key = akita_types::AkitaScheduleLookupKey::single(onehot_group(14, 1));
+    let lookup_key = akita_params::AkitaScheduleLookupKey::single(onehot_group(14, 1));
     assert_selected_grinding_edge_parity(&selected, &lookup_key, &policy);
     assert!(
         selected.schedule.recursive_folds.len() < unpruned_search::MAX_ORACLE_RECURSION_DEPTH,
@@ -330,13 +330,13 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     let root = &selected.schedule.root.params;
     assert!(matches!(
         root.opening_method(),
-        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+        akita_params::OpeningMethod::SubringCoefficientPacking { .. }
     ));
     let terminal_eor = extension_opening_reduction_level_bytes(
         policy.challenge_field_bits().unwrap(),
         policy.claim_ext_degree,
-        akita_types::PolynomialGroupLayout::singleton(
-            akita_types::padded_boolean_opening_vars(selected.schedule.terminal.input_witness_len)
+        akita_params::PolynomialGroupLayout::singleton(
+            akita_params::padded_boolean_opening_vars(selected.schedule.terminal.input_witness_len)
                 .unwrap(),
         ),
     )
@@ -345,14 +345,14 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
         akita_schedules::expanded_schedule_native_proof_estimate_bytes(
-            &akita_types::AkitaScheduleLookupKey::single(onehot_group(14, 1)),
+            &akita_params::AkitaScheduleLookupKey::single(onehot_group(14, 1)),
             &selected.schedule,
             &policy,
         )
         .unwrap(),
     );
 
-    let query_count = akita_types::derive_transcript_grinding_plan_from_public_shape(
+    let query_count = akita_params::derive_transcript_grinding_plan_from_public_shape(
         &selected.schedule,
         &lookup_key.opening_layout().unwrap(),
         policy.transcript_grinding_order().unwrap(),
@@ -371,11 +371,11 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
             relation_mode_filter: RelationModeFilter::All,
             root_main_constraint: None,
             adaptation_guide: None,
-            query_prefix_count: akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT - query_count,
+            query_prefix_count: akita_params::TRANSCRIPT_GRINDING_QUERY_LIMIT - query_count,
         },
     )
     .unwrap();
-    let constrained_query_count = akita_types::derive_transcript_grinding_plan_from_public_shape(
+    let constrained_query_count = akita_params::derive_transcript_grinding_plan_from_public_shape(
         &constrained.schedule,
         &lookup_key.opening_layout().unwrap(),
         policy.transcript_grinding_order().unwrap(),
@@ -450,7 +450,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
     .expect("packing schedule from mixed domain");
     assert!(matches!(
         selected.schedule.root.params.opening_method(),
-        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+        akita_params::OpeningMethod::SubringCoefficientPacking { .. }
     ));
     let unpruned = unpruned_search::find_schedule(
         key,
@@ -462,7 +462,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
     let unpruned = &unpruned.planned;
     assert!(matches!(
         unpruned.schedule.root.params.opening_method(),
-        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+        akita_params::OpeningMethod::SubringCoefficientPacking { .. }
     ));
     assert_eq!(
         selected.estimate.first_direct_setup_field_len,
@@ -490,7 +490,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
         .iter()
         .all(|fold| matches!(
             fold.params.opening_method(),
-            akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+            akita_params::OpeningMethod::SubringCoefficientPacking { .. }
         )));
 }
 
@@ -565,7 +565,7 @@ fn adaptive_dimension_search_is_canonical() {
 #[test]
 fn production_suffix_selects_l2_with_the_typed_response_model() {
     use akita_config::{policy_of, proof_optimized::fp128, CommitmentConfig};
-    use akita_types::InnerCommitSecurityRoute;
+    use akita_params::InnerCommitSecurityRoute;
 
     let domain = RingDimensionSearchDomain::uniform(64).expect("test domain");
     let fp128_policy = policy_of::<fp128::OneHot>();
@@ -861,15 +861,15 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
         if level <= 1 {
             assert!(matches!(
                 opening_method,
-                akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+                akita_params::OpeningMethod::SubringCoefficientPacking { .. }
             ));
         } else {
-            assert_eq!(opening_method, akita_types::OpeningMethod::EvaluationTrace);
+            assert_eq!(opening_method, akita_params::OpeningMethod::EvaluationTrace);
         }
     }
-    let score = |schedule: &akita_types::PlannedFoldSchedule| {
+    let score = |schedule: &akita_params::PlannedFoldSchedule| {
         let proof_bytes = schedule.estimate.estimated_proof_payload_bytes().unwrap();
-        let root_layout = akita_types::AkitaScheduleLookupKey::single(onehot_group(36, 1))
+        let root_layout = akita_params::AkitaScheduleLookupKey::single(onehot_group(36, 1))
             .opening_layout()
             .unwrap();
         let work: u128 = std::iter::once(&schedule.schedule.root)
@@ -881,7 +881,7 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
                 } else {
                     suffix_opening_layout(fold.input_witness_len, None).unwrap()
                 };
-                let natural = akita_types::active_setup_field_len(&fold.params, &layout).unwrap();
+                let natural = akita_params::active_setup_field_len(&fold.params, &layout).unwrap();
                 let scan = direct_setup_scan_work_elements(
                     natural,
                     fold.params.role_dims().common_relation_coeff_count(),
@@ -956,7 +956,7 @@ fn adaptive_search_supports_direct_multi_chunk_policy() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
     let mut policy = policy_of::<OneHot>();
-    policy.witness_chunk = akita_types::ChunkedWitnessCfg::d64_production();
+    policy.witness_chunk = akita_params::ChunkedWitnessCfg::d64_production();
     let domain = RingDimensionSearchDomain::new([
         CommitmentRingDims::uniform(64),
         CommitmentRingDims::uniform(128),
@@ -972,7 +972,7 @@ fn adaptive_search_supports_direct_multi_chunk_policy() {
         OneHot::ring_challenge_config,
     )
     .unwrap();
-    let lookup_key = akita_types::AkitaScheduleLookupKey::single(onehot_group(16, 1));
+    let lookup_key = akita_params::AkitaScheduleLookupKey::single(onehot_group(16, 1));
     assert_selected_grinding_edge_parity(&schedule, &lookup_key, &policy);
     assert!(!schedule.schedule.recursive_folds.is_empty());
     assert_eq!(schedule.schedule.root.params.witness_chunk.num_chunks, 8);
@@ -1072,7 +1072,7 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
     )
     .unwrap();
     let exact_fields =
-        akita_types::setup_matrix_field_elements_for_schedule(&selected.schedule).unwrap();
+        akita_params::setup_matrix_field_elements_for_schedule(&selected.schedule).unwrap();
     policy.setup_field_budget = Some(exact_fields);
 
     let budgeted = find_schedule(
@@ -1084,7 +1084,7 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
     )
     .expect("the exact setup budget should retain the setup-minimal schedule");
     let budgeted_fields =
-        akita_types::setup_matrix_field_elements_for_schedule(&budgeted.schedule).unwrap();
+        akita_params::setup_matrix_field_elements_for_schedule(&budgeted.schedule).unwrap();
     assert_eq!(budgeted_fields, exact_fields);
 
     let smaller_budget = exact_fields - 1;
@@ -1098,6 +1098,6 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
     )
     .expect("a tighter feasible budget should select an admitted alternative");
     let tighter_fields =
-        akita_types::setup_matrix_field_elements_for_schedule(&tighter.schedule).unwrap();
+        akita_params::setup_matrix_field_elements_for_schedule(&tighter.schedule).unwrap();
     assert!(tighter_fields <= smaller_budget);
 }

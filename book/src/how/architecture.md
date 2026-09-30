@@ -18,7 +18,8 @@ orchestration lives in `akita-pcs`.
 | `akita-transcript` | Spongefish-backed Fiat-Shamir transcript, descriptor preamble, logging checks |
 | `akita-challenges` | Fiat-Shamir challenge sampling helpers |
 | `akita-sumcheck` | Sumcheck proofs, drivers, compact folding, batching, accumulation |
-| `akita-types` | Proof, setup, schedule, layout, commitment, and transcript-append shapes; SIS floors; layout and proof-size helpers |
+| `akita-params` | Parameter geometry, sizing, SIS tables, schedules, compression plans, witness layout, dispatch, and grinding plans |
+| `akita-types` | Proof, setup, and claim wire values, shared protocol math, and native transcript replay |
 | `akita-planner` | `Cfg`-free offline schedule search and artifact emission |
 | `akita-schedules` | Versioned schedule artifacts, semantic row audit, and validated owned catalogs |
 | `akita-config` | Runtime presets, the `CommitmentConfig` trait, trusted artifact loading, `policy_of::<Cfg>()`, and transcript binding |
@@ -43,7 +44,7 @@ Key structural facts:
   optional `catalog-gen` feature enables `akita-config`, so artifact-emission
   binaries may name concrete `CommitmentConfig` presets.
 - `akita-verifier` depends on `akita-config`, `akita-schedules`, and
-  `akita-types`. It receives a validated trusted catalog and never reaches
+  `akita-params`. It receives a validated trusted catalog and never reaches
   planner search.
 - Verifier-only integrations should use `akita-verifier` + `akita-types` + `akita-config`, not the umbrella `akita-pcs` package.
 
@@ -126,7 +127,7 @@ Every function on the prove/verify path has one of two roles:
 
 The bridge is the *operation adapter*: a D-free function that extracts the
 ring dimension of the specific data one operation touches and enters the
-kernel through `akita_types::dispatch_for_field!` exactly once,
+kernel through `akita_params::dispatch_for_field!` exactly once,
 returning D-free storage. Dispatch is per operation — never per level or per
 proof — so that per-matrix ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
 see `specs/runtime-ring-cutover.md`) reduce to feeding different

@@ -93,9 +93,8 @@ mod matrix_drivers;
 
 use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_cpu_backend::CpuBackend;
-use akita_types::{
-    BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
-};
+use akita_params::{BasisMode, OpeningClaimsLayout};
+use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use common::*;
 use matrix_drivers::*;
 
@@ -210,8 +209,8 @@ fn fp128_dense_mc() {
             akita_config::test_support::workspace_schedule_catalog::<fp128::DenseMultiChunk>()
                 .expect("dense multi-chunk catalog");
         let schedule = catalog
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
-                akita_types::PolynomialGroupLayout::singleton(16),
+            .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::singleton(16),
             ))
             .expect("dense multi-chunk schedule")
             .schedule()
@@ -292,7 +291,7 @@ fn fp128_onehot_mc_catalog_resolves() {
             .expect("one-hot multi-chunk catalog");
     let opening_batch = OpeningClaimsLayout::new(32, 1).expect("opening batch");
     catalog
-        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+        .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
             opening_batch
                 .root_final_group_layout()
                 .expect("root group layout"),
@@ -464,7 +463,7 @@ fn fp128_onehot_oversized_setup() {
         let opening_batch = OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
         let layout = scheme
             .schedules()
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
                 opening_batch
                     .root_final_group_layout()
                     .expect("singleton group layout"),

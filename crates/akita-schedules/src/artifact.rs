@@ -2,7 +2,7 @@
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::{
+use akita_params::{
     digest_descriptor_bytes, AkitaScheduleLookupKey, AkitaScheduleLookupOrderKey,
     CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
     AKITA_INSTANCE_DESCRIPTOR_VERSION,
@@ -759,12 +759,12 @@ fn validate_schedule_challenge_hooks(
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
 ) -> Result<(), AkitaError> {
     let validate = |actual: SparseChallengeConfig,
-                    method: akita_types::OpeningMethod,
+                    method: akita_params::OpeningMethod,
                     ring_dimension: usize,
                     uses_l2: bool,
                     position: ScheduleGroupPosition| {
         let expected = match method {
-            akita_types::OpeningMethod::SubringCoefficientPacking {
+            akita_params::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
             } => SparseChallengeConfig::production_for_ring_dim(challenge_subring_dimension)
                 .ok_or_else(|| {
@@ -772,14 +772,14 @@ fn validate_schedule_challenge_hooks(
                         "{position} uses unsupported challenge subring D={challenge_subring_dimension}"
                     ))
                 })?,
-            akita_types::OpeningMethod::EvaluationTrace if uses_l2 => {
+            akita_params::OpeningMethod::EvaluationTrace if uses_l2 => {
                 akita_challenges::selective_l2_challenge_config(ring_dimension).ok_or_else(|| {
                     AkitaError::InvalidSetup(format!(
                         "{position} has no selective L2 challenge config for D={ring_dimension}"
                     ))
                 })?
             }
-            akita_types::OpeningMethod::EvaluationTrace => {
+            akita_params::OpeningMethod::EvaluationTrace => {
                 ring_challenge_config(ring_dimension)?
             }
         };
@@ -800,7 +800,7 @@ fn validate_schedule_challenge_hooks(
             params.inner_commit_matrix_params().ring_dimension(),
             matches!(
                 params.inner_commit_matrix_params().security_route(),
-                akita_types::InnerCommitSecurityRoute::L2 { .. }
+                akita_params::InnerCommitSecurityRoute::L2 { .. }
             ),
             position,
         ),
@@ -812,7 +812,7 @@ fn validate_schedule_challenge_hooks(
             params.d_a(),
             matches!(
                 params.inner().matrix.security_route(),
-                akita_types::InnerCommitSecurityRoute::L2 { .. }
+                akita_params::InnerCommitSecurityRoute::L2 { .. }
             ),
             position,
         ),
@@ -820,11 +820,11 @@ fn validate_schedule_challenge_hooks(
             position, params, ..
         } => validate(
             params.fold_challenge_config,
-            akita_types::OpeningMethod::EvaluationTrace,
+            akita_params::OpeningMethod::EvaluationTrace,
             params.d_a(),
             matches!(
                 params.inner.matrix.security_route(),
-                akita_types::InnerCommitSecurityRoute::L2 { .. }
+                akita_params::InnerCommitSecurityRoute::L2 { .. }
             ),
             position,
         ),

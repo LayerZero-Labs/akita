@@ -3,12 +3,14 @@
 use super::{prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay};
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_error::AkitaError;
+use akita_params::{
+    ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, FlatMatrix,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
+    RelationWitnessGeometry, RingOpeningPoint, RingRelationMode, SisModulusProfileId,
+};
 use akita_types::{
-    relation_rhs_coeff_len, AkitaExpandedSetup, AkitaSetupDescriptor, ChunkedWitnessCfg,
-    CommitmentRingDims, CommittedGroupParams, FlatMatrix, InnerCommitMatrixParams,
-    OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, RelationWitnessGeometry,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening, RingRelationInstance,
-    RingRelationMode, RingVec, SisModulusProfileId,
+    relation_rhs_coeff_len, AkitaExpandedSetup, AkitaSetupDescriptor, RingMultiplierOpeningPoint,
+    RingRelationGroupOpening, RingRelationInstance, RingVec,
 };
 use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7};
 

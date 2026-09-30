@@ -4,13 +4,16 @@ use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::{CommitmentHandle, CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;
+use akita_params::{
+    lagrange_weights, AkitaScheduleLookupKey, BasisMode, CommittedGroupBatchProfile,
+    OpeningScheduleSelection, PolynomialGroupLayout,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::{
-    lagrange_weights, AkitaScheduleLookupKey, AkitaVerifierSetup, BasisMode, CommittedGroup,
-    CommittedGroupBatchProfile, FpExtEncoding, GroupBatchStatement, OpeningClaims,
-    OpeningScheduleSelection, PolynomialGroupClaims, PolynomialGroupLayout,
+    AkitaVerifierSetup, CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims,
+    PolynomialGroupClaims,
 };
 use jolt_field::{
     CanonicalBytes, CanonicalEncoding, ExtField, Field, Fold, One, PseudoMersenne, Ring, Unreduced,
@@ -259,8 +262,8 @@ where
         );
         let sumcheck_protocols = selected_sumcheck_protocols(&by_role);
         for protocol in [
-            akita_types::SumcheckProtocol::Stage1,
-            akita_types::SumcheckProtocol::Stage2,
+            akita_params::SumcheckProtocol::Stage1,
+            akita_params::SumcheckProtocol::Stage2,
         ] {
             assert!(
                 sumcheck_protocols.contains(&protocol),
@@ -270,11 +273,11 @@ where
         for (family, protocol) in [
             (
                 akita_transcript::SITE_FAMILY_PHYSICAL_L2,
-                akita_types::SumcheckProtocol::PhysicalL2,
+                akita_params::SumcheckProtocol::PhysicalL2,
             ),
             (
                 akita_transcript::SITE_FAMILY_STAGE3,
-                akita_types::SumcheckProtocol::Stage3,
+                akita_params::SumcheckProtocol::Stage3,
             ),
         ] {
             if by_role.iter().any(|(bucket, _)| bucket.family == family) {
@@ -292,7 +295,7 @@ where
             );
             assert!(
                 sumcheck_protocols
-                    .contains(&akita_types::SumcheckProtocol::ExtensionOpeningReduction),
+                    .contains(&akita_params::SumcheckProtocol::ExtensionOpeningReduction),
                 "extension-field workload must exercise EOR sumcheck messages"
             );
         }

@@ -980,7 +980,7 @@ through the existing level/schedule descriptor bytes.
 
 Multi-group opening and schedule encodings use the same canonical byte helpers as
 the existing instance descriptor digests in
-`crates/akita-types/src/descriptor_bytes.rs`:
+`crates/akita-params/src/descriptor_bytes.rs`:
 
 ```text
 usize   -> u64 little-endian

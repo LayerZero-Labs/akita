@@ -1,10 +1,8 @@
 //! Canonical native proof-stream grammar for extension-opening reduction.
 
-use crate::{
-    tensor_opening_split, GrindingSite, NativeProverGrinding, NativeVerifierGrinding,
-    OpeningClaimsLayout,
-};
+use crate::{tensor_opening_split, NativeProverGrinding, NativeVerifierGrinding};
 use akita_error::{checked, AkitaError};
+use akita_params::{GrindingSite, OpeningClaimsLayout};
 use akita_transcript::{
     public_native_extensions_prover, public_native_extensions_verifier,
     receive_native_extension_group, send_native_extension_group, ProtocolSiteId,
@@ -200,7 +198,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ChallengeFieldOrder, GrindingPlan, GrindingRun, PolynomialGroupLayout};
+    use akita_params::{ChallengeFieldOrder, GrindingPlan, GrindingRun, PolynomialGroupLayout};
     use akita_transcript::{new_native_prover, new_native_verifier};
     use jolt_field::{FpExt4, Prime32Offset99, Ring};
 

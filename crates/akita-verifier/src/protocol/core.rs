@@ -14,6 +14,10 @@ use crate::stages::stage2::AkitaStage2Verifier;
 use crate::stages::SetupSumcheckVerifier;
 use akita_challenges::FoldDraw;
 use akita_error::AkitaError;
+use akita_params::{
+    BasisMode, CommittedGroupParams, FoldParams, FoldSchedule, InnerCommitSecurityRoute,
+    OpeningClaimsLayout, RelationWitnessGeometry, SetupContributionMode, TerminalFoldParams,
+};
 use akita_serialization::AkitaSerialize;
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
 use akita_types::{
@@ -21,11 +25,9 @@ use akita_types::{
     canonical_extension_opening_reduction_shape, ensure_trace_stage2_supported,
     prepare_opening_point, proof::relation::relation_row_weight,
     relation_claim_from_compressed_rhs_extension, ring_subfield_packed_extension_opening_point,
-    tensor_equality_factor_eval_at_point, AkitaVerifierSetup, BasisMode, CommittedGroupParams,
-    EvaluationTraceInputs, FoldParams, FoldSchedule, FpExtEncoding, InnerCommitSecurityRoute,
-    OpeningClaims, OpeningClaimsLayout, PhysicalResponsePlan, PolynomialGroupClaims,
-    PreparedOpeningPoint, RelationRangeImagePlan, RelationWitnessGeometry, RingRelationInstance,
-    RingVec, SetupContributionMode, TerminalFoldParams,
+    tensor_equality_factor_eval_at_point, AkitaVerifierSetup, EvaluationTraceInputs, FpExtEncoding,
+    OpeningClaims, PhysicalResponsePlan, PolynomialGroupClaims, PreparedOpeningPoint,
+    RelationRangeImagePlan, RingRelationInstance, RingVec,
 };
 
 use akita_types::{

@@ -21,8 +21,8 @@ fn native_stream_binds_session_statement_basis_and_eof() {
         let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
         let layout = scheme
             .schedules()
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
-                akita_types::PolynomialGroupLayout::singleton(NUM_VARS),
+            .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::singleton(NUM_VARS),
             ))
             .expect("layout")
             .schedule()
@@ -119,8 +119,8 @@ fn native_stream_binds_session_statement_basis_and_eof() {
             }
             let sumcheck_protocols = selected_sumcheck_protocols(&role_ranges);
             for protocol in [
-                akita_types::SumcheckProtocol::Stage1,
-                akita_types::SumcheckProtocol::Stage2,
+                akita_params::SumcheckProtocol::Stage1,
+                akita_params::SumcheckProtocol::Stage2,
             ] {
                 assert!(
                     sumcheck_protocols.contains(&protocol),
@@ -130,11 +130,11 @@ fn native_stream_binds_session_statement_basis_and_eof() {
             for (family, protocol) in [
                 (
                     akita_transcript::SITE_FAMILY_PHYSICAL_L2,
-                    akita_types::SumcheckProtocol::PhysicalL2,
+                    akita_params::SumcheckProtocol::PhysicalL2,
                 ),
                 (
                     akita_transcript::SITE_FAMILY_STAGE3,
-                    akita_types::SumcheckProtocol::Stage3,
+                    akita_params::SumcheckProtocol::Stage3,
                 ),
             ] {
                 if role_ranges
@@ -197,8 +197,8 @@ fn native_stream_mutations_reject_without_panicking() {
         let point = random_point(NUM_VARS, 0x8181);
         let row = scheme
             .schedules()
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
-                akita_types::PolynomialGroupLayout::singleton(NUM_VARS),
+            .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::singleton(NUM_VARS),
             ))
             .expect("layout");
         let opening = opening_from_poly_for_layout(

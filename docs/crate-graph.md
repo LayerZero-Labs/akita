@@ -20,7 +20,8 @@ orchestration lives in `akita-pcs`.
 | `akita-transcript` | Fiat-Shamir transcript and descriptor preamble |
 | `akita-challenges` | Challenge sampling helpers |
 | `akita-sumcheck` | Sumcheck proofs, drivers, folding, batching |
-| `akita-types` | Proof/setup/schedule/layout shapes, SIS floors, proof-size helpers |
+| `akita-params` | Parameter geometry, sizing, SIS tables, schedules, compression plans, witness layout, dispatch, and grinding plans |
+| `akita-types` | Proof, setup, and claim wire values, shared protocol math, and native transcript replay |
 | `akita-sis-estimator` | Offline scalar SIS attack-cost estimation and artifact certification |
 | `akita-planner` | `Cfg`-free schedule search and optional preset-driven artifact emission |
 | `akita-schedules` | Versioned artifacts, row audit, and validated owned catalogs |
@@ -42,6 +43,7 @@ graph TD
   Transcript["akita-transcript"]
   Challenges["akita-challenges"]
   Sumcheck["akita-sumcheck"]
+  Params["akita-params"]
   Types["akita-types"]
   SisEstimator["akita-sis-estimator"]
   Planner["akita-planner"]
@@ -66,6 +68,14 @@ graph TD
   Sumcheck --> Field
   Sumcheck --> Ser
   Sumcheck --> Transcript
+  Params --> Error
+  Params --> Algebra
+  Params --> Challenges
+  Params --> Field
+  Params --> Ser
+  Params --> Sumcheck
+  Params --> Transcript
+  Types --> Params
   Types --> Error
   Types --> Algebra
   Types --> Challenges
@@ -73,22 +83,24 @@ graph TD
   Types --> Ser
   Types --> Sumcheck
   Types --> Transcript
-  SisEstimator --> Types
+  SisEstimator --> Params
   Planner --> Error
   Planner --> Challenges
   Planner --> Schedules
-  Planner --> Types
+  Planner --> Params
   Planner -. catalog-gen .-> Config
   Planner -. catalog-security .-> SisEstimator
   Schedules --> Error
   Schedules --> Challenges
-  Schedules --> Types
+  Schedules --> Params
+  Config --> Params
   Config --> Error
   Config --> Challenges
   Config --> Field
   Config --> Transcript
   Config --> Types
   Config --> Schedules
+  Verifier --> Params
   Verifier --> Error
   Verifier --> Algebra
   Verifier --> Challenges
@@ -98,6 +110,7 @@ graph TD
   Verifier --> Sumcheck
   Verifier --> Transcript
   Verifier --> Types
+  Prover --> Params
   Prover --> Error
   Prover --> Algebra
   Prover --> Challenges
@@ -108,6 +121,7 @@ graph TD
   Prover --> Transcript
   Prover --> Types
   Cpu --> Prover
+  Cpu --> Params
   Cpu --> Error
   Cpu --> Algebra
   Cpu --> Challenges
@@ -117,6 +131,7 @@ graph TD
   Cpu --> Sumcheck
   Cpu --> Transcript
   Cpu --> Types
+  Setup --> Params
   Setup --> Error
   Setup --> Algebra
   Setup --> Config
@@ -124,6 +139,7 @@ graph TD
   Setup --> Cpu
   Setup --> Ser
   Setup --> Types
+  Pcs --> Params
   Pcs --> Error
   Pcs --> Algebra
   Pcs --> Challenges
@@ -146,19 +162,19 @@ graph TD
   protocol error variant. Callers map failure at the boundary where its meaning
   is known. Generic checked helpers must not be redefined in downstream crates.
 - `akita-planner` is the offline schedule search and artifact emission engine.
-  Normal planner search is `Cfg`-free and depends on `akita-types`,
+  Normal planner search is `Cfg`-free and depends on `akita-params`,
   `akita-challenges`, `akita-error`, and `akita-schedules`. The optional
   `catalog-gen` feature also enables `akita-config`, allowing artifact-emission
   binaries to name concrete `CommitmentConfig` presets.
 - `akita-sis-estimator` owns the offline scalar SIS cost model and table
   certification logic. It depends on inert schedule and matrix descriptions in
-  `akita-types`. The planner's optional `catalog-security` feature uses it to
+  `akita-params`. The planner's optional `catalog-security` feature uses it to
   report direct modeled costs for expanded artifact rows; normal planner,
   schedule, prover, and verifier builds do not depend on the estimator.
 - `akita-schedules` owns canonical artifact encoding, bounded decoding, semantic
   row audit, and the immutable `ValidatedScheduleCatalog` indexes used at runtime.
   Tracked `.aks` family files are deterministic planner output but are never
-  linked into the crate. It depends only on `akita-error`, `akita-types`, and
+  linked into the crate. It depends only on `akita-error`, `akita-params`, and
   `akita-challenges`.
 - `akita-config` owns concrete runtime presets, the single `CommitmentConfig`
   policy trait, and the `TrustedScheduleCatalog<Cfg>` capability that binds a
@@ -188,11 +204,13 @@ graph TD
 - `akita-setup` owns application-side setup persistence. Restoring an artifact
   requires backend validation before it becomes an opaque commitment handle;
   serialized process-local identities carry no authority.
-- `akita-types` owns inert shared protocol data: proof/setup/claim shapes,
-  opening-point and layout math, schedule contracts, SIS sizing (`akita_types::sis`),
-  and transcript append traits. It should not grow planner search or prover
-  algorithms (offline search and compact emission machinery live in
-  `akita-planner`).
+- `akita-params` owns parameter geometry, sizing, SIS tables (`akita_params::sis`),
+  schedule contracts, compression plans, witness layout, dispatch, and grinding
+  plans. It does not depend on `akita-types`; schedules and the SIS estimator
+  use it directly without pulling in wire proof values.
+- `akita-types` owns proof/setup/claim wire values, shared protocol math, and
+  native transcript replay. Offline search and compact emission machinery live
+  in `akita-planner`.
 - `akita-pcs` is the broad umbrella crate: it owns the end-to-end
   `AkitaCommitmentScheme` orchestration, re-exports the full public surface, and
   hosts examples and integration tests. Verifier-only integrations should not use

@@ -1,5 +1,5 @@
 use akita_error::AkitaError;
-use akita_types::{SignedDigitKernel, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS};
+use akita_params::{SignedDigitKernel, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS};
 
 #[inline]
 pub(crate) fn is_i8_log_basis(log_basis: u32) -> bool {

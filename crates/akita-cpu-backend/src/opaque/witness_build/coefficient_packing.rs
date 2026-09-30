@@ -9,10 +9,11 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
-use akita_types::{
-    CommittedGroupParams, DigitBlocks, OpeningClaimsLayout, OpeningMethod, RelationWitnessGeometry,
+use akita_params::{
+    CommittedGroupParams, OpeningClaimsLayout, OpeningMethod, RelationWitnessGeometry,
     SubringCoefficientPackingGeometry,
 };
+use akita_types::DigitBlocks;
 use jolt_field::{CanonicalEncoding, Field};
 
 /// Fold one group's canonical partials with its single sampled subring challenge batch.
@@ -233,7 +234,7 @@ pub(crate) fn materialize_coefficient_packing_d_input<
 mod tests {
     use super::*;
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
-    use akita_types::{
+    use akita_params::{
         gadget_row_scalars, CommittedGroupParams, OpenCommitMatrixParams, OpeningClaimsLayout,
         PolynomialGroupLayout, SisModulusProfileId,
     };

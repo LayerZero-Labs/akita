@@ -344,10 +344,10 @@ materialized relation table.
 
 - Row families and public right hand sides:
   `crates/akita-types/src/proof/relation.rs` and
-  `crates/akita-types/src/layout/relation_layout.rs`.
-- Witness ranges: `crates/akita-types/src/witness.rs`.
+  `crates/akita-params/src/layout/relation_layout.rs`.
+- Witness ranges: `crates/akita-params/src/witness.rs`.
 - Relation address geometry:
-  `crates/akita-types/src/layout/relation_address.rs`.
+  `crates/akita-params/src/layout/relation_address.rs`.
 - Residue and terminal coefficient functionals:
   `crates/akita-algebra/src/ring/residue.rs`.
 - Verifier preparation:

@@ -2,7 +2,7 @@
 use super::{CpuBackend, PreparedCrtNttProfile, PreparedNttCacheMetric};
 use crate::opaque::NttExecutionRequirements;
 use akita_error::AkitaError;
-use akita_types::FoldSchedule;
+use akita_params::FoldSchedule;
 
 impl<F: jolt_field::Field + jolt_field::CanonicalEncoding, E> CpuBackend<F, E> {
     /// Prepare the CPU cache union for a complete commit-and-prove workload.

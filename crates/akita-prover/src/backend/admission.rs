@@ -2,9 +2,8 @@
 use super::{ProofContext, ProofScopeConsumer, ProverHandleFamily};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
-use akita_types::{
-    AkitaSetupDescriptor, Commitment, FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout,
-};
+use akita_params::{FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout};
+use akita_types::{AkitaSetupDescriptor, Commitment};
 use jolt_field::{CanonicalEncoding, Field};
 
 pub trait ProofAdmission<F: Field + CanonicalEncoding, E: Field>:

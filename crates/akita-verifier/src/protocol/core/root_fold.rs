@@ -22,7 +22,7 @@ where
             root_lp
                 .group_params_geometry(opening_batch, group_index)?
                 .opening_method(),
-            akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+            akita_params::OpeningMethod::SubringCoefficientPacking { .. }
         ) {
             return Err(AkitaError::InvalidProof);
         }
@@ -111,7 +111,7 @@ where
                 .params
                 .outer_payload_geometry()?
                 .transmitted_coefficients();
-            let committed_len = akita_types::witness_commitment_domain_len(witness_len, ring_dim)?;
+            let committed_len = akita_params::witness_commitment_domain_len(witness_len, ring_dim)?;
             (
                 NativeNextWitnessPlan::OuterPayload { coefficient_count },
                 ring_dim,
@@ -131,7 +131,7 @@ where
                 .first()
                 .ok_or(AkitaError::InvalidProof)?
                 .t_field_elems;
-            let committed_len = akita_types::witness_commitment_domain_len(witness_len, ring_dim)?;
+            let committed_len = akita_params::witness_commitment_domain_len(witness_len, ring_dim)?;
             (
                 NativeNextWitnessPlan::TerminalT { coefficient_count },
                 ring_dim,
@@ -145,7 +145,7 @@ where
                 .map_err(|_| AkitaError::InvalidSetup("extension degree overflow".into()))?,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("challenge field width overflow".into()))?;
-    let level_layout = akita_types::native_nonterminal_level_layout(
+    let level_layout = akita_params::native_nonterminal_level_layout(
         F::MODULUS_BITS,
         challenge_field_bits,
         root_lp,

@@ -7,7 +7,7 @@ pub(crate) enum PlannerOpeningCandidate {
         challenge_config: SparseChallengeConfig,
     },
     SubringCoefficientPacking {
-        geometry: akita_types::SubringCoefficientPackingGeometry,
+        geometry: akita_params::SubringCoefficientPackingGeometry,
     },
 }
 
@@ -65,7 +65,7 @@ impl PlannerOpeningCandidate {
         {
             return Ok(None);
         }
-        let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(
+        let geometry = akita_params::SubringCoefficientPackingGeometry::try_new(
             extension_degree,
             dimensions.d_a(),
             challenge_subring_dimension,
@@ -73,11 +73,11 @@ impl PlannerOpeningCandidate {
         Ok(Some(Self::SubringCoefficientPacking { geometry }))
     }
 
-    pub(crate) const fn method(self) -> akita_types::OpeningMethod {
+    pub(crate) const fn method(self) -> akita_params::OpeningMethod {
         match self {
-            Self::EvaluationTrace { .. } => akita_types::OpeningMethod::EvaluationTrace,
+            Self::EvaluationTrace { .. } => akita_params::OpeningMethod::EvaluationTrace,
             Self::SubringCoefficientPacking { geometry } => {
-                akita_types::OpeningMethod::SubringCoefficientPacking {
+                akita_params::OpeningMethod::SubringCoefficientPacking {
                     challenge_subring_dimension: geometry.challenge_subring_dimension(),
                 }
             }
@@ -154,7 +154,7 @@ mod tests {
         .expect("registered two-subcolumn packing geometry");
         assert_eq!(
             admitted.method(),
-            akita_types::OpeningMethod::SubringCoefficientPacking {
+            akita_params::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: 64
             }
         );
@@ -219,10 +219,10 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|candidate| match candidate.method() {
-                akita_types::OpeningMethod::SubringCoefficientPacking {
+                akita_params::OpeningMethod::SubringCoefficientPacking {
                     challenge_subring_dimension,
                 } => challenge_subring_dimension,
-                akita_types::OpeningMethod::EvaluationTrace => unreachable!(),
+                akita_params::OpeningMethod::EvaluationTrace => unreachable!(),
             })
             .collect::<Vec<_>>();
             assert_eq!(actual, expected);

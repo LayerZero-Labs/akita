@@ -99,7 +99,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ChallengeFieldOrder, GrindingPlan, GrindingRun, GrindingSite};
+    use akita_params::{ChallengeFieldOrder, GrindingPlan, GrindingRun, GrindingSite};
     use akita_transcript::{new_native_prover, new_native_verifier};
     use jolt_field::{FpExt4, Prime32Offset99, Ring};
 

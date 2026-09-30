@@ -3,12 +3,12 @@
 use crate::runtime::PlannerPolicy;
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::sis::{
+use akita_params::sis::{
     min_secure_l2_rank, projected_role_ring_count, role_a_collision_l2_sq_for_response_bound,
     rounded_up_collision_inf_norm, sis_l2_table_key_for_collision_sq, FoldChallengeNorms,
     SisTableKey,
 };
-use akita_types::{InnerCommitMatrixParams, PhysicalL2NormProofShape, SisMatrixRole};
+use akita_params::{InnerCommitMatrixParams, PhysicalL2NormProofShape, SisMatrixRole};
 
 /// Exact public geometry that may admit one selective physical-L2 A matrix.
 #[derive(Clone, Copy, Debug)]
@@ -145,7 +145,7 @@ pub fn projected_collision_role_price(
 mod tests {
     use super::*;
     use crate::{PlannerCostModelId, SelectionPolicyId};
-    use akita_types::{
+    use akita_params::{
         ChunkedWitnessCfg, DecompositionParams, SisL2TableDigest, SisModulusProfileId,
         SisSecurityPolicyId, SisTableDigest,
     };
@@ -255,7 +255,7 @@ mod tests {
         .expect("basis-eight L2 table coverage");
         assert!(matches!(
             basis_eight.security_route(),
-            akita_types::InnerCommitSecurityRoute::L2 { .. }
+            akita_params::InnerCommitSecurityRoute::L2 { .. }
         ));
         let candidate = selective_l2_inner_matrix(
             &policy,
@@ -274,7 +274,7 @@ mod tests {
         )
         .expect("D128 L2 candidate")
         .expect("D128 L2 table coverage");
-        let akita_types::InnerCommitSecurityRoute::L2 { table_key, .. } =
+        let akita_params::InnerCommitSecurityRoute::L2 { table_key, .. } =
             candidate.security_route()
         else {
             panic!("expected L2 route")
