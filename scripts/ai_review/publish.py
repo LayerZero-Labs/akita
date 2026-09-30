@@ -46,7 +46,7 @@ def validate(snapshot, proposal):
     if digest(unsigned) != snapshot["digest"] or proposal["snapshot_digest"] != snapshot["digest"]:
         raise ReviewError("Review snapshot mismatch")
     result = proposal["result"]
-    if set(result) != {"complete", "limitations", "coverage", "previous", "findings"}:
+    if set(result) != {"complete", "limitations", "discussion_blockers", "coverage", "previous", "findings"}:
         raise ReviewError("Unexpected review fields")
     if type(result["complete"]) is not bool or not isinstance(result["limitations"], str):
         raise ReviewError("Invalid completion status")
@@ -56,6 +56,10 @@ def validate(snapshot, proposal):
         raise ReviewError("Review did not account for every changed file")
     if len(result["limitations"]) > 4000 or len(result["findings"]) > 20:
         raise ReviewError("Review exceeds publication budget")
+    if not isinstance(result["discussion_blockers"], list) or len(result["discussion_blockers"]) > 100:
+        raise ReviewError("Invalid discussion blockers")
+    for blocker in result["discussion_blockers"]:
+        bounded_text(blocker, 2000)
     prior = {f["id"]: f for f in (snapshot["prior"] or {}).get("findings", [])}
     updates = result["previous"]
     if (not isinstance(updates, list) or len(updates) != len(prior)
@@ -101,9 +105,15 @@ def prepare_review(snapshot, proposal):
     result = proposal["result"]
     state = {"repository": REPOSITORY, "number": snapshot["number"], "request": snapshot["request"],
              "head": snapshot["revision"]["head"], "findings": findings,
-             "complete": result["complete"], "limitations": result["limitations"]}
+             "complete": result["complete"], "limitations": result["limitations"],
+             "discussion_blockers": result["discussion_blockers"]}
     encoded = base64.b64encode(json.dumps(state).encode()).decode()
     body = f"{MARKER}{encoded} -->"
+    remaining = [finding for finding in findings if finding["status"] != "fixed"]
+    if (result["complete"] and not result["discussion_blockers"]
+            and all(f["status"] == "open" and f["priority"] == "nit" for f in remaining)):
+        reason = "only optional nits remain" if remaining else "no unresolved findings"
+        body += f"\n\nRecommended for approval: {reason} in this automated review."
     comments = []
     previous = {f["id"] for f in (snapshot["prior"] or {}).get("findings", [])}
     for finding in findings:

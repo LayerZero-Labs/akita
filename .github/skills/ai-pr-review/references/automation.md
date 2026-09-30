@@ -40,7 +40,11 @@ On every repeated request:
 3. Read all supplied trusted discussions and replies, including new comments on
    an unchanged head. Check proposed explanations against code. Semantically
    deduplicate against human discussions and all earlier findings; changing the
-   wording or location does not create a new root cause.
+   wording or location does not create a new root cause. Record confirmed,
+   unresolved non-nit issues already raised in eligible human discussion in
+   `discussion_blockers`, citing their comment and source evidence. Do not omit
+   them merely because they do not need a new inline comment. Use an empty list
+   only when no such issue remains.
 4. Review the full current PR diff as well as the delta for newly introduced or
    newly exposed issues. Return only genuinely new findings in `findings`, with
    a stable, short `root_cause`, priority, concrete trigger, consequence, and fix
@@ -54,11 +58,15 @@ On every repeated request:
 The deterministic publisher submits a COMMENT review with only new inline
 findings. Use one short paragraph per root cause and omit the priority prefix
 from `body` because the publisher adds it. It verifies both the source location
-and LEFT/RIGHT diff coordinates. Its review body contains only a hidden state
-marker with prior-finding dispositions and coverage; no visible summary comment
-is posted. On a new request with no new findings, a marker-only COMMENT review
-persists the reassessment without repeating inline comments. This is not an
-approval or readiness declaration. Coverage and limits remain in review artifacts.
+and LEFT/RIGHT diff coordinates. Its review body contains a hidden state marker
+with prior-finding dispositions and coverage. When the review is complete and
+all remaining findings are confirmed optional nits (or there are none), it also
+posts a short recommendation for approval. Unresolved P0–P3 findings, uncertain
+prior findings, incomplete coverage, and `discussion_blockers` suppress that
+recommendation, even when no new inline comments are needed. The publisher
+generates this prose; do not include it in finding bodies. It remains a COMMENT
+review, never a formal APPROVE action. Other outcomes carry only the hidden
+state marker. Coverage and limits remain in review artifacts.
 
 It refreshes authorization, revisions and trusted discussions before publication.
 It does not edit the PR description, approve, request changes, resolve threads,

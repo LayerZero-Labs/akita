@@ -18,6 +18,8 @@ INTEGER = {"type": "integer"}
 RESULT_SCHEMA = object_schema({
     "complete": {"type": "boolean"},
     "limitations": STRING,
+    "discussion_blockers": {"type": "array", "items": STRING,
+                            "description": "Unresolved non-nit findings already raised in eligible human discussion, with source evidence. Do not duplicate them inline."},
     "coverage": {"type": "array", "items": STRING},
     "previous": {"type": "array", "items": object_schema({
         "id": STRING, "status": {"type": "string", "enum": ["open", "fixed", "uncertain"]},

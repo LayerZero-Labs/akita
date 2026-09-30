@@ -15,6 +15,13 @@ than being posted as new issues. Rerunning the same Actions event does not publi
 twice. Review requests serialize per PR; GitHub concurrency may replace an older
 pending request when several commands arrive while a review runs.
 
+A completed review with no unresolved findings, or only optional nits, posts
+"Recommended for approval" in its review body. New nits still appear inline.
+Prior unresolved P0–P3 findings, unresolved non-nit collaborator feedback,
+uncertain findings, or incomplete coverage prevent the recommendation, even if
+there are no new findings. This is a COMMENT review proposing approval; it does
+not submit GitHub's formal APPROVE action.
+
 The repository copy of the [review skill](../.github/skills/ai-pr-review/SKILL.md)
 is the source of truth for automation. Its
 [automation contract](../.github/skills/ai-pr-review/references/automation.md)
@@ -97,8 +104,9 @@ for the original request ID before attempting a write.
 The latest state is stored in a hidden marker in the bot review body. Do not edit
 those markers;
 malformed state fails closed and removal loses that historical baseline. Fixed
-findings stay in history so later regressions can be recognized. A review with no
-new findings carries only this hidden marker; no visible summary is posted.
+findings stay in history so later regressions can be recognized. Reviews that do
+not qualify for an approval recommendation carry only this hidden marker in
+their review body, while any new findings are posted inline.
 Prior thread resolution is left to humans. Review artifacts retain coverage and
 limitations, including issues that cannot be anchored in the current diff. An external
 comment cannot spoof state by copying a marker.

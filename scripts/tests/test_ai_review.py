@@ -87,7 +87,7 @@ def seal(value):
 
 def proposal(value):
     return {"snapshot_digest": value["digest"], "reads": [["head", "src/a.py"]],
-            "result": {"complete": True, "limitations": "", "coverage": value["changed"],
+            "result": {"complete": True, "limitations": "", "discussion_blockers": [], "coverage": value["changed"],
                        "previous": [], "findings": [{"priority": "P2", "path": "src/a.py",
                            "revision": "head", "line": 2, "root_cause": "empty batch indexes zero",
                            "body": "Empty inputs raise instead of returning None; validate first."}]}}
@@ -175,6 +175,60 @@ class SourceToolTests(unittest.TestCase):
 
 
 class PublicationTests(unittest.TestCase):
+    def test_clean_and_nit_only_reviews_recommend_approval_once(self):
+        for priority in (None, "nit", "P0", "P1", "P2", "P3"):
+            with self.subTest(priority=priority):
+                gh = FakeGitHub()
+                value = snapshot(gh)
+                result = proposal(value)
+                if priority is None:
+                    result["result"]["findings"] = []
+                else:
+                    result["result"]["findings"][0]["priority"] = priority
+                self.assertEqual(publish(gh, EVENT, value, result), "published")
+                payload = gh.writes[0][1]
+                self.assertEqual("Recommended for approval:" in payload["body"], priority in (None, "nit"))
+                self.assertEqual(payload["event"], "COMMENT")
+                self.assertEqual(len(payload["comments"]), 0 if priority is None else 1)
+                if priority == "nit":
+                    self.assertIn("only optional nits remain", payload["body"])
+                state = previous_state(discussions(gh, 7), 7)
+                self.assertEqual(state["request"], value["request"])
+                self.assertEqual(publish(gh, EVENT, value, result), "already-published")
+                self.assertEqual(len(gh.writes), 1)
+
+    def test_prior_findings_control_approval_even_when_no_new_findings_exist(self):
+        for priority, status, recommend in (("P1", "open", False), ("P1", "fixed", True),
+                                            ("P1", "uncertain", False), ("nit", "open", True),
+                                            ("nit", "uncertain", False)):
+            with self.subTest(priority=priority, status=status):
+                value = snapshot()
+                initial = proposal(value)
+                initial["result"]["findings"][0]["priority"] = priority
+                body = prepare_review(value, initial)["body"]
+                value["prior"] = previous_state([{"id": 99, "own": True, "body": body}], 7)
+                seal(value)
+                result = proposal(value)
+                result["result"]["findings"] = []
+                result["result"]["previous"] = [{"id": value["prior"]["findings"][0]["id"],
+                    "status": status, "evidence": "Checked current src/a.py:2 against the empty-input contract."}]
+                payload = prepare_review(value, result)
+                self.assertEqual("Recommended for approval:" in payload["body"], recommend)
+                self.assertEqual(payload["comments"], [])
+
+    def test_incomplete_reviews_and_unresolved_human_findings_do_not_recommend_approval(self):
+        for complete, blockers in ((False, []), (True, ["Human comment 88: src/a.py:2 still fails on empty input."])):
+            for nit in (False, True):
+                with self.subTest(complete=complete, blockers=blockers, nit=nit):
+                    value = snapshot()
+                    result = proposal(value)
+                    result["result"].update(complete=complete, discussion_blockers=blockers)
+                    if nit:
+                        result["result"]["findings"][0]["priority"] = "nit"
+                    else:
+                        result["result"]["findings"] = []
+                    self.assertNotIn("Recommended for approval:", prepare_review(value, result)["body"])
+
     def test_inline_anchors_include_correct_sides_and_reject_off_diff_lines(self):
         patch_text = "--- a/x\n+++ b/x\n@@ -10,2 +10,2 @@\n same\n-old\n+new\n"
         self.assertEqual(diff_lines(patch_text), {"base": [10, 11], "head": [10, 11]})
