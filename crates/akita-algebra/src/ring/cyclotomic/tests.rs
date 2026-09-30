@@ -270,6 +270,28 @@ fn balanced_i8_decomposition_includes_bases_seven_and_eight() {
     }
 }
 
+#[test]
+fn coefficient_inner_product_is_constant_term_of_conjugate_product() {
+    let mut rng = StdRng::seed_from_u64(0xC7);
+    for _ in 0..16 {
+        let a = CyclotomicRing::<F128, D>::random(&mut rng);
+        let b = CyclotomicRing::<F128, D>::random(&mut rng);
+        assert_eq!(a.constant_term(), a.coefficients()[0]);
+        assert_eq!(
+            a.coefficient_inner_product(&b),
+            (a * b.sigma_m1()).constant_term()
+        );
+        assert_eq!(
+            a.coefficient_inner_product(&b),
+            b.coefficient_inner_product(&a)
+        );
+    }
+    let x = CyclotomicRing::<F64, D>::x();
+    assert_eq!(x.sigma_m1().coefficients()[D - 1], -F64::one());
+    assert_eq!(x.coefficient_inner_product(&x), F64::one());
+    assert_eq!(x.constant_term(), F64::zero());
+}
+
 fn check_shift_windows_match_wide_accumulation<F, const D: usize>(seed: u64)
 where
     F: Field + WithCommitAccumulator,

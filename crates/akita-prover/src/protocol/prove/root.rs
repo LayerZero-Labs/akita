@@ -33,7 +33,6 @@ where
     let layout = claims.opening_layout();
     resolved.validate_opening_layout(layout)?;
     let schedule = resolved.schedule();
-    schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
     let proof_session = backend.begin_proof(expanded, schedules, schedule, layout)?;
     let guard = crate::backend::ProofScope::admitted(backend, proof_session);
     let proof_session = guard.session();
