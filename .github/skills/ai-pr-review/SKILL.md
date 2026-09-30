@@ -99,6 +99,10 @@ In post mode, verify the submitted review and any inline comments. Finish with c
 
 ## Embedded Cursor skills
 
+Copyright (c) 2026 Cursor. These embedded instruction bodies are licensed under
+the [MIT license](LICENSE.cursor-team-kit); retain that license when copying or
+modifying them. See [NOTICE.md](NOTICE.md) for source and adaptation details.
+
 The following are the complete instruction bodies from Cursor `cursor-team-kit` revision `ecc249f1e306fc64ddf83c7bed16cacf7c2239db`. Only discovery frontmatter is omitted; the instruction text is unchanged. The workflow scope above governs both passes.
 
 ### Cursor skill: `deslop`
