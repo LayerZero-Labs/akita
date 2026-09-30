@@ -96,7 +96,9 @@ them.
 - **Bounded class products.** Both searches MUST bound the per-dimension
   product of class opening domains at 256 before allocating it. A larger
   product MUST remove coefficient-packing root openings for that dimension
-  rather than fail the search, so evaluation-trace openings remain available.
+  rather than fail the search. The root only folds by coefficient packing, so
+  that dimension then offers no root candidate, exactly as an unsupported
+  dimension does; other dimensions are unaffected.
 - **Final admission.** An adapted row MUST NOT bypass
   `ValidatedScheduleCatalog::try_new`, challenge-hook validation, duplicate-key
   rejection, row identity, catalog identity, or final `TrustedScheduleCatalog<Cfg>`

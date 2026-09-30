@@ -102,8 +102,9 @@ pub(crate) const fn state_allows_terminal_seed(
 /// classes. Class multiplicity does not count toward it, so any number of
 /// identical producers fits; three to eight distinct classes do, depending on
 /// the per-class domain sizes. A larger product removes coefficient-packing
-/// root openings for that dimension, as an unsupported dimension does;
-/// evaluation-trace openings are one per class and remain available.
+/// root openings for that dimension, as an unsupported dimension does. The root
+/// only folds by coefficient packing, so that dimension then offers no root
+/// candidate; other dimensions are unaffected.
 pub(crate) const MAX_PRECOMMIT_OPENING_PRODUCTS: usize = 256;
 
 /// Enumerate the root precommit openings for one shared opening dimension.

@@ -174,9 +174,8 @@ Both searches give every group of an interchangeable class (equal commit-phase
 profile and source contract) the same root opening. Many identical producers,
 such as the chunks of one large object, therefore cost one opening choice
 between them, and planning time grows only slowly with their number. Distinct
-classes multiply the opening choices; beyond 256 combinations the searches drop
-coefficient-packing root openings for the affected dimension instead of
-enumerating them.
+classes multiply the opening choices; beyond 256 combinations the searches skip
+the affected root opening dimension instead of enumerating them.
 
 An adapted row is not trusted merely because planning succeeded. The
 application merges its selected rows, validates them with
