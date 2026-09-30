@@ -17,9 +17,8 @@ use akita_sumcheck::{
     SumcheckInstanceVerifier,
 };
 use akita_transcript::{
-    native_prover_ext_challenge, native_verifier_ext_challenge, new_native_prover,
-    new_native_verifier, NativeProverState, NativeVerifierState, ProtocolSiteId,
-    SITE_FAMILY_SUMCHECK,
+    native_ext_challenge, new_native_prover, new_native_verifier, NativeProverState,
+    NativeVerifierState, ProtocolSiteId, SITE_FAMILY_SUMCHECK,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::UnivariatePoly;
@@ -66,7 +65,7 @@ impl<F: Field + CanonicalEncoding, E: ExtField<F>> NativeSumcheckProverChannel<E
     }
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
-        native_prover_ext_challenge::<F, E>(
+        native_ext_challenge::<F, E, _>(
             &mut self.state,
             site(invocation, round, NativeSumcheckRole::Challenge),
         )
@@ -96,7 +95,7 @@ impl<'proof, F: Field + CanonicalEncoding, E: ExtField<F>> NativeSumcheckVerifie
     }
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
-        native_verifier_ext_challenge::<F, E>(
+        native_ext_challenge::<F, E, _>(
             &mut self.state,
             site(invocation, round, NativeSumcheckRole::Challenge),
         )

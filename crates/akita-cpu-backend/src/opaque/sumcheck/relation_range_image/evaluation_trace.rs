@@ -221,6 +221,53 @@ pub(crate) struct PreparedProverLinearTerms<E: Field> {
 }
 
 impl<E: Field> PreparedProverLinearTerms<E> {
+    /// Prepare a rank-one response-norm term over validated Stage-2 geometry.
+    pub(crate) fn from_response_norm_factors(
+        coefficient_weights: Vec<E>,
+        lane_weights: Vec<E>,
+        live_lane_count: usize,
+        coeff_count: usize,
+    ) -> Result<Self, AkitaError> {
+        if coeff_count == 0 || !coeff_count.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "response-norm coefficient count must be a nonzero power of two".into(),
+            ));
+        }
+        if coefficient_weights.len() != coeff_count {
+            return Err(AkitaError::InvalidSize {
+                expected: coeff_count,
+                actual: coefficient_weights.len(),
+            });
+        }
+        if lane_weights.len() != live_lane_count {
+            return Err(AkitaError::InvalidSize {
+                expected: live_lane_count,
+                actual: lane_weights.len(),
+            });
+        }
+
+        let mut lane_terms = vec![Vec::new(); live_lane_count];
+        for (lane, &factor) in lane_weights.iter().enumerate() {
+            if !factor.is_zero() {
+                lane_terms[lane].push(PreparedLaneTerm {
+                    factor,
+                    source_index: 0,
+                    lane: 0,
+                });
+            }
+        }
+
+        Ok(Self {
+            lane_weights: PreparedLaneWeights::Sparse(lane_terms),
+            sources: vec![PreparedTraceSource {
+                values: coefficient_weights,
+                lane_count: 1,
+            }],
+            live_lane_count,
+            coeff_count,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn source_count(&self) -> usize {
         self.sources.len()
@@ -685,13 +732,59 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         })
     }
 
+    fn packing_as_sparse(
+        packing: &PreparedPackingLaneMap<E>,
+        sources: &[PreparedTraceSource<E>],
+        live_lane_count: usize,
+    ) -> Result<Vec<Vec<PreparedLaneTerm<E>>>, AkitaError> {
+        if packing.lane_to_segment.len() != live_lane_count {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut lane_terms = vec![Vec::new(); live_lane_count];
+        for (lane, terms) in lane_terms.iter_mut().enumerate() {
+            let Some((segment, source_lane)) = packing.source_lane(lane) else {
+                continue;
+            };
+            let source = sources
+                .get(segment.source_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            if source_lane >= source.lane_count {
+                return Err(AkitaError::InvalidProof);
+            }
+            terms.push(PreparedLaneTerm {
+                factor: segment.factor,
+                source_index: segment.source_index,
+                lane: source_lane,
+            });
+        }
+        Ok(lane_terms)
+    }
+
+    fn convert_packing_to_sparse(&mut self) -> Result<(), AkitaError> {
+        let PreparedLaneWeights::Packing(packing) = &self.lane_weights else {
+            return Ok(());
+        };
+        let sparse = Self::packing_as_sparse(packing, &self.sources, self.live_lane_count)?;
+        self.lane_weights = PreparedLaneWeights::Sparse(sparse);
+        Ok(())
+    }
+
     /// Add another checked structured term set over the same witness domain.
-    pub(crate) fn merge(&mut self, other: Self) -> Result<(), AkitaError> {
+    pub(crate) fn merge(&mut self, mut other: Self) -> Result<(), AkitaError> {
         if self.live_lane_count != other.live_lane_count || self.coeff_count != other.coeff_count {
             return Err(AkitaError::InvalidSize {
                 expected: self.live_lane_count * self.coeff_count,
                 actual: other.live_lane_count * other.coeff_count,
             });
+        }
+        match (&self.lane_weights, &other.lane_weights) {
+            (PreparedLaneWeights::Packing(_), PreparedLaneWeights::Sparse(_)) => {
+                self.convert_packing_to_sparse()?;
+            }
+            (PreparedLaneWeights::Sparse(_), PreparedLaneWeights::Packing(_)) => {
+                other.convert_packing_to_sparse()?;
+            }
+            _ => {}
         }
         let Self {
             lane_weights: source_weights,
@@ -875,4 +968,4 @@ impl<E: Field> PreparedProverLinearTerms<E> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

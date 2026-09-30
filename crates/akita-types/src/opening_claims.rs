@@ -252,34 +252,17 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     }
 }
 
-/// Apply the scheduled native work and sample one context-bound coefficient
+/// Apply the scheduled native work and draw one context-bound coefficient
 /// per opening claim.
-pub fn sample_row_coefficients_native<F, L>(
+pub fn row_coefficients_native<F, L, G>(
     layout: &OpeningClaimsLayout,
     site: GrindingSite,
-    grinding: &mut crate::NativeProverGrinding<'_>,
+    grinding: &mut G,
 ) -> Result<Vec<L>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     L: ExtField<F>,
-{
-    layout.check()?;
-    if !layout.requires_row_batch_challenge() {
-        return Ok(vec![L::one()]);
-    }
-    grinding.grinded_ext_challenges::<F, L>(site, layout.num_total_polynomials())
-}
-
-/// Verify the scheduled native work and replay one context-bound coefficient
-/// per opening claim.
-pub fn verify_row_coefficients_native<F, L>(
-    layout: &OpeningClaimsLayout,
-    site: GrindingSite,
-    grinding: &mut crate::NativeVerifierGrinding<'_, '_>,
-) -> Result<Vec<L>, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    L: ExtField<F>,
+    G: crate::NativeGrinding,
 {
     layout.check()?;
     if !layout.requires_row_batch_challenge() {

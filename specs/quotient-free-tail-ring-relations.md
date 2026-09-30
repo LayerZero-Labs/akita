@@ -8,7 +8,7 @@
 | PR            | [#466](https://github.com/LayerZero-Labs/akita/pull/466) |
 | Supersedes    | |
 | Superseded-by | |
-| Book-chapter  | book/src/how/proving/akita-fold-realizations.md |
+| Book-chapter  | book/src/how/proving/ring-relation-checking.md |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
 **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **NOT RECOMMENDED**, **MAY**, and

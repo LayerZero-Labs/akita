@@ -223,7 +223,7 @@ where
     )?;
     let inner =
         akita_types::reduce_inner_opening_to_ring_element::<F, D>(&point[..alpha_bits], basis)?;
-    Ok((value * inner.sigma_m1()).coefficients()[0])
+    Ok(value.coefficient_inner_product(&inner))
 }
 impl<F: Field + CanonicalEncoding, const D: usize> RootPolynomialEvaluator<F, D>
     for crate::opaque::DensePoly<F>

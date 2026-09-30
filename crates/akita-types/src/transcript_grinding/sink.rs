@@ -1,14 +1,14 @@
 use super::{
-    polynomial_identity_loss_factor, GrindingPlanAccumulator, GrindingRun, GrindingSite,
-    SumcheckProtocol,
+    polynomial_identity_loss_factor, ChallengeFieldOrder, GrindingPlanAccumulator, GrindingRun,
+    GrindingSite, SumcheckProtocol,
 };
-use akita_error::AkitaError;
+use akita_error::{narrowing::usize_to_u32, AkitaError};
 
 /// Consecutive queries whose protocol shape differs only by the round index.
 /// This is not a wire run: replay still has one distinct site for every round.
 #[derive(Clone, Copy)]
 pub(crate) struct SumcheckRoundBatch {
-    pub(crate) capacity: u32,
+    pub(crate) challenge_order: ChallengeFieldOrder,
     pub(crate) protocol: SumcheckProtocol,
     pub(crate) level: u32,
     pub(crate) stage: u32,
@@ -26,10 +26,10 @@ impl SumcheckRoundBatch {
                 protocol: self.protocol,
                 level: self.level,
                 stage: self.stage,
-                round: crate::narrowing::usize_to_u32(last_round, "sumcheck grinding round")?,
+                round: usize_to_u32(last_round, "sumcheck grinding round")?,
             },
             polynomial_identity_loss_factor(self.degree)?,
-            self.capacity,
+            self.challenge_order,
         )
         .map(Some)
     }
@@ -43,7 +43,7 @@ impl SumcheckRoundBatch {
             protocol: self.protocol,
             level: self.level,
             stage: self.stage,
-            round: crate::narrowing::usize_to_u32(round, "sumcheck grinding round")?,
+            round: usize_to_u32(round, "sumcheck grinding round")?,
         };
         Ok(representative)
     }

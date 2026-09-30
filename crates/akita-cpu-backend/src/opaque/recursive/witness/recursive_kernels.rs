@@ -222,12 +222,7 @@ where
         )?;
     let inner_point = &protocol_point[..protocol_point.len().min(alpha_bits)];
     let scalar = if E::DEGREE == 1 {
-        (eval * point.packed_inner_trusted::<D>()?.sigma_m1())
-            .coefficients()
-            .first()
-            .copied()
-            .map(E::lift_base)
-            .ok_or_else(|| AkitaError::InvalidInput("empty folded opening ring".into()))?
+        E::lift_base(eval.coefficient_inner_product(point.packed_inner_trusted::<D>()?))
     } else {
         if !D.is_multiple_of(E::DEGREE) || !(D / E::DEGREE).is_power_of_two() {
             return Err(AkitaError::InvalidInput(

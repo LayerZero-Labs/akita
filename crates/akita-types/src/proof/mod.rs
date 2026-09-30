@@ -40,8 +40,7 @@ mod witness_emission;
 pub const MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS: usize = 1 << 26;
 
 pub use crate::opening_claims::{
-    sample_row_coefficients_native, verify_row_coefficients_native, GroupBatchStatement,
-    OpeningClaims, PolynomialGroupClaims,
+    row_coefficients_native, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
 pub use batch::{
     prepare_opening_point, ring_subfield_packed_extension_opening_point, PreparedOpeningPoint,

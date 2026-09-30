@@ -9,7 +9,7 @@ use akita_sumcheck::{
 };
 use akita_transcript::{
     native_field_challenge_bytes, native_prover_field_challenge, native_verifier_field_challenge,
-    new_native_prover, new_native_verifier, public_native_bytes_prover, verifier_context,
+    new_native_prover, new_native_verifier, public_native_bytes, verifier_context,
     NativeVerifierState, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
     SITE_FAMILY_SUMCHECK,
 };
@@ -35,7 +35,7 @@ pub fn transcript_labels(data: &[u8]) {
     let Ok(mut transcript) = new_native_prover(b"akita-fuzz", label) else {
         return;
     };
-    let _ = public_native_bytes_prover(&mut transcript, ProtocolSiteId::default(), bytes);
+    let _ = public_native_bytes(&mut transcript, ProtocolSiteId::default(), bytes);
     let _: F = native_prover_field_challenge(&mut transcript).unwrap();
 }
 

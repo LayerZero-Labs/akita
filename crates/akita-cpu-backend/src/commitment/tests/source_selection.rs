@@ -8,7 +8,7 @@ use crate::commitment::{
 };
 use crate::opaque::CommitInnerPlan;
 use akita_error::AkitaError;
-use jolt_field::Prime64Offset59;
+use jolt_field::{Prime64Offset59, Ring};
 use std::any::Any;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -119,7 +119,7 @@ fn plan() -> CommitInnerPlan {
 
 fn source(value: u64, offers_external: bool) -> DualPathSource {
     DualPathSource {
-        coefficients: vec![F::from_canonical_u64(value); 64],
+        coefficients: vec![F::from_u64(value); 64],
         payload: value as u8,
         operation: TestOperation,
         offers_external,

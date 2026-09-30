@@ -6,6 +6,9 @@
 /// Checked integer formulas shared by Akita's layout and validation code.
 pub mod checked;
 
+/// Checked narrowing conversions from `usize` into fixed-width integers.
+pub mod narrowing;
+
 /// Errors that can occur in Akita PCS operations.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AkitaError {

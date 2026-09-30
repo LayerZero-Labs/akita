@@ -11,8 +11,7 @@ use crate::input::Reader;
 use crate::{gen, stats};
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_transcript::{
-    native_prover_ext_challenge, native_verifier_ext_challenge, new_native_prover,
-    new_native_verifier, public_native_bytes_prover, public_native_bytes_verifier,
+    native_ext_challenge, new_native_prover, new_native_verifier, public_native_bytes,
     public_native_fields_prover, public_native_fields_verifier, receive_native_bytes,
     receive_native_extension, receive_native_field, send_native_bytes, send_native_extension,
     send_native_field, NativeProverState, NativeVerifierState, ProtocolSiteId,
@@ -96,7 +95,7 @@ fn prove(state: &mut NativeProverState, ops: &[Op]) -> Vec<Seen> {
     for op in ops {
         match op {
             Op::PublicBytes(site, bytes) => {
-                public_native_bytes_prover(state, *site, bytes).expect("bounded public bytes")
+                public_native_bytes(state, *site, bytes).expect("bounded public bytes")
             }
             Op::PublicFields(site, values) => {
                 public_native_fields_prover(state, *site, values).expect("public fields")
@@ -111,7 +110,7 @@ fn prove(state: &mut NativeProverState, ops: &[Op]) -> Vec<Seen> {
                 ));
             }
             Op::ChallengeExt2(site) => seen.push(Seen::Ext2(
-                native_prover_ext_challenge::<fp64::Field, Ext2>(state, *site).expect("challenge"),
+                native_ext_challenge::<fp64::Field, Ext2, _>(state, *site).expect("challenge"),
             )),
         }
     }
@@ -124,9 +123,7 @@ fn replay(mut state: NativeVerifierState<'_>, ops: &[Op]) -> Option<(Vec<Seen>, 
     let mut challenges = Vec::new();
     for op in ops {
         match op {
-            Op::PublicBytes(site, bytes) => {
-                public_native_bytes_verifier(&mut state, *site, bytes).ok()?
-            }
+            Op::PublicBytes(site, bytes) => public_native_bytes(&mut state, *site, bytes).ok()?,
             Op::PublicFields(site, values) => {
                 public_native_fields_verifier(&mut state, *site, values).ok()?
             }
@@ -146,7 +143,7 @@ fn replay(mut state: NativeVerifierState<'_>, ops: &[Op]) -> Option<(Vec<Seen>, 
                 ));
             }
             Op::ChallengeExt2(site) => challenges.push(Seen::Ext2(
-                native_verifier_ext_challenge::<fp64::Field, Ext2>(&mut state, *site).ok()?,
+                native_ext_challenge::<fp64::Field, Ext2, _>(&mut state, *site).ok()?,
             )),
         }
     }

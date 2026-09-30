@@ -25,7 +25,7 @@ env:
   #
   # Ring-degree choice differs by field:
   # - Small prime fields use generated adaptive catalogs. fp32 admits A through
-  #   D1024 with a D64/D128 suffix; fp64 admits A through D512 with a D64 suffix.
+  #   D1024 with a D64/D128 suffix; fp64 admits A through D2048 with a D64/D128 suffix.
   # - fp128: `onehot_fp128` is the canonical direct one-hot profile. Recursive
   #   and distributed profiles use the corresponding adaptive catalogs.
   AKITA_BENCH_MODE: onehot_fp128

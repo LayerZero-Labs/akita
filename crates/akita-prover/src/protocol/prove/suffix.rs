@@ -1,4 +1,5 @@
 use super::*;
+use akita_types::NativeGrinding;
 use jolt_field::AdditiveGroup;
 /// Prover state carried between suffix fold levels.
 pub struct SuffixProverState<F: Field, E: Field, MaterialHandle, WitnessHandle> {
@@ -219,7 +220,7 @@ where
         } else {
             (sumcheck_challenges, None)
         };
-        akita_transcript::public_native_extensions_prover::<F, E>(
+        akita_transcript::public_native_extensions::<F, E, _>(
             grinding.state_mut(),
             akita_transcript::ProtocolSiteId {
                 family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
@@ -261,7 +262,7 @@ where
                         opening_handle,
                     )?;
                 if reduction.is_none() {
-                    akita_transcript::public_native_extensions_prover::<F, E>(
+                    akita_transcript::public_native_extensions::<F, E, _>(
                         grinding.state_mut(),
                         akita_transcript::ProtocolSiteId {
                             family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
@@ -527,14 +528,15 @@ mod tests {
     type TestF = Fp32<251>;
 
     fn evaluation_batch_plan() -> akita_types::GrindingPlan {
+        let challenge_order = akita_types::ChallengeFieldOrder::from_full_capacity(128).unwrap();
         akita_types::GrindingPlan::new(
             vec![akita_types::GrindingRun::proof_of_work(
                 akita_types::GrindingSite::EvaluationBatch { level: 0 },
                 1,
-                128,
+                challenge_order,
             )
             .unwrap()],
-            128,
+            challenge_order,
         )
         .unwrap()
     }

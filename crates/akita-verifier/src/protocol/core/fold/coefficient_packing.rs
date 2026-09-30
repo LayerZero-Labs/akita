@@ -3,6 +3,7 @@
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
+use akita_types::NativeGrinding;
 use akita_types::{
     BasisMode, Commitment, CommittedGroupParams, FpExtEncoding, OpeningClaims, OpeningClaimsLayout,
     PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
@@ -105,7 +106,7 @@ where
     let prepared_points =
         prepare_prefix_points::<F, E, _>(claims, openings, opening_batch, basis, lp)?;
     for group_index in 0..opening_batch.num_groups() {
-        akita_transcript::public_native_extensions_verifier::<F, E>(
+        akita_transcript::public_native_extensions::<F, E, _>(
             grinding.state_mut(),
             akita_transcript::ProtocolSiteId {
                 family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
@@ -118,7 +119,7 @@ where
         )
         .map_err(|_| AkitaError::InvalidProof)?;
     }
-    akita_transcript::public_native_extensions_verifier::<F, E>(
+    akita_transcript::public_native_extensions::<F, E, _>(
         grinding.state_mut(),
         akita_transcript::ProtocolSiteId {
             family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
