@@ -5,14 +5,17 @@
 //! prover-side compact witness scans and two-round-prefix kernels stay in the
 //! prover/root path.
 
-use akita_challenges::NativeVerifierFoldDraw;
+use crate::stages::ring_switch::{PreparedStage2Compression, RingSwitchVerifyOutput};
+use crate::stages::stage2::Stage2CompressionOracle;
+use akita_algebra::offset_eq::EqPairTensorFamily;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_types::NativeGrinding;
 use akita_types::{
-    draw_group_fold_challenges, CommittedGroupParams, DigitRangeEqualityPoint, DigitRangePlan,
-    GroupFoldChallenges, OpeningClaimsLayout,
+    batch_l2_virtual_evaluations, CommittedGroupParams, FpExtEncoding, InnerCommitSecurityRoute,
+    PhysicalResponsePlan, RelationRangeImagePlan,
 };
+use akita_types::{DigitRangeEqualityPoint, DigitRangePlan};
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 pub(crate) struct NativeStage1VerifyOutput<E: Field> {
     pub(crate) point: Vec<E>,
@@ -24,36 +27,6 @@ pub(crate) struct RangeLeafVerifierInput<E: Field> {
     pub(crate) equality_point: Vec<E>,
     pub(crate) input_claim: E,
     pub(crate) polynomial_coefficients: Vec<E>,
-}
-
-/// Native Spongefish replay of all sparse fold roots for one recursive level.
-pub(crate) fn derive_multi_group_stage1_challenges_native<F, E>(
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
-    level: u32,
-    opening_batch: &OpeningClaimsLayout,
-    lp: &CommittedGroupParams,
-) -> Result<Vec<GroupFoldChallenges>, AkitaError>
-where
-    F: Field + CanonicalEncoding + AkitaSerialize,
-    E: ExtField<F>,
-{
-    let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
-    for group_index in 0..opening_batch.num_groups() {
-        let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
-        let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
-        let group = u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?;
-        let drawn = {
-            let mut live = NativeVerifierFoldDraw::new(grinding.state_mut(), level, group);
-            draw_group_fold_challenges::<F, E, _>(&mut live, &group_lp, group_index, k_g)?
-        };
-        let coordinate_count = group_lp
-            .num_live_blocks()
-            .checked_mul(k_g)
-            .ok_or(AkitaError::InvalidProof)?;
-        grinding.record_fold_challenges(level, group, coordinate_count)?;
-        group_challenges.push(drawn);
-    }
-    Ok(group_challenges)
 }
 
 /// Stage-1 range-check verifier, including the root/leaf tree choreography.
@@ -212,4 +185,119 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
             physical_l2_virtual_evaluations: None,
         })
     }
+}
+
+pub(crate) struct Stage1Replay<'a, E: Field> {
+    pub(crate) batching_coeff: E,
+    pub(crate) compression: Stage2CompressionOracle<'a, E>,
+    pub(crate) range_image_evaluation: E,
+    pub(crate) stage1_point: Vec<E>,
+    pub(crate) physical_l2_claim: E,
+    pub(crate) physical_l2_families: Vec<EqPairTensorFamily<E>>,
+}
+
+pub(crate) fn verify_stage1_native<'a, F, E>(
+    rs: &'a RingSwitchVerifyOutput<E>,
+    lp: &CommittedGroupParams,
+    relation_plan: &RelationRangeImagePlan,
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    level: u32,
+    layout: &akita_types::NativeNonterminalLevelLayout,
+) -> Result<Stage1Replay<'a, E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + FpExtEncoding<F> + Ring + AkitaSerialize,
+{
+    let num_rounds = rs.relation_address_geometry.relation_point_variable_count();
+    if rs.tau0.len() != num_rounds {
+        return Err(AkitaError::InvalidSize {
+            expected: num_rounds,
+            actual: rs.tau0.len(),
+        });
+    }
+    let digit_range_equality_col_bits = rs
+        .tau0
+        .len()
+        .checked_sub(rs.digit_range_equality_low_variable_count)
+        .ok_or(AkitaError::InvalidProof)?;
+    let equality_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
+        &rs.tau0,
+        digit_range_equality_col_bits,
+        rs.digit_range_equality_low_variable_count,
+    )?;
+    let stage1_verifier = AkitaStage1Verifier::new(equality_point, DigitRangePlan::new(rs.b)?);
+    let (stage1_stages, stage1_norm) = DigitRangePlan::new(rs.b)?
+        .proof_shapes_for_route(num_rounds, lp.inner().matrix.security_route())?;
+    if !stage1_stages.iter().copied().eq(layout.stage1_stages())
+        || stage1_norm != layout.stage1_norm()
+    {
+        return Err(AkitaError::InvalidSetup(
+            "native Stage 1 replay disagrees with the level grammar".into(),
+        ));
+    }
+    let physical_plan = PhysicalResponsePlan::new(lp, relation_plan)?;
+    let physical = physical_plan
+        .as_ref()
+        .map(|plan| {
+            let InnerCommitSecurityRoute::L2 {
+                response_l2_sq_cap, ..
+            } = lp.inner().matrix.security_route()
+            else {
+                return Err(AkitaError::InvalidSetup(
+                    "physical response plan exists for a non-L2 route".into(),
+                ));
+            };
+            Ok((
+                plan,
+                lp.inner().matrix.sis_modulus_profile(),
+                response_l2_sq_cap,
+            ))
+        })
+        .transpose()?;
+    let replay = stage1_verifier.verify_native::<F>(grinding, physical, level)?;
+    let (physical_l2_claim, physical_l2_families) = match (
+        replay.physical_l2_virtual_evaluations,
+        physical_plan.as_ref(),
+    ) {
+        (Some(evaluations), Some(plan)) => {
+            let eta = grinding.grinded_ext_challenge::<F, E>(
+                akita_types::GrindingSite::L2VirtualBatch { level },
+            )?;
+            let (claim, batching) = batch_l2_virtual_evaluations(eta, &evaluations);
+            (claim, plan.virtualization_families(&batching)?)
+        }
+        (None, None) => (E::zero(), Vec::new()),
+        _ => return Err(AkitaError::InvalidProof),
+    };
+    let compression = match &rs.compression {
+        PreparedStage2Compression::Raw => Stage2CompressionOracle::Raw,
+        PreparedStage2Compression::QuotientLift { weights, support } => {
+            Stage2CompressionOracle::QuotientLift {
+                weights,
+                support,
+                binary_batching: grinding.grinded_ext_challenge::<F, E>(
+                    akita_types::GrindingSite::CompressionBinary { level },
+                )?,
+            }
+        }
+        PreparedStage2Compression::ReducedEvaluation { weights, support } => {
+            Stage2CompressionOracle::ReducedEvaluation {
+                weights,
+                support,
+                binary_batching: grinding.grinded_ext_challenge::<F, E>(
+                    akita_types::GrindingSite::CompressionBinary { level },
+                )?,
+            }
+        }
+    };
+    let batching_coeff =
+        grinding.grinded_ext_challenge::<F, E>(akita_types::GrindingSite::Stage2Batch { level })?;
+    Ok(Stage1Replay {
+        batching_coeff,
+        compression,
+        range_image_evaluation: replay.range_image_evaluation,
+        stage1_point: replay.point,
+        physical_l2_claim,
+        physical_l2_families,
+    })
 }

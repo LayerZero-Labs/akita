@@ -1,6 +1,6 @@
 //! Extension-claim fold verifier prefix: extension-opening reduction replay.
 
-use crate::fold::{FoldClaimMaterial, PreparedFoldOpeningPoint};
+use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_types::NativeGrinding;

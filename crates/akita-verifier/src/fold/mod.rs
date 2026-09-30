@@ -4,114 +4,40 @@
 //! in `verify`, `root`, and `suffix`. FoldSchedule/config dispatch stays with
 //! the scheme crate until the verifier-facing config boundary is extracted.
 
-mod verify;
-use crate::relation::evaluation_trace::prepare_evaluation_trace;
-use crate::relation::{ring_switch_verifier_native, RingSwitchReplay, RingSwitchVerifyOutput};
-use crate::stages::stage1::{derive_multi_group_stage1_challenges_native, AkitaStage1Verifier};
-use crate::stages::stage2::AkitaStage2Verifier;
-use crate::stages::SetupSumcheckVerifier;
-use akita_challenges::FoldDraw;
-use akita_error::AkitaError;
-use akita_serialization::AkitaSerialize;
-use akita_types::{
-    assemble_compressed_relation_rhs, assemble_relation_rhs, ensure_trace_stage2_supported,
-    prepare_opening_point, proof::relation::relation_row_weight,
-    relation_claim_from_compressed_rhs_extension, AkitaVerifierSetup, BasisMode,
-    CommittedGroupParams, EvaluationTraceInputs, FoldParams, FoldSchedule, FpExtEncoding,
-    InnerCommitSecurityRoute, OpeningClaims, OpeningClaimsLayout, PhysicalResponsePlan,
-    PolynomialGroupClaims, PreparedOpeningPoint, RelationRangeImagePlan, RelationWitnessGeometry,
-    RingRelationInstance, RingVec, SetupContributionMode, TerminalFoldParams,
-};
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
-
+mod challenges;
 mod root;
 mod suffix;
+mod terminal;
+mod verify;
 
-pub(crate) type SetupPrefixOpening<E> = (Vec<E>, E);
-
+use crate::relation::evaluation_trace::prepare_evaluation_trace;
+use crate::relation::RingSwitchReplay;
 use crate::stages::opening_claims::{
-    prepare_single_field_suffix_groups, verify_coefficient_packing_root_prefix,
-    verify_coefficient_packing_suffix_prefix_native, verify_extension_claim_suffix_prefix_native,
-    verify_extension_claim_terminal_suffix_native,
+    finalize_native_claims, prepare_single_field_suffix_groups,
+    verify_coefficient_packing_root_prefix, verify_coefficient_packing_suffix_prefix_native,
+    verify_extension_claim_suffix_prefix_native, FoldClaimMaterial, FoldPrefix,
+    PreparedFoldOpeningPoint,
 };
-use crate::stages::stage2::{Stage2CompressionOracle, Stage2OpeningSemantics};
-use akita_algebra::offset_eq::EqPairTensorFamily;
+use crate::stages::ring_switch::ring_switch_verifier_native;
+use crate::stages::stage1::verify_stage1_native;
+use crate::stages::stage2::{replay_stage2_native, validate_stage2_replay, Stage2OpeningSemantics};
+use crate::stages::SetupSumcheckVerifier;
+use akita_error::AkitaError;
+use akita_serialization::AkitaSerialize;
 use akita_types::NativeGrinding;
 use akita_types::{
-    batch_l2_virtual_evaluations, dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan,
-    OpeningFamily, RingRelationGroupOpening,
+    assemble_compressed_relation_rhs, assemble_relation_rhs, dispatch_for_field,
+    ensure_trace_stage2_supported, proof::relation::relation_row_weight,
+    relation_claim_from_compressed_rhs_extension, AkitaVerifierSetup, BasisMode,
+    CommittedGroupParams, DigitRangePlan, EvaluationTraceInputs, FoldParams, FoldSchedule,
+    FpExtEncoding, OpeningClaims, OpeningClaimsLayout, OpeningFamily, PolynomialGroupClaims,
+    RelationRangeImagePlan, RelationWitnessGeometry, RingRelationGroupOpening,
+    RingRelationInstance, RingVec, SetupContributionMode, TerminalFoldParams,
 };
+use challenges::derive_multi_group_stage1_challenges_native;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 
-/// Common prepared fold prefix consumed by root and suffix finishing logic.
-pub(crate) struct FoldPrefix<F: Field, E: Field> {
-    pub(crate) prepared_points: Vec<PreparedFoldOpeningPoint<F, E>>,
-    pub(crate) row_coefficients: Vec<E>,
-    pub(crate) trace_eval_target: E,
-    pub(crate) trace_claim_coefficients: Vec<E>,
-    pub(crate) scalar_openings: Vec<E>,
-}
-
-pub(crate) type PreparedFoldOpeningPoint<F, E> = OpeningFamily<
-    PreparedOpeningPoint<F, E>,
-    akita_types::PreparedSubringCoefficientPackingPoint<E>,
->;
-
-/// Fold material fixed before the shared opening payload is absorbed.
-pub(crate) struct FoldClaimMaterial<F: Field, E: Field> {
-    pub(crate) prepared_points: Vec<PreparedFoldOpeningPoint<F, E>>,
-    pub(crate) openings: Vec<E>,
-    pub(crate) reduction_final_claims: Option<Vec<E>>,
-    pub(crate) reduction_factors: Option<Vec<E>>,
-}
-
-pub(crate) fn finalize_native_claims<F, E>(
-    opening_shape: &OpeningClaimsLayout,
-    material: FoldClaimMaterial<F, E>,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
-    level: u32,
-) -> Result<FoldPrefix<F, E>, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    if material.openings.len() != opening_shape.num_total_polynomials()
-        || material.prepared_points.len() != opening_shape.num_groups()
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    let row_coefficients = akita_types::row_coefficients_native::<F, E, _>(
-        opening_shape,
-        akita_types::GrindingSite::EvaluationBatch { level },
-        grinding,
-    )?;
-    let trace_claim_coefficients = material.reduction_factors.as_ref().map_or_else(
-        || Ok(row_coefficients.clone()),
-        |factors| opening_shape.scale_row_coefficients_by_group(&row_coefficients, factors),
-    )?;
-    let trace_eval_target = if let Some(final_claims) = &material.reduction_final_claims {
-        if final_claims.len() != row_coefficients.len() || material.reduction_factors.is_none() {
-            return Err(AkitaError::InvalidProof);
-        }
-        final_claims
-            .iter()
-            .zip(&row_coefficients)
-            .fold(E::zero(), |acc, (&claim, &coefficient)| {
-                acc + coefficient * claim
-            })
-    } else {
-        if material.reduction_factors.is_some() {
-            return Err(AkitaError::InvalidProof);
-        }
-        opening_shape.batched_eval_target(&trace_claim_coefficients, &material.openings)?
-    };
-    Ok(FoldPrefix {
-        prepared_points: material.prepared_points,
-        row_coefficients,
-        trace_eval_target,
-        trace_claim_coefficients,
-        scalar_openings: material.openings,
-    })
-}
+pub(crate) type SetupPrefixOpening<E> = (Vec<E>, E);
 
 pub(crate) struct NativePreparedFoldReplay<'a, F: Field, E: Field> {
     pub(crate) lp: &'a CommittedGroupParams,
@@ -140,194 +66,6 @@ pub(crate) struct NativeFoldVerifyOutput<F: Field, E: Field> {
     pub(crate) setup_prefix_opening: Option<SetupPrefixOpening<E>>,
     pub(crate) next_witness: RingVec<F>,
     pub(crate) opening: E,
-}
-
-struct Stage1Replay<'a, E: Field> {
-    batching_coeff: E,
-    compression: Stage2CompressionOracle<'a, E>,
-    range_image_evaluation: E,
-    stage1_point: Vec<E>,
-    physical_l2_claim: E,
-    physical_l2_families: Vec<EqPairTensorFamily<E>>,
-}
-
-fn verify_stage1_native<'a, F, E>(
-    rs: &'a RingSwitchVerifyOutput<E>,
-    lp: &CommittedGroupParams,
-    relation_plan: &RelationRangeImagePlan,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
-    level: u32,
-    layout: &akita_types::NativeNonterminalLevelLayout,
-) -> Result<Stage1Replay<'a, E>, AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: ExtField<F> + FpExtEncoding<F> + Ring + AkitaSerialize,
-{
-    let num_rounds = rs.relation_address_geometry.relation_point_variable_count();
-    if rs.tau0.len() != num_rounds {
-        return Err(AkitaError::InvalidSize {
-            expected: num_rounds,
-            actual: rs.tau0.len(),
-        });
-    }
-    let digit_range_equality_col_bits = rs
-        .tau0
-        .len()
-        .checked_sub(rs.digit_range_equality_low_variable_count)
-        .ok_or(AkitaError::InvalidProof)?;
-    let equality_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
-        &rs.tau0,
-        digit_range_equality_col_bits,
-        rs.digit_range_equality_low_variable_count,
-    )?;
-    let stage1_verifier = AkitaStage1Verifier::new(equality_point, DigitRangePlan::new(rs.b)?);
-    let (stage1_stages, stage1_norm) = DigitRangePlan::new(rs.b)?
-        .proof_shapes_for_route(num_rounds, lp.inner().matrix.security_route())?;
-    if !stage1_stages.iter().copied().eq(layout.stage1_stages())
-        || stage1_norm != layout.stage1_norm()
-    {
-        return Err(AkitaError::InvalidSetup(
-            "native Stage 1 replay disagrees with the level grammar".into(),
-        ));
-    }
-    let physical_plan = PhysicalResponsePlan::new(lp, relation_plan)?;
-    let physical = physical_plan
-        .as_ref()
-        .map(|plan| {
-            let InnerCommitSecurityRoute::L2 {
-                response_l2_sq_cap, ..
-            } = lp.inner().matrix.security_route()
-            else {
-                return Err(AkitaError::InvalidSetup(
-                    "physical response plan exists for a non-L2 route".into(),
-                ));
-            };
-            Ok((
-                plan,
-                lp.inner().matrix.sis_modulus_profile(),
-                response_l2_sq_cap,
-            ))
-        })
-        .transpose()?;
-    let replay = stage1_verifier.verify_native::<F>(grinding, physical, level)?;
-    let (physical_l2_claim, physical_l2_families) = match (
-        replay.physical_l2_virtual_evaluations,
-        physical_plan.as_ref(),
-    ) {
-        (Some(evaluations), Some(plan)) => {
-            let eta = grinding.grinded_ext_challenge::<F, E>(
-                akita_types::GrindingSite::L2VirtualBatch { level },
-            )?;
-            let (claim, batching) = batch_l2_virtual_evaluations(eta, &evaluations);
-            (claim, plan.virtualization_families(&batching)?)
-        }
-        (None, None) => (E::zero(), Vec::new()),
-        _ => return Err(AkitaError::InvalidProof),
-    };
-    let compression = match &rs.compression {
-        crate::relation::PreparedStage2Compression::Raw => Stage2CompressionOracle::Raw,
-        crate::relation::PreparedStage2Compression::QuotientLift { weights, support } => {
-            Stage2CompressionOracle::QuotientLift {
-                weights,
-                support,
-                binary_batching: grinding.grinded_ext_challenge::<F, E>(
-                    akita_types::GrindingSite::CompressionBinary { level },
-                )?,
-            }
-        }
-        crate::relation::PreparedStage2Compression::ReducedEvaluation { weights, support } => {
-            Stage2CompressionOracle::ReducedEvaluation {
-                weights,
-                support,
-                binary_batching: grinding.grinded_ext_challenge::<F, E>(
-                    akita_types::GrindingSite::CompressionBinary { level },
-                )?,
-            }
-        }
-    };
-    let batching_coeff =
-        grinding.grinded_ext_challenge::<F, E>(akita_types::GrindingSite::Stage2Batch { level })?;
-    Ok(Stage1Replay {
-        batching_coeff,
-        compression,
-        range_image_evaluation: replay.range_image_evaluation,
-        stage1_point: replay.point,
-        physical_l2_claim,
-        physical_l2_families,
-    })
-}
-
-struct Stage2RoundReplay<E: Field> {
-    output_claim: E,
-    challenges: Vec<E>,
-    witness_eval: E,
-}
-
-fn replay_stage2_native<F, E>(
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
-    level: u32,
-    input_claim: E,
-    shape: akita_sumcheck::NativeSumcheckShape,
-) -> Result<Stage2RoundReplay<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
-        grinding,
-        akita_types::SumcheckProtocol::Stage2,
-        level,
-        0,
-    );
-    let replay = akita_sumcheck::verify_sumcheck_rounds_native::<F, E, _>(
-        &mut channel,
-        0,
-        input_claim,
-        shape,
-    )?;
-    let witness_eval = akita_types::native_stage2_w_eval::<F, E, _>(grinding, level, E::zero())?;
-    Ok(Stage2RoundReplay {
-        output_claim: replay.output_claim,
-        challenges: replay.challenges,
-        witness_eval,
-    })
-}
-#[allow(clippy::too_many_arguments)]
-fn validate_stage2_replay<F, E>(
-    setup: &AkitaVerifierSetup<F>,
-    stage1: Stage1Replay<'_, E>,
-    rs: &RingSwitchVerifyOutput<E>,
-    setup_claim: Option<E>,
-    opening_semantics: Stage2OpeningSemantics<'_, E>,
-    replay: Stage2RoundReplay<E>,
-) -> Result<Vec<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
-{
-    let witness_eval = replay.witness_eval;
-    let stage2_verifier = AkitaStage2Verifier::<F, E>::new(
-        stage1.batching_coeff,
-        witness_eval,
-        stage1.stage1_point,
-        &rs.relation_matrix_evaluator,
-        stage1.compression,
-        setup.expanded(),
-        rs.alpha,
-        setup_claim,
-        rs.relation_address_geometry.relation_lane_variable_count(),
-        rs.relation_address_geometry
-            .relation_coefficient_variable_count(),
-        opening_semantics,
-        stage1.physical_l2_claim,
-        stage1.physical_l2_families,
-    )?;
-
-    let expected = stage2_verifier.expected_output_claim(&replay.challenges)?;
-    if replay.output_claim != expected {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(replay.challenges)
 }
 
 /// Replay one complete fold directly from the native Spongefish argument.

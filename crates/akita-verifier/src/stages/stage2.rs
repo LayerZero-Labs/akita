@@ -5,11 +5,15 @@ use crate::coefficient_packing_relation::{
 };
 use crate::relation::evaluation_trace::PreparedEvaluationTrace;
 use crate::relation::{PreparedRelationGroups, RelationMatrixEvaluator};
+use crate::stages::ring_switch::RingSwitchVerifyOutput;
+use crate::stages::stage1::Stage1Replay;
 use akita_algebra::{
     eq_poly::EqPolynomial,
     offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily},
 };
 use akita_error::AkitaError;
+use akita_serialization::AkitaSerialize;
+use akita_types::AkitaVerifierSetup;
 use akita_types::{
     AkitaExpandedSetup, CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
     OpeningFamily, ReducedCompressionRelationWeights,
@@ -297,6 +301,80 @@ where
             + trace_oracle
             + physical_l2_oracle)
     }
+}
+
+pub(crate) struct Stage2RoundReplay<E: Field> {
+    pub(crate) output_claim: E,
+    pub(crate) challenges: Vec<E>,
+    pub(crate) witness_eval: E,
+}
+
+pub(crate) fn replay_stage2_native<F, E>(
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    level: u32,
+    input_claim: E,
+    shape: akita_sumcheck::NativeSumcheckShape,
+) -> Result<Stage2RoundReplay<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
+        grinding,
+        akita_types::SumcheckProtocol::Stage2,
+        level,
+        0,
+    );
+    let replay = akita_sumcheck::verify_sumcheck_rounds_native::<F, E, _>(
+        &mut channel,
+        0,
+        input_claim,
+        shape,
+    )?;
+    let witness_eval = akita_types::native_stage2_w_eval::<F, E, _>(grinding, level, E::zero())?;
+    Ok(Stage2RoundReplay {
+        output_claim: replay.output_claim,
+        challenges: replay.challenges,
+        witness_eval,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn validate_stage2_replay<F, E>(
+    setup: &AkitaVerifierSetup<F>,
+    stage1: Stage1Replay<'_, E>,
+    rs: &RingSwitchVerifyOutput<E>,
+    setup_claim: Option<E>,
+    opening_semantics: Stage2OpeningSemantics<'_, E>,
+    replay: Stage2RoundReplay<E>,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+{
+    let witness_eval = replay.witness_eval;
+    let stage2_verifier = AkitaStage2Verifier::<F, E>::new(
+        stage1.batching_coeff,
+        witness_eval,
+        stage1.stage1_point,
+        &rs.relation_matrix_evaluator,
+        stage1.compression,
+        setup.expanded(),
+        rs.alpha,
+        setup_claim,
+        rs.relation_address_geometry.relation_lane_variable_count(),
+        rs.relation_address_geometry
+            .relation_coefficient_variable_count(),
+        opening_semantics,
+        stage1.physical_l2_claim,
+        stage1.physical_l2_families,
+    )?;
+
+    let expected = stage2_verifier.expected_output_claim(&replay.challenges)?;
+    if replay.output_claim != expected {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(replay.challenges)
 }
 
 #[allow(clippy::too_many_arguments)]

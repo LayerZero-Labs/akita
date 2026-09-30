@@ -1,6 +1,6 @@
 //! Coefficient-packing fold verifier prefix.
 
-use crate::fold::{FoldClaimMaterial, PreparedFoldOpeningPoint};
+use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_types::NativeGrinding;
