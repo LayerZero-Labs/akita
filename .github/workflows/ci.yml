@@ -252,6 +252,7 @@ jobs:
           cargo test --release -p akita-pcs
           --test protocol_soundness
           --test fold_linf
+          --test proof_size_e2e
           --no-default-features
           --features parallel,logging-transcript,${{ matrix.backend }}
           --
