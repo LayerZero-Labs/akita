@@ -1,6 +1,7 @@
 """Disposable static-review fixture; never executed by the workflow.
 
 Contract: first_or_none returns the first item, or None for an empty list.
+Contract: last_or_none returns the last item, or None for an empty list.
 This file will be removed with the test branch; it is not production code.
 """
 
@@ -10,4 +11,8 @@ This file will be removed with the test branch; it is not production code.
 
 
 def first_or_none(items):
-    return items[0]
+    return items[0] if items else None
+
+
+def last_or_none(items):
+    return items[0] if items else None
