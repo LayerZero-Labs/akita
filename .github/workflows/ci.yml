@@ -217,9 +217,7 @@ jobs:
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
     runs-on: ubuntu-latest
-    # Release builds of several logging-transcript test binaries dominate this
-    # job; it stays well under the schedule-drift job on the critical path.
-    timeout-minutes: 40
+    timeout-minutes: 25
     strategy:
       matrix:
         backend: [transcript-blake2b, transcript-keccak]
@@ -254,7 +252,6 @@ jobs:
           cargo test --release -p akita-pcs
           --test protocol_soundness
           --test fold_linf
-          --test proof_size_e2e
           --no-default-features
           --features parallel,logging-transcript,${{ matrix.backend }}
           --

@@ -8,6 +8,7 @@
 //! The independent opening oracles stay in `common`: the shared
 //! `recursive_multi_group_round_trip` driver needs them too.
 
+use crate::common::proof_size::prove_matching_byte_model;
 use crate::common::*;
 use akita_config::{
     recursive_commitment::RecursiveScheduleConfig, CommitmentConfig, RecursiveCommitmentConfig,
@@ -172,21 +173,16 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
             )
             .unwrap();
 
-        let proof = scheme
-            .batched_prove(
-                &setup,
-                prove_input::<Cfg>(
-                    &pt[..],
-                    &[expected_opening],
-                    &commitment,
-                    hint,
-                    scheme.schedules(),
-                ),
-                &stack,
-                label,
-                BasisMode::Lagrange,
-            )
-            .expect("prove");
+        let prover_data = prove_input::<Cfg>(
+            &pt[..],
+            &[expected_opening],
+            &commitment,
+            hint,
+            scheme.schedules(),
+        );
+        let proof = prove_matching_byte_model(scheme.schedules(), prover_data.selection(), || {
+            scheme.batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
+        });
 
         let openings = [expected_opening];
         scheme
@@ -232,21 +228,16 @@ where
             )
             .unwrap();
 
-        let proof = scheme
-            .batched_prove(
-                &setup,
-                prove_input::<Cfg>(
-                    &pt[..],
-                    &[expected_opening],
-                    &commitment,
-                    hint,
-                    scheme.schedules(),
-                ),
-                &stack,
-                label,
-                BasisMode::Lagrange,
-            )
-            .expect("prove");
+        let prover_data = prove_input::<Cfg>(
+            &pt[..],
+            &[expected_opening],
+            &commitment,
+            hint,
+            scheme.schedules(),
+        );
+        let proof = prove_matching_byte_model(scheme.schedules(), prover_data.selection(), || {
+            scheme.batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
+        });
 
         let openings = [expected_opening];
         scheme
@@ -356,9 +347,9 @@ where
         );
         let selection = prover_data.selection();
 
-        let proof = scheme
-            .batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
-            .expect("prove");
+        let proof = prove_matching_byte_model(scheme.schedules(), selection, || {
+            scheme.batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
+        });
 
         let verifier_groups = vec![
             PolynomialGroupClaims::new(
@@ -458,9 +449,9 @@ where
         );
         let selection = prover_data.selection();
 
-        let proof = scheme
-            .batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
-            .expect("prove");
+        let proof = prove_matching_byte_model(scheme.schedules(), selection, || {
+            scheme.batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
+        });
 
         let verifier_groups = vec![
             PolynomialGroupClaims::new(
