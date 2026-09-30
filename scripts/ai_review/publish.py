@@ -18,7 +18,7 @@ def bounded_text(value, limit):
 
 def plain(value):
     # Render model prose as text, not Markdown links, images, HTML or mentions.
-    value = html.escape(value).replace("@", "@\u200b")
+    value = html.escape(value, quote=False).replace("@", "@\u200b")
     for char in "\\`*_{}[]()#+-.!|>~":
         value = value.replace(char, "\\" + char)
     return value.replace("\n", " ").replace("\r", " ")

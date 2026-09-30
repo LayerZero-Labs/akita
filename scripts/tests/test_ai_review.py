@@ -219,11 +219,12 @@ class PublicationTests(unittest.TestCase):
     def test_model_text_cannot_embed_images_html_or_mentions(self):
         value = snapshot()
         result = proposal(value)
-        result["result"]["findings"][0]["body"] = "![click](https://evil.test) <img src=x> @maintainer"
+        result["result"]["findings"][0]["body"] = "doesn't ![click](https://evil.test) <img src=x> @maintainer"
         body = render(value, result)
         self.assertNotIn("![click]", body)
         self.assertNotIn("<img", body)
         self.assertNotIn("@maintainer", body)
+        self.assertIn("doesn't", body)
 
     def test_every_previous_finding_must_be_reassessed_and_can_regress(self):
         value = snapshot()
