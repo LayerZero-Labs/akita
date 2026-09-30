@@ -26,4 +26,4 @@ def index_or_none(items, index):
 
 
 def count_items(items):
-    return len(items) + 1
+    return len(items)
