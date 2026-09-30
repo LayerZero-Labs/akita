@@ -8,6 +8,7 @@
 use akita_challenges::NativeVerifierFoldDraw;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
+use akita_types::NativeGrinding;
 use akita_types::{
     draw_group_fold_challenges, CommittedGroupParams, DigitRangeEqualityPoint, DigitRangePlan,
     GroupFoldChallenges, OpeningClaimsLayout,
@@ -106,11 +107,14 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
                 &mut channel,
                 0,
             )?;
-            let child_claims = akita_types::native_stage1_verifier_child_claims::<F, E>(
+            let mut child_claims =
+                akita_transcript::native_extension_slots::<E>(expected.child_claims)
+                    .map_err(|_| AkitaError::InvalidProof)?;
+            akita_types::native_stage1_child_claims::<F, E, _>(
                 grinding,
                 level,
                 stage,
-                expected.child_claims,
+                &mut child_claims,
             )?;
             let expected_output = current_weights
                 .iter()
@@ -196,7 +200,7 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
             0,
         )?;
         let range_image_evaluation =
-            akita_types::native_stage1_verifier_range_image::<F, E>(grinding, level, stage)?;
+            akita_types::native_stage1_range_image::<F, E, _>(grinding, level, stage, E::zero())?;
         let expected_output = self
             .plan
             .evaluate_leaf_polynomial(&leaf.polynomial_coefficients, range_image_evaluation);

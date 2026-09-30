@@ -2,6 +2,7 @@
 
 use super::super::*;
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
+use akita_types::NativeGrinding;
 use akita_types::{dispatch_for_field, TerminalFoldParams};
 
 pub(in crate::protocol::core) struct PreparedProtocolPoint<F: Field, E: Field> {
@@ -71,13 +72,16 @@ where
         partial_count: usize,
         split_bits: usize,
     ) -> Result<EorPrefix<E>, AkitaError> {
-        let prefix = akita_types::native_eor_verifier_prefix::<F, E>(
+        let partials = akita_transcript::native_extension_slots::<E>(partial_count)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        let prefix = akita_types::native_eor_prefix::<F, E, _>(
             self.grinding,
             opening_batch,
             openings,
+            partials,
             self.level,
         )?;
-        if prefix.partials.len() != partial_count || prefix.eta.len() != split_bits {
+        if prefix.eta.len() != split_bits {
             return Err(AkitaError::InvalidProof);
         }
         Ok(EorPrefix {
@@ -111,11 +115,16 @@ where
     }
 
     fn final_claims(&mut self, opening_batch: &OpeningClaimsLayout) -> Result<Vec<E>, AkitaError> {
-        akita_types::native_eor_verifier_final_claims::<F, E>(
+        let mut final_claims =
+            akita_transcript::native_extension_slots::<E>(opening_batch.num_total_polynomials())
+                .map_err(|_| AkitaError::InvalidProof)?;
+        akita_types::native_eor_final_claims::<F, E, _>(
             self.grinding,
             opening_batch,
+            &mut final_claims,
             self.level,
-        )
+        )?;
+        Ok(final_claims)
     }
 }
 
@@ -247,7 +256,7 @@ where
         protocol_points.push(protocol_point);
     }
     for (group_index, protocol_point) in protocol_points.iter().enumerate() {
-        akita_transcript::public_native_extensions_verifier::<F, E>(
+        akita_transcript::public_native_extensions::<F, E, _>(
             grinding.state_mut(),
             akita_transcript::ProtocolSiteId {
                 family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
@@ -530,11 +539,11 @@ mod tests {
 
         let state = new_native_prover(b"native-eor-verifier", b"fixture").unwrap();
         let mut prover = akita_types::NativeProverGrinding::new(state, &plan);
-        akita_types::native_eor_prover_prefix::<F, E>(
+        akita_types::native_eor_prefix::<F, E, _>(
             &mut prover,
             &opening_batch,
             &openings,
-            &partials,
+            partials.clone(),
             level,
         )
         .unwrap();
@@ -557,10 +566,10 @@ mod tests {
             akita_types::NATIVE_EOR_SUMCHECK_INVOCATION,
         )
         .unwrap();
-        akita_types::native_eor_prover_final_claims::<F, E>(
+        akita_types::native_eor_final_claims::<F, E, _>(
             &mut prover,
             &opening_batch,
-            &[E::zero()],
+            &mut [E::zero()],
             level,
         )
         .unwrap();

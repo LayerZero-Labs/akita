@@ -9,6 +9,7 @@ use crate::backend::{
 use akita_challenges::{FoldDraw, NativePreviewFoldDraw, NativeProverFoldDraw};
 use akita_error::AkitaError;
 use akita_types::GroupFoldChallenges;
+use akita_types::NativeGrinding;
 use akita_types::{
     draw_group_fold_challenges, dyadic_block_ranges, CommittedGroupParams,
     InnerCommitSecurityRoute, OpeningClaimsLayout, TerminalFoldParams, TerminalResponseShape,

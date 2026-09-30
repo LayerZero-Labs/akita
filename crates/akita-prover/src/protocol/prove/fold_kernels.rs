@@ -90,7 +90,7 @@ where
             actual: openings.len(),
         });
     }
-    let row_coefficients = akita_types::sample_row_coefficients_native::<F, E>(
+    let row_coefficients = akita_types::row_coefficients_native::<F, E, _>(
         opening_batch,
         akita_types::GrindingSite::EvaluationBatch { level },
         grinding,

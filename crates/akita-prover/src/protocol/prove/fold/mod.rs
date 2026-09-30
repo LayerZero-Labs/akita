@@ -1,6 +1,7 @@
 use super::*;
 use crate::backend::OperationCtx;
 use crate::backend::{EvaluationTraceDescription, Stage2OpeningDescription};
+use akita_types::NativeGrinding;
 use jolt_field::AdditiveGroup;
 
 use akita_types::{
@@ -208,7 +209,7 @@ where
             return Err(AkitaError::InvalidProof);
         }
         if pad_base_evals {
-            akita_transcript::public_native_extensions_prover::<F, E>(
+            akita_transcript::public_native_extensions::<F, E, _>(
                 grinding.state_mut(),
                 akita_transcript::ProtocolSiteId {
                     family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
@@ -226,7 +227,7 @@ where
         prepared_group_openings.push(prepared);
     }
     if reduction.is_none() {
-        akita_transcript::public_native_extensions_prover::<F, E>(
+        akita_transcript::public_native_extensions::<F, E, _>(
             grinding.state_mut(),
             akita_transcript::ProtocolSiteId {
                 family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
@@ -758,7 +759,7 @@ where
         },
     )
     .map_err(|err| AkitaError::InvalidInput(format!("stage-2 proving failed: {err:?}")))?;
-    akita_types::native_stage2_prover_w_eval::<F, E>(grinding, fold_level, w_eval)?;
+    akita_types::native_stage2_w_eval::<F, E, _>(grinding, fold_level, w_eval)?;
     let stage3_sumcheck_proof = match next_params.recursive() {
         Some(next_fold_params) => prove_stage3::<F, E, _>(
             consumer,

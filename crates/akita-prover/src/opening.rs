@@ -2,6 +2,7 @@
 use crate::backend::CommitmentHandleMetadata;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
+use akita_types::NativeGrinding;
 use akita_types::{
     Commitment, CommittedGroup, CommittedGroupBatchProfile, CommittedGroupParams, OpeningClaims,
     OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupClaims,
@@ -190,7 +191,7 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
             .map_err(|_| AkitaError::InvalidProof)?;
         }
         for (group_index, group_claims) in self.opening_claims.groups().iter().enumerate() {
-            akita_transcript::public_native_extensions_prover::<CommitF, PointF>(
+            akita_transcript::public_native_extensions::<CommitF, PointF, _>(
                 grinding.state_mut(),
                 akita_transcript::ProtocolSiteId {
                     family: akita_transcript::SITE_FAMILY_ROOT_STATEMENT,
