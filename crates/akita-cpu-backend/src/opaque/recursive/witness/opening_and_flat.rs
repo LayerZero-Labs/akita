@@ -268,6 +268,7 @@ pub(crate) struct SuffixWitnessView<'a, F: Field, const D: usize> {
     pub(super) live_coeff_len: usize,
     pub(super) live_ring_elems: usize,
     pub(super) padded_ring_elems: usize,
+    num_vars: usize,
     pub(super) _marker: PhantomData<F>,
 }
 
@@ -283,11 +284,21 @@ impl<'a, F: Field, const D: usize> SuffixWitnessView<'a, F, D> {
             });
         }
 
+        let padded_ring_elems = (digits.len() / D)
+            .checked_next_power_of_two()
+            .ok_or_else(|| {
+                AkitaError::Internal("recursive witness ring extent overflows usize".into())
+            })?
+            .max(1);
+        let total = akita_error::checked::product([padded_ring_elems, D]).ok_or_else(|| {
+            AkitaError::Internal("recursive witness ring elems times D overflow".into())
+        })?;
         Ok(Self {
             digits,
             live_coeff_len,
             live_ring_elems: live_coeff_len.div_ceil(D),
-            padded_ring_elems: (digits.len() / D).next_power_of_two().max(1),
+            padded_ring_elems,
+            num_vars: total.trailing_zeros() as usize,
             _marker: PhantomData,
         })
     }
@@ -332,11 +343,7 @@ impl<'a, F: Field, const D: usize> SuffixWitnessView<'a, F, D> {
 
     #[inline]
     pub(crate) fn num_vars(&self) -> usize {
-        let total = self
-            .padded_ring_elems
-            .checked_mul(D)
-            .expect("recursive witness ring elems * D overflow");
-        total.trailing_zeros() as usize
+        self.num_vars
     }
 }
 
@@ -810,5 +817,33 @@ where
                 )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod shape_tests {
+    use super::*;
+    use jolt_field::Prime128OffsetA7F7;
+
+    #[test]
+    fn view_constructor_rejects_rounded_ring_extent_overflow() {
+        let digits = PackedSignedDigits::default();
+        let view = digits.zero_padded(usize::MAX).unwrap();
+        let error = SuffixWitnessView::<Prime128OffsetA7F7, 1>::from_recursive_witness(view, 0)
+            .err()
+            .unwrap();
+        assert!(matches!(error, AkitaError::Internal(message)
+            if message == "recursive witness ring extent overflows usize"));
+    }
+
+    #[test]
+    fn view_constructor_rejects_ring_times_dimension_overflow() {
+        let digits = PackedSignedDigits::default();
+        let view = digits.zero_padded(usize::MAX - 1).unwrap();
+        let error = SuffixWitnessView::<Prime128OffsetA7F7, 2>::from_recursive_witness(view, 0)
+            .err()
+            .unwrap();
+        assert!(matches!(error, AkitaError::Internal(message)
+            if message == "recursive witness ring elems times D overflow"));
     }
 }

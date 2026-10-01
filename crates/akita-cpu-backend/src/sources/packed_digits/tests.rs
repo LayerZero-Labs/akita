@@ -337,3 +337,24 @@ fn decode_microbenchmark() {
         );
     }
 }
+
+#[test]
+fn auto_storage_matches_explicit_width_for_every_tail_and_signed_extreme() {
+    let mut rng = StdRng::seed_from_u64(0x6175_746f);
+    assert_eq!(
+        PackedSignedDigits::default(),
+        PackedSignedDigits::from_i8_digits_auto(vec![])
+    );
+    for width in 1..=8 {
+        for len in [0, 1, 7, 8, 63, 64, 65, 127, 128, 129] {
+            let mut digits = random_digits(&mut rng, len, width);
+            if let Some(first) = digits.first_mut() {
+                *first = -(1i16 << (width - 1)) as i8;
+            }
+            let automatic = PackedSignedDigits::from_i8_digits_auto(digits.clone());
+            let explicit =
+                PackedSignedDigits::from_i8_digits(digits, automatic.bit_width()).unwrap();
+            assert_eq!(automatic, explicit);
+        }
+    }
+}
