@@ -41,15 +41,19 @@ jobs:
         uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # cargo-fuzz
         with:
           tool: cargo-fuzz
-      - name: Fuzz all targets
+      # End-to-end and boundary targets need minutes of setup per process and
+      # more memory than this runner has; they run in long campaigns
+      # (fuzz/README.md). CI fuzzes the primitive targets briefly.
+      - name: Fuzz primitive targets
+        working-directory: fuzz
         run: |
           set -euo pipefail
-          targets=$(cargo +nightly fuzz list)
+          targets=$(cargo run --release -q -p akita-fuzz-runner -- targets | awk '$2 == "primitive" { print $1 }')
           if [ -z "$targets" ]; then
-            echo "No fuzz targets found"
+            echo "No primitive fuzz targets found"
             exit 1
           fi
           for target in $targets; do
             echo "--- Fuzzing $target for ${FUZZ_DURATION}s ---"
-            cargo +nightly fuzz run --release --target "${FUZZ_TARGET}" "$target" -- -max_total_time="${FUZZ_DURATION}"
+            cargo +nightly fuzz run --release --debug-assertions --target "${FUZZ_TARGET}" "$target" -- -max_total_time="${FUZZ_DURATION}"
           done

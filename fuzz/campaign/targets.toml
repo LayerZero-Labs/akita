@@ -177,7 +177,7 @@ malloc_limit_mb = 8192
 
 [target.pcs_faults]
 kind = "end_to_end"
-description = "Soundness vs cheating provers: one injected fault (admitted rejected nonce, witness digit, terminal response, norm claim) must be rejected"
+description = "Soundness vs cheating provers: one injected fault (response pushed over its bound, witness digit, terminal response, norm claim) must be rejected"
 weight = 1.5
 max_len = 16384
 timeout_s = 900

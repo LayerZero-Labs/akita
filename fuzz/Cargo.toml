@@ -30,19 +30,43 @@ parallel = [
 
 [dependencies]
 akita-algebra = { path = "../crates/akita-algebra" }
-akita-config = { path = "../crates/akita-config", default-features = false, features = ["transcript-blake2b"] }
-akita-setup = { path = "../crates/akita-setup", default-features = false, features = ["transcript-blake2b"] }
-akita-cpu-backend = { path = "../crates/akita-cpu-backend", default-features = false, features = ["transcript-blake2b"] }
+akita-config = { path = "../crates/akita-config", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-setup = { path = "../crates/akita-setup", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-cpu-backend = { path = "../crates/akita-cpu-backend", default-features = false, features = [
+  "transcript-blake2b",
+] }
 akita-error = { path = "../crates/akita-error" }
-akita-pcs = { path = "../crates/akita-pcs", default-features = false, features = ["transcript-blake2b", "response-model-diagnostics", "fault-injection"] }
-akita-prover = { path = "../crates/akita-prover", default-features = false, features = ["transcript-blake2b"] }
-akita-schedules = { path = "../crates/akita-schedules", default-features = false, features = ["transcript-blake2b"] }
+akita-pcs = { path = "../crates/akita-pcs", default-features = false, features = [
+  "transcript-blake2b",
+  "response-model-diagnostics",
+  "fault-injection",
+] }
+akita-prover = { path = "../crates/akita-prover", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-schedules = { path = "../crates/akita-schedules", default-features = false, features = [
+  "transcript-blake2b",
+] }
 akita-serialization = { path = "../crates/akita-serialization" }
-akita-sumcheck = { path = "../crates/akita-sumcheck", default-features = false, features = ["transcript-blake2b"] }
-akita-challenges = { path = "../crates/akita-challenges", default-features = false, features = ["transcript-blake2b"] }
-akita-transcript = { path = "../crates/akita-transcript", default-features = false, features = ["transcript-blake2b"] }
-akita-types = { path = "../crates/akita-types", default-features = false, features = ["transcript-blake2b"] }
-akita-verifier = { path = "../crates/akita-verifier", default-features = false, features = ["transcript-blake2b"] }
+akita-sumcheck = { path = "../crates/akita-sumcheck", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-challenges = { path = "../crates/akita-challenges", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-transcript = { path = "../crates/akita-transcript", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-types = { path = "../crates/akita-types", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-verifier = { path = "../crates/akita-verifier", default-features = false, features = [
+  "transcript-blake2b",
+] }
 jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
   "asm",
   "solinas",
