@@ -356,9 +356,7 @@ where
         .claim_coefficients
         .get(group_claim_range.clone())
         .ok_or_else(|| {
-            AkitaError::Internal(
-                "packing claim range exceeds the validated coefficient table".into(),
-            )
+            AkitaError::InvalidInput("packing claim range exceeds the coefficient table".into())
         })?;
     let group_layout = inputs.opening_batch.group_layout(inputs.group_index)?;
     let group_params = inputs

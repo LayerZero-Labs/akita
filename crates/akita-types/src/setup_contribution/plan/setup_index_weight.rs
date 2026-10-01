@@ -526,7 +526,7 @@ mod projection_tests {
             1,
             vec![F::one()].into(),
             Vec::new(),
-            crate::CommitmentRingDims::uniform(1),
+            crate::CommitmentRingDims::uniform(64),
         )
         .unwrap();
         assert!(matches!(
