@@ -374,11 +374,11 @@ impl GrindingSite {
 /// One compact plan run in protocol replay order.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct GrindingRun {
-    pub site: GrindingSite,
+    site: GrindingSite,
     loss_factor: u64,
-    pub grind_bits: u8,
-    pub nonce_bits: u8,
-    pub multiplicity: u64,
+    grind_bits: u8,
+    nonce_bits: u8,
+    multiplicity: u64,
 }
 
 impl GrindingRun {
@@ -539,7 +539,7 @@ impl GrindingRun {
 /// Validated public transcript-grinding replay plan.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GrindingPlan {
-    pub runs: Vec<GrindingRun>,
+    runs: Vec<GrindingRun>,
     challenge_order: ChallengeFieldOrder,
     total_nonce_bits: usize,
     nonce_max_bytes: usize,

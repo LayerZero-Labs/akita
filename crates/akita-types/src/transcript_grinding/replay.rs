@@ -37,14 +37,14 @@ impl<'a> GrindingPlanCursor<'a> {
     }
 
     fn next(&mut self) -> Option<GrindingPlanEntry> {
-        let run = *self.plan.runs.get(self.run_index)?;
+        let run = *self.plan.runs().get(self.run_index)?;
         let entry = GrindingPlanEntry {
-            site: run.site,
-            grind_bits: run.grind_bits,
-            nonce_bits: run.nonce_bits,
+            site: run.site(),
+            grind_bits: run.grind_bits(),
+            nonce_bits: run.nonce_bits(),
         };
         self.run_offset += 1;
-        if self.run_offset == run.multiplicity {
+        if self.run_offset == run.multiplicity() {
             self.run_index += 1;
             self.run_offset = 0;
         }
@@ -52,25 +52,25 @@ impl<'a> GrindingPlanCursor<'a> {
     }
 
     fn peek(&self) -> Option<GrindingPlanEntry> {
-        let run = *self.plan.runs.get(self.run_index)?;
+        let run = *self.plan.runs().get(self.run_index)?;
         Some(GrindingPlanEntry {
-            site: run.site,
-            grind_bits: run.grind_bits,
-            nonce_bits: run.nonce_bits,
+            site: run.site(),
+            grind_bits: run.grind_bits(),
+            nonce_bits: run.nonce_bits(),
         })
     }
 
     fn consume_run(&mut self, site: GrindingSite, multiplicity: usize) -> Result<(), AkitaError> {
         let run = self
             .plan
-            .runs
+            .runs()
             .get(self.run_index)
             .ok_or(AkitaError::InvalidProof)?;
         if self.run_offset != 0
-            || run.site != site
-            || run.grind_bits != 0
-            || run.nonce_bits != 0
-            || usize::try_from(run.multiplicity).ok() != Some(multiplicity)
+            || run.site() != site
+            || run.grind_bits() != 0
+            || run.nonce_bits() != 0
+            || usize::try_from(run.multiplicity()).ok() != Some(multiplicity)
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -82,7 +82,7 @@ impl<'a> GrindingPlanCursor<'a> {
     }
 
     fn is_finished(&self) -> bool {
-        self.run_index == self.plan.runs.len() && self.run_offset == 0
+        self.run_index == self.plan.runs().len() && self.run_offset == 0
     }
 }
 
