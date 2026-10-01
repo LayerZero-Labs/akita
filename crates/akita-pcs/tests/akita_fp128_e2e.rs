@@ -95,6 +95,7 @@ use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_cpu_backend::CpuBackend;
 use akita_params::{BasisMode, OpeningClaimsLayout};
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use common::proof_size::prove_matching_byte_model;
 use common::*;
 use matrix_drivers::*;
 
@@ -354,15 +355,11 @@ fn fp128_onehot_batched() {
             .expect("commit");
 
         let session = b"completeness/fp128_onehot_batched";
-        let proof = scheme
-            .batched_prove(
-                &setup,
-                prove_input::<OneHotCfg>(&pt[..], &openings, &commitment, hint, scheme.schedules()),
-                &stack,
-                session,
-                BasisMode::Lagrange,
-            )
-            .expect("prove");
+        let prover_data =
+            prove_input::<OneHotCfg>(&pt[..], &openings, &commitment, hint, scheme.schedules());
+        let proof = prove_matching_byte_model(scheme.schedules(), prover_data.selection(), || {
+            scheme.batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
+        });
 
         scheme
             .verifier(verifier_setup.clone())
@@ -419,15 +416,11 @@ fn fp128_dense_batched() {
             .expect("commit");
 
         let session = b"completeness/fp128_dense_batched";
-        let proof = scheme
-            .batched_prove(
-                &setup,
-                prove_input::<DenseCfg>(&pt[..], &openings, &commitment, hint, scheme.schedules()),
-                &stack,
-                session,
-                BasisMode::Lagrange,
-            )
-            .expect("prove");
+        let prover_data =
+            prove_input::<DenseCfg>(&pt[..], &openings, &commitment, hint, scheme.schedules());
+        let proof = prove_matching_byte_model(scheme.schedules(), prover_data.selection(), || {
+            scheme.batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
+        });
 
         scheme
             .verifier(verifier_setup.clone())

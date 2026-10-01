@@ -3,6 +3,7 @@
 #[cfg(feature = "logging-transcript")]
 pub(crate) mod mutations;
 mod opening_oracles;
+pub(crate) mod proof_size;
 #[path = "../../examples/support/workspace_schedules.rs"]
 mod workspace_schedules;
 
