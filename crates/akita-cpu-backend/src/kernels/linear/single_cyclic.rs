@@ -129,7 +129,7 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
     );
     let chunk_width =
         safe_crt_chunk_width::<F, W, K, D>(params, vec_len, digit_bound).ok_or_else(|| {
-            AkitaError::Internal("single i8 CRT capacity cannot fit a single term".into())
+            AkitaError::InvalidSetup("single i8 CRT capacity cannot fit a single term".into())
         })?;
     Ok(drive_single_chunked_matvec(
         n_a,
@@ -183,7 +183,7 @@ pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
     );
     let chunk_width =
         safe_crt_chunk_width::<F, W, K, D>(params, vec_len, digit_bound).ok_or_else(|| {
-            AkitaError::Internal("cyclic i8 CRT capacity cannot fit a single term".into())
+            AkitaError::InvalidSetup("cyclic i8 CRT capacity cannot fit a single term".into())
         })?;
     Ok(drive_single_chunked_matvec(
         n_a,
