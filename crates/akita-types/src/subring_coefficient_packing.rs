@@ -93,10 +93,16 @@ impl<E: Field> PreparedSubringCoefficientPackingPoint<E> {
         padded_point.resize(expected, E::zero());
         let mut offset = 0usize;
         let mut take_axis = |bits: usize| -> Result<&[E], AkitaError> {
-            let end = offset.checked_add(bits).ok_or(AkitaError::InvalidProof)?;
-            let axis = padded_point
-                .get(offset..end)
-                .ok_or(AkitaError::InvalidProof)?;
+            let end = offset.checked_add(bits).ok_or_else(|| {
+                AkitaError::Internal(
+                    "validated coefficient-packing axis end overflows usize".into(),
+                )
+            })?;
+            let axis = padded_point.get(offset..end).ok_or_else(|| {
+                AkitaError::Internal(
+                    "validated coefficient-packing axis exceeds the padded point".into(),
+                )
+            })?;
             offset = end;
             Ok(axis)
         };

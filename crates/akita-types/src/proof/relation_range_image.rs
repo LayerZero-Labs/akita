@@ -345,18 +345,25 @@ pub fn reconstruct_l2_sq_from_gram(
         for (left, right) in layout.limb_pairs() {
             let claim_index = layout
                 .subclaim_index(block_index, left, right)
-                .ok_or(AkitaError::InvalidProof)?;
-            let claim = claims
-                .get(claim_index)
-                .copied()
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal("validated limb-Gram layout has no subclaim index".into())
+                })?;
+            let claim = claims.get(claim_index).copied().ok_or_else(|| {
+                AkitaError::Internal(
+                    "validated limb-Gram claims are missing the indexed claim".into(),
+                )
+            })?;
             let exponent = left
                 .checked_add(right)
                 .ok_or_else(|| AkitaError::InvalidSetup("L2 exponent overflow".into()))?;
             let scale = powers
                 .get(exponent)
                 .copied()
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "generated L2 basis powers are missing the Gram exponent".into(),
+                    )
+                })?
                 .checked_mul(if left == right { 1 } else { 2 })
                 .ok_or_else(|| AkitaError::InvalidSetup("L2 Gram scale overflow".into()))?;
             total =
@@ -620,7 +627,19 @@ impl RelationRangeImagePlan {
                     } if *row_group_index == group_index
                 )
             })
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                if self
+                    .groups
+                    .iter()
+                    .any(|group| group.group_index == group_index)
+                {
+                    AkitaError::Internal("validated relation group has no consistency row".into())
+                } else {
+                    AkitaError::InvalidInput(
+                        "consistency row group index is absent from the relation plan".into(),
+                    )
+                }
+            })
     }
 
     /// Canonical trailing scalar-opening row after every physical relation row.
@@ -769,6 +788,16 @@ mod tests {
             })
             .collect();
         WitnessLayout::new_for_test(units, quotient_rows, 1)
+    }
+
+    #[test]
+    fn consistency_row_rejects_an_absent_group() {
+        let plan = plan_for(&[1], 1, CommitmentRingDims::uniform(64), 64, 4);
+        assert!(plan.consistency_row_index(0).is_ok());
+        assert!(matches!(
+            plan.consistency_row_index(1),
+            Err(AkitaError::InvalidInput(_))
+        ));
     }
 
     fn plan_for(
@@ -1009,6 +1038,12 @@ mod tests {
             154
         );
         assert!(reconstruct_l2_sq_from_gram(shape, 4, &claims[..8]).is_err());
+        let mut forged_claims = vec![0; claims.len()];
+        forged_claims[0] = -1;
+        assert!(matches!(
+            reconstruct_l2_sq_from_gram(shape, 4, &forged_claims),
+            Err(AkitaError::InvalidProof)
+        ));
     }
 
     #[test]
