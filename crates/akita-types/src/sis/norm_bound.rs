@@ -838,5 +838,20 @@ mod tests {
             0,
         )
         .is_none());
+        // A basis of `2^128` or more saturates the response difference, so no
+        // audited cell covers it; the answer is `None`, not a shift panic.
+        for log_basis in [128, u32::MAX] {
+            assert!(rounded_up_role_a_inf_norm(
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
+                d,
+                log_basis,
+                &challenge,
+                fold_digits,
+                1,
+            )
+            .is_none());
+        }
     }
 }

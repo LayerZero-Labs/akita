@@ -766,7 +766,9 @@ fn setup_requirements_union_covers_both_families_at_one_bound() {
 }
 
 /// Edit a checked-in artifact structurally. Admission audits rows before its
-/// canonical-bytes check, so the edited artifact reaches the audit.
+/// canonical-bytes check, so the edited artifact reaches the audit. The edited
+/// bytes are not in canonical form, so every caller must pin the audit's own
+/// diagnostic: any edit at all is an `InvalidSetup` at the canonical-bytes check.
 fn edited_artifact<Cfg: CommitmentConfig>(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
     let mut value: serde_json::Value =
         serde_json::from_slice(&checked_in_artifact_bytes::<Cfg>()).expect("artifact JSON");
@@ -788,60 +790,93 @@ fn first_recursive_group(value: &mut serde_json::Value) -> &mut serde_json::Valu
         .expect("a row with a recursive fold group")
 }
 
-fn assert_rejected_as_invalid_setup<Cfg: CommitmentConfig>(bytes: &[u8], what: &str) {
+fn rejection_message<Cfg: CommitmentConfig>(bytes: &[u8]) -> String {
     match TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(bytes) {
-        Err(akita_error::AkitaError::InvalidSetup(_)) => {}
-        other => panic!("{what} must be rejected as InvalidSetup, got {other:?}"),
+        Err(akita_error::AkitaError::InvalidSetup(message)) => message,
+        other => panic!("edited artifact must be rejected as InvalidSetup, got {other:?}"),
     }
+}
+
+/// Assert the digit-range pass rejected `role` of `group`, naming `edited`
+/// (the out-of-range half of the pair, e.g. `"log_basis 17 "`).
+fn assert_digit_range_rejection<Cfg: CommitmentConfig>(
+    bytes: &[u8],
+    group: &str,
+    role: &str,
+    edited: &str,
+) {
+    let message = rejection_message::<Cfg>(bytes);
+    assert!(
+        message.starts_with(&format!("{group}: {role} log_basis "))
+            && message.contains(edited)
+            && message.ends_with(" is outside the field decomposition"),
+        "{group} {role} must fail the digit-range pass on {edited:?}, got {message:?}"
+    );
 }
 
 #[test]
 fn unsupported_terminal_inner_log_basis_is_rejected_not_panicking() {
-    for log_basis in [0, 128] {
+    for log_basis in [0, 17, 128] {
         let bytes = edited_artifact::<fp128::Dense>(|value| {
             value["rows"][0]["schedule"]["terminal"]["inner"]["digits"]["log_basis"] =
                 log_basis.into();
         });
-        assert_rejected_as_invalid_setup::<fp128::Dense>(&bytes, "terminal A log_basis");
+        assert_digit_range_rejection::<fp128::Dense>(
+            &bytes,
+            "terminal fold",
+            "A",
+            &format!("log_basis {log_basis} "),
+        );
     }
 }
 
 #[test]
 fn unsupported_fold_group_log_basis_is_rejected_not_panicking() {
     type Cfg = RecursiveCommitmentConfig<akita_config::proof_optimized::fp32::Dense>;
-    for log_basis in [0, 128] {
+    const GROUP: &str = "recursive fold 0 final group";
+    for log_basis in [0, 17, 128] {
+        let edited = format!("log_basis {log_basis} ");
         let outer = edited_artifact::<Cfg>(|value| {
             first_recursive_group(value)["profile"]["outer"]["digits"]["log_basis"] =
                 log_basis.into();
         });
-        assert_rejected_as_invalid_setup::<Cfg>(&outer, "fold B log_basis");
+        if log_basis == 0 {
+            // The structural check owns a zero commitment basis.
+            assert_eq!(
+                rejection_message::<Cfg>(&outer),
+                "commitment group layout requires nonzero outer basis and digit depth"
+            );
+        } else {
+            assert_digit_range_rejection::<Cfg>(&outer, GROUP, "B", &edited);
+        }
         let opening = edited_artifact::<Cfg>(|value| {
             first_recursive_group(value)["opening"]["log_basis_open"] = log_basis.into();
         });
-        assert_rejected_as_invalid_setup::<Cfg>(&opening, "fold opening log_basis");
+        assert_digit_range_rejection::<Cfg>(&opening, GROUP, "opening", &edited);
     }
 }
 
-/// Admission must answer in bounded time. It runs on a worker thread so a
-/// regression to a digit-count-linear loop fails here instead of stalling CI.
+/// A depth beyond the field decomposition is rejected before any digit formula
+/// reads it. `u64::MAX` once made admission iterate the balanced-digit series
+/// for as many rounds as the artifact asked.
 #[test]
-fn oversized_fold_digit_count_is_rejected() {
-    let bytes = edited_artifact::<fp128::Dense>(|value| {
+fn out_of_range_digit_depths_are_rejected_before_digit_formulas() {
+    let edited = format!("digit depth {} ", u64::MAX);
+    let root_fold = edited_artifact::<fp128::Dense>(|value| {
         value["rows"][0]["schedule"]["root"]["params"]["groups"]["entries"][0]["opening"]
             ["num_digits_fold"] = u64::MAX.into();
     });
-    let (done, finished) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        assert_rejected_as_invalid_setup::<fp128::Dense>(&bytes, "num_digits_fold = u64::MAX");
-        let _ = done.send(());
+    assert_digit_range_rejection::<fp128::Dense>(&root_fold, "root final group", "fold", &edited);
+    let terminal_fold = edited_artifact::<fp128::Dense>(|value| {
+        value["rows"][0]["schedule"]["terminal"]["fold"]["num_digits"] = u64::MAX.into();
     });
-    match finished.recv_timeout(std::time::Duration::from_secs(30)) {
-        Ok(()) => {}
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            panic!("admission of num_digits_fold = u64::MAX did not finish within 30 s")
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            panic!("admission check panicked on the worker thread")
-        }
+    assert_digit_range_rejection::<fp128::Dense>(&terminal_fold, "terminal fold", "fold", &edited);
+
+    type Cfg = RecursiveCommitmentConfig<akita_config::proof_optimized::fp32::Dense>;
+    for (key, role) in [("num_digits_open", "opening"), ("num_digits_fold", "fold")] {
+        let bytes = edited_artifact::<Cfg>(|value| {
+            first_recursive_group(value)["opening"][key] = u64::MAX.into();
+        });
+        assert_digit_range_rejection::<Cfg>(&bytes, "recursive fold 0 final group", role, &edited);
     }
 }
