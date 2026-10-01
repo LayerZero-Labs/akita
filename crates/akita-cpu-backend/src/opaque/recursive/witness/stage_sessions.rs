@@ -399,7 +399,11 @@ where
             }
             crate::opaque::Stage2OpeningDescription::CoefficientPacking(terms) => {
                 let mut groups = terms.into_groups().into_iter();
-                let first_group = groups.next().ok_or(AkitaError::InvalidProof)?;
+                let first_group = groups.next().ok_or_else(|| {
+                    AkitaError::Internal(
+                        "validated stage 2 coefficient packing plan has no group".into(),
+                    )
+                })?;
                 let mut prepared =
                     relation_range_image::prepare_coefficient_packing_linear_terms(first_group)?;
                 for group in groups {
