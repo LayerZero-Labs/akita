@@ -44,8 +44,15 @@ impl<E: Field> RelationWeightGroupPlan<E> {
         witness_layout: &'a WitnessLayout,
         max_blocks: usize,
     ) -> Result<Vec<EtBlockRange<'a>>, AkitaError> {
-        if max_blocks == 0 || self.rows.a_row_weights.len() != self.witness.n_a {
-            return Err(AkitaError::InvalidProof);
+        if max_blocks == 0 {
+            return Err(AkitaError::Internal(
+                "relation block task grain is zero".into(),
+            ));
+        }
+        if self.rows.a_row_weights.len() != self.witness.n_a {
+            return Err(AkitaError::Internal(
+                "relation commitment row weight count differs from its rank".into(),
+            ));
         }
         let mut ranges: Vec<EtBlockRange<'a>> = Vec::new();
         for claim in 0..self.witness.num_claims {
@@ -78,7 +85,9 @@ impl<E: Field> RelationWeightGroupPlan<E> {
         max_positions: usize,
     ) -> Result<Vec<ZPositionRange<'a>>, AkitaError> {
         if max_positions == 0 {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "relation position task grain is zero".into(),
+            ));
         }
         let mut ranges = Vec::new();
         for unit in witness_layout.units_for_group(self.group_index)? {
@@ -213,7 +222,9 @@ impl<E: Field> RelationWeightGroupPlan<E> {
             .into_iter()
             .map(|range| match (windows.next(), windows.next()) {
                 (Some(e), Some(t)) => Ok(EtScatterTask { range, e, t }),
-                _ => Err(AkitaError::InvalidProof),
+                _ => Err(AkitaError::Internal(
+                    "relation scatter task is missing paired E and T windows".into(),
+                )),
             })
             .collect()
     }
@@ -246,5 +257,7 @@ fn address_extent(first: usize, last: usize, width: usize) -> Result<Range<usize
     last.checked_add(width)
         .filter(|_| first <= last)
         .map(|end| first..end)
-        .ok_or(AkitaError::InvalidProof)
+        .ok_or_else(|| {
+            AkitaError::Internal("relation address extent overflow or reversed endpoints".into())
+        })
 }

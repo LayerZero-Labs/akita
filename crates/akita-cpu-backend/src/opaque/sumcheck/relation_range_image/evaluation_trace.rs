@@ -83,7 +83,9 @@ pub(crate) fn build_evaluation_trace_weights<E: Field>(
                     .checked_add(coeff_count)
                     .ok_or_else(|| AkitaError::InvalidSetup("trace segment end overflow".into()))?;
                 if end > inputs.digit_witness_domain.live_len() {
-                    return Err(AkitaError::InvalidProof);
+                    return Err(AkitaError::Internal(
+                        "evaluation-trace segment exceeds the live digit witness".into(),
+                    ));
                 }
                 segments.push(EvaluationTraceSegment {
                     physical_coefficient_start,
@@ -92,10 +94,11 @@ pub(crate) fn build_evaluation_trace_weights<E: Field>(
                 });
             }
             terms.push(EvaluationTraceTerm {
-                coefficient: *inputs
-                    .claim_coefficients
-                    .get(claim_index)
-                    .ok_or(AkitaError::InvalidProof)?,
+                coefficient: *inputs.claim_coefficients.get(claim_index).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "evaluation-trace claim has no batching coefficient".into(),
+                    )
+                })?,
                 block_opening_point: parameters.shared_block_opening_point(),
                 basis: parameters.basis(),
                 group_block_count: parameters.group_block_count(),
@@ -109,7 +112,9 @@ pub(crate) fn build_evaluation_trace_weights<E: Field>(
         }
     }
     if terms.len() != inputs.claim_coefficients.len() || terms.is_empty() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "evaluation-trace term count is empty or differs from its claim coefficients".into(),
+        ));
     }
     Ok(EvaluationTraceWeights {
         terms,
@@ -151,10 +156,11 @@ pub(super) struct PreparedPackingLaneMap<E: Field> {
 
 impl<E: Field> PreparedPackingLaneMap<E> {
     fn add_segment(&mut self, lane: usize, segment: usize) -> Result<(), AkitaError> {
-        let slot = self
-            .lane_to_segment
-            .get_mut(lane)
-            .ok_or(AkitaError::InvalidProof)?;
+        let slot = self.lane_to_segment.get_mut(lane).ok_or_else(|| {
+            AkitaError::Internal(
+                "coefficient-packing lane is outside the prepared segment map".into(),
+            )
+        })?;
         if slot.is_some() {
             return Err(AkitaError::InvalidSetup(
                 "coefficient-packing segments overlap".into(),
@@ -275,7 +281,9 @@ impl<E: Field> PreparedProverLinearTerms<E> {
 
     pub(crate) fn final_value(&self) -> Result<E, AkitaError> {
         if self.live_lane_count != 1 || self.coeff_count != 1 {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "terminal evaluation trace is not fully folded".into(),
+            ));
         }
         Ok(self.get(0, 0, 1))
     }
@@ -402,9 +410,11 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                                 "evaluation-trace global block overflow".into(),
                             )
                         })?;
-                    let block_weight = *block_weights
-                        .get(global_block)
-                        .ok_or(AkitaError::InvalidProof)?;
+                    let block_weight = *block_weights.get(global_block).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "evaluation-trace global block has no opening weight".into(),
+                        )
+                    })?;
                     let local_block_offset =
                         block_stride.checked_mul(local_block).ok_or_else(|| {
                             AkitaError::InvalidSetup(
@@ -453,7 +463,10 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                                     )
                                 })?;
                             if support_end > live_lane_count {
-                                return Err(AkitaError::InvalidProof);
+                                return Err(AkitaError::Internal(
+                                    "evaluation-trace opening support exceeds the live lane count"
+                                        .into(),
+                                ));
                             }
                             opening_support.push(PreparedOpeningSupport {
                                 first_lane,
@@ -472,10 +485,14 @@ impl<E: Field> PreparedProverLinearTerms<E> {
             }
         }
         if opening_support.is_empty() {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "prepared evaluation trace has no opening support".into(),
+            ));
         }
         if opening_support.len() != opening_support_count {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "prepared evaluation-trace support count differs from its allocation".into(),
+            ));
         }
         let sources = source_inner_traces
             .into_iter()
@@ -486,11 +503,15 @@ impl<E: Field> PreparedProverLinearTerms<E> {
             .collect::<Vec<_>>();
         let mut lane_terms = vec![Vec::new(); live_lane_count];
         for support in opening_support {
-            let source = sources
-                .get(support.inner_trace_index)
-                .ok_or(AkitaError::InvalidProof)?;
+            let source = sources.get(support.inner_trace_index).ok_or_else(|| {
+                AkitaError::Internal(
+                    "evaluation-trace opening support has no inner trace source".into(),
+                )
+            })?;
             if support.source_lane_start + support.lane_count > source.lane_count {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "evaluation-trace opening support exceeds its source lanes".into(),
+                ));
             }
             for lane_offset in 0..support.lane_count {
                 let source_lane = support.source_lane_start + lane_offset;
@@ -499,7 +520,12 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                 })?;
                 lane_terms
                     .get_mut(target_lane)
-                    .ok_or(AkitaError::InvalidProof)?
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "evaluation-trace target lane is outside the prepared lane terms"
+                                .into(),
+                        )
+                    })?
                     .push(PreparedLaneTerm {
                         factor: support.factor,
                         source_index: support.inner_trace_index,
@@ -556,10 +582,15 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                 CpuCoefficientPackingSource::DirectOpening => 0,
                 CpuCoefficientPackingSource::PackingZ => 1,
             };
-            let source = sources.get(source_index).ok_or(AkitaError::InvalidProof)?;
-            let term_segments = segments
-                .get(term.segments())
-                .ok_or(AkitaError::InvalidProof)?;
+            let source = sources.get(source_index).ok_or_else(|| {
+                AkitaError::Internal("coefficient-packing term has no prepared source".into())
+            })?;
+            let term_segments = segments.get(term.segments()).ok_or_else(|| {
+                AkitaError::Internal(
+                    "coefficient-packing term segment range is outside the prepared segments"
+                        .into(),
+                )
+            })?;
             if term_segments.is_empty() {
                 return Err(AkitaError::InvalidSetup(
                     "coefficient-packing term has no support".into(),
@@ -605,7 +636,9 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                             )
                         })?;
                     if source_lane >= source.lane_count {
-                        return Err(AkitaError::InvalidProof);
+                        return Err(AkitaError::Internal(
+                            "coefficient-packing segment lane exceeds its source".into(),
+                        ));
                     }
                     packing.add_segment(target_lane, segment_index)?;
                 }
@@ -738,18 +771,24 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         live_lane_count: usize,
     ) -> Result<Vec<Vec<PreparedLaneTerm<E>>>, AkitaError> {
         if packing.lane_to_segment.len() != live_lane_count {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "coefficient-packing lane map length differs from the live lane count".into(),
+            ));
         }
         let mut lane_terms = vec![Vec::new(); live_lane_count];
         for (lane, terms) in lane_terms.iter_mut().enumerate() {
             let Some((segment, source_lane)) = packing.source_lane(lane) else {
                 continue;
             };
-            let source = sources
-                .get(segment.source_index)
-                .ok_or(AkitaError::InvalidProof)?;
+            let source = sources.get(segment.source_index).ok_or_else(|| {
+                AkitaError::Internal(
+                    "coefficient-packing lane map segment has no prepared source".into(),
+                )
+            })?;
             if source_lane >= source.lane_count {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "coefficient-packing lane map source lane exceeds its source".into(),
+                ));
             }
             terms.push(PreparedLaneTerm {
                 factor: segment.factor,
@@ -909,7 +948,9 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                 source.values.len() != source.lane_count.saturating_mul(self.coeff_count)
             })
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "folded evaluation-trace lane or coefficient storage differs from its shape".into(),
+            ));
         }
         Ok(())
     }

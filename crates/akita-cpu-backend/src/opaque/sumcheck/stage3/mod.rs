@@ -72,13 +72,19 @@ where
             &schedule
                 .recursive_folds
                 .get(request.level as usize - 1)
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "stage 3 level is outside the admitted schedule".into(),
+                    )
+                })?
                 .params
         };
         let next = &schedule
             .recursive_folds
             .get(request.level as usize)
-            .ok_or(AkitaError::InvalidProof)?
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("stage 3 has no next fold at the requested level".into())
+            })?
             .params;
         if parameters != request.parameters || next != request.next_parameters {
             return Err(AkitaError::InvalidInput(
@@ -92,7 +98,12 @@ where
         let setup_x_challenges = request
             .stage2_challenges
             .get(setup_coefficient_bits..)
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "stage 3 challenge vector is shorter than the relation coefficient prefix"
+                        .into(),
+                )
+            })?;
         let setup = build_setup_product_term(
             expanded,
             request.prefix,
