@@ -142,7 +142,9 @@ pub fn zigzag_encode(n: i64, width: u32) -> Result<u64, AkitaError> {
     let min = -(1i64 << (width - 1));
     let max = (1i64 << (width - 1)) - 1;
     if n < min || n > max {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidInput(
+            "golomb-rice coordinate exceeds the zigzag width".into(),
+        ));
     }
     Ok(((n << 1) ^ (n >> 63)) as u64)
 }
@@ -206,7 +208,9 @@ pub fn golomb_rice_max_quotient_for_cap(
             "fold witness linf cap {cap} exceeds i64 for golomb quotient bound"
         ))
     })?;
-    golomb_rice_quotient_for_coord(cap_i64, rice_low_bits, zigzag_w)
+    golomb_rice_quotient_for_coord(cap_i64, rice_low_bits, zigzag_w).map_err(|error| {
+        AkitaError::InvalidSetup(format!("golomb-rice cap cannot be encoded: {error}"))
+    })
 }
 
 /// Closed-form standard Golomb wire bits for one coefficient.
@@ -229,9 +233,9 @@ pub fn golomb_rice_total_wire_bits<T: Copy + Into<i64>>(
     values.iter().try_fold(0usize, |acc, &n| {
         golomb_rice_coord_wire_bits(n.into(), rice_low_bits, zigzag_w)?
             .checked_add(acc)
-            .ok_or(AkitaError::InvalidSetup(
-                "golomb-rice total wire bits overflow".to_string(),
-            ))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("golomb-rice total wire bits overflow".to_string())
+            })
     })
 }
 
@@ -362,6 +366,19 @@ mod tests {
             .map(|&n| golomb_rice_quotient_for_coord(n, rice_low_bits, zigzag_w).expect("quotient"))
             .max()
             .unwrap_or(0)
+    }
+
+    #[test]
+    fn zigzag_argument_and_scheduled_cap_have_distinct_errors() {
+        assert!(matches!(
+            zigzag_encode(4, 3),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            golomb_rice_max_quotient_for_cap(4, 1, 3),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        assert!(matches!(zigzag_decode(8, 3), Err(AkitaError::InvalidProof)));
     }
 
     #[test]

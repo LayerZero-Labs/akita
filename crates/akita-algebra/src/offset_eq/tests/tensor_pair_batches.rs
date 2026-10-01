@@ -222,3 +222,60 @@ fn out_of_domain_bit_product_axis_keeps_zero_branch_factor() {
         scalar * zero_factor * eq_eval_at_index(&right, 0)
     );
 }
+
+#[test]
+fn mutable_dense_axis_rejects_missing_coordinate_weights() {
+    let mut malformed = EqPairTensorAxis::dense(0, 1, vec![F::one()]);
+    malformed.len = 3;
+    let equality = OffsetEqWindow::new(&[F::one(); 4]).unwrap();
+    for axes in [
+        vec![malformed.clone()],
+        vec![EqPairTensorAxis::unit(2, 1, 3), malformed.clone()],
+        vec![
+            EqPairTensorAxis::unit(2, 1, 3),
+            EqPairTensorAxis::unit(2, 4, 5),
+            malformed,
+        ],
+    ] {
+        let family = EqPairTensorFamily {
+            left_offset: 0,
+            right_offset: 0,
+            scalar: F::one(),
+            axes,
+        };
+        assert!(matches!(
+            eval_boolean_pair_tensor_families::<_, false, false>(
+                &[F::one(); 4],
+                &[F::one(); 4],
+                std::slice::from_ref(&family),
+            ),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            materialize_eq_tensor_left(&equality, &[family], 16),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+}
+
+#[test]
+fn mutable_bit_product_axis_rejects_missing_factors() {
+    for stride in [1, 3] {
+        let mut axis = EqPairTensorAxis::bit_product(stride, stride, vec![[F::one(); 2]]).unwrap();
+        axis.len = 4;
+        let family = EqPairTensorFamily {
+            left_offset: 0,
+            right_offset: 0,
+            scalar: F::one(),
+            axes: vec![axis],
+        };
+        assert!(matches!(
+            eval_boolean_pair_tensor_families::<_, false, false>(
+                &[F::one(); 4],
+                &[F::one(); 4],
+                &[family],
+            ),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+}
