@@ -84,7 +84,7 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
     policy.inner_basis_range.1 = policy.inner_basis_range.0;
     policy.opening_basis_range.1 = policy.opening_basis_range.0;
     let key = onehot_group(20, 1);
-    let lookup_key = akita_types::AkitaScheduleLookupKey::single(key);
+    let lookup_key = akita_types::ScheduleLookupKey::single(key);
     let canonical = crate::planner::find_schedule_in_relation_order(
         &lookup_key,
         OneHot::committed_source_contract().unwrap(),

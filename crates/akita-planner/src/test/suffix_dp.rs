@@ -309,7 +309,7 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
     let candidate = |queries| super::ScheduleCandidate {
         first_direct_setup_field_len: std::num::NonZeroUsize::new(1),
         first_direct_output_witness_len: 512,
-        cost: super::NativeProofCost::new(1, 0, queries, 512).expect("candidate cost"),
+        cost: super::ProofCost::new(1, 0, queries, 512).expect("candidate cost"),
         setup_field_elements: 1,
         folds: super::super::CandidateFoldChain::default().prepend(super::CandidateFoldStep {
             params: std::sync::Arc::new(params.clone()),
@@ -374,9 +374,8 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     };
     policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
-    let key = akita_types::AkitaScheduleLookupKey::single(
-        akita_types::PolynomialGroupLayout::singleton(14),
-    );
+    let key =
+        akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::singleton(14));
     let root = crate::planner::find_schedule(
         &key,
         OneHot::committed_source_contract().unwrap(),

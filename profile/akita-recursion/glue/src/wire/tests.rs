@@ -306,27 +306,25 @@ fn setup_matrix_payload_must_fit_remaining_blob_before_allocation() {
 }
 
 #[test]
-fn native_proof_budget_is_derived_from_the_selected_schedule() {
+fn proof_budget_is_derived_from_the_selected_schedule() {
     let schedules = schedules::<TestCfg>();
     let opening_claims = akita_types::OpeningClaimsLayout::new(14, 1).expect("opening layout");
     let row = schedules
-        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+        .resolve_key(&akita_types::ScheduleLookupKey::single(
             opening_claims
                 .root_final_group_layout()
                 .expect("singleton group layout"),
         ))
         .expect("trusted singleton row");
-    let bound = AkitaJoltInputs::<TestF, TEST_D>::native_proof_byte_bound::<TestCfg>(
-        row.selection(),
-        &schedules,
-    )
-    .expect("native proof bound");
+    let bound =
+        AkitaJoltInputs::<TestF, TEST_D>::proof_byte_bound::<TestCfg>(row.selection(), &schedules)
+            .expect("native proof bound");
     assert!(bound > 0);
-    let key = akita_types::AkitaScheduleLookupKey {
+    let key = akita_types::ScheduleLookupKey {
         final_group: row.profiles().final_group.group,
         precommitteds: row.profiles().precommitteds.clone(),
     };
-    let planner_estimate = akita_schedules::expanded_schedule_native_proof_estimate_bytes(
+    let planner_estimate = akita_schedules::expanded_schedule_proof_estimate_bytes(
         &key,
         row.schedule(),
         &akita_config::policy_of::<TestCfg>(),
@@ -347,11 +345,14 @@ fn native_proof_budget_is_derived_from_the_selected_schedule() {
         "test native proof",
     )
     .expect_err("oversized native proof must fail before allocation");
-    assert!(matches!(error, SerializationError::LengthLimitExceeded { .. }));
+    assert!(matches!(
+        error,
+        SerializationError::LengthLimitExceeded { .. }
+    ));
 }
 
 #[test]
-fn unknown_schedule_identity_is_rejected_before_native_proof_allocation() {
+fn unknown_schedule_identity_is_rejected_before_proof_allocation() {
     type ExtCfg = fp32::OneHot;
     type ExtF = fp32::Field;
     type ExtE = <ExtCfg as CommitmentConfig>::ExtField;
@@ -359,7 +360,7 @@ fn unknown_schedule_identity_is_rejected_before_native_proof_allocation() {
     let layout = akita_types::OpeningClaimsLayout::new(30, 1).expect("opening layout");
     let schedules = schedules::<ExtCfg>();
     let row = schedules
-        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+        .resolve_key(&akita_types::ScheduleLookupKey::single(
             layout
                 .root_final_group_layout()
                 .expect("singleton group layout"),
@@ -367,9 +368,8 @@ fn unknown_schedule_identity_is_rejected_before_native_proof_allocation() {
         .expect("trusted fp32 singleton row");
     let mut unknown = row.selection();
     unknown.row_digest = akita_types::ScheduleRowDigest::from_bytes([0x5a; 32]);
-    let error = AkitaJoltInputs::<ExtF, 2048, ExtE>::native_proof_byte_bound::<ExtCfg>(
-        unknown, &schedules,
-    )
-    .expect_err("unknown schedule must fail before proof decoding");
+    let error =
+        AkitaJoltInputs::<ExtF, 2048, ExtE>::proof_byte_bound::<ExtCfg>(unknown, &schedules)
+            .expect_err("unknown schedule must fail before proof decoding");
     assert!(error.to_string().contains("schedule"));
 }

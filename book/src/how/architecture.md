@@ -56,7 +56,7 @@ Key structural facts:
 5. **Prove.** `batched_prove` receives retained commitment handles and public claims. The backend checks that each claim matches its commitment before preparing a fresh proof session. The generic prover walks the schedule, absorbs backend messages, samples challenges, and assembles the proof. Source coefficients and witness arithmetic remain inside the backend.
 6. **Verify.** `batched_verify` resolves the proof row digest in the trusted catalog, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. The proof never supplies schedule bytes. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.
 
-Entry points: `crates/akita-pcs/src/scheme/mod.rs`, `crates/akita-prover/src/protocol/prove/root.rs`, `crates/akita-verifier/src/protocol/core/verify.rs`.
+Entry points: `crates/akita-pcs/src/scheme/mod.rs`, `crates/akita-prover/src/protocol/prove/root.rs`, `crates/akita-verifier/src/fold/verify.rs`.
 
 Further reading: [Configuration and planning](./configuration.md), [Setup
 offloading](./setup-offloading.md), [Proving](./proving/proving.md), and
@@ -165,7 +165,7 @@ Mixed-dimension malformed proof rejection is covered by
 | `OpeningScheduleSelection`, `GroupBatchStatement` | Exact generated-row identity and verifier-side self-describing opening statement |
 | `ValidatedScheduleCatalog` | Config-free, semantically audited expanded rows with canonical lookup indexes and artifact I/O |
 | `TrustedScheduleCatalog<Cfg>` | Config-bound trusted parameter passed to setup, prover, and verifier APIs |
-| Native Spongefish prover/verifier states | Fiat--Shamir state, proof emission/receipt, domain separation, challenges, and EOF checking |
+| Spongefish prover/verifier states | Fiat--Shamir state, proof emission/receipt, domain separation, challenges, and EOF checking |
 | `AkitaInstanceDescriptor` | Canonical transcript preamble binding algebra, setup, plan, and call shape |
 
 Opening batch kernels validate one authoritative challenge partition against every

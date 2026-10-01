@@ -28,7 +28,7 @@ pub mod tail_segments;
 
 pub use digit_math::{gadget_row_scalars, isqrt_ceil};
 pub use digit_range::{
-    AkitaStage1StageShape, DigitRangePlan, FlatBooleanDomain, PhysicalL2NormProofWireShape,
+    DigitRangePlan, FlatBooleanDomain, PhysicalL2NormProofWireShape, Stage1StageShape,
 };
 pub use flat_matrix::{FlatMatrix, RingMatrixView};
 pub use geometry::{
@@ -47,8 +47,8 @@ pub use params::{
 };
 pub use proof_size::{
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
-    native_terminal_response_max_bytes, native_terminal_response_planner_bytes,
     padded_boolean_opening_vars, sumcheck_rounds, terminal_response_bytes,
+    terminal_response_max_bytes, terminal_response_planner_bytes,
     try_extension_opening_reduction_level_bytes, EXTENSION_OPENING_REDUCTION_DEGREE,
     SETUP_SUMCHECK_DEGREE,
 };

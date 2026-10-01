@@ -18,7 +18,7 @@ pub(crate) fn prove_extension_opening_reduction<F, E, B>(
         B::CommitmentHandle,
         B::WitnessHandle,
     >],
-    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     expected_openings: &[E],
 ) -> Result<ProvedExtensionOpeningReduction<E>, AkitaError>
@@ -44,7 +44,7 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let prefix = akita_types::native_eor_prefix::<F, E, _>(
+    let prefix = akita_types::eor_prefix::<F, E, _>(
         grinding,
         opening_batch,
         &prepared.openings,
@@ -76,21 +76,21 @@ where
         rounds: max_tail_vars,
         field: std::marker::PhantomData,
     };
-    let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+    let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
         grinding,
         akita_types::SumcheckProtocol::ExtensionOpeningReduction,
         level,
         0,
     );
-    let shape = akita_sumcheck::NativeSumcheckShape::new(
+    let shape = akita_sumcheck::SumcheckShape::new(
         max_tail_vars,
         akita_types::EXTENSION_OPENING_REDUCTION_DEGREE,
     )?;
-    let (rho, claim) = akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
+    let (rho, claim) = akita_sumcheck::prove_sumcheck::<F, E, _, _>(
         &mut kernel,
         &mut channel,
         shape,
-        akita_types::NATIVE_EOR_SUMCHECK_INVOCATION,
+        akita_types::EOR_SUMCHECK_INVOCATION,
     )?;
     let mut final_claims = backend.finish_eor(session)?;
     if final_claims.len() != num_claims
@@ -123,12 +123,7 @@ where
         final_factors.push(factor);
         protocol_points.push(point);
     }
-    akita_types::native_eor_final_claims::<F, E, _>(
-        grinding,
-        opening_batch,
-        &mut final_claims,
-        level,
-    )?;
+    akita_types::eor_final_claims::<F, E, _>(grinding, opening_batch, &mut final_claims, level)?;
     Ok(ProvedExtensionOpeningReduction {
         reduction: ExtensionOpeningReduction {
             final_claims,

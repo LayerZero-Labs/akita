@@ -143,13 +143,13 @@ fn first_parent_visible_cost(
 struct SetupScore {
     first_direct_setup_capacity: crate::schedule_params::SetupPrefixCapacity,
     first_direct_output_witness_len: usize,
-    cost: crate::schedule_params::NativeProofCost,
+    cost: crate::schedule_params::ProofCost,
     setup_field_elements: usize,
 }
 
 #[derive(Clone, Copy)]
 struct PayloadScore {
-    cost: crate::schedule_params::NativeProofCost,
+    cost: crate::schedule_params::ProofCost,
     setup_field_elements: usize,
 }
 

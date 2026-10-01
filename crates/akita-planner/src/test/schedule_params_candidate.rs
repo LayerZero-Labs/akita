@@ -511,7 +511,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
 #[test]
 fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
-    use akita_types::{AkitaScheduleLookupKey, InnerCommitSecurityRoute, OpeningMethod};
+    use akita_types::{InnerCommitSecurityRoute, OpeningMethod, ScheduleLookupKey};
 
     let policy = policy_of::<Dense>();
     let dimensions = CommitmentRingDims {
@@ -523,7 +523,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 64)
             .unwrap()
             .unwrap();
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(16, 2));
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::new(16, 2));
     let candidates = crate::planner::root_level_candidates_with_fresh_preparation(
         &key,
         Dense::committed_source_contract().unwrap(),
@@ -552,7 +552,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     let packing_direct_bytes = packing_payload.direct;
     assert_eq!(
         packing_direct_bytes,
-        akita_types::native_nonterminal_level_layout(
+        akita_types::nonterminal_level_layout(
             policy.decomposition.field_bits(),
             policy.challenge_field_bits().unwrap(),
             first_params,
@@ -566,7 +566,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
                 .unwrap(),
             None,
         )
-        .and_then(akita_types::NativeNonterminalLevelLayout::encoded_len)
+        .and_then(akita_types::NonterminalLevelLayout::encoded_len)
         .expect("packing direct payload without EOR"),
     );
     assert!(
@@ -616,7 +616,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         );
     }
     let frozen_group = synthetic_profile(key.final_group, &candidates[0].0);
-    let grouped_key = AkitaScheduleLookupKey {
+    let grouped_key = ScheduleLookupKey {
         final_group: key.final_group,
         precommitteds: vec![frozen_group],
     };
@@ -732,7 +732,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         "the fixture needs a choice of precommit openings"
     );
 
-    let product_key = AkitaScheduleLookupKey {
+    let product_key = ScheduleLookupKey {
         final_group: grouped_key.final_group,
         precommitteds: vec![frozen_group, frozen_group],
     };
@@ -772,7 +772,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         }
     }
 
-    let repeated_key = AkitaScheduleLookupKey {
+    let repeated_key = ScheduleLookupKey {
         final_group: grouped_key.final_group,
         precommitteds: vec![frozen_group; 256],
     };
@@ -793,7 +793,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     let mixed_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
         &policy,
         dimensions,
-        &AkitaScheduleLookupKey {
+        &ScheduleLookupKey {
             final_group: grouped_key.final_group,
             precommitteds: vec![frozen_group; 3],
         },
@@ -826,7 +826,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         .map(|(params, _)| synthetic_profile(key.final_group, params))
         .find(|profile| *profile != frozen_group)
         .expect("a second root profile");
-    let split_key = AkitaScheduleLookupKey {
+    let split_key = ScheduleLookupKey {
         final_group: grouped_key.final_group,
         precommitteds: vec![frozen_group, other_class, frozen_group],
     };
@@ -871,7 +871,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     // Distinct group layouts form distinct classes that share one domain.
     // These profiles only feed enumeration, which reads ring dimensions; they
     // are not valid commit-phase profiles and must not be materialized.
-    let distinct_classes = |count: usize| AkitaScheduleLookupKey {
+    let distinct_classes = |count: usize| ScheduleLookupKey {
         final_group: grouped_key.final_group,
         precommitteds: (0..count)
             .map(|index| GroupCommitPhaseParams {
@@ -923,7 +923,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
 #[test]
 fn guided_root_slice_survives_grouped_local_pruning() {
     use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
-    use akita_types::AkitaScheduleLookupKey;
+    use akita_types::ScheduleLookupKey;
 
     let mut policy = policy_of::<Dense>();
     policy.selection_policy =
@@ -937,7 +937,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
         PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 64)
             .expect("valid final packing opening")
             .expect("final packing geometry");
-    let scalar_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(24, 2));
+    let scalar_key = ScheduleLookupKey::single(PolynomialGroupLayout::new(24, 2));
     let scalar = crate::planner::root_level_candidates_with_fresh_preparation(
         &scalar_key,
         Dense::committed_source_contract().unwrap(),
@@ -955,7 +955,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
         scalar_key.final_group,
         &scalar.first().expect("scalar root candidate").0,
     );
-    let grouped_key = AkitaScheduleLookupKey {
+    let grouped_key = ScheduleLookupKey {
         final_group: scalar_key.final_group,
         precommitteds: vec![frozen],
     };
@@ -1020,7 +1020,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
 #[test]
 fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
     use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
-    use akita_types::AkitaScheduleLookupKey;
+    use akita_types::ScheduleLookupKey;
 
     let mut policy = policy_of::<Dense>();
     let dimensions = CommitmentRingDims::uniform(256);
@@ -1032,7 +1032,7 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
         policy.ring_dimension_schedule_mode,
     );
     let pre_group = PolynomialGroupLayout::new(14, 1);
-    let pre_key = AkitaScheduleLookupKey::single(pre_group);
+    let pre_key = ScheduleLookupKey::single(pre_group);
     let pre_candidates = crate::planner::root_level_candidates_with_fresh_preparation(
         &pre_key,
         Dense::committed_source_contract().unwrap(),
@@ -1203,7 +1203,7 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
         opening_shape,
     )
     .expect("aggregate EOR bytes");
-    let base = akita_types::native_nonterminal_level_layout(
+    let base = akita_types::nonterminal_level_layout(
         policy.decomposition.field_bits(),
         policy.challenge_field_bits().unwrap(),
         &params,
@@ -1217,7 +1217,7 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
             .unwrap(),
         None,
     )
-    .and_then(akita_types::NativeNonterminalLevelLayout::encoded_len)
+    .and_then(akita_types::NonterminalLevelLayout::encoded_len)
     .expect("base level payload");
     let terminal = akita_types::TerminalFoldParams::from_expanded_group(params.clone());
     let runtime = akita_schedules::planner_support::nonterminal_level_payload_bytes(

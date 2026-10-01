@@ -336,7 +336,7 @@ fn trusted_artifact_round_trip_preserves_rows_and_selection() {
         .expect("load trusted artifact");
 
     let key =
-        akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
+        akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
     let checked_in_row = checked_in.resolve_key(&key).expect("checked-in row");
     let loaded_row = loaded.resolve_key(&key).expect("artifact row");
     assert_eq!(loaded.catalog_digest(), checked_in.catalog_digest());

@@ -141,7 +141,7 @@ where
 }
 
 /// Shared tail of the two-group (precommit + final) cells: verify both group
-/// openings against the native proof stream.
+/// openings against the proof stream.
 /// The *head* of those cells stays at the call site on purpose. Committing the
 /// pre-group, resolving the combined schedule, and deriving the final group's
 /// ring dimension are interleaved — the final polynomial cannot be built until

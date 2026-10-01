@@ -27,7 +27,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
             const NUM_VARS: usize = 14;
             const LABEL: &[u8] = b"test/cross-relation-mode";
 
-            let key = akita_types::AkitaScheduleLookupKey::single(
+            let key = akita_types::ScheduleLookupKey::single(
                 akita_types::PolynomialGroupLayout::new(NUM_VARS, 1),
             );
             let catalogs = cross_mode_catalogs::<Cfg>(&key).expect("valid cross-mode catalogs");

@@ -15,8 +15,8 @@ use akita_types::sis::CommittedSourceContract;
 #[cfg(test)]
 use akita_types::CommittedGroupParams;
 use akita_types::{
-    validate_role_dims, validate_role_dims_for_field, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    CommitmentRingDims, GadgetDigits, GroupCommitPhaseParams, PrecommittedGroupProfiles,
+    validate_role_dims, validate_role_dims_for_field, AkitaExpandedSetup, CommitmentRingDims,
+    GadgetDigits, GroupCommitPhaseParams, PrecommittedGroupProfiles, ScheduleLookupKey,
 };
 #[cfg(test)]
 use akita_types::{Commitment, CommittedGroup, FpExtEncoding};
@@ -372,7 +372,7 @@ where
             }
             *commit_params
         } else {
-            let key = AkitaScheduleLookupKey {
+            let key = ScheduleLookupKey {
                 final_group: polynomial_group_layout,
                 precommitteds: context.precommitted_groups.as_slice().to_vec(),
             };

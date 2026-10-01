@@ -880,7 +880,7 @@ def extract_summary(
     planned_groups: dict[int, list[dict[str, object]]] = {}
     terminal_plan: dict[str, object] | None = None
     proof_levels: dict[int, dict[str, object]] = {}
-    native_fold_response_nonces: dict[int, int] = {}
+    fold_response_nonces: dict[int, int] = {}
     grinding_plan_summary: dict[str, object] | None = None
     grinding_plan_runs: list[dict[str, object]] = []
     onehot_commit_schedules: list[dict[str, object]] = []
@@ -990,9 +990,9 @@ def extract_summary(
                     f"level={level}, nonce={accepted_nonce}, "
                     f"rejected={rejected_attempts}, attempts={attempts}"
                 )
-            if level in native_fold_response_nonces:
+            if level in fold_response_nonces:
                 raise ValueError(f"duplicate native fold response nonce for level {level}")
-            native_fold_response_nonces[level] = accepted_nonce
+            fold_response_nonces[level] = accepted_nonce
         elif "verify single threaded OK" in line and kvs.get("label") == mode:
             summary["verify_single_total_s"] = float(kvs["elapsed_s"])
         elif (
@@ -1559,14 +1559,14 @@ def extract_summary(
             summary["grind_nonces"] = ",".join(
                 str(level["grind_nonce_val"]) for level in grind_rows
             )
-    if native_fold_response_nonces:
+    if fold_response_nonces:
         ordered_nonces = [
-            native_fold_response_nonces[level]
-            for level in sorted(native_fold_response_nonces)
+            fold_response_nonces[level]
+            for level in sorted(fold_response_nonces)
         ]
         summary["native_fold_response_retries"] = [
-            {"level": level, "retries": [native_fold_response_nonces[level]]}
-            for level in sorted(native_fold_response_nonces)
+            {"level": level, "retries": [fold_response_nonces[level]]}
+            for level in sorted(fold_response_nonces)
         ]
         summary["grind_levels"] = len(ordered_nonces)
         summary["grind_nonce_max"] = max(ordered_nonces)
@@ -2963,10 +2963,10 @@ def grind_retries_by_level(summary: dict[str, object]) -> dict[int, list[int]] |
             result[int(observation["level"])] = [int(value) for value in retries]
         return result
 
-    native_observations = summary.get("native_fold_response_retries")
-    if isinstance(native_observations, list):
+    fold_response_observations = summary.get("native_fold_response_retries")
+    if isinstance(fold_response_observations, list):
         result = {}
-        for observation in native_observations:
+        for observation in fold_response_observations:
             if not isinstance(observation, dict):
                 continue
             retries = observation.get("retries")
@@ -3019,7 +3019,7 @@ def grinding_retries_metric_value(
     return exact_choice(current_value, render(baseline_levels))
 
 
-def native_metric_value(
+def metric_value(
     current: dict[str, object],
     baseline: dict[str, object] | None,
     key: str,
@@ -3207,7 +3207,7 @@ def render_matrix_summary(
                     "native_terminal_response_max_bytes",
                 }:
                     row.append(
-                        native_metric_value(
+                        metric_value(
                             current,
                             baseline,
                             metric.key,

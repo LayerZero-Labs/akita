@@ -4,7 +4,7 @@
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_types::sis::{HonestFoldPolicy, HonestFoldSizingQuery};
-use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use akita_types::{PolynomialGroupLayout, ScheduleLookupKey};
 
 fn catalog<Cfg: CommitmentConfig>() -> akita_config::TrustedScheduleCatalog<Cfg> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -68,7 +68,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
     let catalog = catalog::<Cfg>();
 
     for &nv in BASIS_ENVELOPE_NUM_VARS {
-        let schedule = match catalog.resolve_key(&AkitaScheduleLookupKey::single(
+        let schedule = match catalog.resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::new(nv, 1),
         )) {
             Ok(row) => row.schedule().clone(),

@@ -6,7 +6,7 @@
 
 mod accum;
 mod compact_fold;
-mod native;
+mod proof_stream;
 mod single;
 mod traits;
 mod types;
@@ -15,11 +15,11 @@ pub use akita_algebra::poly::{fold_evals_in_place, multilinear_eval};
 
 pub use accum::reduce_signed_accum;
 pub use compact_fold::CompactPairFoldLut;
-pub use native::{
-    prove_eq_factored_sumcheck_native, prove_sumcheck_native, verify_eq_factored_sumcheck_native,
-    verify_eq_factored_sumcheck_rounds_native, verify_sumcheck_native,
-    verify_sumcheck_rounds_native, NativeSumcheckProverChannel, NativeSumcheckRole,
-    NativeSumcheckRoundResult, NativeSumcheckShape, NativeSumcheckVerifierChannel,
+pub use proof_stream::{
+    prove_eq_factored_sumcheck, prove_sumcheck, verify_eq_factored_sumcheck,
+    verify_eq_factored_sumcheck_rounds, verify_sumcheck, verify_sumcheck_rounds,
+    SumcheckProverChannel, SumcheckRole, SumcheckRoundResult, SumcheckShape,
+    SumcheckVerifierChannel,
 };
 pub use single::advance_eq_factored_claim;
 pub use traits::{

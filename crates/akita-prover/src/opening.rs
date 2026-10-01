@@ -2,7 +2,7 @@
 use crate::backend::CommitmentHandleMetadata;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
-use akita_types::NativeGrinding;
+use akita_types::GrindingReplay;
 use akita_types::{
     Commitment, CommittedGroup, CommittedGroupBatchProfile, CommittedGroupParams, OpeningClaims,
     OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupClaims,
@@ -146,10 +146,10 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
             self.groups.iter().map(&mut map).collect(),
         )
     }
-    pub(crate) fn append_to_native(
+    pub(crate) fn append_to(
         &self,
         root_params: &CommittedGroupParams,
-        grinding: &mut akita_types::NativeProverGrinding<'_>,
+        grinding: &mut akita_types::ProverGrinding<'_>,
     ) -> Result<(), AkitaError>
     where
         CommitF: CanonicalEncoding,
@@ -173,36 +173,22 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
                 .last()
                 .ok_or(AkitaError::InvalidProof)?
                 .ring_dimension();
-            let group = u32::try_from(group_index)
-                .map_err(|_| AkitaError::InvalidSetup("group index exceeds u32".into()))?;
-            akita_transcript::public_native_fields_prover(
+            akita_transcript::public_fields_prover(
                 grinding.state_mut(),
-                akita_transcript::ProtocolSiteId {
-                    family: akita_transcript::SITE_FAMILY_ROOT_STATEMENT,
-                    stage: 1,
-                    group,
-                    detail: u32::try_from(ring_dim).map_err(|_| {
-                        AkitaError::InvalidSetup("ring dimension exceeds u32".into())
-                    })?,
-                    ..akita_transcript::ProtocolSiteId::default()
-                },
+                akita_types::FoldSite::RootCommitment {
+                    group: group_index,
+                    ring_dimension: ring_dim,
+                }
+                .id()?,
                 commitment.rows().coeffs(),
-            )
-            .map_err(|_| AkitaError::InvalidProof)?;
+            )?;
         }
         for (group_index, group_claims) in self.opening_claims.groups().iter().enumerate() {
-            akita_transcript::public_native_extensions::<CommitF, PointF, _>(
+            akita_transcript::public_extensions::<CommitF, PointF, _>(
                 grinding.state_mut(),
-                akita_transcript::ProtocolSiteId {
-                    family: akita_transcript::SITE_FAMILY_ROOT_STATEMENT,
-                    stage: 2,
-                    group: u32::try_from(group_index)
-                        .map_err(|_| AkitaError::InvalidSetup("group index exceeds u32".into()))?,
-                    ..akita_transcript::ProtocolSiteId::default()
-                },
+                akita_types::FoldSite::RootPoint { group: group_index }.id()?,
                 group_claims.point(),
-            )
-            .map_err(|_| AkitaError::InvalidProof)?;
+            )?;
         }
         Ok(())
     }

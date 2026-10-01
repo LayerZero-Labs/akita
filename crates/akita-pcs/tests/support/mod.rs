@@ -12,8 +12,8 @@ use akita_types::sis::{
     BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldSizingQuery,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, DecompositionParams,
-    GroupCommitPhaseParams, SetupMatrixCapacity, SisModulusProfileId,
+    CommittedGroupBatchProfile, DecompositionParams, GroupCommitPhaseParams, ScheduleLookupKey,
+    SetupMatrixCapacity, SisModulusProfileId,
 };
 use std::marker::PhantomData;
 
@@ -296,7 +296,7 @@ where
 
     pub(crate) fn derive_catalog_row(
         catalog: &akita_config::ValidatedScheduleCatalog,
-        key: &AkitaScheduleLookupKey,
+        key: &ScheduleLookupKey,
         challenge_subring_dimension: usize,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
         if !key.precommitteds.is_empty() {
@@ -308,7 +308,7 @@ where
         let successor_template = match base.schedule().recursive_folds.first() {
             Some(successor) => successor.clone(),
             None => {
-                let grouped_key = AkitaScheduleLookupKey {
+                let grouped_key = ScheduleLookupKey {
                     final_group: key.final_group,
                     precommitteds: vec![base.profiles().final_group],
                 };
@@ -678,7 +678,7 @@ where
     /// catalog admission themselves and observe admission reject it.
     pub(crate) fn derive_row(
         catalog: &akita_config::ValidatedScheduleCatalog,
-        key: &AkitaScheduleLookupKey,
+        key: &ScheduleLookupKey,
     ) -> Result<(CommittedGroupBatchProfile, akita_types::FoldSchedule), AkitaError> {
         let base = RootCoefficientPackingConfig::<Base>::derive_catalog_row(catalog, key, 64)?;
         let profiles = base.profiles().clone();
@@ -934,7 +934,7 @@ where
     Final: CommitmentConfig<Field = Envelope::Field, ExtField = Envelope::ExtField> + 'static,
 {
     pub(crate) fn derive_catalog_row(
-        key: &AkitaScheduleLookupKey,
+        key: &ScheduleLookupKey,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
         let (policy, ring_challenge_config) = if key.precommitteds.is_empty() {
             (

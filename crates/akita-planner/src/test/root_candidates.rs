@@ -4,7 +4,7 @@ use super::*;
 /// not exercise producer-preparation reuse directly.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn root_level_candidates_with_fresh_preparation(
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
@@ -44,7 +44,7 @@ pub(crate) fn root_level_candidates_with_fresh_preparation(
 /// Candidate materialization stays canonical, while this reference domain is
 /// independent of production split bounds and local slice pruning.
 pub(crate) fn exhaustive_root_candidates_for_reference(
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
     final_source_contract: CommittedSourceContract,
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,

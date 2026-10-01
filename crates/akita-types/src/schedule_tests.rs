@@ -4,7 +4,7 @@ use jolt_poly::{CompressedPoly, OmittedConstantPoly};
 #[test]
 fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     let estimate = FoldScheduleEstimate {
-        native_nonce_max_bytes: 0,
+        nonce_max_bytes: 0,
         estimated_root_direct_payload_bytes: 100,
         estimated_root_stage3_payload_bytes: 11,
         estimated_recursive_direct_payload_bytes: vec![200, 300],
@@ -25,7 +25,7 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
 }
 use crate::golomb_rice::golomb_rice_encode_vec;
 use crate::{
-    extension_opening_reduction_level_bytes, native_nonterminal_level_layout, sumcheck_rounds,
+    extension_opening_reduction_level_bytes, nonterminal_level_layout, sumcheck_rounds,
     terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, Commitment,
     CommitmentPayloadMode, CommittedGroup, CommittedGroupBatchProfile, DigitRangePlan,
     ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, OpeningClaimsLayout,
@@ -799,7 +799,7 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
         let opening_layout =
             OpeningClaimsLayout::new(sumcheck_rounds(D, output_witness_len), 1).unwrap();
         assert_eq!(
-                native_nonterminal_level_layout(
+                nonterminal_level_layout(
                     128,
                     128,
                     &lp,
@@ -812,7 +812,7 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
                     .unwrap(),
                     Some(&next_lp),
                 )
-                .and_then(crate::NativeNonterminalLevelLayout::encoded_len)
+                .and_then(crate::NonterminalLevelLayout::encoded_len)
                 .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, output_witness_len).unwrap(),
                 "planned level bytes should match the serialized non-offloaded body at log_basis={log_basis}"
@@ -863,7 +863,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
 
         // The planner accounts for the final witness separately
         // (`terminal_response_bytes` on the terminal plan). Subtract
-        // it from the serialized terminal level. Native nonce messages
+        // it from the serialized terminal level. Nonce messages
         // stream is accounted separately.
         let serialized_without_witness =
             terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
@@ -941,7 +941,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
             stage3_sumcheck_proof: None,
         };
         assert_eq!(
-                native_nonterminal_level_layout(
+                nonterminal_level_layout(
                     128,
                     128,
                     &lp,
@@ -954,7 +954,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                     .unwrap(),
                     Some(&next_lp),
                 )
-                .and_then(crate::NativeNonterminalLevelLayout::encoded_len)
+                .and_then(crate::NonterminalLevelLayout::encoded_len)
                 .unwrap(),
                 level_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized non-offloaded body at log_basis={log_basis}"
@@ -1003,8 +1003,7 @@ fn planned_extension_reduction_bytes_match_headerless_payload() {
 #[test]
 fn scalar_schedule_key_accepts_single_group_layout() {
     let layout = OpeningClaimsLayout::new(4, 2).expect("scalar layout");
-    let key =
-        AkitaScheduleLookupKey::single(layout.root_final_group_layout().expect("final group"));
+    let key = ScheduleLookupKey::single(layout.root_final_group_layout().expect("final group"));
     assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
     assert!(key.precommitteds.is_empty());
     assert!(key.precommitteds.is_empty());
@@ -1012,21 +1011,15 @@ fn scalar_schedule_key_accepts_single_group_layout() {
 
 #[test]
 fn validate_rejects_zero_dimensions() {
-    assert!(
-        AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(0, 1))
-            .validate(128)
-            .is_err()
-    );
-    assert!(
-        AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(20, 0))
-            .validate(128)
-            .is_err()
-    );
-    assert!(
-        AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(20, 4))
-            .validate(128)
-            .is_ok()
-    );
+    assert!(ScheduleLookupKey::single(PolynomialGroupLayout::new(0, 1))
+        .validate(128)
+        .is_err());
+    assert!(ScheduleLookupKey::single(PolynomialGroupLayout::new(20, 0))
+        .validate(128)
+        .is_err());
+    assert!(ScheduleLookupKey::single(PolynomialGroupLayout::new(20, 4))
+        .validate(128)
+        .is_ok());
 }
 
 fn precommitted_descriptor(num_vars: usize) -> GroupCommitPhaseParams {
@@ -1132,7 +1125,7 @@ fn precommitted_group_profiles_preserve_caller_order() {
 
 #[test]
 fn group_batch_key_separates_final_arity_from_max_opening_arity() {
-    let multi_group_key = AkitaScheduleLookupKey {
+    let multi_group_key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(14, 3),
         precommitteds: vec![precommitted_descriptor(20)],
     };
@@ -1159,7 +1152,7 @@ fn group_batch_key_separates_final_arity_from_max_opening_arity() {
 
 #[test]
 fn group_batch_key_allows_independent_precommitted_num_vars() {
-    let multi_group_key = AkitaScheduleLookupKey {
+    let multi_group_key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
         precommitteds: vec![precommitted_descriptor(12)],
     };
@@ -1171,7 +1164,7 @@ fn group_batch_key_allows_independent_precommitted_num_vars() {
 
 #[test]
 fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
-    let multi_group_key = AkitaScheduleLookupKey {
+    let multi_group_key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
         precommitteds: vec![precommitted_descriptor(20)],
     };
@@ -1183,7 +1176,7 @@ fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
 
 #[test]
 fn group_batch_key_allows_mixed_polynomial_counts() {
-    let multi_group_key = AkitaScheduleLookupKey {
+    let multi_group_key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
         precommitteds: vec![{
             let mut descriptor = precommitted_descriptor(10);
@@ -1219,7 +1212,7 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
 fn group_batch_key_identity_binds_ordered_profiles() {
     let first = precommitted_descriptor(12);
     let second = precommitted_descriptor(14);
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(16, 1),
         precommitteds: vec![first, second],
     };

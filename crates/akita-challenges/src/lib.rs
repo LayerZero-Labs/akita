@@ -7,8 +7,8 @@
 //! - [`SparseChallengeConfig`] — fixed-weight sparse family `(count_pm1, count_pm2)`
 //!   exposing policy questions like `l1_norm()` / `infinity_norm()` / `validate()`
 //!   to `akita-config`, `akita-types`, and `akita-planner`.
-//! - [`FoldDraw`] and its native Spongefish adapters — fold-challenge drawing
-//!   over live or preview native state.
+//! - [`FoldDraw`] and its Spongefish adapters — fold-challenge drawing
+//!   over live or preview state.
 //! - [`Challenges`] — sampled folding challenges in claim-major block order.
 //!
 //! Sampling uses the signed-sparse path in a private `sampler` submodule. The
@@ -32,6 +32,6 @@ pub use config::{
     MIN_FOLD_CHALLENGE_ENTROPY_BITS, PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
 pub use fold_draw::{
-    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, NativePreviewFoldDraw,
-    NativeProverFoldDraw, NativeVerifierFoldDraw,
+    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, PreviewFoldDraw,
+    ProverFoldDraw, VerifierFoldDraw,
 };

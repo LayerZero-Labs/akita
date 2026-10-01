@@ -84,10 +84,10 @@ including its committed digit depths and response limits.
 
 Each fold emits one canonical unsigned LEB128 Spongefish proof message whose
 value is restricted to the 12-bit search domain. For candidate values `0, 1, ...`, the
-prover previews the native nonce message followed by every group-local
+prover previews the nonce message followed by every group-local
 fold-challenge context and samples the sparse challenges. The accepted nonce is
 then committed once to the live proof stream, and the verifier performs the
-same native receipt and sampling.
+same receipt and sampling.
 
 `TranscriptGrindingBinding` commits the canonical grinding-plan digest. The
 plan binds the exclusive probe cap (`4096`), the 12-bit semantic width, query

@@ -9,9 +9,9 @@ use akita_types::sis::{
     OpenCommitMatrixParams, SisMatrixRole,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, DecompositionParams,
-    GroupCommitPhaseParams, GroupOpenPhaseParams, OpeningClaimsLayout, PlannedFoldSchedule,
-    PolynomialGroupLayout, PrecommittedGroupAdmissionPolicy,
+    CommitmentRingDims, CommittedGroupParams, DecompositionParams, GroupCommitPhaseParams,
+    GroupOpenPhaseParams, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
+    PrecommittedGroupAdmissionPolicy, ScheduleLookupKey,
 };
 
 use akita_schedules::planner_support::projected_collision_role_price;
@@ -282,7 +282,7 @@ pub(crate) struct PreparedRootProducers {
 impl PreparedRootProducers {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare(
-        key: &AkitaScheduleLookupKey,
+        key: &ScheduleLookupKey,
         precommitted_source_contracts: &[CommittedSourceContract],
         policy: &PlannerPolicy,
         dimensions: CommitmentRingDims,
@@ -336,7 +336,7 @@ impl PreparedRootProducers {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn root_level_candidates_for_prepared_producers(
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
     final_source_contract: CommittedSourceContract,
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,
@@ -636,7 +636,7 @@ fn root_final_group_level_params_candidate(
 /// planner uses them only to size the offline honest-response model; the
 /// verifier continues to enforce the response caps frozen into the schedule.
 pub fn find_schedule(
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
@@ -712,7 +712,7 @@ pub fn find_adapted_schedule(
 
 fn find_adapted_schedule_for_key(
     main_row: &ResolvedScheduleRow,
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
@@ -772,7 +772,7 @@ fn find_adapted_schedule_for_key(
 /// Build a schedule under a test-only relation-mode restriction.
 #[cfg(feature = "test-support")]
 pub fn find_schedule_for_test_relation_mode(
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
@@ -795,7 +795,7 @@ pub fn find_schedule_for_test_relation_mode(
 /// Canonical schedule search with an internal traversal-order seam used to
 /// prove that candidate enumeration does not affect selection.
 pub(crate) fn find_schedule_in_relation_order(
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
