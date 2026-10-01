@@ -320,7 +320,9 @@ where
             ));
         }
         akita_sumcheck::SumcheckInstanceProver::finalize(&mut self.prover);
-        if self.claim != self.prover.expected_final_claim()? {
+        if self.claim != self.prover.expected_final_claim()?
+            && !crate::opaque::fold::fault_skips_self_checks()
+        {
             return Err(AkitaError::InvalidInput(
                 "relation session final claim disagrees with its folded oracle".into(),
             ));
