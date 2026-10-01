@@ -3,13 +3,17 @@
 use crate::coefficient_packing_relation::{
     CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
 };
-use crate::protocol::evaluation_trace::PreparedEvaluationTrace;
-use crate::protocol::ring_switch::{PreparedRelationGroups, RelationMatrixEvaluator};
+use crate::relation::evaluation_trace::PreparedEvaluationTrace;
+use crate::relation::{PreparedRelationGroups, RelationMatrixEvaluator};
+use crate::stages::ring_switch::RingSwitchVerifyOutput;
+use crate::stages::stage1::Stage1Replay;
 use akita_algebra::{
     eq_poly::EqPolynomial,
     offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily},
 };
 use akita_error::AkitaError;
+use akita_serialization::AkitaSerialize;
+use akita_types::AkitaVerifierSetup;
 use akita_types::{
     AkitaExpandedSetup, CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
     OpeningFamily, ReducedCompressionRelationWeights,
@@ -137,6 +141,36 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     _marker: std::marker::PhantomData<F>,
 }
 
+/// Replayed inputs for [`AkitaStage2Verifier::new`].
+pub(crate) struct Stage2VerifierInput<'a, F: Field, E: Field> {
+    /// Stage 2 batching coefficient drawn after Stage 1.
+    pub(crate) batching_coeff: E,
+    /// Prover-sent witness evaluation at the Stage 2 point.
+    pub(crate) witness_eval: E,
+    /// Stage 1 sumcheck point.
+    pub(crate) stage1_point: Vec<E>,
+    /// Prepared relation-matrix evaluator from the ring switch.
+    pub(crate) relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
+    /// Payload-mode compression oracle.
+    pub(crate) compression: Stage2CompressionOracle<'a, E>,
+    /// Expanded public setup.
+    pub(crate) setup: &'a AkitaExpandedSetup<F>,
+    /// Ring-switch alpha challenge.
+    pub(crate) alpha: E,
+    /// Stage 3 setup claim when the setup contribution is deferred.
+    pub(crate) setup_claim: Option<E>,
+    /// Relation lane variable count.
+    pub(crate) col_bits: usize,
+    /// Relation coefficient variable count.
+    pub(crate) ring_bits: usize,
+    /// Opening-claim semantics for this level.
+    pub(crate) opening_semantics: Stage2OpeningSemantics<'a, E>,
+    /// Batched physical L2 virtual claim, zero without a physical plan.
+    pub(crate) physical_l2_claim: E,
+    /// Physical L2 virtualization families.
+    pub(crate) physical_l2_families: Vec<EqPairTensorFamily<E>>,
+}
+
 pub(crate) enum Stage2CompressionOracle<'a, E: Field> {
     Raw,
     QuotientLift {
@@ -158,23 +192,23 @@ where
 {
     /// Construct a verifier from the shared stage-2 context and the witness
     /// oracle selected by the current proof level.
-    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new")]
-    pub(crate) fn new(
-        batching_coeff: E,
-        witness_eval: E,
-        stage1_point: Vec<E>,
-        relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
-        compression: Stage2CompressionOracle<'a, E>,
-        setup: &'a AkitaExpandedSetup<F>,
-        alpha: E,
-        setup_claim: Option<E>,
-        col_bits: usize,
-        ring_bits: usize,
-        opening_semantics: Stage2OpeningSemantics<'a, E>,
-        physical_l2_claim: E,
-        physical_l2_families: Vec<EqPairTensorFamily<E>>,
-    ) -> Result<Self, AkitaError> {
+    pub(crate) fn new(input: Stage2VerifierInput<'a, F, E>) -> Result<Self, AkitaError> {
+        let Stage2VerifierInput {
+            batching_coeff,
+            witness_eval,
+            stage1_point,
+            relation_matrix_evaluator,
+            compression,
+            setup,
+            alpha,
+            setup_claim,
+            col_bits,
+            ring_bits,
+            opening_semantics,
+            physical_l2_claim,
+            physical_l2_families,
+        } = input;
         let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidSetup("stage-2 variable count overflow".to_string())
         })?;
@@ -299,6 +333,100 @@ where
     }
 }
 
+/// Stage 2 sumcheck rounds and the prover's witness evaluation, before the
+/// output claim is checked.
+pub(crate) struct Stage2RoundReplay<E: Field> {
+    pub(crate) output_claim: E,
+    pub(crate) challenges: Vec<E>,
+    pub(crate) witness_eval: E,
+}
+
+/// Checked Stage 2 output: the fold's next opening point and claim.
+pub(crate) struct Stage2Output<E: Field> {
+    pub(crate) point: Vec<E>,
+    pub(crate) witness_eval: E,
+}
+
+/// Replay the Stage 2 rounds from the batched Stage 1, relation, opening, and
+/// physical L2 input claims.
+pub(crate) fn replay_stage2_native<F, E>(
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    level: u32,
+    stage1: &Stage1Replay<'_, E>,
+    relation_claim: E,
+    opening_semantics: &Stage2OpeningSemantics<'_, E>,
+    shape: akita_sumcheck::NativeSumcheckShape,
+) -> Result<Stage2RoundReplay<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    let input_claim = stage1.batching_coeff * stage1.range_image_evaluation
+        + relation_claim
+        + opening_semantics.opening_claim()
+        + stage1.physical_l2_claim;
+    let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
+        grinding,
+        akita_types::SumcheckProtocol::Stage2,
+        level,
+        0,
+    );
+    let replay = akita_sumcheck::verify_sumcheck_rounds_native::<F, E, _>(
+        &mut channel,
+        0,
+        input_claim,
+        shape,
+    )?;
+    let witness_eval = akita_types::native_stage2_w_eval::<F, E, _>(grinding, level, E::zero())?;
+    Ok(Stage2RoundReplay {
+        output_claim: replay.output_claim,
+        challenges: replay.challenges,
+        witness_eval,
+    })
+}
+
+/// Check the Stage 2 output claim once the Stage 3 setup claim is known.
+pub(crate) fn validate_stage2_replay<F, E>(
+    setup: &AkitaVerifierSetup<F>,
+    stage1: Stage1Replay<'_, E>,
+    rs: &RingSwitchVerifyOutput<E>,
+    setup_claim: Option<E>,
+    opening_semantics: Stage2OpeningSemantics<'_, E>,
+    replay: Stage2RoundReplay<E>,
+) -> Result<Stage2Output<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+{
+    let witness_eval = replay.witness_eval;
+    let stage2_verifier = AkitaStage2Verifier::<F, E>::new(Stage2VerifierInput {
+        batching_coeff: stage1.batching_coeff,
+        witness_eval,
+        stage1_point: stage1.stage1_point,
+        relation_matrix_evaluator: &rs.relation_matrix_evaluator,
+        compression: stage1.compression,
+        setup: setup.expanded(),
+        alpha: rs.alpha,
+        setup_claim,
+        col_bits: rs.relation_address_geometry.relation_lane_variable_count(),
+        ring_bits: rs
+            .relation_address_geometry
+            .relation_coefficient_variable_count(),
+        opening_semantics,
+        physical_l2_claim: stage1.physical_l2_claim,
+        physical_l2_families: stage1.physical_l2_families,
+    })?;
+
+    let expected = stage2_verifier.expected_output_claim(&replay.challenges)?;
+    if replay.output_claim != expected {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(Stage2Output {
+        point: replay.challenges,
+        witness_eval,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn evaluate_compression_oracle<F, E>(
     compression: &Stage2CompressionOracle<'_, E>,
@@ -349,7 +477,7 @@ mod tests {
     use super::*;
     use crate::coefficient_packing_relation::prepare_coefficient_packing_verifier_batch_semantics;
     use crate::coefficient_packing_relation::tests::materialize_stage2;
-    use crate::protocol::ring_switch::{FlatRelationContext, RelationMatrixEvaluator};
+    use crate::relation::{FlatRelationContext, RelationMatrixEvaluator};
     use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
     use akita_types::{
         prepare_coefficient_packing_batch_semantics, relation_rhs_coeff_len, AkitaSetupDescriptor,
@@ -510,7 +638,7 @@ mod tests {
             .unwrap();
         let evaluator = RelationMatrixEvaluator {
             relation_address_geometry,
-            groups: crate::protocol::ring_switch::PreparedRelationGroups::QuotientLift(Vec::new()),
+            groups: crate::relation::PreparedRelationGroups::QuotientLift(Vec::new()),
             log_basis: params.open().digits.log_basis,
             eq_tau1: Arc::from(Vec::<E>::new()),
             flat_context: FlatRelationContext {
@@ -532,21 +660,22 @@ mod tests {
             );
         let domain = relation_address_geometry.digit_witness_domain();
         let scalar_opening = E::from_u64(19);
-        let verifier = AkitaStage2Verifier::<F, E>::new(
-            E::zero(),
-            E::from_u64(23),
-            vec![E::zero(); domain.num_vars()],
-            &evaluator,
-            Stage2CompressionOracle::Raw,
-            &setup,
+        let verifier = AkitaStage2Verifier::<F, E>::new(Stage2VerifierInput {
+            batching_coeff: E::zero(),
+            witness_eval: E::from_u64(23),
+            stage1_point: vec![E::zero(); domain.num_vars()],
+            relation_matrix_evaluator: &evaluator,
+            compression: Stage2CompressionOracle::Raw,
+            setup: &setup,
             alpha,
-            None,
-            relation_address_geometry.relation_lane_variable_count(),
-            relation_address_geometry.relation_coefficient_variable_count(),
-            Stage2OpeningSemantics::packing(&batch, &[(0, scalar_opening)]).unwrap(),
-            E::zero(),
-            Vec::new(),
-        )
+            setup_claim: None,
+            col_bits: relation_address_geometry.relation_lane_variable_count(),
+            ring_bits: relation_address_geometry.relation_coefficient_variable_count(),
+            opening_semantics: Stage2OpeningSemantics::packing(&batch, &[(0, scalar_opening)])
+                .unwrap(),
+            physical_l2_claim: E::zero(),
+            physical_l2_families: Vec::new(),
+        })
         .unwrap();
         assert_eq!(
             verifier.opening_semantics.opening_claim(),

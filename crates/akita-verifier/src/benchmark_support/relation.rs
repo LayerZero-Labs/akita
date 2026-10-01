@@ -1,6 +1,9 @@
-//! Feature-gated fixtures for benchmarking the production relation evaluator.
+//! Fixtures for benchmarking the production relation evaluator.
 
-use super::{prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay};
+use crate::relation::evaluation::PreparedDirectRelation;
+use crate::relation::{
+    prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
+};
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_error::AkitaError;
 use akita_types::{
@@ -26,16 +29,18 @@ pub struct RelationEvaluatorBenchmarkCase {
 
 /// One production-prepared relation evaluation used for isolated phase timing.
 pub struct PreparedRelationEvaluatorBenchmark<'a> {
-    prepared: super::relation_evaluation::PreparedDirectRelation<'a, Prime128OffsetA7F7>,
+    prepared: PreparedDirectRelation<'a, Prime128OffsetA7F7>,
 }
 
 impl RelationEvaluatorBenchmarkCase {
     /// Prepare the production relation point, setup-contribution plan, and
     /// direct setup scan (column weights and packed segments).
     pub fn prepare(&self) -> Result<PreparedRelationEvaluatorBenchmark<'_>, AkitaError> {
-        let prepared = super::relation_evaluation::PreparedDirectRelation::prepare::<
-            Prime128OffsetA7F7,
-        >(&self.evaluator, &self.point, self.alpha)?;
+        let prepared = PreparedDirectRelation::prepare::<Prime128OffsetA7F7>(
+            &self.evaluator,
+            &self.point,
+            self.alpha,
+        )?;
         Ok(PreparedRelationEvaluatorBenchmark { prepared })
     }
 }
@@ -255,9 +260,7 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         .relation_point_variable_count())
         .map(|index| scalar(101 + index as u128))
         .collect::<Vec<_>>();
-    let prepared = super::relation_evaluation::PreparedDirectRelation::prepare::<F>(
-        &evaluator, &point, alpha,
-    )?;
+    let prepared = PreparedDirectRelation::prepare::<F>(&evaluator, &point, alpha)?;
     let setup_field_elements = prepared.setup_field_len();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {

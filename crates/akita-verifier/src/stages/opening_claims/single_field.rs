@@ -12,7 +12,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// Recursive-suffix single-field preparation: per-group `prepare_opening_point`
 /// over the suffix opening groups, no EOR.
-pub(in crate::protocol::core) fn prepare_single_field_suffix_groups<F, E>(
+pub(crate) fn prepare_single_field_suffix_groups<F, E>(
     block_claims: &OpeningClaims<'_, E>,
     lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,

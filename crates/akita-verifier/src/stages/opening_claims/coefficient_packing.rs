@@ -69,7 +69,7 @@ fn prepare_prefix_points<F: Field, E: ExtField<F>, C>(
 }
 
 /// Prepare a root packing prefix directly from the authenticated public claims.
-pub(in crate::protocol::core) fn verify_coefficient_packing_root_prefix<F, E>(
+pub(crate) fn verify_coefficient_packing_root_prefix<F, E>(
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
@@ -90,7 +90,7 @@ where
     })
 }
 
-pub(in crate::protocol::core) fn verify_coefficient_packing_suffix_prefix_native<F, E>(
+pub(crate) fn verify_coefficient_packing_suffix_prefix_native<F, E>(
     claims: &OpeningClaims<'_, E>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,

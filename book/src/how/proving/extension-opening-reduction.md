@@ -169,7 +169,7 @@ proof coefficients.
 - `crates/akita-prover/src/protocol/prove/opening_reduction.rs`.
 - `crates/akita-cpu-backend/src/opaque/recursive/opening/dense.rs`
   contains the fused fold-and-accumulate kernels.
-- `crates/akita-verifier/src/protocol/core/fold/extension_claim.rs`.
+- `crates/akita-verifier/src/stages/opening_claims/extension_claim.rs`.
 - `crates/akita-cpu-backend/src/arithmetic/extension_opening_reduction.rs`
   builds the prover's tensor partials and factor tables.
 - `crates/akita-types/src/extension_opening_reduction.rs` holds the tensor

@@ -29,7 +29,7 @@ jobs:
       - name: Test exact-cache boundary
         run: |
           cargo test --release -p akita-types --lib ntt_cache
-          cargo test --release -p akita-verifier --lib terminal_ntt
+          cargo test --release -p akita-verifier --lib terminal::ntt::
 
   aarch64-neon:
     name: Native AArch64 NEON kernels
@@ -47,7 +47,7 @@ jobs:
         run: |
           cargo test --release -p akita-algebra --lib ntt
           cargo test --release -p akita-types --lib ntt_cache
-          cargo test --release -p akita-verifier --lib terminal_ntt
+          cargo test --release -p akita-verifier --lib terminal::ntt::
           cargo test --release -p akita-cpu-backend --lib wide_mass::tests
 
   avx512-ifma:
@@ -70,7 +70,7 @@ jobs:
           cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-algebra --lib ifma52 -- --include-ignored
           cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-algebra --lib ntt::avx -- --include-ignored
           cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-types --lib ifma -- --include-ignored
-          cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-verifier --lib terminal_ntt
+          cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-verifier --lib terminal::ntt::
 
   wasm-serialization:
     name: Wasm serialization check

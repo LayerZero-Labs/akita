@@ -20,26 +20,26 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// One chunk's compact E-segment geometry, shared by every claim in its group.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PreparedEvaluationTraceUnit {
-    first_claim_coefficient: usize,
-    claim_stride_coefficients: usize,
-    global_block_start: usize,
-    block_count: usize,
+pub(crate) struct PreparedEvaluationTraceUnit {
+    pub(crate) first_claim_coefficient: usize,
+    pub(crate) claim_stride_coefficients: usize,
+    pub(crate) global_block_start: usize,
+    pub(crate) block_count: usize,
 }
 
 /// Verifier state for one opening group.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PreparedEvaluationTraceGroup<E: Field> {
-    block_opening_point: Arc<[E]>,
-    basis: BasisMode,
-    source_ring_dimension: usize,
-    opening_ring_dimension: usize,
-    coefficient_block_len: usize,
-    opening_digit_weights: Arc<[E]>,
-    inner_trace: Arc<[E]>,
-    claim_coefficients: Vec<E>,
-    units: Vec<PreparedEvaluationTraceUnit>,
-    contraction: PreparedTraceContraction<E>,
+pub(crate) struct PreparedEvaluationTraceGroup<E: Field> {
+    pub(crate) block_opening_point: Arc<[E]>,
+    pub(crate) basis: BasisMode,
+    pub(crate) source_ring_dimension: usize,
+    pub(crate) opening_ring_dimension: usize,
+    pub(crate) coefficient_block_len: usize,
+    pub(crate) opening_digit_weights: Arc<[E]>,
+    pub(crate) inner_trace: Arc<[E]>,
+    pub(crate) claim_coefficients: Vec<E>,
+    pub(crate) units: Vec<PreparedEvaluationTraceUnit>,
+    pub(crate) contraction: PreparedTraceContraction<E>,
 }
 
 /// Below this per-unit block count the affine scan wins despite its linear
@@ -56,7 +56,7 @@ struct TraceUnitTensorAxis {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct TraceUnitTensorSegment {
+pub(crate) struct TraceUnitTensorSegment {
     first_unit: usize,
     axis: Option<TraceUnitTensorAxis>,
 }
@@ -95,7 +95,7 @@ fn trace_unit_run_strides(
 
 /// Block-axis work selected and constructed once during trace preparation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum PreparedTraceContraction<E: Field> {
+pub(crate) enum PreparedTraceContraction<E: Field> {
     /// Concrete affine weights for the small-block crossover region.
     Affine {
         low_block_weights: Arc<[E]>,
@@ -169,7 +169,7 @@ fn trace_unit_tensor_segments(
     Ok(segments)
 }
 
-fn prepare_trace_contraction<E: Field>(
+pub(crate) fn prepare_trace_contraction<E: Field>(
     block_opening_point: &[E],
     basis: BasisMode,
     units: &[PreparedEvaluationTraceUnit],
@@ -200,8 +200,8 @@ fn prepare_trace_contraction<E: Field>(
 /// Succinct verifier representation of the complete evaluation-trace weight.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PreparedEvaluationTrace<E: Field> {
-    groups: Vec<PreparedEvaluationTraceGroup<E>>,
-    num_variables: usize,
+    pub(crate) groups: Vec<PreparedEvaluationTraceGroup<E>>,
+    pub(crate) num_variables: usize,
 }
 
 impl<E: Field> PreparedEvaluationTrace<E> {
@@ -508,117 +508,10 @@ where
     })
 }
 
-/// Exact synthetic trace fixture for production-kernel benchmarks.
-#[cfg(any(test, feature = "benchmark-support"))]
-pub struct EvaluationTraceBenchmarkCase {
-    trace: PreparedEvaluationTrace<jolt_field::Prime128OffsetA7F7>,
-    point: Vec<jolt_field::Prime128OffsetA7F7>,
-}
-
-#[cfg(any(test, feature = "benchmark-support"))]
-impl EvaluationTraceBenchmarkCase {
-    /// Evaluate the prepared trace at its fixed benchmark point.
-    pub fn evaluate(&self) -> Result<jolt_field::Prime128OffsetA7F7, AkitaError> {
-        self.trace.evaluate_at_point(&self.point)
-    }
-}
-
-/// Build a checked trace benchmark with two claims, two opening digits, and a
-/// D128 source split into D64 coefficient blocks.
-#[cfg(any(test, feature = "benchmark-support"))]
-pub fn evaluation_trace_benchmark_case(
-    num_live_blocks: usize,
-    witness_chunks: usize,
-    basis: BasisMode,
-) -> Result<EvaluationTraceBenchmarkCase, AkitaError> {
-    use akita_types::dyadic_block_ranges;
-    use jolt_field::Prime128OffsetA7F7 as F;
-
-    const SOURCE_RING_DIMENSION: usize = 128;
-    const OPENING_RING_DIMENSION: usize = 128;
-    const COEFFICIENT_BLOCK_LEN: usize = 64;
-    const NUM_CLAIMS: usize = 2;
-    const DIGIT_COUNT: usize = 2;
-
-    if num_live_blocks == 0 || !witness_chunks.is_power_of_two() {
-        return Err(AkitaError::InvalidInput(
-            "trace benchmark requires nonempty blocks and a dyadic chunk count".into(),
-        ));
-    }
-    let mut coefficient_cursor = 0usize;
-    let mut units = Vec::with_capacity(witness_chunks.min(num_live_blocks));
-    for range in dyadic_block_ranges(num_live_blocks, witness_chunks)? {
-        let block_count = range.len();
-        if block_count == 0 {
-            continue;
-        }
-        let claim_stride_coefficients = block_count
-            .checked_mul(DIGIT_COUNT)
-            .and_then(|count| count.checked_mul(SOURCE_RING_DIMENSION))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("trace benchmark claim stride overflow".into())
-            })?;
-        units.push(PreparedEvaluationTraceUnit {
-            first_claim_coefficient: coefficient_cursor,
-            claim_stride_coefficients,
-            global_block_start: range.start,
-            block_count,
-        });
-        coefficient_cursor = claim_stride_coefficients
-            .checked_mul(NUM_CLAIMS)
-            .and_then(|count| coefficient_cursor.checked_add(count))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("trace benchmark unit offset overflow".into())
-            })?;
-    }
-    let block_variables = num_live_blocks
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("trace benchmark block domain overflow".into()))?
-        .trailing_zeros() as usize;
-    let column_len = num_live_blocks
-        .checked_mul(NUM_CLAIMS * DIGIT_COUNT * (SOURCE_RING_DIMENSION / COEFFICIENT_BLOCK_LEN))
-        .ok_or_else(|| AkitaError::InvalidSetup("trace benchmark column span overflow".into()))?;
-    let column_variables = column_len
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("trace benchmark column domain overflow".into()))?
-        .trailing_zeros() as usize;
-    let coefficient_variables = COEFFICIENT_BLOCK_LEN.trailing_zeros() as usize;
-    let num_variables = coefficient_variables
-        .checked_add(column_variables)
-        .ok_or_else(|| AkitaError::InvalidSetup("trace benchmark point width overflow".into()))?;
-    let block_opening_point: Arc<[F]> = (0..block_variables)
-        .map(|index| F::from_u64(101 + index as u64))
-        .collect::<Vec<_>>()
-        .into();
-    let contraction =
-        prepare_trace_contraction(&block_opening_point, basis, &units, COEFFICIENT_BLOCK_LEN)?;
-    let trace = PreparedEvaluationTrace {
-        groups: vec![PreparedEvaluationTraceGroup {
-            block_opening_point,
-            basis,
-            source_ring_dimension: SOURCE_RING_DIMENSION,
-            opening_ring_dimension: OPENING_RING_DIMENSION,
-            coefficient_block_len: COEFFICIENT_BLOCK_LEN,
-            opening_digit_weights: vec![F::from_u64(211), F::from_u64(223)].into(),
-            inner_trace: (0..SOURCE_RING_DIMENSION)
-                .map(|index| F::from_u64(307 + index as u64))
-                .collect::<Vec<_>>()
-                .into(),
-            claim_coefficients: vec![F::from_u64(401), F::from_u64(409)],
-            units,
-            contraction,
-        }],
-        num_variables,
-    };
-    let point = (0..num_variables)
-        .map(|index| F::from_u64(503 + index as u64))
-        .collect();
-    Ok(EvaluationTraceBenchmarkCase { trace, point })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::benchmark_support::evaluation_trace_benchmark_case;
     use akita_algebra::CyclotomicRing;
     use akita_config::proof_optimized::fp128;
     use akita_types::{

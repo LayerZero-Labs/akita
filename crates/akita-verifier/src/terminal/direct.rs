@@ -94,30 +94,27 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let (rhs, lhs) = cfg_join!(
-        || super::terminal_ntt::centered_rows(terminal_ntt, n_a, z),
-        || {
-            let _span = tracing::info_span!(
-                "terminal_direct_a_lhs",
-                rows = n_a,
-                challenges = challenges.as_slice().len()
-            )
-            .entered();
-            (0..n_a)
-                .map(|row_index| {
-                    challenges
-                        .as_slice()
-                        .iter()
-                        .zip(t.chunks_exact(n_a))
-                        .try_fold(CyclotomicRing::zero(), |mut sum, (challenge, rows)| {
-                            let row = rows.get(row_index).ok_or(AkitaError::InvalidProof)?;
-                            sparse_challenge_mul_accumulate(challenge, row, &mut sum)?;
-                            Ok::<_, AkitaError>(sum)
-                        })
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()
-        }
-    );
+    let (rhs, lhs) = cfg_join!(|| super::ntt::centered_rows(terminal_ntt, n_a, z), || {
+        let _span = tracing::info_span!(
+            "terminal_direct_a_lhs",
+            rows = n_a,
+            challenges = challenges.as_slice().len()
+        )
+        .entered();
+        (0..n_a)
+            .map(|row_index| {
+                challenges
+                    .as_slice()
+                    .iter()
+                    .zip(t.chunks_exact(n_a))
+                    .try_fold(CyclotomicRing::zero(), |mut sum, (challenge, rows)| {
+                        let row = rows.get(row_index).ok_or(AkitaError::InvalidProof)?;
+                        sparse_challenge_mul_accumulate(challenge, row, &mut sum)?;
+                        Ok::<_, AkitaError>(sum)
+                    })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()
+    });
     let rhs = rhs?;
     let lhs = lhs?;
     let _span = tracing::info_span!("terminal_direct_a_compare", rows = n_a).entered();
@@ -131,7 +128,7 @@ where
 
 /// Check reduced consistency and A rows for a quotient-free terminal witness.
 #[tracing::instrument(skip_all, name = "terminal_direct_ring_relations")]
-pub(super) fn verify_terminal_ring_relations<F>(
+pub(crate) fn verify_terminal_ring_relations<F>(
     terminal_ntt: &TerminalNttCache,
     challenges: &Challenges,
     multiplier: &RingMultiplierOpeningPoint<F>,
@@ -292,7 +289,7 @@ where
 /// Check the public opening directly against the revealed folded `e` segment.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "terminal_direct_trace")]
-pub(super) fn verify_terminal_trace<F, E>(
+pub(crate) fn verify_terminal_trace<F, E>(
     multiplier: &RingMultiplierOpeningPoint<F>,
     params: &TerminalFoldParams,
     terminal_response: &TerminalResponse<F>,

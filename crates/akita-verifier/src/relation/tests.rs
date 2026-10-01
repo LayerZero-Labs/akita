@@ -163,10 +163,9 @@ fn mixed_replay_fixture(mode: akita_types::RingRelationMode) -> MixedReplayFixtu
         .relation_point_variable_count())
         .map(|index| MixedF::from_u64(211 + index as u64))
         .collect::<Vec<_>>();
-    let prepared = super::relation_evaluation::PreparedDirectRelation::prepare::<MixedF>(
-        &evaluator, &point, alpha,
-    )
-    .unwrap();
+    let prepared =
+        super::evaluation::PreparedDirectRelation::prepare::<MixedF>(&evaluator, &point, alpha)
+            .unwrap();
     let setup_field_len = prepared.setup_field_len();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {

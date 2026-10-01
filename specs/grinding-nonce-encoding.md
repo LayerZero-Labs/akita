@@ -994,5 +994,5 @@ Current PR:
 - `crates/akita-types/src/proof/wire.rs` — structured proof serialization;
 - `crates/akita-transcript/src/grinding.rs` — fixed PoW transcript payload;
 - `crates/akita-prover/src/protocol/core/prove.rs` — packed stream completion;
-- `crates/akita-verifier/src/protocol/core/verify.rs` — packed replay and final
+- `crates/akita-verifier/src/fold/verify.rs` — packed replay and final
   cursor checks.

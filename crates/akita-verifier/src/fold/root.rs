@@ -1,6 +1,19 @@
-use super::*;
+use super::{
+    verify_fold_native, NativeFoldVerifyOutput, NativeNextWitnessPlan, NativePreparedFoldReplay,
+};
+use crate::stages::opening_claims::{
+    finalize_native_claims, verify_coefficient_packing_root_prefix,
+};
+use akita_error::AkitaError;
+use akita_serialization::AkitaSerialize;
 use akita_types::Commitment;
 use akita_types::NativeGrinding;
+use akita_types::{
+    AkitaVerifierSetup, BasisMode, CommittedGroupParams, FoldParams, FpExtEncoding, OpeningClaims,
+    OpeningClaimsLayout, RelationWitnessGeometry, RingVec, SetupContributionMode,
+    TerminalFoldParams,
+};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn verify_root_native<F, E>(

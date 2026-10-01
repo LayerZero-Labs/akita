@@ -1,7 +1,8 @@
 //! Verifier for the setup-product sumcheck — the verifier counterpart to the
 //! prover-side `AkitaStage3Prover`.
 
-use crate::protocol::ring_switch::RelationMatrixEvaluator;
+use crate::relation::RelationMatrixEvaluator;
+use crate::stages::ring_switch::RingSwitchVerifyOutput;
 use crate::SetupIndexWeightMle;
 #[cfg(test)]
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
@@ -27,7 +28,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 /// setup-index weight polynomial and sumcheck round count from the ring-switch
 /// row evaluation, then call [`verify_stage3`](Self::verify_stage3)
 /// with the proof and transcript.
-pub(crate) struct SetupSumcheckVerifier<E: Field> {
+struct SetupSumcheckVerifier<E: Field> {
     setup_index_weight: SetupIndexWeightMle<E>,
     alpha: E,
     ring_bits: usize,
@@ -128,6 +129,36 @@ impl<E: Field> SetupSumcheckVerifier<E> {
             challenges: replay.challenges,
         })
     }
+}
+
+/// Replay Stage 3 for a fold whose successor defers the setup contribution.
+///
+/// The setup contribution is evaluated at the Stage 2 point with its
+/// coefficient variables removed.
+pub(crate) fn verify_stage3<F, E>(
+    setup: &AkitaVerifierSetup<F>,
+    rs: &RingSwitchVerifyOutput<E>,
+    stage2_challenges: &[E],
+    next_params: &CommittedGroupParams,
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    level: u32,
+) -> Result<NativeSetupSumcheckReplay<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
+{
+    let setup_coefficient_bits = rs
+        .relation_address_geometry
+        .relation_coefficient_variable_count();
+    let setup_x_challenges = stage2_challenges
+        .get(setup_coefficient_bits..)
+        .ok_or(AkitaError::InvalidProof)?;
+    let verifier = SetupSumcheckVerifier::new::<F>(
+        &rs.relation_matrix_evaluator,
+        setup_x_challenges,
+        rs.alpha,
+    )?;
+    verifier.verify_stage3_native::<F>(setup, next_params, grinding, level)
 }
 
 /// Resolve the planned setup-prefix slot in the verifier setup, check that it

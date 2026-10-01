@@ -524,8 +524,8 @@ The implementation evidence for this result is:
 | `crates/akita-challenges/src/config.rs` and `sampler/mod.rs` in that crate | Production support ladder, fixed operator policies, bounded coordinate rejection, runtime certificate containment |
 | `crates/akita-types/src/transcript_grinding/plan.rs` and `crates/akita-types/src/transcript_grinding.rs` | Geometry-derived runs, root-plus-coordinate multiplicity, structural count, response nonce width, and zero fold work bits |
 | `crates/akita-prover/src/protocol/fold_grind.rs` | Joint response-admission search across groups |
-| `crates/akita-verifier/src/protocol/core/fold/mod.rs` | Nonterminal range and physical-L2 claims tied into the recursive relation |
-| `crates/akita-verifier/src/protocol/core/terminal_direct.rs` | Terminal representation/norm and direct relation checks |
+| `crates/akita-verifier/src/stages/stage1.rs` | Nonterminal range and physical-L2 claims tied into the recursive relation |
+| `crates/akita-verifier/src/terminal/direct.rs` | Terminal representation/norm and direct relation checks |
 | [Security model](../book/src/how/security.md) and [subring packing](subring-coefficient-packing.md) | Accepted response-space contract and separate packed relation loss |
 
 The [Book's binding chapter](../book/src/foundations/pcs-and-binding.md)

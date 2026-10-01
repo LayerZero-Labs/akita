@@ -390,8 +390,8 @@ nonce encoding are documented in
   native nonce transport, predicate checks, challenges, and plan progress.
 - `crates/akita-challenges/src/sampler/xof.rs` derives the indexed sparse
   challenge streams.
-- `crates/akita-verifier/src/protocol/core/fold/mod.rs` and
-  `crates/akita-verifier/src/protocol/core/suffix.rs` enforce fold and
+- `crates/akita-verifier/src/fold/mod.rs` and
+  `crates/akita-verifier/src/fold/terminal.rs` enforce fold and
   terminal replay order.
 - `crates/akita-pcs/tests/transcript_hardening.rs` tests ordering and
   prover/verifier agreement; `crates/akita-pcs/tests/fold_linf.rs` covers

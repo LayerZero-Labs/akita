@@ -1,18 +1,27 @@
 //! Extension-claim fold verifier prefix: extension-opening reduction replay.
 
-use super::super::*;
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
+use akita_error::AkitaError;
+use akita_serialization::AkitaSerialize;
 use akita_types::NativeGrinding;
+use akita_types::{
+    canonical_extension_opening_reduction_shape,
+    derive_tensor_extension_opening_claim_from_partials, prepare_opening_point,
+    ring_subfield_packed_extension_opening_point, tensor_equality_factor_eval_at_point,
+    tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
+    BasisMode, CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, PreparedOpeningPoint,
+};
 use akita_types::{dispatch_for_field, TerminalFoldParams};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
-pub(in crate::protocol::core) struct PreparedProtocolPoint<F: Field, E: Field> {
-    pub(in crate::protocol::core) prepared: PreparedOpeningPoint<F, E>,
-    pub(in crate::protocol::core) protocol: Vec<E>,
+pub(crate) struct PreparedProtocolPoint<F: Field, E: Field> {
+    pub(crate) prepared: PreparedOpeningPoint<F, E>,
+    pub(crate) protocol: Vec<E>,
 }
 
-pub(in crate::protocol::core) struct FoldEorReplay<F: Field, E: Field> {
-    pub(in crate::protocol::core) groups: Vec<PreparedProtocolPoint<F, E>>,
-    pub(in crate::protocol::core) final_relation: Option<(Vec<E>, Vec<E>)>,
+pub(crate) struct FoldEorReplay<F: Field, E: Field> {
+    pub(crate) groups: Vec<PreparedProtocolPoint<F, E>>,
+    pub(crate) final_relation: Option<(Vec<E>, Vec<E>)>,
 }
 
 #[derive(Clone, Copy)]
@@ -195,7 +204,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn verify_extension_claim_suffix_prefix_native<F, E>(
+pub(crate) fn verify_extension_claim_suffix_prefix_native<F, E>(
     group_points: &[&[E]],
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
@@ -272,7 +281,7 @@ where
     })
 }
 
-pub(in crate::protocol::core) fn verify_extension_claim_terminal_suffix_native<F, E>(
+pub(crate) fn verify_extension_claim_terminal_suffix_native<F, E>(
     opening_point: &[E],
     opening: E,
     opening_batch: &OpeningClaimsLayout,
