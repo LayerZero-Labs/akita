@@ -11,10 +11,9 @@ use crate::input::Reader;
 use crate::{gen, stats};
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_transcript::{
-    native_ext_challenge, new_native_prover, new_native_verifier, public_native_bytes,
-    public_native_fields_prover, public_native_fields_verifier, receive_native_bytes,
-    receive_native_extension, receive_native_field, send_native_bytes, send_native_extension,
-    send_native_field, NativeProverState, NativeVerifierState, ProtocolSiteId,
+    ext_challenge, new_prover_channel, new_verifier_channel, public_bytes, public_fields_prover,
+    public_fields_verifier, receive_bytes, receive_extension, receive_field, send_bytes,
+    send_extension, send_field, ProtocolSiteId, ProverChannel, VerifierChannel,
 };
 
 type F = akita_config::proof_optimized::fp128::Field;
@@ -86,31 +85,31 @@ fn challenge_context(state_site: ProtocolSiteId) -> akita_transcript::ProtocolCo
         akita_transcript::ProtocolMessageKind::Challenge as u32,
         0,
         0,
-        akita_transcript::native_field_challenge_bytes::<F>(),
+        akita_transcript::field_challenge_bytes::<F>(),
     )
 }
 
-fn prove(state: &mut NativeProverState, ops: &[Op]) -> Vec<Seen> {
+fn prove(state: &mut ProverChannel, ops: &[Op]) -> Vec<Seen> {
     let mut seen = Vec::new();
     for op in ops {
         match op {
             Op::PublicBytes(site, bytes) => {
-                public_native_bytes(state, *site, bytes).expect("bounded public bytes")
+                public_bytes(state, *site, bytes).expect("bounded public bytes")
             }
             Op::PublicFields(site, values) => {
-                public_native_fields_prover(state, *site, values).expect("public fields")
+                public_fields_prover(state, *site, values).expect("public fields")
             }
-            Op::SendField(value) => send_native_field(state, *value),
-            Op::SendExt4(value) => send_native_extension::<fp32::Field, Ext4>(state, *value),
-            Op::SendBytes(bytes) => send_native_bytes(state, bytes),
+            Op::SendField(value) => send_field(state, *value),
+            Op::SendExt4(value) => send_extension::<fp32::Field, Ext4>(state, *value),
+            Op::SendBytes(bytes) => send_bytes(state, bytes),
             Op::ChallengeField(site) => {
                 akita_transcript::prover_context(state, challenge_context(*site));
                 seen.push(Seen::Field(
-                    akita_transcript::native_prover_field_challenge(state).expect("challenge"),
+                    akita_transcript::prover_field_challenge(state).expect("challenge"),
                 ));
             }
             Op::ChallengeExt2(site) => seen.push(Seen::Ext2(
-                native_ext_challenge::<fp64::Field, Ext2, _>(state, *site).expect("challenge"),
+                ext_challenge::<fp64::Field, Ext2, _>(state, *site).expect("challenge"),
             )),
         }
     }
@@ -118,32 +117,30 @@ fn prove(state: &mut NativeProverState, ops: &[Op]) -> Vec<Seen> {
 }
 
 /// Replay; `None` means the verifier rejected somewhere.
-fn replay(mut state: NativeVerifierState<'_>, ops: &[Op]) -> Option<(Vec<Seen>, Vec<Seen>)> {
+fn replay(mut state: VerifierChannel<'_>, ops: &[Op]) -> Option<(Vec<Seen>, Vec<Seen>)> {
     let mut received = Vec::new();
     let mut challenges = Vec::new();
     for op in ops {
         match op {
-            Op::PublicBytes(site, bytes) => public_native_bytes(&mut state, *site, bytes).ok()?,
+            Op::PublicBytes(site, bytes) => public_bytes(&mut state, *site, bytes).ok()?,
             Op::PublicFields(site, values) => {
-                public_native_fields_verifier(&mut state, *site, values).ok()?
+                public_fields_verifier(&mut state, *site, values).ok()?
             }
-            Op::SendField(_) => {
-                received.push(Seen::Field(receive_native_field::<F>(&mut state).ok()?))
-            }
+            Op::SendField(_) => received.push(Seen::Field(receive_field::<F>(&mut state).ok()?)),
             Op::SendExt4(_) => received.push(Seen::Ext4(
-                receive_native_extension::<fp32::Field, Ext4>(&mut state).ok()?,
+                receive_extension::<fp32::Field, Ext4>(&mut state).ok()?,
             )),
-            Op::SendBytes(bytes) => received.push(Seen::Bytes(
-                receive_native_bytes(&mut state, bytes.len()).ok()?,
-            )),
+            Op::SendBytes(bytes) => {
+                received.push(Seen::Bytes(receive_bytes(&mut state, bytes.len()).ok()?))
+            }
             Op::ChallengeField(site) => {
                 akita_transcript::verifier_context(&mut state, challenge_context(*site));
                 challenges.push(Seen::Field(
-                    akita_transcript::native_verifier_field_challenge(&mut state).ok()?,
+                    akita_transcript::verifier_field_challenge(&mut state).ok()?,
                 ));
             }
             Op::ChallengeExt2(site) => challenges.push(Seen::Ext2(
-                native_ext_challenge::<fp64::Field, Ext2, _>(&mut state, *site).ok()?,
+                ext_challenge::<fp64::Field, Ext2, _>(&mut state, *site).ok()?,
             )),
         }
     }
@@ -170,13 +167,13 @@ pub fn run(data: &[u8]) {
     let instance = reader.take(instance_len).to_vec();
     let ops = ops(&mut reader);
 
-    let Ok(mut prover) = new_native_prover(&session, &instance) else {
+    let Ok(mut prover) = new_prover_channel(&session, &instance) else {
         return;
     };
     let challenges = prove(&mut prover, &ops);
     let proof = prover.narg_string().to_vec();
     let verifier =
-        new_native_verifier(&session, &instance, &proof).expect("prover accepted this domain");
+        new_verifier_channel(&session, &instance, &proof).expect("prover accepted this domain");
     let (received, replayed) = replay(verifier, &ops).expect("honest transcript must replay");
     assert_eq!(received, sent(&ops), "received prover messages");
     assert_eq!(replayed, challenges, "replayed challenges");
@@ -186,7 +183,7 @@ pub fn run(data: &[u8]) {
         let mut tampered = proof.clone();
         let offset = reader.u32() as usize % tampered.len();
         tampered[offset] ^= reader.u8().max(1);
-        let verifier = new_native_verifier(&session, &instance, &tampered).expect("same domain");
+        let verifier = new_verifier_channel(&session, &instance, &tampered).expect("same domain");
         if let Some((received_t, replayed_t)) = replay(verifier, &ops) {
             assert!(
                 received_t != received || replayed_t != replayed,
@@ -202,7 +199,7 @@ pub fn run(data: &[u8]) {
     if first_challenge.is_some() && !challenges.is_empty() {
         let mut other_session = session.clone();
         other_session.push(reader.u8());
-        if let Ok(mut other) = new_native_prover(&other_session, &instance) {
+        if let Ok(mut other) = new_prover_channel(&other_session, &instance) {
             let other_challenges = prove(&mut other, &ops);
             assert_ne!(
                 other_challenges[0], challenges[0],

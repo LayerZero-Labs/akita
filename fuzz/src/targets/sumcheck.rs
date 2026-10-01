@@ -12,13 +12,13 @@ use crate::{gen, stats};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_error::AkitaError;
 use akita_sumcheck::{
-    prove_sumcheck_native, verify_sumcheck_native, InfallibleSumcheck, NativeSumcheckProverChannel,
-    NativeSumcheckRole, NativeSumcheckShape, NativeSumcheckVerifierChannel, SumcheckInstanceProver,
-    SumcheckInstanceVerifier,
+    prove_sumcheck, verify_sumcheck, InfallibleSumcheck, SumcheckInstanceProver,
+    SumcheckInstanceVerifier, SumcheckProverChannel, SumcheckRole, SumcheckShape,
+    SumcheckVerifierChannel,
 };
 use akita_transcript::{
-    native_ext_challenge, new_native_prover, new_native_verifier, NativeProverState,
-    NativeVerifierState, ProtocolSiteId, SITE_FAMILY_SUMCHECK,
+    ext_challenge, new_prover_channel, new_verifier_channel, ProtocolSiteId,
+    ProverChannel as ProverState, VerifierChannel as VerifierState, SITE_FAMILY_SUMCHECK,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::UnivariatePoly;
@@ -33,7 +33,7 @@ pub fn run(data: &[u8]) {
     }
 }
 
-fn site(invocation: u32, round: u32, role: NativeSumcheckRole) -> ProtocolSiteId {
+fn site(invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
     ProtocolSiteId {
         family: SITE_FAMILY_SUMCHECK,
         invocation,
@@ -44,60 +44,50 @@ fn site(invocation: u32, round: u32, role: NativeSumcheckRole) -> ProtocolSiteId
 }
 
 struct ProverChannel<F, E> {
-    state: NativeProverState,
+    state: ProverState,
     _marker: PhantomData<(F, E)>,
 }
 
-impl<F: Field + CanonicalEncoding, E: ExtField<F>> NativeSumcheckProverChannel<E>
+impl<F: Field + CanonicalEncoding, E: ExtField<F>> SumcheckProverChannel<E>
     for ProverChannel<F, E>
 {
-    fn state_mut(&mut self) -> &mut NativeProverState {
+    fn state_mut(&mut self) -> &mut ProverState {
         &mut self.state
     }
 
-    fn sumcheck_site(
-        &self,
-        invocation: u32,
-        round: u32,
-        role: NativeSumcheckRole,
-    ) -> ProtocolSiteId {
+    fn sumcheck_site(&self, invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
         site(invocation, round, role)
     }
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
-        native_ext_challenge::<F, E, _>(
+        ext_challenge::<F, E, _>(
             &mut self.state,
-            site(invocation, round, NativeSumcheckRole::Challenge),
+            site(invocation, round, SumcheckRole::Challenge),
         )
         .map_err(|_| AkitaError::InvalidProof)
     }
 }
 
 struct VerifierChannel<'proof, F, E> {
-    state: NativeVerifierState<'proof>,
+    state: VerifierState<'proof>,
     _marker: PhantomData<(F, E)>,
 }
 
-impl<'proof, F: Field + CanonicalEncoding, E: ExtField<F>> NativeSumcheckVerifierChannel<'proof, E>
+impl<'proof, F: Field + CanonicalEncoding, E: ExtField<F>> SumcheckVerifierChannel<'proof, E>
     for VerifierChannel<'proof, F, E>
 {
-    fn state_mut(&mut self) -> &mut NativeVerifierState<'proof> {
+    fn state_mut(&mut self) -> &mut VerifierState<'proof> {
         &mut self.state
     }
 
-    fn sumcheck_site(
-        &self,
-        invocation: u32,
-        round: u32,
-        role: NativeSumcheckRole,
-    ) -> ProtocolSiteId {
+    fn sumcheck_site(&self, invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
         site(invocation, round, role)
     }
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
-        native_ext_challenge::<F, E, _>(
+        ext_challenge::<F, E, _>(
             &mut self.state,
-            site(invocation, round, NativeSumcheckRole::Challenge),
+            site(invocation, round, SumcheckRole::Challenge),
         )
         .map_err(|_| AkitaError::InvalidProof)
     }
@@ -228,7 +218,7 @@ fn case<F: Field + CanonicalEncoding, E: ExtField<F>>(reader: &mut Reader<'_>) {
             .iter()
             .fold(E::one(), |product, table| product * table[index])
     });
-    let shape = NativeSumcheckShape::new(rounds, degree).expect("valid shape");
+    let shape = SumcheckShape::new(rounds, degree).expect("valid shape");
 
     let mut instance = ProductInstance {
         tables: tables.clone(),
@@ -236,10 +226,10 @@ fn case<F: Field + CanonicalEncoding, E: ExtField<F>>(reader: &mut Reader<'_>) {
         claim,
     };
     let mut prover = ProverChannel::<F, E> {
-        state: new_native_prover(&session, b"akita-fuzz/sumcheck").expect("bounded session"),
+        state: new_prover_channel(&session, b"akita-fuzz/sumcheck").expect("bounded session"),
         _marker: PhantomData,
     };
-    let (challenges, final_claim) = prove_sumcheck_native::<F, E, _, _>(
+    let (challenges, final_claim) = prove_sumcheck::<F, E, _, _>(
         &mut InfallibleSumcheck(&mut instance),
         &mut prover,
         shape,
@@ -263,12 +253,11 @@ fn case<F: Field + CanonicalEncoding, E: ExtField<F>>(reader: &mut Reader<'_>) {
             claim,
         };
         let mut channel = VerifierChannel::<F, E> {
-            state: new_native_verifier(&session, b"akita-fuzz/sumcheck", proof)
+            state: new_verifier_channel(&session, b"akita-fuzz/sumcheck", proof)
                 .expect("bounded session"),
             _marker: PhantomData,
         };
-        let replayed =
-            verify_sumcheck_native::<F, E, _, _>(&verifier, &mut channel, shape, invocation)?;
+        let replayed = verify_sumcheck::<F, E, _, _>(&verifier, &mut channel, shape, invocation)?;
         channel
             .state
             .check_eof()

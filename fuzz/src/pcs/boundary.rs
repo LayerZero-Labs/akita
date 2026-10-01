@@ -25,6 +25,8 @@ fn kind(error: &AkitaError) -> &'static str {
         AkitaError::InvalidInput(_) => "InvalidInput",
         AkitaError::UnsupportedSchedule(_) => "UnsupportedSchedule",
         AkitaError::InvalidSetup(_) => "InvalidSetup",
+        // A failed internal invariant: never an expected rejection.
+        AkitaError::Internal(_) => "Internal",
     }
 }
 
