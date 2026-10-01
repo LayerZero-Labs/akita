@@ -188,7 +188,7 @@ impl RecursiveWitnessFlat {
 
     #[cfg(feature = "response-model-diagnostics")]
     pub(crate) fn digit(&self, index: usize) -> Option<i8> {
-        self.digits.get(index)
+        self.digits.view().get(index)
     }
 
     pub(crate) fn digits(&self) -> impl ExactSizeIterator<Item = i8> + '_ {

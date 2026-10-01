@@ -229,9 +229,10 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
 
     #[cfg(any(debug_assertions, test))]
     pub(crate) fn input_claim(&self, compact_witness: &PackedSignedDigits) -> E {
+        let digits = compact_witness.view();
         cfg_iter!(self.weights)
             .map(|weight| {
-                let witness = compact_witness
+                let witness = digits
                     .get(weight.index)
                     .map_or_else(E::zero, |value| E::from_i64(i64::from(value)));
                 witness * weight.linear
