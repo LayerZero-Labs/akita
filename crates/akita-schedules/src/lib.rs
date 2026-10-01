@@ -8,7 +8,7 @@ mod resolve;
 mod runtime;
 mod traversal;
 
-pub use akita_types::{
+pub use akita_params::{
     suffix_opening_layout, ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams,
     SisModulusProfileId, SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
 };

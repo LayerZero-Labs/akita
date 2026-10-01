@@ -1,5 +1,5 @@
 use super::*;
-use crate::layout::tail_segments::{
+use akita_params::layout::tail_segments::{
     TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
 };
 use akita_serialization::{Valid, DEFAULT_MAX_SEQUENCE_LEN};

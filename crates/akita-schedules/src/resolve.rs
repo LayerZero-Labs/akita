@@ -4,7 +4,7 @@ use crate::audit::audit_resolved_schedule;
 use crate::runtime::planned_next_witness_len;
 use crate::PlannerPolicy;
 use akita_error::AkitaError;
-use akita_types::{
+use akita_params::{
     root_input_witness_len, schedule_row_digest, validate_schedule_ring_dims,
     CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
 };
@@ -68,7 +68,7 @@ impl ResolvedScheduleRow {
     /// Check that opening claims have the exact layout authorized by this row.
     pub fn validate_opening_layout(
         &self,
-        opening_batch: &akita_types::OpeningClaimsLayout,
+        opening_batch: &akita_params::OpeningClaimsLayout,
     ) -> Result<(), AkitaError> {
         if self.profiles.opening_layout()? != *opening_batch {
             return Err(AkitaError::InvalidInput(

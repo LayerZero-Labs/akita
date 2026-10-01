@@ -143,7 +143,7 @@ batch — exactly as the generated table
 ## Background: where the two techniques already compose
 
 Both features are per-level properties of `LevelParams`
-(`crates/akita-types/src/layout/params.rs`): `witness_chunk: ChunkedWitnessCfg`
+(`crates/akita-params/src/layout/params.rs`): `witness_chunk: ChunkedWitnessCfg`
 (chunking) and `setup_contribution_mode: SetupContributionMode` +
 `setup_prefix: Option<SetupPrefixSlotId>` (offloading). They are threaded through
 the same planner, walker, prover, and verifier, and are mostly orthogonal:
@@ -417,7 +417,7 @@ recomputed setup-product challenge point.
   segment, and change `num_chunks` between prove and verify — each must reject
   with `AkitaError::InvalidProof` and no panic.
 - Assert the schedule structural guards
-  (`crates/akita-types/src/schedule.rs`): a chunked `Recursive` fold's successor
+  (`crates/akita-params/src/schedule.rs`): a chunked `Recursive` fold's successor
   still carries exactly the setup-prefix group; a chunked terminal fold is still
   rejected.
 
@@ -516,7 +516,7 @@ cycles saved by offloading vs the extra chunked-witness bytes.
 - `crates/akita-types/src/setup_contribution/plan/` (setup-contribution plan; the
   former `relation.rs`/`inputs.rs` were folded into `plan/` and
   `prepare_setup_sumcheck_terms` by refactor PR #305)
-- `crates/akita-types/src/witness.rs`
+- `crates/akita-params/src/witness.rs`
 - `crates/akita-config/src/setup_prefix_slots.rs`
 - `crates/akita-setup/src/recursive_prefixes.rs`
 - `crates/akita-pcs/tests/recursive_setup_e2e.rs`

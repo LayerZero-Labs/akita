@@ -8,8 +8,9 @@ use std::path::PathBuf;
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::sis::CommittedSourceContract;
-use akita_types::{FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout, ScheduleLookupKey};
+use akita_params::sis::CommittedSourceContract;
+use akita_params::ScheduleLookupKey;
+use akita_params::{FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout};
 
 use crate::PlannerPolicy;
 

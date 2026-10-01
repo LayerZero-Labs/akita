@@ -56,7 +56,7 @@ proof-and-work score, proof bytes, and first-direct output witness. The
 [recursive-objective rationale](../../specs/setup-offloading-planner.md#why-recursive-planning-starts-with-padded-total-setup-capacity)
 explains why exact setup inside the winning bucket is not another tie-break.
 
-The output is an `akita_types::PlannedFoldSchedule`. Its protocol value is a
+The output is an `akita_params::PlannedFoldSchedule`. Its protocol value is a
 typed `FoldSchedule { root, recursive_folds, terminal }`; its non-protocol
 `FoldScheduleEstimate` stores the modeled byte costs used for selection.
 Estimates are neither serialized nor Fiat–Shamir bound.
@@ -125,7 +125,7 @@ For a fixed field, ring dimension, decomposition policy, and opening shape, the 
 - `block_index_bits`: the number `r_blk = ceil(log2 B)` of Boolean block-index variables.
 - `position_index_bits`: the number of variables inside each block.
 
-Once those values are chosen, the rest of the level is derived rather than independently searched. Digit counts, coefficient-`L∞` bounds, matrix widths, and SIS-secure ranks come from the shared `akita_types::sis` helpers. The planner builds the A, B, and D Ajtai key parameters from those derived values and then scores the resulting proof size.
+Once those values are chosen, the rest of the level is derived rather than independently searched. Digit counts, coefficient-`L∞` bounds, matrix widths, and SIS-secure ranks come from the shared `akita_params::sis` helpers. The planner builds the A, B, and D Ajtai key parameters from those derived values and then scores the resulting proof size.
 
 Conceptually, a candidate level answers three questions:
 

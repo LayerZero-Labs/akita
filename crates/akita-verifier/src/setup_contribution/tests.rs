@@ -5,11 +5,13 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
+use akita_params::{
+    dyadic_block_ranges, gadget_row_scalars, CommitmentRingDims, CommittedGroupParams, FlatMatrix,
+    OpeningClaimsLayout, RingRole, WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout,
+};
 use akita_types::{
-    dyadic_block_ranges, gadget_row_scalars, AkitaExpandedSetup, AkitaSetupDescriptor,
-    CommitmentRingDims, CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, PhysicalBSetupPlan,
-    PreparedRelationAddress, RingRole, SetupContributionGroupInputs, WitnessLayout,
-    WitnessQuotientRowLayout, WitnessUnitLayout,
+    AkitaExpandedSetup, AkitaSetupDescriptor, PhysicalBSetupPlan, PreparedRelationAddress,
+    SetupContributionGroupInputs,
 };
 use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7, Zero};
 
@@ -61,7 +63,7 @@ fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: Commitm
     params.own_group_mut().opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(role_dims.d_a())
             .expect("test ring has a production challenge");
-    let inner_bound = akita_types::sis::rounded_up_role_a_inf_norm(
+    let inner_bound = akita_params::sis::rounded_up_role_a_inf_norm(
         params.inner().matrix.security_policy(),
         params
             .inner()
@@ -79,7 +81,7 @@ fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: Commitm
     .expect("retargeted exact A bound");
     let inner = &params.inner().matrix;
     params.own_group_mut().profile.inner.matrix =
-        akita_types::InnerCommitMatrixParams::new_unchecked(
+        akita_params::InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
             inner
                 .sis_table_key()
@@ -93,7 +95,7 @@ fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: Commitm
         );
     let outer = &params.outer().matrix;
     params.own_group_mut().profile.outer.matrix =
-        akita_types::OuterCommitMatrixParams::new_unchecked(
+        akita_params::OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),
@@ -103,7 +105,7 @@ fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: Commitm
             role_dims.d_b(),
         );
     let open = &params.open().matrix;
-    params.open_matrix = akita_types::OpenCommitMatrixParams::new_unchecked(
+    params.open_matrix = akita_params::OpenCommitMatrixParams::new_unchecked(
         open.security_policy(),
         open.sis_table_key().table_digest,
         open.sis_modulus_profile(),
@@ -124,7 +126,7 @@ fn retarget_precommitted_test_role_dims(
     group.opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
             .expect("test precommitted ring has a production challenge");
-    let inner_bound = akita_types::sis::rounded_up_role_a_inf_norm(
+    let inner_bound = akita_params::sis::rounded_up_role_a_inf_norm(
         group.profile.inner.matrix.security_policy(),
         group
             .profile
@@ -144,7 +146,7 @@ fn retarget_precommitted_test_role_dims(
     let mut layout = group.profile;
     let inner = &layout.inner.matrix;
     let inner_output_rank = inner.output_rank();
-    layout.inner.matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
+    layout.inner.matrix = akita_params::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner
             .sis_table_key()
@@ -163,7 +165,7 @@ fn retarget_precommitted_test_role_dims(
         .and_then(|width| width.checked_mul(group.profile.group.num_polynomials()))
         .and_then(|width| width.checked_mul(inner_ring_dimension / outer_ring_dimension))
         .expect("test precommitted B width");
-    layout.outer.matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
+    layout.outer.matrix = akita_params::OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -219,7 +221,7 @@ fn test_inputs_for_group_sizes(
 ) -> TestSetupInputs {
     let num_claims: usize = group_sizes.iter().copied().sum();
     let mut lp = CommittedGroupParams::params_only(
-        akita_types::sis::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
         TEST_D,
         log_basis,
         n_a,
@@ -244,10 +246,10 @@ fn test_inputs_for_group_sizes(
         .expect("test B width");
     if lp.outer().matrix.input_width() < expected_b_width {
         lp.own_group_mut().profile.outer.matrix =
-            akita_types::OuterCommitMatrixParams::new_unchecked(
-                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-                akita_types::sis::SisTableDigest::CURRENT,
-                akita_types::sis::SisModulusProfileId::Q128OffsetA7F7,
+            akita_params::OuterCommitMatrixParams::new_unchecked(
+                akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
+                akita_params::sis::SisTableDigest::CURRENT,
+                akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
                 n_b,
                 expected_b_width,
                 3,
@@ -255,10 +257,10 @@ fn test_inputs_for_group_sizes(
             );
     }
     if lp.inner().matrix.coeff_linf_bound() == Some(0) {
-        let a_bound = akita_types::sis::rounded_up_role_a_inf_norm(
-            akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-            akita_types::sis::SisTableDigest::CURRENT,
-            akita_types::sis::SisModulusProfileId::Q128OffsetA7F7,
+        let a_bound = akita_params::sis::rounded_up_role_a_inf_norm(
+            akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
+            akita_params::sis::SisTableDigest::CURRENT,
+            akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
             TEST_D,
             lp.open().digits.log_basis,
             &lp.fold_challenge_config(),
@@ -267,10 +269,10 @@ fn test_inputs_for_group_sizes(
         )
         .expect("exact test A bound");
         lp.own_group_mut().profile.inner.matrix =
-            akita_types::InnerCommitMatrixParams::new_unchecked(
-                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-                akita_types::sis::SisTableDigest::CURRENT,
-                akita_types::sis::SisModulusProfileId::Q128OffsetA7F7,
+            akita_params::InnerCommitMatrixParams::new_unchecked(
+                akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
+                akita_params::sis::SisTableDigest::CURRENT,
+                akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
                 n_a,
                 lp.inner().matrix.input_width(),
                 a_bound,
@@ -279,10 +281,10 @@ fn test_inputs_for_group_sizes(
     }
     if lp.outer().matrix.coeff_linf_bound() == 0 {
         lp.own_group_mut().profile.outer.matrix =
-            akita_types::OuterCommitMatrixParams::new_unchecked(
-                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-                akita_types::sis::SisTableDigest::CURRENT,
-                akita_types::sis::SisModulusProfileId::Q128OffsetA7F7,
+            akita_params::OuterCommitMatrixParams::new_unchecked(
+                akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
+                akita_params::sis::SisTableDigest::CURRENT,
+                akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
                 n_b,
                 lp.outer().matrix.input_width(),
                 3,
@@ -295,8 +297,8 @@ fn test_inputs_for_group_sizes(
                 .iter()
                 .map(|&_group_size| {
                     let mut layout =
-                        akita_types::GroupCommitPhaseParams::from_params_unchecked_for_test(
-                            akita_types::PolynomialGroupLayout::new(0, 1),
+                        akita_params::GroupCommitPhaseParams::from_params_unchecked_for_test(
+                            akita_params::PolynomialGroupLayout::new(0, 1),
                             &lp,
                         );
                     let expected_group_b_width = lp
@@ -307,7 +309,7 @@ fn test_inputs_for_group_sizes(
                         .and_then(|width| width.checked_mul(layout.blocks.live_blocks))
                         .and_then(|width| width.checked_mul(layout.group.num_polynomials()))
                         .expect("test precommitted B width");
-                    let outer_commit_matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
+                    let outer_commit_matrix = akita_params::OuterCommitMatrixParams::new_unchecked(
                         lp.outer().matrix.security_policy(),
                         lp.outer().matrix.sis_table_key().table_digest,
                         lp.outer().matrix.sis_modulus_profile(),
@@ -317,10 +319,10 @@ fn test_inputs_for_group_sizes(
                         lp.d_a(),
                     );
                     layout.outer.matrix = outer_commit_matrix;
-                    akita_types::GroupOpenPhaseParams {
+                    akita_params::GroupOpenPhaseParams {
                         setup_natural_len: None,
                         profile: layout,
-                        opening: akita_types::GroupOpeningPlan::evaluation_trace(
+                        opening: akita_params::GroupOpeningPlan::evaluation_trace(
                             lp.fold_challenge_config(),
                             lp.open().digits.log_basis,
                             lp.open().digits.num_digits,
@@ -377,7 +379,7 @@ fn test_witness_layout(
             chunk_num_live_blocks,
             z_range,
             e_range,
-            akita_types::RelationRowGeometry::native(TEST_D).unwrap(),
+            akita_params::RelationRowGeometry::native(TEST_D).unwrap(),
             t_range,
         ));
     }
@@ -386,7 +388,7 @@ fn test_witness_layout(
             let range = cursor..cursor + quotient_depth * TEST_D;
             cursor = range.end;
             WitnessQuotientRowLayout::new_for_test(
-                akita_types::RelationRowGeometry::native(TEST_D).unwrap(),
+                akita_params::RelationRowGeometry::native(TEST_D).unwrap(),
                 range,
             )
         })
@@ -403,7 +405,7 @@ fn prepare_test_plan(
     role_dims: CommitmentRingDims,
 ) -> Result<SetupContributionPlan<F>, AkitaError> {
     let relation_address_geometry =
-        akita_types::RelationAddressGeometry::new(role_dims, role_dims.d_a(), opening_source_len)?;
+        akita_params::RelationAddressGeometry::new(role_dims, role_dims.d_a(), opening_source_len)?;
     SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
@@ -462,8 +464,8 @@ fn test_group_plan(
     b_weights: Vec<F>,
 ) -> (SetupContributionGroupPlan<F>, DirectScanWeights<F>) {
     let physical_b = PhysicalBSetupPlan::new(
-        akita_types::CommitmentSliceGeometry::try_new(
-            akita_types::CommitmentSliceCount::ONE,
+        akita_params::CommitmentSliceGeometry::try_new(
+            akita_params::CommitmentSliceCount::ONE,
             t_cols,
             1,
             1,
@@ -613,7 +615,7 @@ fn structured_weight_fixture_with_outgoing(
         ownership_widths,
         role_dims,
         outgoing_ring_dim,
-        akita_types::CommitmentSliceCount::ONE,
+        akita_params::CommitmentSliceCount::ONE,
     )
 }
 
@@ -622,7 +624,7 @@ fn structured_weight_fixture_with_slices(
     ownership_widths: &[usize],
     role_dims: CommitmentRingDims,
     outgoing_ring_dim: usize,
-    outer_slice_count: akita_types::CommitmentSliceCount,
+    outer_slice_count: akita_params::CommitmentSliceCount,
 ) -> StructuredWeightFixture {
     let num_claims = 2;
     let depth_open = 2;
@@ -655,7 +657,7 @@ fn structured_weight_fixture_with_slices(
                 blocks,
                 z_range,
                 e_range,
-                akita_types::RelationRowGeometry::native(role_dims.d_a()).unwrap(),
+                akita_params::RelationRowGeometry::native(role_dims.d_a()).unwrap(),
                 t_range,
             );
             global_block_base += blocks;
@@ -667,7 +669,7 @@ fn structured_weight_fixture_with_slices(
             let range = cursor..cursor + depth_fold * role_dims.d_d();
             cursor = range.end;
             WitnessQuotientRowLayout::new_for_test(
-                akita_types::RelationRowGeometry::native(role_dims.d_d()).unwrap(),
+                akita_params::RelationRowGeometry::native(role_dims.d_d()).unwrap(),
                 range,
             )
         })
@@ -695,7 +697,7 @@ fn structured_weight_fixture_with_slices(
         .own_group_mut()
         .profile
         .outer_slice_count = outer_slice_count;
-    let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
+    let slice_geometry = akita_params::CommitmentSliceGeometry::try_new(
         outer_slice_count,
         num_live_blocks,
         num_claims,
@@ -707,7 +709,7 @@ fn structured_weight_fixture_with_slices(
     .unwrap();
     let outer = &inputs.level_params.outer().matrix;
     inputs.level_params.own_group_mut().profile.outer.matrix =
-        akita_types::OuterCommitMatrixParams::new_unchecked(
+        akita_params::OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),
@@ -725,9 +727,12 @@ fn structured_weight_fixture_with_slices(
     inputs.eq_tau1 = eq_tau1.into();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let opening_source_len = layout.live_coeff_len();
-    let relation_address_geometry =
-        akita_types::RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len)
-            .unwrap();
+    let relation_address_geometry = akita_params::RelationAddressGeometry::new(
+        role_dims,
+        outgoing_ring_dim,
+        opening_source_len,
+    )
+    .unwrap();
     let address_bits = relation_address_geometry.relation_lane_variable_count();
     let full_vec_randomness = (0..address_bits)
         .map(|idx| test_scalar(101 + idx as u128))
@@ -782,7 +787,7 @@ fn expected_z_setup_weights(
                     let physical = unit.z_range().start
                         + TEST_D
                             * (fold_digit + depth_fold * (commit_digit + depth_commit * position));
-                    let opening_address = akita_types::checked_opening_source_index(
+                    let opening_address = akita_params::checked_opening_source_index(
                         opening_source_len,
                         physical / TEST_D,
                     )
@@ -798,7 +803,7 @@ struct HeterogeneousSetupFixture {
     inputs: TestSetupInputs,
     groups: Vec<SetupContributionGroupInputs>,
     witness_layout: WitnessLayout,
-    relation_address_geometry: akita_types::RelationAddressGeometry,
+    relation_address_geometry: akita_params::RelationAddressGeometry,
     relation_point: Vec<F>,
     fold_gadget: Vec<F>,
 }
@@ -838,7 +843,7 @@ fn heterogeneous_setup_fixture() -> HeterogeneousSetupFixture {
         },
     );
     retarget_precommitted_test_role_dims(&mut inputs.level_params, 0, 64, 64);
-    let joint_geometry = akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+    let joint_geometry = akita_params::RelationWitnessGeometry::for_evaluation_trace_execution(
         &inputs.level_params,
         &inputs.opening_batch,
     )
@@ -848,7 +853,7 @@ fn heterogeneous_setup_fixture() -> HeterogeneousSetupFixture {
         &inputs.opening_batch,
         &joint_geometry,
         1,
-        akita_types::RelationQuotientPlan::quotient_lift(quotient_depth).unwrap(),
+        akita_params::RelationQuotientPlan::quotient_lift(quotient_depth).unwrap(),
     )
     .unwrap();
     let opening_source_len = witness_layout.live_coeff_len();
@@ -1016,7 +1021,7 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         log_basis,
         vec![test_scalar(11), test_scalar(12)],
     );
-    let joint_geometry = akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+    let joint_geometry = akita_params::RelationWitnessGeometry::for_evaluation_trace_execution(
         &inputs.level_params,
         &inputs.opening_batch,
     )
@@ -1026,7 +1031,7 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         &inputs.opening_batch,
         &joint_geometry,
         1,
-        akita_types::RelationQuotientPlan::quotient_lift(inputs.depth_fold().unwrap()).unwrap(),
+        akita_params::RelationQuotientPlan::quotient_lift(inputs.depth_fold().unwrap()).unwrap(),
     )
     .unwrap();
     let relation_geometry = inputs
@@ -1079,7 +1084,7 @@ fn z_setup_weight_oracle_uses_physical_addresses() {
         1,
     );
     let opening_source_len = layout.live_coeff_len();
-    let point = (0..akita_types::opening_domain_len(opening_source_len)
+    let point = (0..akita_params::opening_domain_len(opening_source_len)
         .unwrap()
         .trailing_zeros() as usize)
         .map(|index| test_scalar(1201 + index as u128))
@@ -1118,7 +1123,7 @@ fn z_setup_weight_oracle_uses_physical_addresses() {
     );
     assert_eq!(got, expected);
     assert_eq!(
-        akita_types::checked_opening_source_index(opening_source_len, opening_source_len - 1)
+        akita_params::checked_opening_source_index(opening_source_len, opening_source_len - 1)
             .unwrap(),
         opening_source_len - 1
     );
@@ -1175,7 +1180,7 @@ fn single_group_plan_supports_multi_chunk_weights() {
             .collect(),
     );
     let groups = vec![group];
-    let address_bits = akita_types::RelationAddressGeometry::new(
+    let address_bits = akita_params::RelationAddressGeometry::new(
         CommitmentRingDims::uniform(TEST_D),
         TEST_D,
         opening_source_len,

@@ -75,7 +75,7 @@ by `akita-planner`):
 - `sis_floor` (`SisModulusProfileId`, `min_rank_for_secure_width`,
   `ceil_supported_collision`) — renamed out of the `generated` namespace to
   `akita_types::sis_floor` since it is a security-floor table, not a generated
-  *schedule*. `akita_types::SisModulusProfileId` re-export is unchanged.
+  *schedule*. `akita_params::SisModulusProfileId` re-export is unchanged.
 - `level_proof_bytes` and the pure byte/layout helpers it uses
   (`field_bytes`, `proof_ring_vec_bytes`, `sumcheck_rounds`,
   `direct_witness_bytes`, `extension_opening_reduction_proof_bytes`,
@@ -186,7 +186,7 @@ no behavior changes there.
       `akita_types::{schedule_from_entry_bits, estimate_proof_bytes,
       generated_schedule_lookup_key}` and the `Generated*` types are gone from
       its public surface. `akita_types::sis_floor::*` and
-      `akita_types::SisModulusProfileId` remain.
+      `akita_params::SisModulusProfileId` remain.
 - [ ] `akita-planner` exposes `resolve_schedule`, the `Generated*` types, the
       shipped tables, the `*_table()` constructors, and `schedule_from_entry_bits`
       / `estimate_proof_bytes`.
@@ -213,7 +213,7 @@ Must continue passing unchanged (proves byte-for-byte equivalence):
 
 - `akita-config/tests/generated_tables.rs` (drift guard, positional parity).
 - `akita-config/tests/regen_diff.rs`, `akita-config/tests/runtime_fallback.rs`.
-- `akita-types/src/proof_size.rs` byte-formula tests — these move with the walker
+- `akita-params/src/proof_size.rs` byte-formula tests — these move with the walker
   into `akita-planner` (they exercise `level_proof_bytes` + the walker together;
   `level_proof_bytes` stays in types, so the tests that only touch it can stay,
   and the walker tests follow `schedule_from_entry_bits`).
@@ -222,7 +222,7 @@ Must continue passing unchanged (proves byte-for-byte equivalence):
 New / relocated tests:
 
 - The `generated_schedule_lookup_key` aliasing test in
-  `akita-types/src/schedule.rs` moves to `akita-planner`.
+  `akita-params/src/schedule.rs` moves to `akita-planner`.
 - A planner unit test that `resolve_schedule(.., Some(table))` and the prior
   two-call path (`table_entry` → `schedule_from_entry_bits`) agree, and that
   `resolve_schedule(.., None) == find_schedule`.
@@ -486,7 +486,7 @@ Risks to resolve first:
 - Key sources: `crates/akita-planner/src/{lib,schedule_params,ajtai_params}.rs`,
   `crates/akita-types/src/{proof_size,schedule,sis_offline}.rs`,
   `crates/akita-types/src/generated/{mod,expand}.rs`,
-  `crates/akita-types/src/layout/{params,digit_math,mod}.rs`,
+  `crates/akita-params/src/layout/{params,digit_math,mod}.rs`,
   `crates/akita-config/src/{lib,generated_families}.rs`,
   `crates/akita-config/src/bin/gen_schedule_tables.rs`,
   `crates/akita-config/tests/generated_tables.rs`.

@@ -1,8 +1,8 @@
 //! Offline interpretation of catalog-bound planner policy data.
 
 use akita_error::AkitaError;
+use akita_params::MAX_I16_LOG_BASIS;
 use akita_schedules::{ChunkedWitnessCfg, DecompositionParams, PlannerPolicy, SelectionPolicyId};
-use akita_types::MAX_I16_LOG_BASIS;
 
 /// Coefficient source whose A-matrix decomposition basis is being selected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,7 +40,7 @@ impl InnerBasisSource {
         selected_log_basis: u32,
     ) -> Result<usize, AkitaError> {
         match self {
-            Self::RawCoefficients { log_bound } => Ok(akita_types::sis::num_digits_inner_for_bound(
+            Self::RawCoefficients { log_bound } => Ok(akita_params::sis::num_digits_inner_for_bound(
                 DecompositionParams {
                     log_basis: selected_log_basis,
                     ..decomposition

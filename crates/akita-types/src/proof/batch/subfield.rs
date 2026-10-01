@@ -404,7 +404,7 @@ fn add_shifted_subfield_monomial<F: Field, const D: usize>(
         ));
     }
     if shift >= D {
-        return Err(AkitaError::Internal(
+        return Err(AkitaError::InvalidInput(
             "subfield monomial shift exceeds ring dimension".into(),
         ));
     }

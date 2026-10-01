@@ -24,12 +24,10 @@ use crate::stages::stage1::verify_stage1;
 use crate::stages::stage2::{replay_stage2, validate_stage2_replay};
 use crate::stages::stage3::verify_stage3;
 use akita_error::AkitaError;
+use akita_params::{BasisMode, CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
 use akita_types::GrindingReplay;
-use akita_types::{
-    AkitaVerifierSetup, BasisMode, CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout,
-    RingVec,
-};
+use akita_types::{AkitaVerifierSetup, FpExtEncoding, RingVec};
 use challenges::derive_multi_group_stage1_challenges;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use relation_instance::{assemble_relation_instance, validate_fold_payloads};
@@ -44,7 +42,7 @@ pub(crate) struct PreparedFoldReplay<'a, F: Field, E: Field> {
     pub(crate) commitment_payloads: Vec<RingVec<F>>,
     pub(crate) prefix: FoldPrefix<F, E>,
     pub(crate) w_len: usize,
-    pub(crate) level_layout: akita_types::NonterminalLevelLayout,
+    pub(crate) level_layout: akita_params::NonterminalLevelLayout,
     pub(crate) next_witness: NextWitnessPlan,
     pub(crate) next_witness_ring_dim: usize,
     pub(crate) next_opening_source_len: usize,
@@ -82,7 +80,7 @@ where
 {
     let level = prepared.level;
     let relation_geometry = validate_fold_payloads(&prepared)?;
-    grinding.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
+    grinding.read_fold_response(akita_params::GrindingSite::FoldResponse { level })?;
     let group_challenges = derive_multi_group_stage1_challenges::<F, E>(
         grinding,
         level,

@@ -3,6 +3,7 @@ use super::owned::CommittedSource;
 use crate::opaque::CpuWitnessHandle;
 use crate::opaque::*;
 use akita_error::AkitaError;
+use akita_params::*;
 use akita_serialization::AkitaSerialize;
 use akita_types::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced};
@@ -145,7 +146,7 @@ where
         self.validate_binding(&binding)?;
         binding.scope_lease().validate_context(context)?;
         let (parameters, chunks) = self.admitted_group(&binding)?;
-        let (negative, positive) = akita_types::sis::balanced_digit_representable_bounds(
+        let (negative, positive) = akita_params::sis::balanced_digit_representable_bounds(
             parameters.log_basis_open(),
             parameters.num_digits_fold(),
         );

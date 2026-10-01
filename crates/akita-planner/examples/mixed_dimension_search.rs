@@ -1,12 +1,12 @@
 use akita_config::{
     policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
 };
+use akita_params::{GroupCommitPhaseParams, PolynomialGroupLayout, ScheduleLookupKey};
 use akita_planner::find_schedule;
-use akita_types::{GroupCommitPhaseParams, PolynomialGroupLayout, ScheduleLookupKey};
 
-fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
+fn print_schedule(label: &str, planned: &akita_params::PlannedFoldSchedule) {
     let schedule = &planned.schedule;
-    let physical_setup = akita_types::setup_matrix_field_elements_for_schedule(schedule)
+    let physical_setup = akita_params::setup_matrix_field_elements_for_schedule(schedule)
         .expect("physical setup capacity");
     println!("{label}");
     println!(

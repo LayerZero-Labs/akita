@@ -33,26 +33,26 @@ class TestPathMatchesGlob(unittest.TestCase):
     def test_flat_schedule_and_proof_size_paths(self) -> None:
         self.assertTrue(
             mod.path_matches_glob(
-                "crates/akita-types/src/schedule.rs",
-                "crates/akita-types/src/schedule*",
+                "crates/akita-params/src/schedule.rs",
+                "crates/akita-params/src/schedule*",
             )
         )
         self.assertFalse(
             mod.path_matches_glob(
-                "crates/akita-types/src/schedule.rs",
-                "crates/akita-types/src/**/schedule*",
+                "crates/akita-params/src/schedule.rs",
+                "crates/akita-params/src/**/schedule*",
             )
         )
         self.assertTrue(
             mod.path_matches_glob(
-                "crates/akita-types/src/proof_size.rs",
-                "crates/akita-types/src/proof_size.rs",
+                "crates/akita-params/src/proof_size.rs",
+                "crates/akita-params/src/proof_size.rs",
             )
         )
         self.assertTrue(
             mod.path_matches_glob(
-                "crates/akita-types/src/layout/proof_size.rs",
-                "crates/akita-types/src/**/proof_size*",
+                "crates/akita-params/src/layout/proof_size.rs",
+                "crates/akita-params/src/**/proof_size*",
             )
         )
 
