@@ -79,13 +79,19 @@ prior findings, incomplete coverage, and `discussion_blockers` suppress that
 recommendation, even when no new inline comments are needed. The publisher
 generates this prose; do not include it in finding bodies. It remains a COMMENT
 review, never a formal APPROVE action. Other outcomes carry only the hidden
-state marker. Coverage and limits remain in review artifacts.
+state marker. Artifacts contain detailed coverage until cleanup; completion status
+and limitations remain in the hidden PR state. Snapshot and result artifacts are
+deleted after successful publication and label updates. Failed runs retain them
+for one day for investigation/retry; repeat reviews use the PR state, not artifacts.
 
 After verified publication, the publisher adds `ai-reviewed` to the PR and adds
 `ai-approved` exactly when its deterministic approval decision permits the
 recommendation. A later blocking or incomplete review removes `ai-approved`;
 PR updates clear it as well. The labels are informational review status, not
 triggers or merge authorization. The old `ai-review` selection label is retired.
+Publication retries must verify the latest review and inline-comment manifest
+before updating labels. PR reopening events invalidate older review approvals
+even when the code and PR text are identical.
 
 It refreshes authorization, revisions and trusted discussions before publication.
 It does not edit the PR description, approve, request changes, resolve threads,

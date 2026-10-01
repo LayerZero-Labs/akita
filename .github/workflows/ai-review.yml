@@ -9,7 +9,8 @@ on:
 permissions: {}
 
 concurrency:
-  group: ai-review-${{ github.event.issue.number || github.event.pull_request.number }}
+  # PR invalidation must not be displaced by a pending issue-comment run.
+  group: ai-review-${{ github.event_name }}-${{ github.event.issue.number || github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
@@ -143,3 +144,33 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ai_review/run.py publish --directory "$RUNNER_TEMP/ai-review"
+
+  cleanup:
+    needs: publish
+    if: needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      # No source checkout, model key or PR-write permission in this job.
+      - name: Delete review artifacts after successful publication
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              ...context.repo,
+              run_id: context.runId,
+              per_page: 100,
+            });
+            for (const artifact of artifacts) {
+              if (!['ai-review-snapshot', 'ai-review-result'].includes(artifact.name)) continue;
+              try {
+                await github.rest.actions.deleteArtifact({
+                  ...context.repo,
+                  artifact_id: artifact.id,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }

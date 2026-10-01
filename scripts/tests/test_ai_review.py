@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ai_review"))
 from collect import diff_lines, discussions, previous_state, tree
-from common import GitHub, MARKER, NoRedirect, REPOSITORY, ReviewError, authorize, digest, request, revision
+from common import GitHub, MARKER, NoRedirect, REPOSITORY, ReviewError, authorize, digest, reopen_epoch, request, revision
 from model import review, source_tool
 from publish import publish, prepare_review, review_text, validate
 from quota import ATTEMPT_MARKER, reserve
@@ -40,6 +40,7 @@ class FakeGitHub:
         self.comments = [self.command]
         self.reviews, self.inline, self.writes = [], [], []
         self.labels = {"documentation"}
+        self.events = []
         self.permissions_checked = []
 
     def get(self, path, payload=None, method=None):
@@ -80,6 +81,8 @@ class FakeGitHub:
         return user.get("id") == 42 and self.permission in ("admin", "maintain", "write")
 
     def pages(self, path):
+        if path == "issues/7/events":
+            return self.events
         if path == "issues/7/labels":
             return [{"name": name} for name in self.labels]
         return {"issues/7/comments": self.comments, "pulls/7/reviews": self.reviews,
@@ -89,6 +92,7 @@ class FakeGitHub:
 def snapshot(github=None):
     github = github or FakeGitHub()
     value = {"repository": REPOSITORY, "number": 7, "request": 12,
+             "reopen_epoch": reopen_epoch(github, 7),
              "revision": revision(github.pr), "merge_base": BASE,
              "title": "Fix batch", "description": "Details", "prior": None,
              "comments": discussions(github, 7), "changed": ["src/a.py"], "diff": "diff", "delta": "",
@@ -312,6 +316,121 @@ class SourceToolTests(unittest.TestCase):
 
 
 class PublicationTests(unittest.TestCase):
+    def test_reopen_then_replay_cannot_restore_approval_but_fresh_review_can(self):
+        gh = FakeGitHub()
+        value = snapshot(gh)
+        result = proposal(value)
+        result["result"]["findings"] = []
+        publish(gh, EVENT, value, result)
+        gh.events.extend([{"id": 40, "event": "closed"}, {"id": 41, "event": "reopened"}])
+        gh.labels.discard("ai-approved")
+        publish(gh, EVENT, value, result)
+        self.assertEqual(gh.labels, {"documentation", "ai-reviewed"})
+        event = copy.deepcopy(EVENT)
+        event["comment"]["id"] = 13
+        gh.comments.append({**COMMAND, "id": 13})
+        fresh = snapshot(gh)
+        fresh["request"] = 13
+        fresh["prior"] = previous_state(discussions(gh, 7), 7)
+        seal(fresh)
+        clean = proposal(fresh)
+        clean["result"]["findings"] = []
+        publish(gh, event, fresh, clean)
+        self.assertIn("ai-approved", gh.labels)
+
+    def test_reopening_after_collection_rejects_publication(self):
+        gh = FakeGitHub()
+        value = snapshot(gh)
+        gh.events.append({"id": 41, "event": "reopened"})
+        with self.assertRaisesRegex(ReviewError, "stale"):
+            publish(gh, EVENT, value, proposal(value))
+        self.assertFalse(gh.writes)
+
+    def test_concurrent_invalidation_before_label_add_cannot_leave_stale_approval(self):
+        for change in ("head", "reopened", "closed", "body"):
+            with self.subTest(change=change):
+                gh = FakeGitHub()
+                value = snapshot(gh)
+                clean = proposal(value)
+                clean["result"]["findings"] = []
+                original = gh.get
+
+                def update_pr_before_label_write(path, payload=None, method=None):
+                    if path == "issues/7/labels" and payload:
+                        # Return separate API objects so mutating the live PR
+                        # cannot also change the publisher's earlier response.
+                        if change == "reopened":
+                            gh.events.append({"id": 41, "event": "reopened"})
+                        elif change == "head":
+                            gh.pr["head"]["sha"] = "c" * 40
+                        elif change == "closed":
+                            gh.pr["state"] = "closed"
+                        else:
+                            gh.pr["body"] = "New scope"
+                        gh.labels.discard("ai-approved")
+                    return copy.deepcopy(original(path, payload, method))
+
+                with patch.object(gh, "get", side_effect=update_pr_before_label_write):
+                    publish(gh, EVENT, value, clean)
+                self.assertEqual(gh.labels, {"documentation", "ai-reviewed"})
+
+    def test_failed_verification_still_blocks_labels_on_retry(self):
+        for defect in ("missing", "duplicate", "body", "line", "side", "commit", "state", "summary"):
+            with self.subTest(defect=defect):
+                gh = FakeGitHub()
+                value = snapshot(gh)
+                result = proposal(value)
+                result["result"]["findings"][0]["priority"] = "nit"
+                original = gh.get
+
+                def corrupt_publication(path, payload=None, method=None):
+                    response = original(path, payload, method)
+                    if path == "pulls/7/reviews" and payload:
+                        if defect == "missing":
+                            gh.inline.clear()
+                        elif defect == "duplicate":
+                            gh.inline.append(copy.deepcopy(gh.inline[0]))
+                        elif defect in ("body", "line", "side"):
+                            key, content = {"body": ("body", "Altered finding"),
+                                            "line": ("original_line", 99), "side": ("side", "LEFT")}[defect]
+                            gh.inline[0][key] = content
+                        elif defect == "commit":
+                            gh.reviews[-1]["commit_id"] = "c" * 40
+                        elif defect == "state":
+                            gh.reviews[-1]["state"] = "DISMISSED"
+                        else:
+                            gh.reviews[-1]["body"] += "\nUnexpected summary"
+                    return response
+
+                with patch.object(gh, "get", side_effect=corrupt_publication):
+                    with self.assertRaisesRegex(ReviewError, "could not be verified"):
+                        publish(gh, EVENT, value, result)
+                for _ in range(2):
+                    with self.assertRaisesRegex(ReviewError, "could not be verified"):
+                        publish(gh, EVENT, value, result)
+                self.assertEqual(len(gh.reviews), 1)
+                self.assertEqual(gh.labels, {"documentation"})
+
+    def test_replay_verifies_latest_review_even_when_request_is_older(self):
+        gh = FakeGitHub()
+        old = snapshot(gh)
+        clean = proposal(old)
+        clean["result"]["findings"] = []
+        publish(gh, EVENT, old, clean)
+        event = copy.deepcopy(EVENT)
+        event["comment"]["id"] = 13
+        gh.comments.append({**COMMAND, "id": 13})
+        fresh = snapshot(gh)
+        fresh["request"] = 13
+        fresh["prior"] = previous_state(discussions(gh, 7), 7)
+        seal(fresh)
+        publish(gh, event, fresh, proposal(fresh))
+        gh.labels.discard("ai-reviewed")
+        gh.inline.clear()
+        with self.assertRaisesRegex(ReviewError, "could not be verified"):
+            publish(gh, EVENT, old, clean)
+        self.assertEqual(gh.labels, {"documentation"})
+
     def test_blocking_or_incomplete_review_removes_only_approval_label(self):
         for complete, blockers in ((True, []), (False, []), (True, ["An unresolved human finding"])):
             gh = FakeGitHub()

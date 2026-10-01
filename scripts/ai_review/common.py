@@ -124,3 +124,12 @@ def authorize(github, event):
 def revision(pr):
     return {"head": sha(pr["head"]["sha"]), "base": sha(pr["base"]["sha"]),
             "base_ref": pr["base"]["ref"], "head_ref": pr["head"]["ref"]}
+
+
+def reopen_epoch(github, number):
+    """Use durable GitHub event IDs; identical code can still have been reopened."""
+    ids = [event["id"] for event in github.pages(f"issues/{number}/events")
+           if event.get("event") == "reopened"]
+    if any(type(value) is not int or value <= 0 for value in ids):
+        raise ReviewError("Invalid PR lifecycle event")
+    return max(ids, default=0)

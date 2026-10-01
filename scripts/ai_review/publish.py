@@ -6,7 +6,7 @@ import json
 import re
 
 from collect import discussions, previous_state
-from common import MARKER, REPOSITORY, ReviewError, authorize, digest, revision
+from common import MARKER, REPOSITORY, ReviewError, authorize, digest, reopen_epoch, revision
 
 
 def bounded_text(value, limit):
@@ -106,13 +106,27 @@ def approval_recommended(state):
                     for f in state["findings"]))
 
 
+def review_body(state):
+    encoded = base64.b64encode(json.dumps(state).encode()).decode()
+    body = f"{MARKER}{encoded} -->"
+    if approval_recommended(state):
+        remaining = any(finding["status"] != "fixed" for finding in state["findings"])
+        reason = "only optional nits remain" if remaining else "no unresolved findings"
+        body += f"\n\nRecommended for approval: {reason} in this automated review."
+    if len(body.encode()) > 60_000:
+        raise ReviewError("Published review exceeds comment size limit")
+    return body
+
+
 def sync_labels(github, number, state):
     # Only the newest verified review may determine labels, including on retries.
     # These destinations and label names never come from model output.
     pr = github.get(f"pulls/{number}")
     scope = {"revision": revision(pr), "title": pr["title"], "description": pr.get("body") or ""}
     approved = (state["head"] == pr["head"]["sha"]
+                and pr["state"] == "open"
                 and state.get("scope_digest") == digest(scope)
+                and state.get("reopen_epoch") == reopen_epoch(github, number)
                 and approval_recommended(state))
     endpoint = f"issues/{number}/labels"
     labels = {label["name"] for label in github.pages(endpoint)}
@@ -121,6 +135,16 @@ def sync_labels(github, number, state):
     wanted = {"ai-reviewed"} | ({"ai-approved"} if approved else set())
     if wanted - labels:
         github.get(endpoint, {"labels": sorted(wanted - labels)})
+    if approved:
+        # Invalidation runs independently. Close the race where it removes the
+        # label between our first scope check and a stale add-label request.
+        fresh = github.get(f"pulls/{number}")
+        if (fresh["state"] != "open" or revision(fresh) != revision(pr)
+                or fresh["title"] != pr["title"] or fresh.get("body") != pr.get("body")
+                or reopen_epoch(github, number) != state["reopen_epoch"]):
+            current = {label["name"] for label in github.pages(endpoint)}
+            if "ai-approved" in current:
+                github.get(f"{endpoint}/ai-approved", method="DELETE")
 
 
 def prepare_review(snapshot, proposal):
@@ -128,15 +152,10 @@ def prepare_review(snapshot, proposal):
     result = proposal["result"]
     state = {"repository": REPOSITORY, "number": snapshot["number"], "request": snapshot["request"],
              "head": snapshot["revision"]["head"], "findings": findings,
+             "reopen_epoch": snapshot["reopen_epoch"],
              "scope_digest": digest({key: snapshot[key] for key in ("revision", "title", "description")}),
              "complete": result["complete"], "limitations": result["limitations"],
              "discussion_blockers": result["discussion_blockers"]}
-    encoded = base64.b64encode(json.dumps(state).encode()).decode()
-    body = f"{MARKER}{encoded} -->"
-    remaining = [finding for finding in findings if finding["status"] != "fixed"]
-    if approval_recommended(state):
-        reason = "only optional nits remain" if remaining else "no unresolved findings"
-        body += f"\n\nRecommended for approval: {reason} in this automated review."
     comments = []
     previous = {f["id"] for f in (snapshot["prior"] or {}).get("findings", [])}
     for finding in findings:
@@ -145,9 +164,26 @@ def prepare_review(snapshot, proposal):
                              "side": "RIGHT" if finding["revision"] == "head" else "LEFT",
                              "body": f"[{finding['priority']}] {review_text(finding['body'])}\n\n"
                                      f"<!-- akita-ai-review-finding:{finding['id']} -->"})
-    if len(body.encode()) > 60_000:
-        raise ReviewError("Published review exceeds comment size limit")
-    return {"commit_id": snapshot["revision"]["head"], "event": "COMMENT", "body": body, "comments": comments}
+    state["inline_digest"] = digest(sorted([c["path"], c["line"], c["side"], c["body"]] for c in comments))
+    return {"commit_id": snapshot["revision"]["head"], "event": "COMMENT",
+            "body": review_body(state), "comments": comments}
+
+
+def verify_review(github, number, review_id, body):
+    state = previous_state([{"id": review_id, "own": True, "body": body}], number)
+    verified = github.get(f"pulls/{number}/reviews/{review_id}")
+    # The review-specific comments endpoint returns legacy position-only data.
+    # Replies do not belong to the original publication manifest.
+    inline = [c for c in github.pages(f"pulls/{number}/comments")
+              if c.get("pull_request_review_id") == review_id and not c.get("in_reply_to_id")]
+    actual = sorted([c.get("path"), c.get("original_line"), c.get("side"), c.get("body")] for c in inline)
+    if (body != review_body(state) or verified.get("body") != body or verified.get("commit_id") != state["head"]
+            or verified.get("state") != "COMMENTED"
+            or verified.get("user", {}).get("login") != "github-actions[bot]"
+            or verified.get("user", {}).get("type") != "Bot"
+            or digest(actual) != state.get("inline_digest")):
+        raise ReviewError("Published review could not be verified; do not blindly retry")
+    return state
 
 
 def publish(github, event, snapshot, proposal):
@@ -158,21 +194,19 @@ def publish(github, event, snapshot, proposal):
     comments = discussions(github, pr["number"])
     if any(c["own"] and previous_state([c], pr["number"])["request"] == snapshot["request"]
            for c in comments):
-        sync_labels(github, pr["number"], previous_state(comments, pr["number"]))
+        latest = previous_state(comments, pr["number"])
+        selected = next((c for c in comments if c["own"] and c["kind"] == "review"
+                         and previous_state([c], pr["number"]) == latest), None)
+        if selected is None:
+            raise ReviewError("No submitted review available for label recovery")
+        state = verify_review(github, pr["number"], selected["id"], selected["body"])
+        sync_labels(github, pr["number"], state)
         return "already-published"
     if (revision(pr) != snapshot["revision"] or comments != snapshot["comments"]
-            or pr["title"] != snapshot["title"] or (pr.get("body") or "") != snapshot["description"]):
+            or pr["title"] != snapshot["title"] or (pr.get("body") or "") != snapshot["description"]
+            or reopen_epoch(github, pr["number"]) != snapshot["reopen_epoch"]):
         raise ReviewError("Review is stale; post a new /ai-review command")
     posted = github.get(f"pulls/{pr['number']}/reviews", payload)
-    verified = github.get(f"pulls/{pr['number']}/reviews/{posted['id']}")
-    # The review-specific endpoint returns legacy position-only comment objects.
-    inline = [c for c in github.pages(f"pulls/{pr['number']}/comments")
-              if c.get("pull_request_review_id") == posted["id"]]
-    expected = {(c["path"], c["line"], c["side"], c["body"]) for c in payload["comments"]}
-    actual = {(c.get("path"), c.get("original_line"), c.get("side"), c.get("body")) for c in inline}
-    if (verified.get("body") != payload["body"] or verified.get("commit_id") != payload["commit_id"]
-            or verified.get("state") != "COMMENTED" or actual != expected):
-        raise ReviewError("Published review could not be verified; do not blindly retry")
-    sync_labels(github, pr["number"], previous_state(
-        [{"id": posted["id"], "own": True, "body": verified["body"]}], pr["number"]))
+    state = verify_review(github, pr["number"], posted["id"], payload["body"])
+    sync_labels(github, pr["number"], state)
     return "published"

@@ -45,10 +45,18 @@ The same approval decision controls both the prose and label; model text cannot
 select labels. Existing unrelated PR labels are preserved. A failed publication
 does not add labels; retrying a failed label update repairs labels without
 posting the review again and uses the latest published review, not an old result.
+Every retry rechecks that review's body, commit, submitted state and exact inline
+comment contents/coordinates against the publication manifest in its state marker.
+A marker alone does not establish successful publication.
 
 `ai-reviewed` remains as review history. New commits (including force pushes),
 PR edits and reopening clear `ai-approved` through a metadata-only job with no
-checkout or OpenAI access. Label updates are asynchronous and labels are not a
+checkout or OpenAI access.
+The invalidation queue is separate from comment-triggered review runs, so an
+unrelated comment cannot replace pending invalidation. Snapshots record the latest
+GitHub reopening event ID; an old review cannot restore approval after reopening.
+The publisher also rechecks PR state after adding approval to catch updates racing
+with the separate invalidation job. Label updates are asynchronous and labels are not a
 merge authorization or proof that all current discussion has been checked.
 GitHub allows users with triage or higher access to edit labels; these labels
 are informational, not an admin-only security control. Repository setup must
@@ -76,6 +84,7 @@ checkout, so a PR cannot overwrite the trusted scripts or skill.
 | Review | Environment OpenAI key, read-only job permission | Send source evidence to the fixed OpenAI Responses endpoint; offer bounded in-memory source reads/searches |
 | Publish | PR write token; no OpenAI key | Validate the structured result, recheck authorization and snapshot, submit one COMMENT review with new inline findings on the original PR |
 | Invalidate approval | PR write token; no OpenAI key | On PR updates, remove only `ai-approved` without checking out source or running a review |
+| Cleanup | Actions write token; no OpenAI key | After successful publication and label updates, delete only this run's snapshot and result artifacts |
 
 The model receives neither credential nor process/environment access. The source
 tools cannot fetch URLs, traverse the filesystem, invoke a shell, or write to
@@ -158,7 +167,15 @@ diff, 300,000 characters of eligible discussion, 250,000 bytes per source blob,
 32 MiB per artifact, 32 model turns, 24 reads/searches per turn, 900,000 characters
 of accumulated context, 20 new findings and 100 retained findings. Exceeding a
 budget stops the run; it never silently turns into a clean review. Artifacts
-contain public source/review evidence, no credentials, and expire after one day.
+contain public source/review evidence, no credentials. After publication and label
+updates succeed, a separate cleanup job deletes `ai-review-snapshot` and
+`ai-review-result` from that run. It does not download their contents or delete
+other artifacts. Failed reviews/publications retain artifacts for the configured
+one day to support investigation and publication retries. Cleanup failures or
+cancellation may leave artifacts until expiry; deletion is not an instantaneous
+erasure guarantee. Once deleted, the exact snapshot/result can no longer be used
+for debugging or publication retries. Repeat author commands still work from the
+review state on the PR. This cleanup does not delete data already sent to OpenAI.
 
 The publisher rejects changes to head, base, branch targets, PR text or eligible
 discussion since collection. Post a fresh command after the PR stabilizes. A
@@ -172,7 +189,8 @@ malformed state fails closed and removal loses that historical baseline. Fixed
 findings stay in history so later regressions can be recognized. Reviews that do
 not qualify for an approval recommendation carry only this hidden marker in
 their review body, while any new findings are posted inline.
-Prior thread resolution is left to humans. Review artifacts retain coverage and
+Prior thread resolution is left to humans. Review artifacts contain detailed
+coverage until deletion; the hidden PR state retains completion status and
 limitations, including issues that cannot be anchored in the current diff. An external
 comment cannot spoof state by copying a marker.
 
