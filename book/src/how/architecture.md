@@ -165,7 +165,7 @@ Mixed-dimension malformed proof rejection is covered by
 | `OpeningScheduleSelection`, `GroupBatchStatement` | Exact generated-row identity and verifier-side self-describing opening statement |
 | `ValidatedScheduleCatalog` | Config-free, semantically audited expanded rows with canonical lookup indexes and artifact I/O |
 | `TrustedScheduleCatalog<Cfg>` | Config-bound trusted parameter passed to setup, prover, and verifier APIs |
-| Native Spongefish prover/verifier states | Fiat--Shamir state, proof emission/receipt, domain separation, challenges, and EOF checking |
+| Spongefish prover/verifier states | Fiat--Shamir state, proof emission/receipt, domain separation, challenges, and EOF checking |
 | `AkitaInstanceDescriptor` | Canonical transcript preamble binding algebra, setup, plan, and call shape |
 
 Opening batch kernels validate one authoritative challenge partition against every

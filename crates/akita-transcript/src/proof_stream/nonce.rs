@@ -1,26 +1,26 @@
 use spongefish::{Encoding, NargDeserialize, VerificationError};
 
-/// Canonical unsigned LEB128 nonce used by native grinding messages.
+/// Canonical unsigned LEB128 nonce used by grinding messages.
 ///
 /// The encoding is self-delimiting and rejects overflow and redundant terminal
 /// zero groups. Schedule-dependent range checks remain at the grinding-plan
 /// replay boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NativeNonce(u32);
+pub struct NonceAtom(u32);
 
-struct NativeNonceEncoding {
-    bytes: [u8; native_nonce_max_bytes(u32::BITS as u8)],
+struct NonceEncoding {
+    bytes: [u8; nonce_max_bytes(u32::BITS as u8)],
     len: usize,
 }
 
-impl AsRef<[u8]> for NativeNonceEncoding {
+impl AsRef<[u8]> for NonceEncoding {
     fn as_ref(&self) -> &[u8] {
         &self.bytes[..self.len]
     }
 }
 
-impl NativeNonce {
-    /// Wrap one nonce for canonical native proof transport.
+impl NonceAtom {
+    /// Wrap one nonce for canonical proof transport.
     #[must_use]
     pub const fn new(value: u32) -> Self {
         Self(value)
@@ -33,11 +33,11 @@ impl NativeNonce {
     }
 }
 
-impl Encoding<[u8]> for NativeNonce {
+impl Encoding<[u8]> for NonceAtom {
     fn encode(&self) -> impl AsRef<[u8]> {
         let mut value = self.0;
-        let mut encoded = NativeNonceEncoding {
-            bytes: [0; native_nonce_max_bytes(u32::BITS as u8)],
+        let mut encoded = NonceEncoding {
+            bytes: [0; nonce_max_bytes(u32::BITS as u8)],
             len: 0,
         };
         loop {
@@ -55,11 +55,11 @@ impl Encoding<[u8]> for NativeNonce {
     }
 }
 
-impl NargDeserialize for NativeNonce {
+impl NargDeserialize for NonceAtom {
     fn deserialize_from_narg(buf: &mut &[u8]) -> Result<Self, VerificationError> {
         let mut remaining = *buf;
         let mut value = 0u32;
-        for index in 0..native_nonce_max_bytes(u32::BITS as u8) {
+        for index in 0..nonce_max_bytes(u32::BITS as u8) {
             let (&byte, tail) = remaining.split_first().ok_or(VerificationError)?;
             let payload = byte & 0x7f;
             if index == 4 && payload > 0x0f {
@@ -81,7 +81,7 @@ impl NargDeserialize for NativeNonce {
 
 /// Maximum canonical unsigned LEB128 bytes for a nonce of `nonce_bits` bits.
 #[must_use]
-pub const fn native_nonce_max_bytes(nonce_bits: u8) -> usize {
+pub const fn nonce_max_bytes(nonce_bits: u8) -> usize {
     if nonce_bits == 0 {
         0
     } else {
@@ -91,7 +91,7 @@ pub const fn native_nonce_max_bytes(nonce_bits: u8) -> usize {
 
 /// Number of bytes in one canonical unsigned LEB128 nonce.
 #[must_use]
-pub const fn native_nonce_encoded_len(value: u32) -> usize {
+pub const fn nonce_encoded_len(value: u32) -> usize {
     let significant_bits = u32::BITS - value.leading_zeros();
     let encoded_bits = if significant_bits == 0 {
         1
@@ -116,14 +116,14 @@ mod tests {
             (16_384, 3),
             (u32::MAX, 5),
         ] {
-            let encoded = NativeNonce::new(value).encode().as_ref().to_vec();
+            let encoded = NonceAtom::new(value).encode().as_ref().to_vec();
             assert_eq!(encoded.len(), expected_len);
-            assert_eq!(encoded.len(), native_nonce_encoded_len(value));
+            assert_eq!(encoded.len(), nonce_encoded_len(value));
             let suffix = [0xa5, 0x5a];
             let mut argument = encoded.clone();
             argument.extend_from_slice(&suffix);
             let mut cursor = argument.as_slice();
-            let decoded = NativeNonce::deserialize_from_narg(&mut cursor).unwrap();
+            let decoded = NonceAtom::deserialize_from_narg(&mut cursor).unwrap();
             assert_eq!(decoded.into_inner(), value);
             assert_eq!(decoded.encode().as_ref(), encoded);
             assert_eq!(cursor, suffix);
@@ -140,7 +140,7 @@ mod tests {
         ] {
             let mut cursor = malformed;
             let original = cursor;
-            assert!(NativeNonce::deserialize_from_narg(&mut cursor).is_err());
+            assert!(NonceAtom::deserialize_from_narg(&mut cursor).is_err());
             assert_eq!(cursor, original);
         }
     }

@@ -1,5 +1,5 @@
-use super::root::verify_root_native;
-use super::suffix::{verify_suffix_native, NativeSuffixVerifierState};
+use super::root::verify_root;
+use super::suffix::{verify_suffix, SuffixVerifierState};
 // Top-level batched verifier orchestration once a schedule is selected.
 
 use akita_config::{transcript_instance_descriptor, CommitmentConfig};
@@ -21,7 +21,7 @@ where
         Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne + Valid,
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
 {
-    /// Verify one authoritative native Spongefish argument.
+    /// Verify one authoritative Spongefish argument.
     #[inline(never)]
     #[tracing::instrument(skip_all, name = "AkitaVerifier::batched_verify")]
     pub fn batched_verify(
@@ -108,8 +108,8 @@ where
             schedule,
             basis,
         )?;
-        let state = akita_transcript::new_native_verifier(session, &descriptor_bytes, proof)?;
-        let mut grinding = akita_types::NativeVerifierGrinding::new(state, &grinding_plan);
+        let state = akita_transcript::new_verifier_channel(session, &descriptor_bytes, proof)?;
+        let mut grinding = akita_types::VerifierGrinding::new(state, &grinding_plan);
         let raw_groups = claims
             .groups()
             .iter()
@@ -122,7 +122,7 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?;
         let raw_claims = OpeningClaims::from_groups(raw_groups)?;
-        let root = verify_root_native::<Cfg::Field, Cfg::ExtField>(
+        let root = verify_root::<Cfg::Field, Cfg::ExtField>(
             setup,
             &mut grinding,
             &raw_claims,
@@ -132,12 +132,12 @@ where
             schedule.recursive_folds.first(),
             &schedule.terminal,
         )?;
-        verify_suffix_native::<Cfg::Field, Cfg::ExtField>(
+        verify_suffix::<Cfg::Field, Cfg::ExtField>(
             setup,
             &self.terminal_ntt,
             &mut grinding,
             schedule,
-            NativeSuffixVerifierState {
+            SuffixVerifierState {
                 opening_point: root.challenges,
                 opening: root.opening,
                 witness: root.next_witness,

@@ -667,7 +667,7 @@ Unsigned LEB128 can have redundant mathematical representations unless the
 decoder enforces shortest form. For example, both `00` and `80 00` evaluate to
 zero, but Akita accepts only `00`.
 
-Akita's native decoder rejects:
+Akita's decoder rejects:
 
 - a redundant terminal zero group such as `80 00`;
 - an unterminated sequence such as a lone `80`;
@@ -705,7 +705,7 @@ encoded as the one byte `00`.
 ## 7. How PR #37 uses LEB128 with Spongefish
 
 PR #37 removes the global `TranscriptNonceStream`. At every nonzero PoW or
-fold-response site, the nonce is an inline native Spongefish prover message.
+fold-response site, the nonce is an inline Spongefish prover message.
 
 For PoW:
 
@@ -729,7 +729,7 @@ LEB128 says where that individual integer ends.
 
 Because the LEB128 proof bytes are now the absorbed transcript bytes, this is a
 protocol change rather than only a storage change. Challenges differ from main,
-and the native protocol uses a new version.
+and the protocol uses a new version.
 
 ## 8. Detailed size comparison
 
@@ -739,10 +739,10 @@ For nonzero semantic widths `b_i`, three quantities must remain distinct:
 main packed size
     = ceil(sum(b_i) / 8)
 
-native LEB128 actual size
+LEB128 actual size
     = sum(LEB128_length(chosen_nonce_i))
 
-native LEB128 maximum
+LEB128 maximum
     = sum(ceil(b_i / 7))
 ```
 
@@ -804,7 +804,7 @@ ceil(10 * 9 / 8) = 12 bytes
 For each PoW attempt, success probability is `1/4`. An honest first winner is
 normally a very small integer, so almost every LEB128 nonce is one byte. Ten
 rounds will normally use about ten bytes. A prover deliberately choosing values
-at least 128 could make every nonce two bytes, for a 20-byte native maximum.
+at least 128 could make every nonce two bytes, for a 20-byte maximum.
 
 This explains both why LEB128 performs well for the honest prover and why its
 parser bound cannot use the honest measurement.
@@ -829,7 +829,7 @@ For the recorded fp128 one-hot, one-polynomial, `nv=36` parity workload:
 | Representation | Nonce bytes | Complete proof bytes |
 | --- | ---: | ---: |
 | Pinned main packed stream | 400 | 69,776 |
-| Native LEB128 candidate | 335 | 69,756 |
+| LEB128 candidate | 335 | 69,756 |
 
 LEB128 saved 65 nonce bytes for that honest run. The complete proof saved only
 20 bytes because PR #37 also changes other framing and transcript-dependent
@@ -878,9 +878,9 @@ sum(actual LEB128 lengths) > ceil(sum(scheduled widths) / 8)
 
 They tie when the two sides are equal.
 
-## 10. Why LEB128 aligns with native Spongefish
+## 10. Why LEB128 aligns with Spongefish
 
-Spongefish's native model couples proof I/O and transcript state:
+Spongefish's model couples proof I/O and transcript state:
 
 ```text
 prover_message(value):
@@ -900,7 +900,7 @@ the proof bytes cannot diverge from the absorbed bytes.
 
 Main's aggregate stream does not fit this model naturally. Bits for different
 future sites share bytes and live in a proof-level prefix. Retaining it beside
-native Spongefish would require:
+Spongefish would require:
 
 - a second proof cursor;
 - external plan-aware bit parsing;
@@ -909,31 +909,31 @@ native Spongefish would require:
 - separate exhaustion checks for Spongefish and the nonce stream.
 
 That hybrid can be implemented soundly, but it offloads less work to
-Spongefish and recreates the synchronization boundary that native proof
+Spongefish and recreates the synchronization boundary that proof
 messages are intended to remove.
 
 LEB128 is not required by Spongefish. A fixed-width inline nonce codec would
-also align with native messages. LEB128 is the selected compromise because it
-combines native local framing with good honest-prover size.
+also align with messages. LEB128 is the selected compromise because it
+combines local framing with good honest-prover size.
 
 ## 11. Safety and accounting rules for the LEB128 design
 
-The native design is safe only if it keeps three different size concepts
+The design is safe only if it keeps three different size concepts
 separate:
 
-1. **Native-maximum planner objective.** Schedule selection adds the canonical
+1. **Maximum planner objective.** Schedule selection adds the canonical
    per-message LEB128 maxima, `sum(ceil(width_i / 7))`. This aligns the modeled
-   nonce cost with the native format, but the complete objective is still a
+   nonce cost with the format, but the complete objective is still a
    model because terminal response pricing is not an exact wire bound.
-2. **Native parser maximum.** Recursive and ordinary input boundaries use the
-   sum of per-message LEB128 maxima, along with all other native grammar and
+2. **Parser maximum.** Recursive and ordinary input boundaries use the
+   sum of per-message LEB128 maxima, along with all other grammar and
    terminal framing bounds.
 3. **Actual honest size.** Profiling measures the concrete LEB128 lengths of
    the accepted nonces.
 
 The planner objective is not a parser bound because it does not price every
 component with the conservative grammar maximum. The actual honest size is not
-a malicious-proof bound. Changing from aggregate packed-bit pricing to native
+a malicious-proof bound. Changing from aggregate packed-bit pricing to
 per-message maxima changes the optimization policy and therefore requires
 regenerating every schedule catalog.
 
@@ -962,7 +962,7 @@ PR #37 stores each nonzero nonce as an inline canonical unsigned LEB128
 Spongefish message. That representation is locally parseable, couples receipt
 with absorption, and is usually smaller for the honest PoW search because it
 does not pay proof bytes for unused search slack. Its malicious maximum can be
-larger, so native parser bounds must use per-message maxima.
+larger, so parser bounds must use per-message maxima.
 
 For Akita's goal of offloading proof transport and transcript state to
 Spongefish, LEB128 is the cleaner architecture. Main remains the stronger
@@ -972,15 +972,15 @@ choice if the sole objective is the smallest fixed worst-case nonce section.
 
 Current PR:
 
-- `crates/akita-transcript/src/native/nonce.rs` — unsigned LEB128 codec;
-- `crates/akita-transcript/src/native.rs` — native preview, commit, receipt,
+- `crates/akita-transcript/src/proof_stream/nonce.rs` — unsigned LEB128 codec;
+- `crates/akita-transcript/src/proof_stream.rs` — preview, commit, receipt,
   absorption, and challenge extraction;
-- `crates/akita-types/src/transcript_grinding/native_replay.rs` — public plan
+- `crates/akita-types/src/transcript_grinding/replay.rs` — public plan
   cursor and verifier checks;
 - `crates/akita-types/src/transcript_grinding/plan.rs` — canonical plan
   derivation and the complete component catalog;
-- `crates/akita-schedules/src/runtime.rs` — native-maximum planner estimate
-  versus complete native proof bound;
+- `crates/akita-schedules/src/runtime.rs` — maximum planner estimate
+  versus complete proof bound;
 - `specs/transcript-grinding.md` — authoritative grinding contract;
 - `book/src/how/transcript.md` — current transcript architecture and verifier
   requirements.

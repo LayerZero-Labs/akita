@@ -20,7 +20,7 @@
 //! Two replay primitives are public but are not part of the verifier's
 //! intended downstream API: [`RelationMatrixEvaluator`], which the
 //! `benchmark-support` relation-evaluator bench drives directly, and
-//! [`AkitaStage1Verifier`], which downstream range-proof lanes reuse.
+//! [`Stage1Verifier`], which downstream range-proof lanes reuse.
 
 #[cfg(any(test, feature = "benchmark-support"))]
 mod benchmark_support;
@@ -43,5 +43,5 @@ pub use benchmark_support::{
 pub use prepared_cache::build_riscv64_terminal_ntt_cache;
 pub use relation::RelationMatrixEvaluator;
 pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};
-pub use stages::stage1::AkitaStage1Verifier;
+pub use stages::stage1::Stage1Verifier;
 pub use verifier::AkitaVerifier;

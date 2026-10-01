@@ -1,9 +1,9 @@
-//! Native Spongefish proof streams and Akita-specific message codecs.
+//! Spongefish proof streams and Akita-specific message codecs.
 
 mod grinding;
 #[cfg(feature = "logging-transcript")]
 mod logging;
-mod native;
+mod proof_stream;
 mod sponge;
 
 #[cfg(not(any(feature = "transcript-blake2b", feature = "transcript-keccak")))]
@@ -21,30 +21,27 @@ pub use logging::{
     clear_thread_events, thread_events, thread_proof_ranges, ProofMessageRange, TranscriptEvent,
 };
 #[cfg(feature = "logging-transcript")]
-pub use native::finish_native_proof_ranges;
-pub use native::{
-    commit_native_grinding_nonce, exchange_native_extension_group, native_ext_challenge,
-    native_extension_slots, native_field_challenge_bytes, native_field_sampling_is_certified,
-    native_nonce_encoded_len, native_nonce_max_bytes, native_prover_field_challenge,
-    native_prover_fold_root, native_verifier_field_challenge, native_verifier_fold_root,
-    new_native_prover, new_native_verifier, preview_native_grinding_predicate, prover_context,
-    public_native_bytes, public_native_extensions, public_native_fields_prover,
-    public_native_fields_verifier, receive_native_bounded_bytes, receive_native_byte_group,
-    receive_native_bytes, receive_native_extension, receive_native_field,
-    receive_native_field_group, receive_native_grinding_nonce, search_native_grinding_nonce,
-    send_native_bounded_bytes, send_native_byte_group, send_native_bytes, send_native_extension,
-    send_native_field, send_native_field_group, verifier_context, NativeExtension, NativeField,
-    NativeFoldPreview, NativeNonce, NativeProverState, NativeU128, NativeVerifierState,
-    ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
-    NATIVE_CONTEXT_DOMAIN, NATIVE_FIELD_CHALLENGE_BYTES, NATIVE_FIELD_SAMPLING_QUERY_LIMIT,
-    NATIVE_PROTOCOL_VERSION, SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_FOLD_BINDING,
-    SITE_FAMILY_FOLD_CHALLENGE, SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD,
-    SITE_FAMILY_PHYSICAL_L2, SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2,
-    SITE_FAMILY_STAGE3, SITE_FAMILY_SUMCHECK, SITE_FAMILY_TERMINAL,
+pub use proof_stream::finish_proof_ranges;
+pub use proof_stream::{
+    commit_grinding_nonce, exchange_extension_group, ext_challenge, extension_slots,
+    field_challenge_bytes, field_sampling_is_certified, new_prover_channel, new_verifier_channel,
+    nonce_encoded_len, nonce_max_bytes, preview_grinding_predicate, prover_context,
+    prover_field_challenge, prover_fold_root, public_bytes, public_extensions,
+    public_fields_prover, public_fields_verifier, receive_bounded_bytes, receive_byte_group,
+    receive_bytes, receive_extension, receive_field, receive_field_group, receive_grinding_nonce,
+    search_grinding_nonce, send_bounded_bytes, send_byte_group, send_bytes, send_extension,
+    send_field, send_field_group, verifier_context, verifier_field_challenge, verifier_fold_root,
+    ExtensionAtom, FieldAtom, FoldPreview, NonceAtom, ProofChannel, ProtocolContextRecord,
+    ProtocolMessageKind, ProtocolSiteId, ProverChannel, U128Atom, VerifierChannel, CONTEXT_DOMAIN,
+    FIELD_CHALLENGE_BYTES, FIELD_SAMPLING_QUERY_LIMIT, PROTOCOL_VERSION,
+    SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_FOLD_CHALLENGE,
+    SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_PHYSICAL_L2,
+    SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_STAGE3,
+    SITE_FAMILY_SUMCHECK, SITE_FAMILY_TERMINAL,
 };
 pub use sponge::TranscriptSponge;
 
-/// Byte length of every native transcript challenge block.
+/// Byte length of every proof channel challenge block.
 pub const TRANSCRIPT_CHALLENGE_BLOCK_LEN: usize = 32;
 /// Byte length of every fold-challenge seed.
 pub const FOLD_CHALLENGE_SEED_LEN: usize = TRANSCRIPT_CHALLENGE_BLOCK_LEN;

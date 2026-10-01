@@ -9,9 +9,7 @@ use std::path::PathBuf;
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_types::sis::CommittedSourceContract;
-use akita_types::{
-    AkitaScheduleLookupKey, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
-};
+use akita_types::{FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout, ScheduleLookupKey};
 
 use crate::PlannerPolicy;
 
@@ -99,8 +97,8 @@ impl GroupedGenerationRequest {
     }
 
     #[must_use]
-    pub fn key(&self) -> AkitaScheduleLookupKey {
-        AkitaScheduleLookupKey {
+    pub fn key(&self) -> ScheduleLookupKey {
+        ScheduleLookupKey {
             final_group: self.final_group,
             precommitteds: self
                 .precommitted_producers

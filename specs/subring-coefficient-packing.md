@@ -1264,7 +1264,7 @@ It does not add a semantic preference for smaller `s` or larger `d_A`.
 
 Adaptive direct catalogs use `MinFirstDirectSetupThenExactProofAndWorkV5`:
 first-direct padded setup capacity, exact additive proof-and-work score,
-native proof bytes, exact total setup field elements, root output-witness
+proof bytes, exact total setup field elements, root output-witness
 length, and the canonical descriptor.
 
 The additive work term includes each fold's outgoing witness and, for a direct
@@ -1273,7 +1273,7 @@ Offloaded edges have no direct-scan charge. Recursive catalogs use
 `MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6`, which first compares
 the next-power-of-two capacity covering the total setup envelope.
 Exact setup differences within one recursive capacity bucket are tolerated
-before comparing first-direct capacity, the proof-and-work score, native proof bytes, and first-direct
+before comparing first-direct capacity, the proof-and-work score, proof bytes, and first-direct
 output-witness length. A numeric tie then goes
 directly to the canonical descriptor. No direct objective component for `s`,
 `d_A`, rank, fold count, or measured wall-clock time is added.
@@ -1340,7 +1340,7 @@ rows had first-direct padded capacities of 131,072 and 262,144 fields. Their
 six-level schedules used 458,752 and 524,288 total setup fields and modeled
 62,447 and 63,254 proof bytes. Those historical results are recorded in the
 [catalog evidence note](evidence/subring-coefficient-packing/README.md#current-fp32-nv20-adaptive-objective).
-The current catalog is regenerated under the proof-only native policy above.
+The current catalog is regenerated under the proof-only policy above.
 
 ### B slicing interaction
 

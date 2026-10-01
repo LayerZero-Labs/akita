@@ -23,9 +23,9 @@ pub struct MaterializedEntry {
 
 impl MaterializedEntry {
     #[must_use]
-    pub fn key(&self) -> AkitaScheduleLookupKey {
+    pub fn key(&self) -> ScheduleLookupKey {
         match &self.request {
-            PlanningRequest::Scalar(group) => AkitaScheduleLookupKey::single(*group),
+            PlanningRequest::Scalar(group) => ScheduleLookupKey::single(*group),
             PlanningRequest::Grouped(request) => request.key(),
         }
     }
@@ -60,7 +60,7 @@ struct MaterializationCounters {
 
 fn compact_request_label(request: &PlanningRequest) -> String {
     let key = match request {
-        PlanningRequest::Scalar(layout) => AkitaScheduleLookupKey::single(*layout),
+        PlanningRequest::Scalar(layout) => ScheduleLookupKey::single(*layout),
         PlanningRequest::Grouped(request) => request.key(),
     };
     let digest = akita_types::digest_descriptor_bytes(&key.canonical_descriptor_bytes());
@@ -231,7 +231,7 @@ fn materialized_entry(
 ) -> Result<MaterializedRequestOutcome, String> {
     let (key, result, reused_preplan) = match request {
         PlanningRequest::Scalar(key) => {
-            let lookup = AkitaScheduleLookupKey::single(*key);
+            let lookup = ScheduleLookupKey::single(*key);
             let preplanned = spec
                 .preplanned_scalar
                 .iter()
@@ -281,7 +281,7 @@ mod tests {
         let group = PolynomialGroupLayout::singleton(14);
         let descriptor = akita_config::test_support::workspace_schedule_catalog::<Dense>()
             .unwrap()
-            .resolve_key(&AkitaScheduleLookupKey::single(group))
+            .resolve_key(&ScheduleLookupKey::single(group))
             .unwrap()
             .profiles()
             .final_group;

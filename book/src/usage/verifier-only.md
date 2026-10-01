@@ -40,7 +40,7 @@ The verifier receives these public values:
 - The approved external schedule artifact or its validated catalog.
 - A schedule selection produced with the proof.
 - Ordered commitments, points, and claimed values.
-- Native Spongefish argument bytes.
+- Spongefish argument bytes.
 - The application transcript domain and basis mode.
 
 The host should place them in one versioned public artifact or authenticate the
@@ -49,7 +49,7 @@ bundle.
 
 ## Keep proof bytes opaque
 
-Do not decode the proof into a host-side Rust object. Pass the native argument
+Do not decode the proof into a host-side Rust object. Pass the argument
 bytes to verification; the approved schedule supplies all message counts and
 allocation bounds.
 

@@ -9,9 +9,9 @@ use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_schedules::PlannerPolicy;
 use akita_serialization::Valid;
-#[cfg(test)]
-use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout};
 use akita_types::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
+#[cfg(test)]
+use akita_types::{OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::marker::PhantomData;
 use std::ops::Deref;
@@ -97,7 +97,7 @@ pub use transcript_grinding_plan::derive_transcript_grinding_plan;
 pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     let recursive_setup_planning = Cfg::recursive_setup_planning();
     PlannerPolicy {
-        cost_model: akita_schedules::PlannerCostModelId::NativeNoncePayloadAndSetupEnvelopeV2,
+        cost_model: akita_schedules::PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
         selective_l2_response_model:
             akita_schedules::SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
         selection_policy: Cfg::selection_policy(),
@@ -278,7 +278,7 @@ fn row_fits_setup_capacity(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<bool, AkitaError> {
-    akita_types::AkitaScheduleLookupKey {
+    akita_types::ScheduleLookupKey {
         final_group: row.profiles().final_group.group,
         precommitteds: row.profiles().precommitteds.clone(),
     }
@@ -684,7 +684,7 @@ mod fp128_policy_tests {
                 }
             };
             let schedule = catalog
-                .resolve_key(&AkitaScheduleLookupKey::single(group))
+                .resolve_key(&ScheduleLookupKey::single(group))
                 .unwrap()
                 .schedule()
                 .clone();
@@ -759,12 +759,12 @@ mod fp128_policy_tests {
         let onehot_key = PolynomialGroupLayout::new(32, 1);
 
         let dense = dense_catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(dense_key))
+            .resolve_key(&ScheduleLookupKey::single(dense_key))
             .expect("adaptive dense schedule")
             .schedule()
             .clone();
         let onehot = onehot_catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(onehot_key))
+            .resolve_key(&ScheduleLookupKey::single(onehot_key))
             .expect("adaptive onehot schedule")
             .schedule()
             .clone();
@@ -780,7 +780,7 @@ mod fp128_policy_tests {
         let key = PolynomialGroupLayout::new(30, 4);
 
         let schedule = catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(key))
+            .resolve_key(&ScheduleLookupKey::single(key))
             .expect("adaptive batched onehot schedule")
             .schedule()
             .clone();
@@ -794,7 +794,7 @@ mod fp128_policy_tests {
             .expect("one-hot schedule catalog");
         let opening_batch = OpeningClaimsLayout::new(14, 1).expect("opening layout");
         let row = catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(
+            .resolve_key(&ScheduleLookupKey::single(
                 opening_batch.root_final_group_layout().expect("root group"),
             ))
             .expect("generated row");
@@ -826,7 +826,7 @@ mod fp128_policy_tests {
             .find_map(|num_vars| {
                 let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
                 let row = catalog
-                    .resolve_key(&AkitaScheduleLookupKey::single(
+                    .resolve_key(&ScheduleLookupKey::single(
                         layout.root_final_group_layout().ok()?,
                     ))
                     .ok()?;
@@ -864,7 +864,7 @@ mod fp128_policy_tests {
             .find_map(|num_vars| {
                 let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
                 let row = catalog
-                    .resolve_key(&AkitaScheduleLookupKey::single(
+                    .resolve_key(&ScheduleLookupKey::single(
                         layout.root_final_group_layout().ok()?,
                     ))
                     .ok()?;
@@ -906,7 +906,7 @@ mod fp128_policy_tests {
             .find_map(|num_vars| {
                 let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
                 let row = catalog
-                    .resolve_key(&AkitaScheduleLookupKey::single(
+                    .resolve_key(&ScheduleLookupKey::single(
                         layout.root_final_group_layout().ok()?,
                     ))
                     .ok()?;
@@ -954,7 +954,7 @@ mod independent_commitment_tests {
         let group = PolynomialGroupLayout::new(16, 1);
         group.validate().expect("group layout");
         let scalar_row = catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(group))
+            .resolve_key(&ScheduleLookupKey::single(group))
             .expect("generated scalar row");
         let profile = scalar_row.profiles().final_group;
         assert_eq!(profile, scalar_row.profiles().final_group);

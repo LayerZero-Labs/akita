@@ -135,7 +135,7 @@ pub trait FoldDraw {
     }
 }
 
-fn native_fold_record(
+fn fold_record(
     level: u32,
     group: u32,
     payload_len: usize,
@@ -156,20 +156,20 @@ fn native_fold_record(
     )
 }
 
-/// One group-local fold-root draw against a candidate native public state.
-pub struct NativePreviewFoldDraw<'a> {
-    preview: &'a mut akita_transcript::NativeFoldPreview,
+/// One group-local fold-root draw against a candidate public state.
+pub struct PreviewFoldDraw<'a> {
+    preview: &'a mut akita_transcript::FoldPreview,
 }
 
-impl<'a> NativePreviewFoldDraw<'a> {
+impl<'a> PreviewFoldDraw<'a> {
     /// Bind this short-lived draw adapter to one schedule-derived fold group.
     #[must_use]
-    pub const fn new(preview: &'a mut akita_transcript::NativeFoldPreview) -> Self {
+    pub const fn new(preview: &'a mut akita_transcript::FoldPreview) -> Self {
         Self { preview }
     }
 }
 
-impl FoldDraw for NativePreviewFoldDraw<'_> {
+impl FoldDraw for PreviewFoldDraw<'_> {
     fn absorb_and_squeeze(
         &mut self,
         payload: &[u8],
@@ -178,18 +178,18 @@ impl FoldDraw for NativePreviewFoldDraw<'_> {
     }
 }
 
-/// One group-local fold-root draw against the live native prover state.
-pub struct NativeProverFoldDraw<'a> {
-    state: &'a mut akita_transcript::NativeProverState,
+/// One group-local fold-root draw against the live prover channel.
+pub struct ProverFoldDraw<'a> {
+    state: &'a mut akita_transcript::ProverChannel,
     level: u32,
     group: u32,
 }
 
-impl<'a> NativeProverFoldDraw<'a> {
+impl<'a> ProverFoldDraw<'a> {
     /// Bind this short-lived draw adapter to one schedule-derived fold group.
     #[must_use]
     pub const fn new(
-        state: &'a mut akita_transcript::NativeProverState,
+        state: &'a mut akita_transcript::ProverChannel,
         level: u32,
         group: u32,
     ) -> Self {
@@ -201,31 +201,31 @@ impl<'a> NativeProverFoldDraw<'a> {
     }
 }
 
-impl FoldDraw for NativeProverFoldDraw<'_> {
+impl FoldDraw for ProverFoldDraw<'_> {
     fn absorb_and_squeeze(
         &mut self,
         payload: &[u8],
     ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
-        Ok(akita_transcript::native_prover_fold_root(
+        Ok(akita_transcript::prover_fold_root(
             self.state,
-            native_fold_record(self.level, self.group, payload.len()),
+            fold_record(self.level, self.group, payload.len()),
             payload,
         ))
     }
 }
 
-/// One group-local fold-root draw against the live native verifier state.
-pub struct NativeVerifierFoldDraw<'a, 'proof> {
-    state: &'a mut akita_transcript::NativeVerifierState<'proof>,
+/// One group-local fold-root draw against the live verifier channel.
+pub struct VerifierFoldDraw<'a, 'proof> {
+    state: &'a mut akita_transcript::VerifierChannel<'proof>,
     level: u32,
     group: u32,
 }
 
-impl<'a, 'proof> NativeVerifierFoldDraw<'a, 'proof> {
+impl<'a, 'proof> VerifierFoldDraw<'a, 'proof> {
     /// Bind this short-lived draw adapter to one schedule-derived fold group.
     #[must_use]
     pub const fn new(
-        state: &'a mut akita_transcript::NativeVerifierState<'proof>,
+        state: &'a mut akita_transcript::VerifierChannel<'proof>,
         level: u32,
         group: u32,
     ) -> Self {
@@ -237,14 +237,14 @@ impl<'a, 'proof> NativeVerifierFoldDraw<'a, 'proof> {
     }
 }
 
-impl FoldDraw for NativeVerifierFoldDraw<'_, '_> {
+impl FoldDraw for VerifierFoldDraw<'_, '_> {
     fn absorb_and_squeeze(
         &mut self,
         payload: &[u8],
     ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
-        akita_transcript::native_verifier_fold_root(
+        akita_transcript::verifier_fold_root(
             self.state,
-            native_fold_record(self.level, self.group, payload.len()),
+            fold_record(self.level, self.group, payload.len()),
             payload,
         )
     }

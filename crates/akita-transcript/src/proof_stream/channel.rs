@@ -1,8 +1,8 @@
 //! Role-generic access to one end of the proof channel.
 
 use super::{
-    native_prover_field_challenge, native_verifier_field_challenge, prover_context,
-    verifier_context, NativeProverState, NativeVerifierState, ProtocolContextRecord,
+    prover_context, prover_field_challenge, verifier_context, verifier_field_challenge,
+    ProtocolContextRecord, ProverChannel, VerifierChannel,
 };
 use akita_error::AkitaError;
 use jolt_field::CanonicalEncoding;
@@ -45,7 +45,7 @@ pub trait ProofChannel {
     fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, AkitaError>;
 }
 
-impl ProofChannel for NativeProverState {
+impl ProofChannel for ProverChannel {
     #[inline(always)]
     fn context(&mut self, record: ProtocolContextRecord) {
         prover_context(self, record);
@@ -64,11 +64,11 @@ impl ProofChannel for NativeProverState {
     }
 
     fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, AkitaError> {
-        native_prover_field_challenge(self)
+        prover_field_challenge(self)
     }
 }
 
-impl ProofChannel for NativeVerifierState<'_> {
+impl ProofChannel for VerifierChannel<'_> {
     #[inline(always)]
     fn context(&mut self, record: ProtocolContextRecord) {
         verifier_context(self, record);
@@ -87,6 +87,6 @@ impl ProofChannel for NativeVerifierState<'_> {
     }
 
     fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, AkitaError> {
-        native_verifier_field_challenge(self)
+        verifier_field_challenge(self)
     }
 }

@@ -3,7 +3,7 @@
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_types::NativeGrinding;
+use akita_types::GrindingReplay;
 use akita_types::{
     BasisMode, Commitment, CommittedGroupParams, FpExtEncoding, OpeningClaims, OpeningClaimsLayout,
     PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
@@ -90,13 +90,13 @@ where
     })
 }
 
-pub(crate) fn verify_coefficient_packing_suffix_prefix_native<F, E>(
+pub(crate) fn verify_coefficient_packing_suffix_prefix<F, E>(
     claims: &OpeningClaims<'_, E>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     lp: &CommittedGroupParams,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
 ) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
@@ -106,9 +106,9 @@ where
     let prepared_points =
         prepare_prefix_points::<F, E, _>(claims, openings, opening_batch, basis, lp)?;
     for group_index in 0..opening_batch.num_groups() {
-        akita_transcript::public_native_extensions::<F, E, _>(
+        akita_transcript::public_extensions::<F, E, _>(
             grinding.state_mut(),
-            akita_types::NativeFoldSite::GroupPoint {
+            akita_types::FoldSite::GroupPoint {
                 level,
                 group: group_index,
             }
@@ -116,9 +116,9 @@ where
             claims.group_point(group_index)?,
         )?;
     }
-    akita_transcript::public_native_extensions::<F, E, _>(
+    akita_transcript::public_extensions::<F, E, _>(
         grinding.state_mut(),
-        akita_types::NativeFoldSite::Openings { level }.id()?,
+        akita_types::FoldSite::Openings { level }.id()?,
         openings,
     )?;
     Ok(FoldClaimMaterial {

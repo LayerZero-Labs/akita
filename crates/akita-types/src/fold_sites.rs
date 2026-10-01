@@ -2,8 +2,8 @@
 //!
 //! The prover and verifier each exchange these atoms through their own
 //! role-specific transcript call, so this module owns only the site identity.
-//! Both roles name a site through [`NativeFoldSite`] and convert it with
-//! [`NativeFoldSite::id`].
+//! Both roles name a site through [`FoldSite`] and convert it with
+//! [`FoldSite::id`].
 
 use akita_error::AkitaError;
 use akita_transcript::{
@@ -16,7 +16,7 @@ use akita_transcript::{
 /// Group indices and ring dimensions are taken as `usize` and converted in
 /// [`Self::id`], so callers never narrow them just to fill a site field.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum NativeFoldSite {
+pub enum FoldSite {
     /// Root commitment rows for one opening group.
     RootCommitment { group: usize, ring_dimension: usize },
     /// Root opening point for one opening group.
@@ -45,7 +45,7 @@ pub enum NativeFoldSite {
     TerminalZPayload { level: u32 },
 }
 
-impl NativeFoldSite {
+impl FoldSite {
     /// Site identity recorded for this atom.
     ///
     /// # Errors

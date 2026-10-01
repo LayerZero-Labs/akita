@@ -4,8 +4,8 @@
 
 use akita_config::proof_optimized::{fp128, fp64};
 use akita_types::{
-    validate_schedule_ring_dims, AkitaScheduleLookupKey, CommittedGroupBatchProfile,
-    GroupCommitPhaseParams, OpeningClaimsLayout, PolynomialGroupLayout,
+    validate_schedule_ring_dims, CommittedGroupBatchProfile, GroupCommitPhaseParams,
+    OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey,
 };
 
 #[test]
@@ -14,7 +14,7 @@ fn batched_selection_preserves_typed_schedule_topology() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
         .expect("workspace schedule catalog");
     let nv = 14;
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(nv));
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(nv));
     let expected = catalog.resolve_key(&key).expect("runtime schedule");
     let batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
     let profiles = CommittedGroupBatchProfile {
@@ -52,14 +52,14 @@ fn real_presets_validate_against_setup_ring_dimension() {
     let fp128_catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>()
         .expect("fp128 workspace schedule catalog");
     let fp64_schedule = fp64_catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(
+        .resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(14),
         ))
         .expect("fp64 schedule");
     validate_schedule_ring_dims(fp64_schedule.schedule()).expect("adaptive fp64 schedule envelope");
 
     let fp128_schedule = fp128_catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(
+        .resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(14),
         ))
         .expect("fp128 schedule");

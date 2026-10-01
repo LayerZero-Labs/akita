@@ -31,14 +31,14 @@ pub fn terminal_response_bytes(field_bits: u32, shape: &TerminalResponseShape) -
 /// followed by the bounded `z` payload for each group.
 /// This differs from the legacy structured response only in using four, not
 /// eight, framing bytes per group.
-pub fn native_terminal_response_max_bytes(
+pub fn terminal_response_max_bytes(
     field_bits: u32,
     shape: &TerminalResponseShape,
 ) -> Result<usize, AkitaError> {
-    checked_native_terminal_response_bytes(field_bits, shape, shape.layout.z_payload_bytes())
+    checked_terminal_response_bytes(field_bits, shape, shape.layout.z_payload_bytes())
 }
 
-fn checked_native_terminal_response_bytes(
+fn checked_terminal_response_bytes(
     field_bits: u32,
     shape: &TerminalResponseShape,
     z_payload_bytes: usize,
@@ -74,17 +74,17 @@ fn checked_native_terminal_response_bytes(
 /// route, candidate selection may price the tighter deterministic payload bound
 /// implied by the certified energy. Unsupported shapes conservatively use the
 /// scheduled byte budget.
-pub fn native_terminal_response_planner_bytes(
+pub fn terminal_response_planner_bytes(
     field_bits: u32,
     shape: &TerminalResponseShape,
     response_l2_sq_cap: Option<u128>,
 ) -> Result<usize, AkitaError> {
     let scheduled_z_bytes = shape.layout.z_payload_bytes();
     let Some(l2_sq_cap) = response_l2_sq_cap else {
-        return checked_native_terminal_response_bytes(field_bits, shape, scheduled_z_bytes);
+        return checked_terminal_response_bytes(field_bits, shape, scheduled_z_bytes);
     };
     let [group] = shape.layout.groups.as_slice() else {
-        return checked_native_terminal_response_bytes(field_bits, shape, scheduled_z_bytes);
+        return checked_terminal_response_bytes(field_bits, shape, scheduled_z_bytes);
     };
     let Some(z_payload_bytes) =
         crate::tail_golomb_rice_low_bits::golomb_rice_l2_planner_payload_bytes(
@@ -93,9 +93,9 @@ pub fn native_terminal_response_planner_bytes(
             group.z_rice_low_bits,
         )
     else {
-        return checked_native_terminal_response_bytes(field_bits, shape, scheduled_z_bytes);
+        return checked_terminal_response_bytes(field_bits, shape, scheduled_z_bytes);
     };
-    checked_native_terminal_response_bytes(
+    checked_terminal_response_bytes(
         field_bits,
         shape,
         z_payload_bytes.min(group.z_payload_bytes),
@@ -393,27 +393,27 @@ mod tests {
     fn terminal_l2_planner_estimate_does_not_change_the_wire_cap() {
         let shape = sample_terminal_shape();
         let original = shape.clone();
-        let native = native_terminal_response_max_bytes(64, &shape).unwrap();
-        let estimated = native_terminal_response_planner_bytes(64, &shape, Some(1 << 20)).unwrap();
+        let max_bytes = terminal_response_max_bytes(64, &shape).unwrap();
+        let estimated = terminal_response_planner_bytes(64, &shape, Some(1 << 20)).unwrap();
 
-        assert!(estimated < native);
+        assert!(estimated < max_bytes);
         assert_eq!(
             shape, original,
             "planning must not mutate scheduled geometry"
         );
         assert_eq!(shape.layout.groups[0].z_payload_bytes, 4_096);
         assert_eq!(
-            native_terminal_response_planner_bytes(64, &shape, None).unwrap(),
-            native
+            terminal_response_planner_bytes(64, &shape, None).unwrap(),
+            max_bytes
         );
     }
 
     #[test]
-    fn native_terminal_bound_uses_u32_group_framing() {
+    fn terminal_bound_uses_u32_group_framing() {
         let shape = sample_terminal_shape();
         let legacy = terminal_response_bytes(64, &shape);
-        let native = native_terminal_response_max_bytes(64, &shape).unwrap();
-        assert_eq!(legacy - native, 4 * shape.layout.groups.len());
+        let max_bytes = terminal_response_max_bytes(64, &shape).unwrap();
+        assert_eq!(legacy - max_bytes, 4 * shape.layout.groups.len());
     }
 
     #[test]
@@ -422,8 +422,8 @@ mod tests {
         shape.layout.groups.push(shape.layout.groups[0]);
         shape.layout.logical_num_elems *= 2;
         assert_eq!(
-            native_terminal_response_planner_bytes(64, &shape, Some(1 << 20)).unwrap(),
-            native_terminal_response_max_bytes(64, &shape).unwrap()
+            terminal_response_planner_bytes(64, &shape, Some(1 << 20)).unwrap(),
+            terminal_response_max_bytes(64, &shape).unwrap()
         );
     }
 }

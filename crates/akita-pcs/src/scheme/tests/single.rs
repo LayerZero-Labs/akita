@@ -9,7 +9,7 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
 
             let (scheme, verifier_setup, commitment, mut proof, opening_point, opening, _) =
                 make_verify_fixture(NUM_VARS);
-            let key = akita_types::AkitaScheduleLookupKey::single(
+            let key = akita_types::ScheduleLookupKey::single(
                 akita_types::PolynomialGroupLayout::new(NUM_VARS, 1),
             );
             let selection = scheme
@@ -147,16 +147,16 @@ fn verify_rejects_wrong_opening() {
 }
 
 #[test]
-fn native_spongefish_roundtrip_and_statement_binding() {
+fn spongefish_roundtrip_and_statement_binding() {
     std::thread::Builder::new()
         .stack_size(512 * 1024 * 1024)
-        .spawn(native_spongefish_roundtrip_and_statement_binding_inner)
+        .spawn(spongefish_roundtrip_and_statement_binding_inner)
         .expect("native test thread")
         .join()
         .expect("native test thread panicked");
 }
 
-fn native_spongefish_roundtrip_and_statement_binding_inner() {
+fn spongefish_roundtrip_and_statement_binding_inner() {
     let scheme = workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     let layout = singleton_layout(&scheme, 16);
     let num_vars =

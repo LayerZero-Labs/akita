@@ -1,8 +1,8 @@
-//! Native proof-stream atoms emitted after stage-1 sumcheck challenges.
+//! Proof-stream atoms emitted after stage-1 sumcheck challenges.
 
-use crate::NativeGrinding;
+use crate::GrindingReplay;
 use akita_error::AkitaError;
-use akita_transcript::{exchange_native_extension_group, ProtocolSiteId, SITE_FAMILY_STAGE1};
+use akita_transcript::{exchange_extension_group, ProtocolSiteId, SITE_FAMILY_STAGE1};
 use core::slice;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
@@ -23,7 +23,7 @@ fn stage1_site(level: u32, stage: u32, role: u32) -> ProtocolSiteId {
 ///
 /// The verifier passes `claims` sized from the schedule and receives them in
 /// place.
-pub fn native_stage1_child_claims<F, E, G>(
+pub fn stage1_child_claims<F, E, G>(
     grinding: &mut G,
     level: u32,
     stage: u32,
@@ -32,9 +32,9 @@ pub fn native_stage1_child_claims<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: NativeGrinding,
+    G: GrindingReplay,
 {
-    exchange_native_extension_group::<F, E, _>(
+    exchange_extension_group::<F, E, _>(
         grinding.state_mut(),
         stage1_site(level, stage, ROLE_CHILD_CLAIMS),
         claims,
@@ -42,7 +42,7 @@ where
 }
 
 /// Exchange the final range-image evaluation after leaf sumcheck challenges.
-pub fn native_stage1_range_image<F, E, G>(
+pub fn stage1_range_image<F, E, G>(
     grinding: &mut G,
     level: u32,
     stage: u32,
@@ -51,9 +51,9 @@ pub fn native_stage1_range_image<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: NativeGrinding,
+    G: GrindingReplay,
 {
-    exchange_native_extension_group::<F, E, _>(
+    exchange_extension_group::<F, E, _>(
         grinding.state_mut(),
         stage1_site(level, stage, ROLE_RANGE_IMAGE),
         slice::from_mut(&mut evaluation),
@@ -65,10 +65,10 @@ where
 mod tests {
     use super::*;
     use crate::{
-        ChallengeFieldOrder, GrindingPlan, GrindingRun, GrindingSite, NativeProverGrinding,
-        NativeVerifierGrinding,
+        ChallengeFieldOrder, GrindingPlan, GrindingRun, GrindingSite, ProverGrinding,
+        VerifierGrinding,
     };
-    use akita_transcript::{new_native_prover, new_native_verifier};
+    use akita_transcript::{new_prover_channel, new_verifier_channel};
     use jolt_field::{FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
@@ -90,27 +90,26 @@ mod tests {
         .unwrap();
         let mut claims = [E::from_u64(3), E::from_u64(5), E::from_u64(8)];
         let range_image = E::from_u64(13);
-        let state = new_native_prover(b"native-stage1", b"fixture").unwrap();
-        let mut prover = NativeProverGrinding::new(state, &plan);
-        native_stage1_child_claims::<F, E, _>(&mut prover, level, stage, &mut claims).unwrap();
+        let state = new_prover_channel(b"native-stage1", b"fixture").unwrap();
+        let mut prover = ProverGrinding::new(state, &plan);
+        stage1_child_claims::<F, E, _>(&mut prover, level, stage, &mut claims).unwrap();
         let prover_gamma = prover
             .grinded_ext_challenge::<F, E>(GrindingSite::Stage1InterstageBatch { level, stage })
             .unwrap();
-        native_stage1_range_image::<F, E, _>(&mut prover, level, stage + 1, range_image).unwrap();
+        stage1_range_image::<F, E, _>(&mut prover, level, stage + 1, range_image).unwrap();
         let proof = prover.finish().unwrap();
 
-        let state = new_native_verifier(b"native-stage1", b"fixture", &proof).unwrap();
-        let mut verifier = NativeVerifierGrinding::new(state, &plan);
+        let state = new_verifier_channel(b"native-stage1", b"fixture", &proof).unwrap();
+        let mut verifier = VerifierGrinding::new(state, &plan);
         let mut received = [E::zero(); 3];
-        native_stage1_child_claims::<F, E, _>(&mut verifier, level, stage, &mut received).unwrap();
+        stage1_child_claims::<F, E, _>(&mut verifier, level, stage, &mut received).unwrap();
         assert_eq!(received, claims);
         let verifier_gamma = verifier
             .grinded_ext_challenge::<F, E>(GrindingSite::Stage1InterstageBatch { level, stage })
             .unwrap();
         assert_eq!(verifier_gamma, prover_gamma);
         assert_eq!(
-            native_stage1_range_image::<F, E, _>(&mut verifier, level, stage + 1, E::zero())
-                .unwrap(),
+            stage1_range_image::<F, E, _>(&mut verifier, level, stage + 1, E::zero()).unwrap(),
             range_image
         );
         verifier.finish().unwrap();

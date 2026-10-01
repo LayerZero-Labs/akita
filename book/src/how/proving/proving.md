@@ -26,7 +26,7 @@ A nonterminal fold starts with four kinds of information.
 
 The fold streams:
 
-- one schedule-shaped sequence of native commitment payloads and sum-check messages;
+- one schedule-shaped sequence of commitment payloads and sum-check messages;
 - one smaller digit witness for the successor;
 - one opening claim that binds that witness at the final Stage 2 challenge; and
 - when setup offloading is selected, a separate opening claim for one prepared

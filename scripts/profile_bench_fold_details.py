@@ -747,18 +747,18 @@ def render_grinding_plan_details(
     displayed_baseline_runs = aggregate_grinding_runs(baseline_runs)
     baseline_by_key = {grinding_run_key(run): run for run in displayed_baseline_runs}
     current_packed_estimate = int(grinding_plan["packed_nonce_estimate_bytes"])
-    current_native_max = int(grinding_plan["native_nonce_max_bytes"])
+    current_max = int(grinding_plan["native_nonce_max_bytes"])
     if baseline_grinding_plan is not None:
         baseline_packed_estimate = int(baseline_grinding_plan["packed_nonce_estimate_bytes"])
-        baseline_native_max_value = baseline_grinding_plan.get("native_nonce_max_bytes")
-        baseline_native_max: int | None = (
-            int(baseline_native_max_value)
-            if baseline_native_max_value is not None
+        baseline_max_value = baseline_grinding_plan.get("native_nonce_max_bytes")
+        baseline_max: int | None = (
+            int(baseline_max_value)
+            if baseline_max_value is not None
             else None
         )
         baseline_total_bits: int | None = int(baseline_grinding_plan["total_nonce_bits"])
     else:
-        baseline_native_max = None
+        baseline_max = None
         legacy_storage = legacy_grinding_storage(baseline_proof_levels)
         if legacy_storage is None:
             baseline_total_bits = None
@@ -775,7 +775,7 @@ def render_grinding_plan_details(
         "| Additive per-message LEB128 maxima | "
         + grinding_int_choice(grinding_plan["total_nonce_bits"], baseline_total_bits)
         + " | "
-        + grinding_int_choice(current_native_max, baseline_native_max)
+        + grinding_int_choice(current_max, baseline_max)
         + " | "
         + grinding_int_choice(current_packed_estimate, baseline_packed_estimate)
         + " | "

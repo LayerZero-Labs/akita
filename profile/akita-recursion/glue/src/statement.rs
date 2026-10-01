@@ -44,7 +44,7 @@ pub struct AkitaJoltInputs<F: Field, const D: usize, E: Field = F> {
     pub commitment: CommittedGroup<F>,
     /// Expanded verifier setup (matrix prefix usable by the verifier kernel).
     pub verifier_setup: AkitaVerifierSetup<F>,
-    /// Canonical native Spongefish argument bytes.
+    /// Canonical Spongefish argument bytes.
     pub proof: Vec<u8>,
 }
 

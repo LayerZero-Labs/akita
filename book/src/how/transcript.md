@@ -12,7 +12,7 @@ which bytes are absorbed and when each challenge is drawn.
 
 ## The transcript layer
 
-Production uses Spongefish's native prover and verifier states. Its domain
+Production uses Spongefish's prover and verifier states. Its domain
 separator includes a backend-specific protocol tag, the caller's length-framed
 session bytes, and canonical instance bytes. The selected backend is BLAKE2b
 or Keccak; each has its own protocol tag.
@@ -23,10 +23,10 @@ the implementation uses 32-bit or 64-bit pointers. Akita keeps a known-answer
 vector for this boundary.
 
 Every logical message or challenge has a fixed public diagnostic context
-record. Proof values use native prover emission and verifier receipt, derived
-or public values use native public messages, and verifier challenges use native
+record. Proof values use prover emission and verifier receipt, derived
+or public values use public messages, and verifier challenges use
 verifier messages. Field atoms are canonical. The one variable-size terminal
-payload carries a checked native length atom before its body.
+payload carries a checked length atom before its body.
 
 Production absorbs and squeezes are positional. Context records and callsite
 labels are diagnostics and do not enter sponge bytes. The backend-specific
@@ -230,7 +230,7 @@ Nonzero proof-of-work sites and every fold-response site carry an inline
 canonical unsigned LEB128 nonce at the exact protocol position where it is
 used. A decoder does not
 obtain a nonce count or policy from proof bytes. The plan cursor checks sites in
-order and must be exhausted when native EOF is checked.
+order and must be exhausted when EOF is checked.
 
 The planner accepts only complete schedules whose expanded grinding query
 count is less than `u32::MAX`. If the objective-best candidate exceeds that
@@ -240,7 +240,7 @@ admitted by the planner's existing bounded candidate-generation policies.
 domain; it does not prove that no mathematically valid schedule exists among
 layouts discarded by those policies.
 
-Proof-of-work and fold-response nonces use distinct native message kinds and
+Proof-of-work and fold-response nonces use distinct message kinds and
 serve different purposes.
 
 ### Protected challenge queries
@@ -270,9 +270,9 @@ leaves the transcript unchanged at that site.
 The additional seven nonce bits provide room for honest search beyond the
 expected $2^g$ attempts. Storage is self-delimiting and canonical; the semantic
 width is still checked from the public plan. Schedule selection adds the
-per-message native maxima, `ceil(semantic_nonce_width / 7)`. This deterministic
+per-message maxima, `ceil(semantic_nonce_width / 7)`. This deterministic
 cost is not the realized LEB128 wire size. The verifier safety bound is derived
-separately from the complete native grammar.
+separately from the complete grammar.
 
 ### The loss of a claim-batching challenge
 
@@ -367,11 +367,11 @@ preserve those messages in the new state.
 The current descriptor's `SetupSection.protocol_features.zk` is
 `false`. Transcript binding does not add hiding or zero knowledge.
 
-The native protocol uses a descriptor-bound positional grammar. Context records
+The protocol uses a descriptor-bound positional grammar. Context records
 capture semantic sites and widths for logging diagnostics without adding
 production hashing work. Tests cover prover/verifier vectors, tampering,
 truncation, statement/session binding, and EOF; they do not freeze one
-proof-byte digest for all future schedules. The native grinding grammar and
+proof-byte digest for all future schedules. The grinding grammar and
 nonce encoding are documented in
 [`specs/transcript-grinding.md`](../../../specs/transcript-grinding.md) and
 [`specs/grinding-nonce-encoding.md`](../../../specs/grinding-nonce-encoding.md).
@@ -382,12 +382,12 @@ nonce encoding are documented in
   shared descriptor and grinding plan.
 - `crates/akita-types/src/instance_descriptor/mod.rs` owns descriptor fields,
   canonical serialization, and version validation.
-- `crates/akita-transcript/src/native.rs` owns native state construction,
+- `crates/akita-transcript/src/proof_stream.rs` owns state construction,
   context framing, canonical atom codecs, bounded bytes, and EOF-compatible
   proof transport.
 - `crates/akita-types/src/transcript_grinding/plan.rs` defines the ordered
-  plan; `crates/akita-types/src/transcript_grinding/native_replay.rs` couples
-  native nonce transport, predicate checks, challenges, and plan progress.
+  plan; `crates/akita-types/src/transcript_grinding/replay.rs` couples
+  nonce transport, predicate checks, challenges, and plan progress.
 - `crates/akita-challenges/src/sampler/xof.rs` derives the indexed sparse
   challenge streams.
 - `crates/akita-verifier/src/fold/mod.rs` and

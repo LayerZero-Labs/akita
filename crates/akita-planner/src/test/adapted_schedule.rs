@@ -126,7 +126,7 @@ fn assert_frozen_skeleton(main: &akita_types::FoldSchedule, adapted: &akita_type
 
 fn scalar_row(group: PolynomialGroupLayout) -> Result<ResolvedScheduleRow, AkitaError> {
     akita_config::test_support::workspace_schedule_catalog::<Dense>()?
-        .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .resolve_key(&ScheduleLookupKey::single(group))
         .cloned()
 }
 
@@ -138,7 +138,7 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
     let pre_group = PolynomialGroupLayout::singleton(14);
     let pre_row = scalar_row(pre_group).expect("scalar precommit row");
     let pre_profile = pre_row.profiles().final_group;
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group: main_group,
         precommitteds: vec![pre_profile],
     };
@@ -259,7 +259,7 @@ fn adapted_schedule_rejects_non_grouped_or_mismatched_requests() {
     .expect_err("adaptation without precommits must fail");
     assert!(matches!(scalar_error, AkitaError::InvalidInput(_)));
 
-    let mismatch = AkitaScheduleLookupKey {
+    let mismatch = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(15),
         precommitteds: vec![main_row.profiles().final_group],
     };
@@ -284,7 +284,7 @@ fn adapted_schedule_forces_the_frozen_split_after_grouped_growth() {
         .expect("large scalar precommit row")
         .profiles()
         .final_group;
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group: main_group,
         precommitteds: vec![pre_profile; 4],
     };
@@ -308,10 +308,10 @@ fn adapted_schedule_falls_back_to_the_full_search_when_the_frozen_suffix_is_infe
         .expect("one-hot catalog");
     let main_group = PolynomialGroupLayout::singleton(16);
     let main_row = catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(main_group))
+        .resolve_key(&ScheduleLookupKey::single(main_group))
         .expect("scalar main row");
     let pre_profile = catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(
+        .resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(14),
         ))
         .expect("scalar precommit row")
@@ -366,9 +366,9 @@ fn adapted_schedule_rebuilds_a_checked_in_onehot_group_shape() {
         .cloned()
         .expect("checked-in grouped reference row");
     let main_row = catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(final_group))
+        .resolve_key(&ScheduleLookupKey::single(final_group))
         .expect("standalone main row");
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group,
         precommitteds: reference.profiles().precommitteds.clone(),
     };
@@ -405,7 +405,7 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
             .expect("recursive one-hot catalog");
     let main_group = PolynomialGroupLayout::singleton(36);
     let main_row = recursive_catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(main_group))
+        .resolve_key(&ScheduleLookupKey::single(main_group))
         .expect("recursive standalone main row");
     assert!(main_row
         .schedule()
@@ -414,13 +414,13 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
         .any(|fold| fold.params.setup_prefix().is_some()));
     let pre_profile = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
         .expect("one-hot catalog")
-        .resolve_key(&AkitaScheduleLookupKey::single(
+        .resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(14),
         ))
         .expect("standalone precommit row")
         .profiles()
         .final_group;
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group: main_group,
         precommitteds: vec![pre_profile],
     };
@@ -507,7 +507,7 @@ fn benchmark_adapted_schedule_against_full_plans() {
     for (name, (main_vars, main_polys), pre_layouts, expect_success) in cases {
         let main_group = PolynomialGroupLayout::new(main_vars, main_polys);
         let main_row = catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(main_group))
+            .resolve_key(&ScheduleLookupKey::single(main_group))
             .expect("standalone main row");
         let precommitteds = pre_layouts
             .iter()
@@ -518,7 +518,7 @@ fn benchmark_adapted_schedule_against_full_plans() {
                     catalog.catalog()
                 };
                 producer_catalog
-                    .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+                    .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
                         vars, polys,
                     )))
                     .expect("standalone producer row")
@@ -526,7 +526,7 @@ fn benchmark_adapted_schedule_against_full_plans() {
                     .final_group
             })
             .collect::<Vec<_>>();
-        let key = AkitaScheduleLookupKey {
+        let key = ScheduleLookupKey {
             final_group: main_group,
             precommitteds,
         };
@@ -591,13 +591,13 @@ fn benchmark_adapted_schedule_against_full_plans() {
                 admitted
                     .resolve_key(&key)
                     .expect("successful adaptation must resolve from the admitted catalog");
-                let adapted_bytes = akita_schedules::expanded_schedule_native_proof_estimate_bytes(
+                let adapted_bytes = akita_schedules::expanded_schedule_proof_estimate_bytes(
                     &key,
                     &adapted.schedule,
                     &policy,
                 )
                 .expect("adapted payload bytes");
-                let full_bytes = akita_schedules::expanded_schedule_native_proof_estimate_bytes(
+                let full_bytes = akita_schedules::expanded_schedule_proof_estimate_bytes(
                     &key, &reference, &policy,
                 )
                 .expect("full-plan payload bytes");

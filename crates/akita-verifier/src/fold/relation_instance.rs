@@ -1,7 +1,7 @@
 //! The fold's public ring-relation instance: payload shape checks before the
 //! fold transcript, then instance assembly from the drawn fold challenges.
 
-use super::NativePreparedFoldReplay;
+use super::PreparedFoldReplay;
 use crate::stages::opening_claims::PreparedFoldOpeningPoint;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
@@ -17,7 +17,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 /// Runs before the fold response is read, so every rejection here precedes
 /// any fold transcript operation.
 pub(super) fn validate_fold_payloads<F, E>(
-    prepared: &NativePreparedFoldReplay<'_, F, E>,
+    prepared: &PreparedFoldReplay<'_, F, E>,
 ) -> Result<RelationWitnessGeometry, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
@@ -62,7 +62,7 @@ where
 /// Assemble the fold's ring-relation instance from the evaluation-batch row
 /// coefficients, the transmitted payloads, and the drawn fold challenges.
 pub(super) fn assemble_relation_instance<F, E>(
-    prepared: &NativePreparedFoldReplay<'_, F, E>,
+    prepared: &PreparedFoldReplay<'_, F, E>,
     relation_geometry: &RelationWitnessGeometry,
     group_challenges: Vec<GroupFoldChallenges>,
 ) -> Result<RingRelationInstance<F>, AkitaError>

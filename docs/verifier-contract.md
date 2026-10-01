@@ -41,7 +41,7 @@ Transcript replay is also shape-bounded. Before decoding the headerless proof,
 the verifier derives the canonical `GrindingPlan` and successor-aware fold
 geometry from the validated public schedule and opening layout. That one
 geometry determines each sumcheck round count, recursive opening layout, and
-native proof-stream byte bound. Nonzero grinding and fold-response nonces are
+proof-stream byte bound. Nonzero grinding and fold-response nonces are
 canonical inline `u32` messages. Replay rejects a wrong site or query kind,
 truncation, trailing bytes, incomplete plan consumption, and an out-of-range
 nonce.

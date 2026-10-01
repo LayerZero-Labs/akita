@@ -10,10 +10,10 @@ mod extension_claim;
 mod single_field;
 
 pub(crate) use coefficient_packing::{
-    verify_coefficient_packing_root_prefix, verify_coefficient_packing_suffix_prefix_native,
+    verify_coefficient_packing_root_prefix, verify_coefficient_packing_suffix_prefix,
 };
 pub(crate) use extension_claim::{
-    verify_extension_claim_suffix_prefix_native, verify_extension_claim_terminal_suffix_native,
+    verify_extension_claim_suffix_prefix, verify_extension_claim_terminal_suffix,
 };
 pub(crate) use single_field::prepare_single_field_suffix_groups;
 
@@ -39,10 +39,10 @@ pub(crate) struct FoldClaimMaterial<F: Field, E: Field> {
     pub(crate) reduction_factors: Option<Vec<E>>,
 }
 
-pub(crate) fn finalize_native_claims<F, E>(
+pub(crate) fn finalize_claims<F, E>(
     opening_shape: &OpeningClaimsLayout,
     material: FoldClaimMaterial<F, E>,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
 ) -> Result<FoldPrefix<F, E>, AkitaError>
 where
@@ -54,7 +54,7 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let row_coefficients = akita_types::row_coefficients_native::<F, E, _>(
+    let row_coefficients = akita_types::row_coefficients::<F, E, _>(
         opening_shape,
         akita_types::GrindingSite::EvaluationBatch { level },
         grinding,

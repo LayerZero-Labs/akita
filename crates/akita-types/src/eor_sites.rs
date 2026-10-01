@@ -1,9 +1,9 @@
-//! Canonical native proof-stream grammar for extension-opening reduction.
+//! Canonical proof-stream grammar for extension-opening reduction.
 
-use crate::{tensor_opening_split, GrindingSite, NativeGrinding, OpeningClaimsLayout};
+use crate::{tensor_opening_split, GrindingReplay, GrindingSite, OpeningClaimsLayout};
 use akita_error::{checked, AkitaError};
 use akita_transcript::{
-    exchange_native_extension_group, public_native_extensions, ProtocolSiteId,
+    exchange_extension_group, public_extensions, ProtocolSiteId,
     SITE_FAMILY_EXTENSION_OPENING_REDUCTION,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
@@ -13,11 +13,11 @@ const STAGE_PARTIALS: u32 = 2;
 const STAGE_FINAL_CLAIMS: u32 = 3;
 
 /// EOR has one sumcheck invocation at each fold level.
-pub const NATIVE_EOR_SUMCHECK_INVOCATION: u32 = 0;
+pub const EOR_SUMCHECK_INVOCATION: u32 = 0;
 
-/// Native EOR prefix values shared by arithmetic proving and verification.
+/// EOR prefix values shared by arithmetic proving and verification.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NativeEorPrefix<E: Field> {
+pub struct EorPrefix<E: Field> {
     /// Proof-supplied tensor column partials in canonical claim-major order.
     pub partials: Vec<E>,
     /// Tensor-row reduction point protected by the opening-point grind.
@@ -79,29 +79,29 @@ where
     Ok((eta, claim_coefficients))
 }
 
-/// Exchange and bind the native EOR prefix before its sumcheck rounds.
+/// Exchange and bind the EOR prefix before its sumcheck rounds.
 ///
 /// The prover passes its tensor column partials; the verifier passes
 /// `width * num_claims` placeholders and receives them in place.
-pub fn native_eor_prefix<F, E, G>(
+pub fn eor_prefix<F, E, G>(
     grinding: &mut G,
     opening_batch: &OpeningClaimsLayout,
     openings: &[E],
     mut partials: Vec<E>,
     level: u32,
-) -> Result<NativeEorPrefix<E>, AkitaError>
+) -> Result<EorPrefix<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: NativeGrinding,
+    G: GrindingReplay,
 {
     let (split_bits, _) = validate_shape::<F, E>(opening_batch, openings, partials.len())?;
-    public_native_extensions::<F, E, _>(
+    public_extensions::<F, E, _>(
         grinding.state_mut(),
         eor_site(level, STAGE_OPENINGS),
         openings,
     )?;
-    exchange_native_extension_group::<F, E, _>(
+    exchange_extension_group::<F, E, _>(
         grinding.state_mut(),
         eor_site(level, STAGE_PARTIALS),
         &mut partials,
@@ -110,7 +110,7 @@ where
         batch_challenges::<E>(opening_batch, level, split_bits, |site, count| {
             grinding.grinded_ext_challenges::<F, E>(site, count)
         })?;
-    Ok(NativeEorPrefix {
+    Ok(EorPrefix {
         partials,
         eta,
         claim_coefficients,
@@ -118,7 +118,7 @@ where
 }
 
 /// Exchange the schedule-fixed EOR final-claim vector after sumcheck replay.
-pub fn native_eor_final_claims<F, E, G>(
+pub fn eor_final_claims<F, E, G>(
     grinding: &mut G,
     opening_batch: &OpeningClaimsLayout,
     final_claims: &mut [E],
@@ -127,12 +127,12 @@ pub fn native_eor_final_claims<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: NativeGrinding,
+    G: GrindingReplay,
 {
     if final_claims.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }
-    exchange_native_extension_group::<F, E, _>(
+    exchange_extension_group::<F, E, _>(
         grinding.state_mut(),
         eor_site(level, STAGE_FINAL_CLAIMS),
         final_claims,
@@ -143,10 +143,10 @@ where
 mod tests {
     use super::*;
     use crate::{
-        ChallengeFieldOrder, GrindingPlan, GrindingRun, NativeProverGrinding,
-        NativeVerifierGrinding, PolynomialGroupLayout,
+        ChallengeFieldOrder, GrindingPlan, GrindingRun, PolynomialGroupLayout, ProverGrinding,
+        VerifierGrinding,
     };
-    use akita_transcript::{new_native_prover, new_native_verifier};
+    use akita_transcript::{new_prover_channel, new_verifier_channel};
     use jolt_field::{FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
@@ -191,19 +191,19 @@ mod tests {
     }
 
     #[test]
-    fn native_eor_grammar_roundtrips_without_structured_proof() {
+    fn eor_grammar_roundtrips_without_structured_proof() {
         let level = 3;
         let (plan, layout, openings, partials, mut final_claims) = fixture();
-        let state = new_native_prover(b"native-eor", b"fixture").unwrap();
-        let mut prover = NativeProverGrinding::new(state, &plan);
+        let state = new_prover_channel(b"native-eor", b"fixture").unwrap();
+        let mut prover = ProverGrinding::new(state, &plan);
         let prover_prefix =
-            native_eor_prefix::<F, E, _>(&mut prover, &layout, &openings, partials, level).unwrap();
-        native_eor_final_claims::<F, E, _>(&mut prover, &layout, &mut final_claims, level).unwrap();
+            eor_prefix::<F, E, _>(&mut prover, &layout, &openings, partials, level).unwrap();
+        eor_final_claims::<F, E, _>(&mut prover, &layout, &mut final_claims, level).unwrap();
         let proof = prover.finish().unwrap();
 
-        let state = new_native_verifier(b"native-eor", b"fixture", &proof).unwrap();
-        let mut verifier = NativeVerifierGrinding::new(state, &plan);
-        let verifier_prefix = native_eor_prefix::<F, E, _>(
+        let state = new_verifier_channel(b"native-eor", b"fixture", &proof).unwrap();
+        let mut verifier = VerifierGrinding::new(state, &plan);
+        let verifier_prefix = eor_prefix::<F, E, _>(
             &mut verifier,
             &layout,
             &openings,
@@ -213,26 +213,26 @@ mod tests {
         .unwrap();
         assert_eq!(verifier_prefix, prover_prefix);
         let mut received = vec![E::zero(); final_claims.len()];
-        native_eor_final_claims::<F, E, _>(&mut verifier, &layout, &mut received, level).unwrap();
+        eor_final_claims::<F, E, _>(&mut verifier, &layout, &mut received, level).unwrap();
         assert_eq!(received, final_claims);
         verifier.finish().unwrap();
     }
 
     #[test]
-    fn native_eor_rejects_truncation_before_final_claims() {
+    fn eor_rejects_truncation_before_final_claims() {
         let level = 3;
         let (plan, layout, openings, partials, mut final_claims) = fixture();
-        let state = new_native_prover(b"native-eor", b"fixture").unwrap();
-        let mut prover = NativeProverGrinding::new(state, &plan);
+        let state = new_prover_channel(b"native-eor", b"fixture").unwrap();
+        let mut prover = ProverGrinding::new(state, &plan);
         let partial_count = partials.len();
-        native_eor_prefix::<F, E, _>(&mut prover, &layout, &openings, partials, level).unwrap();
-        native_eor_final_claims::<F, E, _>(&mut prover, &layout, &mut final_claims, level).unwrap();
+        eor_prefix::<F, E, _>(&mut prover, &layout, &openings, partials, level).unwrap();
+        eor_final_claims::<F, E, _>(&mut prover, &layout, &mut final_claims, level).unwrap();
         let mut proof = prover.finish().unwrap();
         proof.pop();
 
-        let state = new_native_verifier(b"native-eor", b"fixture", &proof).unwrap();
-        let mut verifier = NativeVerifierGrinding::new(state, &plan);
-        native_eor_prefix::<F, E, _>(
+        let state = new_verifier_channel(b"native-eor", b"fixture", &proof).unwrap();
+        let mut verifier = VerifierGrinding::new(state, &plan);
+        eor_prefix::<F, E, _>(
             &mut verifier,
             &layout,
             &openings,
@@ -242,7 +242,7 @@ mod tests {
         .unwrap();
         let mut received = vec![E::zero(); layout.num_total_polynomials()];
         assert_eq!(
-            native_eor_final_claims::<F, E, _>(&mut verifier, &layout, &mut received, level),
+            eor_final_claims::<F, E, _>(&mut verifier, &layout, &mut received, level),
             Err(AkitaError::InvalidProof)
         );
     }

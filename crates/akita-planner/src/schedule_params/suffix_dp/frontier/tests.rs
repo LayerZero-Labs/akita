@@ -7,7 +7,7 @@ use super::{
     SetupScore,
 };
 use crate::schedule_params::{
-    objective::CompleteObjectiveBound, CandidateMetrics, NativeProofCost, SetupPrefixCapacity,
+    objective::CompleteObjectiveBound, CandidateMetrics, ProofCost, SetupPrefixCapacity,
 };
 
 const SETUP_FIRST: crate::SelectionPolicyId =
@@ -52,7 +52,7 @@ fn setup_score(
     SetupScore {
         first_direct_setup_capacity: capacity,
         first_direct_output_witness_len: 0,
-        cost: NativeProofCost::new(payload_bytes, nonce_bytes, 0, 0).unwrap(),
+        cost: ProofCost::new(payload_bytes, nonce_bytes, 0, 0).unwrap(),
         setup_field_elements,
     }
 }
@@ -66,7 +66,7 @@ fn setup_score_with_queries(
     SetupScore {
         first_direct_setup_capacity: capacity,
         first_direct_output_witness_len: 0,
-        cost: NativeProofCost::new(payload_bytes, 0, expanded_query_count, 0).unwrap(),
+        cost: ProofCost::new(payload_bytes, 0, expanded_query_count, 0).unwrap(),
         setup_field_elements,
     }
 }
@@ -77,7 +77,7 @@ fn payload_score(
     setup_field_elements: usize,
 ) -> PayloadScore {
     PayloadScore {
-        cost: NativeProofCost::new(payload_bytes, nonce_bytes, 0, 0).unwrap(),
+        cost: ProofCost::new(payload_bytes, nonce_bytes, 0, 0).unwrap(),
         setup_field_elements,
     }
 }
@@ -89,7 +89,7 @@ fn payload_score_with_queries(
     setup_field_elements: usize,
 ) -> PayloadScore {
     PayloadScore {
-        cost: NativeProofCost::new(payload_bytes, nonce_bytes, expanded_query_count, 0).unwrap(),
+        cost: ProofCost::new(payload_bytes, nonce_bytes, expanded_query_count, 0).unwrap(),
         setup_field_elements,
     }
 }
@@ -244,7 +244,7 @@ fn envelope_first_projection_preserves_maskable_setup_tradeoffs() {
 }
 
 #[test]
-fn payload_projection_adds_native_nonce_bytes_directly() {
+fn payload_projection_adds_nonce_bytes_directly() {
     let admission = admission(2, 8);
     let context = context(2, 7);
     let smaller_payload = order(payload_score(100, 8, 64), &[1], &context, admission);
@@ -445,7 +445,7 @@ fn metrics(natural_len: usize, proof_bytes: usize) -> CandidateMetrics {
     CandidateMetrics {
         first_direct_setup_capacity: SetupPrefixCapacity::for_natural_len(natural_len),
         first_direct_output_witness_len: 0,
-        cost: NativeProofCost::new(proof_bytes, 0, 0, 0).unwrap(),
+        cost: ProofCost::new(proof_bytes, 0, 0, 0).unwrap(),
         setup_field_elements: 0,
     }
 }

@@ -16,7 +16,7 @@ fn root_candidate_classes<Cfg: CommitmentConfig>(
     num_vars: usize,
 ) -> Result<(bool, bool), AkitaError> {
     let policy = policy_of::<Cfg>();
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
     let input_bits = (1usize << num_vars) * policy.decomposition.field_bits() as usize;
     let mut has_contractive = false;
     let mut has_noncontractive = false;
@@ -65,7 +65,7 @@ fn root_candidate_classes<Cfg: CommitmentConfig>(
 #[test]
 fn contractive_winner_remains_selected() {
     let policy = policy_of::<Dense>();
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(14));
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(14));
     let schedule = find_schedule(
         &key,
         Dense::committed_source_contract().unwrap(),
@@ -87,7 +87,7 @@ fn contractive_winner_remains_selected() {
 #[test]
 fn noncontractive_root_is_selected_by_the_complete_policy() {
     let policy = policy_of::<Dense>();
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(9));
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(9));
     let schedule = find_schedule(
         &key,
         Dense::committed_source_contract().unwrap(),
@@ -106,7 +106,7 @@ fn noncontractive_root_is_selected_by_the_complete_policy() {
 #[test]
 fn noncontractive_multi_chunk_root_can_beat_contractive_candidates() {
     let policy = policy_of::<DenseMultiChunk>();
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
     let schedule = find_schedule(
         &key,
         DenseMultiChunk::committed_source_contract().unwrap(),
@@ -129,7 +129,7 @@ fn noncontractive_multi_chunk_root_can_beat_contractive_candidates() {
 fn valid_small_scalar_root_has_a_schedule() {
     let policy = policy_of::<Dense>();
     for num_vars in 8..=9 {
-        let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
+        let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
         let schedule = find_schedule(
             &key,
             Dense::committed_source_contract().unwrap(),
@@ -169,7 +169,7 @@ fn valid_small_scalar_root_has_a_schedule() {
 fn valid_small_grouped_root_has_a_schedule() {
     let precommitted_group = PolynomialGroupLayout::singleton(16);
     let policy = policy_of::<Dense>();
-    let producer_key = AkitaScheduleLookupKey::single(precommitted_group);
+    let producer_key = ScheduleLookupKey::single(precommitted_group);
     let producer_dimensions = CommitmentRingDims {
         inner: 128,
         outer: 64,
@@ -203,7 +203,7 @@ fn valid_small_grouped_root_has_a_schedule() {
     let precommitted_profile =
         GroupCommitPhaseParams::try_from_params(precommitted_group, &producer)
             .expect("scalar producer profile");
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(8),
         precommitteds: vec![precommitted_profile],
     };

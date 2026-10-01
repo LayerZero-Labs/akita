@@ -284,7 +284,7 @@ mod tests {
                 let setup =
                     crate::AkitaProverSetup::<F>::generate_with_capacity(NV, 1, capacity).unwrap();
                 let row = catalog
-                    .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                    .resolve_key(&akita_types::ScheduleLookupKey::single(
                         akita_types::PolynomialGroupLayout::new(NV, 1),
                     ))
                     .unwrap();
@@ -392,7 +392,7 @@ mod tests {
         const NV: usize = 14;
         let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
         let row = catalog
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_types::ScheduleLookupKey::single(
                 akita_types::PolynomialGroupLayout::new(NV, 1),
             ))
             .unwrap();
@@ -435,7 +435,7 @@ mod tests {
         const WORKERS: usize = 8;
         let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
         let row = catalog
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_types::ScheduleLookupKey::single(
                 akita_types::PolynomialGroupLayout::new(NV, 1),
             ))
             .unwrap();
@@ -499,7 +499,7 @@ mod tests {
         const NV: usize = 14;
         let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
         let row = catalog
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_types::ScheduleLookupKey::single(
                 akita_types::PolynomialGroupLayout::new(NV, 1),
             ))
             .unwrap();

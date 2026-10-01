@@ -10,14 +10,14 @@ use crate::stages::stage2::Stage2CompressionOracle;
 use akita_algebra::offset_eq::EqPairTensorFamily;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_types::NativeGrinding;
+use akita_types::GrindingReplay;
 use akita_types::{
     batch_l2_virtual_evaluations, CommittedGroupParams, FpExtEncoding, InnerCommitSecurityRoute,
     PhysicalResponsePlan, RelationRangeImagePlan,
 };
 use akita_types::{DigitRangeEqualityPoint, DigitRangePlan};
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
-pub(crate) struct NativeStage1VerifyOutput<E: Field> {
+pub(crate) struct Stage1VerifyOutput<E: Field> {
     pub(crate) point: Vec<E>,
     pub(crate) range_image_evaluation: E,
     pub(crate) physical_l2_virtual_evaluations: Option<Vec<E>>,
@@ -30,12 +30,12 @@ pub(crate) struct RangeLeafVerifierInput<E: Field> {
 }
 
 /// Stage-1 range-check verifier, including the root/leaf tree choreography.
-pub struct AkitaStage1Verifier<E: Field> {
+pub struct Stage1Verifier<E: Field> {
     equality_point: DigitRangeEqualityPoint<E>,
     plan: DigitRangePlan,
 }
 
-impl<E: Field> AkitaStage1Verifier<E> {
+impl<E: Field> Stage1Verifier<E> {
     /// Construct the stage-1 verifier from a checked range topology.
     pub fn new(equality_point: DigitRangeEqualityPoint<E>, plan: DigitRangePlan) -> Self {
         Self {
@@ -45,10 +45,10 @@ impl<E: Field> AkitaStage1Verifier<E> {
     }
 }
 
-impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
-    fn verify_product_prefix_native<F>(
+impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
+    fn verify_product_prefix<F>(
         &self,
-        grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+        grinding: &mut akita_types::VerifierGrinding<'_, '_>,
         level: u32,
     ) -> Result<RangeLeafVerifierInput<E>, AkitaError>
     where
@@ -67,27 +67,21 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
                 .stage_shape(rounds, stage_index)
                 .ok_or(AkitaError::InvalidProof)?;
             let stage = u32::try_from(stage_index).map_err(|_| AkitaError::InvalidProof)?;
-            let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
+            let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
                 grinding,
                 akita_types::SumcheckProtocol::Stage1,
                 level,
                 stage,
             );
-            let replay = akita_sumcheck::verify_eq_factored_sumcheck_rounds_native::<F, E, _>(
+            let replay = akita_sumcheck::verify_eq_factored_sumcheck_rounds::<F, E, _>(
                 &current_equality_point,
                 current_claim,
-                akita_sumcheck::NativeSumcheckShape::new(rounds, arity)?,
+                akita_sumcheck::SumcheckShape::new(rounds, arity)?,
                 &mut channel,
                 0,
             )?;
-            let mut child_claims =
-                akita_transcript::native_extension_slots::<E>(expected.child_claims)?;
-            akita_types::native_stage1_child_claims::<F, E, _>(
-                grinding,
-                level,
-                stage,
-                &mut child_claims,
-            )?;
+            let mut child_claims = akita_transcript::extension_slots::<E>(expected.child_claims)?;
+            akita_types::stage1_child_claims::<F, E, _>(grinding, level, stage, &mut child_claims)?;
             let expected_output = current_weights
                 .iter()
                 .zip(child_claims.chunks_exact(arity))
@@ -120,27 +114,27 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
     }
 
     /// Replay the non-L2 stage-1 proof directly from Spongefish.
-    pub(crate) fn verify_native<F>(
+    pub(crate) fn verify<F>(
         &self,
-        grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+        grinding: &mut akita_types::VerifierGrinding<'_, '_>,
         physical_l2: Option<(
             &akita_types::PhysicalResponsePlan,
             akita_types::SisModulusProfileId,
             u128,
         )>,
         level: u32,
-    ) -> Result<NativeStage1VerifyOutput<E>, AkitaError>
+    ) -> Result<Stage1VerifyOutput<E>, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F> + akita_types::FpExtEncoding<F>,
     {
-        let leaf = self.verify_product_prefix_native::<F>(grinding, level)?;
+        let leaf = self.verify_product_prefix::<F>(grinding, level)?;
         let stage = u32::try_from(self.plan.product_stage_arities().len())
             .map_err(|_| AkitaError::InvalidProof)?;
         if let Some((plan, profile, cap)) = physical_l2 {
-            let replay = super::physical_l2_norm::verify_physical_l2_norm_native::<F, E>(
+            let replay = super::physical_l2_norm::verify_physical_l2_norm::<F, E>(
                 plan,
-                super::physical_l2_norm::NativePhysicalL2RangeClaim {
+                super::physical_l2_norm::PhysicalL2RangeClaim {
                     equality_point: &leaf.equality_point,
                     input_claim: leaf.input_claim,
                     leaf_coefficients: &leaf.polynomial_coefficients,
@@ -151,35 +145,35 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
                 grinding,
                 level,
             )?;
-            return Ok(NativeStage1VerifyOutput {
+            return Ok(Stage1VerifyOutput {
                 point: replay.point,
                 range_image_evaluation: replay.range_image_evaluation,
                 physical_l2_virtual_evaluations: Some(replay.virtual_evaluations),
             });
         }
         let degree_bound = leaf.polynomial_coefficients.len().saturating_sub(1);
-        let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
+        let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
             grinding,
             akita_types::SumcheckProtocol::Stage1,
             level,
             stage,
         );
-        let replay = akita_sumcheck::verify_eq_factored_sumcheck_rounds_native::<F, E, _>(
+        let replay = akita_sumcheck::verify_eq_factored_sumcheck_rounds::<F, E, _>(
             &leaf.equality_point,
             leaf.input_claim,
-            akita_sumcheck::NativeSumcheckShape::new(leaf.equality_point.len(), degree_bound)?,
+            akita_sumcheck::SumcheckShape::new(leaf.equality_point.len(), degree_bound)?,
             &mut channel,
             0,
         )?;
         let range_image_evaluation =
-            akita_types::native_stage1_range_image::<F, E, _>(grinding, level, stage, E::zero())?;
+            akita_types::stage1_range_image::<F, E, _>(grinding, level, stage, E::zero())?;
         let expected_output = self
             .plan
             .evaluate_leaf_polynomial(&leaf.polynomial_coefficients, range_image_evaluation);
         if replay.output_claim != expected_output {
             return Err(AkitaError::InvalidProof);
         }
-        Ok(NativeStage1VerifyOutput {
+        Ok(Stage1VerifyOutput {
             point: replay.challenges,
             range_image_evaluation,
             physical_l2_virtual_evaluations: None,
@@ -196,13 +190,13 @@ pub(crate) struct Stage1Replay<'a, E: Field> {
     pub(crate) physical_l2_families: Vec<EqPairTensorFamily<E>>,
 }
 
-pub(crate) fn verify_stage1_native<'a, F, E>(
+pub(crate) fn verify_stage1<'a, F, E>(
     rs: &'a RingSwitchVerifyOutput<E>,
     lp: &CommittedGroupParams,
     relation_plan: &RelationRangeImagePlan,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
-    layout: &akita_types::NativeNonterminalLevelLayout,
+    layout: &akita_types::NonterminalLevelLayout,
 ) -> Result<Stage1Replay<'a, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
@@ -225,7 +219,7 @@ where
         digit_range_equality_col_bits,
         rs.digit_range_equality_low_variable_count,
     )?;
-    let stage1_verifier = AkitaStage1Verifier::new(equality_point, DigitRangePlan::new(rs.b)?);
+    let stage1_verifier = Stage1Verifier::new(equality_point, DigitRangePlan::new(rs.b)?);
     let (stage1_stages, stage1_norm) = DigitRangePlan::new(rs.b)?
         .proof_shapes_for_route(num_rounds, lp.inner().matrix.security_route())?;
     if !stage1_stages.iter().copied().eq(layout.stage1_stages())
@@ -254,7 +248,7 @@ where
             ))
         })
         .transpose()?;
-    let replay = stage1_verifier.verify_native::<F>(grinding, physical, level)?;
+    let replay = stage1_verifier.verify::<F>(grinding, physical, level)?;
     let (physical_l2_claim, physical_l2_families) = match (
         replay.physical_l2_virtual_evaluations,
         physical_plan.as_ref(),

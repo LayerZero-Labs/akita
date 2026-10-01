@@ -349,13 +349,13 @@ pub(crate) struct Stage2Output<E: Field> {
 
 /// Replay the Stage 2 rounds from the batched Stage 1, relation, opening, and
 /// physical L2 input claims.
-pub(crate) fn replay_stage2_native<F, E>(
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+pub(crate) fn replay_stage2<F, E>(
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
     stage1: &Stage1Replay<'_, E>,
     relation_claim: E,
     opening_semantics: &Stage2OpeningSemantics<'_, E>,
-    shape: akita_sumcheck::NativeSumcheckShape,
+    shape: akita_sumcheck::SumcheckShape,
 ) -> Result<Stage2RoundReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -365,19 +365,15 @@ where
         + relation_claim
         + opening_semantics.opening_claim()
         + stage1.physical_l2_claim;
-    let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
+    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
         grinding,
         akita_types::SumcheckProtocol::Stage2,
         level,
         0,
     );
-    let replay = akita_sumcheck::verify_sumcheck_rounds_native::<F, E, _>(
-        &mut channel,
-        0,
-        input_claim,
-        shape,
-    )?;
-    let witness_eval = akita_types::native_stage2_w_eval::<F, E, _>(grinding, level, E::zero())?;
+    let replay =
+        akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(&mut channel, 0, input_claim, shape)?;
+    let witness_eval = akita_types::stage2_w_eval::<F, E, _>(grinding, level, E::zero())?;
     Ok(Stage2RoundReplay {
         output_claim: replay.output_claim,
         challenges: replay.challenges,

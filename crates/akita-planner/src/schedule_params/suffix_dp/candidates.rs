@@ -1,7 +1,7 @@
 use akita_error::AkitaError;
 use akita_types::{
-    try_extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, CommitmentRingDims,
-    CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout, TerminalFoldParams,
+    try_extension_opening_reduction_level_bytes, CommitmentRingDims, CommittedGroupParams,
+    OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey, TerminalFoldParams,
 };
 
 use crate::{
@@ -75,7 +75,7 @@ pub(super) struct GeneratedCandidates {
 }
 
 pub(super) struct CandidateDomain<'a> {
-    pub(super) root_level_key: Option<&'a AkitaScheduleLookupKey>,
+    pub(super) root_level_key: Option<&'a ScheduleLookupKey>,
     root_main_constraint: Option<&'a CommittedGroupParams>,
     guide_fold: Option<&'a CommittedGroupParams>,
     guide_terminal: Option<&'a TerminalFoldParams>,
@@ -119,7 +119,7 @@ pub(crate) const MAX_PRECOMMIT_OPENING_PRODUCTS: usize = 256;
 pub(crate) fn packing_precommit_opening_products(
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
     precommitted_source_contracts: &[akita_types::sis::CommittedSourceContract],
 ) -> Result<Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>>, AkitaError> {
     if !crate::schedule_params::precommitted_groups_support_opening_dimension(
@@ -176,7 +176,7 @@ pub(crate) fn packing_precommit_opening_products(
 fn opening_work_domain(
     ctx: &SuffixCtx<'_>,
     state: SuffixState,
-    root_level_key: Option<&AkitaScheduleLookupKey>,
+    root_level_key: Option<&ScheduleLookupKey>,
     root_main_constraint: Option<&CommittedGroupParams>,
     guide_fold: Option<&CommittedGroupParams>,
     guide_terminal: Option<&TerminalFoldParams>,

@@ -7,9 +7,8 @@ mod common;
 
 use akita_cpu_backend::CpuBackend;
 #[cfg(feature = "logging-transcript")]
-use common::native_mutations::{
-    assert_native_ranges_match_context, representative_native_mutation_ranges,
-    selected_sumcheck_protocols,
+use common::mutations::{
+    assert_ranges_match_context, representative_mutation_ranges, selected_sumcheck_protocols,
 };
 use common::*;
 use jolt_field::One;
@@ -18,13 +17,13 @@ const NUM_VARS: usize = 14;
 const LABEL: &[u8] = b"hardening/onehot/native";
 
 #[test]
-fn native_stream_binds_session_statement_basis_and_eof() {
+fn stream_binds_session_statement_basis_and_eof() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
         let layout = scheme
             .schedules()
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_types::ScheduleLookupKey::single(
                 akita_types::PolynomialGroupLayout::singleton(NUM_VARS),
             ))
             .expect("layout")
@@ -89,7 +88,7 @@ fn native_stream_binds_session_statement_basis_and_eof() {
             let verifier_events = akita_transcript::thread_events();
             assert!(!prover_events.is_empty());
             assert_eq!(verifier_events, prover_events);
-            assert_native_ranges_match_context(&prover_ranges);
+            assert_ranges_match_context(&prover_ranges);
 
             let mut ordered_ranges = prover_ranges.clone();
             ordered_ranges.sort_unstable_by_key(|range| range.start);
@@ -104,7 +103,7 @@ fn native_stream_binds_session_statement_basis_and_eof() {
                 "native proof ranges must cover the proof"
             );
 
-            let role_ranges = representative_native_mutation_ranges(prover_ranges.clone());
+            let role_ranges = representative_mutation_ranges(prover_ranges.clone());
             for family in [
                 akita_transcript::SITE_FAMILY_SUMCHECK,
                 akita_transcript::SITE_FAMILY_OPENING_PAYLOAD,
@@ -192,7 +191,7 @@ fn native_stream_binds_session_statement_basis_and_eof() {
 }
 
 #[test]
-fn native_stream_mutations_reject_without_panicking() {
+fn stream_mutations_reject_without_panicking() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let scheme = load_workspace_scheme::<DenseCfg>().expect("workspace schedule catalog");
@@ -200,7 +199,7 @@ fn native_stream_mutations_reject_without_panicking() {
         let point = random_point(NUM_VARS, 0x8181);
         let row = scheme
             .schedules()
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_types::ScheduleLookupKey::single(
                 akita_types::PolynomialGroupLayout::singleton(NUM_VARS),
             ))
             .expect("layout");

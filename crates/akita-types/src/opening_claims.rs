@@ -254,7 +254,7 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
 
 /// Apply the scheduled native work and draw one context-bound coefficient
 /// per opening claim.
-pub fn row_coefficients_native<F, L, G>(
+pub fn row_coefficients<F, L, G>(
     layout: &OpeningClaimsLayout,
     site: GrindingSite,
     grinding: &mut G,
@@ -262,7 +262,7 @@ pub fn row_coefficients_native<F, L, G>(
 where
     F: Field + CanonicalEncoding,
     L: ExtField<F>,
-    G: crate::NativeGrinding,
+    G: crate::GrindingReplay,
 {
     layout.check()?;
     if !layout.requires_row_batch_challenge() {

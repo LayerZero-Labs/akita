@@ -5,13 +5,13 @@ use akita_transcript::{
 };
 use akita_types::SumcheckProtocol;
 
-/// Semantic identity retained by the native proof-mutation suites.
+/// Semantic identity retained by the proof-mutation suites.
 ///
 /// Round and limb are deliberately excluded so one later representative can
 /// be selected within a single protocol site. Every coordinate that identifies
 /// an independently meaningful protocol occurrence remains in the bucket.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct NativeMutationBucket {
+pub(crate) struct MutationBucket {
     pub(crate) family: u32,
     pub(crate) invocation: u32,
     pub(crate) level: u32,
@@ -21,7 +21,7 @@ pub(crate) struct NativeMutationBucket {
     pub(crate) kind: u32,
 }
 
-impl NativeMutationBucket {
+impl MutationBucket {
     fn new(range: &ProofMessageRange) -> (Self, (u32, u32)) {
         let site = ProtocolSiteId::from_bytes(range.context.site_id);
         (
@@ -46,12 +46,12 @@ impl NativeMutationBucket {
 }
 
 /// Select one later round/limb from every complete semantic protocol bucket.
-pub(crate) fn representative_native_mutation_ranges(
+pub(crate) fn representative_mutation_ranges(
     ranges: impl IntoIterator<Item = ProofMessageRange>,
-) -> Vec<(NativeMutationBucket, ProofMessageRange)> {
+) -> Vec<(MutationBucket, ProofMessageRange)> {
     let mut selected = BTreeMap::new();
     for range in ranges.into_iter().filter(|range| range.len != 0) {
-        let (bucket, rank) = NativeMutationBucket::new(&range);
+        let (bucket, rank) = MutationBucket::new(&range);
         if selected
             .get(&bucket)
             .is_none_or(|(selected_rank, _)| rank > *selected_rank)
@@ -66,7 +66,7 @@ pub(crate) fn representative_native_mutation_ranges(
 }
 
 pub(crate) fn selected_sumcheck_protocols(
-    selected: &[(NativeMutationBucket, ProofMessageRange)],
+    selected: &[(MutationBucket, ProofMessageRange)],
 ) -> BTreeSet<SumcheckProtocol> {
     selected
         .iter()
@@ -74,8 +74,8 @@ pub(crate) fn selected_sumcheck_protocols(
         .collect()
 }
 
-/// Reconcile actual native emission with every message's public byte grammar.
-pub(crate) fn assert_native_ranges_match_context(ranges: &[ProofMessageRange]) {
+/// Reconcile actual emission with every message's public byte grammar.
+pub(crate) fn assert_ranges_match_context(ranges: &[ProofMessageRange]) {
     for range in ranges {
         let maximum = usize::try_from(range.context.encoded_bytes)
             .expect("native context byte count must fit usize");
@@ -142,7 +142,7 @@ mod tests {
             ranges.push(range(protocol, 1, 1, index * 4 + 2));
         }
 
-        let selected = representative_native_mutation_ranges(ranges);
+        let selected = representative_mutation_ranges(ranges);
         assert_eq!(selected.len(), protocols.len() * 2);
         assert_eq!(
             selected_sumcheck_protocols(&selected),

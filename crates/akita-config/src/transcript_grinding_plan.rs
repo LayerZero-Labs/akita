@@ -46,7 +46,7 @@ mod tests {
             .expect("one-hot schedule catalog");
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
         let row = catalog
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_types::ScheduleLookupKey::single(
                 layout.root_final_group_layout().expect("root group"),
             ))
             .expect("generated production row");
@@ -103,7 +103,7 @@ mod tests {
             .expect("one-hot schedule catalog");
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
         let row = catalog
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_types::ScheduleLookupKey::single(
                 layout.root_final_group_layout().expect("root group"),
             ))
             .expect("generated production row");
