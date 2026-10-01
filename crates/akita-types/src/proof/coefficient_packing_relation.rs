@@ -607,7 +607,11 @@ where
                     let challenge_alpha = *validated
                         .challenge_alpha_values
                         .get(challenge_index)
-                        .ok_or(AkitaError::InvalidProof)?;
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "packing challenge index exceeds alpha table".into(),
+                            )
+                        })?;
                     let mut events = Vec::with_capacity(block_event_capacity);
                     for (digit, &gadget) in validated.opening_gadget.iter().enumerate() {
                         for (plane, &basis_element) in validated.basis.iter().enumerate() {

@@ -52,8 +52,7 @@ where
         Cfg::Field,
         Cfg,
     >(expanded, layout, selection, schedule, basis)?;
-    let channel = akita_transcript::new_prover_channel(transcript_session, &descriptor_bytes)
-        .map_err(|_| AkitaError::InvalidSetup("native transcript initialization failed".into()))?;
+    let channel = akita_transcript::new_prover_channel(transcript_session, &descriptor_bytes)?;
     let mut grinding = akita_types::ProverGrinding::new(channel, &grinding_plan);
     claims.append_to(&schedule.root.params, &mut grinding)?;
     let root_claims = claims.map_groups(OpeningSource::Commitment)?;

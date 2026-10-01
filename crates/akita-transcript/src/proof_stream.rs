@@ -171,7 +171,9 @@ impl<'a> FramedBytes<'a> {
     fn new(bytes: &'a [u8]) -> Result<Self, AkitaError> {
         Ok(Self {
             bytes,
-            len: u64::try_from(bytes.len()).map_err(|_| AkitaError::InvalidProof)?,
+            len: u64::try_from(bytes.len()).map_err(|_| {
+                AkitaError::InvalidInput("framed transcript input length does not fit u64".into())
+            })?,
         })
     }
 }
@@ -214,7 +216,7 @@ fn domain<'a>(
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidProof`] when a framed input length exceeds
+/// Returns [`AkitaError::InvalidInput`] when a framed transcript input length exceeds
 /// `u64`.
 pub fn new_prover_channel(session: &[u8], instance: &[u8]) -> Result<ProverChannel, AkitaError> {
     Ok(domain(session, instance)?.to_prover(TranscriptSponge::default()))
@@ -224,7 +226,7 @@ pub fn new_prover_channel(session: &[u8], instance: &[u8]) -> Result<ProverChann
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidProof`] when a framed input length exceeds
+/// Returns [`AkitaError::InvalidInput`] when a framed transcript input length exceeds
 /// `u64`.
 pub fn new_verifier_channel<'proof>(
     session: &[u8],
@@ -481,7 +483,8 @@ pub fn send_byte_group(
     site: ProtocolSiteId,
     bytes: &[u8],
 ) -> Result<(), AkitaError> {
-    let len = u64::try_from(bytes.len()).map_err(|_| AkitaError::InvalidProof)?;
+    let len = u64::try_from(bytes.len())
+        .map_err(|_| AkitaError::Internal("proof byte group length does not fit u64".into()))?;
     prover_context(
         state,
         ProtocolContextRecord::new(
@@ -537,9 +540,13 @@ pub fn send_bounded_bytes(
     max_len: usize,
 ) -> Result<(), AkitaError> {
     if bytes.len() > max_len {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "bounded proof payload length exceeds its scheduled maximum".into(),
+        ));
     }
-    let len = u32::try_from(bytes.len()).map_err(|_| AkitaError::InvalidProof)?;
+    let len = u32::try_from(bytes.len()).map_err(|_| {
+        AkitaError::Internal("bounded proof payload length does not fit u32".into())
+    })?;
     let (length_record, payload_site) = bounded_bytes_sites(site);
     prover_context(state, length_record);
     state.prover_message(&len);

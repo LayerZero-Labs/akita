@@ -307,9 +307,9 @@ impl<'plan> ProverGrinding<'plan> {
     fn grind_query_inner(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
         let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::ProofOfWork)?;
         let Some(bits) = NonZeroU8::new(entry.grind_bits) else {
-            return (entry.nonce_bits == 0)
-                .then_some(())
-                .ok_or(AkitaError::InvalidProof);
+            return (entry.nonce_bits == 0).then_some(()).ok_or_else(|| {
+                AkitaError::Internal("zero-bit grinding entry has nonzero nonce bits".into())
+            });
         };
         let (nonce_record, predicate_record) =
             grinding_records(site, entry.grind_bits, entry.nonce_bits);
@@ -318,13 +318,22 @@ impl<'plan> ProverGrinding<'plan> {
                 .ok_or_else(|| AkitaError::InvalidInput("transcript grinding exhausted".into()))?;
         let predicate =
             commit_grinding_nonce(&mut self.state, nonce_record, nonce, predicate_record);
-        if winning_predicate != predicate || !grinding_predicate_accepts(&predicate, bits) {
-            return Err(AkitaError::InvalidProof);
+        if winning_predicate != predicate {
+            return Err(AkitaError::Internal(
+                "committed grinding predicate differs from winning predicate".into(),
+            ));
+        }
+        if !grinding_predicate_accepts(&predicate, bits) {
+            return Err(AkitaError::Internal(
+                "committed grinding predicate fails its bound".into(),
+            ));
         }
         self.serialized_nonce_bytes = self
             .serialized_nonce_bytes
             .checked_add(nonce_encoded_len(nonce))
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("proof-of-work serialized nonce byte count overflow".into())
+            })?;
         Ok(())
     }
 
@@ -346,7 +355,9 @@ impl<'plan> ProverGrinding<'plan> {
     ) -> Result<(), AkitaError> {
         let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse)?;
         if !value_fits(counter, entry.nonce_bits) {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "fold-response nonce exceeds its scheduled bit width".into(),
+            ));
         }
         prover_context(
             &mut self.state,
@@ -356,7 +367,9 @@ impl<'plan> ProverGrinding<'plan> {
         self.serialized_nonce_bytes = self
             .serialized_nonce_bytes
             .checked_add(nonce_encoded_len(counter))
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("fold-response serialized nonce byte count overflow".into())
+            })?;
         tracing::info!(
             role = "prover",
             level = site.level(),
@@ -376,12 +389,25 @@ impl<'plan> ProverGrinding<'plan> {
         site: GrindingSite,
         counter: u32,
     ) -> Result<FoldPreview, AkitaError> {
-        let entry = self.cursor.peek().ok_or(AkitaError::InvalidProof)?;
-        if entry.site != site
-            || site.kind() != GrindingQueryKind::FoldResponse
-            || !value_fits(counter, entry.nonce_bits)
-        {
-            return Err(AkitaError::InvalidProof);
+        let entry = self.cursor.peek().ok_or_else(|| {
+            AkitaError::Internal(
+                "fold-response preview has no remaining grinding plan entry".into(),
+            )
+        })?;
+        if entry.site != site {
+            return Err(AkitaError::Internal(
+                "fold-response preview site differs from grinding plan".into(),
+            ));
+        }
+        if site.kind() != GrindingQueryKind::FoldResponse {
+            return Err(AkitaError::Internal(
+                "fold-response preview query kind is not FoldResponse".into(),
+            ));
+        }
+        if !value_fits(counter, entry.nonce_bits) {
+            return Err(AkitaError::Internal(
+                "fold-response preview nonce exceeds scheduled bit width".into(),
+            ));
         }
         Ok(FoldPreview::new(&self.state, counter))
     }
@@ -395,7 +421,9 @@ impl<'plan> ProverGrinding<'plan> {
     ) -> Result<(), AkitaError> {
         let result = coordinate_count
             .checked_add(1)
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::Internal("fold-challenge coordinate multiplicity overflow".into())
+            })
             .and_then(|multiplicity| {
                 self.cursor.consume_run(
                     GrindingSite::FoldChallengeGroup { level, group },
@@ -408,8 +436,15 @@ impl<'plan> ProverGrinding<'plan> {
 
     /// Finish plan replay and return the authoritative Spongefish argument.
     pub fn finish(self) -> Result<Vec<u8>, AkitaError> {
-        if self.invalid || !self.cursor.is_finished() {
-            return Err(AkitaError::InvalidProof);
+        if self.invalid {
+            return Err(AkitaError::Internal(
+                "an earlier grinding step failed".into(),
+            ));
+        }
+        if !self.cursor.is_finished() {
+            return Err(AkitaError::Internal(
+                "the grinding plan has unconsumed entries".into(),
+            ));
         }
         tracing::info!(
             role = "prover",
@@ -609,7 +644,9 @@ where
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
         if invocation != 0 {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "grinding sumcheck prover invocation is not zero".into(),
+            ));
         }
         self.grinding
             .grinded_ext_challenge::<F, E>(GrindingSite::SumcheckRound {
@@ -813,14 +850,14 @@ mod tests {
         .unwrap();
         let state = new_prover_channel(b"native-grinding", b"fixture").unwrap();
         let mut prover = ProverGrinding::new(state, &plan);
-        assert_eq!(
+        assert!(matches!(
             prover.commit_fold_response(
                 GrindingSite::FoldResponse { level: 0 },
                 super::super::FOLD_RESPONSE_ATTEMPTS,
             ),
-            Err(AkitaError::InvalidProof)
-        );
-        assert_eq!(prover.finish(), Err(AkitaError::InvalidProof));
+            Err(AkitaError::Internal(_))
+        ));
+        assert!(matches!(prover.finish(), Err(AkitaError::Internal(_))));
 
         for (proof, expected) in [
             (&[0xff, 0x1f][..], Ok(4095)),
@@ -858,7 +895,7 @@ mod tests {
             prover.grinded_ext_challenges::<F, F>(site, usize::MAX),
             Err(AkitaError::InvalidProof)
         );
-        assert_eq!(prover.finish(), Err(AkitaError::InvalidProof));
+        assert!(matches!(prover.finish(), Err(AkitaError::Internal(_))));
 
         let state = new_verifier_channel(b"native-poison", b"fixture", &[]).unwrap();
         let mut verifier = VerifierGrinding::new(state, &plan);
