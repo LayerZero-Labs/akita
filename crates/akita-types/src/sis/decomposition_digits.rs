@@ -43,9 +43,9 @@ use crate::DecompositionParams;
 /// rather than commit the truncation
 /// (see [`crate::DecompositionParams::log_commit_bound`]).
 ///
-/// Both sides **saturate to a conservative lower bound** once the true reach
-/// exceeds `u128::MAX`, inheriting that behavior from the underlying
-/// `balanced_digit_max` / [`balanced_digit_abs_max`] series. A caller that needs
+/// Each side is exact while it fits in `u128` and **saturates to `u128::MAX`**,
+/// a lower bound on the true reach, beyond it, inheriting that behavior from
+/// `balanced_digit_max` / [`balanced_digit_abs_max`]. A caller that needs
 /// to distinguish "the reach is this value" from "the reach is beyond `u128`" must
 /// use [`checked_balanced_digit_representable_bounds`]; comparing a saturated
 /// value against a real coefficient rejects legitimate inputs.
@@ -80,25 +80,52 @@ pub fn checked_balanced_digit_representable_bounds(
     if log_basis == 0 || log_basis >= 128 {
         return (Some(0), Some(0));
     }
-    let base: u128 = 1u128 << log_basis;
-    // `(b^n - 1) / (b - 1)` accumulated as `1 + b + ... + b^(n-1)`, so overflow is
-    // detected rather than folded into a saturating quotient.
     let num_digits = num_digits.max(1);
-    let mut series: Option<u128> = Some(0);
-    let mut power: Option<u128> = Some(1);
-    for _ in 0..num_digits {
-        series = match (series, power) {
-            (Some(total), Some(term)) => total.checked_add(term),
-            _ => None,
-        };
-        if series.is_none() {
-            break;
-        }
-        power = power.and_then(|term| term.checked_mul(base));
-    }
-    let scale = |factor: u128| series.and_then(|total| factor.checked_mul(total));
+    let half_base = 1u128 << (log_basis - 1);
     // Balanced digits span `[-b/2, b/2 - 1]`, so the positive factor is one less.
-    (scale(base / 2), scale(base / 2 - 1))
+    (
+        checked_digit_reach(Some(half_base), log_basis, num_digits),
+        checked_digit_reach(Some(half_base - 1), log_basis, num_digits),
+    )
+}
+
+/// `1 + b + ... + b^(num_digits - 1)` for `b = 2^log_basis`, or `None` when it
+/// exceeds `u128::MAX`.
+///
+/// Total over `log_basis`: `0` is base 1, and a base of `2^128` or more is
+/// `None` from the second digit on. The loop stops at the first overflow, so a
+/// schedule-supplied `num_digits` costs at most `ceil(128 / log_basis) + 1`
+/// iterations rather than `num_digits`.
+fn checked_digit_series(log_basis: u32, num_digits: usize) -> Option<u128> {
+    if log_basis == 0 {
+        return u128::try_from(num_digits).ok();
+    }
+    let base = 1u128.checked_shl(log_basis);
+    let mut series = 0u128;
+    let mut power = Some(1u128);
+    for _ in 0..num_digits {
+        // An overflowed power already exceeds `u128::MAX`, and so does the sum.
+        series = series.checked_add(power?)?;
+        power = power
+            .zip(base)
+            .and_then(|(term, base)| term.checked_mul(base));
+    }
+    Some(series)
+}
+
+/// Exact `factor · (1 + b + ... + b^(n-1))`, or `None` when it exceeds
+/// `u128::MAX`. A `None` factor stands for one of at least `2^128`.
+///
+/// A zero factor or an empty series is exactly `0`, however large the other
+/// operand: base-2 balanced digits `{-1, 0}` have positive reach `0` at every
+/// depth.
+fn checked_digit_reach(factor: Option<u128>, log_basis: u32, num_digits: usize) -> Option<u128> {
+    if factor == Some(0) || num_digits == 0 {
+        return Some(0);
+    }
+    factor
+        .zip(checked_digit_series(log_basis, num_digits))
+        .and_then(|(factor, series)| factor.checked_mul(series))
 }
 
 /// Minimum balanced-digit depth whose exact signed range contains
@@ -131,18 +158,18 @@ pub fn num_digits_for_linf_cap(cap: u128, field_bits: u32, log_basis: u32) -> us
 /// Maximum positive value representable by `num_digits` balanced base-`b`
 /// digits, where `b = 2^log_basis`. Each balanced digit lies in
 /// `[-b/2, b/2 - 1]`; the max positive value is the geometric series
-/// `(b/2 - 1) · (b^n - 1) / (b - 1)`. When `b^n` overflows `u128` the result is
-/// a conservative lower bound (safe: it can only add a digit, never drop one).
+/// `(b/2 - 1) · (b^n - 1) / (b - 1)`. The result is exact while it fits in
+/// `u128` and saturates to `u128::MAX` beyond it, a lower bound (safe for digit
+/// selection: it can only add a digit, never drop one). Base 1
+/// (`log_basis = 0`) has no positive digit and returns `0`.
 pub(crate) fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
-    let base: u128 = 1u128 << log_basis;
-    let max_digit = base / 2 - 1;
-    let base_minus_1 = base - 1;
-
-    // `saturating_pow` squares, so a schedule-supplied `num_digits` costs
-    // `O(log n)`. `b >= 2`, so capping the exponent at `u32::MAX` still saturates.
-    let base_pow = base.saturating_pow(u32::try_from(num_digits).unwrap_or(u32::MAX));
-
-    max_digit.saturating_mul(base_pow.saturating_sub(1) / base_minus_1)
+    let max_digit = match log_basis {
+        0 => Some(0),
+        _ => 1u128
+            .checked_shl(log_basis - 1)
+            .map(|half_base| half_base - 1),
+    };
+    checked_digit_reach(max_digit, log_basis, num_digits).unwrap_or(u128::MAX)
 }
 
 /// Maximum absolute value accepted by `num_digits` balanced base-`b` digits,
@@ -151,26 +178,17 @@ pub(crate) fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
 /// This is the coefficient-`L∞` envelope the verifier accepts for the folded
 /// witness `z`: stage-1 digit membership admits every balanced `num_digits`-digit
 /// string, and balanced digits `[-b/2, b/2 - 1]` reach further on the negative
-/// side, so the absolute envelope is this negative reach.
+/// side, so the absolute envelope is this negative reach. The result is exact
+/// while it fits in `u128` and saturates to `u128::MAX` beyond it. Base 1
+/// (`log_basis = 0`) returns `0`.
 #[inline]
 #[must_use]
 pub fn balanced_digit_abs_max(log_basis: u32, num_digits: usize) -> u128 {
-    let base: u128 = 1u128 << log_basis;
-    let max_abs_digit = base / 2;
-
-    // Stop once the series saturates, so a schedule-supplied `num_digits` costs
-    // at most `ceil(128 / log_basis) + 1` iterations rather than `num_digits`.
-    let mut pow = 1u128;
-    let mut series = 0u128;
-    for _ in 0..num_digits {
-        series = series.saturating_add(pow);
-        if series == u128::MAX {
-            break;
-        }
-        pow = pow.saturating_mul(base);
-    }
-
-    max_abs_digit.saturating_mul(series)
+    let max_abs_digit = match log_basis {
+        0 => Some(0),
+        _ => 1u128.checked_shl(log_basis - 1),
+    };
+    checked_digit_reach(max_abs_digit, log_basis, num_digits).unwrap_or(u128::MAX)
 }
 
 /// Diameter of the signed interval represented by `num_digits` balanced
@@ -181,16 +199,20 @@ pub fn balanced_digit_abs_max(log_basis: u32, num_digits: usize) -> u128 {
 /// complete interval diameter is
 /// `(b - 1) * (1 + b + ... + b^(num_digits - 1)) = b^num_digits - 1`.
 /// This is tighter than twice [`balanced_digit_abs_max`] because the accepted
-/// interval is asymmetric. The result saturates when the exact diameter does
-/// not fit in `u128`.
+/// interval is asymmetric. The result is exact while it fits in `u128`
+/// (through `log_basis · num_digits = 128`) and saturates to `u128::MAX`
+/// beyond it. Base 1 (`log_basis = 0`) returns `0`.
 #[inline]
 #[must_use]
 pub fn balanced_digit_interval_diameter(log_basis: u32, num_digits: usize) -> u128 {
-    let base: u128 = 1u128 << log_basis;
-    // Squaring keeps a schedule-supplied `num_digits` at `O(log n)`; see
-    // `balanced_digit_max`.
-    base.saturating_pow(u32::try_from(num_digits).unwrap_or(u32::MAX))
-        .saturating_sub(1)
+    if log_basis == 0 {
+        return 0;
+    }
+    u32::try_from(num_digits)
+        .ok()
+        .and_then(|num_digits| log_basis.checked_mul(num_digits))
+        .filter(|&bits| bits < 128)
+        .map_or(u128::MAX, |bits| (1u128 << bits) - 1)
 }
 
 /// Minimum number of balanced base-`2^log_basis` digits needed to represent a
@@ -373,11 +395,8 @@ mod tests {
     }
 
     /// Pins all three saturating series at and around their saturation points,
-    /// against closed forms in `2^(k·n)`, for every `log_basis` below 128.
-    ///
-    /// Once `b^n` saturates, `balanced_digit_max` divides `u128::MAX` and
-    /// `balanced_digit_interval_diameter` returns `u128::MAX - 1`; the oracles
-    /// pin that existing saturated output rather than the exact value.
+    /// against closed forms in `2^(k·n)`, for every `log_basis` below 128: each
+    /// is exact while it fits in `u128` and `u128::MAX` beyond it.
     #[test]
     fn saturating_series_match_closed_forms_at_every_boundary() {
         for log_basis in 1u32..=127 {
@@ -393,15 +412,15 @@ mod tests {
                     power_minus_one / (base - 1)
                 })
             };
+            let reach = |factor: u128, series: Option<u128>| match series {
+                Some(series) => factor.saturating_mul(series),
+                None if factor == 0 => 0,
+                None => u128::MAX,
+            };
             for num_digits in 0usize..=260 {
                 let bits = u64::from(log_basis) * num_digits as u64;
-                let power = if bits >= 128 {
-                    u128::MAX
-                } else {
-                    1u128 << bits
-                };
                 // Past `k·n = 128`, one more term `b · S_(n-1) + 1` either fits or
-                // saturates; `S_(n-1)` itself is `None` once `k·(n-1) > 128`.
+                // overflows; `S_(n-1)` itself is `None` once `k·(n-1) > 128`.
                 let series = if bits <= 128 {
                     geometric(bits)
                 } else {
@@ -412,21 +431,34 @@ mod tests {
                 let context = format!("log_basis={log_basis} num_digits={num_digits}");
                 assert_eq!(
                     balanced_digit_interval_diameter(log_basis, num_digits),
-                    power.saturating_sub(1),
+                    if bits >= 128 {
+                        u128::MAX
+                    } else {
+                        (1u128 << bits) - 1
+                    },
                     "{context}"
                 );
                 assert_eq!(
                     balanced_digit_max(log_basis, num_digits),
-                    (base / 2 - 1).saturating_mul(power.saturating_sub(1) / (base - 1)),
+                    reach(base / 2 - 1, series),
                     "{context}"
                 );
                 assert_eq!(
                     balanced_digit_abs_max(log_basis, num_digits),
-                    series.map_or(u128::MAX, |series| (base / 2).saturating_mul(series)),
+                    reach(base / 2, series),
+                    "{context}"
+                );
+                // The saturating pair is the checked pair with `None` read as
+                // `u128::MAX`.
+                let (negative, positive) =
+                    checked_balanced_digit_representable_bounds(log_basis, num_digits);
+                assert_eq!(
+                    balanced_digit_representable_bounds(log_basis, num_digits),
+                    (negative.unwrap_or(u128::MAX), positive.unwrap_or(u128::MAX)),
                     "{context}"
                 );
             }
-            // Digit counts past `u32::MAX` exercise the capped exponent.
+            // Digit counts past `u32::MAX` must answer without iterating.
             for num_digits in [
                 u32::MAX as usize,
                 (u32::MAX as usize).saturating_add(1),
@@ -434,13 +466,50 @@ mod tests {
             ] {
                 assert_eq!(
                     balanced_digit_interval_diameter(log_basis, num_digits),
-                    u128::MAX - 1
+                    u128::MAX
                 );
                 assert_eq!(
                     balanced_digit_max(log_basis, num_digits),
-                    (base / 2 - 1).saturating_mul((u128::MAX - 1) / (base - 1))
+                    if log_basis == 1 { 0 } else { u128::MAX }
                 );
                 assert_eq!(balanced_digit_abs_max(log_basis, num_digits), u128::MAX);
+            }
+        }
+    }
+
+    /// Bases outside `1..=127` answer instead of panicking: base 1 has no
+    /// nonzero reach, and a base of `2^128` or more is exact for one digit and
+    /// saturated from the second on.
+    #[test]
+    fn saturating_series_are_total_over_log_basis() {
+        for num_digits in [0, 1, 2, 1_000, usize::MAX] {
+            assert_eq!(balanced_digit_max(0, num_digits), 0);
+            assert_eq!(balanced_digit_abs_max(0, num_digits), 0);
+            assert_eq!(balanced_digit_interval_diameter(0, num_digits), 0);
+        }
+        for log_basis in [128u32, 129, 200, u32::MAX] {
+            for num_digits in [0usize, 1, 2, usize::MAX] {
+                let (positive, negative, diameter) = match (log_basis, num_digits) {
+                    (_, 0) => (0, 0, 0),
+                    (128, 1) => ((1u128 << 127) - 1, 1u128 << 127, u128::MAX),
+                    _ => (u128::MAX, u128::MAX, u128::MAX),
+                };
+                let context = format!("log_basis={log_basis} num_digits={num_digits}");
+                assert_eq!(
+                    balanced_digit_max(log_basis, num_digits),
+                    positive,
+                    "{context}"
+                );
+                assert_eq!(
+                    balanced_digit_abs_max(log_basis, num_digits),
+                    negative,
+                    "{context}"
+                );
+                assert_eq!(
+                    balanced_digit_interval_diameter(log_basis, num_digits),
+                    diameter,
+                    "{context}"
+                );
             }
         }
     }
@@ -448,10 +517,9 @@ mod tests {
     /// The checked reaches agree with the saturating ones inside `u128` and
     /// report `None` beyond it.
     ///
-    /// The saturating pair is a deliberate conservative *lower* bound
-    /// (`balanced_digit_max` divides a saturated `b^n`), which is correct for
-    /// choosing a digit depth but wrong as an acceptance interval. A commit-side
-    /// range check must not read it as exact.
+    /// Beyond `u128` the saturating pair is `u128::MAX`, a *lower* bound on the
+    /// true reach, which is correct for choosing a digit depth but wrong as an
+    /// acceptance interval. A commit-side range check must not read it as exact.
     #[test]
     fn checked_reaches_are_exact_where_the_saturating_reaches_are() {
         for (log_basis, num_digits) in [(2u32, 3usize), (3, 2), (5, 13), (11, 11)] {
@@ -466,10 +534,14 @@ mod tests {
         // reaches exceed `u128::MAX` and the saturating pair understates them.
         let (negative, positive) = checked_balanced_digit_representable_bounds(11, 12);
         assert_eq!((negative, positive), (None, None));
-        let (saturating_negative, saturating_positive) =
-            balanced_digit_representable_bounds(11, 12);
-        assert!(saturating_positive < u128::MAX / 2);
-        assert_eq!(saturating_negative, u128::MAX);
+        assert_eq!(
+            balanced_digit_representable_bounds(11, 12),
+            (u128::MAX, u128::MAX)
+        );
+        // Base 4 with 64 digits: the positive reach `(4^64 - 1) / 3` fits exactly.
+        // It must not come out one short, as it would by dividing a saturated
+        // `4^64`.
+        assert_eq!(balanced_digit_max(2, 64), u128::MAX / 3);
 
         // Total over degenerate bases: verifier-reachable callers pass unvalidated
         // schedule data, so this must answer rather than panic.
