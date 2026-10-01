@@ -156,12 +156,12 @@ impl ScopeLease {
         commitment_id: u128,
     ) -> Result<(), AkitaError> {
         self.validate_context(context)?;
-        let group = context.group_index().ok_or(AkitaError::InvalidProof)?;
-        let mut commitments = self
-            .state
-            .commitments
-            .lock()
-            .map_err(|_| AkitaError::InvalidProof)?;
+        let group = context.group_index().ok_or_else(|| {
+            AkitaError::Internal("commitment admission lost its validated group context".into())
+        })?;
+        let mut commitments = self.state.commitments.lock().map_err(|_| {
+            AkitaError::Internal("admitted commitment map lock poisoned during admission".into())
+        })?;
         let key = (context.fold_level(), group);
         if commitments.get(&key).is_some_and(|&id| id != commitment_id) {
             return Err(AkitaError::InvalidInput(
@@ -178,12 +178,12 @@ impl ScopeLease {
         commitment_id: u128,
     ) -> Result<(), AkitaError> {
         self.validate_context(context)?;
-        let group = context.group_index().ok_or(AkitaError::InvalidProof)?;
-        let commitments = self
-            .state
-            .commitments
-            .lock()
-            .map_err(|_| AkitaError::InvalidProof)?;
+        let group = context.group_index().ok_or_else(|| {
+            AkitaError::Internal("commitment validation lost its validated group context".into())
+        })?;
+        let commitments = self.state.commitments.lock().map_err(|_| {
+            AkitaError::Internal("admitted commitment map lock poisoned during validation".into())
+        })?;
         #[cfg(test)]
         if self.state.plan.is_none() {
             return Ok(());

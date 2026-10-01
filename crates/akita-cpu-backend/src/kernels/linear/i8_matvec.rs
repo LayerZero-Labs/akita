@@ -12,10 +12,10 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
     num_digits: usize,
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     let num_live_blocks = blocks.len();
     if num_live_blocks == 0 {
-        return vec![];
+        return Ok(vec![]);
     }
     let n_a = ntt_mat.len();
     let mat_width = ntt_mat.first().map_or(0, |row| row.len());
@@ -26,21 +26,24 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
         .unwrap_or(0);
     let inner_width = mat_width.min(max_data_width);
     if inner_width == 0 || n_a == 0 {
-        return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_live_blocks];
+        let output = vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_live_blocks];
+        return Ok(output);
     }
 
     let digit_bound = balanced_digit_abs_bound(log_basis);
     let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
-        .expect("single i8 CRT term must fit supported parameters");
+        .ok_or_else(|| {
+            AkitaError::Internal("i8 matvec CRT capacity cannot fit a single term".into())
+        })?;
     if n_a <= DENSE_I8_BLOCK_PARALLEL_MAX_ROWS
         && num_live_blocks >= DENSE_I8_BLOCK_PARALLEL_MIN_BLOCKS
         && inner_width == max_data_width
     {
         if inner_width <= safe_width {
             return if CHECK_ZERO {
-                mat_vec_mul_i8_block_parallel_with_params(
+                Ok(mat_vec_mul_i8_block_parallel_with_params(
                     ntt_mat, blocks, num_digits, log_basis, params,
-                )
+                ))
             } else {
                 mat_vec_mul_i8_dense_block_parallel_with_params(
                     ntt_mat, blocks, num_digits, log_basis, params,
@@ -48,7 +51,7 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
             };
         }
         let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
-        return mat_vec_mul_i8_block_parallel_chunked_with_params::<F, W, K, D, CHECK_ZERO>(
+        let output = mat_vec_mul_i8_block_parallel_chunked_with_params::<F, W, K, D, CHECK_ZERO>(
             ntt_mat,
             blocks,
             inner_width,
@@ -57,13 +60,14 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
             log_basis,
             params,
         );
+        return Ok(output);
     }
 
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     let tile_width =
         aligned_i8_tile_width(base_tile_width::<W, K, D>(n_a), inner_width, num_digits);
     let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
-    drive_block_chunked_matvec(
+    Ok(drive_block_chunked_matvec(
         num_live_blocks,
         n_a,
         inner_width,
@@ -103,7 +107,7 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
                 }
             }
         },
-    )
+    ))
 }
 
 pub(super) fn mat_vec_mul_i8_with_params<
@@ -117,7 +121,7 @@ pub(super) fn mat_vec_mul_i8_with_params<
     num_digits: usize,
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     mat_vec_mul_i8_with_params_impl::<F, W, K, D, true>(
         ntt_mat, blocks, num_digits, log_basis, params,
     )
@@ -134,7 +138,7 @@ pub(super) fn mat_vec_mul_i8_dense_with_params<
     num_digits: usize,
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     mat_vec_mul_i8_with_params_impl::<F, W, K, D, false>(
         ntt_mat, blocks, num_digits, log_basis, params,
     )

@@ -86,7 +86,11 @@ impl<F: Field> CompressionSourceWitness<F> {
         self.material
             .quotients()
             .and_then(|quotients| quotients.get(map_index))
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::Internal(
+                    "compression source quotient for the retained map is missing".into(),
+                )
+            })
     }
 }
 

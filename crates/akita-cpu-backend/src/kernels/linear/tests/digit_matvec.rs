@@ -360,7 +360,8 @@ fn mat_vec_mul_i8_dense_single_row_matches_generic_on_block_parallel_path() {
                 num_digits,
                 log_basis,
                 &params,
-            );
+            )
+            .unwrap();
             let generic_single: Vec<CyclotomicRing<F, D>> =
                 generic.into_iter().map(|row| row[0]).collect();
             assert_eq!(single, generic_single);

@@ -52,9 +52,10 @@ impl CompressionNttCache {
             domains,
         };
         let entry = {
-            let mut slots = self.slots.lock().map_err(|_| {
-                AkitaError::InvalidSetup("compression NTT cache lock poisoned".into())
-            })?;
+            let mut slots = self
+                .slots
+                .lock()
+                .map_err(|_| AkitaError::Internal("compression NTT cache lock poisoned".into()))?;
             Arc::clone(
                 slots
                     .entry(key)
