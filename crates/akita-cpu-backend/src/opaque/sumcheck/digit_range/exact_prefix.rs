@@ -13,15 +13,15 @@ pub(crate) struct ExactPrefixTable<T: Copy> {
 impl<T: Copy> ExactPrefixTable<T> {
     pub(crate) fn new(domain_len: usize, explicit: Vec<T>, default: T) -> Result<Self, AkitaError> {
         if domain_len == 0 || !domain_len.is_power_of_two() {
-            return Err(AkitaError::InvalidInput(format!(
+            return Err(AkitaError::Internal(format!(
                 "exact-prefix domain length must be a nonzero power of two; got {domain_len}"
             )));
         }
         if explicit.len() > domain_len {
-            return Err(AkitaError::InvalidSize {
-                expected: domain_len,
-                actual: explicit.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "exact-prefix explicit table length: expected {domain_len}, actual {}",
+                explicit.len(),
+            )));
         }
         Ok(Self {
             domain_len,
@@ -55,7 +55,7 @@ impl<T: Copy> ExactPrefixTable<T> {
         T: Send + Sync,
     {
         if self.domain_len < 2 {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "cannot fold a one-element exact-prefix table".to_string(),
             ));
         }
@@ -117,7 +117,7 @@ impl<'a, E: Field> SplitEqualitySuffixMass<'a, E> {
             || !first.len().is_power_of_two()
             || !second.len().is_power_of_two()
         {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "split-equality tables must have nonzero power-of-two lengths".to_string(),
             ));
         }
@@ -130,13 +130,13 @@ impl<'a, E: Field> SplitEqualitySuffixMass<'a, E> {
             .len()
             .checked_mul(self.second.len())
             .ok_or_else(|| {
-                AkitaError::InvalidInput("split-equality pair count overflow".to_string())
+                AkitaError::Internal("split-equality pair count overflow".to_string())
             })?;
         if first_implicit_pair > pair_count {
-            return Err(AkitaError::InvalidSize {
-                expected: pair_count,
-                actual: first_implicit_pair,
-            });
+            return Err(AkitaError::Internal(format!(
+                "split-equality implicit pair offset: expected {pair_count}, \
+                 actual {first_implicit_pair}"
+            )));
         }
         if first_implicit_pair == pair_count {
             return Ok(E::zero());

@@ -30,7 +30,7 @@ impl<F: Field> CpuCompressionRetention<F> {
                     total.checked_add(quotient.coeff_len())
                 })
                 .ok_or_else(|| {
-                    AkitaError::InvalidSetup("CPU compression quotient extent overflow".into())
+                    AkitaError::Internal("CPU compression quotient extent overflow".into())
                 })?,
             CompressionRelationOutput::ReducedEvaluation => 0,
         };
@@ -40,14 +40,10 @@ impl<F: Field> CpuCompressionRetention<F> {
                 quotient_coefficients
                     .checked_mul(size_of::<F>())
                     .ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "CPU compression quotient byte extent overflow".into(),
-                        )
+                        AkitaError::Internal("CPU compression quotient byte extent overflow".into())
                     })?,
             )
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("CPU compression retained bytes overflow".into())
-            })
+            .ok_or_else(|| AkitaError::Internal("CPU compression retained bytes overflow".into()))
     }
 }
 
@@ -73,8 +69,8 @@ impl<F: Field + 'static> PortableCompressionStateExport<F> for CpuCompressionExp
                 Some(RingRelationMode::ReducedEvaluation),
                 CompressionRelationOutput::ReducedEvaluation,
             ) => PortableCompressionState::reduced_evaluation(retained.witness.clone()),
-            _ => Err(AkitaError::InvalidInput(
-                "CPU compression state disagrees with its bound relation mode".into(),
+            _ => Err(AkitaError::Internal(
+                "CPU compression export disagrees with its bound relation mode".into(),
             )),
         }
     }
@@ -96,8 +92,8 @@ impl<F: Field + 'static> PortableCompressionStateExport<F> for CpuCompressionExp
                     Some(RingRelationMode::ReducedEvaluation),
                     CompressionRelationOutput::ReducedEvaluation,
                 ) => PortableCompressionState::reduced_evaluation(retained.witness),
-                _ => Err(AkitaError::InvalidInput(
-                    "CPU compression state disagrees with its bound relation mode".into(),
+                _ => Err(AkitaError::Internal(
+                    "CPU compression consume disagrees with its bound relation mode".into(),
                 )),
             },
             Err(shared) => self.export_compression_state(&shared),

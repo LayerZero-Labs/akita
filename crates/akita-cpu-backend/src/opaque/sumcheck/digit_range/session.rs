@@ -179,7 +179,7 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
             if physical.domain().num_vars() != equality_point.len()
                 || physical.domain().live_len() != digit_source.live_len()
             {
-                return Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::Internal(
                     "physical response and digit-range domains disagree".into(),
                 ));
             }
@@ -359,7 +359,7 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
             }
         };
         if !valid {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "Stage 1 consumer returned an invalid round polynomial".into(),
             ));
         }
@@ -475,7 +475,7 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
                         let expected =
                             p.range.final_range_claim() + p.norm_merge * p.norm.final_claim()?;
                         if self.claim != expected {
-                            return Err(AkitaError::InvalidInput(
+                            return Err(AkitaError::Internal(
                                 "fused Stage 1 final claim mismatch".into(),
                             ));
                         }

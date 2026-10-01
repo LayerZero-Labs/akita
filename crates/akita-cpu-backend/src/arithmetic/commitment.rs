@@ -45,7 +45,7 @@ impl<F: Field, E> CpuBackend<F, E> {
         F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator,
     {
         if plan.ring_dimension != D || sources.is_empty() {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "resolved CPU inner stage has invalid ring dispatch or an empty source group"
                     .into(),
             ));
@@ -54,7 +54,7 @@ impl<F: Field, E> CpuBackend<F, E> {
         for source in sources {
             source.validate_plan(&plan)?;
             if source.selected_type() != sources[0].selected_type() {
-                return Err(AkitaError::InvalidInput(
+                return Err(AkitaError::Internal(
                     "CPU inner source group is not representation-homogeneous".into(),
                 ));
             }
@@ -68,12 +68,12 @@ impl<F: Field, E> CpuBackend<F, E> {
                         let Some(PolynomialRepresentation::OneHot(onehot)) =
                             source.representation()
                         else {
-                            return Err(AkitaError::InvalidInput(
+                            return Err(AkitaError::Internal(
                                 "compiled one-hot group contains another representation".into(),
                             ));
                         };
                         let UnitPositionSlice::$variant(positions) = onehot.positions else {
-                            return Err(AkitaError::InvalidInput(
+                            return Err(AkitaError::Internal(
                                 "compiled one-hot group contains another index width".into(),
                             ));
                         };
@@ -96,7 +96,7 @@ impl<F: Field, E> CpuBackend<F, E> {
                         dense,
                     ))) = source.representation()
                     else {
-                        return Err(AkitaError::InvalidInput(
+                        return Err(AkitaError::Internal(
                             "compiled dense group contains another representation".into(),
                         ));
                     };
@@ -116,7 +116,7 @@ impl<F: Field, E> CpuBackend<F, E> {
                         DenseRepresentation::PredecomposedDigits(planes),
                     )) = source.representation()
                     else {
-                        return Err(AkitaError::InvalidInput(
+                        return Err(AkitaError::Internal(
                             "compiled dense-digit group contains another representation".into(),
                         ));
                     };
@@ -129,7 +129,7 @@ impl<F: Field, E> CpuBackend<F, E> {
                 .map(|source| {
                     let Some(PolynomialRepresentation::ShortNorm(short)) = source.representation()
                     else {
-                        return Err(AkitaError::InvalidInput(
+                        return Err(AkitaError::Internal(
                             "compiled short-norm group contains another representation".into(),
                         ));
                     };
@@ -152,7 +152,7 @@ impl<F: Field, E> CpuBackend<F, E> {
                 OneHotIndexWidth::U32 => commit_onehot_group!(U32),
                 OneHotIndexWidth::Usize => commit_onehot_group!(Usize),
             },
-            None => Err(AkitaError::InvalidInput(
+            None => Err(AkitaError::Internal(
                 "CPU standard inner stage cannot execute an external source path".into(),
             )),
         }
@@ -171,16 +171,16 @@ impl<F: Field, E> CpuBackend<F, E> {
             || planes.num_digits != plan.num_digits_inner
             || planes.log_basis != plan.log_basis_inner
         {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "predecomposed dense planes disagree with the inner stage plan".into(),
             ));
         }
         let (digit_planes, remainder) = planes.bytes.as_chunks::<D>();
         if !remainder.is_empty() {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: remainder.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "predecomposed dense ring remainder length: expected {D}, actual {}",
+                remainder.len(),
+            )));
         }
         let blocks = dense_digit_block_slices(
             digit_planes,
@@ -189,7 +189,7 @@ impl<F: Field, E> CpuBackend<F, E> {
             plan.num_digits_inner,
         );
         if blocks.len() != plan.num_live_blocks {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "predecomposed dense block count disagrees with the inner stage plan".into(),
             ));
         }
@@ -214,7 +214,7 @@ impl<F: Field, E> CpuBackend<F, E> {
         F: Field + CanonicalEncoding,
     {
         if plan.ring_dimension != D {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "dense commitment plan disagrees with ring dispatch".into(),
             ));
         }
@@ -242,7 +242,7 @@ impl<F: Field, E> CpuBackend<F, E> {
         };
         let block_slices = dense_coefficient_block_slices(rings, plan.num_positions_per_block);
         if block_slices.len() != plan.num_live_blocks {
-            return Err(AkitaError::InvalidSetup(format!(
+            return Err(AkitaError::Internal(format!(
                 "dense source produced {} live blocks, expected {}",
                 block_slices.len(),
                 plan.num_live_blocks
