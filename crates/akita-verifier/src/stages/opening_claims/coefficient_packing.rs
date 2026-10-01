@@ -2,11 +2,13 @@
 
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
 use akita_error::AkitaError;
+use akita_params::{
+    BasisMode, CommittedGroupParams, OpeningClaimsLayout, SubringCoefficientPackingGeometry,
+};
 use akita_serialization::AkitaSerialize;
 use akita_types::GrindingReplay;
 use akita_types::{
-    BasisMode, Commitment, CommittedGroupParams, FpExtEncoding, OpeningClaims, OpeningClaimsLayout,
-    PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
+    Commitment, FpExtEncoding, OpeningClaims, PreparedSubringCoefficientPackingPoint,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
@@ -14,10 +16,10 @@ fn prepare_group<E: Field>(
     point: &[E],
     basis: BasisMode,
     source_num_vars: usize,
-    group_params: &akita_types::GroupOpenPhaseParams,
+    group_params: &akita_params::GroupOpenPhaseParams,
     extension_degree: usize,
 ) -> Result<PreparedSubringCoefficientPackingPoint<E>, AkitaError> {
-    let akita_types::OpeningMethod::SubringCoefficientPacking {
+    let akita_params::OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension,
     } = group_params.opening_method()
     else {

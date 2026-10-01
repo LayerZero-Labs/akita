@@ -137,11 +137,11 @@ where
     let num_live_blocks = plan.live_blocks();
     let alpha_bits = plan.alpha_bits();
     let opening_method = plan.opening_method();
-    if let akita_types::OpeningMethod::SubringCoefficientPacking {
+    if let akita_params::OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension,
     } = opening_method
     {
-        let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(
+        let geometry = akita_params::SubringCoefficientPackingGeometry::try_new(
             E::DEGREE,
             D,
             challenge_subring_dimension,
@@ -243,7 +243,7 @@ where
         }
         let mut reduced_point = inner_point[..inner_point.len().min(packed_bits)].to_vec();
         reduced_point.resize(packed_bits, E::zero());
-        let weights = akita_types::basis_weights(&reduced_point, basis)?;
+        let weights = akita_params::basis_weights(&reduced_point, basis)?;
         let packed = akita_types::embed_ring_subfield_vector::<F, E, D>(
             &weights,
             AkitaError::InvalidInput(

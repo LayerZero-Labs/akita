@@ -353,8 +353,8 @@ impl<const D: usize> PreparedLimbMatrix<D> {
 mod tests {
     use super::super::exact::ExactCachePlan;
     use super::*;
-    use crate::FlatMatrix;
     use akita_algebra::CyclotomicRing;
+    use akita_params::FlatMatrix;
     use jolt_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
     fn extreme_matrix<F: Field + CanonicalEncoding, const D: usize>(

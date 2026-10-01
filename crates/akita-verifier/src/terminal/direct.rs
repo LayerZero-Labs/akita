@@ -3,10 +3,10 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_error::AkitaError;
+use akita_params::{dispatch_for_field, TerminalFoldParams};
 use akita_types::{
-    decode_terminal_z_golomb_payload, dispatch_for_field, recover_ring_subfield_inner_product,
-    FpExtEncoding, PreparedOpeningPoint, RingMultiplierOpeningPoint, TerminalFoldParams,
-    TerminalResponse,
+    decode_terminal_z_golomb_payload, recover_ring_subfield_inner_product, FpExtEncoding,
+    PreparedOpeningPoint, RingMultiplierOpeningPoint, TerminalResponse,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
@@ -154,7 +154,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     dispatch_for_field!(
-        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
         F,
         params.d_a(),
         |D_A| {
@@ -176,7 +176,7 @@ where
                 )?
             };
             if params.response_l2_sq_cap().is_some_and(|cap| {
-                akita_types::sis::checked_centered_l2_sq(&z_values).is_none_or(|norm| norm > cap)
+                akita_params::sis::checked_centered_l2_sq(&z_values).is_none_or(|norm| norm > cap)
             }) {
                 return Err(AkitaError::InvalidProof);
             }
@@ -245,8 +245,10 @@ where
                             digits = num_digits_inner
                         )
                         .entered();
-                        let gadget =
-                            akita_types::gadget_row_scalars::<F>(num_digits_inner, log_basis_inner);
+                        let gadget = akita_params::gadget_row_scalars::<F>(
+                            num_digits_inner,
+                            log_basis_inner,
+                        );
                         let mut reduced = CyclotomicRing::zero();
                         for position in 0..num_positions {
                             let start = position
@@ -309,7 +311,7 @@ where
     }
     let mut actual = E::zero();
     dispatch_for_field!(
-        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
         F,
         params.d_a(),
         |D| {

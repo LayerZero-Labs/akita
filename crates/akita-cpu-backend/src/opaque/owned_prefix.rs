@@ -3,10 +3,11 @@ use super::owned::{CommitmentHandle, CommittedSource, OwnedPolynomials};
 use crate::commitment::{CommitmentExecutor, DenseType, PolynomialType, PortableStatePolicy};
 use crate::{CpuBackend, DensePoly};
 use akita_error::AkitaError;
+use akita_params::sis::{CommittedSourceClass, CommittedSourceContract};
+use akita_params::{DecompositionParams, SetupPrefixSlotId};
 use akita_prover::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::sis::{CommittedSourceClass, CommittedSourceContract};
-use akita_types::{Commitment, DecompositionParams, FpExtEncoding, SetupPrefixSlotId};
+use akita_types::{Commitment, FpExtEncoding};
 use jolt_field::{
     AdditiveGroup, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced,
     WithCommitAccumulator,
@@ -284,16 +285,16 @@ mod tests {
                 let setup =
                     crate::AkitaProverSetup::<F>::generate_with_capacity(NV, 1, capacity).unwrap();
                 let row = catalog
-                    .resolve_key(&akita_types::ScheduleLookupKey::single(
-                        akita_types::PolynomialGroupLayout::new(NV, 1),
+                    .resolve_key(&akita_params::ScheduleLookupKey::single(
+                        akita_params::PolynomialGroupLayout::new(NV, 1),
                     ))
                     .unwrap();
                 let params = &row.schedule().root.params;
                 let n_prefix =
                     (params.d_a() * params.outer_slice_count().get()).next_power_of_two();
                 let prefix =
-                    akita_types::setup_prefix_precommitted_params(params, n_prefix).unwrap();
-                let id = akita_types::scheduled_setup_prefix(n_prefix, prefix)
+                    akita_params::setup_prefix_precommitted_params(params, n_prefix).unwrap();
+                let id = akita_params::scheduled_setup_prefix(n_prefix, prefix)
                     .slot_id()
                     .unwrap();
                 let first = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
@@ -392,14 +393,14 @@ mod tests {
         const NV: usize = 14;
         let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
         let row = catalog
-            .resolve_key(&akita_types::ScheduleLookupKey::single(
-                akita_types::PolynomialGroupLayout::new(NV, 1),
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::new(NV, 1),
             ))
             .unwrap();
         let params = &row.schedule().root.params;
         let n_prefix = (params.d_a() * params.outer_slice_count().get()).next_power_of_two();
-        let prefix = akita_types::setup_prefix_precommitted_params(params, n_prefix).unwrap();
-        let id = akita_types::scheduled_setup_prefix(n_prefix, prefix)
+        let prefix = akita_params::setup_prefix_precommitted_params(params, n_prefix).unwrap();
+        let id = akita_params::scheduled_setup_prefix(n_prefix, prefix)
             .slot_id()
             .unwrap();
 
@@ -435,14 +436,14 @@ mod tests {
         const WORKERS: usize = 8;
         let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
         let row = catalog
-            .resolve_key(&akita_types::ScheduleLookupKey::single(
-                akita_types::PolynomialGroupLayout::new(NV, 1),
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::new(NV, 1),
             ))
             .unwrap();
         let params = &row.schedule().root.params;
         let n_prefix = (params.d_a() * params.outer_slice_count().get()).next_power_of_two();
-        let prefix = akita_types::setup_prefix_precommitted_params(params, n_prefix).unwrap();
-        let id = akita_types::scheduled_setup_prefix(n_prefix, prefix)
+        let prefix = akita_params::setup_prefix_precommitted_params(params, n_prefix).unwrap();
+        let id = akita_params::scheduled_setup_prefix(n_prefix, prefix)
             .slot_id()
             .unwrap();
 
@@ -499,14 +500,14 @@ mod tests {
         const NV: usize = 14;
         let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
         let row = catalog
-            .resolve_key(&akita_types::ScheduleLookupKey::single(
-                akita_types::PolynomialGroupLayout::new(NV, 1),
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::new(NV, 1),
             ))
             .unwrap();
         let params = &row.schedule().root.params;
         let n_prefix = (params.d_a() * params.outer_slice_count().get()).next_power_of_two();
-        let prefix = akita_types::setup_prefix_precommitted_params(params, n_prefix).unwrap();
-        let id = akita_types::scheduled_setup_prefix(n_prefix, prefix)
+        let prefix = akita_params::setup_prefix_precommitted_params(params, n_prefix).unwrap();
+        let id = akita_params::scheduled_setup_prefix(n_prefix, prefix)
             .slot_id()
             .unwrap();
 

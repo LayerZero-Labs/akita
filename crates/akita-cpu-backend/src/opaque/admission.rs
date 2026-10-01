@@ -4,11 +4,10 @@ use crate::opaque::lifecycle::CpuProofSessionHandle;
 use crate::opaque::CpuBackend;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
+use akita_params::{FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout};
 use akita_prover::backend::{ProofAdmission, ProofContext};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::{
-    AkitaSetupDescriptor, Commitment, FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout,
-};
+use akita_types::{AkitaSetupDescriptor, Commitment};
 use jolt_field::{CanonicalEncoding, Field};
 
 impl<F: Field, E> akita_prover::backend::ProofScopeConsumer for CpuBackend<F, E> {
@@ -29,7 +28,7 @@ impl<F: Field, E> CpuBackend<F, E> {
     pub(crate) fn admitted_group(
         &self,
         binding: &crate::opaque::OperationBinding,
-    ) -> Result<(akita_types::GroupOpenPhaseParams, usize), AkitaError> {
+    ) -> Result<(akita_params::GroupOpenPhaseParams, usize), AkitaError> {
         self.validate_binding(binding)?;
         let (schedule, _) = binding.scope_lease().proof_plan()?;
         let level = if binding.fold_level() == 0 {
@@ -77,7 +76,7 @@ where
         plan.validate_structure()?;
         plan.validate_nonterminal_opening_execution(E::DEGREE)?;
         plan.root.params.validate_opening_batch(layout)?;
-        let required = akita_types::setup_matrix_field_elements_for_schedule(plan)?;
+        let required = akita_params::setup_matrix_field_elements_for_schedule(plan)?;
         if required > prepared.expanded.shared_matrix.as_field_slice().len() {
             return Err(AkitaError::InvalidSetup(
                 "proof plan exceeds backend setup capacity".into(),
@@ -88,13 +87,13 @@ where
         {
             parameters.witness_chunk.validate()?;
             for group in parameters.groups() {
-                akita_types::validate_role_dims_for_field::<F>(
+                akita_params::validate_role_dims_for_field::<F>(
                     group.role_dims(parameters.open().matrix.ring_dimension()),
                 )?;
             }
         }
-        akita_types::dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        akita_params::dispatch_for_field!(
+            akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
             F,
             plan.terminal.d_a(),
             |D| {

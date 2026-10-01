@@ -8,7 +8,8 @@ use jolt_field::Field;
 use std::ops::Range;
 use std::sync::Arc;
 
-use akita_types::{BasisMode, ValidatedCoefficientPackingGroup};
+use akita_params::BasisMode;
+use akita_types::ValidatedCoefficientPackingGroup;
 
 /// One verifier group's compact coefficient-packing semantics.
 #[derive(Clone, Debug, Eq, PartialEq)]

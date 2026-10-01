@@ -14,9 +14,10 @@ use crate::common::load_workspace_scheme;
 use crate::common::proof_size::prove_matching_byte_model;
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::CpuBackend;
+use akita_params::BasisMode;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_types::{BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::Valid;
@@ -30,7 +31,7 @@ pub(super) struct SingleGroupRoundtrip<Cfg: CommitmentConfig> {
     pub(super) scheme: AkitaCommitmentScheme<Cfg>,
     pub(super) proof: Vec<u8>,
     pub(super) verifier_setup: akita_types::AkitaVerifierSetup<Cfg::Field>,
-    pub(super) selection: akita_types::OpeningScheduleSelection,
+    pub(super) selection: akita_params::OpeningScheduleSelection,
     pub(super) commitment: akita_types::CommittedGroup<Cfg::Field>,
     pub(super) point: Vec<Cfg::ExtField>,
     pub(super) expected: Cfg::ExtField,
@@ -154,7 +155,7 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
     scheme: &AkitaCommitmentScheme<Cfg>,
     proof: &[u8],
     verifier_setup: &akita_types::AkitaVerifierSetup<Cfg::Field>,
-    selection: akita_types::OpeningScheduleSelection,
+    selection: akita_params::OpeningScheduleSelection,
     pre: (
         &akita_types::CommittedGroup<Cfg::Field>,
         &[Cfg::ExtField],

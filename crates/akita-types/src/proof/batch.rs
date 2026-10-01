@@ -3,13 +3,13 @@
 mod ring_multiplier;
 mod subfield;
 
-use crate::{
-    basis_weights, basis_weights_prefix, embed_ring_subfield_vector,
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, FpExtEncoding,
-    RingVec,
-};
+use crate::{embed_ring_subfield_vector, FpExtEncoding, RingVec};
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
+use akita_params::{
+    basis_weights, basis_weights_prefix, reduce_inner_opening_to_ring_element,
+    ring_opening_point_from_field, BasisMode,
+};
 use jolt_field::{ExtField, Field};
 
 pub use ring_multiplier::{PreparedRingMultiplier, RingMultiplierOpeningPoint};
@@ -96,9 +96,11 @@ where
         ));
     }
     let position_index_bits =
-        crate::BlockGeometry::position_index_bits_for(num_positions_per_block);
-    let block_index_bits = crate::BlockGeometry::checked_block_index_bits_for(num_live_blocks)
-        .ok_or_else(|| AkitaError::InvalidSetup("block-index domain size overflow".to_string()))?;
+        akita_params::BlockGeometry::position_index_bits_for(num_positions_per_block);
+    let block_index_bits = akita_params::BlockGeometry::checked_block_index_bits_for(
+        num_live_blocks,
+    )
+    .ok_or_else(|| AkitaError::InvalidSetup("block-index domain size overflow".to_string()))?;
     let expected_len = position_index_bits
         .checked_add(block_index_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
@@ -155,9 +157,11 @@ where
             "opening geometry requires power-of-two M and positive B".to_string(),
         ));
     }
-    let block_index_bits = crate::BlockGeometry::checked_block_index_bits_for(num_live_blocks)
-        .ok_or_else(|| AkitaError::InvalidSetup("block-index domain size overflow".to_string()))?;
-    let outer_bits = crate::BlockGeometry::position_index_bits_for(num_positions_per_block)
+    let block_index_bits = akita_params::BlockGeometry::checked_block_index_bits_for(
+        num_live_blocks,
+    )
+    .ok_or_else(|| AkitaError::InvalidSetup("block-index domain size overflow".to_string()))?;
+    let outer_bits = akita_params::BlockGeometry::position_index_bits_for(num_positions_per_block)
         .checked_add(block_index_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     let target_num_vars = outer_bits

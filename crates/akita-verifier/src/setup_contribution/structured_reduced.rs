@@ -98,7 +98,7 @@ impl<E: Field> DirectScan<E> {
         })?;
         if !matches!(
             group.opening_method(),
-            akita_types::OpeningMethod::EvaluationTrace
+            akita_params::OpeningMethod::EvaluationTrace
         ) {
             return Err(AkitaError::InvalidSetup(
                 "reduced structured contraction disagrees with its prepared mode".into(),

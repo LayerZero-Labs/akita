@@ -7,7 +7,7 @@ use akita_cpu_backend::benchmark_support::balanced_ring_decompose_fold_partition
 use akita_cpu_backend::standalone::{
     decompose_recursive_witness, recursive_witness_from_i8_digits,
 };
-use akita_types::sis::compute_num_digits_field_width;
+use akita_params::sis::compute_num_digits_field_width;
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
