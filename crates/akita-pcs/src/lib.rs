@@ -20,7 +20,6 @@
 //! - `jolt-field` - Shared field traits, concrete fields, and packing
 //! - `akita-serialization` - Serialization abstractions
 //! - `akita-algebra` - Modules, rings, NTTs, and polynomial helpers
-//! - `akita-transcript` - Fiat-Shamir transcript implementations and labels
 //! - `akita-challenges` - Fiat-Shamir challenge sampling helpers
 //! - `akita-sumcheck` - Generic sumcheck proof types, traits, and drivers
 //! - `akita-verifier` - Verifier replay without prover-only polynomial backends
@@ -62,7 +61,8 @@ pub use akita_prover::{
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_setup::new_prover_setup;
 pub use akita_types::{
-    BasisMode, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PrecommittedGroupProfiles,
+    AkitaSponge, BasisMode, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    PrecommittedGroupProfiles, PROOF_STREAM_PROTOCOL,
 };
 pub use akita_verifier::AkitaVerifier;
 pub use jolt_field::{

@@ -11,6 +11,7 @@ use crate::report::{
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_cpu_backend::CpuBackend;
 use akita_cpu_backend::OneHotPoly;
+use akita_pcs::{AkitaSponge, PROOF_STREAM_PROTOCOL};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::{
     BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
@@ -18,6 +19,7 @@ use akita_types::{
 };
 use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
+use jolt_transcript::ProverTranscript;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::time::Instant;
@@ -128,7 +130,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             "profile setup-contribution mode"
         );
         eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
-        let proof = scheme
+        let mut transcript =
+            ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, b"profile");
+        scheme
             .batched_prove(
                 &setup,
                 prover_claims::<Cfg>(
@@ -140,10 +144,13 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
                     hints.into_iter().next().unwrap(),
                 ),
                 &backend,
-                b"profile",
+                &mut transcript,
                 BasisMode::Lagrange,
             )
             .unwrap();
+        #[cfg(feature = "logging")]
+        crate::report::print_wire_events(label, transcript.events());
+        let proof = transcript.finish();
         report_timing(label, "prove", t0.elapsed().as_secs_f64());
         let post_execution_ntt_metrics = backend
             .shared_ntt_cache_metrics()
@@ -242,7 +249,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let verifier = scheme
         .verifier(verifier_setup.clone())
         .expect("verifier for the profile setup");
-    let verify = |claims| verifier.batched_verify(&proof, b"profile", claims, BasisMode::Lagrange);
+    let verify =
+        |claims| verifier.verify_standalone(&proof, b"profile", claims, BasisMode::Lagrange);
     run_verifier_timings(label, pools, "batched profile", prepare, verify);
     report_verifier_ntt_cache_size(label, verifier.terminal_ntt_cache_bytes());
 }

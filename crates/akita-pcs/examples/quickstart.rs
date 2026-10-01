@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let selection = prover_data.selection();
 
-    let proof = scheme.batched_prove(
+    let proof = scheme.prove_standalone(
         &setup,
         prover_data,
         &backend,
@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &commit_output.committed_group,
     )?])?;
     let statement = GroupBatchStatement::new(selection, verifier_claims)?;
-    verifier.batched_verify(&proof, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)?;
+    verifier.verify_standalone(&proof, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)?;
 
     println!("Akita proof verified");
     Ok(())

@@ -37,62 +37,44 @@ pub(crate) fn print_proof_summary(
         proof.len(),
         nonce_max_bytes,
     );
-    #[cfg(feature = "logging-transcript")]
-    print_wire_contexts(label);
 }
 
-#[cfg(feature = "logging-transcript")]
-fn print_wire_contexts(label: &str) {
+/// First `ProtocolSiteId::family` of `GrindingSite`: every prover message at
+/// or above it is a proof-of-work or fold-response nonce.
+#[cfg(feature = "logging")]
+const GRINDING_SITE_FAMILY_FIRST: u32 = 100;
+
+/// Report observed prover-message bytes per site family and level, and the
+/// nonce/non-nonce split of the whole argument string.
+#[cfg(feature = "logging")]
+pub(crate) fn print_wire_events(label: &str, events: &[jolt_transcript::TranscriptEvent]) {
     use std::collections::BTreeMap;
 
-    let mut wire = BTreeMap::<(u32, u32, u32), (u64, u64)>::new();
-    for event in akita_transcript::thread_events() {
-        let akita_transcript::TranscriptEvent::Context(record) = event;
-        if matches!(
-            record.kind,
-            kind if kind == akita_transcript::ProtocolMessageKind::ProofLength as u32
-                || kind == akita_transcript::ProtocolMessageKind::ProofAtoms as u32
-                || kind == akita_transcript::ProtocolMessageKind::GrindingNonce as u32
-                || kind == akita_transcript::ProtocolMessageKind::FoldResponseNonce as u32
-        ) {
-            let family = u32::from_le_bytes(record.site_id[..4].try_into().expect("site family"));
-            let level = u32::from_le_bytes(record.site_id[8..12].try_into().expect("site level"));
-            let entry = wire.entry((family, level, record.kind)).or_default();
-            entry.0 += record.atom_count;
-            entry.1 += record.encoded_bytes;
-        }
-    }
-    for ((family, level, kind), (atoms, bytes)) in wire {
-        eprintln!(
-            "[{label}] native_wire_context: family={family} level={level} kind={kind} atoms={atoms} declared_bytes={bytes}"
-        );
-    }
-
-    let mut ranges = akita_transcript::thread_proof_ranges();
-    ranges.sort_unstable_by_key(|range| range.start);
+    let mut wire = BTreeMap::<(u32, u32), (usize, usize)>::new();
     let mut cursor = 0usize;
     let mut nonce_bytes = 0usize;
     let mut non_nonce_bytes = 0usize;
     let mut complete = true;
-    for range in ranges {
-        let Some(end) = range.start.checked_add(range.len) else {
-            complete = false;
-            break;
+    for event in events {
+        let Some(range) = &event.narg else {
+            continue;
         };
-        if range.start != cursor {
-            complete = false;
-            break;
-        }
-        cursor = end;
-        if matches!(
-            range.context.kind,
-            kind if kind == akita_transcript::ProtocolMessageKind::GrindingNonce as u32
-                || kind == akita_transcript::ProtocolMessageKind::FoldResponseNonce as u32
-        ) {
-            nonce_bytes = nonce_bytes.saturating_add(range.len);
+        let site = akita_types::ProtocolSiteId::from_bytes(event.site.0);
+        let entry = wire.entry((site.family, site.level)).or_default();
+        entry.0 += 1;
+        entry.1 += range.len();
+        complete &= range.start == cursor;
+        cursor = range.end;
+        if site.family >= GRINDING_SITE_FAMILY_FIRST {
+            nonce_bytes += range.len();
         } else {
-            non_nonce_bytes = non_nonce_bytes.saturating_add(range.len);
+            non_nonce_bytes += range.len();
         }
+    }
+    for ((family, level), (messages, bytes)) in wire {
+        eprintln!(
+            "[{label}] native_wire_messages: family={family} level={level} messages={messages} bytes={bytes}"
+        );
     }
     if complete {
         tracing::info!(
