@@ -820,6 +820,29 @@ mod tests {
     }
 
     #[test]
+    fn sumcheck_rejects_round_polynomial_that_contradicts_the_claim() {
+        let (evaluations, claim) = fixture();
+        let mut instance = DenseInstance {
+            evaluations,
+            rounds: 4,
+            claim: claim + F::one(),
+        };
+        let mut channel = TestProverChannel {
+            state: new_prover_channel(b"native-sumcheck", b"fixture").unwrap(),
+            invocation: 7,
+        };
+        assert!(matches!(
+            prove_sumcheck(
+                &mut crate::InfallibleSumcheck(&mut instance),
+                &mut channel,
+                SumcheckShape::new(4, 1).unwrap(),
+                7,
+            ),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
     fn sumcheck_roundtrip_consumes_the_argument() {
         let (evaluations, claim) = fixture();
         let mut prover_instance = DenseInstance {
