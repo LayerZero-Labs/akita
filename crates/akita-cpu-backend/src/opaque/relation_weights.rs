@@ -26,12 +26,14 @@ use std::ops::Range;
 use akita_algebra::eq_poly::SplitEqEvals;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_error::AkitaError;
+use akita_params::{
+    gadget_row_scalars, r_decomp_levels, CommittedGroupParams, OpeningClaimsLayout, OpeningMethod,
+    RelationAddressGeometry, RelationRowFamily, RelationWitnessGeometry, SetupProjectionGeometry,
+};
 use akita_types::RelationWeightContribution;
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, CoefficientPackingBatchSemantics,
-    CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, OpeningFamily, OpeningMethod,
-    PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
-    RelationRowFamily, RelationWitnessGeometry, RingRelationInstance, SetupProjectionGeometry,
+    AkitaExpandedSetup, CoefficientPackingBatchSemantics, FpExtEncoding, OpeningFamily,
+    PreparedSubringCoefficientPackingPoint, RelationRangeImagePlan, RingRelationInstance,
 };
 use compiler::RelationWeightCompilation;
 use jolt_field::solinas::parallel::*;

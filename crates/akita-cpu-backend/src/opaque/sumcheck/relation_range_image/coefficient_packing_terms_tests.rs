@@ -2,16 +2,18 @@ use super::*;
 
 use akita_algebra::poly::multilinear_eval;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
+use akita_params::{
+    r_decomp_levels, BasisMode, CommitmentPayloadMode, DigitRangePlan, FlatMatrix,
+    OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod, RelationAddressGeometry,
+    RelationWitnessGeometry, SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
+};
 use akita_types::{
     coefficient_packing_relation_events, prepare_coefficient_packing_batch_semantics,
-    r_decomp_levels, relation_rhs_coeff_len, validate_coefficient_packing_batch_groups,
-    AkitaExpandedSetup, AkitaSetupDescriptor, BasisMode, CoefficientPackingBatchSemanticInputs,
-    CoefficientPackingBatchSemantics, CoefficientPackingChallenges,
-    CoefficientPackingGroupSemantics, CommitmentPayloadMode, DigitRangePlan, FlatMatrix,
-    OpenCommitMatrixParams, OpeningClaimsLayout, OpeningFamily, OpeningMethod,
-    PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
-    RelationWeightEvent, RelationWitnessGeometry, RingRelationGroupOpening, RingRelationInstance,
-    RingVec, SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
+    relation_rhs_coeff_len, validate_coefficient_packing_batch_groups, AkitaExpandedSetup,
+    AkitaSetupDescriptor, CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
+    CoefficientPackingChallenges, CoefficientPackingGroupSemantics, OpeningFamily,
+    PreparedSubringCoefficientPackingPoint, RelationRangeImagePlan, RelationWeightEvent,
+    RingRelationGroupOpening, RingRelationInstance, RingVec,
 };
 use jolt_field::{Ext2, One, Prime64Offset59, Ring, Zero};
 
@@ -19,7 +21,7 @@ type F = Prime64Offset59;
 type E = Ext2<F>;
 
 struct Fixture {
-    params: akita_types::CommittedGroupParams,
+    params: akita_params::CommittedGroupParams,
     opening_batch: OpeningClaimsLayout,
     relation_plan: RelationRangeImagePlan,
     relation: RingRelationInstance<F>,
@@ -38,7 +40,7 @@ fn fixture_for_basis(basis: BasisMode) -> Fixture {
     let d_a = 256;
     let d_d = 128;
     let config = SparseChallengeConfig::production_for_ring_dim(s).unwrap();
-    let mut params = akita_types::CommittedGroupParams::params_only(
+    let mut params = akita_params::CommittedGroupParams::params_only(
         SisModulusProfileId::Q64Offset59,
         d_a,
         2,
@@ -70,7 +72,7 @@ fn fixture_for_basis(basis: BasisMode) -> Fixture {
         &opening_batch,
         &relation_geometry,
         1,
-        akita_types::RelationQuotientPlan::quotient_lift(r_decomp_levels::<F>(
+        akita_params::RelationQuotientPlan::quotient_lift(r_decomp_levels::<F>(
             params.open().digits.log_basis,
         ))
         .unwrap(),

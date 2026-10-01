@@ -6,14 +6,13 @@ use crate::ProverOpeningData;
 #[cfg(test)]
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
-use akita_types::dispatch_for_field;
+use akita_params::dispatch_for_field;
+use akita_params::{CommittedGroupParams, SignedDigitKernel, MAX_I8_LOG_BASIS};
 use akita_types::GrindingReplay;
 #[cfg(test)]
 use akita_types::RingRelationGroupOpening;
 use akita_types::RingVec;
-use akita_types::{
-    CommittedGroupParams, OpeningFamily, RingRelationInstance, SignedDigitKernel, MAX_I8_LOG_BASIS,
-};
+use akita_types::{OpeningFamily, RingRelationInstance};
 use jolt_field::Unreduced;
 use jolt_field::{CanonicalEncoding, Field, Ring};
 
@@ -52,7 +51,7 @@ pub(in crate::protocol) struct PreparedRingRelationOutput<
 pub fn validate_prepared_relation_groups<F, E>(
     groups: &[PreparedRelationGroupPublic<F, E>],
     level_params: &CommittedGroupParams,
-    opening_batch: &akita_types::OpeningClaimsLayout,
+    opening_batch: &akita_params::OpeningClaimsLayout,
     relation: &RingRelationInstance<F>,
 ) -> Result<(), AkitaError>
 where
@@ -69,7 +68,7 @@ where
         ));
     }
     let geometry =
-        akita_types::RelationWitnessGeometry::for_level(level_params, opening_batch, E::DEGREE)?;
+        akita_params::RelationWitnessGeometry::for_level(level_params, opening_batch, E::DEGREE)?;
     for (group_index, group) in groups.iter().enumerate() {
         let layout = opening_batch.group_layout(group_index)?;
         let group_params = level_params.group_params_geometry(opening_batch, group_index)?;
@@ -85,13 +84,13 @@ where
             relation.group_openings()[group_index].coefficient_packing_geometry(),
         ) {
             (
-                akita_types::OpeningMethod::EvaluationTrace,
+                akita_params::OpeningMethod::EvaluationTrace,
                 OpeningFamily::EvaluationTrace(point),
                 None,
             ) if relation.group_ring_multiplier_point(group_index)?
                 == &point.ring_multiplier_point => {}
             (
-                akita_types::OpeningMethod::SubringCoefficientPacking { .. },
+                akita_params::OpeningMethod::SubringCoefficientPacking { .. },
                 OpeningFamily::SubringCoefficientPacking(point),
                 Some(relation_geometry),
             ) if relation_geometry == point.geometry()
@@ -150,7 +149,7 @@ impl RingRelationProver {
         level: u32,
         reduction: &Option<crate::protocol::prove::ExtensionOpeningReduction<PointF>>,
         scalar_openings: &[PointF],
-        trace_opening_batch: &akita_types::OpeningClaimsLayout,
+        trace_opening_batch: &akita_params::OpeningClaimsLayout,
         expected_witness_len: usize,
         commitment_ring_dimension: usize,
     ) -> Result<PreparedRingRelationOutput<F, PointF, B::WitnessHandle>, AkitaError>
@@ -192,7 +191,7 @@ impl RingRelationProver {
             ));
         }
         let relation_geometry =
-            akita_types::RelationWitnessGeometry::for_level(&lp, &opening_batch, PointF::DEGREE)?;
+            akita_params::RelationWitnessGeometry::for_level(&lp, &opening_batch, PointF::DEGREE)?;
         let relation_rhs_layout = relation_geometry.rhs_layout();
         let group_commitments = (0..num_groups)
             .map(|group_index| {

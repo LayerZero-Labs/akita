@@ -5,14 +5,16 @@ use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use jolt_field::{CanonicalEncoding, Ext2, ExtField, Field, Prime64Offset59, Ring, Zero};
 
 use crate::{
-    r_decomp_levels, relation_rhs_coeff_len, BasisMode, ChunkedWitnessCfg,
-    CoefficientPackingChallenges, CommitmentPayloadMode, CommittedGroupParams, DigitRangePlan,
-    FpExtEncoding, GroupCommitPhaseParams, GroupOpenPhaseParams, GroupOpeningPlan,
+    relation_rhs_coeff_len, CoefficientPackingChallenges, FpExtEncoding,
+    PreparedSubringCoefficientPackingPoint, RelationRangeImagePlan, RingRelationGroupOpening,
+    RingRelationInstance, RingVec,
+};
+use akita_params::{
+    r_decomp_levels, BasisMode, ChunkedWitnessCfg, CommitmentPayloadMode, CommittedGroupParams,
+    DigitRangePlan, GroupCommitPhaseParams, GroupOpenPhaseParams, GroupOpeningPlan,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod,
-    OuterCommitMatrixParams, PolynomialGroupLayout, PreparedSubringCoefficientPackingPoint,
-    RelationAddressGeometry, RelationRangeImagePlan, RelationWitnessGeometry,
-    RingRelationGroupOpening, RingRelationInstance, RingVec, SisModulusProfileId,
-    SubringCoefficientPackingGeometry, WitnessLayout,
+    OuterCommitMatrixParams, PolynomialGroupLayout, RelationAddressGeometry,
+    RelationWitnessGeometry, SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
 };
 
 /// One coefficient-packing group with its relation, prepared point, claims
@@ -88,7 +90,7 @@ where
         &opening_batch,
         &relation_geometry,
         params.witness_chunk.num_chunks,
-        crate::RelationQuotientPlan::quotient_lift(r_decomp_levels::<Base>(
+        akita_params::RelationQuotientPlan::quotient_lift(r_decomp_levels::<Base>(
             params.open().digits.log_basis,
         ))
         .unwrap(),
@@ -214,7 +216,7 @@ pub fn coefficient_packing_multigroup_fixture() -> CoefficientPackingMultigroupF
     let mut frozen = params.with_decomp(4, 8, 2, 2, 2).unwrap();
     frozen.set_precommitted_groups(Vec::new()).unwrap();
     frozen.own_group_mut().profile.inner.digits.log_basis = 9;
-    let a_bound = *crate::sis::inner_coeff_linf_bounds(
+    let a_bound = *akita_params::sis::inner_coeff_linf_bounds(
         frozen.inner().matrix.sis_modulus_profile(),
         u32::try_from(frozen.d_a()).expect("test ring dimension"),
     )
@@ -264,7 +266,7 @@ pub fn coefficient_packing_multigroup_fixture() -> CoefficientPackingMultigroupF
         &opening_batch,
         &relation_geometry,
         params.witness_chunk.num_chunks,
-        crate::RelationQuotientPlan::quotient_lift(r_decomp_levels::<F>(
+        akita_params::RelationQuotientPlan::quotient_lift(r_decomp_levels::<F>(
             params.open().digits.log_basis,
         ))
         .unwrap(),

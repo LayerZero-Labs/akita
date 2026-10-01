@@ -5,7 +5,8 @@ use super::{
 use crate::commitment::PortableCommitmentHandle;
 use crate::opaque::CommitInnerPlan;
 use akita_error::AkitaError;
-use akita_types::{CompressionChainPlan, CompressionChainWitness, RingRelationMode, RingVec};
+use akita_params::{CompressionChainPlan, CompressionChainWitness, RingRelationMode};
+use akita_types::RingVec;
 use jolt_field::Field;
 use std::sync::{Arc, Mutex};
 

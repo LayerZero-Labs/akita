@@ -9,8 +9,8 @@ pub struct CpuWitnessBuildHandle<F: Field + CanonicalEncoding> {
     pub(crate) assembly_state: crate::opaque::CpuRecursiveWitnessAssemblyState<F>,
     pub(crate) relation_rhs: akita_types::RingVec<F>,
     pub(crate) v: akita_types::RingVec<F>,
-    pub(crate) level: akita_types::CommittedGroupParams,
-    pub(crate) opening_batch: akita_types::OpeningClaimsLayout,
+    pub(crate) level: akita_params::CommittedGroupParams,
+    pub(crate) opening_batch: akita_params::OpeningClaimsLayout,
 }
 
 /// Owner, proof, setup, level, and operation identity attached to CPU state.

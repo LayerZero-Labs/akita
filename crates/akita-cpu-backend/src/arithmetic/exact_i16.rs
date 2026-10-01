@@ -3,7 +3,8 @@ use crate::sources::packed_digits::PackedSignedDigitView;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_types::{balanced_signed_digit_abs_bound, NttCacheKey, NttTransformDomain};
+use akita_params::balanced_signed_digit_abs_bound;
+use akita_types::{NttCacheKey, NttTransformDomain};
 #[allow(unused_imports)]
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};

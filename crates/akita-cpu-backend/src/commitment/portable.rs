@@ -1,13 +1,13 @@
 use akita_error::AkitaError;
+use akita_params::{
+    CompressionChainPlan, CompressionChainWitness, PackedNegativeBinary, RingRelationMode,
+    COMPRESSION_MAP_COUNT, COMPRESSION_TARGET_BYTES, MAX_COMPRESSION_INPUT_BYTES,
+};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
     DEFAULT_MAX_SEQUENCE_LEN,
 };
 use akita_types::RingVec;
-use akita_types::{
-    CompressionChainPlan, CompressionChainWitness, PackedNegativeBinary, RingRelationMode,
-    COMPRESSION_MAP_COUNT, COMPRESSION_TARGET_BYTES, MAX_COMPRESSION_INPUT_BYTES,
-};
 use jolt_field::Field;
 use std::io::{Read, Write};
 
@@ -629,7 +629,7 @@ fn reserve_shape_len<T>(vec: &mut Vec<T>, len: usize) -> Result<(), Serializatio
 mod tests {
 
     use super::*;
-    use akita_types::SisModulusProfileId;
+    use akita_params::SisModulusProfileId;
     use jolt_field::{Fp32, Ring, Zero};
 
     type F = Fp32<251>;

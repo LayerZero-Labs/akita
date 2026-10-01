@@ -1,13 +1,14 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_cpu_backend::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_error::{checked, AkitaError};
-use akita_types::{
+use akita_params::{
     sis::compute_num_digits_field_width, CommitmentPayloadMode, CommitmentSliceCount,
     CommittedGroupParams, CommittedSourceEncoding, FoldSchedule, GrindingPlan,
-    GroupOpenPhaseParams, InnerCommitSecurityRoute, NttTransformDomain, OpenCommitMatrixParams,
-    OpeningMethod, PolynomialGroupLayout, RingRelationMode, SisModulusProfileId,
+    GroupOpenPhaseParams, InnerCommitSecurityRoute, OpenCommitMatrixParams, OpeningMethod,
+    PolynomialGroupLayout, RingRelationMode, SisModulusProfileId,
     SubringCoefficientPackingGeometry,
 };
+use akita_types::NttTransformDomain;
 
 mod grinding;
 
@@ -109,7 +110,7 @@ fn print_wire_contexts(label: &str) {
 
 pub(crate) fn emit_proof_tail_report(label: &str, schedule: &FoldSchedule, field_bits: u32) {
     let response = &schedule.terminal.response_shape;
-    let planned_bytes = akita_types::terminal_response_planner_bytes(
+    let planned_bytes = akita_params::terminal_response_planner_bytes(
         field_bits,
         response,
         schedule.terminal.response_l2_sq_cap(),
@@ -251,9 +252,9 @@ struct PlannedGroupReport {
     num_positions_per_block: usize,
 
     block_index_domain_size: usize,
-    security_route: akita_types::InnerCommitSecurityRoute,
+    security_route: akita_params::InnerCommitSecurityRoute,
     response_l2_sq_cap: Option<u128>,
-    norm_proof_shape: Option<akita_types::PhysicalL2NormProofShape>,
+    norm_proof_shape: Option<akita_params::PhysicalL2NormProofShape>,
     setup_prefix_natural_field_elements: usize,
     setup_prefix_padded_field_elements: usize,
 }
@@ -327,7 +328,7 @@ fn b_slice_report_geometry(
         let complete_source_coefficients =
             slice_count.complete_source_coefficients(physical_output_rank, outer_ring_dimension)?;
         Some(
-            akita_types::CompressionChainPlan::for_complete_source(
+            akita_params::CompressionChainPlan::for_complete_source(
                 modulus_profile,
                 complete_source_coefficients,
             )?
@@ -373,8 +374,8 @@ impl PlannedGroupReport {
             opening_report_geometry(params.opening_method(), extension_degree, role_dims.d_a())?;
         let security_route = params.inner().matrix.security_route();
         let (response_l2_sq_cap, norm_proof_shape) = match security_route {
-            akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
-            akita_types::InnerCommitSecurityRoute::L2 {
+            akita_params::InnerCommitSecurityRoute::Linf(_) => (None, None),
+            akita_params::InnerCommitSecurityRoute::L2 {
                 response_l2_sq_cap,
                 norm_proof_shape,
                 ..
@@ -474,8 +475,8 @@ impl PlannedGroupReport {
             .unwrap_or((0, 0));
         let security_route = layout.inner.matrix.security_route();
         let (response_l2_sq_cap, norm_proof_shape) = match security_route {
-            akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
-            akita_types::InnerCommitSecurityRoute::L2 {
+            akita_params::InnerCommitSecurityRoute::Linf(_) => (None, None),
+            akita_params::InnerCommitSecurityRoute::L2 {
                 response_l2_sq_cap,
                 norm_proof_shape,
                 ..
@@ -510,7 +511,7 @@ impl PlannedGroupReport {
             d_b: role_dims.d_b(),
             d_d: role_dims.d_d(),
             source_encoding: source_encoding_name(
-                akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
+                akita_params::CommittedSourceEncoding::CanonicalCoefficientTable,
             ),
             extension_degree,
             opening_method: opening.method,
@@ -636,7 +637,7 @@ pub(crate) fn emit_runtime_schedule_summary(
         .ok_or_else(|| AkitaError::InvalidSetup("profile challenge field width overflow".into()))?;
     let levels = schedule.num_fold_levels();
     let num_setup_field_elements =
-        akita_types::setup_matrix_field_elements_for_schedule(schedule).unwrap_or(0);
+        akita_params::setup_matrix_field_elements_for_schedule(schedule).unwrap_or(0);
     let num_setup_bytes = num_setup_field_elements.saturating_mul(field_bits.div_ceil(8) as usize);
     let selected_offload_edges = schedule
         .recursive_folds
@@ -750,13 +751,13 @@ pub(crate) fn emit_runtime_schedule_summary(
             opening_report_geometry(lp.opening_method(), extension_degree, role_dims.d_a())?;
         let extension_opening_reduction_bytes =
             if matches!(lp.opening_method(), OpeningMethod::EvaluationTrace) {
-                let final_group = akita_types::PolynomialGroupLayout::singleton(
-                    akita_types::padded_boolean_opening_vars(input_witness_len)?,
+                let final_group = akita_params::PolynomialGroupLayout::singleton(
+                    akita_params::padded_boolean_opening_vars(input_witness_len)?,
                 );
                 let opening_shape = lp
                     .opening_layout_for_final_group(final_group)?
                     .aggregate_polynomial_group_layout()?;
-                akita_types::extension_opening_reduction_level_bytes(
+                akita_params::extension_opening_reduction_level_bytes(
                     challenge_field_bits,
                     extension_degree,
                     opening_shape,
@@ -783,8 +784,8 @@ pub(crate) fn emit_runtime_schedule_summary(
         let d_output_raw_dimension = lp.open().matrix.raw_output_dimension();
         let security_route = lp.inner().matrix.security_route();
         let (response_l2_sq_cap, norm_proof_shape) = match security_route {
-            akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
-            akita_types::InnerCommitSecurityRoute::L2 {
+            akita_params::InnerCommitSecurityRoute::Linf(_) => (None, None),
+            akita_params::InnerCommitSecurityRoute::L2 {
                 response_l2_sq_cap,
                 norm_proof_shape,
                 ..

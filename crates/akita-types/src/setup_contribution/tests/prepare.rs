@@ -17,7 +17,7 @@ fn prepared_relation_address_clones_share_the_equality_window() {
 #[test]
 fn prepare_accepts_exact_non_pow2_fold_count() {
     let mut lp = CommittedGroupParams::params_only(
-        crate::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         1,
@@ -28,19 +28,19 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
     )
     .with_decomp(8, 24, 2, 3, 3)
     .expect("valid test level params");
-    lp.own_group_mut().profile.inner.matrix = crate::InnerCommitMatrixParams::new_unchecked(
-        crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-        crate::sis::SisTableDigest::CURRENT,
-        crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+    lp.own_group_mut().profile.inner.matrix = akita_params::InnerCommitMatrixParams::new_unchecked(
+        akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
+        akita_params::sis::SisTableDigest::CURRENT,
+        akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
         1,
         16,
         1,
         64,
     );
-    lp.own_group_mut().profile.outer.matrix = crate::OuterCommitMatrixParams::new_unchecked(
-        crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-        crate::sis::SisTableDigest::CURRENT,
-        crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+    lp.own_group_mut().profile.outer.matrix = akita_params::OuterCommitMatrixParams::new_unchecked(
+        akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
+        akita_params::sis::SisTableDigest::CURRENT,
+        akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
         1,
         18,
         1,
@@ -60,14 +60,14 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         b_row_start: 2,
     };
     let joint_geometry =
-        crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
+        akita_params::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
             .unwrap();
     let witness_layout = WitnessLayout::new(
         &lp,
         &opening_batch,
         &joint_geometry,
         1,
-        crate::RelationQuotientPlan::quotient_lift(2).unwrap(),
+        akita_params::RelationQuotientPlan::quotient_lift(2).unwrap(),
     )
     .unwrap();
     let opening_source_len = witness_layout.live_coeff_len();
@@ -75,7 +75,7 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         .map(|idx| test_scalar(11 + idx as u128))
         .collect::<Vec<_>>()
         .into();
-    let relation_address_geometry = crate::RelationAddressGeometry::new(
+    let relation_address_geometry = akita_params::RelationAddressGeometry::new(
         CommitmentRingDims::uniform(TEST_D),
         TEST_D,
         opening_source_len,

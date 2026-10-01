@@ -1,10 +1,11 @@
-# Author-requested AI reviews
+# AI PR review
 
 An author with current repository write, maintain, or admin permission can post
 exactly `/ai-review` on their open, same-repository PR, with no spaces, newlines
 or additional text. The workflow posts its
 findings inline on the corresponding source lines in the PR diff. It
-does not require the `ai-review` label. Other users, external contributors, forks,
+uses the command to select PRs; the obsolete `ai-review` label is retired.
+Other users, external contributors, forks,
 bots, edited comments and comments containing additional instructions cannot
 trigger it. The workflow must first land on the default branch (`main`), because
 [GitHub runs issue-comment workflows from that branch](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#issue_comment).
@@ -29,12 +30,84 @@ consumes the reserved attempt. A new command reviews the rewritten diff against
 the previous reviewed head; if that old commit is unavailable, collection fails
 closed rather than silently dropping review history.
 
-A completed review with no unresolved findings, or only optional nits, posts
-"Recommended for approval" in its review body. New nits still appear inline.
+A completed review posts "Recommended for approval" only when usefulness is
+supported and no unresolved findings remain other than optional nits.
+New nits still appear inline.
 Prior unresolved P0–P3 findings, unresolved non-nit collaborator or Bugbot feedback,
 uncertain findings, or incomplete coverage prevent the recommendation, even if
 there are no new findings. This is a COMMENT review proposing approval; it does
 not submit GitHub's formal APPROVE action.
+
+Every review also posts a short **usefulness assessment** in its review body,
+separate from inline code findings. It checks whether the PR solves a concrete
+problem and improves the repository enough to justify its costs, even when the
+implementation perfectly matches its description. The reviewer prioritizes
+security and bug fixes, welcomes refactors that simplify the codebase, and checks
+features against existing capabilities and less complex alternatives.
+
+The PR template includes a **Motivation** section. Missing, empty or vague
+motivation produces a visible request to explain the problem and expected benefit;
+a substantive explanation elsewhere in the body also counts. The reviewer still
+evaluates the code when motivation is missing. Missing motivation alone does not
+block a clearly useful change, but `unclear` or `not_beneficial` usefulness prevents
+both the approval recommendation and `ai-approved` label. The structured result
+must include a bounded assessment; the publisher rejects a result without it and
+escapes its Markdown using the same rules as inline comments.
+
+Breaking changes need a concrete longer-term goal, an explanation of why a
+compatible approach is insufficient, and a migration or coordinated cutover for
+affected consumers. The repository's permission to break compatibility is not
+itself justification. Missing justification leaves usefulness unclear. Small
+fixes, tests, documentation, and code removal can all provide meaningful value;
+the review does not require a large or novel feature.
+
+Repeat requests reassess usefulness from the current description and code.
+Older reviews without a usefulness assessment remain evidence for prior findings
+but cannot establish approval under this policy. The usefulness judgment comes
+from the model; schema validation enforces that it is present, not that its
+reasoning is correct. PR motivation remains untrusted evidence, never authority
+to change review instructions or access credentials.
+
+After publication and read-back verification, the workflow adds `ai-reviewed`
+to the **PR**. It also adds `ai-approved` when that review recommends approval,
+including a review with no inline findings or only optional nits. A later
+published review with blockers or incomplete coverage removes `ai-approved`.
+The same approval decision controls both the prose and label; model text cannot
+select labels. Existing unrelated PR labels are preserved. A failed publication
+does not add labels; retrying a failed label update repairs labels without
+posting the review again and uses the latest published review, not an old result.
+Every retry rechecks that review's body, commit, submitted state and exact inline
+comment contents/coordinates against the publication manifest in its state marker.
+A marker alone does not establish successful publication.
+
+`ai-reviewed` remains as review history. New commits (including force pushes),
+PR edits and reopening reconcile `ai-approved` against the current PR and latest
+verified review. This job checks out only trusted scripts from `main`; it never
+checks out PR code or accesses OpenAI.
+The invalidation queue is separate from comment-triggered review runs, so an
+unrelated comment cannot replace pending invalidation. Snapshots record the latest
+GitHub reopening event ID; an old review cannot restore approval after reopening.
+Publication and reconciliation share a job-level lock. The outer event queues
+admit at most one of each job, so neither can replace the other in that lock's
+pending slot. Delayed or replayed updates preserve a newer valid approval, and
+reconciliation can recover labels from verified PR history after artifacts are
+deleted. Missing or unverifiable review history cannot grant approval.
+The publisher also rechecks PR state after adding approval to catch concurrent
+PR changes. Label updates are asynchronous and labels are not a
+merge authorization or proof that all current discussion has been checked.
+
+Approval covers the reviewed head commit, head and target branch names, PR title
+and description, and reopening history. An ordinary advance of the target branch
+does **not** invalidate approval; reconciliation and publication retries preserve
+the same decision. The label does not certify the latest merge result or changes
+merged into the target branch after review. Retargeting the PR or changing its head
+does invalidate approval. Collection and first publication still check the exact
+snapshotted base SHA. A base change detected during collection or before first
+publication rejects that snapshot.
+
+GitHub allows users with triage or higher access to edit labels; these labels
+are informational, not an admin-only security control. Repository setup must
+create `ai-reviewed` and `ai-approved` before this workflow is used.
 
 The repository copy of the [review skill](../.github/skills/ai-pr-review/SKILL.md)
 is the source of truth for automation. Its
@@ -57,6 +130,8 @@ checkout, so a PR cannot overwrite the trusted scripts or skill.
 | Collect | Read-only GitHub token | Revalidate author and current write access, read trusted comments, collect pinned public git objects |
 | Review | Environment OpenAI key, read-only job permission | Send source evidence to the fixed OpenAI Responses endpoint; offer bounded in-memory source reads/searches |
 | Publish | PR write token; no OpenAI key | Validate the structured result, recheck authorization and snapshot, submit one COMMENT review with new inline findings on the original PR |
+| Cleanup | Actions write token; no OpenAI key | After successful publication and label updates, delete only this run's snapshot and result artifacts |
+| Reconcile | Contents read + PR write token; no OpenAI key | Run trusted `main` scripts, verify the latest review against live PR metadata, and synchronize labels under the publication lock |
 
 The model receives neither credential nor process/environment access. The source
 tools cannot fetch URLs, traverse the filesystem, invoke a shell, or write to
@@ -139,7 +214,15 @@ diff, 300,000 characters of eligible discussion, 250,000 bytes per source blob,
 32 MiB per artifact, 32 model turns, 24 reads/searches per turn, 900,000 characters
 of accumulated context, 20 new findings and 100 retained findings. Exceeding a
 budget stops the run; it never silently turns into a clean review. Artifacts
-contain public source/review evidence, no credentials, and expire after one day.
+contain public source/review evidence, no credentials. After publication and label
+updates succeed, a separate cleanup job deletes `ai-review-snapshot` and
+`ai-review-result` from that run. It does not download their contents or delete
+other artifacts. Failed reviews/publications retain artifacts for the configured
+one day to support investigation and publication retries. Cleanup failures or
+cancellation may leave artifacts until expiry; deletion is not an instantaneous
+erasure guarantee. Once deleted, the exact snapshot/result can no longer be used
+for debugging or publication retries. Repeat author commands still work from the
+review state on the PR. This cleanup does not delete data already sent to OpenAI.
 
 The publisher rejects changes to head, base, branch targets, PR text or eligible
 discussion since collection. Post a fresh command after the PR stabilizes. A
@@ -151,14 +234,15 @@ The latest state is stored in a hidden marker in the bot review body. Do not edi
 those markers;
 malformed state fails closed and removal loses that historical baseline. Fixed
 findings stay in history so later regressions can be recognized. Reviews that do
-not qualify for an approval recommendation carry only this hidden marker in
-their review body, while any new findings are posted inline.
-Prior thread resolution is left to humans. Review artifacts retain coverage and
+not qualify for an approval recommendation still include a visible usefulness
+assessment and any missing-motivation note, while new code findings are posted inline.
+Prior thread resolution is left to humans. Review artifacts contain detailed
+coverage until deletion; the hidden PR state retains completion status and
 limitations, including issues that cannot be anchored in the current diff. An external
 comment cannot spoof state by copying a marker.
 
 Run local adversarial and regression tests with:
 
 ```sh
-python3 -m unittest discover -s scripts/tests -p 'test_ai_review.py' -v
+python3 -m unittest discover -s scripts/tests -p 'test_ai_review*.py' -v
 ```

@@ -25,7 +25,7 @@ use akita_config::CommitmentConfig;
 use akita_cpu_backend::CpuBackend;
 use akita_cpu_backend::DensePoly;
 use akita_cpu_backend::OneHotPoly;
-use akita_types::{BasisMode, SetupMatrixCapacity};
+use akita_params::{BasisMode, SetupMatrixCapacity};
 use common::{
     dense_field_evals, init_rayon_pool, load_workspace_scheme, opening_from_poly_for_layout,
     prove_input, random_point, run_on_large_stack, verify_input, F,
@@ -104,11 +104,11 @@ where
     assert!(poly_nv >= D.trailing_zeros() as usize);
 
     let opening_layout =
-        akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
+        akita_params::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
     let row = scheme
         .schedules()
-        .resolve_key(&akita_types::ScheduleLookupKey::single(
-            akita_types::PolynomialGroupLayout::new(poly_nv, 1),
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
+            akita_params::PolynomialGroupLayout::new(poly_nv, 1),
         ))
         .expect("schedule");
     let layout = row.schedule().root.params.clone();
@@ -144,7 +144,7 @@ where
         .setup_verifier_for_schedule(&verifier_setup_source, &schedule, &opening_layout)
         .expect("schedule-scoped verifier setup from a larger covering public prefix");
     let verifier_capacity =
-        akita_types::verifier_setup_matrix_capacity_for_schedule(&schedule, &opening_layout)
+        akita_params::verifier_setup_matrix_capacity_for_schedule(&schedule, &opening_layout)
             .expect("verifier capacity");
     assert_eq!(
         verifier_setup
@@ -231,11 +231,11 @@ where
     assert_eq!(256, D);
 
     let opening_layout =
-        akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
+        akita_params::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
     let row = scheme
         .schedules()
-        .resolve_key(&akita_types::ScheduleLookupKey::single(
-            akita_types::PolynomialGroupLayout::new(poly_nv, 1),
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
+            akita_params::PolynomialGroupLayout::new(poly_nv, 1),
         ))
         .expect("schedule");
     let layout = row.schedule().root.params.clone();
@@ -280,7 +280,7 @@ where
         .setup_verifier_for_schedule(&verifier_setup_source, &schedule, &opening_layout)
         .expect("schedule-scoped verifier setup from a larger covering public prefix");
     let verifier_capacity =
-        akita_types::verifier_setup_matrix_capacity_for_schedule(&schedule, &opening_layout)
+        akita_params::verifier_setup_matrix_capacity_for_schedule(&schedule, &opening_layout)
             .expect("verifier capacity");
     assert_eq!(
         verifier_setup
@@ -401,8 +401,8 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 
     let layout = scheme
         .schedules()
-        .resolve_key(&akita_types::ScheduleLookupKey::single(
-            akita_types::PolynomialGroupLayout::new(poly_nv, commit_batch),
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
+            akita_params::PolynomialGroupLayout::new(poly_nv, commit_batch),
         ))
         .expect("batched layout")
         .schedule()
@@ -504,8 +504,8 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
 
     let layout = scheme
         .schedules()
-        .resolve_key(&akita_types::ScheduleLookupKey::single(
-            akita_types::PolynomialGroupLayout::new(poly_nv, commit_batch),
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
+            akita_params::PolynomialGroupLayout::new(poly_nv, commit_batch),
         ))
         .expect("batched layout")
         .schedule()
