@@ -655,8 +655,38 @@ mod optimized_commit;
 #[test]
 fn base_fold_rejects_zero_block_width() {
     let poly = OneHotPoly::<Prime24Offset3>::new(64, vec![Some(1usize)]).unwrap();
-    assert!(matches!(
-        poly.fold_blocks::<64>(&[], 0),
-        Err(AkitaError::InvalidInput(_))
-    ));
+    assert_eq!(
+        poly.fold_blocks::<64>(&[], 0).unwrap_err(),
+        AkitaError::InvalidInput("one-hot positions per block are unsupported".into()),
+    );
+}
+
+#[test]
+fn base_fold_rejects_unsupported_ring_dimension_before_building_blocks() {
+    let poly = OneHotPoly::<Prime24Offset3>::new(64, vec![Some(1usize)]).unwrap();
+    assert_eq!(
+        poly.fold_blocks::<0>(&[], 1).unwrap_err(),
+        AkitaError::InvalidInput("one-hot commitment ring dimension is unsupported".into()),
+    );
+}
+
+#[test]
+fn base_block_fold_returns_an_unordered_range_error() {
+    let poly = OneHotPoly::<Prime24Offset3>::new(64, vec![Some(1usize)]).unwrap();
+    let range = std::ops::Range { start: 1, end: 0 };
+    assert_eq!(
+        super::fold::fold_onehot_block::<_, _, 64>(&poly, range, &[]).unwrap_err(),
+        AkitaError::InvalidInput("one hot ring range must be ordered".into()),
+    );
+}
+
+#[test]
+fn base_fold_propagates_a_coefficient_position_error() {
+    let mut poly = OneHotPoly::<Prime24Offset3>::new(64, vec![None, Some(0usize)]).unwrap();
+    // Exercise an inconsistent backend-owned position after construction.
+    poly.indices[1] = Some(usize::MAX);
+    assert_eq!(
+        poly.fold_blocks::<64>(&[], 2).unwrap_err(),
+        AkitaError::InvalidInput("onehot ring range index overflow".into()),
+    );
 }
