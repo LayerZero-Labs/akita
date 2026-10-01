@@ -490,12 +490,20 @@ fn signed_i16_cache_checks_shape_and_digit_class() {
         },
     )
     .expect("cache");
+    assert!(matches!(
+        cache.mat_vec_i16::<Prime32Offset99>(0, 1, &[[0; D]]),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        cache.mat_vec_i16::<Prime32Offset99>(10, 1, &[]),
+        Err(AkitaError::InvalidInput(_))
+    ));
     assert!(cache
         .mat_vec_i16::<Prime32Offset99>(10, 1, &[[511; D], [-512; D]])
         .is_ok());
     assert!(matches!(
         cache.mat_vec_i16::<Prime32Offset99>(10, 1, &[[512; D], [0; D]]),
-        Err(AkitaError::InvalidProof)
+        Err(AkitaError::InvalidInput(_))
     ));
     assert!(cache
         .mat_vec_i16::<Prime32Offset99>(10, 1, &[[0; D]])
