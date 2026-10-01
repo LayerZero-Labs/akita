@@ -360,7 +360,7 @@ impl<E: Field> ReducedCompressionRelationWeights<E> {
 pub fn build_reduced_compression_relation_weights<F, E>(
     alpha: E,
     lp: &CommittedGroupParams,
-    opening_batch: &crate::OpeningClaimsLayout,
+    opening_batch: &akita_params::OpeningClaimsLayout,
     extension_degree: usize,
     tau1: &[E],
     witness_layout: &WitnessLayout,
@@ -371,10 +371,10 @@ where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + ExtField<F>,
 {
-    if lp.ring_relation_mode != crate::RingRelationMode::ReducedEvaluation
+    if lp.ring_relation_mode != akita_params::RingRelationMode::ReducedEvaluation
         || !matches!(
             witness_layout.relation_quotient_layout(),
-            crate::RelationQuotientLayout::ReducedEvaluation
+            akita_params::RelationQuotientLayout::ReducedEvaluation
         )
     {
         return Err(AkitaError::InvalidSetup(
@@ -382,7 +382,7 @@ where
         ));
     }
     let relation_geometry =
-        crate::RelationWitnessGeometry::for_level(lp, opening_batch, extension_degree)?;
+        akita_params::RelationWitnessGeometry::for_level(lp, opening_batch, extension_degree)?;
     let relation_layout = relation_geometry.rhs_layout();
     let row_families = relation_layout.row_families()?;
     let row_weights = EqPolynomial::evals_prefix(tau1, row_families.len())?;
@@ -470,14 +470,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CommitmentPayloadMode, CompressionMapPlan, RingRelationMode};
     use akita_challenges::SparseChallengeConfig;
+    use akita_params::{CommitmentPayloadMode, CompressionMapPlan, RingRelationMode};
     use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
 
     #[test]
     fn reduced_compression_program_covers_every_map_without_quotient_events() {
-        let mut params = crate::CommittedGroupParams::params_only(
-            crate::SisModulusProfileId::Q128OffsetA7F7,
+        let mut params = akita_params::CommittedGroupParams::params_only(
+            akita_params::SisModulusProfileId::Q128OffsetA7F7,
             32,
             2,
             1,
@@ -489,15 +489,15 @@ mod tests {
         .unwrap();
         params.payload_mode = CommitmentPayloadMode::Compressed;
         params.ring_relation_mode = RingRelationMode::ReducedEvaluation;
-        let opening_batch = crate::OpeningClaimsLayout::new(0, 2).unwrap();
+        let opening_batch = akita_params::OpeningClaimsLayout::new(0, 2).unwrap();
         let relation_geometry =
-            crate::RelationWitnessGeometry::for_level(&params, &opening_batch, 1).unwrap();
-        let witness_layout = crate::WitnessLayout::new(
+            akita_params::RelationWitnessGeometry::for_level(&params, &opening_batch, 1).unwrap();
+        let witness_layout = akita_params::WitnessLayout::new(
             &params,
             &opening_batch,
             &relation_geometry,
             2,
-            crate::RelationQuotientPlan::ReducedEvaluation,
+            akita_params::RelationQuotientPlan::ReducedEvaluation,
         )
         .unwrap();
         assert!(witness_layout.r_rows().is_empty());
@@ -606,7 +606,8 @@ mod tests {
     #[test]
     fn reduced_map_uses_canonical_geometry_at_unaligned_window() {
         let map =
-            CompressionMapPlan::new(crate::SisModulusProfileId::Q128OffsetA7F7, 8, 16, 1).unwrap();
+            CompressionMapPlan::new(akita_params::SisModulusProfileId::Q128OffsetA7F7, 8, 16, 1)
+                .unwrap();
         let setup_coefficients = map.input_width() * map.ring_dimension();
         let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             crate::AkitaSetupDescriptor {
@@ -615,7 +616,7 @@ mod tests {
                 num_field_elements: setup_coefficients,
                 setup_seed: [0u8; 32].into(),
             },
-            crate::FlatMatrix::from_flat_data(
+            akita_params::FlatMatrix::from_flat_data(
                 (0..setup_coefficients)
                     .map(|index| F::from_u64(401 + index as u64))
                     .collect(),

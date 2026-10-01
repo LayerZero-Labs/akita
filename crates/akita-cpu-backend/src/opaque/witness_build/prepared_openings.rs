@@ -4,7 +4,8 @@ use super::finalize::{RelationDQuotientWitness, RingRelationGroupWitness};
 use crate::opaque::OperationCtx;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_error::AkitaError;
-use akita_types::{CommittedGroupParams, DigitBlocks, RingVec};
+use akita_params::CommittedGroupParams;
+use akita_types::{DigitBlocks, RingVec};
 use jolt_field::{CanonicalEncoding, Field};
 
 enum ConsumerOpeningKind<F: Field> {
@@ -79,8 +80,8 @@ impl<F: Field + CanonicalEncoding> PreparedOpeningWitness<F> {
 
     pub(crate) fn coefficient_packing<const D: usize>(
         level: &CommittedGroupParams,
-        opening_batch: &akita_types::OpeningClaimsLayout,
-        geometry: &akita_types::RelationWitnessGeometry,
+        opening_batch: &akita_params::OpeningClaimsLayout,
+        geometry: &akita_params::RelationWitnessGeometry,
         group_index: usize,
         partials_by_claim: Vec<crate::opaque::SubringCoefficientPackingPartials<F>>,
     ) -> Result<Self, AkitaError> {
@@ -106,7 +107,7 @@ impl<F: Field + CanonicalEncoding> PreparedOpeningWitness<F> {
         fold: crate::opaque::CpuAcceptedFold<F>,
         challenges: akita_types::GroupFoldChallenges,
         inner_relation: crate::opaque::OpaqueInnerRelationState<F>,
-        role_dims: akita_types::CommitmentRingDims,
+        role_dims: akita_params::CommitmentRingDims,
     ) -> Result<RingRelationGroupWitness<F>, AkitaError> {
         match (self.kind, challenges) {
             (
@@ -157,10 +158,10 @@ type PreparedGroupWitnessOutput<F, E> = (
 pub(super) fn prepare_group_opening_witness<F, E, const D: usize>(
     handle: &crate::opaque::CpuPreparedOpeningHandle<F, E>,
     level: &CommittedGroupParams,
-    opening_batch: &akita_types::OpeningClaimsLayout,
-    geometry: &akita_types::RelationWitnessGeometry,
+    opening_batch: &akita_params::OpeningClaimsLayout,
+    geometry: &akita_params::RelationWitnessGeometry,
     group_index: usize,
-    group_dims: akita_types::CommitmentRingDims,
+    group_dims: akita_params::CommitmentRingDims,
 ) -> Result<PreparedGroupWitnessOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -173,12 +174,12 @@ where
 
 pub(super) fn prepare_opening_relation_rows<F, RB, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, RB>,
-    opening_batch: &akita_types::OpeningClaimsLayout,
+    opening_batch: &akita_params::OpeningClaimsLayout,
     openings: &[PreparedOpeningWitness<F>],
     has_preceding_groups: bool,
     d_row_len: usize,
     log_basis: u32,
-    relation_mode: akita_types::RingRelationMode,
+    relation_mode: akita_params::RingRelationMode,
 ) -> Result<(RingVec<F>, RelationDQuotientWitness<F>), AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -201,10 +202,10 @@ where
         .ok_or(AkitaError::InvalidProof)?;
     if d_row_len == 0 {
         let quotients = match relation_mode {
-            akita_types::RingRelationMode::QuotientLift => {
+            akita_params::RingRelationMode::QuotientLift => {
                 RelationDQuotientWitness::QuotientLift(RingVec::from_coeffs(Vec::new()))
             }
-            akita_types::RingRelationMode::ReducedEvaluation => {
+            akita_params::RingRelationMode::ReducedEvaluation => {
                 RelationDQuotientWitness::ReducedEvaluation
             }
         };

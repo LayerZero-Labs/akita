@@ -1,7 +1,7 @@
 //! Program-bound prepared verifier NTT cache artifacts.
 
 use super::*;
-use crate::ScheduleRowDigest;
+use akita_params::ScheduleRowDigest;
 
 const MAGIC: [u8; 8] = *b"AKVNTT01";
 const TARGET_RISCV64_SCALAR_Q128: u32 = 1;
@@ -377,7 +377,7 @@ mod tests {
     }
 
     fn artifact() -> Vec<u8> {
-        let flat = crate::FlatMatrix::from_ring_slice(&matrix());
+        let flat = akita_params::FlatMatrix::from_ring_slice(&matrix());
         build_riscv64_scalar_q128_cache_artifact(
             flat.ring_view::<D>(1, WIDTH).expect("matrix view"),
             WIDTH,

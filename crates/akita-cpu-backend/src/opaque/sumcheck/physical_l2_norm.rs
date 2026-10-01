@@ -5,8 +5,9 @@ use super::digit_range::exact_prefix::ExactPrefixTable;
 use jolt_poly::UnivariatePoly;
 
 use akita_error::AkitaError;
+use akita_params::PhysicalL2NormProofShape;
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
-use akita_types::{reconstruct_l2_sq_from_gram, PhysicalL2NormProofShape, PhysicalResponsePlan};
+use akita_types::{reconstruct_l2_sq_from_gram, PhysicalResponsePlan};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring};
 use jolt_field::{Fold, Unreduced};

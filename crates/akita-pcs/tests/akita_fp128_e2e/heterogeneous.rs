@@ -257,7 +257,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         // count would not compare like with like.
         let bounded_digits = bounded_commitment.profile.inner.digits;
         let full_width_digits_at_bounded_basis =
-            akita_types::sis::compute_num_digits_field_width(128, bounded_digits.log_basis);
+            akita_params::sis::compute_num_digits_field_width(128, bounded_digits.log_basis);
         assert!(
             bounded_digits.num_digits < full_width_digits_at_bounded_basis,
             "bounded precommit digit depth must be below same-basis full-width depth",
@@ -440,8 +440,8 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
 
         let profile = scheme
             .schedules()
-            .resolve_key(&akita_types::ScheduleLookupKey::single(
-                akita_types::PolynomialGroupLayout::new(NV, 1),
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::new(NV, 1),
             ))
             .expect("one-hot row")
             .profiles()
@@ -504,7 +504,7 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
 
 /// The producer contract `fp128::DenseBounded` declares: class plus bound, read
 /// from the config rather than restated, so these tests cannot drift from it.
-fn bounded_contract() -> akita_types::sis::CommittedSourceContract {
+fn bounded_contract() -> akita_params::sis::CommittedSourceContract {
     fp128::DenseBounded::committed_source_contract()
         .expect("the bounded preset declares a valid producer contract")
 }
@@ -532,9 +532,9 @@ fn bounded_dense_declares_a_bound_that_contains_every_u64() {
 
     // And a 64-bit *signed* declaration would not have covered it — the
     // off-by-one this guards against.
-    let (_, signed_64_positive) = akita_types::sis::CommittedSourceContract::try_new(
+    let (_, signed_64_positive) = akita_params::sis::CommittedSourceContract::try_new(
         BoundedDenseCfg::committed_source_class(),
-        akita_types::DecompositionParams {
+        akita_params::DecompositionParams {
             log_commit_bound: 64,
             ..BoundedDenseCfg::decomposition()
         },
@@ -625,13 +625,13 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
         // the regression this test exists to catch.
         let profile = bounded_scheme
             .schedules()
-            .resolve_key(&akita_types::ScheduleLookupKey::single(
-                akita_types::PolynomialGroupLayout::new(NV, 1),
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::new(NV, 1),
             ))
             .expect("bounded row")
             .profiles()
             .final_group;
-        let (_, representable) = akita_types::sis::checked_balanced_digit_representable_bounds(
+        let (_, representable) = akita_params::sis::checked_balanced_digit_representable_bounds(
             profile.inner.digits.log_basis,
             profile.inner.digits.num_digits,
         );
@@ -681,8 +681,8 @@ fn final_group_admitted_under_another_producer_contract_is_refused() {
         let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let profile = dense_scheme
             .schedules()
-            .resolve_key(&akita_types::ScheduleLookupKey::single(
-                akita_types::PolynomialGroupLayout::new(NV, 1),
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::new(NV, 1),
             ))
             .expect("dense row")
             .profiles()

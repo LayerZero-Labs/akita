@@ -78,7 +78,7 @@ pub(crate) fn terminal_direct_suffix_cost(
         ));
     }
     let (mut terminal_params, certified_linf_cap) =
-        akita_types::TerminalFoldParams::try_from_expanded_group(terminal_lp.clone())?;
+        akita_params::TerminalFoldParams::try_from_expanded_group(terminal_lp.clone())?;
     let mut sparse_challenge_config = terminal_lp.fold_challenge_config();
     if route_guide != Some(CandidateInnerRoute::Linf) {
         if let Some(l2_challenge) =
@@ -101,7 +101,7 @@ pub(crate) fn terminal_direct_suffix_cost(
                     fold_digit_count: terminal_lp.num_digits_fold(),
                     fold_challenge_config: &l2_challenge,
                     response_l2_sq_cap,
-                    norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
+                    norm_proof_shape: Some(akita_params::PhysicalL2NormProofShape::Direct {
                         physical_response_len: terminal_params
                             .inner_width()
                             .checked_mul(terminal_params.d_a())
@@ -173,7 +173,7 @@ mod tests {
         let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(256)
             .expect("D256 challenge");
         let params = CommittedGroupParams::params_only(
-            akita_types::SisModulusProfileId::Q128OffsetA7F7,
+            akita_params::SisModulusProfileId::Q128OffsetA7F7,
             256,
             2,
             2,
@@ -204,14 +204,14 @@ mod tests {
         use akita_config::{
             policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
         };
-        use akita_types::InnerCommitSecurityRoute;
+        use akita_params::InnerCommitSecurityRoute;
 
         type Recursive = RecursiveCommitmentConfig<OneHot>;
         let policy = policy_of::<Recursive>();
         let source_moment = crate::response_model::SourceMomentEstimate::new(1_000_000);
         let request = RecursiveCandidateRequest {
             policy: &policy,
-            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+            payload_mode: akita_params::CommitmentPayloadMode::Compressed,
             opening: PlannerOpeningCandidate::evaluation_trace(
                 Recursive::ring_challenge_config(64).expect("challenge config"),
             ),

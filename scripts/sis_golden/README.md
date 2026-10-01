@@ -43,7 +43,7 @@ cargo run -p akita-sis-estimator --release --features parallel \
 ```
 
 Full `rust-split` output writes
-`crates/akita-types/src/sis/generated_l2_sis_table/`. It does not replace the
+`crates/akita-params/src/sis/generated_l2_sis_table/`. It does not replace the
 production infinity norm table in `generated_sis_table/`.
 
 The full comparison CSV is a local audit artifact, not a committed source file.
@@ -191,7 +191,7 @@ The profile reach guards remain `2^28 - 1` for q32, `2^41 - 1` for q64, and
 `2^44 - 1` for q128; unsupported intermediate values are not rounded up for A.
 
 The production Rust split table is compiled from
-`crates/akita-types/src/sis/generated_sis_table/`; this directory also contains
+`crates/akita-params/src/sis/generated_sis_table/`; this directory also contains
 the policy audit CSV and structured-attack review artifact. There is no second
 runtime table or compatibility reference directory.
 
@@ -352,7 +352,7 @@ cp "$compression_diag_csv" scripts/sis_golden/compression_infinity_width_table.c
 
 The checked-in merged certificate is
 `scripts/sis_golden/compression_infinity_width_table.csv`. The exact six-row
-runtime subset lives in `crates/akita-types/src/sis/compression.rs`; the three
+runtime subset lives in `crates/akita-params/src/sis/compression.rs`; the three
 `AtLeast` rows remain audit-only. This standalone CSV is evidence, not a table
 generator input. Refreshing it does not by itself change the production A/B/D
 SIS table or schedule identity; full `rust-split` generation independently
@@ -360,7 +360,7 @@ certifies the canonical `B = 1` origins under its production cap. After an
 intentional refresh, run the focused consumer checks:
 
 ```bash
-cargo test -p akita-types --lib sis::compression::tests
+cargo test -p akita-params --lib sis::compression::tests
 cargo test -p akita-types --lib \
   compression::tests::ladder_geometry_and_complete_image_bound_are_checked
 cargo test -p akita-sis-estimator --lib width_table
@@ -377,7 +377,7 @@ Partial one-shot jobs must use CSV output; resumable shard jobs write only to a
 result directory until complete assembly. Rows with `hit_cap=true` are lower
 bounds, not tight cutoffs. Full `rust-split` assembly writes the compact runtime modules
 and the canonical policy audit under
-`crates/akita-types/src/sis/generated_sis_table/`. The runtime modules store
+`crates/akita-params/src/sis/generated_sis_table/`. The runtime modules store
 the Module-SIS projection `(d, B) -> widths[rank]`. `policy_audit.csv` and
 `policy_review.txt` record the generation evidence and share the table digest.
 Other full CSV jobs are local comparison artifacts and must not be committed.

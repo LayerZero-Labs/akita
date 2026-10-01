@@ -1,9 +1,8 @@
 //! Setup-product operations over backend-owned setup storage.
 
 use akita_error::AkitaError;
-use akita_types::{
-    CommittedGroupParams, RelationAddressGeometry, RingRelationInstance, SetupPrefixSlotId,
-};
+use akita_params::{CommittedGroupParams, RelationAddressGeometry, SetupPrefixSlotId};
+use akita_types::RingRelationInstance;
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 

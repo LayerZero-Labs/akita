@@ -1,10 +1,8 @@
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::CommitmentHandle;
+use akita_params::OpeningScheduleSelection;
 use akita_prover::SelectedProverOpeningData;
-use akita_types::{
-    CommittedGroup, GroupBatchStatement, OpeningClaims, OpeningScheduleSelection,
-    PolynomialGroupClaims,
-};
+use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::Field;
 
 #[allow(clippy::type_complexity)]

@@ -3,7 +3,7 @@
 use core::fmt;
 
 use akita_error::AkitaError;
-use akita_types::{CommittedGroupParams, FoldSchedule, GroupOpenPhaseParams, TerminalFoldParams};
+use akita_params::{CommittedGroupParams, FoldSchedule, GroupOpenPhaseParams, TerminalFoldParams};
 
 /// Semantic position of one group in a complete schedule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
