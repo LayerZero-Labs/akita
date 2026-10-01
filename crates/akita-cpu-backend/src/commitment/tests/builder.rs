@@ -16,10 +16,11 @@ use crate::opaque::{
 use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::{
-    CommittedGroupParams, CompressionChainPlan, RingRelationMode, RingVec, SetupMatrixCapacity,
+use akita_params::{
+    CommittedGroupParams, CompressionChainPlan, RingRelationMode, SetupMatrixCapacity,
     SisModulusProfileId,
 };
+use akita_types::RingVec;
 use jolt_field::Prime64Offset59;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -336,7 +337,7 @@ fn mixed_outer_with_cpu_compression_matches_the_all_cpu_route() {
                     BackendKindId::of::<MixedBackend>("mixed").unwrap(),
                     standard_types,
                 ),
-                StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
+                StageDimensionCapabilities::cpu_role::<F>(akita_params::RingRole::Inner),
                 Some(inner.portable_exporter()),
             )
             .unwrap(),
@@ -347,7 +348,7 @@ fn mixed_outer_with_cpu_compression_matches_the_all_cpu_route() {
             Arc::new(outer),
             StateOwnerCapability::new(),
             outer_context,
-            StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Outer),
+            StageDimensionCapabilities::cpu_role::<F>(akita_params::RingRole::Outer),
         ))
         .unwrap();
     builder
@@ -501,7 +502,7 @@ fn builder_rejects_a_prepared_stage_from_another_setup() {
             BackendKindId::of::<TestBackend>("test").unwrap(),
             vec![PolynomialType::Dense(super::super::DenseType::Coefficients)],
         ),
-        StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
+        StageDimensionCapabilities::cpu_role::<F>(akita_params::RingRole::Inner),
         Some(inner.portable_exporter()),
     )
     .unwrap();

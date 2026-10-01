@@ -7,7 +7,8 @@ use crate::opaque::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_types::{gadget_row_scalars, RingMultiplierOpeningPoint};
+use akita_params::gadget_row_scalars;
+use akita_types::RingMultiplierOpeningPoint;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
 use std::marker::PhantomData;
@@ -77,14 +78,14 @@ where
             });
         }
         if let Some(cap) = plan.linf_cap() {
-            if akita_types::golomb_rice_values_within_cap(centered, cap).is_err() {
+            if akita_params::golomb_rice_values_within_cap(centered, cap).is_err() {
                 return Ok(None);
             }
         } else if centered.iter().any(|value| i16::try_from(*value).is_err()) {
             return Ok(None);
         }
         let observed_l2_sq = if plan.l2_sq_cap().is_some() || response_model_diagnostics_enabled() {
-            let value = akita_types::sis::checked_centered_l2_sq(centered);
+            let value = akita_params::sis::checked_centered_l2_sq(centered);
             if plan.l2_sq_cap().is_some() && value.is_none() {
                 return Err(AkitaError::InvalidInput(
                     "terminal fold response L2 overflow".into(),
@@ -98,8 +99,8 @@ where
             None
         };
         let zigzag_width =
-            akita_types::golomb_rice_zigzag_width(plan.linf_cap().unwrap_or(i16::MAX as u128));
-        if akita_types::golomb_rice_total_wire_bits(centered, plan.rice_low_bits(), zigzag_width)?
+            akita_params::golomb_rice_zigzag_width(plan.linf_cap().unwrap_or(i16::MAX as u128));
+        if akita_params::golomb_rice_total_wire_bits(centered, plan.rice_low_bits(), zigzag_width)?
             > plan.payload_bytes().saturating_mul(8)
         {
             return Ok(None);
@@ -136,7 +137,7 @@ where
             .map(|value| i64::from(*value))
             .collect::<Vec<_>>();
         let payload =
-            akita_types::golomb_rice_encode_vec(&values, self.rice_low_bits, self.zigzag_width)?;
+            akita_params::golomb_rice_encode_vec(&values, self.rice_low_bits, self.zigzag_width)?;
         if payload.len() > self.payload_bytes {
             return Err(AkitaError::InvalidInput(
                 "terminal response exceeds its scheduled payload budget".into(),
@@ -372,7 +373,7 @@ where
             .into_iter()
             .map(|row| {
                 RelationQuotientRow::new(
-                    akita_types::RelationRowGeometry::native(D)?,
+                    akita_params::RelationRowGeometry::native(D)?,
                     row.coefficients().to_vec(),
                 )
             })
@@ -393,7 +394,7 @@ where
         Ok(FoldRelationOutput::EvaluationTrace {
             a_quotients,
             z_consistency_high_half: RelationQuotientRow::new(
-                akita_types::RelationRowGeometry::native(D)?,
+                akita_params::RelationRowGeometry::native(D)?,
                 consistency.coefficients().to_vec(),
             )?,
         })
@@ -421,7 +422,7 @@ fn admit_fold_response(
     let Some(previous_l2) = *observed_l2_sq else {
         return Ok(response_l2_sq_cap.is_none());
     };
-    let Some(chunk_l2) = akita_types::sis::checked_centered_l2_sq(witness.centered_coeffs_flat())
+    let Some(chunk_l2) = akita_params::sis::checked_centered_l2_sq(witness.centered_coeffs_flat())
     else {
         if response_l2_sq_cap.is_some() {
             return Err(AkitaError::InvalidInput(
@@ -543,7 +544,7 @@ impl CpuFoldResponses {
 struct AcceptedFoldManifest {
     ring_dimension: usize,
     response_coefficients: usize,
-    opening_method: akita_types::OpeningMethod,
+    opening_method: akita_params::OpeningMethod,
     source_claims: usize,
     live_blocks: usize,
     positions_per_block: usize,
@@ -599,7 +600,7 @@ where
     pub(crate) fn from_cpu_for_test<const D: usize>(
         _ctx: &crate::opaque::OperationCtx<'_, F, crate::opaque::CpuBackend<F, F>>,
         global: DecomposeFoldWitness,
-        params: &akita_types::GroupOpenPhaseParams,
+        params: &akita_params::GroupOpenPhaseParams,
         source_claims: usize,
         num_chunks: usize,
     ) -> Self
@@ -639,7 +640,7 @@ where
     pub(crate) fn validate_for_build(
         &self,
         build_binding: &crate::opaque::OperationBinding,
-        params: &akita_types::GroupOpenPhaseParams,
+        params: &akita_params::GroupOpenPhaseParams,
         source_claims: usize,
         expected_chunks: usize,
     ) -> Result<(), AkitaError> {
@@ -677,7 +678,7 @@ where
                 z_consistency_high_half,
             } if matches!(
                 self.manifest.opening_method,
-                akita_types::OpeningMethod::EvaluationTrace
+                akita_params::OpeningMethod::EvaluationTrace
             ) =>
             {
                 (a_quotients, Some(z_consistency_high_half))
@@ -685,7 +686,7 @@ where
             FoldRelationOutput::SubringCoefficientPacking { a_quotients }
                 if matches!(
                     self.manifest.opening_method,
-                    akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+                    akita_params::OpeningMethod::SubringCoefficientPacking { .. }
                 ) =>
             {
                 (a_quotients, None)

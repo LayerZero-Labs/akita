@@ -71,10 +71,12 @@ impl SisSecurityPolicy {
     }
 }
 
-impl From<akita_types::sis::SisSecurityPolicyId> for SisSecurityPolicy {
-    fn from(policy: akita_types::sis::SisSecurityPolicyId) -> Self {
+impl From<akita_params::sis::SisSecurityPolicyId> for SisSecurityPolicy {
+    fn from(policy: akita_params::sis::SisSecurityPolicyId) -> Self {
         match policy {
-            akita_types::sis::SisSecurityPolicyId::Quantum128BitADPS16 => Self::Quantum128BitADPS16,
+            akita_params::sis::SisSecurityPolicyId::Quantum128BitADPS16 => {
+                Self::Quantum128BitADPS16
+            }
         }
     }
 }

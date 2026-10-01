@@ -19,13 +19,15 @@ use crate::opaque::{RelationDQuotientWitness, RingRelationGroupWitness, RingRela
 use crate::AkitaProverSetup;
 use akita_algebra::{poly::multilinear_eval, CyclotomicRing, EqPolynomial};
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
+use akita_params::{
+    active_setup_field_len, CommitmentPayloadMode, CommittedGroupParams, CompressionWitnessSpan,
+    DigitRangePlan, OpeningClaimsLayout, RelationAddressGeometry, RingOpeningPoint,
+    RingRelationMode, SetupMatrixCapacity, SisModulusProfileId,
+};
 use akita_types::{
-    active_setup_field_len, relation_rhs_coeff_len, shared_setup_fold_gadget,
-    CommitmentPayloadMode, CommittedGroupParams, CompressionWitnessSpan, DigitBlocks,
-    DigitRangePlan, OpeningClaimsLayout, PreparedRelationAddress, RelationAddressGeometry,
-    RelationRangeImagePlan, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening,
-    RingRelationInstance, RingRelationMode, RingVec, SetupContributionGroupInputs,
-    SetupContributionPlan, SetupMatrixCapacity, SisModulusProfileId,
+    relation_rhs_coeff_len, shared_setup_fold_gadget, DigitBlocks, PreparedRelationAddress,
+    RelationRangeImagePlan, RingMultiplierOpeningPoint, RingRelationGroupOpening,
+    RingRelationInstance, RingVec, SetupContributionGroupInputs, SetupContributionPlan,
 };
 use akita_verifier::{DirectScan, PreparedCoefficientFunctional};
 use jolt_field::{Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
@@ -56,7 +58,7 @@ fn reduced_instance(
     params: &CommittedGroupParams,
 ) -> (
     RingRelationInstance<ReducedF>,
-    akita_types::RelationRhsLayout,
+    akita_params::RelationRhsLayout,
 ) {
     let opening_batch = OpeningClaimsLayout::new(8, 1).expect("opening batch");
     let group_params = params
@@ -81,7 +83,7 @@ fn reduced_instance(
             .collect(),
         live_block_weights: vec![ReducedF::zero(); blocks],
     });
-    let geometry = akita_types::RelationWitnessGeometry::for_level(params, &opening_batch, 1)
+    let geometry = akita_params::RelationWitnessGeometry::for_level(params, &opening_batch, 1)
         .expect("relation geometry");
     let rhs_layout = geometry.rhs_layout().clone();
     let rhs_len = relation_rhs_coeff_len(&rhs_layout).expect("relation RHS length");
@@ -188,7 +190,7 @@ fn inner_rows(params: &CommittedGroupParams) -> RingVec<ReducedF> {
 
 fn expected_packed_digits(
     span: &CompressionWitnessSpan,
-    packed: &akita_types::PackedNegativeBinary,
+    packed: &akita_params::PackedNegativeBinary,
 ) -> Vec<i8> {
     assert_eq!(span.map(), packed.map());
     (0..span.range().len())
@@ -205,7 +207,7 @@ fn expected_packed_digits(
 }
 
 struct ReducedCompilerFixture {
-    witness_layout: akita_types::WitnessLayout,
+    witness_layout: akita_params::WitnessLayout,
     live_len: usize,
     physical_field_len: usize,
     opening_source_len: usize,
@@ -227,14 +229,14 @@ fn reduced_compiler_fixture(
     let live_len = witness_layout.live_coeff_len();
     let physical_field_len = live_len.next_power_of_two();
     let geometry = RelationAddressGeometry::for_relation(
-        &akita_types::RelationWitnessGeometry::for_level(params, opening_batch, 1)
+        &akita_params::RelationWitnessGeometry::for_level(params, opening_batch, 1)
             .expect("relation geometry"),
         REDUCED_D,
         live_len,
     )
     .expect("relation address geometry");
     let relation_geometry =
-        akita_types::RelationWitnessGeometry::for_level(params, opening_batch, 1)
+        akita_params::RelationWitnessGeometry::for_level(params, opening_batch, 1)
             .expect("relation geometry");
     let relation_plan = RelationRangeImagePlan::new(
         relation_geometry,
@@ -485,7 +487,7 @@ fn build_reduced_without_quotients(
 }
 
 fn retained_compression_digits(
-    layout: &akita_types::WitnessLayout,
+    layout: &akita_params::WitnessLayout,
     compression: &crate::opaque::CompressionWitnessMaterialization<ReducedF>,
 ) -> Vec<(CompressionWitnessSpan, Vec<i8>)> {
     layout

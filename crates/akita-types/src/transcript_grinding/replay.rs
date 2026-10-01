@@ -1,7 +1,7 @@
 //! Inline Spongefish nonce replay for transcript grinding.
 
-use super::{GrindingPlan, GrindingQueryKind, GrindingSite};
 use akita_error::AkitaError;
+use akita_params::{GrindingPlan, GrindingQueryKind, GrindingSite};
 use akita_sumcheck::{SumcheckProverChannel, SumcheckRole, SumcheckVerifierChannel};
 use akita_transcript::{
     commit_grinding_nonce, ext_challenge, grinding_predicate_accepts, nonce_encoded_len,
@@ -37,14 +37,14 @@ impl<'a> GrindingPlanCursor<'a> {
     }
 
     fn next(&mut self) -> Option<GrindingPlanEntry> {
-        let run = *self.plan.runs.get(self.run_index)?;
+        let run = *self.plan.runs().get(self.run_index)?;
         let entry = GrindingPlanEntry {
-            site: run.site,
-            grind_bits: run.grind_bits,
-            nonce_bits: run.nonce_bits,
+            site: run.site(),
+            grind_bits: run.grind_bits(),
+            nonce_bits: run.nonce_bits(),
         };
         self.run_offset += 1;
-        if self.run_offset == run.multiplicity {
+        if self.run_offset == run.multiplicity() {
             self.run_index += 1;
             self.run_offset = 0;
         }
@@ -52,25 +52,25 @@ impl<'a> GrindingPlanCursor<'a> {
     }
 
     fn peek(&self) -> Option<GrindingPlanEntry> {
-        let run = *self.plan.runs.get(self.run_index)?;
+        let run = *self.plan.runs().get(self.run_index)?;
         Some(GrindingPlanEntry {
-            site: run.site,
-            grind_bits: run.grind_bits,
-            nonce_bits: run.nonce_bits,
+            site: run.site(),
+            grind_bits: run.grind_bits(),
+            nonce_bits: run.nonce_bits(),
         })
     }
 
     fn consume_run(&mut self, site: GrindingSite, multiplicity: usize) -> Result<(), AkitaError> {
         let run = self
             .plan
-            .runs
+            .runs()
             .get(self.run_index)
             .ok_or(AkitaError::InvalidProof)?;
         if self.run_offset != 0
-            || run.site != site
-            || run.grind_bits != 0
-            || run.nonce_bits != 0
-            || usize::try_from(run.multiplicity).ok() != Some(multiplicity)
+            || run.site() != site
+            || run.grind_bits() != 0
+            || run.nonce_bits() != 0
+            || usize::try_from(run.multiplicity()).ok() != Some(multiplicity)
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -82,7 +82,7 @@ impl<'a> GrindingPlanCursor<'a> {
     }
 
     fn is_finished(&self) -> bool {
-        self.run_index == self.plan.runs.len() && self.run_offset == 0
+        self.run_index == self.plan.runs().len() && self.run_offset == 0
     }
 }
 
@@ -540,7 +540,7 @@ impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
 
 /// Site of one grinding-backed standard-sumcheck atom, shared by both roles.
 fn grinding_sumcheck_site(
-    protocol: super::SumcheckProtocol,
+    protocol: akita_params::SumcheckProtocol,
     level: u32,
     stage: u32,
     invocation: u32,
@@ -562,7 +562,7 @@ fn grinding_sumcheck_site(
 /// Standard-sumcheck channel borrowing a prover grinding context.
 pub struct GrindingSumcheckProver<'context, 'plan, F, E> {
     grinding: &'context mut ProverGrinding<'plan>,
-    protocol: super::SumcheckProtocol,
+    protocol: akita_params::SumcheckProtocol,
     level: u32,
     stage: u32,
     _fields: PhantomData<fn() -> (F, E)>,
@@ -573,7 +573,7 @@ impl<'context, 'plan, F, E> GrindingSumcheckProver<'context, 'plan, F, E> {
     #[must_use]
     pub fn new(
         grinding: &'context mut ProverGrinding<'plan>,
-        protocol: super::SumcheckProtocol,
+        protocol: akita_params::SumcheckProtocol,
         level: u32,
         stage: u32,
     ) -> Self {
@@ -624,7 +624,7 @@ where
 /// Standard-sumcheck channel borrowing a verifier grinding context.
 pub struct GrindingSumcheckVerifier<'context, 'proof, 'plan, F, E> {
     grinding: &'context mut VerifierGrinding<'proof, 'plan>,
-    protocol: super::SumcheckProtocol,
+    protocol: akita_params::SumcheckProtocol,
     level: u32,
     stage: u32,
     _fields: PhantomData<fn() -> (F, E)>,
@@ -635,7 +635,7 @@ impl<'context, 'proof, 'plan, F, E> GrindingSumcheckVerifier<'context, 'proof, '
     #[must_use]
     pub fn new(
         grinding: &'context mut VerifierGrinding<'proof, 'plan>,
-        protocol: super::SumcheckProtocol,
+        protocol: akita_params::SumcheckProtocol,
         level: u32,
         stage: u32,
     ) -> Self {
@@ -687,11 +687,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ChallengeFieldOrder, GrindingRun};
     use akita_challenges::{
         FoldChallengeDrawDomain, FoldDraw, PreviewFoldDraw, ProverFoldDraw, SparseChallengeConfig,
         VerifierFoldDraw,
     };
+    use akita_params::{ChallengeFieldOrder, GrindingRun};
     use akita_transcript::{new_prover_channel, new_verifier_channel, preview_grinding_predicate};
     use jolt_field::Prime128Offset275 as F;
 
@@ -816,7 +816,7 @@ mod tests {
         assert_eq!(
             prover.commit_fold_response(
                 GrindingSite::FoldResponse { level: 0 },
-                super::super::FOLD_RESPONSE_ATTEMPTS,
+                akita_params::FOLD_RESPONSE_ATTEMPTS,
             ),
             Err(AkitaError::InvalidProof)
         );

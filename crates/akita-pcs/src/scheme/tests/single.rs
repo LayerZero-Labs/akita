@@ -9,8 +9,8 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
 
             let (scheme, verifier_setup, commitment, mut proof, opening_point, opening, _) =
                 make_verify_fixture(NUM_VARS);
-            let key = akita_types::ScheduleLookupKey::single(
-                akita_types::PolynomialGroupLayout::new(NUM_VARS, 1),
+            let key = akita_params::ScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::new(NUM_VARS, 1),
             );
             let selection = scheme
                 .schedules()
@@ -32,7 +32,7 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
                 .any(|fold| fold.params.payload_mode.is_compressed()));
             assert!(reduced.iter().any(|fold| matches!(
                 fold.params.payload_mode,
-                akita_types::CommitmentPayloadMode::Raw
+                akita_params::CommitmentPayloadMode::Raw
             )));
             assert!(schedule
                 .recursive_folds

@@ -6,7 +6,8 @@ use super::{
 };
 use crate::opaque::{CpuBackend, CpuCompressionOperation};
 use akita_error::AkitaError;
-use akita_types::{field_modulus, Commitment, CommittedGroup, GroupCommitPhaseParams, RingVec};
+use akita_params::{field_modulus, GroupCommitPhaseParams};
+use akita_types::{Commitment, CommittedGroup, RingVec};
 use jolt_field::{CanonicalEncoding, Field};
 
 impl<F: Field, E> CpuBackend<F, E> {

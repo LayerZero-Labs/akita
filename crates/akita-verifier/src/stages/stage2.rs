@@ -367,7 +367,7 @@ where
         + stage1.physical_l2_claim;
     let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
         grinding,
-        akita_types::SumcheckProtocol::Stage2,
+        akita_params::SumcheckProtocol::Stage2,
         level,
         0,
     );
@@ -475,13 +475,15 @@ mod tests {
     use crate::coefficient_packing_relation::tests::materialize_stage2;
     use crate::relation::{FlatRelationContext, RelationMatrixEvaluator};
     use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
+    use akita_params::{
+        BasisMode, CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams,
+        OpeningClaimsLayout, OpeningMethod, RelationAddressGeometry, RelationWitnessGeometry,
+        SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
+    };
     use akita_types::{
         prepare_coefficient_packing_batch_semantics, relation_rhs_coeff_len, AkitaSetupDescriptor,
-        BasisMode, CoefficientPackingBatchSemanticInputs, CommitmentPayloadMode, DigitRangePlan,
-        FlatMatrix, OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod,
-        PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
-        RelationWitnessGeometry, RingRelationGroupOpening, RingRelationInstance, RingVec,
-        SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
+        CoefficientPackingBatchSemanticInputs, PreparedSubringCoefficientPackingPoint,
+        RelationRangeImagePlan, RingRelationGroupOpening, RingRelationInstance, RingVec,
     };
     use jolt_field::Zero;
     use jolt_field::{Ext2, Prime64Offset59};
@@ -496,7 +498,7 @@ mod tests {
         let d_a = 256;
         let d_d = 128;
         let challenge_config = SparseChallengeConfig::production_for_ring_dim(s).unwrap();
-        let mut params = akita_types::CommittedGroupParams::params_only(
+        let mut params = akita_params::CommittedGroupParams::params_only(
             SisModulusProfileId::Q64Offset59,
             d_a,
             2,
@@ -529,7 +531,7 @@ mod tests {
             &opening_batch,
             &relation_geometry,
             1,
-            akita_types::RelationQuotientPlan::for_field_bits(&params, F::MODULUS_BITS)
+            akita_params::RelationQuotientPlan::for_field_bits(&params, F::MODULUS_BITS)
                 .expect("relation quotient plan"),
         )
         .unwrap();

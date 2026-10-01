@@ -270,15 +270,15 @@ metadata, descriptors, and trusted external catalog identity.
 
 Relevant implementation sources:
 
-- `crates/akita-types/src/commitment_slicing.rs`
+- `crates/akita-params/src/commitment_slicing.rs`
 - `crates/akita-cpu-backend/src/commitment/api.rs`
 - `crates/akita-types/src/setup_contribution/plan/physical_b.rs`
 
 Public-stream and view sources:
 
 - `crates/akita-types/src/proof/setup.rs`
-- `crates/akita-types/src/layout/flat_matrix.rs`
-- `crates/akita-types/src/dispatch/mod.rs`
+- `crates/akita-params/src/layout/flat_matrix.rs`
+- `crates/akita-params/src/dispatch/mod.rs`
 
 ## Dense and one-hot backends
 

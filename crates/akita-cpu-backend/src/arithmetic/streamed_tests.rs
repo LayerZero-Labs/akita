@@ -13,7 +13,8 @@ use crate::opaque::RingSwitchRelationView;
 use crate::opaque::{RingSwitchRelationKernel, RingSwitchRelationPlan};
 use crate::AkitaProverSetup;
 use akita_error::AkitaError;
-use akita_types::{NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
+use akita_params::SetupMatrixCapacity;
+use akita_types::{NttCacheKey, NttTransformDomain};
 use jolt_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
 use std::sync::atomic::Ordering;
 

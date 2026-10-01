@@ -22,10 +22,10 @@ mod common;
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
-use akita_types::{
+use akita_params::ScheduleLookupKey;
+use akita_params::{
     setup_matrix_capacity_for_schedule, verifier_setup_matrix_capacity_for_schedule, FoldSchedule,
-    OpeningMethod, PolynomialGroupLayout, ScheduleLookupKey, SetupContributionMode,
-    SubringCoefficientPackingGeometry,
+    OpeningMethod, PolynomialGroupLayout, SetupContributionMode, SubringCoefficientPackingGeometry,
 };
 use common::*;
 
@@ -106,7 +106,7 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     // under the base config. Provisioning must cover exactly that, so derive
     // the expectation from the same primitive commit-time admission uses.
     let frozen_precommit = key.precommitteds[0];
-    let precommit_footprint = akita_types::commit_only_setup_field_elements(
+    let precommit_footprint = akita_params::commit_only_setup_field_elements(
         &frozen_precommit.inner.matrix,
         &frozen_precommit.outer.matrix,
         frozen_precommit.outer_slice_count,
