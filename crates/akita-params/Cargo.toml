@@ -1,0 +1,47 @@
+[package]
+name = "akita-params"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "Apache-2.0 OR MIT"
+description = "Parameter geometry and schedules for the Akita polynomial commitment scheme"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+
+[dependencies]
+akita-error = { version = "0.1.0", path = "../akita-error" }
+akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
+  "asm",
+  "solinas",
+] }
+akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
+akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+serde = { version = "1", features = ["derive"] }
+blake2 = "0.11.0"
+sha3 = "0.12.0"
+
+[features]
+default = ["transcript-blake2b"]
+test-support = []
+transcript-blake2b = [
+  "akita-challenges/transcript-blake2b",
+  "akita-sumcheck/transcript-blake2b",
+  "akita-transcript/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-challenges/transcript-keccak",
+  "akita-sumcheck/transcript-keccak",
+  "akita-transcript/transcript-keccak",
+]
+parallel = ["akita-algebra/parallel", "jolt-field/parallel"]
+logging-transcript = ["akita-transcript/logging-transcript"]
+
+[dev-dependencies]
+num-bigint = "0.5.1"
+rand = "0.8"
+
+[lints]
+workspace = true

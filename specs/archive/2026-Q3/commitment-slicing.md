@@ -79,7 +79,7 @@ recursive commitment is level one.
 
 #### Canonical partition
 
-Every B slice range comes from `akita_types::dyadic_block_ranges(B, S)`:
+Every B slice range comes from `akita_params::dyadic_block_ranges(B, S)`:
 
 ```text
 I_s = [floor(s * B / S), floor((s + 1) * B / S))

@@ -1,18 +1,44 @@
-name: Author-requested AI review
+name: AI PR review
 
 on:
   issue_comment:
     types: [created]
+  pull_request_target:
+    types: [synchronize, edited, reopened]
 
 permissions: {}
 
 concurrency:
-  group: ai-review-${{ github.event.issue.number }}
+  # PR invalidation must not be displaced by a pending issue-comment run.
+  group: ai-review-${{ github.event_name }}-${{ github.event.issue.number || github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
+  invalidate-approval:
+    if: github.repository == 'LayerZero-Labs/akita' && github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: ai-review-labels-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # Trusted main scripts only; never check out the PR or use a model key.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+          sparse-checkout: scripts/ai_review
+      - name: Reconcile approval against the latest verified review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ai_review/run.py reconcile --directory "$RUNNER_TEMP/ai-review"
+
   reserve:
     if: >-
+      github.event_name == 'issue_comment' &&
       github.run_attempt == 1 &&
       github.repository == 'LayerZero-Labs/akita' &&
       github.event.issue.pull_request &&
@@ -99,6 +125,11 @@ jobs:
     needs: [collect, review]
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # The outer event queues admit at most one publisher and one reconciler,
+    # so this shared lock has at most one pending job (no replacement).
+    concurrency:
+      group: ai-review-labels-${{ github.event.issue.number }}
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: write
@@ -119,3 +150,33 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ai_review/run.py publish --directory "$RUNNER_TEMP/ai-review"
+
+  cleanup:
+    needs: publish
+    if: needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      # No source checkout, model key or PR-write permission in this job.
+      - name: Delete review artifacts after successful publication
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              ...context.repo,
+              run_id: context.runId,
+              per_page: 100,
+            });
+            for (const artifact of artifacts) {
+              if (!['ai-review-snapshot', 'ai-review-result'].includes(artifact.name)) continue;
+              try {
+                await github.rest.actions.deleteArtifact({
+                  ...context.repo,
+                  artifact_id: artifact.id,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }

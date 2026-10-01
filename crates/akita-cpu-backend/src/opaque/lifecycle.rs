@@ -72,8 +72,8 @@ struct ProofState {
     group_counts: Arc<[usize]>,
     commitments: Mutex<HashMap<(u32, usize), u128>>,
     plan: Option<(
-        Arc<akita_types::FoldSchedule>,
-        akita_types::OpeningClaimsLayout,
+        Arc<akita_params::FoldSchedule>,
+        akita_params::OpeningClaimsLayout,
     )>,
 }
 
@@ -200,8 +200,8 @@ impl ScopeLease {
         &self,
     ) -> Result<
         (
-            Arc<akita_types::FoldSchedule>,
-            akita_types::OpeningClaimsLayout,
+            Arc<akita_params::FoldSchedule>,
+            akita_params::OpeningClaimsLayout,
         ),
         AkitaError,
     > {
@@ -255,8 +255,8 @@ impl BackendIdentity {
 
     pub(crate) fn begin_proof(
         &self,
-        plan: &akita_types::FoldSchedule,
-        layout: &akita_types::OpeningClaimsLayout,
+        plan: &akita_params::FoldSchedule,
+        layout: &akita_params::OpeningClaimsLayout,
     ) -> Result<ScopeLease, AkitaError> {
         plan.validate_structure()?;
         let mut group_counts = Vec::with_capacity(plan.recursive_folds.len() + 2);
@@ -283,8 +283,8 @@ impl BackendIdentity {
         &self,
         group_counts: Vec<usize>,
         plan: Option<(
-            Arc<akita_types::FoldSchedule>,
-            akita_types::OpeningClaimsLayout,
+            Arc<akita_params::FoldSchedule>,
+            akita_params::OpeningClaimsLayout,
         )>,
     ) -> Result<ScopeLease, AkitaError> {
         let sequence = self

@@ -15,10 +15,10 @@ use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::ops::Range;
 
-use crate::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, CommittedGroupParams,
-    CompressionWitnessSpan, FpExtEncoding, RelationRowFamily, RingRelationInstance,
-    RingRelationMode, WitnessLayout,
+use crate::{AkitaExpandedSetup, FpExtEncoding, RingRelationInstance};
+use akita_params::{
+    gadget_row_scalars, r_decomp_levels, CommittedGroupParams, CompressionWitnessSpan,
+    RelationRowFamily, RingRelationMode, WitnessLayout,
 };
 
 #[derive(Clone, Debug)]
@@ -462,7 +462,7 @@ fn successor_compression_span(
             "compression map index overflow".into(),
         ));
     };
-    if successor_index >= crate::COMPRESSION_MAP_COUNT {
+    if successor_index >= akita_params::COMPRESSION_MAP_COUNT {
         return Ok(None);
     }
     let layer = witness_layout
@@ -483,9 +483,9 @@ fn successor_compression_span(
 #[allow(clippy::too_many_arguments)]
 fn push_initial_recompositions<F, E>(
     weights: &mut CompressionRelationWeights<E>,
-    relation_layout: &crate::RelationRhsLayout,
+    relation_layout: &akita_params::RelationRhsLayout,
     lp: &CommittedGroupParams,
-    opening_batch: &crate::OpeningClaimsLayout,
+    opening_batch: &akita_params::OpeningClaimsLayout,
     witness_layout: &WitnessLayout,
     field_bits: usize,
     row_weights: &[E],
@@ -563,7 +563,7 @@ where
     if lp.ring_relation_mode != RingRelationMode::QuotientLift
         || !matches!(
             witness_layout.relation_quotient_layout(),
-            crate::RelationQuotientLayout::QuotientLift { .. }
+            akita_params::RelationQuotientLayout::QuotientLift { .. }
         )
     {
         return Err(AkitaError::InvalidSetup(
@@ -571,8 +571,11 @@ where
         ));
     }
     let opening_batch = instance.opening_batch();
-    let relation_geometry =
-        crate::RelationWitnessGeometry::for_level(lp, opening_batch, instance.extension_degree())?;
+    let relation_geometry = akita_params::RelationWitnessGeometry::for_level(
+        lp,
+        opening_batch,
+        instance.extension_degree(),
+    )?;
     let relation_layout = relation_geometry.rhs_layout();
     let row_families = relation_layout.row_families()?;
     let row_weights = EqPolynomial::evals_prefix(tau1, row_families.len())?;

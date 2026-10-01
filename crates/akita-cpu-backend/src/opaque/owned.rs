@@ -11,6 +11,7 @@ use crate::opaque::CpuPreparedOpeningHandle;
 use crate::opaque::*;
 use crate::sources::poly::SourceCoefficients;
 use akita_error::AkitaError;
+use akita_params::*;
 use akita_serialization::AkitaSerialize;
 use akita_types::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced};

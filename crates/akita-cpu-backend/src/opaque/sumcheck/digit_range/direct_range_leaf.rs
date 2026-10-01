@@ -47,8 +47,8 @@ use super::range_poly::{
 use crate::opaque::sumcheck::fold_prefix_pair_with_zero_padding;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
+use akita_params::DigitRangePlan;
 use akita_sumcheck::{fold_evals_in_place, EqFactoredSumcheckInstanceProver};
-use akita_types::DigitRangePlan;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring, Zero};
 use jolt_field::{Fold, Unreduced};

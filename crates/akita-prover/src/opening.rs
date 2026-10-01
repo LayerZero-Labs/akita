@@ -2,11 +2,11 @@
 use crate::backend::CommitmentHandleMetadata;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
-use akita_types::GrindingReplay;
-use akita_types::{
-    Commitment, CommittedGroup, CommittedGroupBatchProfile, CommittedGroupParams, OpeningClaims,
-    OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupClaims,
+use akita_params::{
+    CommittedGroupBatchProfile, CommittedGroupParams, OpeningClaimsLayout, OpeningScheduleSelection,
 };
+use akita_types::GrindingReplay;
+use akita_types::{Commitment, CommittedGroup, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 pub struct SelectedProverOpeningData<'a, E: Clone, H, F: Field> {
@@ -155,7 +155,7 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
         CommitF: CanonicalEncoding,
         PointF: ExtField<CommitF>,
     {
-        let relation_geometry = akita_types::RelationWitnessGeometry::for_level(
+        let relation_geometry = akita_params::RelationWitnessGeometry::for_level(
             root_params,
             self.opening_layout(),
             PointF::DEGREE,

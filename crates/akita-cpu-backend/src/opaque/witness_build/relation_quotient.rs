@@ -13,9 +13,8 @@ use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_error::AkitaError;
-use akita_types::{
-    CommittedGroupParams, OpeningFamily, RelationRowGeometry, RingRelationGroupOpening, RingVec,
-};
+use akita_params::{CommittedGroupParams, RelationRowGeometry};
+use akita_types::{OpeningFamily, RingRelationGroupOpening, RingVec};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field, Ring};
 
@@ -383,7 +382,7 @@ pub(crate) fn compute_multi_group_relation_quotient<F, O, B>(
     opening_ctx: &OperationCtx<'_, F, O>,
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     lp: &CommittedGroupParams,
-    opening_batch: &akita_types::OpeningClaimsLayout,
+    opening_batch: &akita_params::OpeningClaimsLayout,
     groups: &[PreparedRingSwitchGroup<F>],
     group_openings: &[RingRelationGroupOpening<F>],
     extension_degree: usize,
@@ -412,14 +411,14 @@ where
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
     let relation_geometry =
-        akita_types::RelationWitnessGeometry::for_level(lp, opening_batch, extension_degree)?;
+        akita_params::RelationWitnessGeometry::for_level(lp, opening_batch, extension_degree)?;
     let rhs_layout = relation_geometry.rhs_layout();
     let row_families = rhs_layout.row_families()?;
     let num_rows = row_families.len();
     let n_d_active = lp.open().matrix.output_rank();
     let d_start = row_families
         .iter()
-        .position(|row| matches!(row, akita_types::RelationRowFamily::Opening { .. }))
+        .position(|row| matches!(row, akita_params::RelationRowFamily::Opening { .. }))
         .ok_or_else(|| {
             AkitaError::Internal("relation quotient row families have no opening tail".into())
         })?;
@@ -435,8 +434,8 @@ where
         .take_while(|row| {
             !matches!(
                 row,
-                akita_types::RelationRowFamily::CompressionF { .. }
-                    | akita_types::RelationRowFamily::CompressionH { .. }
+                akita_params::RelationRowFamily::CompressionF { .. }
+                    | akita_params::RelationRowFamily::CompressionH { .. }
             )
         })
         .try_fold(0usize, |length, row| {
@@ -613,7 +612,7 @@ where
                 "relation quotient T digit blocks differ from the group plan".into(),
             ));
         }
-        let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
+        let slice_geometry = akita_params::CommitmentSliceGeometry::try_new(
             group.params.outer_slice_count(),
             num_live_blocks_per_claim,
             group_layout.num_polynomials(),
@@ -623,7 +622,7 @@ where
             group_dims.d_b(),
         )?;
 
-        let (consistency_quotient, a_quotients) = akita_types::dispatch_for_field!(
+        let (consistency_quotient, a_quotients) = akita_params::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
             group_dims.d_a(),
@@ -701,7 +700,7 @@ where
                     .to_vec(),
             )
         };
-        akita_types::dispatch_for_field!(
+        akita_params::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Outer),
             F,
             group_dims.d_b(),
@@ -781,7 +780,7 @@ where
         let d_end = y_offset
             .checked_add(d_coeff_len)
             .ok_or_else(|| AkitaError::Internal("relation quotient D RHS end overflow".into()))?;
-        akita_types::dispatch_for_field!(
+        akita_params::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
             rhs_layout.d_ring_dimension,
@@ -805,7 +804,7 @@ where
     }
     for (row_index, family) in row_families.iter().enumerate() {
         let (source, map_index, geometry) = match *family {
-            akita_types::RelationRowFamily::CompressionF {
+            akita_params::RelationRowFamily::CompressionF {
                 group_index,
                 map_index,
                 geometry,
@@ -814,7 +813,7 @@ where
                 map_index,
                 geometry,
             ),
-            akita_types::RelationRowFamily::CompressionH {
+            akita_params::RelationRowFamily::CompressionH {
                 map_index,
                 geometry,
             } => (CompressionSourceId::Opening, map_index, geometry),
@@ -847,7 +846,7 @@ where
             AkitaError::Internal("compression relation RHS row range is out of bounds".into())
         })?;
         let source_witness = compression.source(source)?;
-        if map_index + 1 == akita_types::COMPRESSION_MAP_COUNT {
+        if map_index + 1 == akita_params::COMPRESSION_MAP_COUNT {
             if rhs_row != source_witness.terminal.coefficients() {
                 return Err(AkitaError::Internal(
                     "terminal compression relation RHS differs from its witness".into(),

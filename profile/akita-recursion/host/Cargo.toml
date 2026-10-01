@@ -32,6 +32,7 @@ akita-recursion-glue = { path = "../glue" }
 akita-config = { path = "../../../crates/akita-config", default-features = false, features = [
 ] }
 akita-types = { path = "../../../crates/akita-types" }
+akita-params = { path = "../../../crates/akita-params" }
 akita-verifier = { path = "../../../crates/akita-verifier", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

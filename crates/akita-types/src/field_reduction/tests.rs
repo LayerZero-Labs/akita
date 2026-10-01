@@ -1,5 +1,5 @@
 use super::*;
-use crate::{reduce_inner_opening_to_ring_element, BasisMode};
+use akita_params::{reduce_inner_opening_to_ring_element, BasisMode};
 use jolt_field::{Ext2, Fp32, FpExt4, FpExt8, One, Zero};
 
 type F = Fp32<251>;
@@ -366,10 +366,10 @@ fn embed_subfield_matches_psi_embed_first_slot() {
 
 #[test]
 fn pre_psi_digit_conversion_is_charged_once_before_physical_a_sizing() {
-    use crate::sis::{
+    use akita_params::sis::{
         role_a_collision_inf_norm_for_response_bound, role_a_collision_l2_sq_for_response_bound,
     };
-    use crate::SisModulusProfileId;
+    use akita_params::SisModulusProfileId;
 
     // Two logical degree-four values with unit coordinates overlap under psi.
     // The logical infinity norm is one, while the actual packed coefficient

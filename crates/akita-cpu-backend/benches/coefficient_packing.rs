@@ -7,10 +7,8 @@ use akita_cpu_backend::standalone::{
     recursive_witness_coefficient_packing_partials, recursive_witness_from_i8_digits,
 };
 use akita_cpu_backend::{DensePoly, OneHotPoly};
-use akita_types::{
-    BasisMode, FpExtEncoding, PreparedSubringCoefficientPackingPoint,
-    SubringCoefficientPackingGeometry,
-};
+use akita_params::{BasisMode, SubringCoefficientPackingGeometry};
+use akita_types::{FpExtEncoding, PreparedSubringCoefficientPackingPoint};
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};

@@ -7,10 +7,11 @@ use crate::opaque::compression::{
 };
 use crate::opaque::{CompressionComputeBackend, OperationCtx};
 use akita_error::AkitaError;
-use akita_types::{
+use akita_params::{
     CompressionChainPlan, CompressionChainWitness, CompressionTerminalPayload, RelationRhsLayout,
-    RingRelationMode, RingVec,
+    RingRelationMode,
 };
+use akita_types::RingVec;
 use jolt_field::{CanonicalEncoding, Field};
 
 /// Semantic source of one compression chain.
