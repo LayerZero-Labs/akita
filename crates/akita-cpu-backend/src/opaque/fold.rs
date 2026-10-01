@@ -293,7 +293,9 @@ impl<F: Field> CpuAcceptedFold<F> {
             },
         )?;
         if !rows.b_cyclic.is_empty() || rows.a_quotients.len() != n_a {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "A-relation kernel returned an unexpected B batch or A row count".into(),
+            ));
         }
         Ok(rows.a_quotients)
     }
@@ -691,14 +693,20 @@ where
             {
                 (a_quotients, None)
             }
-            _ => return Err(AkitaError::InvalidProof),
+            _ => {
+                return Err(AkitaError::Internal(
+                    "accepted fold relation output family differs from its opening method".into(),
+                ))
+            }
         };
         if rows.len() != plan.n_a()
             || rows.iter().chain(consistency).any(|row| {
                 row.geometry().physical_coefficient_width() != self.manifest.ring_dimension
             })
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "accepted fold relation row count or width differs from its manifest".into(),
+            ));
         }
         Ok(output)
     }

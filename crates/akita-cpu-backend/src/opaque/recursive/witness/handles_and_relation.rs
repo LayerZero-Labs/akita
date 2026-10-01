@@ -103,9 +103,9 @@ where
             OpaquePreparedGroupOpeningKind::EvaluationTrace {
                 folded_by_claim, ..
             } => Ok(folded_by_claim),
-            OpaquePreparedGroupOpeningKind::CoefficientPacking { .. } => {
-                Err(AkitaError::InvalidProof)
-            }
+            OpaquePreparedGroupOpeningKind::CoefficientPacking { .. } => Err(AkitaError::Internal(
+                "terminal-native opening unexpectedly uses coefficient packing".into(),
+            )),
         }
     }
 
@@ -270,8 +270,9 @@ impl CpuWitnessHandle {
             witness_layout.live_coeff_len(),
         )?;
         let digit_range = akita_params::DigitRangePlan::new(
-            akita_error::checked::pow2(level.open().digits.log_basis as usize)
-                .ok_or(AkitaError::InvalidProof)?,
+            akita_error::checked::pow2(level.open().digits.log_basis as usize).ok_or_else(
+                || AkitaError::Internal("validated relation digit range basis overflow".into()),
+            )?,
         )?;
         self.relation_plan = Some(Arc::new(akita_types::RelationRangeImagePlan::new(
             akita_params::RelationWitnessGeometry::for_level(

@@ -75,21 +75,22 @@ where
         instance,
     )?;
     let opening_capacity = akita_error::checked::product([opening_source_len, opening_ring_dim])
-        .ok_or_else(|| AkitaError::InvalidSetup("opening capacity overflow".into()))?;
+        .ok_or_else(|| AkitaError::Internal("opening capacity overflow".into()))?;
     if opening_ring_dim == 0
         || !opening_ring_dim.is_power_of_two()
         || witness_handle.manifest().logical_len() > opening_capacity
     {
-        return Err(AkitaError::InvalidInput(
+        return Err(AkitaError::Internal(
             "witness exceeds scheduled opening capacity".into(),
         ));
     }
     let witness_layout = instance.segment_layout(lp, None)?;
     if witness_handle.manifest().logical_len() != witness_layout.live_coeff_len() {
-        return Err(AkitaError::InvalidSize {
-            expected: witness_layout.live_coeff_len(),
-            actual: witness_handle.manifest().logical_len(),
-        });
+        return Err(AkitaError::Internal(format!(
+            "ring-switch witness manifest length mismatch: expected {}, actual {}",
+            witness_layout.live_coeff_len(),
+            witness_handle.manifest().logical_len(),
+        )));
     }
     let geometry = lp.relation_address_geometry(
         opening_batch,
@@ -102,14 +103,14 @@ where
         .live_coeff_len()
         .is_multiple_of(coefficient_count)
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "relation witness is not coefficient aligned".into(),
         ));
     }
     let column_bits = geometry.relation_lane_variable_count();
     let coefficient_bits = geometry.relation_coefficient_variable_count();
     if gamma.is_some_and(|values| values.len() != opening_batch.num_total_polynomials()) {
-        return Err(AkitaError::InvalidInput(
+        return Err(AkitaError::Internal(
             "relation batching does not match claim count".into(),
         ));
     }
@@ -132,7 +133,7 @@ where
     if prepared.metadata().column_bits() != column_bits
         || prepared.metadata().coefficient_bits() != coefficient_bits
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "backend relation geometry differs from the public plan".into(),
         ));
     }
@@ -149,7 +150,9 @@ where
 
     let opening_semantics = match prepared_relation_groups
         .first()
-        .ok_or(AkitaError::InvalidProof)?
+        .ok_or_else(|| {
+            AkitaError::Internal("ring-switch prepared relation has no opening group".into())
+        })?
         .kind()
     {
         OpeningFamily::EvaluationTrace(_) => OpeningFamily::EvaluationTrace(()),
@@ -159,7 +162,10 @@ where
                 .enumerate()
                 .map(|(index, group)| match group.kind() {
                     OpeningFamily::SubringCoefficientPacking(point) => Ok((index, point)),
-                    OpeningFamily::EvaluationTrace(_) => Err(AkitaError::InvalidProof),
+                    OpeningFamily::EvaluationTrace(_) => Err(AkitaError::Internal(
+                        "ring-switch coefficient-packing group has an evaluation-trace opening"
+                            .into(),
+                    )),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let semantics = akita_types::prepare_coefficient_packing_batch_semantics(

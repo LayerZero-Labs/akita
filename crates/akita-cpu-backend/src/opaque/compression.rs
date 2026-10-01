@@ -247,18 +247,18 @@ where
     for (batch_index, ((&item_index, packed_digits), _)) in
         item_indices.iter().zip(packed).zip(expanded).enumerate()
     {
-        let negacyclic = negacyclic_outputs
-            .get(batch_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let negacyclic = negacyclic_outputs.get(batch_index).ok_or_else(|| {
+            AkitaError::Internal("compression negacyclic output batch is missing".into())
+        })?;
         if negacyclic.len() != first_map.output_rank() {
             return Err(AkitaError::InvalidSetup(
                 "compression backend returned the wrong output rank".into(),
             ));
         }
         if let Some(cyclic_outputs) = &cyclic_outputs {
-            let cyclic = cyclic_outputs
-                .get(batch_index)
-                .ok_or(AkitaError::InvalidProof)?;
+            let cyclic = cyclic_outputs.get(batch_index).ok_or_else(|| {
+                AkitaError::Internal("compression cyclic output batch is missing".into())
+            })?;
             if cyclic.len() != first_map.output_rank() {
                 return Err(AkitaError::InvalidSetup(
                     "compression backend returned the wrong output rank".into(),
@@ -478,7 +478,9 @@ where
             }
             RingRelationMode::ReducedEvaluation => {
                 if !item.quotients.is_empty() {
-                    return Err(AkitaError::InvalidProof);
+                    return Err(AkitaError::Internal(
+                        "reduced compression evaluation unexpectedly retained quotients".into(),
+                    ));
                 }
                 CompressionRelationOutput::ReducedEvaluation
             }
