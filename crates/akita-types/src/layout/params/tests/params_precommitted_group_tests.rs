@@ -66,6 +66,32 @@ fn multi_group_row_offsets_match_a_before_b_layout() {
 }
 
 #[test]
+fn group_accessors_reject_absent_caller_indices() {
+    let (lp, batch) = sample_multi_group_root_params();
+    let absent = batch.num_groups();
+    assert!(matches!(
+        lp.group_role_dims(&batch, absent),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        lp.group_role_dims_geometry(&batch, absent),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        lp.group_params(&batch, absent),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        lp.group_params_geometry(&batch, absent),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        lp.consistency_row_index(&batch, absent),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
+#[test]
 fn multi_group_root_accepts_multi_chunk_witness_layout() {
     let (mut lp, batch) = sample_multi_group_root_params();
     lp.witness_chunk = crate::witness::ChunkedWitnessCfg {

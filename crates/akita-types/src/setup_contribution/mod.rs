@@ -58,5 +58,7 @@ pub fn checked_slice<'a, T>(
 ) -> Result<&'a [T], AkitaError> {
     let range = checked::range(start, len)
         .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} overflow")))?;
-    slice.get(range).ok_or(AkitaError::InvalidProof)
+    slice.get(range).ok_or_else(|| {
+        AkitaError::InvalidInput(format!("{context} range exceeds the supplied slice"))
+    })
 }

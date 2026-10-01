@@ -74,8 +74,9 @@ impl<E: Field> CoefficientPackingRelationEvents<E> {
         }
         let block = self.relation_coefficient_block_len;
         let low_variables = block.trailing_zeros() as usize;
-        let equality =
-            OffsetEqWindow::new(point.get(low_variables..).ok_or(AkitaError::InvalidProof)?)?;
+        let equality = OffsetEqWindow::new(point.get(low_variables..).ok_or_else(|| {
+            AkitaError::Internal("packing high point exceeds the checked point dimension".into())
+        })?)?;
         let mut work = 0usize;
         for event in &self.events {
             work = work
@@ -105,22 +106,27 @@ impl<E: Field> CoefficientPackingRelationEvents<E> {
             alpha_cache.push(multilinear_eval(
                 self.alpha_powers
                     .get(alpha_start..alpha_end)
-                    .ok_or(AkitaError::InvalidProof)?,
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "packing alpha block exceeds the generated power table".into(),
+                        )
+                    })?,
                 &point[..low_variables],
             )?);
         }
         let evaluate_event = |sum: Result<E, AkitaError>, event_index: usize| {
             let sum = sum?;
-            let event = self
-                .events
-                .get(event_index)
-                .ok_or(AkitaError::InvalidProof)?;
+            let event = self.events.get(event_index).ok_or_else(|| {
+                AkitaError::Internal("packing event index exceeds the generated event table".into())
+            })?;
             let coefficients = event.physical_coefficients();
             if !coefficients.start.is_multiple_of(block)
                 || !coefficients.len().is_multiple_of(block)
                 || !event.alpha_exponent_start().is_multiple_of(block)
             {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "packing event is not aligned to its coefficient block".into(),
+                ));
             }
             (0..coefficients.len())
                 .step_by(block)
@@ -131,9 +137,11 @@ impl<E: Field> CoefficientPackingRelationEvents<E> {
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("packing alpha range overflow".into())
                         })?;
-                    let alpha_eval = *alpha_cache
-                        .get(alpha_start / block)
-                        .ok_or(AkitaError::InvalidProof)?;
+                    let alpha_eval = *alpha_cache.get(alpha_start / block).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "packing event exceeds the generated alpha evaluation cache".into(),
+                        )
+                    })?;
                     let physical = coefficients
                         .start
                         .checked_add(coefficient_offset)
