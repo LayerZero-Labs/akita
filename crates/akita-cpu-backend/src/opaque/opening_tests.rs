@@ -703,13 +703,10 @@ fn aggregate_eor_rejects_wrong_owner_and_invalid_round_progression() {
         &[E::one()],
     )
     .unwrap();
-    assert!(<CpuBackend as OpaqueEorKernel<F, E>>::bind_eor_round(
-        &backend,
-        &mut session,
-        0,
-        E::one()
-    )
-    .is_err());
+    assert!(matches!(
+        <CpuBackend as OpaqueEorKernel<F, E>>::bind_eor_round(&backend, &mut session, 0, E::one()),
+        Err(AkitaError::InvalidInput(_))
+    ));
     assert!(
         <CpuBackend as OpaqueEorKernel<F, E>>::eor_round(&backend, &mut session, 1, claim).is_err()
     );

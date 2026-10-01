@@ -313,19 +313,20 @@ pub(super) fn mat_vec_mul_i8_dense_block_parallel_with_params<
     num_digits: usize,
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     if ntt_mat.len() == 1 {
-        return mat_vec_mul_i8_dense_single_row_with_params(
+        return Ok(mat_vec_mul_i8_dense_single_row_with_params(
             ntt_mat, blocks, num_digits, log_basis, params,
-        )
+        )?
         .into_iter()
         .map(|ring| vec![ring])
-        .collect();
+        .collect());
     }
 
-    mat_vec_mul_i8_block_parallel_with_params_impl::<F, W, K, D, false>(
+    let output = mat_vec_mul_i8_block_parallel_with_params_impl::<F, W, K, D, false>(
         ntt_mat, blocks, num_digits, log_basis, params,
-    )
+    );
+    Ok(output)
 }
 
 pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
@@ -339,11 +340,11 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
     num_digits: usize,
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<CyclotomicRing<F, D>> {
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
     debug_assert_eq!(ntt_mat.len(), 1);
     let num_live_blocks = blocks.len();
     if num_live_blocks == 0 {
-        return vec![];
+        return Ok(vec![]);
     }
     let mat_width = ntt_mat.first().map_or(0, |row| row.len());
     let max_data_width = blocks
@@ -353,18 +354,20 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
         .unwrap_or(0);
     let inner_width = mat_width.min(max_data_width);
     if inner_width == 0 {
-        return vec![CyclotomicRing::<F, D>::zero(); num_live_blocks];
+        return Ok(vec![CyclotomicRing::<F, D>::zero(); num_live_blocks]);
     }
 
     let digit_bound = balanced_digit_abs_bound(log_basis);
     let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
-        .expect("single i8 CRT term must fit supported parameters");
+        .ok_or_else(|| {
+            AkitaError::Internal("single-row i8 CRT capacity cannot fit a single term".into())
+        })?;
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     let mat_row = &ntt_mat[0];
     let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis);
 
     if inner_width <= safe_width && inner_width == max_data_width {
-        return cfg_into_iter!(blocks)
+        return Ok(cfg_into_iter!(blocks)
             .map(|block| {
                 let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
                 let mut digit_buf = vec![[0i8; D]; num_digits];
@@ -390,7 +393,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
 
                 acc.to_ring(params)
             })
-            .collect();
+            .collect());
     }
 
     // Over-capacity fallback chooses the available fanout: many commitment
@@ -399,7 +402,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
     let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
     let num_chunks = inner_width.div_ceil(chunk_width);
     if num_live_blocks < DENSE_I8_BLOCK_PARALLEL_MIN_BLOCKS {
-        return mat_vec_mul_i8_dense_single_row_chunk_parallel_with_params(
+        return Ok(mat_vec_mul_i8_dense_single_row_chunk_parallel_with_params(
             mat_row,
             blocks,
             inner_width,
@@ -408,10 +411,10 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
             log_basis,
             params,
             &lut,
-        );
+        ));
     }
 
-    cfg_into_iter!(blocks)
+    Ok(cfg_into_iter!(blocks)
         .map(|block| {
             let mut out = CyclotomicRing::<F, D>::zero();
             let mut scratch = I8ColumnScratch::new();
@@ -449,7 +452,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
 
             out
         })
-        .collect()
+        .collect())
 }
 
 #[allow(clippy::too_many_arguments)]

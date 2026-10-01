@@ -13,7 +13,9 @@ pub(crate) fn emit_packed_negative_binary(
     packed: &PackedNegativeBinary,
 ) -> Result<(), AkitaError> {
     if packed.map() != span.map() || span.range().len() != packed.map().padded_digit_count() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "packed compression witness map or extent differs from its span".into(),
+        ));
     }
     let range = span.range();
     const CHUNK: usize = 4096;

@@ -58,7 +58,7 @@ pub(crate) fn mat_vec_mul_ntt_i8<F: Field + CanonicalEncoding, const D: usize>(
         blocks,
         num_digits,
         log_basis
-    ))
+    )?)
 }
 
 /// Dense-optimized matrix-vector multiplication over i8 digit planes.
@@ -83,7 +83,7 @@ pub fn mat_vec_mul_ntt_i8_dense<F: Field + CanonicalEncoding, const D: usize>(
         blocks,
         num_digits,
         log_basis
-    ))
+    )?)
 }
 
 /// Single-row dense variant of [`mat_vec_mul_ntt_i8_dense`].
@@ -104,7 +104,7 @@ pub fn mat_vec_mul_ntt_i8_dense_single_row<F: Field + CanonicalEncoding, const D
         blocks,
         num_digits,
         log_basis
-    ))
+    )?)
 }
 
 /// Column-tiled A*x across multiple blocks of pre-decomposed i8 digit planes.
