@@ -218,6 +218,26 @@ fn portable_fragments_match_complete_cpu_witness_in_both_modes() {
                 other_mode
             )
             .is_err());
+            let mut changed_fold = params.clone();
+            changed_fold.own_group_mut().opening.num_digits_fold += 1;
+            let updated_layout = instance.segment_layout(&changed_fold, None).unwrap();
+            assert!(updated_layout.tail_range().start > layout.tail_range().start);
+            assert!(fragment(
+                &[outer.state().clone()],
+                opening.state(),
+                &changed_fold,
+                &layout,
+                mode
+            )
+            .is_err());
+            fragment(
+                &[outer.state().clone()],
+                opening.state(),
+                &changed_fold,
+                &updated_layout,
+                mode,
+            )
+            .unwrap();
             let mut wrong_basis = params.clone();
             wrong_basis.own_group_mut().opening.log_basis_open = 0;
             assert!(fragment(

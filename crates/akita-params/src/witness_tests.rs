@@ -354,6 +354,37 @@ fn units_for_group_filters_by_group_in_any_order() {
 }
 
 #[test]
+fn canonical_tail_validation_rejects_stale_body_geometry() {
+    for num_chunks in [1, 2] {
+        for mode in [
+            RingRelationMode::QuotientLift,
+            RingRelationMode::ReducedEvaluation,
+        ] {
+            let (mut params, batch, _) = test_layout(num_chunks);
+            params.ring_relation_mode = mode;
+            let geometry = RelationWitnessGeometry::for_level(&params, &batch, 1).unwrap();
+            let plan = match mode {
+                RingRelationMode::QuotientLift => RelationQuotientPlan::quotient_lift(2).unwrap(),
+                RingRelationMode::ReducedEvaluation => RelationQuotientPlan::ReducedEvaluation,
+            };
+            let layout = WitnessLayout::new(&params, &batch, &geometry, num_chunks, plan).unwrap();
+            params.own_group_mut().opening.num_digits_fold += 1;
+            let updated_geometry = RelationWitnessGeometry::for_level(&params, &batch, 1).unwrap();
+            assert_eq!(geometry, updated_geometry);
+            let updated =
+                WitnessLayout::new(&params, &batch, &updated_geometry, num_chunks, plan).unwrap();
+            assert!(updated.tail_range().start > layout.tail_range().start);
+            assert!(layout
+                .validate_tail(&params, geometry.rhs_layout(), plan)
+                .is_err());
+            updated
+                .validate_tail(&params, geometry.rhs_layout(), plan)
+                .unwrap();
+        }
+    }
+}
+
+#[test]
 fn canonical_tail_validation_rejects_changed_ownership_and_ranges() {
     let (params, batch, layout) = test_layout(2);
     let geometry = RelationWitnessGeometry::for_level(&params, &batch, 1).unwrap();
