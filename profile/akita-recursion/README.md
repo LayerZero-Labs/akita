@@ -177,10 +177,9 @@ overrides for those values.
    reads no clock (the Jolt runtime doesn't implement `clock_gettime`). Three
    `start_cycle_tracking` / `end_cycle_tracking` pairs wrap input decoding,
    verifier preparation, and statement construction plus verification.
-   The guest constructs an unbound verifier transcript and the verifier binds
-   the canonical instance descriptor; it must not use a prover-side placeholder
-   transcript, because Spongefish prover state may ask for entropy that the Jolt
-   guest runtime does not provide.
+   The guest verifies a standalone proof: `verify_standalone` starts the
+   verifier transcript, binds the canonical instance descriptor as its first
+   public message, and requires the proof to be consumed exactly.
    This profile is a trusted host-artifact benchmark: the guest decodes the
    verifier setup through the explicitly trusted cached-matrix path. Seed/matrix
    shape metadata and field elements are still validated, but the guest skips

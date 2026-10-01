@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Guard the small reviewed surface that may bypass native Spongefish state APIs.
+# Guard the small reviewed surface that may construct proof transcripts or
+# bypass checked proof decoding.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -71,7 +72,6 @@ search_files() {
 }
 
 proof_input_roots=(
-    crates/akita-transcript/src
     crates/akita-types/src
     crates/akita-challenges/src
     crates/akita-sumcheck/src
@@ -80,22 +80,17 @@ proof_input_roots=(
 )
 
 fail_if_match 'Validate::No|deserialize_[a-z_]*unchecked' "${proof_input_roots[@]}"
-fail_if_match 'ProverState::default|VerifierState::default' "${proof_input_roots[@]}"
 
-raw_state_files="$(search_files 'duplex_sponge_state' "${proof_input_roots[@]}" | sort)"
-expected_raw_state_files='crates/akita-transcript/src/proof_stream.rs
-crates/akita-transcript/src/proof_stream/sampling.rs
-crates/akita-transcript/src/proof_stream/verifier.rs'
-if [ "$raw_state_files" != "$expected_raw_state_files" ]; then
-    echo "error: native raw-state access escaped its reviewed allowlist" >&2
-    printf '%s\n' "$raw_state_files" >&2
-    exit 1
-fi
-
-constructor_files="$(search_files '\.to_(prover|verifier)\(' "${proof_input_roots[@]}" | sort)"
-expected_constructor_files='crates/akita-transcript/src/proof_stream.rs'
+# Protocol code runs on the caller's transcript. Only the standalone verifier
+# boundary and unit-test fixtures may start one.
+constructor_files="$(search_files '(Prover|Verifier)Transcript(::<[^>]*>)?::new' "${proof_input_roots[@]}" | sort)"
+expected_constructor_files='crates/akita-prover/src/protocol/prove/suffix.rs
+crates/akita-sumcheck/src/proof_stream.rs
+crates/akita-types/src/transcript.rs
+crates/akita-verifier/src/fold/verify.rs
+crates/akita-verifier/src/stages/opening_claims/extension_claim.rs'
 if [ "$constructor_files" != "$expected_constructor_files" ]; then
-    echo "error: Spongefish state construction escaped its reviewed allowlist" >&2
+    echo "error: transcript construction escaped its reviewed allowlist" >&2
     printf '%s\n' "$constructor_files" >&2
     exit 1
 fi

@@ -97,7 +97,7 @@ where
             return GuestStatus::InputRejected.code();
         }
     };
-    let result = verifier.batched_verify(
+    let result = verifier.verify_standalone(
         &decoded.proof,
         &decoded.transcript_domain,
         statement,

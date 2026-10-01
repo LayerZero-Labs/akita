@@ -15,19 +15,14 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 akita-serialization = { path = "../crates/akita-serialization" }
 akita-error = { path = "../crates/akita-error" }
 akita-sumcheck = { path = "../crates/akita-sumcheck" }
-akita-transcript = { path = "../crates/akita-transcript" }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
+  "transcript-blake2b",
+] }
 libfuzzer-sys = "0.4.12"
 
 [[bin]]
 name = "serialization_vec"
 path = "fuzz_targets/serialization_vec.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "transcript_labels"
-path = "fuzz_targets/transcript_labels.rs"
 test = false
 doc = false
 bench = false

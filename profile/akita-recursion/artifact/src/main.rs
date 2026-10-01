@@ -306,7 +306,7 @@ fn verify_proof(
 ) -> Result<(), String> {
     AkitaVerifier::new(verifier_setup.clone(), schedules.clone())
         .map_err(|err| format!("verifier setup rejected: {err}"))?
-        .batched_verify(proof, session, statement, BasisMode::Lagrange)
+        .verify_standalone(proof, session, statement, BasisMode::Lagrange)
         .map_err(|err| format!("verifier rejected proof: {err}"))
 }
 
@@ -403,7 +403,7 @@ macro_rules! generate_scalar_case {
         let schedule_selection = prove_input.selection();
         let t0 = Instant::now();
         let proof = scheme
-            .batched_prove(
+            .prove_standalone(
                 &prover_setup,
                 prove_input,
                 &backend,
@@ -431,7 +431,7 @@ macro_rules! generate_scalar_case {
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(&proof, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)
+                verifier.verify_standalone(&proof, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)
             })
         .map_err(|err| format!("{} host-side sanity verify: {err}", case))?;
 
@@ -461,7 +461,7 @@ macro_rules! generate_scalar_case {
         scheme
             .verifier(decoded.verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &decoded.proof,
                     &decoded.transcript_domain,
                     decoded_statement,
@@ -735,14 +735,14 @@ fn run() -> Result<(), String> {
     .map_err(|err| format!("invalid prover opening data: {err}"))?;
     let schedule_selection = prove_input.selection();
     let proof = scheme
-        .batched_prove(
+        .prove_standalone(
             &prover_setup,
             prove_input,
             &backend,
             TRANSCRIPT_DOMAIN,
             BasisMode::Lagrange,
         )
-        .map_err(|err| format!("batched_prove failed: {err}"))?;
+        .map_err(|err| format!("prove_standalone failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
 
     let verifier_setup = scheme
