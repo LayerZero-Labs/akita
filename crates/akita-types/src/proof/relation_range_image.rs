@@ -633,7 +633,7 @@ impl RelationRangeImagePlan {
                     .iter()
                     .any(|group| group.group_index == group_index)
                 {
-                    AkitaError::Internal("validated relation group has no consistency row".into())
+                    AkitaError::InvalidInput("relation group has no consistency row".into())
                 } else {
                     AkitaError::InvalidInput(
                         "consistency row group index is absent from the relation plan".into(),
@@ -793,6 +793,45 @@ mod tests {
     #[test]
     fn consistency_row_rejects_an_absent_group() {
         let plan = plan_for(&[1], 1, CommitmentRingDims::uniform(64), 64, 4);
+        assert!(plan.consistency_row_index(0).is_ok());
+        assert!(matches!(
+            plan.consistency_row_index(1),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn consistency_row_rejects_a_group_missing_from_supplied_geometry() {
+        let fixture = plan_for(&[1], 1, CommitmentRingDims::uniform(64), 64, 4);
+        let relation_geometry = fixture.relation_witness_geometry().clone();
+        let mut cursor = 0;
+        let rows = relation_geometry
+            .rhs_layout()
+            .row_geometries()
+            .unwrap()
+            .into_iter()
+            .map(|geometry| {
+                let start = cursor;
+                cursor += geometry.physical_coefficient_width();
+                WitnessQuotientRowLayout::new_for_test(geometry, start..cursor)
+            })
+            .collect();
+        let witness_layout = WitnessLayout::new_for_test(Vec::new(), rows, 1);
+        let address_geometry = RelationAddressGeometry::for_relation(
+            &relation_geometry,
+            64,
+            witness_layout.live_coeff_len(),
+        )
+        .unwrap();
+        let opening_batch = OpeningClaimsLayout::from_group_sizes(3, &[1, 1]).unwrap();
+        let plan = RelationRangeImagePlan::new(
+            relation_geometry,
+            address_geometry,
+            DigitRangePlan::new(4).unwrap(),
+            witness_layout,
+            &opening_batch,
+        )
+        .unwrap();
         assert!(plan.consistency_row_index(0).is_ok());
         assert!(matches!(
             plan.consistency_row_index(1),
@@ -1037,7 +1076,13 @@ mod tests {
             reconstruct_l2_sq_from_gram(shape, 4, &claims).expect("signed block Gram norm"),
             154
         );
-        assert!(reconstruct_l2_sq_from_gram(shape, 4, &claims[..8]).is_err());
+        assert!(matches!(
+            reconstruct_l2_sq_from_gram(shape, 4, &claims[..8]),
+            Err(AkitaError::InvalidSize {
+                expected: 9,
+                actual: 8,
+            })
+        ));
         let mut forged_claims = vec![0; claims.len()];
         forged_claims[0] = -1;
         assert!(matches!(
@@ -1053,8 +1098,9 @@ mod tests {
             block_len: 1,
             limb_count: 2,
         };
-        assert!(
-            reconstruct_l2_sq_from_gram(shape, usize::MAX, &[i128::MAX, 0, i128::MAX]).is_err()
-        );
+        assert!(matches!(
+            reconstruct_l2_sq_from_gram(shape, usize::MAX, &[i128::MAX, 0, i128::MAX]),
+            Err(AkitaError::InvalidSetup(_))
+        ));
     }
 }
