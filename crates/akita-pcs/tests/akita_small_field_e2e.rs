@@ -61,6 +61,7 @@ use akita_types::{
     lagrange_weights, BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
     PolynomialGroupClaims, PolynomialGroupLayout, ScheduleLookupKey,
 };
+use common::proof_size::prove_matching_byte_model;
 use common::*;
 use jolt_field::{ExtField, One, Ring};
 use small_field_drivers::*;
@@ -238,14 +239,15 @@ vec![pre_hint, final_hint],
 scheme.schedules());
                     let selection = prover_data.selection();
 
-                    let proof = scheme.batched_prove(
-                        &setup,
-                        prover_data,
-                        &stack,
-                        label,
-                        BasisMode::Lagrange,
-                    )
-                    .expect("prove");
+                    let proof = prove_matching_byte_model(scheme.schedules(), selection, || {
+                        scheme.batched_prove(
+                            &setup,
+                            prover_data,
+                            &stack,
+                            label,
+                            BasisMode::Lagrange,
+                        )
+                    });
 
                     two_group_verify_roundtrip::<$cfg>(
                         &scheme,
@@ -414,14 +416,15 @@ vec![pre_hint, final_hint],
 scheme.schedules());
                     let selection = prover_data.selection();
 
-                    let proof = scheme.batched_prove(
-                        &setup,
-                        prover_data,
-                        &stack,
-                        label,
-                        BasisMode::Lagrange,
-                    )
-                    .expect("prove");
+                    let proof = prove_matching_byte_model(scheme.schedules(), selection, || {
+                        scheme.batched_prove(
+                            &setup,
+                            prover_data,
+                            &stack,
+                            label,
+                            BasisMode::Lagrange,
+                        )
+                    });
 
                     two_group_verify_roundtrip::<$cfg>(
                         &scheme,
@@ -616,9 +619,9 @@ fn fp32_onehot_multi_group() {
         let selection = prover_data.selection();
 
         let session = b"completeness/fp32_onehot_multi_group";
-        let proof = scheme
-            .batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
-            .expect("fp32 multi-group prove");
+        let proof = prove_matching_byte_model(scheme.schedules(), selection, || {
+            scheme.batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
+        });
 
         let verify_claims = OpeningClaims::from_groups(vec![
             PolynomialGroupClaims::new(pre_point, vec![pre_opening], &pre_commitment)

@@ -11,6 +11,7 @@
 //! call site, which is the only part worth reading per cell.
 
 use crate::common::load_workspace_scheme;
+use crate::common::proof_size::prove_matching_byte_model;
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::CpuBackend;
 use akita_pcs::AkitaCommitmentScheme;
@@ -106,9 +107,9 @@ where
     .expect("prover data");
     let selection = prover_data.selection();
 
-    let proof = scheme
-        .batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
-        .expect("prove");
+    let proof = prove_matching_byte_model(scheme.schedules(), selection, || {
+        scheme.batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
+    });
 
     let verify_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.clone(),
