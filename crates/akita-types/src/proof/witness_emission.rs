@@ -19,7 +19,7 @@ impl WitnessCoefficientSink for [i8] {
             .ok_or_else(|| AkitaError::InvalidSetup("witness coefficient end overflow".into()))?;
         self.get_mut(start..end)
             .ok_or_else(|| {
-                AkitaError::Internal("witness coefficient span exceeds its destination".into())
+                AkitaError::InvalidInput("witness coefficient span exceeds its destination".into())
             })?
             .copy_from_slice(coefficients);
         Ok(())
