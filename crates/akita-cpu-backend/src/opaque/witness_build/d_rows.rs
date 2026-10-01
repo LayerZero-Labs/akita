@@ -54,11 +54,16 @@ where
                 &[e_hat.typed_planes::<D>()?],
                 log_basis,
             )?;
-            let [reduced] = rows
-                .try_into()
-                .map_err(|_: Vec<_>| AkitaError::InvalidProof)?;
+            let [reduced] = rows.try_into().map_err(|rows: Vec<_>| {
+                AkitaError::Internal(format!(
+                    "D digit-row kernel returned {} batches, expected one",
+                    rows.len()
+                ))
+            })?;
             if reduced.len() != d_row_len {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "D digit-row kernel output rank differs from the relation plan".into(),
+                ));
             }
             return Ok(RelationDRows::ReducedEvaluation { reduced });
         }
@@ -84,7 +89,9 @@ where
         || !rows.b_cyclic.is_empty()
         || !rows.a_quotients.is_empty()
     {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "D relation kernel output shape differs from the relation plan".into(),
+        ));
     }
     let quotients = rows
         .d_cyclic

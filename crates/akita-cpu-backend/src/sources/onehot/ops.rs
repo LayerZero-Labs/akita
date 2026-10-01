@@ -143,7 +143,7 @@ where
         active_a_cols,
         plan.num_digits_inner,
     )?;
-    Ok(rows.into_iter().map(crate::typed_inner_rows).collect())
+    rows.into_iter().map(crate::typed_inner_rows).collect()
 }
 
 impl<F, E, const D: usize, I> OpeningFoldKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend<F, E>
@@ -172,7 +172,7 @@ where
                 live_block_weights,
                 position_weights,
                 num_positions_per_block,
-            ),
+            )?,
             OpeningFoldPlan::Subfield {
                 multipliers,
                 num_positions_per_block,
@@ -471,17 +471,15 @@ where
         &self,
         scalars: &[F],
         num_positions_per_block: usize,
-    ) -> Vec<CyclotomicRing<F, D>> {
-        let (num_rings, num_live_blocks) = self
-            .view_layout(D, num_positions_per_block)
-            .expect("valid one hot fold layout");
-        cfg_into_iter!(0..num_live_blocks)
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        let (num_rings, num_live_blocks) = self.view_layout(D, num_positions_per_block)?;
+        Ok(cfg_into_iter!(0..num_live_blocks)
             .map(|block_idx| {
                 let ring_start = block_idx * num_positions_per_block;
                 let ring_end = (ring_start + num_positions_per_block).min(num_rings);
                 fold_onehot_block::<F, I, D>(self, ring_start..ring_end, scalars)
             })
-            .collect()
+            .collect())
     }
 
     #[cfg(test)]
@@ -524,11 +522,11 @@ where
         live_block_weights: &[F],
         position_weights: &[F],
         num_positions_per_block: usize,
-    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        crate::sources::poly_helpers::fused_evaluate_and_fold_base(
-            self.fold_blocks::<D>(position_weights, num_positions_per_block),
+    ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
+        Ok(crate::sources::poly_helpers::fused_evaluate_and_fold_base(
+            self.fold_blocks::<D>(position_weights, num_positions_per_block)?,
             live_block_weights,
-        )
+        ))
     }
 
     pub(crate) fn evaluate_and_fold_subfield<const D: usize>(

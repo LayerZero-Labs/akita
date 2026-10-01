@@ -62,43 +62,54 @@ where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Send + Sync,
 {
     let challenge_count = challenges.len();
-    let expected_relation_rows = challenge_count
-        .checked_mul(row_rank)
-        .ok_or(AkitaError::InvalidProof)?;
+    let expected_relation_rows = challenge_count.checked_mul(row_rank).ok_or_else(|| {
+        AkitaError::Internal("relation quotient challenge row extent overflow".into())
+    })?;
     if row_rank == 0
         || relation_rows.len() != expected_relation_rows
         || consistency_rows.is_some_and(|rows| rows.len() < challenge_count)
-        || challenges.as_slice().iter().any(|challenge| {
-            challenge.positions.len() != challenge.coeffs.len()
-                || challenge
-                    .positions
-                    .iter()
-                    .any(|&position| position as usize >= D)
-        })
     {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "relation quotient row rank or row counts differ from the accumulation plan".into(),
+        ));
+    }
+    if challenges.as_slice().iter().any(|challenge| {
+        challenge.positions.len() != challenge.coeffs.len()
+            || challenge
+                .positions
+                .iter()
+                .any(|&position| position as usize >= D)
+    }) {
+        return Err(AkitaError::InvalidInput(
+            "relation sparse challenge positions exceed the ring or mismatch coefficients".into(),
+        ));
     }
     let output_rows = row_rank
         .checked_add(usize::from(consistency_rows.is_some()))
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::Internal("relation quotient accumulation output rank overflow".into())
+        })?;
     let output = cfg_fold_reduce!(
         0..challenge_count,
         || Ok::<_, AkitaError>(vec![[F::zero(); D]; output_rows]),
         |acc: Result<Vec<[F; D]>, AkitaError>, challenge_index| {
             acc.and_then(|mut acc| {
-                let start = challenge_index
-                    .checked_mul(row_rank)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let end = start
-                    .checked_add(row_rank)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let rows = relation_rows
-                    .get(start..end)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let challenge = challenges
-                    .as_slice()
-                    .get(challenge_index)
-                    .ok_or(AkitaError::InvalidProof)?;
+                let start = challenge_index.checked_mul(row_rank).ok_or_else(|| {
+                    AkitaError::Internal("relation quotient challenge row start overflow".into())
+                })?;
+                let end = start.checked_add(row_rank).ok_or_else(|| {
+                    AkitaError::Internal("relation quotient challenge row end overflow".into())
+                })?;
+                let rows = relation_rows.get(start..end).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "relation quotient challenge row range is out of bounds".into(),
+                    )
+                })?;
+                let challenge = challenges.as_slice().get(challenge_index).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "relation quotient accumulation challenge is missing".into(),
+                    )
+                })?;
                 let consistency = consistency_rows.and_then(|rows| rows.get(challenge_index));
                 add_sparse_ring_products_high_half::<F, D>(&mut acc, challenge, rows, consistency);
                 Ok(acc)
@@ -196,13 +207,21 @@ fn ring_from_flat_y<F: Field, const D: usize>(
     y: &RingVec<F>,
     offset: usize,
 ) -> Result<CyclotomicRing<F, D>, AkitaError> {
-    let end = offset.checked_add(D).ok_or(AkitaError::InvalidProof)?;
+    let end = offset
+        .checked_add(D)
+        .ok_or_else(|| AkitaError::Internal("relation RHS ring coordinate end overflow".into()))?;
     let coeffs: [F; D] = y
         .coeffs()
         .get(offset..end)
-        .ok_or(AkitaError::InvalidProof)?
+        .ok_or_else(|| {
+            AkitaError::Internal("relation RHS ring coordinate range is out of bounds".into())
+        })?
         .try_into()
-        .map_err(|_| AkitaError::InvalidProof)?;
+        .map_err(|error| {
+            AkitaError::Internal(format!(
+                "relation RHS ring coordinate conversion failed: {error}"
+            ))
+        })?;
     Ok(CyclotomicRing::from_coefficients(coeffs))
 }
 
@@ -239,7 +258,9 @@ where
     let challenges = group_opening.ambient_a_challenges();
     let recomposed_inner_rows = group.recomposed_inner_rows.as_ring_slice::<D>()?;
     if group.fold.response_coefficient_len() != inner_width * D {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "A-relation fold response extent differs from the inner width".into(),
+        ));
     }
     let (evaluation_trace, consistency_rows, packing_product) = match &group.folded_opening {
         OpeningFamily::EvaluationTrace(e_folded)
@@ -274,10 +295,7 @@ where
         log_basis_outer,
         evaluation_trace,
     )?;
-    let derived = group
-        .fold
-        .relation::<O, D>(opening_ctx, &plan)
-        .map_err(|err| AkitaError::InvalidInput(format!("A quotient rows failed: {err:?}")))?;
+    let derived = group.fold.relation::<O, D>(opening_ctx, &plan)?;
     let (a_quotients, z_consistency) = match derived {
         crate::opaque::FoldRelationOutput::EvaluationTrace {
             a_quotients,
@@ -289,7 +307,9 @@ where
     };
 
     if a_quotients.len() != n_a {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "A-relation quotient count differs from the planned row rank".into(),
+        ));
     }
     let products = parallel_high_half_accumulate_a_rows::<F, D>(
         challenges,
@@ -300,13 +320,19 @@ where
     let consistency_quotient = match packing_product {
         None => {
             let [consistency_product, ..] = products.as_slice() else {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "evaluation-trace relation accumulation has no consistency product".into(),
+                ));
             };
             let mut coefficients = *consistency_product;
             for (destination, &source) in coefficients.iter_mut().zip(
                 z_consistency
                     .as_ref()
-                    .ok_or(AkitaError::InvalidProof)?
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "evaluation-trace fold relation has no consistency high half".into(),
+                        )
+                    })?
                     .coefficients(),
             ) {
                 *destination -= source;
@@ -315,7 +341,10 @@ where
         }
         Some(product) => {
             if z_consistency.is_some() {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "coefficient packing fold relation unexpectedly has a consistency high half"
+                        .into(),
+                ));
             }
             let geometry = product.geometry();
             RelationQuotientOutput::from_physical_coordinates(
@@ -333,10 +362,10 @@ where
     for (a_idx, a_q) in a_quotients.iter().enumerate() {
         let product_index = a_product_offset
             .checked_add(a_idx)
-            .ok_or(AkitaError::InvalidProof)?;
-        let mut coefficients = *products
-            .get(product_index)
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| AkitaError::Internal("A-relation product index overflow".into()))?;
+        let mut coefficients = *products.get(product_index).ok_or_else(|| {
+            AkitaError::Internal("A-relation accumulation product is missing".into())
+        })?;
         for (destination, &source) in coefficients.iter_mut().zip(a_q.coefficients()) {
             *destination -= source;
         }
@@ -375,7 +404,9 @@ where
     if groups.len() != opening_batch.num_groups()
         || group_openings.len() != opening_batch.num_groups()
     {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "relation quotient group counts differ from the validated opening batch".into(),
+        ));
     }
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
@@ -388,7 +419,9 @@ where
     let d_start = row_families
         .iter()
         .position(|row| matches!(row, akita_params::RelationRowFamily::Opening { .. }))
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::Internal("relation quotient row families have no opening tail".into())
+        })?;
     let expected_y_len = akita_types::relation_rhs_coeff_len(rhs_layout)?;
     if y.coeff_len() != expected_y_len {
         return Err(AkitaError::InvalidSize {
@@ -408,21 +441,31 @@ where
         .try_fold(0usize, |length, row| {
             length
                 .checked_add(row.geometry().physical_coefficient_width())
-                .ok_or(AkitaError::InvalidProof)
+                .ok_or_else(|| {
+                    AkitaError::Internal("ordinary relation RHS coefficient extent overflow".into())
+                })
         })?;
     if compression.is_some()
         && y.coeffs()
             .get(..ordinary_rhs_len)
-            .ok_or(AkitaError::InvalidProof)?
+            .ok_or_else(|| {
+                AkitaError::Internal(
+                    "compressed relation RHS does not cover the ordinary row prefix".into(),
+                )
+            })?
             .iter()
             .any(|coefficient| !coefficient.is_zero())
     {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "compressed relation ordinary RHS prefix is not zero".into(),
+        ));
     }
     let mut result: Vec<Option<RelationQuotientRow<F>>> = vec![None; num_rows];
     let order = opening_batch.root_group_order()?;
     if order.len() != rhs_layout.groups.len() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "canonical relation group order count differs from the RHS layout".into(),
+        ));
     }
 
     // Every group owns a native consistency/A/B block. The shared D tail is
@@ -431,17 +474,23 @@ where
 
     for (&group_index, group_rows) in order.iter().zip(&rhs_layout.groups) {
         let group_dims = group_rows.role_dims;
-        let group = groups.get(group_index).ok_or(AkitaError::InvalidProof)?;
+        let group = groups.get(group_index).ok_or_else(|| {
+            AkitaError::Internal("canonical relation quotient group is missing".into())
+        })?;
         if group.role_dims != group_dims {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "prepared relation quotient role dimensions differ from the RHS group".into(),
+            ));
         }
         let consistency_row = lp.consistency_row_index(opening_batch, group_index)?;
         y_offset = y_offset
             .checked_add(group_rows.opening_geometry.physical_coefficient_width())
-            .ok_or(AkitaError::InvalidProof)?;
-        let group_opening = group_openings
-            .get(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("relation quotient consistency RHS offset overflow".into())
+            })?;
+        let group_opening = group_openings.get(group_index).ok_or_else(|| {
+            AkitaError::Internal("canonical relation quotient group opening is missing".into())
+        })?;
         let challenges = group_opening.ambient_a_challenges();
         let group_layout = opening_batch.group_layout(group_index)?;
         let log_basis_outer = group.params.log_basis_outer();
@@ -456,12 +505,16 @@ where
         validate_i8_setup_log_basis(log_basis_outer, "for multi-group relation quotient")?;
         validate_i8_setup_log_basis(log_basis_open, "for multi-group relation quotient")?;
         if group_layout.num_polynomials() == 0 {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "validated relation quotient group has no polynomial".into(),
+            ));
         }
         let expected_blocks = group_layout
             .num_polynomials()
             .checked_mul(num_live_blocks_per_claim)
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("relation quotient group block count overflow".into())
+            })?;
         let opening_width = group_rows.opening_geometry.physical_coefficient_width();
         let opening_ratio = opening_width
             .checked_div(group_dims.d_d())
@@ -474,16 +527,20 @@ where
         let expected_e_planes = expected_blocks
             .checked_mul(num_digits_open)
             .and_then(|n| n.checked_mul(opening_ratio))
-            .ok_or(AkitaError::InvalidProof)?;
-        let expected_e_coeffs = expected_blocks
-            .checked_mul(opening_width)
-            .ok_or(AkitaError::InvalidProof)?;
-        let expected_z_coeffs = inner_width
-            .checked_mul(group_dims.d_a())
-            .ok_or(AkitaError::InvalidProof)?;
-        let expected_recomposed_coeffs = n_a
-            .checked_mul(group_dims.d_a())
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("relation quotient E digit plane count overflow".into())
+            })?;
+        let expected_e_coeffs = expected_blocks.checked_mul(opening_width).ok_or_else(|| {
+            AkitaError::Internal("relation quotient E coefficient extent overflow".into())
+        })?;
+        let expected_z_coeffs = inner_width.checked_mul(group_dims.d_a()).ok_or_else(|| {
+            AkitaError::Internal("relation quotient Z coefficient extent overflow".into())
+        })?;
+        let expected_recomposed_coeffs = n_a.checked_mul(group_dims.d_a()).ok_or_else(|| {
+            AkitaError::Internal(
+                "relation quotient recomposed A coefficient extent overflow".into(),
+            )
+        })?;
         let folded_opening_is_valid = match &group.folded_opening {
             OpeningFamily::EvaluationTrace(e_folded)
                 if group_opening.coefficient_packing_geometry().is_none() =>
@@ -517,9 +574,16 @@ where
             || group.recomposed_inner_rows.coeff_len()
                 != expected_blocks
                     .checked_mul(expected_recomposed_coeffs)
-                    .ok_or(AkitaError::InvalidProof)?
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "relation quotient recomposed group coefficient extent overflow".into(),
+                        )
+                    })?
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "relation quotient fold response or recomposed row extent differs from group plan"
+                    .into(),
+            ));
         }
         let outer_ratio = group_dims
             .d_a()
@@ -533,7 +597,9 @@ where
         let expected_t_hat_block_digits = n_a
             .checked_mul(outer_ratio)
             .and_then(|n| n.checked_mul(num_digits_outer))
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("relation quotient T block digit count overflow".into())
+            })?;
         if group.t_hat.block_count() != expected_blocks
             || group.t_hat.digit_stride() != group_dims.d_b()
             || group
@@ -542,7 +608,9 @@ where
                 .iter()
                 .any(|&size| size != expected_t_hat_block_digits)
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "relation quotient T digit blocks differ from the group plan".into(),
+            ));
         }
         let slice_geometry = akita_params::CommitmentSliceGeometry::try_new(
             group.params.outer_slice_count(),
@@ -564,38 +632,48 @@ where
         )?;
         if result
             .get(consistency_row)
-            .ok_or(AkitaError::InvalidProof)?
+            .ok_or_else(|| {
+                AkitaError::Internal("relation quotient consistency output slot is missing".into())
+            })?
             .is_some()
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "relation quotient consistency output slot is already populated".into(),
+            ));
         }
         result[consistency_row] = Some(consistency_quotient);
 
         let a_range = lp.a_row_range(opening_batch, group_index)?;
         if a_range.len() != n_a || a_quotients.len() != n_a {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "relation quotient A range or quotient count differs from the planned row rank"
+                    .into(),
+            ));
         }
         for (row_idx, quotient) in a_range.zip(a_quotients) {
             result[row_idx] = Some(quotient);
         }
 
         y_offset = y_offset
-            .checked_add(
-                n_a.checked_mul(group_dims.d_a())
-                    .ok_or(AkitaError::InvalidProof)?,
-            )
-            .ok_or(AkitaError::InvalidProof)?;
+            .checked_add(n_a.checked_mul(group_dims.d_a()).ok_or_else(|| {
+                AkitaError::Internal("relation quotient A RHS coefficient extent overflow".into())
+            })?)
+            .ok_or_else(|| {
+                AkitaError::Internal("relation quotient A RHS offset overflow".into())
+            })?;
 
         let b_range = lp.commitment_row_range(opening_batch, group_index)?;
         if b_range.len() != n_b {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "relation quotient B row range differs from the planned row rank".into(),
+            ));
         }
-        let b_coeff_len = n_b
-            .checked_mul(group_dims.d_b())
-            .ok_or(AkitaError::InvalidProof)?;
+        let b_coeff_len = n_b.checked_mul(group_dims.d_b()).ok_or_else(|| {
+            AkitaError::Internal("relation quotient B coefficient extent overflow".into())
+        })?;
         let b_end = y_offset
             .checked_add(b_coeff_len)
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| AkitaError::Internal("relation quotient B RHS end overflow".into()))?;
         let recomposed_b = if let Some(compression) = compression {
             RingVec::from_coeffs(
                 compression
@@ -603,14 +681,22 @@ where
                     .witness()
                     .stages()
                     .first()
-                    .ok_or(AkitaError::InvalidProof)?
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "outer compression witness has no first packed stage".into(),
+                        )
+                    })?
                     .recompose::<F>()?,
             )
         } else {
             RingVec::from_coeffs(
                 y.coeffs()
                     .get(y_offset..b_end)
-                    .ok_or(AkitaError::InvalidProof)?
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "relation quotient B RHS coordinate range is out of bounds".into(),
+                        )
+                    })?
                     .to_vec(),
             )
         };
@@ -623,7 +709,11 @@ where
                 let planes_per_claim = num_live_blocks_per_claim
                     .checked_mul(expected_t_hat_block_digits)
                     .filter(|count| *count != 0)
-                    .ok_or(AkitaError::InvalidProof)?;
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "relation quotient B planes per claim overflow or are zero".into(),
+                        )
+                    })?;
                 let mut b_cyclic = Vec::with_capacity(n_b);
                 for_each_outer_slice_input::<D_B>(
                     t_hat_planes.chunks(planes_per_claim),
@@ -643,29 +733,34 @@ where
                                 log_basis_open,
                                 log_basis_outer,
                             },
-                        )
-                        .map_err(|err| {
-                            AkitaError::InvalidInput(format!("B quotient rows failed: {err:?}"))
-                        })?;
+                        )?;
                         if b_rows.b_cyclic.len() != physical_n_b
                             || !b_rows.d_negacyclic.is_empty()
                             || !b_rows.d_cyclic.is_empty()
                             || !b_rows.a_quotients.is_empty()
                         {
-                            return Err(AkitaError::InvalidProof);
+                            return Err(AkitaError::Internal(
+                                "B-relation kernel output shape differs from the slice plan".into(),
+                            ));
                         }
                         b_cyclic.extend(b_rows.b_cyclic);
                         Ok(())
                     },
                 )?;
                 if b_cyclic.len() != n_b {
-                    return Err(AkitaError::InvalidProof);
+                    return Err(AkitaError::Internal(
+                        "B-relation cyclic row count differs from the planned row rank".into(),
+                    ));
                 }
                 for (commit_idx, row_idx) in b_range.clone().enumerate() {
                     let reduced = ring_from_flat_y::<F, D_B>(&recomposed_b, commit_idx * D_B)?;
                     result[row_idx] = Some(RelationQuotientOutput::row_from_ring(
                         quotient_from_cyclic_and_reduced(
-                            b_cyclic.get(commit_idx).ok_or(AkitaError::InvalidProof)?,
+                            b_cyclic.get(commit_idx).ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "B-relation cyclic row for the commitment is missing".into(),
+                                )
+                            })?,
                             &reduced,
                         ),
                     )?);
@@ -679,10 +774,12 @@ where
     if n_d_active != 0 {
         let d_coeff_len = n_d_active
             .checked_mul(rhs_layout.d_ring_dimension)
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("relation quotient D coefficient extent overflow".into())
+            })?;
         let d_end = y_offset
             .checked_add(d_coeff_len)
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| AkitaError::Internal("relation quotient D RHS end overflow".into()))?;
         akita_params::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
@@ -690,10 +787,14 @@ where
             |D_D| {
                 let d_rows = d_quotients.as_ring_slice::<D_D>()?;
                 if d_rows.len() != n_d_active {
-                    return Err(AkitaError::InvalidProof);
+                    return Err(AkitaError::Internal(
+                        "relation quotient D row count differs from the opening rank".into(),
+                    ));
                 }
                 for (d_idx, quotient) in d_rows.iter().enumerate() {
-                    let row_idx = d_start.checked_add(d_idx).ok_or(AkitaError::InvalidProof)?;
+                    let row_idx = d_start.checked_add(d_idx).ok_or_else(|| {
+                        AkitaError::Internal("relation quotient D output row index overflow".into())
+                    })?;
                     result[row_idx] = Some(RelationQuotientOutput::row_from_ring(*quotient)?);
                 }
                 Ok::<(), AkitaError>(())
@@ -724,7 +825,9 @@ where
             ));
         }
         let ring_dim = geometry.polynomial_modulus_dimension();
-        let compression = compression.ok_or(AkitaError::InvalidProof)?;
+        let compression = compression.ok_or_else(|| {
+            AkitaError::Internal("compression relation quotient material is missing".into())
+        })?;
         let quotient = compression.source(source)?.quotient(map_index)?;
         if quotient.ring_dim() != ring_dim || quotient.coeff_len() != ring_dim {
             return Err(AkitaError::InvalidSize {
@@ -738,23 +841,28 @@ where
         )?);
         let rhs_end = y_offset
             .checked_add(ring_dim)
-            .ok_or(AkitaError::InvalidProof)?;
-        let rhs_row = y
-            .coeffs()
-            .get(y_offset..rhs_end)
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| AkitaError::Internal("compression relation RHS end overflow".into()))?;
+        let rhs_row = y.coeffs().get(y_offset..rhs_end).ok_or_else(|| {
+            AkitaError::Internal("compression relation RHS row range is out of bounds".into())
+        })?;
         let source_witness = compression.source(source)?;
         if map_index + 1 == akita_params::COMPRESSION_MAP_COUNT {
             if rhs_row != source_witness.terminal.coefficients() {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "terminal compression relation RHS differs from its witness".into(),
+                ));
             }
         } else if rhs_row.iter().any(|coefficient| !coefficient.is_zero()) {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "nonterminal compression relation RHS row is not zero".into(),
+            ));
         }
         y_offset = rhs_end;
     }
     if y_offset != y.coeff_len() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "relation quotient RHS traversal did not consume all coefficients".into(),
+        ));
     }
     RelationQuotientOutput::from_slots(result)
 }

@@ -21,11 +21,15 @@ fn chunked_fold_matches_windowed_reference_and_global() {
             coeffs: vec![1, -1].into(),
         })
         .collect::<Vec<_>>();
-    let global = poly.decompose_fold::<D>(&challenges, POSITIONS, 2, 4);
+    let global = poly
+        .decompose_fold::<D>(&challenges, POSITIONS, 2, 4)
+        .unwrap();
 
     for chunk_count in [2, 4, 8] {
         let ranges = akita_params::dyadic_block_ranges(challenges.len(), chunk_count).unwrap();
-        let chunks = poly.decompose_fold_chunked::<D>(&challenges, &ranges, POSITIONS, 2, 4);
+        let chunks = poly
+            .decompose_fold_chunked::<D>(&challenges, &ranges, POSITIONS, 2, 4)
+            .unwrap();
         assert_eq!(chunks.len(), chunk_count);
         for (range, chunk) in ranges.iter().zip(&chunks) {
             let window = challenges
@@ -42,7 +46,7 @@ fn chunked_fold_matches_windowed_reference_and_global() {
                     }
                 })
                 .collect::<Vec<_>>();
-            let expected = poly.decompose_fold::<D>(&window, POSITIONS, 2, 4);
+            let expected = poly.decompose_fold::<D>(&window, POSITIONS, 2, 4).unwrap();
             assert_eq!(
                 chunk.centered_coeffs_flat(),
                 expected.centered_coeffs_flat()
@@ -78,7 +82,7 @@ fn ring_fold_matches_dense_multiplication_reference() {
         ring::<D>(300),
         ring::<D>(400),
     ];
-    let got = poly.fold_blocks_ring(&scalars, 4);
+    let got = poly.fold_blocks_ring(&scalars, 4).unwrap();
     let expected = coeffs
         .chunks(4)
         .map(|block| {
@@ -300,8 +304,9 @@ fn single_digit_fold_preserves_signed_i8_i16_boundaries() {
             let mut coefficients = vec![Prime64Offset59::zero(); D];
             coefficients[0] = Prime64Offset59::from_i64(value);
             let poly = DensePoly::from_field_evals(7, coefficients).unwrap();
-            let actual =
-                poly.decompose_fold::<D>(std::slice::from_ref(&challenge), 1, 1, log_basis);
+            let actual = poly
+                .decompose_fold::<D>(std::slice::from_ref(&challenge), 1, 1, log_basis)
+                .unwrap();
             let mut expected = vec![0_i32; D];
             expected[0] = value as i32;
             if actual.centered_coeffs_flat() != expected {
@@ -313,4 +318,25 @@ fn single_digit_fold_preserves_signed_i8_i16_boundaries() {
         mismatches.is_empty(),
         "(basis, expected, actual): {mismatches:?}"
     );
+}
+
+#[test]
+fn fold_operations_reject_invalid_ring_views() {
+    let poly = DensePoly::<F>::from_field_evals(0, vec![F::zero()]).unwrap();
+    assert!(matches!(
+        poly.fold_blocks::<0>(&[], 1),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        poly.fold_blocks_ring::<0>(&[], 1),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        poly.decompose_fold::<0>(&[], 1, 1, 1),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        poly.decompose_fold_chunked::<0>(&[], &[], 1, 1, 1),
+        Err(AkitaError::InvalidInput(_))
+    ));
 }

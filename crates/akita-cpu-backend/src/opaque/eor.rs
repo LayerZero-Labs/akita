@@ -1,4 +1,5 @@
 //! Aggregate EOR arithmetic and validation, including all private group tuples.
+use super::consumer_kernels::CpuWitnessOpeningKernel;
 use super::openings::RetainedOpeningSource;
 use super::source::PreparedExtensionOpeningGroup;
 use super::OperationBinding;
@@ -100,13 +101,17 @@ where
                 } else if context.fold_level() as usize == schedule.recursive_folds.len() + 1 {
                     let num_vars =
                         akita_error::checked::ceil_log2(schedule.terminal.input_witness_len)
-                            .ok_or(AkitaError::InvalidProof)?;
+                            .ok_or_else(|| {
+                                AkitaError::Internal("terminal EOR witness arity overflow".into())
+                            })?;
                     OpeningClaimsLayout::new(num_vars, 1)?
                 } else {
                     let step = schedule
                         .recursive_folds
                         .get(context.fold_level() as usize - 1)
-                        .ok_or(AkitaError::InvalidProof)?;
+                        .ok_or_else(|| {
+                            AkitaError::Internal("admitted EOR recursive fold is missing".into())
+                        })?;
                     OpeningClaimsLayout::from_groups(
                         step.params
                             .groups()
@@ -116,7 +121,9 @@ where
                     )?
                 };
                 if *layout != expected {
-                    return Err(AkitaError::InvalidProof);
+                    return Err(AkitaError::InvalidInput(
+                        "EOR claims layout differs from the admitted layout".into(),
+                    ));
                 }
             }
             #[cfg(test)]
@@ -125,7 +132,10 @@ where
             Err(error) => return Err(error),
         }
         if groups.len() != layout.num_groups() {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidSize {
+                expected: layout.num_groups(),
+                actual: groups.len(),
+            });
         }
         let mut retained = Vec::with_capacity(groups.len());
         let mut openings = Vec::new();
@@ -133,8 +143,16 @@ where
         let (split_bits, width) = tensor_opening_split::<F, E>()?;
         for (index, group) in groups.iter().enumerate() {
             let expected = layout.group_layout(index)?;
-            if group.point.len() != expected.num_vars() || group.point.len() < split_bits {
-                return Err(AkitaError::InvalidProof);
+            if group.point.len() != expected.num_vars() {
+                return Err(AkitaError::InvalidPointDimension {
+                    expected: expected.num_vars(),
+                    actual: group.point.len(),
+                });
+            }
+            if group.point.len() < split_bits {
+                return Err(AkitaError::InvalidInput(
+                    "EOR evaluation point is shorter than the tensor split".into(),
+                ));
             }
             let (source, prepared, witness_opening) = match &group.source {
                 OpeningSource::Commitment(handle) => {
@@ -148,7 +166,10 @@ where
                         || handle.committed.parameters.inner.matrix.ring_dimension()
                             != group.ring_dimension
                     {
-                        return Err(AkitaError::InvalidProof);
+                        return Err(AkitaError::InvalidInput(
+                            "EOR commitment owner or geometry differs from the request group"
+                                .into(),
+                        ));
                     }
                     (
                         RetainedOpeningSource::Commitment(handle.committed.clone()),
@@ -170,7 +191,10 @@ where
                         || witness.manifest().num_vars()? != expected.num_vars()
                         || witness.manifest().commitment_ring_dimension() != group.ring_dimension
                     {
-                        return Err(AkitaError::InvalidProof);
+                        return Err(AkitaError::InvalidInput(
+                            "EOR witness claim count or geometry differs from the request group"
+                                .into(),
+                        ));
                     }
                     let plan = ValidatedWitnessOpeningPlan::new(
                         group.point,
@@ -197,7 +221,9 @@ where
             if prepared.openings.len() != expected.num_polynomials()
                 || prepared.row_partials_by_claim.len() != expected.num_polynomials()
             {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "prepared EOR opening and row counts differ from the group claim count".into(),
+                ));
             }
             openings.extend(prepared.openings);
             proof_partials.extend(prepared.proof_partials);
@@ -227,22 +253,35 @@ where
     ) -> Result<(E, Self::EorSessionHandle), AkitaError> {
         self.validate_binding(&preparation.binding)?;
         let (split_bits, _) = tensor_opening_split::<F, E>()?;
-        if eta.len() != split_bits
-            || coefficients.len() != preparation.layout.num_total_polynomials()
-        {
-            return Err(AkitaError::InvalidProof);
+        if eta.len() != split_bits {
+            return Err(AkitaError::InvalidSize {
+                expected: split_bits,
+                actual: eta.len(),
+            });
+        }
+        if coefficients.len() != preparation.layout.num_total_polynomials() {
+            return Err(AkitaError::InvalidSize {
+                expected: preparation.layout.num_total_polynomials(),
+                actual: coefficients.len(),
+            });
         }
         let rounds = preparation
             .layout
             .max_num_vars()
             .checked_sub(split_bits)
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal(
+                    "prepared EOR maximum arity is smaller than the tensor split".into(),
+                )
+            })?;
         let mut sessions = Vec::with_capacity(preparation.groups.len());
         let mut claims = Vec::new();
         let mut tails: Vec<Vec<E>> = Vec::with_capacity(preparation.groups.len());
         for (index, group) in preparation.groups.into_iter().enumerate() {
             let range = preparation.layout.root_group_claim_range(index)?;
-            let weights = coefficients.get(range).ok_or(AkitaError::InvalidProof)?;
+            let weights = coefficients.get(range).ok_or_else(|| {
+                AkitaError::Internal("prepared EOR coefficient group range is out of bounds".into())
+            })?;
             let claim =
                 group
                     .rows
@@ -253,13 +292,14 @@ where
                             sum + *weight * tensor_reduction_claim_from_rows::<F, E>(row, eta)?,
                         )
                     })?;
-            let tail = group
-                .point
-                .get(split_bits..)
-                .ok_or(AkitaError::InvalidProof)?;
-            let extra = rounds
-                .checked_sub(tail.len())
-                .ok_or(AkitaError::InvalidProof)?;
+            let tail = group.point.get(split_bits..).ok_or_else(|| {
+                AkitaError::Internal("prepared EOR point does not contain the tensor tail".into())
+            })?;
+            let extra = rounds.checked_sub(tail.len()).ok_or_else(|| {
+                AkitaError::Internal(
+                    "prepared EOR group tail exceeds the aggregate round count".into(),
+                )
+            })?;
             tails.push(tail.to_vec());
             let session = match group.source {
                 RetainedOpeningSource::Commitment(source) => source.source.begin_eor(
@@ -280,12 +320,24 @@ where
                         claim,
                         group.ring_dimension,
                     );
-                    let handle=crate::opaque::consumer_kernels::CpuWitnessOpeningKernel::<F,E>::begin_witness_eor(self,Some(self.prepared()?),&witness,group.witness_opening.ok_or(AkitaError::InvalidProof)?,&plan)?;
+                    let handle = CpuWitnessOpeningKernel::<F, E>::begin_witness_eor(
+                        self,
+                        Some(self.prepared()?),
+                        &witness,
+                        group.witness_opening.ok_or_else(|| {
+                            AkitaError::Internal(
+                                "prepared EOR witness opening handle is missing".into(),
+                            )
+                        })?,
+                        &plan,
+                    )?;
                     Box::new(handle) as Box<dyn ExtensionOpeningSession<E>>
                 }
             };
             if session.num_rounds() != rounds || session.num_terms() != weights.len() {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "EOR group session round or term count differs from the preparation".into(),
+                ));
             }
             sessions.push(session);
             claims.push(claim);
@@ -323,13 +375,17 @@ where
             || claim != session.claim
             || session.pending.is_some()
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "EOR round request has an invalid index or claim, or a round is pending".into(),
+            ));
         }
         let mut coefficients = vec![E::zero(); EXTENSION_OPENING_REDUCTION_DEGREE + 1];
         for (group, claim) in session.groups.iter_mut().zip(&session.group_claims) {
             let polynomial = group.round_polynomial(round, *claim)?;
             if polynomial.coefficients().len() > coefficients.len() {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "EOR group polynomial exceeds the aggregate degree bound".into(),
+                ));
             }
             for (sum, value) in coefficients.iter_mut().zip(polynomial.coefficients()) {
                 *sum += *value;
@@ -338,7 +394,9 @@ where
         }
         let polynomial = UnivariatePoly::new(coefficients);
         if polynomial.evaluate(E::zero()) + polynomial.evaluate(E::one()) != claim {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "EOR aggregate round polynomial does not sum to the retained claim".into(),
+            ));
         }
         session.pending = Some(polynomial.clone());
         Ok(polynomial)
@@ -351,9 +409,13 @@ where
     ) -> Result<(), AkitaError> {
         self.validate_leased_binding(&session.binding, &session.lease)?;
         if round != session.round || round >= session.num_rounds {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "EOR round index bound out of sequence or beyond completion".into(),
+            ));
         }
-        let polynomial = session.pending.take().ok_or(AkitaError::InvalidProof)?;
+        let polynomial = session.pending.take().ok_or_else(|| {
+            AkitaError::InvalidInput("EOR round bound before requesting its polynomial".into())
+        })?;
         // Each group advances its own claim from its already pending polynomial.
         for ((group, claim), polynomial) in session
             .groups
@@ -372,7 +434,9 @@ where
     fn finish_eor(&self, session: Self::EorSessionHandle) -> Result<Vec<E>, AkitaError> {
         self.validate_leased_binding(&session.binding, &session.lease)?;
         if session.round != session.num_rounds || session.pending.is_some() {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "EOR finished before all rounds were bound or with a round pending".into(),
+            ));
         }
         let CpuEorSession {
             groups,
@@ -387,20 +451,26 @@ where
         for (group, tail) in groups.into_iter().zip(&expected_tails) {
             // Same value the verifier derives: eq(tail, local) projected
             // through eta, then one `(1 - r)` per cylindrical high variable.
-            let local = challenges
-                .get(..tail.len())
-                .ok_or(AkitaError::InvalidProof)?;
+            let local = challenges.get(..tail.len()).ok_or_else(|| {
+                AkitaError::Internal(
+                    "finished EOR challenges do not cover the retained group tail".into(),
+                )
+            })?;
             let mut factor = tensor_equality_factor_eval_at_point::<F, E>(tail, &eta, local)?;
-            for extra in challenges
-                .get(tail.len()..)
-                .ok_or(AkitaError::InvalidProof)?
-            {
+            for extra in challenges.get(tail.len()..).ok_or_else(|| {
+                AkitaError::Internal(
+                    "finished EOR challenges do not contain the cylindrical tail range".into(),
+                )
+            })? {
                 factor *= E::one() - *extra;
             }
             for (coefficient, witness, actual_factor) in group.finish()? {
                 let index = values.len();
                 if actual_factor != factor || coefficients.get(index) != Some(&coefficient) {
-                    return Err(AkitaError::InvalidProof);
+                    return Err(AkitaError::Internal(
+                        "finished EOR group factor or coefficient differs from retained state"
+                            .into(),
+                    ));
                 }
                 values.push(witness * actual_factor);
             }
@@ -412,7 +482,9 @@ where
                 .fold(E::zero(), |sum, (value, weight)| sum + *value * *weight)
                 != claim
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "finished EOR values do not match the coefficient count or aggregate claim".into(),
+            ));
         }
         Ok(values)
     }
