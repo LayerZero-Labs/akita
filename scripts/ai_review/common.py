@@ -1,0 +1,126 @@
+"""Fixed-origin HTTP and bounded review data. Never log remote bodies or tokens."""
+
+import hashlib
+import json
+import os
+import re
+import urllib.error
+import urllib.request
+
+REPOSITORY = "LayerZero-Labs/akita"
+WORKFLOW = ".github/workflows/ai-review.yml"
+MAX_BYTES = 32 * 1024 * 1024
+MARKER = "<!-- akita-ai-review:v1 "
+
+
+class ReviewError(Exception):
+    """Safe, locally generated error suitable for a public workflow log."""
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ReviewError("HTTP redirect refused")
+
+
+def request(origin, path, token, payload=None):
+    if origin not in ("https://api.github.com", "https://api.openai.com"):
+        raise ReviewError("Unknown API origin")
+    if not path.startswith("/") or path.startswith("//"):
+        raise ReviewError("Invalid API path")
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    if origin == "https://api.github.com":
+        headers.update({"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"})
+    req = urllib.request.Request(origin + path, headers=headers,
+                                 data=None if payload is None else json.dumps(payload).encode())
+    try:
+        with urllib.request.build_opener(NoRedirect).open(req, timeout=180) as response:
+            data = response.read(MAX_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        raise ReviewError(f"API request failed (HTTP {exc.code})") from None
+    except (urllib.error.URLError, TimeoutError):
+        raise ReviewError("API request failed or timed out; no automatic write retry") from None
+    if len(data) > MAX_BYTES:
+        raise ReviewError("API response exceeds size limit")
+    return json.loads(data)
+
+
+class GitHub:
+    def __init__(self, token):
+        self.token = token
+
+    def get(self, path, payload=None):
+        return request("https://api.github.com", f"/repos/{REPOSITORY}/{path}", self.token, payload)
+
+    def pages(self, path):
+        items = []
+        for page in range(1, 101):
+            batch = self.get(f"{path}{'&' if '?' in path else '?'}per_page=100&page={page}")
+            if not isinstance(batch, list):
+                raise ReviewError("Unexpected paginated response")
+            items.extend(batch)
+            if len(batch) < 100:
+                return items
+        raise ReviewError("Pagination limit reached; refusing incomplete review")
+
+    def writer(self, user):
+        if user.get("type") != "User" or not re.fullmatch(r"[A-Za-z0-9-]+", user.get("login", "")):
+            return False
+        permission = self.get(f"collaborators/{user['login']}/permission")
+        return (permission.get("user", {}).get("id") == user.get("id")
+                and permission.get("permission") in ("admin", "maintain", "write"))
+
+
+def digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def sha(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value):
+        raise ReviewError("Invalid commit SHA")
+    return value
+
+
+def load_json(path):
+    with open(path, "rb") as handle:
+        data = handle.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
+        raise ReviewError("Review artifact exceeds size limit")
+    return json.loads(data)
+
+
+def save_json(path, value):
+    data = json.dumps(value, ensure_ascii=True)
+    if len(data.encode()) > MAX_BYTES:
+        raise ReviewError("Review artifact exceeds size limit")
+    with open(path, "w") as handle:
+        handle.write(data)
+
+
+def authorize(github, event):
+    if (os.environ.get("GITHUB_REPOSITORY", REPOSITORY) != REPOSITORY
+            or event.get("repository", {}).get("full_name") != REPOSITORY
+            or event.get("action") != "created"
+            or not event.get("issue", {}).get("pull_request")):
+        raise ReviewError("Not an eligible PR comment event")
+    number = event["issue"]["number"]
+    comment_id = event.get("comment", {}).get("id")
+    if type(number) is not int or type(comment_id) is not int:
+        raise ReviewError("Invalid event identifiers")
+    pr = github.get(f"pulls/{number}")
+    comment = github.get(f"issues/comments/{comment_id}")
+    if (comment.get("body", "") != "/ai-review"
+            or comment.get("issue_url") != f"https://api.github.com/repos/{REPOSITORY}/issues/{number}"
+            or comment.get("user", {}).get("id") != pr.get("user", {}).get("id")
+            or comment.get("user", {}).get("id") != event["comment"].get("user", {}).get("id")
+            or event.get("sender", {}).get("id") != comment.get("user", {}).get("id")
+            or pr.get("state") != "open"
+            or (pr.get("head", {}).get("repo") or {}).get("full_name") != REPOSITORY
+            or (pr.get("base", {}).get("repo") or {}).get("full_name") != REPOSITORY
+            or not github.writer(comment["user"])):
+        raise ReviewError("Review request is not authorized")
+    return pr
+
+
+def revision(pr):
+    return {"head": sha(pr["head"]["sha"]), "base": sha(pr["base"]["sha"]),
+            "base_ref": pr["base"]["ref"], "head_ref": pr["head"]["ref"]}
