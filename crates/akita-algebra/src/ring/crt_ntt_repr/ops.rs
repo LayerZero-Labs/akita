@@ -51,11 +51,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         params: &CrtNttParamSet<W, K, D>,
     ) -> Result<Vec<Self>, AkitaError> {
         if rhs.len() != num_cols {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidSize {
+                expected: num_cols,
+                actual: rhs.len(),
+            });
         }
-        let required = num_rows
-            .checked_mul(num_cols)
-            .ok_or(AkitaError::InvalidProof)?;
+        let required = num_rows.checked_mul(num_cols).ok_or_else(|| {
+            AkitaError::InvalidInput("prepared NTT matrix extent overflow".into())
+        })?;
         let matrix = matrix.get(..required).ok_or_else(|| {
             AkitaError::InvalidSetup("prepared NTT matrix prefix is undersized".into())
         })?;

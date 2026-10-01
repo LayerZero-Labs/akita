@@ -487,7 +487,7 @@ pub fn send_byte_group(
     bytes: &[u8],
 ) -> Result<(), AkitaError> {
     let len = u64::try_from(bytes.len())
-        .map_err(|_| AkitaError::Internal("proof byte group length does not fit u64".into()))?;
+        .map_err(|_| AkitaError::InvalidInput("proof byte group length does not fit u64".into()))?;
     prover_context(
         state,
         ProtocolContextRecord::new(
@@ -543,12 +543,12 @@ pub fn send_bounded_bytes(
     max_len: usize,
 ) -> Result<(), AkitaError> {
     if bytes.len() > max_len {
-        return Err(AkitaError::Internal(
+        return Err(AkitaError::InvalidInput(
             "bounded proof payload length exceeds its scheduled maximum".into(),
         ));
     }
     let len = u32::try_from(bytes.len()).map_err(|_| {
-        AkitaError::Internal("bounded proof payload length does not fit u32".into())
+        AkitaError::InvalidInput("bounded proof payload length does not fit u32".into())
     })?;
     let (length_record, payload_site) = bounded_bytes_sites(site);
     prover_context(state, length_record);
@@ -1109,7 +1109,24 @@ mod tests {
         ));
 
         let mut prover = new_prover_channel(b"unsupported-field", b"fixture").unwrap();
-        assert!(prover_field_challenge::<Prime48Offset59>(&mut prover).is_err());
+        assert!(matches!(
+            prover_field_challenge::<Prime48Offset59>(&mut prover),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+
+        let mut verifier = new_verifier_channel(b"unsupported-field", b"fixture", &[]).unwrap();
+        assert!(matches!(
+            verifier_field_challenge::<Prime48Offset59>(&mut verifier),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        assert!(matches!(
+            verifier_field_challenge::<F>(&mut verifier),
+            Err(AkitaError::InvalidProof)
+        ));
+        assert!(matches!(
+            verifier.check_eof(),
+            Err(AkitaError::InvalidProof)
+        ));
     }
 
     #[test]
@@ -1301,6 +1318,15 @@ mod tests {
         let original = cursor;
         assert!(ExtensionAtom::<F, E>::deserialize_from_narg(&mut cursor).is_err());
         assert_eq!(cursor, original);
+    }
+
+    #[test]
+    fn bounded_payload_emission_rejects_over_maximum_input() {
+        let mut prover = new_prover_channel(b"bounded", b"fixture").unwrap();
+        assert!(matches!(
+            send_bounded_bytes(&mut prover, ProtocolSiteId::default(), &[1; 9], 8),
+            Err(AkitaError::InvalidInput(_))
+        ));
     }
 
     #[test]

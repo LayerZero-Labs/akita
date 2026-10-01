@@ -118,9 +118,11 @@ impl SparseChallenge {
                     "sparse challenge coefficients must be non-zero".to_string(),
                 ));
             }
-            let word = seen
-                .get_mut(idx / u64::BITS as usize)
-                .ok_or(AkitaError::InvalidProof)?;
+            let word = seen.get_mut(idx / u64::BITS as usize).ok_or_else(|| {
+                AkitaError::Internal(
+                    "validated sparse challenge position exceeds its bitmap".into(),
+                )
+            })?;
             let mask = 1u64 << (idx % u64::BITS as usize);
             if *word & mask != 0 {
                 return Err(AkitaError::InvalidInput(
