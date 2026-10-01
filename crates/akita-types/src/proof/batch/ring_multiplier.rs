@@ -324,6 +324,43 @@ mod tests {
     }
 
     #[test]
+    fn subfield_multiplier_rejects_bad_shift_without_changing_output() {
+        const D: usize = 64;
+        let point =
+            crate::prepare_opening_point::<F, E, D>(&[], crate::BasisMode::Lagrange, 2, 1, 6)
+                .unwrap()
+                .ring_multiplier_point;
+        let subfield = point.as_subfield().unwrap();
+        let mut output = CyclotomicRing::<F, D>::zero();
+        assert!(matches!(
+            subfield.accumulate_position_monomial(0, D, F::one(), &mut output),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert_eq!(output, CyclotomicRing::zero());
+        subfield
+            .accumulate_position_monomial(0, 0, F::one(), &mut output)
+            .unwrap();
+        assert_eq!(output.coefficients()[0], F::one());
+
+        assert!(matches!(
+            point.accumulate_position_product_high_half(
+                2,
+                &CyclotomicRing::<F, D>::zero(),
+                &mut vec![F::zero(); D],
+            ),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            point.accumulate_position_product_high_half(
+                0,
+                &CyclotomicRing::<F, D>::zero(),
+                &mut vec![F::zero(); D - 1],
+            ),
+            Err(AkitaError::InvalidSize { expected: D, actual }) if actual == D - 1
+        ));
+    }
+
+    #[test]
     fn prepared_subfield_multiplier_uses_full_terminal_functional() {
         let prepared = PreparedRingMultiplier {
             kind: PreparedRingMultiplierKind::Subfield {
