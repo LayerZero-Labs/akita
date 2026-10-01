@@ -10,19 +10,6 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
-default = ["transcript-blake2b"]
-transcript-blake2b = [
-  "akita-challenges/transcript-blake2b",
-  "akita-schedules/transcript-blake2b",
-  "akita-transcript/transcript-blake2b",
-  "akita-types/transcript-blake2b",
-]
-transcript-keccak = [
-  "akita-challenges/transcript-keccak",
-  "akita-schedules/transcript-keccak",
-  "akita-transcript/transcript-keccak",
-  "akita-types/transcript-keccak",
-]
 test-support = []
 
 [dependencies]
@@ -34,7 +21,6 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 ] }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 
 [dev-dependencies]

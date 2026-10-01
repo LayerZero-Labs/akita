@@ -9,15 +9,6 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
-default = ["transcript-blake2b"]
-transcript-blake2b = [
-  "akita-challenges/transcript-blake2b",
-  "akita-types/transcript-blake2b",
-]
-transcript-keccak = [
-  "akita-challenges/transcript-keccak",
-  "akita-types/transcript-keccak",
-]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
