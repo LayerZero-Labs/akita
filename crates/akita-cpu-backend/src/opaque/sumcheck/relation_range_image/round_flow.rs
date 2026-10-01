@@ -72,14 +72,12 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
                 }
             }
             Phase::Lane { witness, lane } => {
-                let (norm, relation) = lane
-                    .round_terms(
-                        witness,
-                        None,
-                        Some(self.split_eq.remaining_eq_tables()),
-                        self.can_skip_norm_linear_coeff(),
-                    )
-                    .expect("lane round equality tables produce terms");
+                let (norm, relation) = lane.round_terms(
+                    witness,
+                    None,
+                    self.split_eq.remaining_eq_tables(),
+                    self.can_skip_norm_linear_coeff(),
+                );
                 RoundComputation::Terms(norm, relation)
             }
         };

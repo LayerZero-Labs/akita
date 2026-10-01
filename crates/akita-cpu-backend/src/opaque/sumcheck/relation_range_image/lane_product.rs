@@ -169,28 +169,28 @@ fn run_lane_product_tile<E: Field + Unreduced + Fold>(
 const TAIL_FOLD_CHUNK: usize = 1 << 14;
 
 impl<E: Field + Unreduced + Fold> LaneProduct<E> {
-    /// Terms of the round over `witness`, after folding `witness` and the
-    /// weights by `challenge` when one is given. With no `eq` tables (the
-    /// final fold) nothing follows and `None` is returned.
+    /// Fold the terminal lane tables; no round polynomial follows this challenge.
+    fn final_fold(&mut self, witness: &mut Vec<E>, challenge: E) {
+        let fold = E::precompute(challenge);
+        let fold_all = |values: &[E]| -> Vec<E> {
+            (0..values.len().div_ceil(2))
+                .map(|index| fold_pair(values, 2 * index, &fold))
+                .collect()
+        };
+        *witness = fold_all(witness);
+        self.weights = fold_all(&self.weights);
+    }
+
+    /// Terms over `witness`, optionally folded by `challenge`, with equality tables
+    /// for the round being accumulated. Terminal folding uses `final_fold` instead.
     pub(super) fn round_terms(
         &mut self,
         witness: &mut Vec<E>,
         challenge: Option<E>,
-        eq: Option<(&[E], &[E])>,
+        (eq_low, eq_high): (&[E], &[E]),
         skip_linear: bool,
-    ) -> Option<(NormRoundTerms<E>, RoundMessage<E>)> {
+    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
         let fold = challenge.map(E::precompute);
-        let Some((eq_low, eq_high)) = eq else {
-            let fold = fold.expect("the final lane-product fold requires a challenge");
-            let fold_all = |values: &[E]| -> Vec<E> {
-                (0..values.len().div_ceil(2))
-                    .map(|index| fold_pair(values, 2 * index, &fold))
-                    .collect()
-            };
-            *witness = fold_all(witness);
-            self.weights = fold_all(&self.weights);
-            return None; // The final fold has no following round polynomial.
-        };
         let live = if fold.is_some() {
             witness.len().div_ceil(2)
         } else {
@@ -271,7 +271,7 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
         } else {
             NormRoundTerms::from_totals::<false>(norm)
         };
-        Some((norm, relation))
+        (norm, relation)
     }
 }
 
@@ -287,10 +287,16 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
         self.split_eq.bind(r);
         let last = self.rounds_completed + 1 == self.num_vars;
         let skip_linear = !last && self.can_skip_norm_linear_coeff();
-        let eq = (!last).then(|| self.split_eq.remaining_eq_tables());
-        let terms = lane.round_terms(&mut witness, Some(r), eq, skip_linear);
         self.live_lane_count = self.live_lane_count.div_ceil(2);
-        if let Some((norm, relation)) = terms {
+        if last {
+            lane.final_fold(&mut witness, r);
+        } else {
+            let (norm, relation) = lane.round_terms(
+                &mut witness,
+                Some(r),
+                self.split_eq.remaining_eq_tables(),
+                skip_linear,
+            );
             let (message, norm_poly) = self.combine_terms(norm, relation);
             self.prev_norm_poly = Some(norm_poly);
             self.cached_round_message = Some(message);

@@ -25,6 +25,7 @@ pub(crate) struct OpaqueCompressionState<F: Field> {
 /// CPU consumer's private common material for setup-prefix and recursive state.
 pub struct CpuCommitmentMaterialHandle<F: Field> {
     binding: crate::opaque::OperationBinding,
+    metadata: crate::opaque::CommitmentMaterialMetadata,
     pub(super) inner: crate::commitment::InnerRelationStateMaterial<F>,
     pub(super) compression: Option<crate::commitment::PortableCompressionState<F>>,
     pub(super) source_count: usize,
@@ -116,7 +117,13 @@ where
                 ));
             }
         };
+        let metadata = crate::opaque::CommitmentMaterialMetadata::try_new(
+            inner.ring_dimension(),
+            source_count,
+            compression.is_some(),
+        )?;
         Ok(Self {
+            metadata,
             binding: crate::opaque::OperationBinding::unbound(),
             commitment_id: None,
             public_commitment: None,
@@ -132,12 +139,7 @@ where
     F: Field + CanonicalEncoding + Send + 'static,
 {
     fn metadata(&self) -> crate::opaque::CommitmentMaterialMetadata {
-        crate::opaque::CommitmentMaterialMetadata::try_new(
-            self.inner.ring_dimension(),
-            self.source_count,
-            self.compression.is_some(),
-        )
-        .expect("CPU material has validated public geometry")
+        self.metadata
     }
 }
 

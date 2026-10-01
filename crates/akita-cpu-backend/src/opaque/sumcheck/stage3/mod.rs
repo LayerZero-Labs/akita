@@ -145,7 +145,7 @@ where
                 "invalid Stage 3 round progression".into(),
             ));
         }
-        let polynomial = session.setup.compute_round_univariate(round);
+        let polynomial = session.setup.compute_round_univariate();
         session.pending = Some(polynomial.clone());
         Ok(polynomial)
     }

@@ -326,7 +326,7 @@ where
             ));
         }
         Ok(crate::opaque::RelationWitnessFinalClaims::new(
-            self.prover.final_w_eval(),
+            self.prover.final_w_eval()?,
             self.claim,
         ))
     }

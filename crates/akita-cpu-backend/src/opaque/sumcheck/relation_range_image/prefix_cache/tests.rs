@@ -137,8 +137,14 @@ fn stage2_norm_histogram_matches_local_round_messages() {
                 round1[point] += weight * values[4 + point];
             }
         }
+        let basis = if b == 4 {
+            PrefixBasis::B4
+        } else {
+            PrefixBasis::B8
+        };
         let cache =
-            Stage2PrefixCache::from_norm_histogram(&histogram, b, tau0, tau1, batching_coeff);
+            Stage2PrefixCache::from_norm_histogram(&histogram, basis, tau0, tau1, batching_coeff)
+                .unwrap();
         let poly0 = cache.round0_norm_poly();
         let poly1 = cache.round1_norm_poly(r0);
         for point in 0..4u64 {
@@ -240,6 +246,27 @@ fn stage2_norm_full_domain_matches_local_round_messages() {
                     }
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn stage2_norm_histogram_rejects_wrong_class_count() {
+    for (basis, expected) in [(PrefixBasis::B4, 256), (PrefixBasis::B8, 4096)] {
+        for actual in [0, expected - 1, expected + 1] {
+            let histogram = vec![F::zero(); actual];
+            let result = Stage2PrefixCache::from_norm_histogram(
+                &histogram,
+                basis,
+                F::one(),
+                F::one(),
+                F::one(),
+            );
+            assert!(
+                matches!(result, Err(AkitaError::Internal(message)) if message == format!(
+                    "stage-2 norm histogram length: expected {expected}, actual {actual}"
+                ))
+            );
         }
     }
 }
