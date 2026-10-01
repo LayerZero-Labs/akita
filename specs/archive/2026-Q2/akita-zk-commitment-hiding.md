@@ -150,7 +150,7 @@ to the outer B input under `cfg(feature = "zk")`.
 - `AkitaCommitmentHint` and `RecursiveCommitmentHintCache` preserve
 blinding digits across typed and D-erased prover paths.
 - Recursive witness length formulas in `akita-types`, proof-size formulas in
-`akita-types/src/layout/proof_size.rs`, and planner formulas in
+`akita-params/src/layout/proof_size.rs`, and planner formulas in
 `akita-planner/src/schedule_params.rs` include blinding columns under
 `zk`.
 - Setup matrix sizing in `akita-config` accounts for ZK outer width.
@@ -314,8 +314,8 @@ W(lp; K, G, P) =
 
 where `K` is total claims, `G` is commitment groups, and `P` is distinct opening
 points. This formula appears in runtime schedule sizing
-(`crates/akita-types/src/schedule.rs`), proof-size helpers
-(`crates/akita-types/src/layout/proof_size.rs`), and planner root sizing
+(`crates/akita-params/src/schedule.rs`), proof-size helpers
+(`crates/akita-params/src/layout/proof_size.rs`), and planner root sizing
 (`crates/akita-planner/src/schedule_params.rs`).
 
 Root-direct proofs need special handling. Since they reveal direct field
@@ -742,8 +742,8 @@ terminal witnesses; commitment hiding is only the first layer.
 - `specs/TEMPLATE.md`
 - `crates/akita-types/src/zk.rs`
 - `crates/akita-types/src/proof/mod.rs`
-- `crates/akita-types/src/schedule.rs`
-- `crates/akita-types/src/layout/proof_size.rs`
+- `crates/akita-params/src/schedule.rs`
+- `crates/akita-params/src/layout/proof_size.rs`
 - `crates/akita-field/src/arithmetic.rs`
 - `crates/akita-prover/src/protocol/masking.rs`
 - `crates/akita-prover/src/api/commitment.rs`

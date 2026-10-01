@@ -23,10 +23,14 @@ akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
 [dev-dependencies]
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false, features = [
+  "test-support",
+] }
 criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
@@ -49,6 +53,7 @@ transcript-blake2b = [
   "akita-sumcheck/transcript-blake2b",
   "akita-transcript/transcript-blake2b",
   "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
 ]
 transcript-keccak = [
   "akita-prover/transcript-keccak",
@@ -57,12 +62,14 @@ transcript-keccak = [
   "akita-sumcheck/transcript-keccak",
   "akita-transcript/transcript-keccak",
   "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
 ]
 logging-transcript = [
   "akita-prover/logging-transcript",
   "akita-challenges/logging-transcript",
   "akita-transcript/logging-transcript",
   "akita-types/logging-transcript",
+  "akita-params/logging-transcript",
 ]
 response-model-diagnostics = ["akita-prover/response-model-diagnostics"]
 disk-persistence = []
@@ -73,6 +80,7 @@ parallel = [
   "jolt-field/parallel",
   "akita-sumcheck/parallel",
   "akita-types/parallel",
+  "akita-params/parallel",
   "akita-verifier/parallel",
 ]
 

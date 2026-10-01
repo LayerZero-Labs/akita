@@ -5,7 +5,8 @@ use crate::sources::poly_helpers::{try_small_i8_cache_from_ring_coeffs, SignedDi
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
-use akita_types::{RingVec, SUPPORTED_COMMITMENT_RING_DIMS};
+use akita_params::SUPPORTED_COMMITMENT_RING_DIMS;
+use akita_types::RingVec;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
 use std::borrow::Cow;
@@ -288,7 +289,7 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
         }
 
         let basis = SignedDigitBasis::new(log_basis).ok()?;
-        if basis.kernel() != akita_types::SignedDigitKernel::I8 {
+        if basis.kernel() != akita_params::SignedDigitKernel::I8 {
             return None;
         }
         let num_rings = self.num_ring_elems_at(D);

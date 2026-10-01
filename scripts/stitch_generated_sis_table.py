@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate and stitch `crates/akita-types/src/sis/generated_sis_table/`."""
+"""Regenerate and stitch `crates/akita-params/src/sis/generated_sis_table/`."""
 
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ from gen_sis_table import (  # noqa: E402
     derived_l2_collision_keys,
 )
 
-OUT_DIR = ROOT / "crates/akita-types/src/sis/generated_sis_table"
-LEGACY_OUT = ROOT / "crates/akita-types/src/sis/generated_sis_table.rs"
+OUT_DIR = ROOT / "crates/akita-params/src/sis/generated_sis_table"
+LEGACY_OUT = ROOT / "crates/akita-params/src/sis/generated_sis_table.rs"
 GEN = ROOT / "scripts/gen_sis_table.py"
 ESTIMATOR = ROOT / "third_party/lattice-estimator"
 FAMILIES = ("q32", "q64", "q128")

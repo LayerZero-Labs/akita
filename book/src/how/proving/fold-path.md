@@ -51,6 +51,6 @@ record that method.
 
 - `crates/akita-prover/src/protocol/prove/fold/`.
 - `crates/akita-verifier/src/fold/` and `crates/akita-verifier/src/stages/`.
-- `crates/akita-types/src/layout/params/precommitted.rs`.
-- `crates/akita-types/src/layout/subring_packing_geometry.rs`.
+- `crates/akita-params/src/layout/params/precommitted.rs`.
+- `crates/akita-params/src/layout/subring_packing_geometry.rs`.
 - `crates/akita-types/src/subring_coefficient_packing.rs`.

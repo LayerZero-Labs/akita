@@ -29,25 +29,28 @@ use crate::kernels::avx_decompose_fold as decompose_fold_avx;
 /// Final basis facts shared by live decomposition and cached digit folds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SignedDigitBasis {
-    pub(super) kernel: akita_types::SignedDigitKernel,
+    pub(super) kernel: akita_params::SignedDigitKernel,
     pub(super) abs_bound: u64,
 }
 
 impl SignedDigitBasis {
     pub(crate) fn new(log_basis: u32) -> Result<Self, AkitaError> {
         let abs_bound =
-            akita_types::balanced_signed_digit_abs_bound(log_basis).ok_or_else(|| {
+            akita_params::balanced_signed_digit_abs_bound(log_basis).ok_or_else(|| {
                 AkitaError::InvalidInput(
                     "signed-digit log basis is outside the supported range".into(),
                 )
             })?;
-        let kernel = akita_types::SignedDigitKernel::for_log_basis(log_basis).ok_or_else(|| {
-            AkitaError::InvalidInput("signed-digit log basis is outside the supported range".into())
-        })?;
+        let kernel =
+            akita_params::SignedDigitKernel::for_log_basis(log_basis).ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "signed-digit log basis is outside the supported range".into(),
+                )
+            })?;
         Ok(Self { kernel, abs_bound })
     }
 
-    pub(crate) fn kernel(self) -> akita_types::SignedDigitKernel {
+    pub(crate) fn kernel(self) -> akita_params::SignedDigitKernel {
         self.kernel
     }
 }

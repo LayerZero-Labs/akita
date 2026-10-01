@@ -4,12 +4,13 @@
 //! coefficient prefixes of the shared setup vector `S`. It does not run a setup
 //! product sumcheck or change proof semantics.
 
-use crate::layout::setup_prefix_slots::{
+use crate::proof::{RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS};
+use crate::AkitaSetupSeed;
+use akita_error::AkitaError;
+use akita_params::layout::setup_prefix_slots::{
     padded_setup_prefix_len, setup_prefix_compression_plan, SetupPrefixSlotId,
 };
-use crate::proof::{RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS};
-use crate::{AkitaSetupSeed, CommittedGroupParams};
-use akita_error::AkitaError;
+use akita_params::CommittedGroupParams;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -102,7 +103,7 @@ where
             MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS,
         )?;
         let mut rows = Vec::new();
-        crate::wire_limits::reserve_shape_len(&mut rows, row_count)?;
+        akita_params::wire_limits::reserve_shape_len(&mut rows, row_count)?;
         let mut total_coeffs = 0usize;
         for _ in 0..row_count {
             let coeff_count = read_limited_usize(

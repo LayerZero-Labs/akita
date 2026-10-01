@@ -354,7 +354,7 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
     let outgoing_ring_dim = 32;
     let (inputs, groups, layout, _, _, relation_point, fold_gadget) =
         structured_weight_fixture_with_outgoing(8, &[3, 5], role_dims, outgoing_ring_dim);
-    let geometry = akita_types::RelationAddressGeometry::new(
+    let geometry = akita_params::RelationAddressGeometry::new(
         role_dims,
         outgoing_ring_dim,
         layout.live_coeff_len(),
@@ -403,7 +403,7 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
     let assert_literal = |scan: &DirectScan<F>, blocks: &Challenges, openings: &[F]| {
         let plan = scan.plan();
         let opening =
-            akita_types::RingMultiplierOpeningPoint::from_base(&akita_types::RingOpeningPoint {
+            akita_types::RingMultiplierOpeningPoint::from_base(&akita_params::RingOpeningPoint {
                 position_weights: openings.to_vec(),
                 live_block_weights: vec![F::zero(); plan.groups()[0].num_live_blocks()],
             })
@@ -572,7 +572,7 @@ fn setup_index_mle_bridges_smaller_relation_blocks_to_native_setup_blocks() {
     let role_dims = CommitmentRingDims::uniform(128);
     let (inputs, groups, layout, _, _, _, fold_gadget) =
         structured_weight_fixture(8, &[3, 5], role_dims);
-    let relation_geometry = akita_types::RelationAddressGeometry::new_with_coefficient_block(
+    let relation_geometry = akita_params::RelationAddressGeometry::new_with_coefficient_block(
         role_dims,
         64,
         128,
@@ -618,7 +618,7 @@ fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
     };
     let setup_ring_dim = 64;
     for slice_count in
-        [2, 4, 8].map(|count| akita_types::CommitmentSliceCount::try_new(count).unwrap())
+        [2, 4, 8].map(|count| akita_params::CommitmentSliceCount::try_new(count).unwrap())
     {
         let (_, _, _, plan, _, _, _) = structured_weight_fixture_with_slices(
             11,
@@ -750,7 +750,7 @@ fn span_setup_index_mle_supports_non_power_of_two_ownership_widths() {
 #[test]
 fn span_setup_index_mle_applies_mixed_role_projection_lanes() {
     let alpha = test_scalar(3);
-    let role_dims = akita_types::CommitmentRingDims {
+    let role_dims = akita_params::CommitmentRingDims {
         inner: 128,
         outer: 64,
         opening: 64,

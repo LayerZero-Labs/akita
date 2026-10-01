@@ -46,3 +46,55 @@ fn cyclic_kernel_rejects_negacyclic_only_prepared_slot() {
         Err(akita_error::AkitaError::InvalidSetup(_))
     ));
 }
+
+#[test]
+fn i8_kernels_reject_crt_parameters_too_small_for_the_field() {
+    use crate::kernels::linear::single_cyclic::{
+        mat_vec_mul_single_i8_cyclic_with_params, mat_vec_mul_single_i8_with_params,
+    };
+    use akita_algebra::ntt::tables::Q32_PRIMES;
+    use akita_error::AkitaError;
+
+    type F = Prime128Offset275;
+    const D: usize = 64;
+    // One 32-bit prime cannot hold a single product term of a 128-bit field.
+    let params = CrtNttParamSet::<i32, 1, D>::new([Q32_PRIMES[0]]);
+    let row = [CyclotomicCrtNtt::<i32, 1, D>::zero()];
+    let matrix: [&[CyclotomicCrtNtt<i32, 1, D>]; 1] = [&row];
+    let ring_block = [CyclotomicRing::<F, D>::one()];
+    let ring_blocks: [&[CyclotomicRing<F, D>]; 1] = [&ring_block];
+    let digits = [[0i8; D]];
+
+    let rejected = |result: Result<(), AkitaError>, expected: &str| {
+        assert!(matches!(result, Err(AkitaError::InvalidSetup(message)) if message == expected));
+    };
+    rejected(
+        mat_vec_mul_i8_with_params::<F, _, 1, D>(&matrix, &ring_blocks, 1, 4, &params).map(drop),
+        "i8 matvec CRT capacity cannot fit a single term",
+    );
+    rejected(
+        mat_vec_mul_i8_dense_with_params::<F, _, 1, D>(&matrix, &ring_blocks, 1, 4, &params)
+            .map(drop),
+        "i8 matvec CRT capacity cannot fit a single term",
+    );
+    rejected(
+        mat_vec_mul_i8_dense_single_row_with_params::<F, _, 1, D>(
+            &matrix,
+            &ring_blocks,
+            1,
+            4,
+            &params,
+        )
+        .map(drop),
+        "single-row i8 CRT capacity cannot fit a single term",
+    );
+    rejected(
+        mat_vec_mul_single_i8_with_params::<F, _, 1, D>(&matrix, &digits, 4, &params).map(drop),
+        "single i8 CRT capacity cannot fit a single term",
+    );
+    rejected(
+        mat_vec_mul_single_i8_cyclic_with_params::<F, _, 1, D>(&matrix, &digits, 4, &params)
+            .map(drop),
+        "cyclic i8 CRT capacity cannot fit a single term",
+    );
+}

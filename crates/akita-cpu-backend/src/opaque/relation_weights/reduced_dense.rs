@@ -9,7 +9,8 @@
 use super::*;
 use akita_algebra::ring::ResidueKernelPoint;
 use akita_challenges::Challenges;
-use akita_types::{dispatch_for_field, RingMultiplierOpeningPoint};
+use akita_params::dispatch_for_field;
+use akita_types::RingMultiplierOpeningPoint;
 use jolt_field::{ExtField, MulBaseUnreduced};
 
 fn sparse_challenge_kernel<F, E>(
@@ -107,7 +108,7 @@ where
             })
         }
         RingMultiplierOpeningPoint::Subfield(subfield) => dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+            akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
             F,
             residue_point.dimension(),
             |D| {

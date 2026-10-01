@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn build_physical_b_weight_segments<E: Field>(
-    geometry: &crate::CommitmentSliceGeometry,
+    geometry: &akita_params::CommitmentSliceGeometry,
     physical_rows: usize,
     logical_row_weights: &[E],
 ) -> Result<Vec<PhysicalBWeightSegment<E>>, AkitaError> {

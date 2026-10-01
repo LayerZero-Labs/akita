@@ -148,7 +148,7 @@ pub trait CommitmentHandleMetadata {
     ///
     /// Proof bytes do not bind it. Trusted planning code compares it with the
     /// contract a schedule row was planned under.
-    fn producer_contract(&self) -> akita_types::sis::CommittedSourceContract;
+    fn producer_contract(&self) -> akita_params::sis::CommittedSourceContract;
 }
 
 /// A protocol input selected from the backend's opaque handle family.
