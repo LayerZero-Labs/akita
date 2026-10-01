@@ -7,13 +7,13 @@ import sys
 from collect import collect
 from common import GitHub, ReviewError, load_json, save_json
 from model import review
-from publish import publish
+from publish import publish, reconcile
 from quota import reserve
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("stage", choices=("reserve", "collect", "review", "publish"))
+    parser.add_argument("stage", choices=("reserve", "collect", "review", "publish", "reconcile"))
     parser.add_argument("--directory", required=True)
     args = parser.parse_args()
     # A job rerun can reuse artifacts without rerunning the reservation job.
@@ -40,6 +40,9 @@ def main():
         save_json(result_path, proposal)
         coverage = "complete" if proposal["result"]["complete"] else "incomplete"
         print(f"Prepared {len(proposal['result']['findings'])} inline findings; coverage {coverage}")
+    elif args.stage == "reconcile":
+        reconcile(GitHub(os.environ["GH_TOKEN"]), load_json(os.environ["GITHUB_EVENT_PATH"]))
+        print("Review labels reconciled")
     else:
         status = publish(GitHub(os.environ["GH_TOKEN"]), load_json(os.environ["GITHUB_EVENT_PATH"]),
                          load_json(snapshot_path), load_json(result_path))

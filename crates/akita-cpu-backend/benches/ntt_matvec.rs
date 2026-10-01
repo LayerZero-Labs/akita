@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use akita_algebra::CyclotomicRing;
 use akita_cpu_backend::benchmark_support::mat_vec_mul_ntt_digits_i8;
-use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode, PreparedNttCache};
+use akita_params::FlatMatrix;
+use akita_types::{prepare_ntt_cache, NttCacheMode, PreparedNttCache};
 use std::hint::black_box;
 
 use criterion::{

@@ -1,6 +1,6 @@
 use super::{LowBasisRangeCheckProver, PackedSignedDigits};
+use akita_params::DigitRangePlan;
 use akita_sumcheck::EqFactoredSumcheckInstanceProver;
-use akita_types::DigitRangePlan;
 use jolt_field::{One, Prime128Offset275, Ring, Zero};
 
 type F = Prime128Offset275;

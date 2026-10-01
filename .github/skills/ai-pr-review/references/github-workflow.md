@@ -11,7 +11,7 @@ gh api repos/OWNER/REPO
 gh api --paginate --slurp 'repos/OWNER/REPO/pulls?state=open&per_page=100' > open-pr-pages.json
 ```
 
-Flatten pages and select PRs where any `labels[].name` equals `ai-review`. Listing all open PRs also exposes unlabeled stack neighbors. Do not rely on `gh pr list`'s default limit, the first search page, or a search endpoint's result cap. Save a manifest with repository ID/hostname, selected PR numbers, capture time, and head/base repo identities, refs, and full SHAs. Snapshot all related stack members before drawing combined conclusions. Recheck metadata after data collection to catch mid-fetch changes.
+Flatten pages and select the PRs explicitly requested by the user. Filter by label only when requested. Listing all open PRs also exposes other stack neighbors. Do not rely on `gh pr list`'s default limit, the first search page, or a search endpoint's result cap. Save a manifest with repository ID/hostname, selected PR numbers, capture time, and head/base repo identities, refs, and full SHAs. Snapshot all related stack members before drawing combined conclusions. Recheck metadata after data collection to catch mid-fetch changes.
 
 For each selected PR and necessary related PR, collect:
 
@@ -57,7 +57,7 @@ Create a directed graph from parent to child when the child's base repo/ref matc
 
 Use detached isolated checkouts pinned to captured SHAs. Never switch/reset the user's working tree. Fetch exact commits from the appropriate upstream or fork; don't assume a local branch is current. For each PR, inspect its actual PR diff (merge-base to head) and its incremental contribution. For each stack tip, inspect the combined diff from the stack's external base and verify interaction behavior at the tip. Inspect each branch of a branching stack separately. Do not replace the PR's recorded base with today's parent head without checking for drift.
 
-Build a finding ownership ledger: introducing PR, root cause, affected members, reproducing revision, current status, fixing PR/revision if any. If a PR is retargeted or a parent merges during the run, refresh the graph and diffs. Read merged ancestors as context; only open labeled PRs are selected for publication.
+Build a finding ownership ledger: introducing PR, root cause, affected members, reproducing revision, current status, fixing PR/revision if any. If a PR is retargeted or a parent merges during the run, refresh the graph and diffs. Read merged ancestors as context; only explicitly selected open PRs are eligible for publication.
 
 ## Local deliverables and duplicate detection
 
@@ -90,7 +90,7 @@ Preview is the default: show the prepared inline comments with source locations 
 
 Before each write:
 
-1. Confirm the repository, selected PR, open state and `ai-review` label. Check full head/base SHAs and relevant stack revisions. If changed, refresh and reassess findings and approval eligibility. After two consecutive stale-snapshot retries for a PR, leave it unpublished and continue stable PRs.
+1. Confirm the repository, selected PR, open state and any explicitly requested selection filter. Check full head/base SHAs and relevant stack revisions. If changed, refresh and reassess findings and approval eligibility. After two consecutive stale-snapshot retries for a PR, leave it unpublished and continue stable PRs.
 2. Refresh existing reviews/comments and repeat semantic duplicate detection. Do not approve while confirmed issues remain unresolved, even if they were raised by someone else. If the authenticated account already approved this head and there is no material new issue, skip another approval. Do not overlap another visible review run on the same snapshot.
 3. Validate each inline location against the current diff: repository-relative path, correct side and line, and smallest useful range. Account for renames. `RIGHT` is new-side, `LEFT` is deleted-side; multiline ranges need valid same-side `start_line`/`start_side`. If no honest anchor exists, keep the issue local and report it to the user; do not turn it into a review summary or silently approve.
 4. Ensure every published comment is a new actionable issue owned by this PR, with a `[P0]`, `[P1]`, `[P2]`, `[P3]`, or `[nit]` prefix. Keep resolved-upstack, fixed, duplicate and context-only notes local.

@@ -21,11 +21,9 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::{
-    lagrange_weights, BasisMode, CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims,
-    OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout, PrecommittedGroupProfiles,
-    ScheduleLookupKey,
-};
+use akita_types::{CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_params::ScheduleLookupKey;
+use akita_params::{lagrange_weights, BasisMode, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupProfiles};
 use akita_verifier::AkitaVerifier;
 use clap::Parser;
 use jolt_field::{
@@ -174,7 +172,7 @@ where
 fn materialize_schedule_setup_prefix_slots<F, E>(
     setup: &mut AkitaProverSetup<F>,
     backend: &CpuBackend<F, E>,
-    schedule: &akita_types::FoldSchedule,
+    schedule: &akita_params::FoldSchedule,
 ) -> Result<(), akita_error::AkitaError>
 where
     F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
@@ -200,7 +198,7 @@ where
 }
 
 fn build_statement<'a>(
-    selection: akita_types::OpeningScheduleSelection,
+    selection: akita_params::OpeningScheduleSelection,
     pre_points: &'a [Vec<F>],
     pre_openings: &'a [Vec<F>],
     pre_commitments: &'a [CommittedGroup<F>],

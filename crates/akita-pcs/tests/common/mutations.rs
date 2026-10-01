@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use akita_params::SumcheckProtocol;
 use akita_transcript::{
     ProofMessageRange, ProtocolMessageKind, ProtocolSiteId, SITE_FAMILY_SUMCHECK,
 };
-use akita_types::SumcheckProtocol;
 
 /// Semantic identity retained by the proof-mutation suites.
 ///

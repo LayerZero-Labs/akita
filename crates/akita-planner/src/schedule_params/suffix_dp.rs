@@ -5,11 +5,11 @@ use std::{
 };
 
 use akita_error::AkitaError;
-use akita_types::{
-    active_setup_field_len, terminal_response_planner_bytes, CommitmentRingDims,
-    CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey,
-    TerminalResponseShape,
+use akita_params::{
+    active_setup_field_len, CommitmentRingDims, CommittedGroupParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, TerminalResponseShape,
 };
+use akita_params::{terminal_response_planner_bytes, ScheduleLookupKey};
 
 use crate::PlannerPolicy;
 
@@ -77,7 +77,7 @@ fn offloaded_witness_contracts(
 
 struct ChildEdge<'a> {
     policy: &'a PlannerPolicy,
-    challenge_order: akita_types::ChallengeFieldOrder,
+    challenge_order: akita_params::ChallengeFieldOrder,
     diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
     opening_layout: &'a OpeningClaimsLayout,
     level: u32,
@@ -95,13 +95,13 @@ impl ChildEdge<'_> {
     fn grinding_cost(
         &self,
         suffix: &ScheduleCandidate,
-        relation_geometry: akita_types::RelationAddressGeometry,
-    ) -> Result<akita_types::TranscriptGrindingCost, AkitaError> {
+        relation_geometry: akita_params::RelationAddressGeometry,
+    ) -> Result<akita_params::TranscriptGrindingCost, AkitaError> {
         let successor = suffix.folds.first().map_or_else(
-            || akita_types::FoldSuccessor::Terminal(&suffix.terminal.params),
-            |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
+            || akita_params::FoldSuccessor::Terminal(&suffix.terminal.params),
+            |fold| akita_params::FoldSuccessor::Recursive(fold.params.as_ref()),
         );
-        akita_types::transcript_grinding_cost_for_planner_edge(
+        akita_params::transcript_grinding_cost_for_planner_edge(
             self.candidate_params.as_ref(),
             relation_geometry,
             self.opening_layout,
@@ -142,9 +142,9 @@ impl PendingQueryEdge {
     fn grinding_cost(
         &self,
         policy: &PlannerPolicy,
-        challenge_order: akita_types::ChallengeFieldOrder,
-        successor: akita_types::FoldSuccessor<'_>,
-    ) -> Result<akita_types::TranscriptGrindingCost, AkitaError> {
+        challenge_order: akita_params::ChallengeFieldOrder,
+        successor: akita_params::FoldSuccessor<'_>,
+    ) -> Result<akita_params::TranscriptGrindingCost, AkitaError> {
         let payload = akita_schedules::planner_support::nonterminal_level_payload_bytes(
             policy,
             &self.params,
@@ -152,7 +152,7 @@ impl PendingQueryEdge {
             successor,
             self.next_witness_len,
         )?;
-        akita_types::transcript_grinding_cost_for_planner_edge(
+        akita_params::transcript_grinding_cost_for_planner_edge(
             &self.params,
             payload.relation_geometry,
             &self.opening_layout,
@@ -166,12 +166,12 @@ impl PendingQueryEdge {
     fn candidate_grinding_cost(
         &self,
         policy: &PlannerPolicy,
-        challenge_order: akita_types::ChallengeFieldOrder,
+        challenge_order: akita_params::ChallengeFieldOrder,
         candidate: &ScheduleCandidate,
-    ) -> Result<akita_types::TranscriptGrindingCost, AkitaError> {
+    ) -> Result<akita_params::TranscriptGrindingCost, AkitaError> {
         let successor = candidate.folds.first().map_or_else(
-            || akita_types::FoldSuccessor::Terminal(&candidate.terminal.params),
-            |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
+            || akita_params::FoldSuccessor::Terminal(&candidate.terminal.params),
+            |fold| akita_params::FoldSuccessor::Recursive(fold.params.as_ref()),
         );
         self.grinding_cost(policy, challenge_order, successor)
     }
@@ -189,7 +189,7 @@ impl QueryPrefix {
     fn admits(
         &self,
         policy: &PlannerPolicy,
-        challenge_order: akita_types::ChallengeFieldOrder,
+        challenge_order: akita_params::ChallengeFieldOrder,
         candidate: &ScheduleCandidate,
     ) -> Result<bool, AkitaError> {
         let edge = self
@@ -200,26 +200,26 @@ impl QueryPrefix {
             .checked_add(edge.expanded_query_count)
             .and_then(|queries| queries.checked_add(candidate.cost.expanded_query_count()))
             .ok_or_else(|| AkitaError::InvalidSetup("candidate query count overflow".into()))?;
-        Ok(total < akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT)
+        Ok(total < akita_params::TRANSCRIPT_GRINDING_QUERY_LIMIT)
     }
 
     fn advance(
         &self,
         policy: &PlannerPolicy,
-        challenge_order: akita_types::ChallengeFieldOrder,
+        challenge_order: akita_params::ChallengeFieldOrder,
         successor: &CommittedGroupParams,
         incoming: PendingQueryEdge,
     ) -> Result<Option<Self>, AkitaError> {
         let edge = self.incoming.grinding_cost(
             policy,
             challenge_order,
-            akita_types::FoldSuccessor::Recursive(successor),
+            akita_params::FoldSuccessor::Recursive(successor),
         )?;
         let finalized_query_count = self
             .finalized_query_count
             .checked_add(edge.expanded_query_count)
             .ok_or_else(|| AkitaError::InvalidSetup("candidate query count overflow".into()))?;
-        if finalized_query_count >= akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT {
+        if finalized_query_count >= akita_params::TRANSCRIPT_GRINDING_QUERY_LIMIT {
             return Ok(None);
         }
         Ok(Some(Self {
@@ -231,7 +231,7 @@ impl QueryPrefix {
     fn admits_result(
         &self,
         policy: &PlannerPolicy,
-        challenge_order: akita_types::ChallengeFieldOrder,
+        challenge_order: akita_params::ChallengeFieldOrder,
         result: &SuffixResult,
     ) -> Result<bool, AkitaError> {
         for candidate in result.payload_candidates().chain(result.setup_candidates()) {
@@ -281,7 +281,7 @@ impl QuerySearch {
     fn admits_terminal(
         &self,
         policy: &PlannerPolicy,
-        challenge_order: akita_types::ChallengeFieldOrder,
+        challenge_order: akita_params::ChallengeFieldOrder,
         candidate: &ScheduleCandidate,
     ) -> Result<bool, AkitaError> {
         match self {
@@ -295,7 +295,7 @@ impl QuerySearch {
 struct ChildEdgePrice {
     direct_payload_bytes: usize,
     stage3_payload_bytes: usize,
-    relation_geometry: akita_types::RelationAddressGeometry,
+    relation_geometry: akita_params::RelationAddressGeometry,
 }
 
 struct PendingScheduleCandidate {
@@ -446,8 +446,8 @@ fn child_edge_price(
     suffix: &ScheduleCandidate,
 ) -> Result<ChildEdgePrice, AkitaError> {
     let successor = suffix.folds.first().map_or_else(
-        || akita_types::FoldSuccessor::Terminal(&suffix.terminal.params),
-        |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
+        || akita_params::FoldSuccessor::Terminal(&suffix.terminal.params),
+        |fold| akita_params::FoldSuccessor::Recursive(fold.params.as_ref()),
     );
     let payload = akita_schedules::planner_support::nonterminal_level_payload_bytes(
         edge.policy,
@@ -473,7 +473,7 @@ fn child_edge_price(
 fn child_choice(
     edge: &ChildEdge<'_>,
     edge_price: ChildEdgePrice,
-    edge_grinding_cost: akita_types::TranscriptGrindingCost,
+    edge_grinding_cost: akita_params::TranscriptGrindingCost,
     suffix: &ScheduleCandidate,
 ) -> Result<Option<PendingScheduleCandidate>, AkitaError> {
     if !frontier::ParentAdmissionClass::for_candidate(suffix).is_admitted_by(
@@ -566,7 +566,7 @@ fn direct_edge_lower_bound(
         1,
         output_witness_len,
     )?;
-    let proof_bytes = akita_types::nonterminal_level_layout(
+    let proof_bytes = akita_params::nonterminal_level_layout(
         policy.decomposition.field_bits(),
         policy.challenge_field_bits()?,
         params,
@@ -742,11 +742,11 @@ fn price_terminal_candidate(
         let route_kind_matches = matches!(
             (candidate_route, guide_route),
             (
-                akita_types::InnerCommitSecurityRoute::Linf(_),
-                akita_types::InnerCommitSecurityRoute::Linf(_)
+                akita_params::InnerCommitSecurityRoute::Linf(_),
+                akita_params::InnerCommitSecurityRoute::Linf(_)
             ) | (
-                akita_types::InnerCommitSecurityRoute::L2 { .. },
-                akita_types::InnerCommitSecurityRoute::L2 { .. }
+                akita_params::InnerCommitSecurityRoute::L2 { .. },
+                akita_params::InnerCommitSecurityRoute::L2 { .. }
             )
         );
         if direct_step.params.d_a() != guide.d_a()

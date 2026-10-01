@@ -34,7 +34,7 @@ pub static COEFF_LINF_BOUNDS: LazyLock<Vec<u64>> = LazyLock::new(|| {
 
 fn canonical_scalar_origins() -> Vec<(AkitaModulusProfileId, u32, u64)> {
     let mut origins = BTreeSet::new();
-    origins.extend(akita_types::sis::sis_role_cells().into_iter().map(|cell| {
+    origins.extend(akita_params::sis::sis_role_cells().into_iter().map(|cell| {
         (
             cell.modulus_profile.into(),
             cell.ring_dimension,
@@ -42,21 +42,21 @@ fn canonical_scalar_origins() -> Vec<(AkitaModulusProfileId, u32, u64)> {
         )
     }));
     origins.extend(
-        akita_types::sis::compression::compression_sis_cells().map(|cell| {
+        akita_params::sis::compression::compression_sis_cells().map(|cell| {
             (
                 cell.modulus_profile.into(),
                 cell.ring_dimension,
-                u64::try_from(akita_types::sis::compression::COMPRESSION_SIS_COEFF_LINF_BOUND)
+                u64::try_from(akita_params::sis::compression::COMPRESSION_SIS_COEFF_LINF_BOUND)
                     .expect("compression SIS bound exceeds u64"),
             )
         }),
     );
     for profile in [
-        akita_types::sis::SisModulusProfileId::Q32Offset99,
-        akita_types::sis::SisModulusProfileId::Q64Offset59,
-        akita_types::sis::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::sis::SisModulusProfileId::Q32Offset99,
+        akita_params::sis::SisModulusProfileId::Q64Offset59,
+        akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
     ] {
-        let dimensions = akita_types::compression_ring_dimensions(profile);
+        let dimensions = akita_params::compression_ring_dimensions(profile);
         let doubled = dimensions
             .into_iter()
             .max()
@@ -65,7 +65,7 @@ fn canonical_scalar_origins() -> Vec<(AkitaModulusProfileId, u32, u64)> {
         origins.insert((
             profile.into(),
             u32::try_from(doubled).expect("compression diagnostic dimension fits u32"),
-            u64::try_from(akita_types::sis::compression::COMPRESSION_SIS_COEFF_LINF_BOUND)
+            u64::try_from(akita_params::sis::compression::COMPRESSION_SIS_COEFF_LINF_BOUND)
                 .expect("compression SIS bound exceeds u64"),
         ));
     }
@@ -102,10 +102,10 @@ pub static FAMILIES: LazyLock<Vec<AkitaModulusProfileId>> = LazyLock::new(|| {
 });
 
 /// Maximum module rank emitted for each scalar row.
-pub const DEFAULT_MAX_RANK: u32 = akita_types::sis::SIS_MAX_MODULE_RANK;
+pub const DEFAULT_MAX_RANK: u32 = akita_params::sis::SIS_MAX_MODULE_RANK;
 
 /// Policy table search cap.
-pub const DEFAULT_SEARCH_CAP: u64 = akita_types::sis::SIS_REQUIRED_MAX_WIDTH;
+pub const DEFAULT_SEARCH_CAP: u64 = akita_params::sis::SIS_REQUIRED_MAX_WIDTH;
 
 /// Legacy L2 generator cap retained for the independent Euclidean table.
 /// The quantum infinity table itself uses [`DEFAULT_SEARCH_CAP`] uniformly.

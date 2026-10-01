@@ -3,11 +3,11 @@ use akita_config::{
     TrustedScheduleCatalog, ValidatedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
-use akita_serialization::AkitaSerialize;
-use akita_types::{
+use akita_params::{
     ChunkedWitnessCfg, DecompositionParams, OpeningScheduleSelection, ScheduleRowDigest,
     SisModulusProfileId,
 };
+use akita_serialization::AkitaSerialize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Clone, Copy, Debug)]
@@ -50,7 +50,7 @@ impl CommitmentConfig for CountingDense {
         fp128::Dense::inner_basis_range()
     }
 
-    fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+    fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
         fp128::Dense::committed_source_class()
     }
 
@@ -101,7 +101,7 @@ fn serialized_slot_ids<Cfg: CommitmentConfig>() -> Vec<String> {
 
 fn recursive_prefix_fixture<Cfg: CommitmentConfig>() -> (usize, String) {
     let slots = serialized_slot_ids::<Cfg>();
-    let digest = akita_types::digest_descriptor_bytes(slots.join("\n").as_bytes());
+    let digest = akita_params::digest_descriptor_bytes(slots.join("\n").as_bytes());
     let digest = digest
         .into_iter()
         .map(|byte| format!("{byte:02x}"))
@@ -336,7 +336,7 @@ fn trusted_artifact_round_trip_preserves_rows_and_selection() {
         .expect("load trusted artifact");
 
     let key =
-        akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
+        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::new(14, 1));
     let checked_in_row = checked_in.resolve_key(&key).expect("checked-in row");
     let loaded_row = loaded.resolve_key(&key).expect("artifact row");
     assert_eq!(loaded.catalog_digest(), checked_in.catalog_digest());
@@ -688,7 +688,7 @@ fn setup_requirements_keep_precommits_when_the_grouped_row_does_not_fit() {
         profile.group.num_polynomials(),
     )
     .expect("independent precommit remains supported");
-    let expected = akita_types::commit_only_setup_field_elements(
+    let expected = akita_params::commit_only_setup_field_elements(
         &profile.inner.matrix,
         &profile.outer.matrix,
         profile.outer_slice_count,

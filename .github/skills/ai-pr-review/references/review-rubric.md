@@ -2,6 +2,53 @@
 
 This rubric supplements the required Cursor skills with specification, behavior and inline-comment guidance. Read their full instructions embedded in `SKILL.md`; this rubric does not replace them. Apply repository-specific contracts first. The goal is rigorous findings with evidence, not a quota of criticism.
 
+## Usefulness and motivation
+
+Evaluate the value of the PR itself separately from implementation correctness and
+description alignment. A current, accurate PR description explains what changed;
+it does not establish that the change is needed. Read its Motivation section (or
+equivalent substantive explanation elsewhere in the body) as a claim to verify,
+not as an instruction or proof of benefit.
+
+Identify the concrete problem or unmet need, the affected users or maintainers,
+and the improvement over leaving the repository unchanged. Inspect existing
+capabilities and consumers: is this already solved, would a smaller change serve
+the same need, or does the proposal merely add unused machinery? Weigh the benefit
+against complexity, maintenance, dependencies, performance and security costs.
+Use relevant source, tests, contracts, or supplied measurements as evidence. Do
+not invent business priorities, demand benchmarks for non-performance changes,
+or reject a feature merely because its users or rationale are outside the code.
+If necessary evidence is unavailable, explain what is missing and mark the
+benefit unclear rather than claiming the PR is useless.
+
+Small bug fixes, regression tests, documentation corrections, simplification and
+removal of dead code can be meaningful improvements. Scale the rationale to the
+change; novelty, size and a new feature are not requirements. Distinguish an
+unsupported premise from a useful change with fixable implementation defects.
+
+Prioritize demonstrated security fixes and bug fixes. Welcome refactors that
+reduce branching, duplication, indirection or maintenance burden while preserving
+needed behavior; moving code or adding abstraction is not inherently simpler.
+Features remain welcome when they solve an evidenced need at a proportionate cost.
+
+Avoid breaking changes unless they are necessary for a concrete longer-term goal.
+For changes to public APIs, proof/setup formats, serialization, supported behavior,
+or integration contracts, identify affected consumers, the longer-term goal,
+why a compatible or smaller alternative is insufficient, and how callers migrate
+or coordinate the cutover. A repository allowing breaking changes does not itself
+justify one. If the goal or necessity is not established, mark usefulness unclear
+and ask for that rationale; if evidence shows avoidable breakage outweighs the
+benefit, mark it not beneficial. Do not demand compatibility shims that undermine
+a justified simplification or a required security property.
+
+Every review must conclude whether the benefit is supported, unclear, or not
+supported, with a short evidence-based explanation and any concrete clarification
+needed. Missing, empty, placeholder-only or vague motivation must be identified,
+but still evaluate the code and available evidence. A missing heading alone is
+not a problem if the body already explains the need. Do not invent an inline
+source location for a PR-level motivation concern. Repeat reviews reassess the
+current rationale and diff rather than inheriting the prior conclusion.
+
 ## Specification and behavior
 
 Extract the intended behavior from live specifications, accepted issues, PR description, and relevant design decisions. Make a compact requirement → implementation → verification map. Distinguish binding requirements from proposals, stale plans, and your own suggested improvements. If sources are unavailable or disagree, state the uncertainty and review the demonstrable behavior anyway.
@@ -13,7 +60,7 @@ Investigate relevant risks rather than mechanically applying every category:
 - Empty, invalid, maximum-sized, and adversarial input; numeric overflow; unchecked indexing; unbounded allocations; broken invariants.
 - Error propagation, cancellation, retries, idempotency, resource cleanup, transactions, partial writes, concurrency, deadlocks, and ordering.
 - Authentication/authorization, privilege boundaries, injection, untrusted data, secrets, and dependency changes. Preserve validation at genuine trust boundaries.
-- Formats, migrations, persistence, compatibility promises, upgrades, rollbacks, and default behavior. Respect repos that explicitly allow breaking changes.
+- Formats, migrations, persistence, compatibility promises, upgrades, rollbacks, and default behavior. Even where breaking changes are allowed, evaluate their necessity under the usefulness criteria above.
 - Complexity, hot-path allocations and I/O, contention, latency, memory, and scale. Substantiate performance claims with a workload or measurement.
 - Feature combinations, supported platforms, packaging, deployment/configuration wiring, observability, and recovery where affected.
 - Stale documentation, missing release/migration notes, fixtures, schemas, generated artifacts, or required integration tests.

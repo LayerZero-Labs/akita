@@ -24,7 +24,7 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
         ring_challenge_cfg: &challenge,
         challenge_dimension: dimensions.d_a(),
         dimensions,
-        payload_mode: akita_types::CommitmentPayloadMode::Raw,
+        payload_mode: akita_params::CommitmentPayloadMode::Raw,
         num_claims,
 
         num_live_ring_elements_per_claim: 64,
@@ -32,7 +32,7 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
         num_live_blocks: 8,
 
         num_chunks: 1,
-        outer_slice_count: akita_types::CommitmentSliceCount::ONE,
+        outer_slice_count: akita_params::CommitmentSliceCount::ONE,
         witness_norms: FoldWitnessNorms::bounded(3, dimensions.d_a()),
         log_basis_open: 3,
         width_s,
@@ -44,7 +44,7 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
     let outer = raw_candidate.outer_commit_matrix;
     let field_bytes = outer.sis_modulus_profile().field_bits().div_ceil(8) as usize;
     let over_cap_rank =
-        akita_types::MAX_COMPRESSION_INPUT_BYTES.div_ceil(dimensions.d_b() * field_bytes) + 1;
+        akita_params::MAX_COMPRESSION_INPUT_BYTES.div_ceil(dimensions.d_b() * field_bytes) + 1;
     raw_candidate.outer_commit_matrix = OuterCommitMatrixParams::try_new(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
@@ -67,7 +67,7 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
     )
     .with_decomp(width_s, width_s * 8, 1, 2, 2)
     .unwrap();
-    params.payload_mode = akita_types::CommitmentPayloadMode::Raw;
+    params.payload_mode = akita_params::CommitmentPayloadMode::Raw;
     params.own_group_mut().profile.inner.matrix = raw_candidate.inner_commit_matrix;
     params.own_group_mut().profile.outer.matrix = raw_candidate.outer_commit_matrix;
     params.own_group_mut().profile.group = PolynomialGroupLayout::singleton(14);
@@ -78,7 +78,7 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
         .expect("raw S1 geometry does not execute compression");
 
     let mut compressed = params;
-    compressed.payload_mode = akita_types::CommitmentPayloadMode::Compressed;
+    compressed.payload_mode = akita_params::CommitmentPayloadMode::Compressed;
     assert!(!compressed.compression_sources_supported().unwrap());
     assert!(compressed
         .validate_commitment_request(2, num_claims)
