@@ -272,7 +272,7 @@ where
         if round != self.next_round
             || round >= self.num_rounds()
             || self.pending.is_some()
-            || previous_claim != self.claim
+            || (previous_claim != self.claim && !crate::opaque::fold::fault_skips_self_checks())
         {
             return Err(AkitaError::InvalidInput(
                 "relation session round order or claim mismatch".into(),
@@ -320,7 +320,9 @@ where
             ));
         }
         akita_sumcheck::SumcheckInstanceProver::finalize(&mut self.prover);
-        if self.claim != self.prover.expected_final_claim()? {
+        if self.claim != self.prover.expected_final_claim()?
+            && !crate::opaque::fold::fault_skips_self_checks()
+        {
             return Err(AkitaError::InvalidInput(
                 "relation session final claim disagrees with its folded oracle".into(),
             ));

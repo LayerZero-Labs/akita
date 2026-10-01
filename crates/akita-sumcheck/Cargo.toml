@@ -24,6 +24,8 @@ default = ["transcript-blake2b"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]
 parallel = ["akita-algebra/parallel", "jolt-field/parallel"]
+# Test-only: lets a fault-injecting prover skip its round self-check.
+fault-injection = []
 
 [lints]
 workspace = true

@@ -299,13 +299,24 @@ where
                     witness_source,
                     &scheduled.response_shape,
                 )?;
-                let terminal_response = akita_types::build_terminal_response_from_payload::<F>(
-                    params,
-                    &scheduled.response_shape,
-                    &e_folded,
-                    t_state.clone(),
-                    output.encoded_payload,
-                )?;
+                // Building re-decodes the payload against its cap. A fault may
+                // have encoded an over-cap response; send it unvalidated.
+                let terminal_response = if crate::protocol::fault_skips_self_checks() {
+                    akita_types::TerminalResponse {
+                        layout: scheduled.response_shape.layout.clone(),
+                        z_payloads: vec![output.encoded_payload],
+                        e_fields: e_folded.clone().into_compact(),
+                        t_fields: t_state.clone().into_compact(),
+                    }
+                } else {
+                    akita_types::build_terminal_response_from_payload::<F>(
+                        params,
+                        &scheduled.response_shape,
+                        &e_folded,
+                        t_state.clone(),
+                        output.encoded_payload,
+                    )?
+                };
                 Ok::<_, AkitaError>(terminal_response)
             }
         )?

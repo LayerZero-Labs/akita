@@ -27,6 +27,21 @@ pub(crate) fn response_model_diagnostics_enabled() -> bool {
     }
 }
 
+/// Whether an installed fault-injection fault disables the consumer
+/// self-checks that would otherwise refuse to emit the faulty proof. Always
+/// `false` without the `fault-injection` feature.
+#[inline]
+pub(crate) fn fault_skips_self_checks() -> bool {
+    #[cfg(feature = "fault-injection")]
+    {
+        akita_prover::fault_injection::skips_self_checks()
+    }
+    #[cfg(not(feature = "fault-injection"))]
+    {
+        false
+    }
+}
+
 /// CPU reference state retained behind an accepted fold handle.
 pub struct CpuAcceptedFold<F: Field> {
     global: DecomposeFoldWitness,
@@ -48,6 +63,10 @@ pub struct CpuAcceptedTerminalFold<F: Field> {
     _field: PhantomData<F>,
 }
 
+/// Admitted terminal fold with its measured squared L2 norm, or the rejected
+/// response's measured squared L2 norm.
+type TerminalAdmission<F> = Result<(CpuAcceptedTerminalFold<F>, Option<u128>), Option<u128>>;
+
 pub(crate) type CpuAcceptedFoldHandle<F> = CpuAcceptedFold<F>;
 pub(crate) type CpuAcceptedTerminalFoldHandle<F> = CpuAcceptedTerminalFold<F>;
 
@@ -63,12 +82,14 @@ where
         self.binding.clone()
     }
 
+    /// Admit a terminal response, or return the rejected response's measured
+    /// squared L2 norm.
     fn admit<B: ComputeBackendSetup<F>, const D: usize>(
         _backend: &B,
         _prepared: Option<&B::PreparedSetup>,
         witness: DecomposeFoldWitness,
         plan: &ValidatedTerminalFoldProbePlan<'_>,
-    ) -> Result<Option<(Self, Option<u128>)>, AkitaError> {
+    ) -> Result<TerminalAdmission<F>, AkitaError> {
         let centered = witness.centered_coeffs_flat();
         if centered.len() != plan.coordinate_count() {
             return Err(AkitaError::InvalidSize {
@@ -76,14 +97,19 @@ where
                 actual: centered.len(),
             });
         }
-        if let Some(cap) = plan.linf_cap() {
-            if akita_types::golomb_rice_values_within_cap(centered, cap).is_err() {
-                return Ok(None);
-            }
-        } else if centered.iter().any(|value| i16::try_from(*value).is_err()) {
-            return Ok(None);
-        }
-        let observed_l2_sq = if plan.l2_sq_cap().is_some() || response_model_diagnostics_enabled() {
+        // Under fault injection a rejected response may still be admitted; it
+        // then needs a zigzag width wide enough to encode it.
+        #[cfg(feature = "fault-injection")]
+        let bypass = akita_prover::fault_injection::admission_bypass_requested();
+        #[cfg(not(feature = "fault-injection"))]
+        let bypass = false;
+        let mut rejected = if let Some(cap) = plan.linf_cap() {
+            akita_types::golomb_rice_values_within_cap(centered, cap).is_err()
+        } else {
+            centered.iter().any(|value| i16::try_from(*value).is_err())
+        };
+        let measure_l2 = plan.l2_sq_cap().is_some() || response_model_diagnostics_enabled();
+        let observed_l2_sq = if measure_l2 && (!rejected || bypass) {
             let value = akita_types::sis::checked_centered_l2_sq(centered);
             if plan.l2_sq_cap().is_some() && value.is_none() {
                 return Err(AkitaError::InvalidInput(
@@ -91,20 +117,46 @@ where
                 ));
             }
             if value.is_some_and(|value| plan.l2_sq_cap().is_some_and(|cap| value > cap)) {
-                return Ok(None);
+                rejected = true;
             }
             value
+        } else if response_model_diagnostics_enabled() {
+            akita_types::sis::checked_centered_l2_sq(centered)
         } else {
             None
         };
-        let zigzag_width =
+        if rejected && !bypass {
+            return Ok(Err(observed_l2_sq));
+        }
+        #[cfg(feature = "fault-injection")]
+        let (witness, observed_l2_sq, pushed) = if rejected {
+            (witness, observed_l2_sq, false)
+        } else {
+            push_terminal_response_over_bound::<D>(witness, observed_l2_sq, plan)?
+        };
+        #[cfg(not(feature = "fault-injection"))]
+        let pushed = false;
+        let centered = witness.centered_coeffs_flat();
+        let mut zigzag_width =
             akita_types::golomb_rice_zigzag_width(plan.linf_cap().unwrap_or(i16::MAX as u128));
+        if rejected || pushed {
+            zigzag_width = zigzag_width
+                .max(akita_types::golomb_rice_zigzag_width(u128::from(
+                    witness.centered_inf_norm(),
+                )))
+                .min(63);
+        }
         if akita_types::golomb_rice_total_wire_bits(centered, plan.rice_low_bits(), zigzag_width)?
             > plan.payload_bytes().saturating_mul(8)
         {
-            return Ok(None);
+            // The wire budget bounds the transcript message, so no fault skips it.
+            return Ok(Err(observed_l2_sq));
         }
-        Ok(Some((
+        #[cfg(feature = "fault-injection")]
+        if rejected {
+            akita_prover::fault_injection::record_bypassed_rejection();
+        }
+        Ok(Ok((
             Self {
                 witness,
                 ring_dimension: D,
@@ -129,14 +181,33 @@ where
                 "accepted terminal fold used with a different operation context".into(),
             ));
         }
-        let values = self
+        #[allow(unused_mut)]
+        let mut values = self
             .witness
             .centered_coeffs_flat()
             .iter()
             .map(|value| i64::from(*value))
             .collect::<Vec<_>>();
+        #[allow(unused_mut)]
+        let mut zigzag_width = self.zigzag_width;
+        #[cfg(feature = "fault-injection")]
+        if let Some(akita_prover::fault_injection::Fault::PerturbTerminalResponse {
+            index,
+            delta,
+        }) = akita_prover::fault_injection::active()
+        {
+            if let Some(value) = values.get_mut(index) {
+                *value += i64::from(delta);
+                zigzag_width = zigzag_width
+                    .max(akita_types::golomb_rice_zigzag_width(u128::from(
+                        value.unsigned_abs(),
+                    )))
+                    .min(63);
+                akita_prover::fault_injection::record_applied();
+            }
+        }
         let payload =
-            akita_types::golomb_rice_encode_vec(&values, self.rice_low_bits, self.zigzag_width)?;
+            akita_types::golomb_rice_encode_vec(&values, self.rice_low_bits, zigzag_width)?;
         if payload.len() > self.payload_bytes {
             return Err(AkitaError::InvalidInput(
                 "terminal response exceeds its scheduled payload budget".into(),
@@ -728,15 +799,26 @@ where
             "terminal fold backend returned chunk responses".into(),
         ));
     }
-    let Some((fold, observed_l2_sq)) =
-        CpuAcceptedTerminalFold::admit::<B, D>(backend, prepared, responses.global, plan)?
-    else {
-        return Ok(FoldProbeOutcome::Rejected);
+    #[cfg(feature = "response-model-diagnostics")]
+    let observed_linf = response_model_diagnostics_enabled()
+        .then(|| u128::from(responses.global.centered_inf_norm()));
+    let diagnostics = |observed_l2_sq| {
+        let diagnostics = FoldProbeDiagnostics::new(observed_l2_sq);
+        #[cfg(feature = "response-model-diagnostics")]
+        let diagnostics = diagnostics.with_observed_linf(observed_linf);
+        diagnostics
     };
-    Ok(FoldProbeOutcome::Accepted {
-        fold_handle: fold,
-        diagnostics: FoldProbeDiagnostics::new(observed_l2_sq),
-    })
+    Ok(
+        match CpuAcceptedTerminalFold::admit::<B, D>(backend, prepared, responses.global, plan)? {
+            Ok((fold, observed_l2_sq)) => FoldProbeOutcome::Accepted {
+                fold_handle: fold,
+                diagnostics: diagnostics(observed_l2_sq),
+            },
+            Err(observed_l2_sq) => FoldProbeOutcome::Rejected {
+                diagnostics: diagnostics(observed_l2_sq),
+            },
+        },
+    )
 }
 
 pub(crate) fn cpu_fold_probe<S, F, B, const D: usize>(
@@ -767,36 +849,299 @@ where
         }
     };
     let responses = backend.decompose_fold_batch(prepared, source, batch_plan)?;
+    #[cfg(feature = "response-model-diagnostics")]
+    let measured = response_model_diagnostics_enabled().then(|| measure_fold_response(&responses));
+    #[cfg(not(feature = "response-model-diagnostics"))]
+    let measured: Option<(u128, Option<u128>)> = None;
+    let diagnostics = |observed_l2_sq: Option<u128>| {
+        let diagnostics = FoldProbeDiagnostics::new(observed_l2_sq);
+        #[cfg(feature = "response-model-diagnostics")]
+        let diagnostics = diagnostics.with_observed_linf(measured.map(|(linf, _)| linf));
+        diagnostics
+    };
+    // Under fault injection a rejected response may still be admitted. The
+    // witness builder then decomposes it into the scheduled digits with
+    // wraparound.
+    #[cfg(feature = "fault-injection")]
+    let bypass = akita_prover::fault_injection::admission_bypass_requested();
+    #[cfg(not(feature = "fault-injection"))]
+    let bypass = false;
+    let mut rejected = false;
     let mut observed_l2_sq = (plan.acceptance().response_l2_sq_cap().is_some()
         || response_model_diagnostics_enabled())
     .then_some(0);
     let chunks = match responses.chunks {
         None => {
-            if !admit_fold_response(&responses.global, plan, &mut observed_l2_sq)? {
-                return Ok(FoldProbeOutcome::Rejected);
-            }
+            rejected = !admit_fold_response(&responses.global, plan, &mut observed_l2_sq)?;
             None
         }
         Some(chunks) => {
             let mut centered = Vec::with_capacity(chunks.len());
             for chunk in chunks {
-                if !admit_fold_response(&chunk, plan, &mut observed_l2_sq)? {
-                    return Ok(FoldProbeOutcome::Rejected);
+                if !rejected && !admit_fold_response(&chunk, plan, &mut observed_l2_sq)? {
+                    rejected = true;
+                    if !bypass {
+                        break;
+                    }
                 }
                 centered.push(chunk.into_centered_coeffs_flat());
             }
             Some(centered)
         }
     };
+    if rejected {
+        // Admission stops measuring at the first rejected unit.
+        observed_l2_sq = measured.map_or(observed_l2_sq, |(_, l2)| l2);
+        if !bypass {
+            return Ok(FoldProbeOutcome::Rejected {
+                diagnostics: diagnostics(observed_l2_sq),
+            });
+        }
+        #[cfg(feature = "fault-injection")]
+        akita_prover::fault_injection::record_bypassed_rejection();
+    }
+    #[cfg(feature = "fault-injection")]
+    let (global, chunks) = if rejected {
+        (responses.global, chunks)
+    } else {
+        push_fold_response_over_bound::<D>(responses.global, chunks, plan, &mut observed_l2_sq)?
+    };
+    #[cfg(not(feature = "fault-injection"))]
+    let global = responses.global;
     Ok(FoldProbeOutcome::Accepted {
-        fold_handle: CpuAcceptedFold::new::<B, D>(
-            backend,
-            prepared,
-            responses.global,
-            chunks,
-            plan,
-        )?,
-        diagnostics: FoldProbeDiagnostics::new(observed_l2_sq),
+        fold_handle: CpuAcceptedFold::new::<B, D>(backend, prepared, global, chunks, plan)?,
+        diagnostics: diagnostics(observed_l2_sq),
+    })
+}
+
+/// Push an admitted recursive fold response over its acceptance bound as an
+/// installed [`PushResponseOverBound`] fault requests. The pushed units (each
+/// chunk, or the global response) replace the admitted ones, and the global
+/// response is re-aggregated from pushed chunks. The response is left honest
+/// when the fault cannot be expressed in `i32` coefficients.
+///
+/// [`PushResponseOverBound`]: akita_prover::fault_injection::Fault::PushResponseOverBound
+#[cfg(feature = "fault-injection")]
+fn push_fold_response_over_bound<const D: usize>(
+    global: DecomposeFoldWitness,
+    chunks: Option<Vec<Vec<i32>>>,
+    plan: &ValidatedFoldProbePlan<'_>,
+    observed_l2_sq: &mut Option<u128>,
+) -> Result<(DecomposeFoldWitness, Option<Vec<Vec<i32>>>), AkitaError> {
+    let Some((index, route)) = akita_prover::fault_injection::over_bound_requested() else {
+        return Ok((global, chunks));
+    };
+    let acceptance = plan.acceptance();
+    let units = match &chunks {
+        Some(chunks) => chunks.iter().map(Vec::as_slice).collect::<Vec<_>>(),
+        None => vec![global.centered_coeffs_flat()],
+    };
+    let Some(mut pushed) = pushed_over_bound(
+        &units,
+        index,
+        route,
+        acceptance.digit_negative_abs_bound(),
+        acceptance.digit_positive_bound(),
+        acceptance.response_l2_sq_cap(),
+    ) else {
+        return Ok((global, chunks));
+    };
+    let (pushed_global, pushed_chunks) = if chunks.is_some() {
+        let mut sum = vec![0i32; global.centered_coeffs_flat().len()];
+        for unit in &pushed {
+            for (total, value) in sum.iter_mut().zip(unit) {
+                let Some(next) = total.checked_add(*value) else {
+                    return Ok((global, chunks));
+                };
+                *total = next;
+            }
+        }
+        (
+            DecomposeFoldWitness::from_centered_flat::<D>(sum)?,
+            Some(pushed),
+        )
+    } else {
+        let unit = pushed.pop().ok_or(AkitaError::InvalidProof)?;
+        (DecomposeFoldWitness::from_centered_flat::<D>(unit)?, None)
+    };
+    if observed_l2_sq.is_some() {
+        *observed_l2_sq = match &pushed_chunks {
+            Some(chunks) => units_l2_sq(chunks),
+            None => units_l2_sq(&[pushed_global.centered_coeffs_flat()]),
+        };
+    }
+    akita_prover::fault_injection::record_pushed_over_bound();
+    Ok((pushed_global, pushed_chunks))
+}
+
+/// Push an admitted terminal response over its acceptance bound as an
+/// installed [`PushResponseOverBound`] fault requests, and report whether it
+/// did. The response is left honest when the pushed response no longer fits
+/// the payload budget under a widened zigzag width, since that budget bounds
+/// the transcript message.
+///
+/// [`PushResponseOverBound`]: akita_prover::fault_injection::Fault::PushResponseOverBound
+#[cfg(feature = "fault-injection")]
+fn push_terminal_response_over_bound<const D: usize>(
+    witness: DecomposeFoldWitness,
+    observed_l2_sq: Option<u128>,
+    plan: &ValidatedTerminalFoldProbePlan<'_>,
+) -> Result<(DecomposeFoldWitness, Option<u128>, bool), AkitaError> {
+    let Some((index, route)) = akita_prover::fault_injection::over_bound_requested() else {
+        return Ok((witness, observed_l2_sq, false));
+    };
+    let (negative_abs_bound, positive_bound) = plan
+        .linf_cap()
+        .map_or((1u128 << 15, u128::from(i16::MAX.unsigned_abs())), |cap| {
+            (cap, cap)
+        });
+    let Some(mut pushed) = pushed_over_bound(
+        &[witness.centered_coeffs_flat()],
+        index,
+        route,
+        negative_abs_bound,
+        positive_bound,
+        plan.l2_sq_cap(),
+    ) else {
+        return Ok((witness, observed_l2_sq, false));
+    };
+    let pushed = DecomposeFoldWitness::from_centered_flat::<D>(
+        pushed.pop().ok_or(AkitaError::InvalidProof)?,
+    )?;
+    let zigzag_width =
+        akita_types::golomb_rice_zigzag_width(plan.linf_cap().unwrap_or(i16::MAX as u128))
+            .max(akita_types::golomb_rice_zigzag_width(u128::from(
+                pushed.centered_inf_norm(),
+            )))
+            .min(63);
+    let fits = akita_types::golomb_rice_total_wire_bits(
+        pushed.centered_coeffs_flat(),
+        plan.rice_low_bits(),
+        zigzag_width,
+    )
+    .is_ok_and(|bits| bits <= plan.payload_bytes().saturating_mul(8));
+    if !fits {
+        return Ok((witness, observed_l2_sq, false));
+    }
+    let observed_l2_sq = observed_l2_sq.and(akita_types::sis::checked_centered_l2_sq(
+        pushed.centered_coeffs_flat(),
+    ));
+    akita_prover::fault_injection::record_pushed_over_bound();
+    Ok((pushed, observed_l2_sq, true))
+}
+
+/// Copy of `units` pushed over its acceptance bound along `route`, starting
+/// at coefficient `index` modulo the total length, counted across units in
+/// order. `None` when the push cannot be expressed in `i32` coefficients or,
+/// for the L2 route, when no L2 cap is enforced.
+#[cfg(feature = "fault-injection")]
+fn pushed_over_bound(
+    units: &[&[i32]],
+    index: usize,
+    route: akita_prover::fault_injection::OverBound,
+    negative_abs_bound: u128,
+    positive_bound: u128,
+    l2_sq_cap: Option<u128>,
+) -> Option<Vec<Vec<i32>>> {
+    use akita_prover::fault_injection::OverBound;
+    let total = units.iter().map(|unit| unit.len()).sum::<usize>();
+    if total == 0 {
+        return None;
+    }
+    let start = index % total;
+    let (excess, negative) = match route {
+        OverBound::Linf { excess, negative } => (excess, negative),
+        OverBound::L2 => {
+            let cap = l2_sq_cap?;
+            if let Some(pushed) =
+                pushed_over_l2_cap(units, start, cap, negative_abs_bound, positive_bound)
+            {
+                return Some(pushed);
+            }
+            // The cap exceeds every in-range response; overflow L∞ instead.
+            (1, false)
+        }
+    };
+    let excess = u128::from(excess.max(1));
+    let value = if negative {
+        let magnitude = i128::try_from(negative_abs_bound.checked_add(excess)?).ok()?;
+        i32::try_from(-magnitude).ok()?
+    } else {
+        i32::try_from(positive_bound.checked_add(excess)?).ok()?
+    };
+    let mut pushed = units.iter().map(|unit| unit.to_vec()).collect::<Vec<_>>();
+    *coefficient_mut(&mut pushed, start)? = value;
+    Some(pushed)
+}
+
+/// Copy of `units` whose squared L2 norm exceeds `cap`, obtained by moving
+/// coefficients from `start` onward (cyclically) to the in-range bound of
+/// their sign. `None` when even the full in-range response stays within `cap`.
+#[cfg(feature = "fault-injection")]
+fn pushed_over_l2_cap(
+    units: &[&[i32]],
+    start: usize,
+    cap: u128,
+    negative_abs_bound: u128,
+    positive_bound: u128,
+) -> Option<Vec<Vec<i32>>> {
+    let high = i32::try_from(positive_bound).unwrap_or(i32::MAX);
+    let low = i128::try_from(negative_abs_bound)
+        .ok()
+        .and_then(|bound| i32::try_from(-bound).ok())
+        .unwrap_or(i32::MIN);
+    let square = |value: i32| u128::from(value.unsigned_abs()).pow(2);
+    let mut energy = units_l2_sq(units)?;
+    let total = units.iter().map(|unit| unit.len()).sum::<usize>();
+    let mut pushed = units.iter().map(|unit| unit.to_vec()).collect::<Vec<_>>();
+    for step in 0..total {
+        if energy > cap {
+            break;
+        }
+        let value = coefficient_mut(&mut pushed, (start + step) % total)?;
+        let target = if *value < 0 { low } else { high };
+        energy = (energy - square(*value)).checked_add(square(target))?;
+        *value = target;
+    }
+    (energy > cap).then_some(pushed)
+}
+
+/// Coefficient `position` counted across `units` in order.
+#[cfg(feature = "fault-injection")]
+fn coefficient_mut(units: &mut [Vec<i32>], mut position: usize) -> Option<&mut i32> {
+    for unit in units {
+        if position < unit.len() {
+            return unit.get_mut(position);
+        }
+        position -= unit.len();
+    }
+    None
+}
+
+/// Total squared L2 norm of `units`, or `None` on overflow.
+#[cfg(feature = "fault-injection")]
+fn units_l2_sq<U: AsRef<[i32]>>(units: &[U]) -> Option<u128> {
+    units.iter().try_fold(0u128, |total, unit| {
+        total.checked_add(akita_types::sis::checked_centered_l2_sq(unit.as_ref())?)
+    })
+}
+
+/// Largest centered magnitude and total squared L2 norm over the units the
+/// acceptance predicate checks: each chunk, or the global response.
+#[cfg(feature = "response-model-diagnostics")]
+fn measure_fold_response(responses: &CpuFoldResponses) -> (u128, Option<u128>) {
+    let units = responses
+        .chunks
+        .as_deref()
+        .unwrap_or(std::slice::from_ref(&responses.global));
+    units.iter().fold((0, Some(0)), |(linf, l2), unit| {
+        (
+            linf.max(u128::from(unit.centered_inf_norm())),
+            l2.and_then(|total| {
+                akita_types::sis::checked_centered_l2_sq(unit.centered_coeffs_flat())
+                    .and_then(|unit_l2| total.checked_add(unit_l2))
+            }),
+        )
     })
 }
 

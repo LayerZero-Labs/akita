@@ -220,7 +220,11 @@ where
     for round in 0..num_rounds {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
         let poly = prover.round_polynomial(round, claim)?;
-        if poly.evaluate(E::zero()) + poly.evaluate(E::one()) != claim {
+        #[cfg(feature = "fault-injection")]
+        let check_round_claim = !crate::fault_injection::round_claim_check_skipped();
+        #[cfg(not(feature = "fault-injection"))]
+        let check_round_claim = true;
+        if check_round_claim && poly.evaluate(E::zero()) + poly.evaluate(E::one()) != claim {
             return Err(AkitaError::InvalidInput(
                 "sumcheck round polynomial does not match its input claim".into(),
             ));
