@@ -50,6 +50,12 @@ pub enum AkitaError {
     /// admitted. This reports a bug in Akita or in a custom backend, not a
     /// rejected proof and not a caller mistake. The message names the failed
     /// invariant.
+    ///
+    /// The variant is not tied to the prover: setup and cache code report
+    /// their own failed invariants the same way. It must never stand in for a
+    /// rejection. A check on a proof, a commitment, or any other untrusted
+    /// value returns [`AkitaError::InvalidProof`], even when only a bug in an
+    /// honest prover could make it fail.
     #[error("Internal error: {0}")]
     Internal(String),
 }
