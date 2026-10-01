@@ -28,20 +28,18 @@ where
         num_positions_per_block: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Vec<DecomposeFoldWitness> {
-        let coeffs = self
-            .ring_coeffs::<D>()
-            .expect("DensePoly::decompose_fold_chunked: invalid ring view");
+    ) -> Result<Vec<DecomposeFoldWitness>, AkitaError> {
+        let coeffs = self.ring_coeffs::<D>()?;
         let Some(planes) = self.digit_planes_for::<D>(num_digits, log_basis) else {
-            return balanced_ring_decompose_fold_chunked(
+            return Ok(balanced_ring_decompose_fold_chunked(
                 coeffs,
                 challenges,
                 chunk_ranges,
                 num_positions_per_block,
                 &BalancedDecomposePow2Params::new(num_digits, log_basis),
-            );
+            ));
         };
-        chunk_ranges
+        Ok(chunk_ranges
             .iter()
             .map(|range| {
                 let ring_start = range.start * num_positions_per_block;
@@ -55,20 +53,18 @@ where
                 );
                 DecomposeFoldWitness::from_centered_rows(coefficients)
             })
-            .collect()
+            .collect())
     }
 
     pub(crate) fn fold_blocks<const D: usize>(
         &self,
         scalars: &[F],
         num_positions_per_block: usize,
-    ) -> Vec<CyclotomicRing<F, D>> {
-        let coeffs = self
-            .ring_coeffs::<D>()
-            .expect("DensePoly::fold_blocks: invalid ring view");
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        let coeffs = self.ring_coeffs::<D>()?;
         let n = coeffs.len();
         let num_live_blocks = n.div_ceil(num_positions_per_block);
-        cfg_into_iter!(0..num_live_blocks)
+        Ok(cfg_into_iter!(0..num_live_blocks)
             .map(|i| {
                 let start = i * num_positions_per_block;
                 let end = (start + num_positions_per_block).min(n);
@@ -79,20 +75,18 @@ where
                 }
                 acc
             })
-            .collect()
+            .collect())
     }
 
     pub(crate) fn fold_blocks_ring<const D: usize>(
         &self,
         scalars: &[CyclotomicRing<F, D>],
         num_positions_per_block: usize,
-    ) -> Vec<CyclotomicRing<F, D>> {
-        let coeffs = self
-            .ring_coeffs::<D>()
-            .expect("DensePoly::fold_blocks_ring: invalid ring view");
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        let coeffs = self.ring_coeffs::<D>()?;
         let n = coeffs.len();
         let num_live_blocks = n.div_ceil(num_positions_per_block);
-        cfg_into_iter!(0..num_live_blocks)
+        Ok(cfg_into_iter!(0..num_live_blocks)
             .map(|i| {
                 let start = i * num_positions_per_block;
                 let end = (start + num_positions_per_block).min(n);
@@ -103,7 +97,7 @@ where
                 }
                 acc
             })
-            .collect()
+            .collect())
     }
 
     pub(crate) fn evaluate_and_fold<const D: usize>(
@@ -111,11 +105,11 @@ where
         live_block_weights: &[F],
         position_weights: &[F],
         num_positions_per_block: usize,
-    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        crate::sources::poly_helpers::fused_evaluate_and_fold_base(
-            self.fold_blocks::<D>(position_weights, num_positions_per_block),
+    ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
+        Ok(crate::sources::poly_helpers::fused_evaluate_and_fold_base(
+            self.fold_blocks::<D>(position_weights, num_positions_per_block)?,
             live_block_weights,
-        )
+        ))
     }
 
     pub(crate) fn evaluate_and_fold_subfield<const D: usize>(
@@ -127,7 +121,7 @@ where
         let live_block_weights = multipliers.materialize_fold_rings::<D>()?;
         Ok(
             crate::sources::poly_helpers::fused_evaluate_and_fold_materialized(
-                self.fold_blocks_ring(&position_weights, num_positions_per_block),
+                self.fold_blocks_ring(&position_weights, num_positions_per_block)?,
                 &live_block_weights,
             ),
         )
@@ -140,10 +134,8 @@ where
         num_positions_per_block: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> DecomposeFoldWitness {
-        let coeffs = self
-            .ring_coeffs::<D>()
-            .expect("DensePoly::decompose_fold: invalid ring view");
+    ) -> Result<DecomposeFoldWitness, AkitaError> {
+        let coeffs = self.ring_coeffs::<D>()?;
         let n = coeffs.len();
 
         if let Some(digit_planes) = self.digit_planes_for::<D>(num_digits, log_basis) {
@@ -157,7 +149,7 @@ where
                     log_basis,
                 )
             };
-            return DecomposeFoldWitness::from_centered_rows(coeff_accum);
+            return Ok(DecomposeFoldWitness::from_centered_rows(coeff_accum));
         }
 
         let params = BalancedDecomposePow2Params::new(num_digits, log_basis);
@@ -185,7 +177,7 @@ where
                         .collect()
                 };
 
-                return DecomposeFoldWitness::from_centered_rows(coeff_accum);
+                return Ok(DecomposeFoldWitness::from_centered_rows(coeff_accum));
             }
 
             let coeff_accum: Vec<[i32; D]> = {
@@ -213,7 +205,7 @@ where
                     .collect()
             };
 
-            return DecomposeFoldWitness::from_centered_rows(coeff_accum);
+            return Ok(DecomposeFoldWitness::from_centered_rows(coeff_accum));
         }
 
         let centered_coeffs = {
@@ -226,6 +218,6 @@ where
             )
         };
 
-        DecomposeFoldWitness::from_centered_rows(centered_coeffs)
+        Ok(DecomposeFoldWitness::from_centered_rows(centered_coeffs))
     }
 }

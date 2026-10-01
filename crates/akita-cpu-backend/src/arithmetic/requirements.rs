@@ -92,7 +92,9 @@ impl NttExecutionRequirements {
             if let Some(prefix) = &step.params.setup_prefix() {
                 requirements.add_setup_prefix_commitment(
                     level,
-                    &prefix.slot_id().expect("setup prefix group"),
+                    &prefix.slot_id().ok_or_else(|| {
+                        AkitaError::Internal("setup prefix group has no slot identity".into())
+                    })?,
                 )?;
                 requirements.add_precommitted_relation(level, prefix, num_chunks)?;
             }

@@ -13,6 +13,7 @@ pub(crate) mod sources;
 mod validation;
 
 use akita_algebra::CyclotomicRing;
+use akita_error::{checked, AkitaError};
 use akita_types::RingVec;
 use jolt_field::Field;
 
@@ -77,13 +78,12 @@ pub mod benchmark_support {
 /// parameters own the source-block and row boundaries.
 pub(crate) fn typed_inner_rows<F: Field, const D: usize>(
     recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
-) -> RingVec<F> {
-    let coefficient_count = recomposed_inner_rows
-        .iter()
-        .map(Vec::len)
-        .sum::<usize>()
-        .checked_mul(D)
-        .expect("trusted inner commitment output length must fit usize");
+) -> Result<RingVec<F>, AkitaError> {
+    let row_count = checked::sum(recomposed_inner_rows.iter().map(Vec::len))
+        .ok_or_else(|| AkitaError::Internal("inner commitment row count overflow".into()))?;
+    let coefficient_count = checked::product([row_count, D]).ok_or_else(|| {
+        AkitaError::Internal("inner commitment coefficient count overflow".into())
+    })?;
     let mut coefficients = Vec::with_capacity(coefficient_count);
     for block in recomposed_inner_rows {
         for row in block {
@@ -91,7 +91,6 @@ pub(crate) fn typed_inner_rows<F: Field, const D: usize>(
         }
     }
     RingVec::from_coeffs_with_ring_dim(coefficients, D)
-        .expect("typed inner commitment rows have valid ring storage")
 }
 
 #[cfg(test)]

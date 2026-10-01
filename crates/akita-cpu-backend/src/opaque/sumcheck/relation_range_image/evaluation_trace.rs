@@ -850,7 +850,11 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                     }
                 }
             }
-            _ => unreachable!("weight representations were preflighted above"),
+            _ => {
+                return Err(AkitaError::Internal(
+                    "preflighted stage-2 weight representations differ".into(),
+                ));
+            }
         }
         Ok(())
     }

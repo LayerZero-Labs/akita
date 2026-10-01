@@ -79,10 +79,7 @@ where
 pub(crate) fn try_small_i8_cache_from_ring_coeffs<F: Field + CanonicalEncoding, const D: usize>(
     coeffs: &[CyclotomicRing<F, D>],
 ) -> Option<Vec<[i8; D]>> {
-    let q = (-F::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
+    let q = (-F::one()).to_u128_checked()? + 1;
     let half_q = q / 2;
     let mut out = Vec::with_capacity(coeffs.len());
 
