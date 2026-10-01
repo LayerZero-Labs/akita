@@ -12,7 +12,7 @@
 #![allow(missing_docs)]
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
-use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use akita_types::{PolynomialGroupLayout, ScheduleLookupKey};
 
 fn catalog<Cfg: CommitmentConfig>() -> akita_config::TrustedScheduleCatalog<Cfg> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -34,7 +34,7 @@ struct RootShape {
 
 fn root_shape<Cfg: CommitmentConfig>(num_vars: usize) -> RootShape {
     let schedule = catalog::<Cfg>()
-        .resolve_key(&AkitaScheduleLookupKey::single(
+        .resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(num_vars),
         ))
         .expect("generated singleton schedule")
@@ -143,7 +143,7 @@ fn a_distinct_bound_is_a_distinct_catalog_identity() {
 
     // A bounded row cannot be resolved through the full-width config, because
     // the catalog identity is validated against the requesting policy.
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(24));
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(24));
     let bounded_bytes = bounded_catalog
         .to_artifact_bytes()
         .expect("bounded artifact");

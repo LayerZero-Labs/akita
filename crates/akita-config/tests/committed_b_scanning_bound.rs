@@ -7,9 +7,9 @@ use akita_config::{
 };
 use akita_schedules::{planner_support::planned_next_witness_len, ResolvedScheduleRow};
 use akita_types::{
-    sis::num_digits_open, AkitaScheduleLookupKey, BlockGeometry, CommittedGroupBatchProfile,
-    DecompositionParams, FoldSchedule, GadgetDigits, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, PolynomialGroupLayout, ScheduleSisBound, ScheduleSisRole,
+    sis::num_digits_open, BlockGeometry, CommittedGroupBatchProfile, DecompositionParams,
+    FoldSchedule, GadgetDigits, OpenCommitMatrixParams, OuterCommitMatrixParams,
+    PolynomialGroupLayout, ScheduleLookupKey, ScheduleSisBound, ScheduleSisRole,
     TerminalResponseShape,
 };
 
@@ -23,7 +23,7 @@ fn differing_basis_schedule<Cfg: CommitmentConfig>(
     let bytes = std::fs::read(path).expect("checked-in schedule artifact");
     let catalog = TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(&bytes).unwrap();
     let row = catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(
+        .resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(14),
         ))
         .unwrap();

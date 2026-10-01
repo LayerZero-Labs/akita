@@ -260,6 +260,7 @@ dependencies = [
 name = "akita-transcript"
 version = "0.1.0"
 dependencies = [
+ "akita-error",
  "jolt-field",
  "spongefish 0.7.4",
 ]

@@ -1,4 +1,4 @@
-//! Akita proof-of-work policy shared by native Spongefish replay.
+//! Akita proof-of-work policy shared by Spongefish replay.
 
 use std::num::NonZeroU8;
 

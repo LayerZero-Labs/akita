@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 #[cfg(feature = "logging-transcript")]
-pub(crate) mod native_mutations;
+pub(crate) mod mutations;
 mod opening_oracles;
 pub(crate) mod proof_size;
 #[path = "../../examples/support/workspace_schedules.rs"]
@@ -21,8 +21,8 @@ use akita_cpu_backend::{evaluate_root_polynomial, RootPolyShape};
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
 pub(super) use akita_prover::SelectedProverOpeningData;
 use akita_types::{
-    AkitaExpandedSetup, AkitaScheduleLookupKey, AkitaVerifierSetup, CommittedGroupBatchProfile,
-    FlatMatrix, GroupBatchStatement, PolynomialGroupLayout, SetupPrefixSlotId,
+    AkitaExpandedSetup, AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix,
+    GroupBatchStatement, PolynomialGroupLayout, ScheduleLookupKey, SetupPrefixSlotId,
     SetupPrefixVerifierRegistry,
 };
 pub(super) use akita_types::{
@@ -78,7 +78,7 @@ where
     FF: Field + CanonicalEncoding + CanonicalBytes + 'static,
 {
     let mut transcript =
-        akita_transcript::new_native_prover(b"akita/protocol-epoch/digest", payload).unwrap();
+        akita_transcript::new_prover_channel(b"akita/protocol-epoch/digest", payload).unwrap();
     akita_transcript::prover_context(
         &mut transcript,
         akita_transcript::ProtocolContextRecord::new(
@@ -91,10 +91,10 @@ where
             akita_transcript::ProtocolMessageKind::Challenge as u32,
             0,
             0,
-            akita_transcript::native_field_challenge_bytes::<FF>(),
+            akita_transcript::field_challenge_bytes::<FF>(),
         ),
     );
-    akita_transcript::native_prover_field_challenge::<FF>(&mut transcript)
+    akita_transcript::prover_field_challenge::<FF>(&mut transcript)
         .expect("supported protocol field")
         .to_bytes_le_vec()
         .iter()

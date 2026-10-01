@@ -345,5 +345,5 @@ including 253 blocks over 64 chunks and 61 blocks over 64 chunks.
   setup-index weights, and the verifier's
   [`setup_index_weight.rs`](../crates/akita-verifier/src/setup_contribution/setup_index_weight.rs)
   conditionally combines them into `SetupIndexWeightMle`.
-- [`evaluation_trace.rs`](../crates/akita-verifier/src/protocol/evaluation_trace.rs)
+- [`evaluation_trace.rs`](../crates/akita-verifier/src/relation/evaluation_trace.rs)
   contracts evaluation trace units and handles irregular dyadic chunks.

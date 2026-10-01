@@ -155,8 +155,8 @@ mod tests {
     use crate::build_riscv64_terminal_ntt_cache;
     use akita_config::proof_optimized::fp128::OneHot;
     use akita_types::{
-        verifier_setup_matrix_capacity_for_schedule, AkitaExpandedSetup, AkitaScheduleLookupKey,
-        AkitaSetupDescriptor, AkitaSetupSeed, FlatMatrix, FoldSchedule, PolynomialGroupLayout,
+        verifier_setup_matrix_capacity_for_schedule, AkitaExpandedSetup, AkitaSetupDescriptor,
+        AkitaSetupSeed, FlatMatrix, FoldSchedule, PolynomialGroupLayout, ScheduleLookupKey,
         SetupPrefixVerifierRegistry,
     };
     use jolt_field::Ring;
@@ -202,7 +202,7 @@ mod tests {
         let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
             .expect("workspace schedule catalog");
         let row = catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+            .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
                 15, 1,
             )))
             .expect("workspace fp128 schedule");

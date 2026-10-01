@@ -363,7 +363,7 @@ impl GroupCommitPhaseParams {
 /// store their only group in `final_group`. Multi-group roots list earlier
 /// groups in `precommitteds` and the final group in `final_group`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct AkitaScheduleLookupKey {
+pub struct ScheduleLookupKey {
     /// Final group shape for the multi-group root commitment.
     pub final_group: PolynomialGroupLayout,
     /// Previously committed groups in caller-supplied transcript order.
@@ -371,7 +371,7 @@ pub struct AkitaScheduleLookupKey {
 }
 
 /// Allocation-cached ordering key for deterministic schedule lookup and emission.
-pub type AkitaScheduleLookupOrderKey = (usize, usize, usize, Vec<Vec<u8>>);
+pub type ScheduleLookupOrderKey = (usize, usize, usize, Vec<Vec<u8>>);
 
 /// A non-empty ordered prefix of groups committed before a final group.
 ///
@@ -405,7 +405,7 @@ impl PrecommittedGroupProfiles {
     }
 }
 
-impl AkitaScheduleLookupKey {
+impl ScheduleLookupKey {
     /// Scalar root-opening context with no precommitted groups.
     pub fn single(final_group: PolynomialGroupLayout) -> Self {
         Self {
@@ -427,7 +427,7 @@ impl AkitaScheduleLookupKey {
     }
 
     /// Canonical ordering key, computed once before sorting or binary search.
-    pub fn canonical_order_key(&self) -> AkitaScheduleLookupOrderKey {
+    pub fn canonical_order_key(&self) -> ScheduleLookupOrderKey {
         (
             self.final_group.num_vars(),
             self.final_group.num_polynomials(),

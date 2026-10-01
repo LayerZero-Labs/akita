@@ -4,6 +4,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::SumcheckInstanceVerifier;
+use akita_types::GrindingReplay;
 use akita_types::{
     reconstruct_l2_sq_from_gram, FpExtEncoding, PhysicalL2NormProofShape, PhysicalResponsePlan,
     SisModulusProfileId,
@@ -16,7 +17,7 @@ pub(crate) struct PhysicalL2VerifierReplay<E: Field> {
     pub(crate) range_image_evaluation: E,
 }
 
-pub(crate) struct NativePhysicalL2RangeClaim<'a, E> {
+pub(crate) struct PhysicalL2RangeClaim<'a, E> {
     pub(crate) equality_point: &'a [E],
     pub(crate) input_claim: E,
     pub(crate) leaf_coefficients: &'a [E],
@@ -205,14 +206,14 @@ where
     Ok(())
 }
 
-/// Replay a physical-L2 proof directly from the native Spongefish stream.
+/// Replay a physical-L2 proof directly from the Spongefish stream.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_physical_l2_norm_native<F, E>(
+pub(crate) fn verify_physical_l2_norm<F, E>(
     plan: &PhysicalResponsePlan,
-    range: NativePhysicalL2RangeClaim<'_, E>,
+    range: PhysicalL2RangeClaim<'_, E>,
     profile: SisModulusProfileId,
     cap: u128,
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
 ) -> Result<PhysicalL2VerifierReplay<E>, AkitaError>
 where
@@ -231,21 +232,21 @@ where
             (layout.subclaim_count(), layout.limb_count())
         }
     };
-    let prefix = akita_types::native_l2_verifier_prefix::<F, E>(grinding, level, subclaim_count)?;
+    let mut subclaims = akita_transcript::extension_slots::<E>(subclaim_count)?;
+    let response_l2_sq = akita_types::l2_prefix::<F, E, _>(grinding, level, 0, &mut subclaims)?;
     let mut subclaim_weights = Vec::new();
     let norm_input_claim = match plan.shape() {
-        PhysicalL2NormProofShape::Direct { .. } => E::from_u128(prefix.response_l2_sq),
+        PhysicalL2NormProofShape::Direct { .. } => E::from_u128(response_l2_sq),
         PhysicalL2NormProofShape::LimbGram { .. } => {
             let gamma = grinding.grinded_ext_challenge::<F, E>(
                 akita_types::GrindingSite::L2SubclaimBatch { level },
             )?;
             let mut power = E::one();
-            for _ in 0..prefix.subclaims.len() {
+            for _ in 0..subclaims.len() {
                 subclaim_weights.push(power);
                 power *= gamma;
             }
-            prefix
-                .subclaims
+            subclaims
                 .iter()
                 .zip(&subclaim_weights)
                 .fold(E::zero(), |sum, (&claim, &weight)| sum + claim * weight)
@@ -254,35 +255,29 @@ where
     let norm_merge =
         grinding.grinded_ext_challenge::<F, E>(akita_types::GrindingSite::L2NormMerge { level })?;
     let input_claim = range.input_claim + norm_merge * norm_input_claim;
-    let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
+    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
         grinding,
         akita_types::SumcheckProtocol::PhysicalL2,
         level,
         0,
     );
-    let replay = akita_sumcheck::verify_sumcheck_rounds_native::<F, E, _>(
+    let replay = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
         &mut channel,
         0,
         input_claim,
-        akita_sumcheck::NativeSumcheckShape::new(
+        akita_sumcheck::SumcheckShape::new(
             plan.domain().num_vars(),
             range.leaf_coefficients.len(),
         )?,
     )?;
-    let virtual_evaluations = akita_types::native_l2_verifier_virtual_evaluations::<F, E>(
-        grinding,
-        level,
-        virtual_count,
-    )?;
-    let range_image_evaluation = akita_types::native_stage1_verifier_range_image::<F, E>(
-        grinding,
-        level,
-        range.range_stage,
-    )?;
+    let mut virtual_evaluations = akita_transcript::extension_slots::<E>(virtual_count)?;
+    akita_types::l2_virtual_evaluations::<F, E, _>(grinding, level, &mut virtual_evaluations)?;
+    let range_image_evaluation =
+        akita_types::stage1_range_image::<F, E, _>(grinding, level, range.range_stage, E::zero())?;
     validate_integer_claim::<F, E>(
         plan,
-        prefix.response_l2_sq,
-        &prefix.subclaims,
+        response_l2_sq,
+        &subclaims,
         &virtual_evaluations,
         profile,
         cap,

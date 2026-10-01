@@ -190,7 +190,7 @@ pub(super) fn terminal(
         .unwrap_or(certified_linf_cap);
     let response_shape =
         akita_types::TerminalResponseShape::derive(&terminal_params, encoding_scale)?;
-    let terminal_bytes = akita_types::native_terminal_response_planner_bytes(
+    let terminal_bytes = akita_types::terminal_response_planner_bytes(
         ctx.policy.decomposition.field_bits(),
         &response_shape,
         terminal_params.response_l2_sq_cap(),
@@ -208,7 +208,7 @@ pub(super) fn terminal(
             )?,
         ),
         first_direct_output_witness_len: 0,
-        cost: NativeProofCost::new(payload_bytes, 0, 0, 0)?,
+        cost: ProofCost::new(payload_bytes, 0, 0, 0)?,
         setup_field_elements: reference_terminal_setup_field_elements(&terminal_params)?,
         folds: CandidateFoldChain::default(),
         terminal: Arc::new(CandidateTerminalResponse {
@@ -273,7 +273,7 @@ pub(super) fn prepend_fold(
         .ok_or_else(|| AkitaError::InvalidSetup("unpruned fold work overflow".into()))?;
     let cost = child.cost.checked_prepend(
         direct_bytes,
-        edge_grinding_cost.native_nonce_max_bytes,
+        edge_grinding_cost.nonce_max_bytes,
         edge_grinding_cost.total_nonce_bits,
         edge_grinding_cost.expanded_query_count,
         work,
@@ -300,7 +300,7 @@ pub(super) fn prepend_fold(
 
 pub(super) fn prepend_root(
     policy: &PlannerPolicy,
-    schedule_key: &akita_types::AkitaScheduleLookupKey,
+    schedule_key: &akita_types::ScheduleLookupKey,
     input_witness_len: usize,
     root_params: &CommittedGroupParams,
     output_witness_len: usize,
@@ -347,7 +347,7 @@ pub(super) fn prepend_root(
         .ok_or_else(|| AkitaError::InvalidSetup("unpruned root work overflow".into()))?;
     let cost = suffix.cost.checked_prepend(
         root_bytes,
-        root_grinding_cost.native_nonce_max_bytes,
+        root_grinding_cost.nonce_max_bytes,
         root_grinding_cost.total_nonce_bits,
         root_grinding_cost.expanded_query_count,
         work,
@@ -399,7 +399,7 @@ pub(super) fn prepend_root(
     )?;
     let edge_wise_cost = candidate.cost.grinding_cost();
     if edge_wise_cost.total_nonce_bits != plan.total_nonce_bits()
-        || edge_wise_cost.native_nonce_max_bytes != plan.native_nonce_max_bytes()
+        || edge_wise_cost.nonce_max_bytes != plan.nonce_max_bytes()
         || edge_wise_cost.expanded_query_count != plan.expanded_query_count()
     {
         return Err(AkitaError::InvalidSetup(

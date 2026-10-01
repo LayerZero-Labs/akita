@@ -68,7 +68,7 @@ however, create more column intervals and repeated full-width Z contributions,
 so its concrete setup scan and bookkeeping cost grows with the response-chunk
 count. This is why the count is both a schedule parameter and a verifier-capped
 resource. Relation replay lives in
-`crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs`.
+`crates/akita-verifier/src/relation/evaluation.rs`.
 Prepared setup geometry and the shared setup scan live in
 `crates/akita-types/src/setup_contribution/`.
 
@@ -783,9 +783,9 @@ indexing that has not already been bounded; malformed input is rejected with
   block ranges.
 - `crates/akita-types/src/setup_contribution/` prepares the shared A, B, and D
   setup contribution.
-- `crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs`
+- `crates/akita-verifier/src/relation/evaluation.rs`
   combines structured, setup, quotient, and compression contributions.
-- `crates/akita-verifier/src/protocol/evaluation_trace.rs` evaluates the
+- `crates/akita-verifier/src/relation/evaluation_trace.rs` evaluates the
   opening trace over the same exact chunks.
 - `crates/akita-algebra/src/offset_eq/tensor_pair/` owns the paired equality
   contraction and its dense test oracle.

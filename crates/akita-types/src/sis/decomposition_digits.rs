@@ -138,10 +138,9 @@ pub(crate) fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
     let max_digit = base / 2 - 1;
     let base_minus_1 = base - 1;
 
-    let mut base_pow = 1u128;
-    for _ in 0..num_digits {
-        base_pow = base_pow.saturating_mul(base);
-    }
+    // `saturating_pow` squares, so a schedule-supplied `num_digits` costs
+    // `O(log n)`. `b >= 2`, so capping the exponent at `u32::MAX` still saturates.
+    let base_pow = base.saturating_pow(u32::try_from(num_digits).unwrap_or(u32::MAX));
 
     max_digit.saturating_mul(base_pow.saturating_sub(1) / base_minus_1)
 }
@@ -159,10 +158,15 @@ pub fn balanced_digit_abs_max(log_basis: u32, num_digits: usize) -> u128 {
     let base: u128 = 1u128 << log_basis;
     let max_abs_digit = base / 2;
 
+    // Stop once the series saturates, so a schedule-supplied `num_digits` costs
+    // at most `ceil(128 / log_basis) + 1` iterations rather than `num_digits`.
     let mut pow = 1u128;
     let mut series = 0u128;
     for _ in 0..num_digits {
         series = series.saturating_add(pow);
+        if series == u128::MAX {
+            break;
+        }
         pow = pow.saturating_mul(base);
     }
 
@@ -183,11 +187,10 @@ pub fn balanced_digit_abs_max(log_basis: u32, num_digits: usize) -> u128 {
 #[must_use]
 pub fn balanced_digit_interval_diameter(log_basis: u32, num_digits: usize) -> u128 {
     let base: u128 = 1u128 << log_basis;
-    let mut power = 1u128;
-    for _ in 0..num_digits {
-        power = power.saturating_mul(base);
-    }
-    power.saturating_sub(1)
+    // Squaring keeps a schedule-supplied `num_digits` at `O(log n)`; see
+    // `balanced_digit_max`.
+    base.saturating_pow(u32::try_from(num_digits).unwrap_or(u32::MAX))
+        .saturating_sub(1)
 }
 
 /// Minimum number of balanced base-`2^log_basis` digits needed to represent a
@@ -367,6 +370,79 @@ mod tests {
             );
         }
         assert_eq!(balanced_digit_interval_diameter(3, 2), 63);
+    }
+
+    /// Pins all three saturating series at and around their saturation points,
+    /// against closed forms in `2^(k·n)`, for every `log_basis` below 128.
+    ///
+    /// Once `b^n` saturates, `balanced_digit_max` divides `u128::MAX` and
+    /// `balanced_digit_interval_diameter` returns `u128::MAX - 1`; the oracles
+    /// pin that existing saturated output rather than the exact value.
+    #[test]
+    fn saturating_series_match_closed_forms_at_every_boundary() {
+        for log_basis in 1u32..=127 {
+            let base = 1u128 << log_basis;
+            // `1 + b + ... + b^(n-1) = (2^(k·n) - 1) / (b - 1)` for `k·n <= 128`.
+            let geometric = |bits: u64| {
+                (bits <= 128).then(|| {
+                    let power_minus_one = if bits == 128 {
+                        u128::MAX
+                    } else {
+                        (1u128 << bits) - 1
+                    };
+                    power_minus_one / (base - 1)
+                })
+            };
+            for num_digits in 0usize..=260 {
+                let bits = u64::from(log_basis) * num_digits as u64;
+                let power = if bits >= 128 {
+                    u128::MAX
+                } else {
+                    1u128 << bits
+                };
+                // Past `k·n = 128`, one more term `b · S_(n-1) + 1` either fits or
+                // saturates; `S_(n-1)` itself is `None` once `k·(n-1) > 128`.
+                let series = if bits <= 128 {
+                    geometric(bits)
+                } else {
+                    geometric(bits - u64::from(log_basis))
+                        .and_then(|below| below.checked_mul(base))
+                        .and_then(|below| below.checked_add(1))
+                };
+                let context = format!("log_basis={log_basis} num_digits={num_digits}");
+                assert_eq!(
+                    balanced_digit_interval_diameter(log_basis, num_digits),
+                    power.saturating_sub(1),
+                    "{context}"
+                );
+                assert_eq!(
+                    balanced_digit_max(log_basis, num_digits),
+                    (base / 2 - 1).saturating_mul(power.saturating_sub(1) / (base - 1)),
+                    "{context}"
+                );
+                assert_eq!(
+                    balanced_digit_abs_max(log_basis, num_digits),
+                    series.map_or(u128::MAX, |series| (base / 2).saturating_mul(series)),
+                    "{context}"
+                );
+            }
+            // Digit counts past `u32::MAX` exercise the capped exponent.
+            for num_digits in [
+                u32::MAX as usize,
+                (u32::MAX as usize).saturating_add(1),
+                usize::MAX,
+            ] {
+                assert_eq!(
+                    balanced_digit_interval_diameter(log_basis, num_digits),
+                    u128::MAX - 1
+                );
+                assert_eq!(
+                    balanced_digit_max(log_basis, num_digits),
+                    (base / 2 - 1).saturating_mul((u128::MAX - 1) / (base - 1))
+                );
+                assert_eq!(balanced_digit_abs_max(log_basis, num_digits), u128::MAX);
+            }
+        }
     }
 
     /// The checked reaches agree with the saturating ones inside `u128` and

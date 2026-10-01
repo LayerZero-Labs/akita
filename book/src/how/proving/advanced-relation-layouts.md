@@ -859,7 +859,7 @@ minimizing each dimension independently.
 Mixed dimensions compose with the two earlier axes without changing their
 ownership rules. Each commitment group owns its $\mathbf A$ and $\mathbf B$
 dimensions, while the consuming level owns the shared $\mathbf D$ dimension.
-Each chunk retains the native layouts of its group's
+Each chunk retains the layouts of its group's
 $[\hat{\mathbf z}\mid\hat{\mathbf e}\mid\hat{\mathbf t}]$ unit; chunking changes
 the block ranges and column support, not the ring assigned to a relation row.
 
