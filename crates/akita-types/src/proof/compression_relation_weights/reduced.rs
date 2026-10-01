@@ -61,7 +61,9 @@ impl<'a, F: Field> CompressionMapColumns<'a, F> {
 
     fn column(&self, column: usize) -> Result<(std::ops::Range<usize>, &[F]), AkitaError> {
         if column >= self.input_width {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "compression column index exceeds the checked input width".into(),
+            ));
         }
         let source_start = column
             .checked_mul(self.ring_dimension)
@@ -80,9 +82,9 @@ impl<'a, F: Field> CompressionMapColumns<'a, F> {
             .ok_or_else(|| AkitaError::InvalidSetup("compression map address overflow".into()))?;
         Ok((
             physical_start..physical_end,
-            self.row
-                .get(source_start..source_end)
-                .ok_or(AkitaError::InvalidProof)?,
+            self.row.get(source_start..source_end).ok_or_else(|| {
+                AkitaError::Internal("compression column exceeds the checked setup row".into())
+            })?,
         ))
     }
 }
@@ -120,16 +122,22 @@ impl<E: Field> EvaluatedReducedCompressionMatrix<E> {
     {
         let ring_dimension = columns.ring_dimension;
         let coefficient_bits = ring_dimension.trailing_zeros() as usize;
-        let low_point = point
-            .get(..coefficient_bits)
-            .ok_or(AkitaError::InvalidProof)?;
-        let high_point = point
-            .get(coefficient_bits..)
-            .ok_or(AkitaError::InvalidProof)?;
+        let low_point = point.get(..coefficient_bits).ok_or_else(|| {
+            AkitaError::Internal(
+                "reduced compression low point exceeds the checked point dimension".into(),
+            )
+        })?;
+        let high_point = point.get(coefficient_bits..).ok_or_else(|| {
+            AkitaError::Internal(
+                "reduced compression high point exceeds the checked point dimension".into(),
+            )
+        })?;
         let low_equality = EqPolynomial::evals(low_point)?;
         let high_equality = OffsetEqWindow::new(high_point)?;
         if low_equality.len() != ring_dimension {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "reduced compression equality table disagrees with the ring dimension".into(),
+            ));
         }
         let residue_point = ResidueKernelPoint::new(alpha, ring_dimension)?;
         let low_offset = columns.physical_start % ring_dimension;
@@ -146,27 +154,37 @@ impl<E: Field> EvaluatedReducedCompressionMatrix<E> {
                 .collect::<Result<Vec<_>, AkitaError>>()?;
             ReducedCompressionColumnEvaluations::Aligned(values)
         } else {
-            let first_len = ring_dimension
-                .checked_sub(low_offset)
-                .ok_or(AkitaError::InvalidProof)?;
+            let first_len = ring_dimension.checked_sub(low_offset).ok_or_else(|| {
+                AkitaError::Internal(
+                    "reduced compression low offset exceeds the ring dimension".into(),
+                )
+            })?;
             let mut first_equality = vec![E::zero(); ring_dimension];
             let mut second_equality = vec![E::zero(); ring_dimension];
             first_equality
                 .get_mut(..first_len)
-                .ok_or(AkitaError::InvalidProof)?
-                .copy_from_slice(
-                    low_equality
-                        .get(low_offset..)
-                        .ok_or(AkitaError::InvalidProof)?,
-                );
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "reduced compression first equality destination is too short".into(),
+                    )
+                })?
+                .copy_from_slice(low_equality.get(low_offset..).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "reduced compression first equality source is too short".into(),
+                    )
+                })?);
             second_equality
                 .get_mut(first_len..)
-                .ok_or(AkitaError::InvalidProof)?
-                .copy_from_slice(
-                    low_equality
-                        .get(..low_offset)
-                        .ok_or(AkitaError::InvalidProof)?,
-                );
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "reduced compression second equality destination is too short".into(),
+                    )
+                })?
+                .copy_from_slice(low_equality.get(..low_offset).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "reduced compression second equality source is too short".into(),
+                    )
+                })?);
             let first_kernel = residue_point.field_kernel(&first_equality)?;
             let second_kernel = residue_point.field_kernel(&second_equality)?;
             let values = (0..columns.input_width)
@@ -200,7 +218,9 @@ impl<E: Field> EvaluatedReducedCompressionMatrix<E> {
         E: Unreduced,
     {
         if physical_start % self.ring_dimension != self.low_offset {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "reduced compression cached matrix has a different low offset".into(),
+            ));
         }
         let high_start = physical_start / self.ring_dimension;
         if E::SUM_IS_EXACT {
@@ -208,19 +228,26 @@ impl<E: Field> EvaluatedReducedCompressionMatrix<E> {
             match &self.columns {
                 ReducedCompressionColumnEvaluations::Aligned(columns) => {
                     for (column, &value) in columns.iter().enumerate() {
-                        let high_index = high_start
-                            .checked_add(column)
-                            .ok_or(AkitaError::InvalidProof)?;
+                        let high_index = high_start.checked_add(column).ok_or_else(|| {
+                            AkitaError::Internal(
+                                "exact aligned compression high index overflow".into(),
+                            )
+                        })?;
                         evaluation += value.mul_unreduced(self.high_equality.eval(high_index));
                     }
                 }
                 ReducedCompressionColumnEvaluations::Split(columns) => {
                     for (column, &[first, second]) in columns.iter().enumerate() {
-                        let high_index = high_start
-                            .checked_add(column)
-                            .ok_or(AkitaError::InvalidProof)?;
-                        let next_high =
-                            high_index.checked_add(1).ok_or(AkitaError::InvalidProof)?;
+                        let high_index = high_start.checked_add(column).ok_or_else(|| {
+                            AkitaError::Internal(
+                                "exact split compression high index overflow".into(),
+                            )
+                        })?;
+                        let next_high = high_index.checked_add(1).ok_or_else(|| {
+                            AkitaError::Internal(
+                                "exact split compression next high index overflow".into(),
+                            )
+                        })?;
                         evaluation += first.mul_unreduced(self.high_equality.eval(high_index));
                         evaluation += second.mul_unreduced(self.high_equality.eval(next_high));
                     }
@@ -233,19 +260,21 @@ impl<E: Field> EvaluatedReducedCompressionMatrix<E> {
                 .iter()
                 .enumerate()
                 .try_fold(E::zero(), |evaluation, (column, &value)| {
-                    let high_index = high_start
-                        .checked_add(column)
-                        .ok_or(AkitaError::InvalidProof)?;
+                    let high_index = high_start.checked_add(column).ok_or_else(|| {
+                        AkitaError::Internal("aligned compression high index overflow".into())
+                    })?;
                     Ok(evaluation + value * self.high_equality.eval(high_index))
                 }),
             ReducedCompressionColumnEvaluations::Split(columns) => columns
                 .iter()
                 .enumerate()
                 .try_fold(E::zero(), |evaluation, (column, &[first, second])| {
-                    let high_index = high_start
-                        .checked_add(column)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let next_high = high_index.checked_add(1).ok_or(AkitaError::InvalidProof)?;
+                    let high_index = high_start.checked_add(column).ok_or_else(|| {
+                        AkitaError::Internal("split compression high index overflow".into())
+                    })?;
+                    let next_high = high_index.checked_add(1).ok_or_else(|| {
+                        AkitaError::Internal("split compression next high index overflow".into())
+                    })?;
                     Ok(evaluation
                         + first * self.high_equality.eval(high_index)
                         + second * self.high_equality.eval(next_high))
@@ -349,9 +378,11 @@ impl<E: Field> ReducedCompressionRelationWeights<E> {
                 )?);
                 evaluated_matrices.len() - 1
             };
-            let matrix = evaluated_matrices
-                .get(matrix_index)
-                .ok_or(AkitaError::InvalidProof)?;
+            let matrix = evaluated_matrices.get(matrix_index).ok_or_else(|| {
+                AkitaError::Internal(
+                    "evaluated reduced compression matrix cache entry is missing".into(),
+                )
+            })?;
             evaluation += event.row_weight * matrix.evaluate(columns.physical_start)?;
         }
         Ok(evaluation)
@@ -402,7 +433,11 @@ where
         .iter()
         .map(|row| row.geometry().polynomial_modulus_dimension())
         .max()
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::Internal(
+                "generated reduced compression rows have no modulus dimension".into(),
+            )
+        })?;
     let mut linear = CompressionRelationWeights {
         events: Vec::new(),
         alpha_powers: scalar_powers(alpha, maximum_dimension),
@@ -443,7 +478,11 @@ where
             continue;
         }
         let (group_index, map_index, span) = compression_span_for_row(witness_layout, family)?;
-        let row_weight = *row_weights.get(row_index).ok_or(AkitaError::InvalidProof)?;
+        let row_weight = *row_weights.get(row_index).ok_or_else(|| {
+            AkitaError::Internal(
+                "reduced compression row exceeds the generated row weight table".into(),
+            )
+        })?;
         maps.push(ReducedCompressionMapEvent {
             span: span.clone(),
             row_weight,
