@@ -2,20 +2,21 @@
 use crate::opaque::{NttExecutionRequirements, NttOperationCluster};
 use akita_config::proof_optimized::fp128;
 use akita_config::RecursiveCommitmentConfig;
-use akita_params::{AkitaScheduleLookupKey, InnerCommitMatrixParams, PolynomialGroupLayout};
+use akita_params::ScheduleLookupKey;
+use akita_params::{InnerCommitMatrixParams, PolynomialGroupLayout};
 use akita_types::{centered_quotient_requires_i16_tail, NttCacheKey, NttTransformDomain};
 
 type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
 fn w8r2_profiling_key(
     base_catalog: &akita_config::TrustedScheduleCatalog<fp128::OneHotMultiChunk>,
-) -> AkitaScheduleLookupKey {
+) -> ScheduleLookupKey {
     let pre_group = PolynomialGroupLayout::new(16, 1);
     let precommitted = base_catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(pre_group))
+        .resolve_key(&ScheduleLookupKey::single(pre_group))
         .expect("independent row")
         .profiles()
         .final_group;
-    AkitaScheduleLookupKey {
+    ScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![precommitted, precommitted],
     }

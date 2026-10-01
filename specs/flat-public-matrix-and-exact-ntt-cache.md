@@ -1448,7 +1448,7 @@ or pass-through aliases that recreate the old API.
 - `crates/akita-cpu-backend/src/opaque/backend.rs`
 - `crates/akita-cpu-backend/src/arithmetic/stack.rs`
 - `crates/akita-prover/src/setup.rs`
-- `crates/akita-verifier/src/protocol/core/terminal_ntt.rs`
+- `crates/akita-verifier/src/terminal/ntt.rs`
 - `crates/akita-setup/src/lib.rs`
 - `crates/akita-setup/src/recursive_prefixes.rs`
 - `book/src/usage/commitment-api.md`

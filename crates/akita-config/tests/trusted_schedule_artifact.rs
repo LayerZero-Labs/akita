@@ -335,9 +335,8 @@ fn trusted_artifact_round_trip_preserves_rows_and_selection() {
     let loaded = TrustedScheduleCatalog::<fp128::Dense>::from_artifact_bytes(&artifact)
         .expect("load trusted artifact");
 
-    let key = akita_params::AkitaScheduleLookupKey::single(
-        akita_params::PolynomialGroupLayout::new(14, 1),
-    );
+    let key =
+        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::new(14, 1));
     let checked_in_row = checked_in.resolve_key(&key).expect("checked-in row");
     let loaded_row = loaded.resolve_key(&key).expect("artifact row");
     assert_eq!(loaded.catalog_digest(), checked_in.catalog_digest());
@@ -820,5 +819,29 @@ fn unsupported_fold_group_log_basis_is_rejected_not_panicking() {
             first_recursive_group(value)["opening"]["log_basis_open"] = log_basis.into();
         });
         assert_rejected_as_invalid_setup::<Cfg>(&opening, "fold opening log_basis");
+    }
+}
+
+/// Admission must answer in bounded time. It runs on a worker thread so a
+/// regression to a digit-count-linear loop fails here instead of stalling CI.
+#[test]
+fn oversized_fold_digit_count_is_rejected() {
+    let bytes = edited_artifact::<fp128::Dense>(|value| {
+        value["rows"][0]["schedule"]["root"]["params"]["groups"]["entries"][0]["opening"]
+            ["num_digits_fold"] = u64::MAX.into();
+    });
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        assert_rejected_as_invalid_setup::<fp128::Dense>(&bytes, "num_digits_fold = u64::MAX");
+        let _ = done.send(());
+    });
+    match finished.recv_timeout(std::time::Duration::from_secs(30)) {
+        Ok(()) => {}
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            panic!("admission of num_digits_fold = u64::MAX did not finish within 30 s")
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("admission check panicked on the worker thread")
+        }
     }
 }

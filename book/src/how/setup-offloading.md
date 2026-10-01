@@ -236,7 +236,7 @@ panic.
 | Materialize required prefix commitments | `crates/akita-setup/src/recursive_prefixes.rs` |
 | Prove the setup product | `crates/akita-cpu-backend/src/opaque/sumcheck/stage3/` |
 | Verify Stage 3 | `crates/akita-verifier/src/stages/stage3.rs` |
-| Enforce the recursive fold handoff | `crates/akita-prover/src/protocol/prove/` and `crates/akita-verifier/src/protocol/core/` |
+| Enforce the recursive fold handoff | `crates/akita-prover/src/protocol/prove/` and `crates/akita-verifier/src/fold/` |
 
 The live planner contract is
 [`specs/setup-offloading-planner.md`](../../specs/setup-offloading-planner.md).

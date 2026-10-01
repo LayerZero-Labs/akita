@@ -1146,7 +1146,7 @@ let build_start = consumer.begin_recursive_witness(
     group_commitments,
 )?;
 
-send_native_field_group(
+send_field_group(
     grinding.state_mut(),
     ProtocolSiteId {
         family: SITE_FAMILY_OPENING_PAYLOAD,

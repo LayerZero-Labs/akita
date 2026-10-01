@@ -209,7 +209,7 @@ fn fp128_dense_mc() {
             akita_config::test_support::workspace_schedule_catalog::<fp128::DenseMultiChunk>()
                 .expect("dense multi-chunk catalog");
         let schedule = catalog
-            .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
                 akita_params::PolynomialGroupLayout::singleton(16),
             ))
             .expect("dense multi-chunk schedule")
@@ -291,7 +291,7 @@ fn fp128_onehot_mc_catalog_resolves() {
             .expect("one-hot multi-chunk catalog");
     let opening_batch = OpeningClaimsLayout::new(32, 1).expect("opening batch");
     catalog
-        .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
             opening_batch
                 .root_final_group_layout()
                 .expect("root group layout"),
@@ -463,7 +463,7 @@ fn fp128_onehot_oversized_setup() {
         let opening_batch = OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
         let layout = scheme
             .schedules()
-            .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
                 opening_batch
                     .root_final_group_layout()
                     .expect("singleton group layout"),

@@ -1,4 +1,4 @@
-use akita_error::AkitaError;
+use akita_error::{narrowing::usize_to_u64, AkitaError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SparseRingCoeff {
@@ -13,9 +13,7 @@ impl SparseRingCoeff {
             ));
         }
         Ok(Self {
-            flat_idx: u64::try_from(flat_idx).map_err(|_| {
-                AkitaError::InvalidInput("sparse flat coefficient index exceeds u64".into())
-            })?,
+            flat_idx: usize_to_u64(flat_idx, "sparse flat coefficient index")?,
         })
     }
 

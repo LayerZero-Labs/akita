@@ -2,7 +2,7 @@
 
 use crate::wire_limits::{checked_shape_len, checked_shape_sequence_len};
 use crate::InnerCommitSecurityRoute;
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_serialization::{SerializationError, Valid};
 use akita_sumcheck::{EqFactoredSumcheckProofShape, SumcheckProofShape};
 use jolt_field::{Field, Ring};
@@ -26,10 +26,7 @@ impl FlatBooleanDomain {
     /// Returns an error if the domain width overflows, the live prefix is
     /// empty, or the live prefix exceeds the Boolean domain.
     pub fn new(live_len: usize, num_vars: usize) -> Result<Self, AkitaError> {
-        let shift = u32::try_from(num_vars)
-            .map_err(|_| AkitaError::InvalidInput("Boolean domain width overflow".to_string()))?;
-        let domain_len = 1usize
-            .checked_shl(shift)
+        let domain_len = checked::pow2(num_vars)
             .ok_or_else(|| AkitaError::InvalidInput("Boolean domain width overflow".to_string()))?;
         if live_len == 0 || live_len > domain_len {
             return Err(AkitaError::InvalidSize {
@@ -84,7 +81,7 @@ impl FlatBooleanDomain {
 
 /// Headerless shape context for one stage in the stage-1 range-check tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AkitaStage1StageShape {
+pub struct Stage1StageShape {
     /// Eq-factored sumcheck shape `(num_rounds, q_degree)`.
     pub sumcheck_proof: EqFactoredSumcheckProofShape,
     /// Number of child claims serialized after the stage proof.
@@ -102,7 +99,7 @@ pub struct PhysicalL2NormProofWireShape {
     pub sumcheck: SumcheckProofShape,
 }
 
-impl Valid for AkitaStage1StageShape {
+impl Valid for Stage1StageShape {
     fn check(&self) -> Result<(), SerializationError> {
         checked_shape_len(self.sumcheck_proof.0)?;
         checked_shape_len(self.sumcheck_proof.1)?;
@@ -219,7 +216,7 @@ impl DigitRangePlan {
 
     /// The supported bases have at most two product stages and eight lanes.
     /// Every yielded stage is therefore complete, with no per-index failure.
-    fn stage_shapes_iter(self, rounds: usize) -> impl Iterator<Item = AkitaStage1StageShape> {
+    fn stage_shapes_iter(self, rounds: usize) -> impl Iterator<Item = Stage1StageShape> {
         let mut child_claims = 1;
         let products = self
             .product_stage_arities()
@@ -227,12 +224,12 @@ impl DigitRangePlan {
             .copied()
             .map(move |arity| {
                 child_claims *= arity;
-                AkitaStage1StageShape {
+                Stage1StageShape {
                     sumcheck_proof: (rounds, arity),
                     child_claims,
                 }
             });
-        products.chain(std::iter::once(AkitaStage1StageShape {
+        products.chain(std::iter::once(Stage1StageShape {
             sumcheck_proof: (rounds, self.leaf_degree()),
             child_claims: 0,
         }))
@@ -241,13 +238,13 @@ impl DigitRangePlan {
     /// Wire shape of one range subproof in transcript order.
     /// Returns `None` only when `stage_index` is outside this plan.
     #[must_use]
-    pub fn stage_shape(self, rounds: usize, stage_index: usize) -> Option<AkitaStage1StageShape> {
+    pub fn stage_shape(self, rounds: usize, stage_index: usize) -> Option<Stage1StageShape> {
         self.stage_shapes_iter(rounds).nth(stage_index)
     }
 
     /// Wire shapes of all range subproofs in transcript order.
     #[must_use]
-    pub fn stage_shapes(self, rounds: usize) -> Vec<AkitaStage1StageShape> {
+    pub fn stage_shapes(self, rounds: usize) -> Vec<Stage1StageShape> {
         self.stage_shapes_iter(rounds).collect()
     }
 
@@ -256,13 +253,7 @@ impl DigitRangePlan {
         self,
         rounds: usize,
         route: InnerCommitSecurityRoute,
-    ) -> Result<
-        (
-            Vec<AkitaStage1StageShape>,
-            Option<PhysicalL2NormProofWireShape>,
-        ),
-        AkitaError,
-    > {
+    ) -> Result<(Vec<Stage1StageShape>, Option<PhysicalL2NormProofWireShape>), AkitaError> {
         let shape = self.route_shape(rounds, route)?;
         Ok((
             shape.stages().collect(),
@@ -388,7 +379,7 @@ pub(crate) struct PhysicalL2NormShape {
 }
 
 impl DigitRangeRouteShape {
-    pub(crate) fn stages(self) -> impl Iterator<Item = AkitaStage1StageShape> {
+    pub(crate) fn stages(self) -> impl Iterator<Item = Stage1StageShape> {
         let count = if self.norm.is_some() {
             self.plan.product_stage_arities().len()
         } else {

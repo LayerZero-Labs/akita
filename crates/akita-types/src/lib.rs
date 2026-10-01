@@ -1,20 +1,22 @@
 //! Shared Akita wire values and protocol math.
 
+mod eor_sites;
 pub mod extension_opening_reduction;
 pub mod field_reduction;
+mod fold_sites;
 pub mod instance_descriptor;
-mod native_eor;
-mod native_l2;
-mod native_stage1;
-mod native_stage2;
-mod native_stage3;
+mod l2_sites;
 pub mod ntt_cache;
 pub mod opening_claims;
 pub mod proof;
 pub mod setup_contribution;
+mod stage1_sites;
+mod stage2_sites;
+mod stage3_sites;
 mod subring_coefficient_packing;
 pub mod trace_weight;
 mod transcript_grinding;
+pub use eor_sites::{eor_final_claims, eor_prefix, EorPrefix, EOR_SUMCHECK_INVOCATION};
 pub use extension_opening_reduction::{
     derive_tensor_extension_opening_claim_from_partials, tensor_equality_factor_eval_at_point,
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
@@ -24,29 +26,13 @@ pub use field_reduction::{
     embed_ring_subfield_vector, embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
     recover_ring_subfield_inner_product, trace_h, FpExtEncoding, SubfieldParams,
 };
+pub use fold_sites::FoldSite;
 pub use instance_descriptor::{
     digest_effective_schedule, digest_serializable, setup_seed_digest, AkitaInstanceDescriptor,
     AlgebraSection, CallSection, PlanSection, ProtocolFeatureSet, SetupSection,
     TranscriptGrindingBinding,
 };
-pub use native_eor::{
-    native_eor_prover_final_claims, native_eor_prover_prefix, native_eor_verifier_final_claims,
-    native_eor_verifier_prefix, NativeEorPrefix, NATIVE_EOR_SUMCHECK_INVOCATION,
-};
-pub use native_l2::{
-    native_l2_prover_prefix, native_l2_prover_virtual_evaluations, native_l2_verifier_prefix,
-    native_l2_verifier_virtual_evaluations, NativeL2Prefix,
-};
-pub use native_stage1::{
-    native_stage1_prover_child_claims, native_stage1_prover_range_image,
-    native_stage1_verifier_child_claims, native_stage1_verifier_range_image,
-};
-pub use native_stage2::{native_stage2_prover_w_eval, native_stage2_verifier_w_eval};
-pub use native_stage3::{
-    native_stage3_prover_claim, native_stage3_prover_prefix_eval, native_stage3_public_slot_prover,
-    native_stage3_public_slot_verifier, native_stage3_verifier_claim,
-    native_stage3_verifier_prefix_eval,
-};
+pub use l2_sites::{l2_prefix, l2_virtual_evaluations};
 pub use ntt_cache::{
     build_riscv64_scalar_q128_cache_artifact, centered_quotient_requires_i16_tail,
     centered_quotient_requires_i16_tail_for_field, decode_riscv64_scalar_q128_cache,
@@ -67,11 +53,11 @@ pub use proof::{
     prepare_coefficient_packing_batch_semantics, prepare_opening_point,
     relation_claim_from_compressed_rhs_extension, relation_claim_from_layout_extension,
     relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
-    relation_rhs_row_count, ring_subfield_packed_extension_opening_point, sample_akita_setup_seed,
-    sample_row_coefficients_native, setup_prefix_coverage_eval_len,
+    relation_rhs_row_count, ring_subfield_packed_extension_opening_point, row_coefficients,
+    sample_akita_setup_seed, setup_prefix_coverage_eval_len,
     validate_coefficient_packing_batch_groups, validate_public_matrix_matches_seed,
-    verify_row_coefficients_native, AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed,
-    AkitaVerifierSetup, CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
+    AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, AkitaVerifierSetup,
+    CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
     CoefficientPackingChallenges, CoefficientPackingGroupSemantics, Commitment, CommittedGroup,
     CompressionRelationWeights, DigitBlockIter, DigitBlocks, ExtensionOpeningReductionShape,
     GroupBatchStatement, GroupFoldChallenges, NegativeBinarySupport, OpeningClaims, OpeningFamily,
@@ -105,14 +91,17 @@ pub use setup_contribution::{
     PhysicalBSetupPlan, PhysicalBWeightSegment, PhysicalBWeightTerm, PreparedRelationAddress,
     SetupContributionGroupInputs, SetupContributionGroupPlan, SetupContributionPlan,
 };
+pub use stage1_sites::{stage1_child_claims, stage1_range_image};
+pub use stage2_sites::stage2_w_eval;
+pub use stage3_sites::{stage3_claim, stage3_prefix_eval, stage3_public_slot};
 pub use subring_coefficient_packing::PreparedSubringCoefficientPackingPoint;
 pub use trace_weight::{
     ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
     EvaluationTraceGroupParameters, EvaluationTraceInputs,
 };
 pub use transcript_grinding::{
-    NativeGrindingSumcheckProver, NativeGrindingSumcheckVerifier, NativeProofAcceptance,
-    NativeProverGrinding, NativeVerifierGrinding,
+    GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProofAcceptance,
+    ProverGrinding, VerifierGrinding,
 };
 
 #[cfg(test)]

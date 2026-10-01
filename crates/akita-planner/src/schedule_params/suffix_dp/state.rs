@@ -271,7 +271,7 @@ pub(crate) struct SuffixCtx<'a> {
         &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     pub(crate) key: PolynomialGroupLayout,
     pub(crate) setup_field_budget: Option<usize>,
-    pub(crate) root_lookup_key: Option<&'a AkitaScheduleLookupKey>,
+    pub(crate) root_lookup_key: Option<&'a ScheduleLookupKey>,
     /// Optional exact main-group root selected by an earlier scalar plan.
     ///
     /// Adapted grouped planning keeps this root's own A/B geometry and opening

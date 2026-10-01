@@ -403,7 +403,7 @@ multi-objective planner.
 The external catalog binds:
 
 ```text
-cost model      = NativeNoncePayloadAndSetupEnvelopeV2
+cost model      = NoncePayloadAndSetupEnvelopeV2
 uniform direct policy = MinEstimatedExactProofAndWorkV5
 adaptive direct policy = MinFirstDirectSetupThenExactProofAndWorkV5
 recursive policy = MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6

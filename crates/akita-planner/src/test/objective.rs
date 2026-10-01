@@ -153,7 +153,7 @@ fn objective_bounds_prune_only_strict_numeric_losses() {
     let incumbent = super::super::CandidateMetrics {
         first_direct_setup_capacity: super::super::SetupPrefixCapacity::for_natural_len(10),
         first_direct_output_witness_len: 1_000,
-        cost: super::super::NativeProofCost::new(20, 0, 0, 0).unwrap(),
+        cost: super::super::ProofCost::new(20, 0, 0, 0).unwrap(),
         setup_field_elements: 30,
     };
     assert!(CompleteObjectiveBound::SetupFirst {
@@ -262,8 +262,7 @@ fn complete_candidate(
     super::ScheduleCandidate {
         first_direct_setup_field_len: NonZeroUsize::new(1),
         first_direct_output_witness_len: output_witness_len,
-        cost: super::super::NativeProofCost::new(proof_bytes, 0, 0, output_witness_len as u128)
-            .unwrap(),
+        cost: super::super::ProofCost::new(proof_bytes, 0, 0, output_witness_len as u128).unwrap(),
         setup_field_elements,
         folds: CandidateFoldChain::default().prepend(
             akita_schedules::planner_support::CandidateFoldStep {

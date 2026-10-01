@@ -579,7 +579,7 @@ mod tests {
 
     fn policy() -> PlannerPolicy {
         PlannerPolicy {
-            cost_model: PlannerCostModelId::NativeNoncePayloadAndSetupEnvelopeV2,
+            cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
             selection_policy: SelectionPolicyId::MinEstimatedExactProofAndWorkV5,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,

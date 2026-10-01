@@ -17,7 +17,7 @@ pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
     eprintln!("[{label}] {phase}: {elapsed_s:.6}s");
 }
 
-pub(crate) fn print_native_proof_summary(
+pub(crate) fn print_proof_summary(
     label: &str,
     proof: &[u8],
     schedule: &FoldSchedule,
@@ -25,7 +25,7 @@ pub(crate) fn print_native_proof_summary(
 ) {
     grinding::emit_grinding_plan_report(label, grinding_plan);
     let levels = schedule.num_fold_levels();
-    let nonce_max_bytes = grinding_plan.native_nonce_max_bytes();
+    let nonce_max_bytes = grinding_plan.nonce_max_bytes();
     tracing::info!(
         label,
         levels,
@@ -39,11 +39,11 @@ pub(crate) fn print_native_proof_summary(
         nonce_max_bytes,
     );
     #[cfg(feature = "logging-transcript")]
-    print_native_wire_contexts(label);
+    print_wire_contexts(label);
 }
 
 #[cfg(feature = "logging-transcript")]
-fn print_native_wire_contexts(label: &str) {
+fn print_wire_contexts(label: &str) {
     use std::collections::BTreeMap;
 
     let mut wire = BTreeMap::<(u32, u32, u32), (u64, u64)>::new();
@@ -108,9 +108,9 @@ fn print_native_wire_contexts(label: &str) {
     }
 }
 
-pub(crate) fn emit_native_proof_tail_report(label: &str, schedule: &FoldSchedule, field_bits: u32) {
+pub(crate) fn emit_proof_tail_report(label: &str, schedule: &FoldSchedule, field_bits: u32) {
     let response = &schedule.terminal.response_shape;
-    let planned_bytes = akita_params::native_terminal_response_planner_bytes(
+    let planned_bytes = akita_params::terminal_response_planner_bytes(
         field_bits,
         response,
         schedule.terminal.response_l2_sq_cap(),

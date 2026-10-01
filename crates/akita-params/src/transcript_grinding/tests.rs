@@ -187,8 +187,8 @@ fn plan_encoding_covers_every_discriminator() {
     assert_eq!(
         plan.digest().unwrap(),
         [
-            243, 18, 27, 181, 52, 125, 49, 9, 184, 91, 129, 241, 103, 56, 49, 9, 225, 108, 72, 197,
-            195, 147, 93, 89, 73, 243, 7, 82, 236, 84, 39, 204,
+            23, 236, 97, 122, 19, 64, 167, 147, 169, 143, 37, 147, 216, 175, 71, 42, 8, 224, 38,
+            33, 26, 236, 47, 127, 109, 150, 186, 198, 151, 118, 193, 12,
         ]
     );
 }
@@ -266,7 +266,7 @@ fn planner_accumulator_prices_an_oversized_edge_without_plan_validation() {
         accumulator.cost(),
         TranscriptGrindingCost {
             total_nonce_bits: 0,
-            native_nonce_max_bytes: 0,
+            nonce_max_bytes: 0,
             expanded_query_count: TRANSCRIPT_GRINDING_QUERY_LIMIT,
         }
     );

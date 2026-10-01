@@ -65,7 +65,7 @@ the remaining work belongs to guest compilation, execution, or the Jolt prover.
 
 The decoder checks a format marker, the fixed source-view dimension, bounded
 lengths, complete consumption of the input, and a schedule-derived upper bound
-on the native proof stream before allocation. The guest then rebuilds the same
+on the proof stream before allocation. The guest then rebuilds the same
 opening statement used by the native verifier.
 
 The guest depends on `akita-verifier` rather than the complete PCS package. It

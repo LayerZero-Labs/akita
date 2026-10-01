@@ -285,7 +285,7 @@ mod tests {
                 let setup =
                     crate::AkitaProverSetup::<F>::generate_with_capacity(NV, 1, capacity).unwrap();
                 let row = catalog
-                    .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+                    .resolve_key(&akita_params::ScheduleLookupKey::single(
                         akita_params::PolynomialGroupLayout::new(NV, 1),
                     ))
                     .unwrap();
@@ -393,7 +393,7 @@ mod tests {
         const NV: usize = 14;
         let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
         let row = catalog
-            .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
                 akita_params::PolynomialGroupLayout::new(NV, 1),
             ))
             .unwrap();
@@ -436,7 +436,7 @@ mod tests {
         const WORKERS: usize = 8;
         let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
         let row = catalog
-            .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
                 akita_params::PolynomialGroupLayout::new(NV, 1),
             ))
             .unwrap();
@@ -488,6 +488,70 @@ mod tests {
                 .memoized(&id, || { panic!("successful retry must remain cached") })
                 .unwrap(),
             23
+        );
+    }
+
+    #[test]
+    fn panicking_prefix_derivation_releases_waiters_and_is_retriable() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        type Cfg = fp128::Dense;
+        const NV: usize = 14;
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
+        let row = catalog
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::new(NV, 1),
+            ))
+            .unwrap();
+        let params = &row.schedule().root.params;
+        let n_prefix = (params.d_a() * params.outer_slice_count().get()).next_power_of_two();
+        let prefix = akita_params::setup_prefix_precommitted_params(params, n_prefix).unwrap();
+        let id = akita_params::scheduled_setup_prefix(n_prefix, prefix)
+            .slot_id()
+            .unwrap();
+
+        let cache = Arc::new(super::super::backend::SetupPrefixCache::<u64>::default());
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let deriver = {
+            let cache = Arc::clone(&cache);
+            let id = id.clone();
+            std::thread::spawn(move || {
+                cache.memoized(&id, || {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    panic!("injected prefix derivation panic");
+                })
+            })
+        };
+        started_rx.recv().unwrap();
+
+        // Blocks on the in-flight slot, then must retry once the deriver unwinds.
+        let (waiter_tx, waiter_rx) = mpsc::channel();
+        let waiter = {
+            let cache = Arc::clone(&cache);
+            let id = id.clone();
+            std::thread::spawn(move || {
+                waiter_tx
+                    .send(cache.memoized(&id, || Ok(29)).map(|value| *value))
+                    .unwrap();
+            })
+        };
+        release_tx.send(()).unwrap();
+        assert!(deriver.join().is_err());
+        assert_eq!(
+            waiter_rx.recv_timeout(Duration::from_secs(30)).unwrap(),
+            Ok(29)
+        );
+        waiter.join().unwrap();
+
+        assert_eq!(cache.len().unwrap(), 1);
+        assert_eq!(
+            *cache
+                .memoized(&id, || panic!("successful retry must remain cached"))
+                .unwrap(),
+            29
         );
     }
 }

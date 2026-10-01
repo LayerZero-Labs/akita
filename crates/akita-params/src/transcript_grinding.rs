@@ -3,7 +3,7 @@
 use crate::descriptor_bytes::digest_descriptor_bytes;
 use crate::OpeningMethod;
 use akita_error::AkitaError;
-use akita_transcript::native_nonce_max_bytes;
+use akita_transcript::nonce_max_bytes;
 
 mod challenge_order;
 pub use akita_transcript::{
@@ -21,7 +21,7 @@ pub const FOLD_RESPONSE_ATTEMPTS: u32 = 1 << FOLD_RESPONSE_NONCE_BITS;
 /// Transcript-grinding binding encoding revision.
 pub const GRINDING_ENCODING_VERSION: u16 = 3;
 /// Query catalog and loss-policy revision.
-pub const GRINDING_QUERY_POLICY_REVISION: u16 = 3;
+pub const GRINDING_QUERY_POLICY_REVISION: u16 = 4;
 /// Indexed fold-coordinate oracle revision.
 pub const FOLD_COORDINATE_ORACLE_REVISION: u16 = 1;
 /// Exclusive upper bound on expanded transcript queries in a complete plan.
@@ -70,7 +70,7 @@ pub enum SumcheckProtocol {
 }
 
 impl SumcheckProtocol {
-    /// Canonical protocol discriminator stored in native sumcheck site identities.
+    /// Canonical protocol discriminator stored in sumcheck site identities.
     #[must_use]
     pub const fn tag(self) -> u32 {
         match self {
@@ -82,7 +82,7 @@ impl SumcheckProtocol {
         }
     }
 
-    /// Decode a canonical native sumcheck protocol discriminator.
+    /// Decode a canonical sumcheck protocol discriminator.
     #[must_use]
     pub const fn from_tag(tag: u32) -> Option<Self> {
         match tag {
@@ -152,7 +152,7 @@ pub enum GrindingSite {
 }
 
 impl GrindingSite {
-    pub fn native_site_id(self, detail: u32) -> akita_transcript::ProtocolSiteId {
+    pub fn site_id(self, detail: u32) -> akita_transcript::ProtocolSiteId {
         let mut site = akita_transcript::ProtocolSiteId {
             detail,
             ..akita_transcript::ProtocolSiteId::default()
@@ -542,7 +542,7 @@ pub struct GrindingPlan {
     pub runs: Vec<GrindingRun>,
     challenge_order: ChallengeFieldOrder,
     total_nonce_bits: usize,
-    native_nonce_max_bytes: usize,
+    nonce_max_bytes: usize,
     expanded_query_count: u64,
 }
 
@@ -551,8 +551,8 @@ pub struct GrindingPlan {
 pub struct TranscriptGrindingCost {
     /// Semantic nonce widths used for range checks and security accounting.
     pub total_nonce_bits: usize,
-    /// Maximum canonical native bytes emitted by the independently encoded nonces.
-    pub native_nonce_max_bytes: usize,
+    /// Maximum canonical bytes emitted by the independently encoded nonces.
+    pub nonce_max_bytes: usize,
     /// Number of logical transcript queries after expanding compact runs.
     pub expanded_query_count: u64,
 }
@@ -565,7 +565,7 @@ pub(crate) struct GrindingPlanAccumulator {
     challenge_order: ChallengeFieldOrder,
     run_count: u32,
     total_nonce_bits: usize,
-    native_nonce_max_bytes: usize,
+    nonce_max_bytes: usize,
     expanded_query_count: u64,
 }
 
@@ -575,7 +575,7 @@ impl GrindingPlanAccumulator {
             challenge_order,
             run_count: 0,
             total_nonce_bits: 0,
-            native_nonce_max_bytes: 0,
+            nonce_max_bytes: 0,
             expanded_query_count: 0,
         }
     }
@@ -610,7 +610,7 @@ impl GrindingPlanAccumulator {
             .checked_add(repeated_bits)
             .ok_or_else(|| AkitaError::InvalidSetup("grinding plan bit count overflow".into()))?;
         if run.nonce_bits != 0 {
-            let run_bytes = native_nonce_max_bytes(run.nonce_bits)
+            let run_bytes = nonce_max_bytes(run.nonce_bits)
                 .checked_mul(multiplicity)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("native grinding nonce byte count overflow".into())
@@ -618,12 +618,12 @@ impl GrindingPlanAccumulator {
             let repeated_bytes = run_bytes.checked_mul(repetitions as usize).ok_or_else(|| {
                 AkitaError::InvalidSetup("native grinding nonce byte count overflow".into())
             })?;
-            self.native_nonce_max_bytes = self
-                .native_nonce_max_bytes
+            self.nonce_max_bytes = self
+                .nonce_max_bytes
                 .checked_add(repeated_bytes)
                 .ok_or_else(|| {
-                AkitaError::InvalidSetup("native grinding nonce byte count overflow".into())
-            })?;
+                    AkitaError::InvalidSetup("native grinding nonce byte count overflow".into())
+                })?;
         }
         self.expanded_query_count = self
             .expanded_query_count
@@ -635,7 +635,7 @@ impl GrindingPlanAccumulator {
     pub(crate) const fn cost(&self) -> TranscriptGrindingCost {
         TranscriptGrindingCost {
             total_nonce_bits: self.total_nonce_bits,
-            native_nonce_max_bytes: self.native_nonce_max_bytes,
+            nonce_max_bytes: self.nonce_max_bytes,
             expanded_query_count: self.expanded_query_count,
         }
     }
@@ -661,7 +661,7 @@ impl GrindingPlan {
             runs,
             challenge_order,
             total_nonce_bits: cost.total_nonce_bits,
-            native_nonce_max_bytes: cost.native_nonce_max_bytes,
+            nonce_max_bytes: cost.nonce_max_bytes,
             expanded_query_count: cost.expanded_query_count,
         })
     }
@@ -683,10 +683,10 @@ impl GrindingPlan {
         self.total_nonce_bits
     }
 
-    /// Maximum bytes emitted by native inline proof-of-work and fold-response nonces.
+    /// Maximum bytes emitted by inline proof-of-work and fold-response nonces.
     #[must_use]
-    pub const fn native_nonce_max_bytes(&self) -> usize {
-        self.native_nonce_max_bytes
+    pub const fn nonce_max_bytes(&self) -> usize {
+        self.nonce_max_bytes
     }
 
     #[must_use]
@@ -731,6 +731,20 @@ pub fn multilinear_point_loss_factor(coordinates: usize) -> Result<u64, AkitaErr
 pub fn powers_batch_loss_factor(values: usize) -> Result<u64, AkitaError> {
     u64::try_from(values.saturating_sub(1).max(1))
         .map_err(|_| AkitaError::InvalidSetup("powers batch length exceeds u64".into()))
+}
+
+/// Loss for batching `values` claims with independently sampled coefficients.
+///
+/// Each of the `values` coefficients is a fresh, unnormalized field draw. The
+/// knowledge extractor separates the batched claims with a coordinate-wise
+/// tree: one base coefficient vector plus one sibling that changes a single
+/// coordinate, for `values + 1` children. That tree charges `values / |E|`.
+/// The one-shot bound `1 / |E|` for a fixed discrepancy vector does not price
+/// this site, because the extractor recovers each opening from the subtree
+/// below the challenge rather than fixing it before the draw.
+pub fn independent_batch_loss_factor(values: usize) -> Result<u64, AkitaError> {
+    u64::try_from(values.max(1))
+        .map_err(|_| AkitaError::InvalidSetup("independent batch length exceeds u64".into()))
 }
 
 /// Canonical ring-switch polynomial loss for one opening method.

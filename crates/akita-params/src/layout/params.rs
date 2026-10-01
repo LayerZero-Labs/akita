@@ -328,11 +328,17 @@ impl CommittedGroupParams {
         // layout. The stored own profile remains authoritative and is validated
         // above; exact layout equality is enforced wherever the batch has a
         // concrete final layout.
+        let mut previous_group = None;
         for group_index in 0..self.preceding_group_count() {
             let group_params = self
                 .preceding_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
-            group_params.validate()?;
+            // Repeated producers carry identical parameters. Their
+            // group-local checks run once per run of equal groups.
+            if previous_group != Some(group_params) {
+                group_params.validate()?;
+            }
+            previous_group = Some(group_params);
             if group_params.opening.log_basis_open != self.open().digits.log_basis {
                 return Err(AkitaError::InvalidSetup(
                     "all opening groups must use the batch-shared opening basis".to_string(),
@@ -500,12 +506,24 @@ impl CommittedGroupParams {
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
     ) -> Result<crate::GroupOpenPhaseParams, AkitaError> {
-        self.validate_opening_batch(opening_batch)?;
-        self.groups
-            .as_slice()
+        self.validated_groups(opening_batch)?
             .get(group_index)
             .copied()
             .ok_or(AkitaError::InvalidProof)
+    }
+
+    /// Every group of this fold's opening batch, after validating the batch
+    /// once.
+    ///
+    /// Callers that visit every group use this slice instead of calling
+    /// [`Self::group_params`] per index, which revalidates the whole batch on
+    /// each call.
+    pub fn validated_groups(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<&[crate::GroupOpenPhaseParams], AkitaError> {
+        self.validate_opening_batch(opening_batch)?;
+        Ok(self.groups.as_slice())
     }
 
     /// Resolve one group's structurally validated parameters without admitting
@@ -533,11 +551,13 @@ impl CommittedGroupParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<OpeningMethod, AkitaError> {
-        let first = self.group_params(opening_batch, 0)?.opening_method();
-        for group_index in 1..opening_batch.num_groups() {
-            let next = self
-                .group_params(opening_batch, group_index)?
-                .opening_method();
+        let groups = self.validated_groups(opening_batch)?;
+        let first = groups
+            .first()
+            .ok_or(AkitaError::InvalidProof)?
+            .opening_method();
+        for group in &groups[1..] {
+            let next = group.opening_method();
             let same_family = matches!(
                 (first, next),
                 (

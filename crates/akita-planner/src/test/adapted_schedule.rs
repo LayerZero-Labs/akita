@@ -126,7 +126,7 @@ fn assert_frozen_skeleton(main: &akita_params::FoldSchedule, adapted: &akita_par
 
 fn scalar_row(group: PolynomialGroupLayout) -> Result<ResolvedScheduleRow, AkitaError> {
     akita_config::test_support::workspace_schedule_catalog::<Dense>()?
-        .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .resolve_key(&ScheduleLookupKey::single(group))
         .cloned()
 }
 
@@ -138,7 +138,7 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
     let pre_group = PolynomialGroupLayout::singleton(14);
     let pre_row = scalar_row(pre_group).expect("scalar precommit row");
     let pre_profile = pre_row.profiles().final_group;
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group: main_group,
         precommitteds: vec![pre_profile],
     };
@@ -206,41 +206,39 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
 }
 
 #[test]
-fn adapted_schedule_rejects_oversized_precommit_width_before_search() {
-    let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
-        .expect("one-hot catalog");
-    let main_group = PolynomialGroupLayout::singleton(44);
-    let main_row = catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(main_group))
-        .expect("scalar main row");
-    let pre_profile = catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(14),
-        ))
-        .expect("scalar producer row")
+fn adapted_schedule_plans_many_interchangeable_producers() {
+    let policy = policy_of::<Dense>();
+    let main_group = PolynomialGroupLayout::singleton(24);
+    let main_row = scalar_row(main_group).expect("scalar main row");
+    let chunk_profile = scalar_row(PolynomialGroupLayout::singleton(14))
+        .expect("scalar chunk row")
         .profiles()
         .final_group;
-    let request = crate::emit::GroupedGenerationRequest::new(
-        main_group,
-        vec![producer::<OneHot>(pre_profile); MAX_ADAPTED_PRECOMMIT_WIDTH + 1],
-    );
-    let error = find_adapted_schedule(
-        main_row,
+    let image_profile = scalar_row(PolynomialGroupLayout::singleton(16))
+        .expect("scalar image row")
+        .profiles()
+        .final_group;
+    // 259 producers of two classes: more than any per-group opening
+    // enumeration can afford, as in a Jolt committed program with 258 bytecode
+    // chunks and one program image.
+    let mut precommitteds = vec![chunk_profile; 258];
+    precommitteds.push(image_profile);
+    let request = grouped_request::<DenseBounded>(main_group, &precommitteds);
+
+    let adapted = find_adapted_schedule(
+        &main_row,
         &request,
-        OneHot::committed_source_contract().unwrap(),
-        &policy_of::<OneHot>(),
-        |_| panic!("oversized request must reject before planner search"),
+        Dense::committed_source_contract().unwrap(),
+        &policy,
+        Dense::ring_challenge_config,
     )
-    .expect_err("oversized producer domain must fail at the public boundary");
-    let AkitaError::UnsupportedSchedule(message) = error else {
-        panic!("unexpected error: {error}");
-    };
-    assert_eq!(
-        message,
-        format!(
-            "adapted planning supports at most {MAX_ADAPTED_PRECOMMIT_WIDTH} precommitted producers, got {}",
-            MAX_ADAPTED_PRECOMMIT_WIDTH + 1
-        )
+    .expect("many interchangeable producers must adapt");
+    assert_frozen_skeleton(main_row.schedule(), &adapted.schedule);
+    let groups = adapted.schedule.root.params.precommitted_groups();
+    assert_eq!(groups.len(), 259);
+    assert!(
+        groups[..258].iter().all(|group| *group == groups[0]),
+        "interchangeable producers share one materialized opening"
     );
 }
 
@@ -261,7 +259,7 @@ fn adapted_schedule_rejects_non_grouped_or_mismatched_requests() {
     .expect_err("adaptation without precommits must fail");
     assert!(matches!(scalar_error, AkitaError::InvalidInput(_)));
 
-    let mismatch = AkitaScheduleLookupKey {
+    let mismatch = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(15),
         precommitteds: vec![main_row.profiles().final_group],
     };
@@ -286,7 +284,7 @@ fn adapted_schedule_forces_the_frozen_split_after_grouped_growth() {
         .expect("large scalar precommit row")
         .profiles()
         .final_group;
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group: main_group,
         precommitteds: vec![pre_profile; 4],
     };
@@ -304,32 +302,53 @@ fn adapted_schedule_forces_the_frozen_split_after_grouped_growth() {
 }
 
 #[test]
-fn adapted_schedule_fails_when_the_frozen_suffix_cannot_absorb_the_change() {
+fn adapted_schedule_falls_back_to_the_full_search_when_the_frozen_suffix_is_infeasible() {
     let policy = policy_of::<OneHot>();
     let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
         .expect("one-hot catalog");
-    let main_group = PolynomialGroupLayout::singleton(14);
+    let main_group = PolynomialGroupLayout::singleton(16);
     let main_row = catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(main_group))
+        .resolve_key(&ScheduleLookupKey::single(main_group))
         .expect("scalar main row");
     let pre_profile = catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(44),
+        .resolve_key(&ScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(14),
         ))
-        .expect("very large scalar precommit row")
+        .expect("scalar precommit row")
         .profiles()
         .final_group;
-    let request = grouped_request::<OneHot>(main_group, &[pre_profile; 4]);
+    let request = grouped_request::<OneHot>(main_group, &[pre_profile]);
+    let key = request.key();
+    let source_contracts = request.source_contracts();
 
-    let error = find_adapted_schedule(
+    let guided = find_adapted_schedule_for_key(
+        main_row,
+        &key,
+        OneHot::committed_source_contract().unwrap(),
+        &source_contracts,
+        &policy,
+        OneHot::ring_challenge_config,
+    )
+    .expect_err("the frozen suffix cannot absorb this precommit");
+    assert!(matches!(guided, AkitaError::UnsupportedSchedule(_)));
+
+    let adapted = find_adapted_schedule(
         main_row,
         &request,
         OneHot::committed_source_contract().unwrap(),
         &policy,
         OneHot::ring_challenge_config,
     )
-    .expect_err("four very large precommits cannot fit the frozen suffix");
-    assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
+    .expect("adaptation falls back to the full search");
+    let full = find_schedule(
+        &key,
+        OneHot::committed_source_contract().unwrap(),
+        &source_contracts,
+        &policy,
+        OneHot::ring_challenge_config,
+    )
+    .expect("full search");
+    assert_eq!(adapted.schedule, full.schedule);
 }
 
 #[test]
@@ -347,9 +366,9 @@ fn adapted_schedule_rebuilds_a_checked_in_onehot_group_shape() {
         .cloned()
         .expect("checked-in grouped reference row");
     let main_row = catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(final_group))
+        .resolve_key(&ScheduleLookupKey::single(final_group))
         .expect("standalone main row");
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group,
         precommitteds: reference.profiles().precommitteds.clone(),
     };
@@ -386,7 +405,7 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
             .expect("recursive one-hot catalog");
     let main_group = PolynomialGroupLayout::singleton(36);
     let main_row = recursive_catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(main_group))
+        .resolve_key(&ScheduleLookupKey::single(main_group))
         .expect("recursive standalone main row");
     assert!(main_row
         .schedule()
@@ -395,13 +414,13 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
         .any(|fold| fold.params.setup_prefix().is_some()));
     let pre_profile = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
         .expect("one-hot catalog")
-        .resolve_key(&AkitaScheduleLookupKey::single(
+        .resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(14),
         ))
         .expect("standalone precommit row")
         .profiles()
         .final_group;
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group: main_group,
         precommitteds: vec![pre_profile],
     };
@@ -444,7 +463,7 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
 }
 
 #[test]
-#[ignore = "manual cold guided-adaptation and full-DP benchmark"]
+#[ignore = "manual cold guided-search and full-DP benchmark"]
 fn benchmark_adapted_schedule_against_full_plans() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
         .expect("one-hot catalog");
@@ -488,7 +507,7 @@ fn benchmark_adapted_schedule_against_full_plans() {
     for (name, (main_vars, main_polys), pre_layouts, expect_success) in cases {
         let main_group = PolynomialGroupLayout::new(main_vars, main_polys);
         let main_row = catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(main_group))
+            .resolve_key(&ScheduleLookupKey::single(main_group))
             .expect("standalone main row");
         let precommitteds = pre_layouts
             .iter()
@@ -499,7 +518,7 @@ fn benchmark_adapted_schedule_against_full_plans() {
                     catalog.catalog()
                 };
                 producer_catalog
-                    .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+                    .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
                         vars, polys,
                     )))
                     .expect("standalone producer row")
@@ -507,7 +526,7 @@ fn benchmark_adapted_schedule_against_full_plans() {
                     .final_group
             })
             .collect::<Vec<_>>();
-        let key = AkitaScheduleLookupKey {
+        let key = ScheduleLookupKey {
             final_group: main_group,
             precommitteds,
         };
@@ -526,10 +545,11 @@ fn benchmark_adapted_schedule_against_full_plans() {
             .collect::<Vec<_>>();
         let request = crate::emit::GroupedGenerationRequest::new(main_group, producers);
         let started = std::time::Instant::now();
-        let result = find_adapted_schedule(
+        let result = find_adapted_schedule_for_key(
             main_row,
-            &request,
+            &key,
             OneHot::committed_source_contract().unwrap(),
+            &request.source_contracts(),
             &policy,
             OneHot::ring_challenge_config,
         );
@@ -571,13 +591,13 @@ fn benchmark_adapted_schedule_against_full_plans() {
                 admitted
                     .resolve_key(&key)
                     .expect("successful adaptation must resolve from the admitted catalog");
-                let adapted_bytes = akita_schedules::expanded_schedule_native_proof_estimate_bytes(
+                let adapted_bytes = akita_schedules::expanded_schedule_proof_estimate_bytes(
                     &key,
                     &adapted.schedule,
                     &policy,
                 )
                 .expect("adapted payload bytes");
-                let full_bytes = akita_schedules::expanded_schedule_native_proof_estimate_bytes(
+                let full_bytes = akita_schedules::expanded_schedule_proof_estimate_bytes(
                     &key, &reference, &policy,
                 )
                 .expect("full-plan payload bytes");
@@ -594,5 +614,49 @@ fn benchmark_adapted_schedule_against_full_plans() {
                 eprintln!("{name}\tfail:{error}\t{micros}\t{full_millis}\t-\t-\t-\t-\t-")
             }
         }
+    }
+}
+
+#[test]
+#[ignore = "manual interchangeable-producer scaling benchmark"]
+fn benchmark_interchangeable_producer_scaling() {
+    let policy = policy_of::<Dense>();
+    let main_group = PolynomialGroupLayout::singleton(24);
+    let main_row = scalar_row(main_group).expect("scalar main row");
+    let chunk_profile = scalar_row(PolynomialGroupLayout::singleton(14))
+        .expect("scalar chunk row")
+        .profiles()
+        .final_group;
+    let image_profile = scalar_row(PolynomialGroupLayout::singleton(16))
+        .expect("scalar image row")
+        .profiles()
+        .final_group;
+
+    eprintln!("chunks\tadapted_millis\tfull_millis");
+    for chunks in [1usize, 2, 4, 8, 16, 64, 256] {
+        let mut precommitteds = vec![chunk_profile; chunks];
+        precommitteds.push(image_profile);
+        let request = grouped_request::<DenseBounded>(main_group, &precommitteds);
+        let started = std::time::Instant::now();
+        find_adapted_schedule(
+            &main_row,
+            &request,
+            Dense::committed_source_contract().unwrap(),
+            &policy,
+            Dense::ring_challenge_config,
+        )
+        .expect("adapted schedule");
+        let adapted_millis = started.elapsed().as_millis();
+        let started = std::time::Instant::now();
+        find_schedule(
+            &request.key(),
+            Dense::committed_source_contract().unwrap(),
+            &request.source_contracts(),
+            &policy,
+            Dense::ring_challenge_config,
+        )
+        .expect("full schedule");
+        let full_millis = started.elapsed().as_millis();
+        eprintln!("{chunks}\t{adapted_millis}\t{full_millis}");
     }
 }

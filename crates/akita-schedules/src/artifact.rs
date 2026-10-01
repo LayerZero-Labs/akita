@@ -3,10 +3,10 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_params::{
-    digest_descriptor_bytes, AkitaScheduleLookupKey, AkitaScheduleLookupOrderKey,
-    CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
+    digest_descriptor_bytes, CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
     AKITA_INSTANCE_DESCRIPTOR_VERSION,
 };
+use akita_params::{ScheduleLookupKey, ScheduleLookupOrderKey};
 use serde::de::{self, DeserializeSeed, SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -130,7 +130,7 @@ pub struct ValidatedScheduleCatalog {
     policy_digest: [u8; 32],
     catalog_digest: [u8; 32],
     rows_by_digest: Vec<ResolvedScheduleRow>,
-    rows_by_key: Vec<(AkitaScheduleLookupOrderKey, usize)>,
+    rows_by_key: Vec<(ScheduleLookupOrderKey, usize)>,
 }
 
 impl ValidatedScheduleCatalog {
@@ -380,10 +380,7 @@ impl ValidatedScheduleCatalog {
     }
 
     /// Resolve the canonical honest prover row for a runtime key.
-    pub fn resolve_key(
-        &self,
-        key: &AkitaScheduleLookupKey,
-    ) -> Result<&ResolvedScheduleRow, AkitaError> {
+    pub fn resolve_key(&self, key: &ScheduleLookupKey) -> Result<&ResolvedScheduleRow, AkitaError> {
         self.resolve_key_matching(key, None)
     }
 
@@ -397,7 +394,7 @@ impl ValidatedScheduleCatalog {
 
     fn resolve_key_matching(
         &self,
-        key: &AkitaScheduleLookupKey,
+        key: &ScheduleLookupKey,
         exact_profiles: Option<&CommittedGroupBatchProfile>,
     ) -> Result<&ResolvedScheduleRow, AkitaError> {
         let order_key = key.canonical_order_key();
@@ -698,7 +695,7 @@ fn write_indent<W: Write + ?Sized>(writer: &mut W, depth: usize) -> io::Result<(
     Ok(())
 }
 
-fn unsupported_schedule_lookup(key: &AkitaScheduleLookupKey, exact_profiles: bool) -> AkitaError {
+fn unsupported_schedule_lookup(key: &ScheduleLookupKey, exact_profiles: bool) -> AkitaError {
     AkitaError::UnsupportedSchedule(if exact_profiles {
         "no trusted schedule row matches the exact committed profiles".to_string()
     } else {
@@ -730,8 +727,8 @@ fn validate_family_name(family_name: &str) -> Result<(), AkitaError> {
     Ok(())
 }
 
-fn key_for_profiles(profiles: &CommittedGroupBatchProfile) -> AkitaScheduleLookupKey {
-    AkitaScheduleLookupKey {
+fn key_for_profiles(profiles: &CommittedGroupBatchProfile) -> ScheduleLookupKey {
+    ScheduleLookupKey {
         final_group: profiles.final_group.group,
         precommitteds: profiles.precommitteds.clone(),
     }

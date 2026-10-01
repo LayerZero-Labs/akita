@@ -669,12 +669,9 @@ where
             &(),
         )?;
         let verifier_setup = decode_setup(&mut rest, bytes.len())?;
-        let proof_bound = Self::native_proof_byte_bound::<Cfg>(schedule_selection, schedules)?;
-        let proof = Self::decode_capped_bytes(
-            &mut rest,
-            proof_bound,
-            "akita-jolt native proof stream",
-        )?;
+        let proof_bound = Self::proof_byte_bound::<Cfg>(schedule_selection, schedules)?;
+        let proof =
+            Self::decode_capped_bytes(&mut rest, proof_bound, "akita-jolt native proof stream")?;
         reject_trailing_bytes(rest)?;
         let inputs = Self {
             case,
@@ -694,7 +691,7 @@ where
         Ok(inputs)
     }
 
-    fn native_proof_byte_bound<Cfg>(
+    fn proof_byte_bound<Cfg>(
         schedule_selection: OpeningScheduleSelection,
         schedules: &TrustedScheduleCatalog<Cfg>,
     ) -> Result<usize, SerializationError>
@@ -704,11 +701,11 @@ where
         let resolved = schedules
             .resolve_selection(schedule_selection)
             .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-        let key = akita_params::AkitaScheduleLookupKey {
+        let key = akita_params::ScheduleLookupKey {
             final_group: resolved.profiles().final_group.group,
             precommitteds: resolved.profiles().precommitteds.clone(),
         };
-        akita_schedules::expanded_schedule_native_proof_bound(
+        akita_schedules::expanded_schedule_proof_bound(
             &key,
             resolved.schedule(),
             &akita_config::policy_of::<Cfg>(),

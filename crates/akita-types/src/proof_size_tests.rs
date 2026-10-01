@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    //! Legacy structured-fixture cross-checks for the native fixed-message
-    //! layout. End-to-end native emission and parser-bound reconciliation live
+    //! Legacy structured-fixture cross-checks for the fixed-message
+    //! layout. End-to-end emission and parser-bound reconciliation live
     //! in the PCS transcript-hardening and protocol-soundness suites.
 
     use akita_params::proof_size::*;
@@ -72,14 +72,14 @@ mod tests {
             successor_ring_dimension,
             output_witness_len,
         )?;
-        native_nonterminal_level_layout(
+        nonterminal_level_layout(
             base_field_bits,
             challenge_field_bits,
             lp,
             relation_geometry,
             next_outer_payload,
         )
-        .and_then(NativeNonterminalLevelLayout::encoded_len)
+        .and_then(NonterminalLevelLayout::encoded_len)
     }
 
     fn terminal_response_fixture(
@@ -410,7 +410,7 @@ mod tests {
         assert!(successor_padded_terminal_eor > stale_terminal_eor);
 
         assert_eq!(
-            native_nonterminal_level_layout(
+            nonterminal_level_layout(
                 128,
                 128,
                 &current,
@@ -424,7 +424,7 @@ mod tests {
                     .unwrap(),
                 Some(&successor),
             )
-            .and_then(NativeNonterminalLevelLayout::encoded_len)
+            .and_then(NonterminalLevelLayout::encoded_len)
             .unwrap(),
             exact_level_proof_bytes::<F, F>(
                 &current,
@@ -721,7 +721,7 @@ mod tests {
     fn stage3_payload_is_additive_over_direct_level_bytes() {
         // The recursive stage-3 setup-product proof is pure overhead layered on
         // top of the direct-mode payload: a level proof carrying it must
-        // serialize to exactly the direct native level layout plus
+        // serialize to exactly the direct level layout plus
         // `stage3_setup_product_bytes`, with no other field affected.
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
@@ -832,7 +832,7 @@ mod tests {
             let serialized_without_witness =
                 terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
 
-            // Native nonce messages are accounted separately.
+            // Nonce messages are accounted separately.
             assert_eq!(
                 0, serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \

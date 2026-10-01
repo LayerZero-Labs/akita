@@ -12,7 +12,7 @@ use crate::workspace_schedules::load_workspace_scheme;
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_params::{
-    AkitaScheduleLookupKey, CommittedGroupParams, MultiChunkProfileId, PolynomialGroupLayout,
+    CommittedGroupParams, MultiChunkProfileId, PolynomialGroupLayout, ScheduleLookupKey,
     SetupContributionMode,
 };
 use akita_pcs::AkitaCommitmentScheme;
@@ -48,7 +48,7 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
     let layout = resolve_layout(scheme.schedules(), group);
     let plan = scheme
         .schedules()
-        .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .resolve_key(&ScheduleLookupKey::single(group))
         .expect("schedule plan")
         .schedule()
         .clone();
@@ -85,7 +85,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let layout = resolve_layout(scheme.schedules(), group);
     let plan = scheme
         .schedules()
-        .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .resolve_key(&ScheduleLookupKey::single(group))
         .expect("schedule plan")
         .schedule()
         .clone();
@@ -136,14 +136,14 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         }
         let plan = scheme
             .schedules()
-            .resolve_key(&AkitaScheduleLookupKey::single(group))
+            .resolve_key(&ScheduleLookupKey::single(group))
             .expect("schedule plan")
             .schedule()
             .clone();
         print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
         run_onehot::<FF, D, Cfg>(&scheme, label, nv, &layout, Some(&plan), true);
     } else {
-        let lookup_key = AkitaScheduleLookupKey::single(group);
+        let lookup_key = ScheduleLookupKey::single(group);
         let plan = scheme
             .schedules()
             .resolve_key(&lookup_key)
@@ -447,7 +447,7 @@ fn run_profile_onehot_fp128_with_cfg<
     let group = PolynomialGroupLayout::new(nv, 1);
     let schedule = scheme
         .schedules()
-        .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .resolve_key(&ScheduleLookupKey::single(group))
         .expect("generated fp128 one-hot schedule")
         .schedule()
         .clone();
@@ -652,7 +652,7 @@ fn resolve_layout<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> CommittedGroupParams {
     catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .resolve_key(&ScheduleLookupKey::single(group))
         .expect("layout")
         .schedule()
         .root

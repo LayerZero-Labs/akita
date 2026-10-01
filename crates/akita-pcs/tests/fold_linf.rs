@@ -28,7 +28,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         akita_params::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
     let row = scheme
         .schedules()
-        .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
             opening_layout
                 .root_final_group_layout()
                 .expect("singleton group layout"),
@@ -117,7 +117,7 @@ impl FoldLinfGrindFixture {
 }
 
 #[test]
-fn fold_linf_grinding_round_trips_through_native_messages() {
+fn fold_linf_grinding_round_trips_through_messages() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let fixture = prove_fold_linf_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_01);
@@ -128,7 +128,7 @@ fn fold_linf_grinding_round_trips_through_native_messages() {
 }
 
 #[test]
-fn native_grinding_stream_rejects_mutation_truncation_and_trailing_bytes() {
+fn grinding_stream_rejects_mutation_truncation_and_trailing_bytes() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let fixture = prove_fold_linf_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_02);

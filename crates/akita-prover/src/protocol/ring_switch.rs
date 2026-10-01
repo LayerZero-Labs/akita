@@ -2,6 +2,7 @@
 use akita_error::AkitaError;
 use akita_params::CommittedGroupParams;
 use akita_types::FpExtEncoding;
+use akita_types::GrindingReplay;
 use akita_types::{
     CoefficientPackingBatchSemantics, OpeningFamily, RelationRangeImagePlan, RingRelationInstance,
 };
@@ -49,7 +50,7 @@ pub(crate) struct RingSwitchFinalization<'a, E: Field, RelationHandle> {
 pub(crate) fn ring_switch_finalize<'a, F, E, B>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
     instance: &RingRelationInstance<F>,
-    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     witness_handle: &B::WitnessHandle,
     lp: &CommittedGroupParams,

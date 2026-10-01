@@ -234,7 +234,7 @@ pub fn build_riscv64_terminal_ntt_cache<F: Field + CanonicalEncoding>(
 mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128::OneHot;
-    use akita_params::{AkitaScheduleLookupKey, FlatMatrix, PolynomialGroupLayout};
+    use akita_params::{FlatMatrix, PolynomialGroupLayout, ScheduleLookupKey};
     use akita_types::{
         prepared_verifier_ntt_cache_metadata, AkitaExpandedSetup, AkitaSetupDescriptor,
         SetupPrefixVerifierRegistry,
@@ -257,7 +257,7 @@ mod tests {
         let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
             .expect("workspace schedule catalog");
         let row = catalog
-            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+            .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
                 15, 1,
             )))
             .expect("workspace fp128 schedule");

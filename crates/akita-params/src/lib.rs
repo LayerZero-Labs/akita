@@ -13,7 +13,6 @@ pub use dispatch::{
 };
 pub mod golomb_rice;
 pub mod layout;
-pub mod narrowing;
 pub mod proof_size;
 mod ring_relation_mode;
 pub mod schedule;
@@ -47,38 +46,37 @@ pub use layout::{
     active_setup_field_len, basis_weights, basis_weights_prefix, checked_opening_source_index,
     commit_only_setup_field_elements, commitment_execution_setup_field_elements,
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
-    gadget_row_scalars, lagrange_weights, monomial_weights, native_terminal_response_max_bytes,
-    native_terminal_response_planner_bytes, opening_d_segment_width, opening_domain_len,
-    padded_boolean_opening_vars, padded_setup_prefix_len, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, scheduled_setup_prefix, setup_matrix_capacity_for_schedule,
-    setup_matrix_field_elements_for_schedule, setup_prefix_precommitted_params,
-    setup_prefix_slot_field_elements, shared_d_digit_log_basis, suffix_opening_layout,
-    sumcheck_rounds, terminal_response_bytes, terminal_response_upper_bound_bytes,
+    gadget_row_scalars, lagrange_weights, monomial_weights, opening_d_segment_width,
+    opening_domain_len, padded_boolean_opening_vars, padded_setup_prefix_len,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, scheduled_setup_prefix,
+    setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
+    setup_prefix_precommitted_params, setup_prefix_slot_field_elements, shared_d_digit_log_basis,
+    suffix_opening_layout, sumcheck_rounds, terminal_response_bytes, terminal_response_max_bytes,
+    terminal_response_planner_bytes, terminal_response_upper_bound_bytes,
     try_extension_opening_reduction_level_bytes, validate_role_dims, validate_schedule_ring_dims,
     validate_setup_prefix_domain, verifier_setup_matrix_capacity_for_schedule,
-    witness_commitment_domain_len, AkitaStage1StageShape, BasisMode, BlockGeometry,
-    CommitmentRingDims, CommitmentSetupMatrixShape, CommittedGroupParams,
-    CompressionRelationAddressGeometry, DigitRangePlan, FlatBooleanDomain, FlatMatrix,
-    GadgetDigits, GroupOpenPhaseParams, GroupOpeningPlan, InnerRoleParams, OpenRoleParams,
-    OpeningClaimsLayout, OpeningMethod, OuterRoleParams, PolynomialGroupLayout,
-    PrecommittedGroupAdmissionPolicy, RelationAddressGeometry, RelationGroupRows,
-    RelationRhsLayout, RelationRowFamily, RelationRowGeometry, RelationWitnessGeometry,
-    RingMatrixView, RingOpeningPoint, RingRole, RoleParams, SetupMatrixCapacity, SetupPrefixSlotId,
-    SetupProjectionGeometry, SubringCoefficientPackingGeometry, TailSegmentGroupLayout,
-    TailSegmentLayout, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE, MAX_FOLD_LEVELS,
+    witness_commitment_domain_len, BasisMode, BlockGeometry, CommitmentRingDims,
+    CommitmentSetupMatrixShape, CommittedGroupParams, CompressionRelationAddressGeometry,
+    DigitRangePlan, FlatBooleanDomain, FlatMatrix, GadgetDigits, GroupOpenPhaseParams,
+    GroupOpeningPlan, InnerRoleParams, OpenRoleParams, OpeningClaimsLayout, OpeningMethod,
+    OuterRoleParams, PolynomialGroupLayout, PrecommittedGroupAdmissionPolicy,
+    RelationAddressGeometry, RelationGroupRows, RelationRhsLayout, RelationRowFamily,
+    RelationRowGeometry, RelationWitnessGeometry, RingMatrixView, RingOpeningPoint, RingRole,
+    RoleParams, SetupMatrixCapacity, SetupPrefixSlotId, SetupProjectionGeometry, Stage1StageShape,
+    SubringCoefficientPackingGeometry, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE, MAX_FOLD_LEVELS,
     MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
     SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
 };
-pub use proof_size::{native_nonterminal_level_layout, NativeNonterminalLevelLayout};
+pub use proof_size::{nonterminal_level_layout, NonterminalLevelLayout};
 pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
 pub use schedule::{
-    detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleLookupKey,
-    AkitaScheduleLookupOrderKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldParams,
-    FoldSchedule, FoldScheduleDescriptorStep, FoldScheduleEstimate, FoldSuccessor,
-    GroupCommitPhaseParams, NextWitnessBindingPolicy, PlannedFoldSchedule,
-    PrecommittedGroupProfiles, ScheduleSisBound, ScheduleSisOccurrence, ScheduleSisRole,
-    TerminalFoldParams, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN,
-    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
+    detect_field_modulus, r_decomp_levels, root_input_witness_len, CommittedGroupBatchProfile,
+    CommittedSourceEncoding, FoldParams, FoldSchedule, FoldScheduleDescriptorStep,
+    FoldScheduleEstimate, FoldSuccessor, GroupCommitPhaseParams, NextWitnessBindingPolicy,
+    PlannedFoldSchedule, PrecommittedGroupProfiles, ScheduleLookupKey, ScheduleLookupOrderKey,
+    ScheduleSisBound, ScheduleSisOccurrence, ScheduleSisRole, TerminalFoldParams,
+    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use signed_digit::{
@@ -93,13 +91,14 @@ pub use sis::{
 };
 pub use tail_golomb_rice_low_bits::{rice_low_bits_for_cap, wire_rice_low_bits};
 pub use transcript_grinding::{
-    grind_bits_for_loss, multilinear_point_loss_factor, polynomial_identity_loss_factor,
-    powers_batch_loss_factor, ring_switch_alpha_loss_factor, ChallengeFieldOrder, GrindingPlan,
-    GrindingQueryKind, GrindingRun, GrindingSite, SumcheckProtocol, TranscriptGrindingCost,
-    FOLD_COORDINATE_ORACLE_REVISION, FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS,
-    GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
-    GRINDING_PREDICATE_BYTES, GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS,
-    TRANSCRIPT_GRINDING_QUERY_LIMIT, TRANSCRIPT_SECURITY_BITS,
+    grind_bits_for_loss, independent_batch_loss_factor, multilinear_point_loss_factor,
+    polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
+    ChallengeFieldOrder, GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite,
+    SumcheckProtocol, TranscriptGrindingCost, FOLD_COORDINATE_ORACLE_REVISION,
+    FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS, GRINDING_ENCODING_VERSION,
+    GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
+    GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS, TRANSCRIPT_GRINDING_QUERY_LIMIT,
+    TRANSCRIPT_SECURITY_BITS,
 };
 pub use transcript_grinding_plan::{
     derive_transcript_grinding_plan_from_public_shape, transcript_grinding_cost_for_planner_edge,

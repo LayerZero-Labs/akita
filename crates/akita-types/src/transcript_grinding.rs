@@ -1,8 +1,8 @@
-//! Native transcript-grinding replay.
+//! Transcript-grinding replay.
 
-#[path = "transcript_grinding/native_replay.rs"]
-mod native_replay;
-pub use native_replay::{
-    NativeGrindingSumcheckProver, NativeGrindingSumcheckVerifier, NativeProofAcceptance,
-    NativeProverGrinding, NativeVerifierGrinding,
+#[path = "transcript_grinding/replay.rs"]
+mod replay;
+pub use replay::{
+    GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProofAcceptance,
+    ProverGrinding, VerifierGrinding,
 };

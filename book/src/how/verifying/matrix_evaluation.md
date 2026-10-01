@@ -351,9 +351,9 @@ materialized relation table.
 - Residue and terminal coefficient functionals:
   `crates/akita-algebra/src/ring/residue.rs`.
 - Verifier preparation:
-  `crates/akita-verifier/src/protocol/ring_switch.rs`.
+  `crates/akita-verifier/src/relation/mod.rs`.
 - Final point evaluation:
-  `crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs`.
+  `crates/akita-verifier/src/relation/evaluation.rs`.
 - Setup contribution:
   `crates/akita-types/src/setup_contribution/`.
 

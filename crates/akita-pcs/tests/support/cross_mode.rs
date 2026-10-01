@@ -3,8 +3,7 @@
 use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog, ValidatedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_params::{
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, GroupCommitPhaseParams,
-    OpeningScheduleSelection,
+    CommittedGroupBatchProfile, GroupCommitPhaseParams, OpeningScheduleSelection, ScheduleLookupKey,
 };
 use akita_planner::{find_schedule_for_test_relation_mode, TestRelationModeFilter};
 
@@ -18,7 +17,7 @@ pub(crate) struct CrossModeCatalogs<Cfg: CommitmentConfig> {
 }
 
 fn planned_row<Base: CommitmentConfig>(
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
     relation_modes: TestRelationModeFilter,
 ) -> Result<(CommittedGroupBatchProfile, akita_params::FoldSchedule), AkitaError> {
     if !key.precommitteds.is_empty() {
@@ -48,7 +47,7 @@ fn planned_row<Base: CommitmentConfig>(
 
 /// Plan and admit quotient-only and adaptive rows without ambient registries.
 pub(crate) fn cross_mode_catalogs<Base: CommitmentConfig>(
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
 ) -> Result<CrossModeCatalogs<Base>, AkitaError> {
     let (quotient_profiles, quotient_schedule) =
         planned_row::<Base>(key, TestRelationModeFilter::QuotientOnly)?;

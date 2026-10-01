@@ -4,9 +4,8 @@
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
-use akita_params::{
-    validate_schedule_ring_dims, AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout,
-};
+use akita_params::ScheduleLookupKey;
+use akita_params::{validate_schedule_ring_dims, FoldSchedule, PolynomialGroupLayout};
 
 fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
@@ -20,7 +19,7 @@ fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
         }
     };
     catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .resolve_key(&ScheduleLookupKey::single(group))
         .expect("runtime schedule")
         .schedule()
         .clone()

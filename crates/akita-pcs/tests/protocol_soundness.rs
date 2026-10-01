@@ -5,8 +5,8 @@ use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::{CommitmentHandle, CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;
 use akita_params::{
-    lagrange_weights, AkitaScheduleLookupKey, BasisMode, CommittedGroupBatchProfile,
-    OpeningScheduleSelection, PolynomialGroupLayout,
+    lagrange_weights, BasisMode, CommittedGroupBatchProfile, OpeningScheduleSelection,
+    PolynomialGroupLayout, ScheduleLookupKey,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
@@ -25,9 +25,8 @@ use rand::{Rng, SeedableRng};
 mod common;
 use common::load_workspace_scheme;
 #[cfg(feature = "logging-transcript")]
-use common::native_mutations::{
-    assert_native_ranges_match_context, representative_native_mutation_ranges,
-    selected_sumcheck_protocols,
+use common::mutations::{
+    assert_ranges_match_context, representative_mutation_ranges, selected_sumcheck_protocols,
 };
 
 const STACK_SIZE: usize = 256 * 1024 * 1024;
@@ -99,7 +98,7 @@ fn verify_input<'a, Cfg: CommitmentConfig>(
     .expect("valid verifier statement")
 }
 
-type NativeFixture<F, E> = (
+type Fixture<F, E> = (
     AkitaVerifierSetup<F>,
     CommittedGroup<F>,
     Vec<u8>,
@@ -112,7 +111,7 @@ fn make_dense_fixture<F, Cfg>(
     scheme: &AkitaCommitmentScheme<Cfg>,
     num_vars: usize,
     label: &'static [u8],
-) -> NativeFixture<F, Cfg::ExtField>
+) -> Fixture<F, Cfg::ExtField>
 where
     F: CanonicalBytes
         + CanonicalEncoding
@@ -183,7 +182,7 @@ where
     (verifier_setup, commitment, proof, point, opening, selection)
 }
 
-fn assert_native_soundness_boundaries<F, Cfg>(num_vars: usize, label: &'static [u8])
+fn assert_soundness_boundaries<F, Cfg>(num_vars: usize, label: &'static [u8])
 where
     F: CanonicalBytes
         + CanonicalEncoding
@@ -208,13 +207,13 @@ where
     #[cfg(feature = "logging-transcript")]
     let proof_ranges = akita_transcript::thread_proof_ranges();
     #[cfg(feature = "logging-transcript")]
-    assert_native_ranges_match_context(&proof_ranges);
+    assert_ranges_match_context(&proof_ranges);
     let resolved = scheme
         .schedules()
         .resolve_selection(selection)
         .expect("selected schedule");
-    let native_bound = akita_schedules::expanded_schedule_native_proof_bound(
-        &AkitaScheduleLookupKey {
+    let bound = akita_schedules::expanded_schedule_proof_bound(
+        &ScheduleLookupKey {
             final_group: resolved.profiles().final_group.group,
             precommitteds: resolved.profiles().precommitteds.clone(),
         },
@@ -223,7 +222,7 @@ where
     )
     .expect("native proof bound");
     assert!(
-        proof.len() <= native_bound,
+        proof.len() <= bound,
         "valid native proof exceeds its schedule-derived parser bound"
     );
     let verify = |candidate: &[u8], claimed: Cfg::ExtField, session: &[u8]| {
@@ -255,7 +254,7 @@ where
 
     #[cfg(feature = "logging-transcript")]
     let mutation_offsets = {
-        let by_role = representative_native_mutation_ranges(proof_ranges);
+        let by_role = representative_mutation_ranges(proof_ranges);
         assert!(
             !by_role.is_empty(),
             "native proof must expose fixed-shape semantic-role ranges"
@@ -326,19 +325,16 @@ where
 }
 
 #[test]
-fn fp128_native_stream_rejects_statement_session_and_proof_mutations() {
+fn fp128_stream_rejects_statement_session_and_proof_mutations() {
     run_on_large_stack(|| {
-        assert_native_soundness_boundaries::<fp128::Field, fp128::Dense>(
-            14,
-            b"soundness/fp128-native",
-        );
+        assert_soundness_boundaries::<fp128::Field, fp128::Dense>(14, b"soundness/fp128-native");
     });
 }
 
 #[test]
-fn fp32_extension_native_stream_rejects_statement_session_and_proof_mutations() {
+fn fp32_extension_stream_rejects_statement_session_and_proof_mutations() {
     run_on_large_stack(|| {
-        assert_native_soundness_boundaries::<fp32::Field, fp32::Dense>(
+        assert_soundness_boundaries::<fp32::Field, fp32::Dense>(
             20,
             b"soundness/fp32-extension-native",
         );
@@ -352,10 +348,10 @@ fn small_field_dense_uncataloged_roots_fail_fast() {
     let fp64_catalog = akita_config::test_support::workspace_schedule_catalog::<fp64::Dense>()
         .expect("fp64 dense catalog");
     for result in [
-        fp32_catalog.resolve_key(&AkitaScheduleLookupKey::single(
+        fp32_catalog.resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(8),
         )),
-        fp64_catalog.resolve_key(&AkitaScheduleLookupKey::single(
+        fp64_catalog.resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(9),
         )),
     ] {
@@ -369,7 +365,7 @@ fn small_field_dense_uncataloged_roots_fail_fast() {
 #[test]
 fn tiny_roots_and_setup_capacities_are_rejected() {
     let scheme = load_workspace_scheme::<fp128::Dense>().expect("workspace schedule catalog");
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(4));
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(4));
     assert!(matches!(
         scheme.schedules().resolve_key(&key),
         Err(akita_error::AkitaError::UnsupportedSchedule(_))

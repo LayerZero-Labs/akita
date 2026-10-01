@@ -58,8 +58,8 @@ graph TD
   Algebra --> Error
   Algebra --> Field
   Algebra --> Ser
+  Transcript --> Error
   Transcript --> Field
-  Transcript --> Ser
   Challenges --> Error
   Challenges --> Field
   Challenges --> Transcript

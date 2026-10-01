@@ -379,6 +379,6 @@ quotient checked by the verifier.
   expands those semantics into local Stage 2 term tables.
 - `crates/akita-verifier/src/coefficient_packing_relation/` builds the
   verifier's compact factors from the same validated groups.
-- `crates/akita-verifier/src/protocol/core/fold/` replays the relation and
+- `crates/akita-verifier/src/fold/` replays the relation and
   rejects a proof whose dimensions or quotient structure do not match the
   selected schedule.

@@ -19,7 +19,7 @@ impl<E: Field> CompiledStage2Weights<E> {
     /// Reduced evaluations can absorb the addend in place. Quotient-factored
     /// weights retain the sparse additional-term representation used by their
     /// sumcheck path.
-    fn absorb_response_norm_weights(&mut self, weights: Vec<E>) -> Result<(), AkitaError> {
+    fn add_response_norm_weights(&mut self, weights: Vec<E>) -> Result<(), AkitaError> {
         match &mut self.ordinary {
             RelationWeightDescription::ReducedEvaluations { evaluations, .. } => {
                 let destination = evaluations
@@ -313,7 +313,7 @@ where
             let equality = OffsetEqWindow::new(norm.point)?;
             let response_norm =
                 materialize_eq_tensor_left(&equality, &families, plan.witness_len())?;
-            compiled.absorb_response_norm_weights(response_norm)?;
+            compiled.add_response_norm_weights(response_norm)?;
         }
     }
     Ok(compiled)
@@ -463,7 +463,7 @@ mod tests {
             binary_intervals: Vec::new(),
         };
         compiled
-            .absorb_response_norm_weights(response_norm)
+            .add_response_norm_weights(response_norm)
             .expect("response-norm table fits reduced relation table");
 
         let RelationWeightDescription::ReducedEvaluations { evaluations, .. } = compiled.ordinary
@@ -500,7 +500,7 @@ mod tests {
             binary_intervals: Vec::new(),
         };
         compiled
-            .absorb_response_norm_weights(response_norm)
+            .add_response_norm_weights(response_norm)
             .expect("sparse route remains valid");
         assert_eq!(compiled.linear, expected);
     }
@@ -517,7 +517,7 @@ mod tests {
             binary_intervals: Vec::new(),
         };
         assert!(matches!(
-            compiled.absorb_response_norm_weights(vec![extension(2); 3]),
+            compiled.add_response_norm_weights(vec![extension(2); 3]),
             Err(AkitaError::InvalidProof)
         ));
     }

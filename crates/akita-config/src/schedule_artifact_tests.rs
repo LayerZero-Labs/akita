@@ -189,7 +189,8 @@ fn catalog_binding_revalidates_recursive_setup_prefix_challenge_hook() {
 fn dense_recursive_artifacts_cover_benchmark_sizes_and_offload_setup() {
     use crate::proof_optimized::{fp32, fp64};
     use crate::recursive_commitment::RecursiveScheduleConfig;
-    use akita_params::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+    use akita_params::PolynomialGroupLayout;
+    use akita_params::ScheduleLookupKey;
 
     fn check<Cfg: RecursiveScheduleConfig>(sizes: &[usize]) {
         type Recursive<C> = RecursiveCommitmentConfig<C>;
@@ -198,7 +199,7 @@ fn dense_recursive_artifacts_cover_benchmark_sizes_and_offload_setup() {
         assert_eq!(catalog.rows().count(), sizes.len());
         let mut offloaded = 0;
         for &num_vars in sizes {
-            let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
+            let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
             let row = catalog.resolve_key(&key).expect("benchmark size present");
             if row
                 .schedule()

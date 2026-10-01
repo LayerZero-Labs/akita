@@ -8,6 +8,7 @@ use akita_challenges::Challenges;
 use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
 use akita_params::{CommittedGroupParams, SignedDigitKernel, MAX_I8_LOG_BASIS};
+use akita_types::GrindingReplay;
 #[cfg(test)]
 use akita_types::RingRelationGroupOpening;
 use akita_types::RingVec;
@@ -144,7 +145,7 @@ impl RingRelationProver {
             F,
         >,
         lp: CommittedGroupParams,
-        grinding: &mut akita_types::NativeProverGrinding<'_>,
+        grinding: &mut akita_types::ProverGrinding<'_>,
         level: u32,
         reduction: &Option<crate::protocol::prove::ExtensionOpeningReduction<PointF>>,
         scalar_openings: &[PointF],
@@ -251,21 +252,18 @@ impl RingRelationProver {
         {
             return Err(AkitaError::InvalidProof);
         }
-        akita_transcript::send_native_field_group(
+        akita_transcript::send_field_group(
             grinding.state_mut(),
-            akita_transcript::ProtocolSiteId {
-                family: akita_transcript::SITE_FAMILY_OPENING_PAYLOAD,
+            akita_types::FoldSite::OpeningPayload {
                 level,
-                detail: u32::try_from(opening_payload_ring_dimension)
-                    .map_err(|_| AkitaError::InvalidSetup("ring dimension exceeds u32".into()))?,
-                ..akita_transcript::ProtocolSiteId::default()
-            },
+                ring_dimension: opening_payload_ring_dimension,
+            }
+            .id()?,
             opening_payload.coeffs(),
-        )
-        .map_err(|_| AkitaError::InvalidProof)?;
+        )?;
         drop(opening_rows_span);
 
-        // Native public claim batching is intentionally delayed until every
+        // Public claim batching is intentionally delayed until every
         // opening digit has been bound through the complete D/H payload above.
         // Extension EOR supplies its already-bound coefficients because its
         // shared reduced point and final relation depend on that earlier batch.

@@ -12,8 +12,8 @@ mod sis_occurrences;
 mod sizing;
 
 pub use profiles::{
-    AkitaScheduleLookupKey, AkitaScheduleLookupOrderKey, CommittedGroupBatchProfile,
-    CommittedSourceEncoding, GroupCommitPhaseParams, PrecommittedGroupProfiles,
+    CommittedGroupBatchProfile, CommittedSourceEncoding, GroupCommitPhaseParams,
+    PrecommittedGroupProfiles, ScheduleLookupKey, ScheduleLookupOrderKey,
 };
 pub use sis_occurrences::{ScheduleSisBound, ScheduleSisOccurrence, ScheduleSisRole};
 pub use sizing::{detect_field_modulus, r_decomp_levels};
@@ -784,7 +784,7 @@ fn validate_stage2_successor_capacity(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldScheduleEstimate {
     /// Maximum bytes used by independently encoded canonical native nonces.
-    pub native_nonce_max_bytes: usize,
+    pub nonce_max_bytes: usize,
     pub estimated_root_direct_payload_bytes: usize,
     pub estimated_root_stage3_payload_bytes: usize,
     pub estimated_recursive_direct_payload_bytes: Vec<usize>,
@@ -826,7 +826,7 @@ impl FoldScheduleEstimate {
     pub fn estimated_proof_payload_bytes(&self) -> Result<usize, AkitaError> {
         self.estimated_direct_proof_payload_bytes()?
             .checked_add(self.estimated_stage3_payload_bytes()?)
-            .and_then(|value| value.checked_add(self.native_nonce_max_bytes))
+            .and_then(|value| value.checked_add(self.nonce_max_bytes))
             .ok_or_else(|| AkitaError::InvalidSetup("fold schedule estimate overflow".to_string()))
     }
 }

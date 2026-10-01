@@ -107,7 +107,7 @@ where
         akita_params::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
     let row = scheme
         .schedules()
-        .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
             akita_params::PolynomialGroupLayout::new(poly_nv, 1),
         ))
         .expect("schedule");
@@ -234,7 +234,7 @@ where
         akita_params::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
     let row = scheme
         .schedules()
-        .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
             akita_params::PolynomialGroupLayout::new(poly_nv, 1),
         ))
         .expect("schedule");
@@ -401,7 +401,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 
     let layout = scheme
         .schedules()
-        .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
             akita_params::PolynomialGroupLayout::new(poly_nv, commit_batch),
         ))
         .expect("batched layout")
@@ -504,7 +504,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
 
     let layout = scheme
         .schedules()
-        .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
             akita_params::PolynomialGroupLayout::new(poly_nv, commit_batch),
         ))
         .expect("batched layout")

@@ -58,7 +58,7 @@ mod small_field_drivers;
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_cpu_backend::CpuBackend;
 use akita_params::{
-    lagrange_weights, AkitaScheduleLookupKey, BasisMode, OpeningClaimsLayout, PolynomialGroupLayout,
+    lagrange_weights, BasisMode, OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey,
 };
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use common::*;
@@ -526,7 +526,7 @@ fn fp32_onehot_multi_group() {
 
         let pre_group_schedule = scheme
             .schedules()
-            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+            .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
                 PRE_NV, 1,
             )))
             .expect("pre schedule")
@@ -552,7 +552,7 @@ fn fp32_onehot_multi_group() {
 
         let multi_schedule = scheme
             .schedules()
-            .resolve_key(&AkitaScheduleLookupKey {
+            .resolve_key(&ScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(FINAL_NV, 1),
                 precommitteds: vec![pre_commitment.profile],
             })

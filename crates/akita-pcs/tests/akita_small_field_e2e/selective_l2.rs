@@ -32,7 +32,7 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
         let opening_layout = OpeningClaimsLayout::new(NUM_VARS, 1).expect("L2 opening layout");
         let schedule = scheme
             .schedules()
-            .resolve_key(&AkitaScheduleLookupKey::single(
+            .resolve_key(&ScheduleLookupKey::single(
                 opening_layout
                     .root_final_group_layout()
                     .expect("singleton group layout"),
@@ -150,7 +150,7 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
         let opening_layout = OpeningClaimsLayout::new(NUM_VARS, 1).expect("terminal L2 layout");
         let schedule = scheme
             .schedules()
-            .resolve_key(&AkitaScheduleLookupKey::single(
+            .resolve_key(&ScheduleLookupKey::single(
                 opening_layout
                     .root_final_group_layout()
                     .expect("singleton group layout"),

@@ -6,12 +6,12 @@ fn multi_group_key<Cfg: CommitmentConfig>(
     final_num_vars: usize,
     pre_sizes: &[usize],
     final_size: usize,
-) -> akita_params::AkitaScheduleLookupKey {
+) -> akita_params::ScheduleLookupKey {
     let precommitteds = pre_sizes
         .iter()
         .map(|&num_polynomials| {
             schedules
-                .resolve_key(&akita_params::AkitaScheduleLookupKey::single(
+                .resolve_key(&akita_params::ScheduleLookupKey::single(
                     akita_params::PolynomialGroupLayout::new(pre_num_vars, num_polynomials),
                 ))
                 .expect("independent row")
@@ -19,7 +19,7 @@ fn multi_group_key<Cfg: CommitmentConfig>(
                 .final_group
         })
         .collect();
-    akita_params::AkitaScheduleLookupKey {
+    akita_params::ScheduleLookupKey {
         final_group: akita_params::PolynomialGroupLayout::new(final_num_vars, final_size),
         precommitteds,
     }
@@ -29,7 +29,7 @@ fn multi_group_key<Cfg: CommitmentConfig>(
 /// one caller-materialized scheme and exact lookup key.
 fn multi_group_root_round_trip_onehot<ProtocolCfg>(
     scheme: &AkitaCommitmentScheme<ProtocolCfg>,
-    multi_group_key: &akita_params::AkitaScheduleLookupKey,
+    multi_group_key: &akita_params::ScheduleLookupKey,
     check_group_binding: bool,
     max_cached_ring_switch_elements: usize,
 ) -> Vec<u8>

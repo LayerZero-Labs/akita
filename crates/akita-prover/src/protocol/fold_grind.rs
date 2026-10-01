@@ -6,7 +6,7 @@ use crate::backend::{
     FoldProbeDiagnostics, FoldProbeGeometry, FoldProbeOutcome, ValidatedFoldAcceptancePlan,
     ValidatedFoldProbePlan, ValidatedTerminalFoldProbePlan,
 };
-use akita_challenges::{FoldDraw, NativePreviewFoldDraw, NativeProverFoldDraw};
+use akita_challenges::{FoldDraw, PreviewFoldDraw, ProverFoldDraw};
 use akita_error::AkitaError;
 #[cfg(test)]
 use akita_params::OpeningMethod;
@@ -15,6 +15,7 @@ use akita_params::{
     TerminalFoldParams, TerminalResponseShape, FOLD_RESPONSE_ATTEMPTS,
 };
 use akita_types::draw_group_fold_challenges;
+use akita_types::GrindingReplay;
 use akita_types::GroupFoldChallenges;
 #[cfg(test)]
 use akita_types::OpeningFamily;
@@ -61,7 +62,7 @@ pub(crate) struct TerminalFoldGrindOutput {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sample_terminal_fold_response<F, E, H, B, const D: usize>(
     backend: &B,
-    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     params: &TerminalFoldParams,
     sparse: &akita_challenges::SparseChallengeConfig,
@@ -108,7 +109,7 @@ where
     let (nonce, (fold_handle, challenges, encoding, diagnostics)) =
         first_jointly_accepted_nonce(FOLD_RESPONSE_ATTEMPTS, |nonce| {
             let mut preview_state = grinding.preview_fold_response(site, nonce)?;
-            let mut preview = NativePreviewFoldDraw::new(&mut preview_state);
+            let mut preview = PreviewFoldDraw::new(&mut preview_state);
             let challenges = preview.draw_folding_challenges_with_rejection(
                 akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
                 params.d_a(),
@@ -146,7 +147,7 @@ where
             }
         })?;
     grinding.commit_fold_response(site, nonce)?;
-    let mut live = NativeProverFoldDraw::new(grinding.state_mut(), level, 0);
+    let mut live = ProverFoldDraw::new(grinding.state_mut(), level, 0);
     let live_challenges = live.draw_folding_challenges_with_rejection(
         akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
         params.d_a(),
@@ -223,9 +224,9 @@ fn first_jointly_accepted_nonce<T>(
 /// Probe every group at its native A dimension as one transcript transaction
 /// for each candidate nonce.
 #[allow(clippy::too_many_arguments)]
-fn sample_multi_group_fold_decompose_witnesses_native<F, E, B>(
+fn replay_multi_group_fold_decompose_witnesses<F, E, B>(
     opening_ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     root_lp: &CommittedGroupParams,
     groups: &[PreparedFoldGrindGroup<'_, B::PreparedOpeningHandle>],
@@ -250,7 +251,7 @@ where
             let mut candidate_outputs = Vec::with_capacity(groups.len());
             {
                 let mut preview_state = grinding.preview_fold_response(site, nonce)?;
-                let mut preview = NativePreviewFoldDraw::new(&mut preview_state);
+                let mut preview = PreviewFoldDraw::new(&mut preview_state);
                 for prepared_group in groups {
                     let group = &prepared_group.input;
                     let challenges = draw_group_fold_challenges::<F, E, _>(
@@ -321,7 +322,7 @@ where
             let challenges = {
                 let group_index = u32::try_from(group.group_index)
                     .map_err(|_| AkitaError::InvalidSetup("fold group index exceeds u32".into()))?;
-                let mut live = NativeProverFoldDraw::new(grinding.state_mut(), level, group_index);
+                let mut live = ProverFoldDraw::new(grinding.state_mut(), level, group_index);
                 draw_group_fold_challenges::<F, E, _>(
                     &mut live,
                     &group.params,
@@ -407,7 +408,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, B>(
     opening_ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     root_lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
@@ -468,7 +469,7 @@ where
             ),
         });
     }
-    sample_multi_group_fold_decompose_witnesses_native::<F, E, B>(
+    replay_multi_group_fold_decompose_witnesses::<F, E, B>(
         opening_ctx,
         grinding,
         level,

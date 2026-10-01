@@ -1,6 +1,7 @@
 use super::*;
 use crate::backend::OperationCtx;
 use crate::backend::{EvaluationTraceDescription, Stage2OpeningDescription};
+use akita_types::GrindingReplay;
 use jolt_field::AdditiveGroup;
 
 use akita_params::{InnerCommitSecurityRoute, OpeningClaimsLayout};
@@ -59,7 +60,7 @@ pub(super) fn prepare_fold<'claims, 'source, F, E, B>(
     >,
     commitment_material: Vec<B::CommitmentMaterialHandle>,
     pad_base_evals: bool,
-    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     level_params: &CommittedGroupParams,
     basis: BasisMode,
@@ -209,35 +210,25 @@ where
             return Err(AkitaError::InvalidProof);
         }
         if pad_base_evals {
-            akita_transcript::public_native_extensions_prover::<F, E>(
+            akita_transcript::public_extensions::<F, E, _>(
                 grinding.state_mut(),
-                akita_transcript::ProtocolSiteId {
-                    family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+                akita_types::FoldSite::GroupPoint {
                     level,
-                    stage: 1,
-                    group: u32::try_from(group_index)
-                        .map_err(|_| AkitaError::InvalidSetup("group index exceeds u32".into()))?,
-                    ..akita_transcript::ProtocolSiteId::default()
-                },
+                    group: group_index,
+                }
+                .id()?,
                 group_protocol_point,
-            )
-            .map_err(|_| AkitaError::InvalidProof)?;
+            )?;
         }
         scalar_openings.extend_from_slice(prepared.scalar_openings());
         prepared_group_openings.push(prepared);
     }
     if reduction.is_none() {
-        akita_transcript::public_native_extensions_prover::<F, E>(
+        akita_transcript::public_extensions::<F, E, _>(
             grinding.state_mut(),
-            akita_transcript::ProtocolSiteId {
-                family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
-                level,
-                stage: 2,
-                ..akita_transcript::ProtocolSiteId::default()
-            },
+            akita_types::FoldSite::Openings { level }.id()?,
             &scalar_openings,
-        )
-        .map_err(|_| AkitaError::InvalidProof)?;
+        )?;
     }
     let crate::protocol::ring_relation::PreparedRingRelationOutput {
         relation:
@@ -325,7 +316,7 @@ struct CommittedNextWitness<F: Field, WitnessHandle, M> {
 }
 
 fn prepare_physical_l2_batch<F, E>(
-    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: usize,
     physical_l2: Option<PhysicalL2ProverReplay<E>>,
 ) -> Result<Option<PhysicalL2ProverReplay<E>>, AkitaError>
@@ -346,7 +337,7 @@ where
 }
 
 fn prepare_stage2_compression<F, E, H>(
-    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: usize,
     rs: &mut RingSwitchOutput<E, H>,
 ) -> Result<E, AkitaError>
@@ -460,8 +451,8 @@ where
 #[allow(clippy::too_many_arguments)]
 fn commit_next_witness<F, E, B>(
     backend: &B,
-    grinding: &mut akita_types::NativeProverGrinding<'_>,
-    level: usize,
+    grinding: &mut akita_types::ProverGrinding<'_>,
+    level: u32,
     next_params: FoldSuccessorParams<'_>,
     expected_output_witness_len: usize,
     next_witness_binding: akita_params::NextWitnessBindingPolicy,
@@ -511,34 +502,22 @@ where
             crate::backend::NextWitnessBindingMessage::OuterPayload(public_commitment),
             akita_params::NextWitnessBindingPolicy::OuterPayload,
         ) => {
-            akita_transcript::send_native_field_group(
+            akita_transcript::send_field_group(
                 grinding.state_mut(),
-                akita_transcript::ProtocolSiteId {
-                    family: akita_transcript::SITE_FAMILY_NEXT_WITNESS,
-                    level: u32::try_from(level).map_err(|_| AkitaError::InvalidProof)?,
-                    stage: 1,
-                    ..akita_transcript::ProtocolSiteId::default()
-                },
+                akita_types::FoldSite::NextWitnessPayload { level }.id()?,
                 public_commitment.coeffs(),
-            )
-            .map_err(|_| AkitaError::InvalidProof)?;
+            )?;
             NextWitnessState::OuterPayload(public_commitment)
         }
         (
             crate::backend::NextWitnessBindingMessage::TerminalInnerState(message),
             akita_params::NextWitnessBindingPolicy::TerminalInnerState,
         ) => {
-            akita_transcript::send_native_field_group(
+            akita_transcript::send_field_group(
                 grinding.state_mut(),
-                akita_transcript::ProtocolSiteId {
-                    family: akita_transcript::SITE_FAMILY_NEXT_WITNESS,
-                    level: u32::try_from(level).map_err(|_| AkitaError::InvalidProof)?,
-                    stage: 2,
-                    ..akita_transcript::ProtocolSiteId::default()
-                },
+                akita_types::FoldSite::NextWitnessInnerState { level }.id()?,
                 message.fields(),
-            )
-            .map_err(|_| AkitaError::InvalidProof)?;
+            )?;
             NextWitnessState::TerminalInnerState
         }
         _ => return Err(AkitaError::InvalidProof),
@@ -569,7 +548,7 @@ pub(in crate::protocol::prove) fn prove_fold<F, E, B>(
     prefix_slots: &SetupPrefixProverRegistry<F, B::CommitmentHandle>,
     backend: &B,
     session: &B::ProofSessionHandle,
-    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: usize,
     lp: &CommittedGroupParams,
     next_params: FoldSuccessorParams<'_>,
@@ -600,7 +579,7 @@ where
         next_params.inner_ring_dimension(),
         expected_output_witness_len,
     )?;
-    let level_layout = akita_params::native_nonterminal_level_layout(
+    let level_layout = akita_params::nonterminal_level_layout(
         F::MODULUS_BITS,
         challenge_field_bits,
         lp,
@@ -617,6 +596,8 @@ where
         row_coefficients,
     } = prepared_fold;
     let next_opening_ring_dim = next_params.inner_ring_dimension();
+    let fold_level = u32::try_from(level)
+        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
     let CommittedNextWitness {
         committed_witness_len,
         witness_handle: mut next_witness,
@@ -625,14 +606,12 @@ where
     } = commit_next_witness::<F, E, B>(
         backend,
         grinding,
-        level,
+        fold_level,
         next_params,
         expected_output_witness_len,
         next_witness_binding,
         witness_handle,
     )?;
-    let fold_level = u32::try_from(level)
-        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
     let consumer = backend;
     let consumer_ctx = OperationCtx::new(
         backend,
@@ -666,7 +645,7 @@ where
         .eq(level_layout.stage1_stages())
         || stage1_norm != level_layout.stage1_norm()
         || level_layout.stage2_sumcheck()
-            != akita_sumcheck::NativeSumcheckShape::new(
+            != akita_sumcheck::SumcheckShape::new(
                 relation_geometry.relation_point_variable_count(),
                 3,
             )?
@@ -759,7 +738,7 @@ where
         },
     )
     .map_err(|err| AkitaError::InvalidInput(format!("stage-2 proving failed: {err:?}")))?;
-    akita_types::native_stage2_prover_w_eval::<F, E>(grinding, fold_level, w_eval)?;
+    akita_types::stage2_w_eval::<F, E, _>(grinding, fold_level, w_eval)?;
     let stage3_sumcheck_proof = match next_params.recursive() {
         Some(next_fold_params) => prove_stage3::<F, E, _>(
             consumer,

@@ -6,10 +6,10 @@ use std::{
 
 use akita_error::AkitaError;
 use akita_params::{
-    active_setup_field_len, native_terminal_response_planner_bytes, AkitaScheduleLookupKey,
-    CommitmentRingDims, CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    TerminalResponseShape,
+    active_setup_field_len, CommitmentRingDims, CommittedGroupParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, TerminalResponseShape,
 };
+use akita_params::{terminal_response_planner_bytes, ScheduleLookupKey};
 
 use crate::PlannerPolicy;
 
@@ -17,7 +17,7 @@ use super::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
     dimension_candidates, level_setup_field_elements, suffix_opening_layout,
     terminal_setup_field_elements, CandidateFoldStep, CandidateInnerRoute, CandidateLayoutGuide,
-    CandidateTerminalResponse, CompleteObjectiveBound, FoldCandidatePolicy, NativeProofCost,
+    CandidateTerminalResponse, CompleteObjectiveBound, FoldCandidatePolicy, ProofCost,
     RecursiveCandidateRequest, RecursiveFoldWork, RelationCandidateTopology, RelationModeFilter,
     RelationSearchDomain, RelationTraversalOrder, RingRelationPhase, ScheduleCandidate,
     SetupPrefixCapacity, SetupPrefixLayoutGuide, SetupPrefixSearchCache, SplitBoundPolicy,
@@ -36,6 +36,7 @@ mod terminal;
 pub(super) use candidates::packing_precommit_opening_products;
 #[cfg(test)]
 pub(super) use candidates::state_allows_terminal_seed;
+pub(crate) use candidates::MAX_PRECOMMIT_OPENING_PRODUCTS;
 use frontier::{consider_child_suffixes, price_child_edge, ProjectedFrontier, Projection};
 pub(crate) use search::derive_selected_suffix_schedule;
 use source::attach_source_moments;
@@ -300,7 +301,7 @@ struct ChildEdgePrice {
 struct PendingScheduleCandidate {
     first_direct_setup_field_len: Option<NonZeroUsize>,
     first_direct_output_witness_len: usize,
-    cost: NativeProofCost,
+    cost: ProofCost,
     setup_field_elements: usize,
     first_fold: CandidateFoldStep,
     suffix_folds: super::CandidateFoldChain,
@@ -533,7 +534,7 @@ fn child_choice(
         .ok_or_else(|| AkitaError::InvalidSetup("edge work overflow".into()))?;
     let cost = suffix.cost.checked_prepend(
         edge_payload_bytes,
-        edge_grinding_cost.native_nonce_max_bytes,
+        edge_grinding_cost.nonce_max_bytes,
         edge_grinding_cost.total_nonce_bits,
         edge_grinding_cost.expanded_query_count,
         work_elements,
@@ -565,7 +566,7 @@ fn direct_edge_lower_bound(
         1,
         output_witness_len,
     )?;
-    let proof_bytes = akita_params::native_nonterminal_level_layout(
+    let proof_bytes = akita_params::nonterminal_level_layout(
         policy.decomposition.field_bits(),
         policy.challenge_field_bits()?,
         params,
@@ -573,7 +574,7 @@ fn direct_edge_lower_bound(
         None,
     )?
     .encoded_len()?;
-    let lower_bound_cost = NativeProofCost::new(proof_bytes, 0, 0, output_witness_len as u128)?;
+    let lower_bound_cost = ProofCost::new(proof_bytes, 0, 0, output_witness_len as u128)?;
     Ok(CompleteObjectiveBound::for_direct_edge(
         policy,
         SetupPrefixCapacity::for_natural_len(natural_setup_field_len).field_elements(),
@@ -768,7 +769,7 @@ fn price_terminal_candidate(
             AkitaError::InvalidSetup("direct setup field length must be nonzero".into())
         })?),
         first_direct_output_witness_len: 0,
-        cost: NativeProofCost::new(total, 0, 0, 0)?,
+        cost: ProofCost::new(total, 0, 0, 0)?,
         setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
         folds: super::CandidateFoldChain::default(),
         terminal: Arc::new(direct_step),
