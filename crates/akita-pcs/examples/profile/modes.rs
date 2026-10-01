@@ -11,12 +11,13 @@ use crate::workload::{
 use crate::workspace_schedules::load_workspace_scheme;
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_params::{
+    CommittedGroupParams, MultiChunkProfileId, PolynomialGroupLayout, ScheduleLookupKey,
+    SetupContributionMode,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_types::{
-    CommittedGroupParams, FpExtEncoding, MultiChunkProfileId, PolynomialGroupLayout,
-    ScheduleLookupKey, SetupContributionMode,
-};
+use akita_types::FpExtEncoding;
 use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 

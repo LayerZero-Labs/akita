@@ -144,8 +144,8 @@ mod tests {
     use super::*;
     use crate::{AkitaProverSetup, DensePoly};
     use akita_config::proof_optimized::fp64;
+    use akita_params::{OpeningClaimsLayout, ScheduleLookupKey};
     use akita_prover::CommitmentHandleMetadata;
-    use akita_types::{OpeningClaimsLayout, ScheduleLookupKey};
     use jolt_field::Ring;
 
     type Cfg = fp64::Dense;

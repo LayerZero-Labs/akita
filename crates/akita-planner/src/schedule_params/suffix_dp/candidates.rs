@@ -1,7 +1,8 @@
 use akita_error::AkitaError;
-use akita_types::{
+use akita_params::ScheduleLookupKey;
+use akita_params::{
     try_extension_opening_reduction_level_bytes, CommitmentRingDims, CommittedGroupParams,
-    OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey, TerminalFoldParams,
+    OpeningClaimsLayout, PolynomialGroupLayout, TerminalFoldParams,
 };
 
 use crate::{
@@ -120,7 +121,7 @@ pub(crate) fn packing_precommit_opening_products(
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,
     key: &ScheduleLookupKey,
-    precommitted_source_contracts: &[akita_types::sis::CommittedSourceContract],
+    precommitted_source_contracts: &[akita_params::sis::CommittedSourceContract],
 ) -> Result<Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>>, AkitaError> {
     if !crate::schedule_params::precommitted_groups_support_opening_dimension(
         key.precommitteds.iter(),
@@ -327,12 +328,12 @@ fn guided_opening(
     constraint: &CommittedGroupParams,
 ) -> Result<crate::schedule_params::PlannerOpeningCandidate, AkitaError> {
     let opening = match constraint.opening_method() {
-        akita_types::OpeningMethod::EvaluationTrace => {
+        akita_params::OpeningMethod::EvaluationTrace => {
             crate::schedule_params::PlannerOpeningCandidate::evaluation_trace(
                 constraint.fold_challenge_config(),
             )
         }
-        akita_types::OpeningMethod::SubringCoefficientPacking {
+        akita_params::OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension,
         } => crate::schedule_params::PlannerOpeningCandidate::coefficient_packing(
             absolute_level,
@@ -371,8 +372,8 @@ fn root_candidate_matches_constraint(
 }
 
 fn inner_route_kind_matches(
-    candidate: akita_types::InnerCommitSecurityRoute,
-    guide: akita_types::InnerCommitSecurityRoute,
+    candidate: akita_params::InnerCommitSecurityRoute,
+    guide: akita_params::InnerCommitSecurityRoute,
 ) -> bool {
     CandidateInnerRoute::of(candidate) == CandidateInnerRoute::of(guide)
 }
@@ -391,8 +392,8 @@ fn candidate_layout_guide(guide: &CommittedGroupParams) -> CandidateLayoutGuide 
 }
 
 fn setup_prefix_structure_matches(
-    candidate: Option<&akita_types::GroupOpenPhaseParams>,
-    guide: Option<&akita_types::GroupOpenPhaseParams>,
+    candidate: Option<&akita_params::GroupOpenPhaseParams>,
+    guide: Option<&akita_params::GroupOpenPhaseParams>,
 ) -> bool {
     match (candidate, guide) {
         (None, None) => true,
@@ -445,10 +446,10 @@ fn terminal_candidate_matches_guide(
         && candidate.blocks().positions_per_block == guide.blocks.positions_per_block
         && candidate.inner().digits.log_basis == guide.inner.digits.log_basis
         && candidate.open().digits.log_basis == guide.fold.log_basis
-        && candidate.opening_method() == akita_types::OpeningMethod::EvaluationTrace
+        && candidate.opening_method() == akita_params::OpeningMethod::EvaluationTrace
         && matches!(
             candidate.inner().matrix.security_route(),
-            akita_types::InnerCommitSecurityRoute::Linf(_)
+            akita_params::InnerCommitSecurityRoute::Linf(_)
         )
         && candidate.setup_prefix().is_none()
 }
@@ -622,7 +623,7 @@ impl<'a> CandidateDomain<'a> {
                     let guide = self.guide_fold.map(candidate_layout_guide).or_else(|| {
                         self.guide_terminal.map(|guide| CandidateLayoutGuide {
                             position_index_bits: guide.blocks.position_index_bits(),
-                            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
+                            outer_slice_count: akita_params::CommitmentSliceCount::ONE,
                             inner_route: CandidateInnerRoute::of(
                                 guide.inner.matrix.security_route(),
                             ),

@@ -4,7 +4,7 @@ use crate::opaque::plans::DenseCommitInput;
 use crate::sources::packed_digits::PackedSignedDigits;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
-use akita_types::sis::compute_num_digits_field_width;
+use akita_params::sis::compute_num_digits_field_width;
 use akita_types::{NttCacheKey, NttTransformDomain};
 use jolt_field::{CanonicalEncoding, One, Ring};
 

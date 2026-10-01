@@ -1,8 +1,8 @@
 use super::*;
 
-fn response_geometry_params(opening_method: akita_types::OpeningMethod) -> CommittedGroupParams {
+fn response_geometry_params(opening_method: akita_params::OpeningMethod) -> CommittedGroupParams {
     let mut params = CommittedGroupParams::params_only(
-        akita_types::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::SisModulusProfileId::Q128OffsetA7F7,
         256,
         2,
         2,
@@ -13,10 +13,10 @@ fn response_geometry_params(opening_method: akita_types::OpeningMethod) -> Commi
     )
     .with_decomp(4, 8, 2, 2, 2)
     .expect("response geometry params");
-    params.payload_mode = akita_types::CommitmentPayloadMode::Raw;
+    params.payload_mode = akita_params::CommitmentPayloadMode::Raw;
     params.own_group_mut().opening.opening_method = opening_method;
     let opening = params.open().matrix;
-    params.open_matrix = akita_types::OpenCommitMatrixParams::new_unchecked(
+    params.open_matrix = akita_params::OpenCommitMatrixParams::new_unchecked(
         opening.security_policy(),
         opening.sis_table_key().table_digest,
         opening.sis_modulus_profile(),
@@ -32,10 +32,11 @@ fn response_geometry_params(opening_method: akita_types::OpeningMethod) -> Commi
 fn next_source_moment_prices_packing_e_and_r_but_keeps_ambient_t() {
     let opening = OpeningClaimsLayout::new(0, 1).expect("opening batch");
     let source = SourceMomentEstimate::new(1 << 16).expect("source moment");
-    let packing = response_geometry_params(akita_types::OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: 64,
-    });
-    let trace = response_geometry_params(akita_types::OpeningMethod::EvaluationTrace);
+    let packing =
+        response_geometry_params(akita_params::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        });
+    let trace = response_geometry_params(akita_params::OpeningMethod::EvaluationTrace);
     let packing_moment =
         next_source_moment(&packing, &opening, &[source], 128, 2).expect("packing source moment");
     let trace_moment =
@@ -60,14 +61,14 @@ fn reduced_evaluation_source_moment_omits_only_quotient_rows() {
     let opening = OpeningClaimsLayout::new(0, 1).expect("opening batch");
     let source = SourceMomentEstimate::new(1 << 16).expect("source moment");
     for payload_mode in [
-        akita_types::CommitmentPayloadMode::Raw,
-        akita_types::CommitmentPayloadMode::Compressed,
+        akita_params::CommitmentPayloadMode::Raw,
+        akita_params::CommitmentPayloadMode::Compressed,
     ] {
-        let mut lifted = response_geometry_params(akita_types::OpeningMethod::EvaluationTrace);
+        let mut lifted = response_geometry_params(akita_params::OpeningMethod::EvaluationTrace);
         lifted.payload_mode = payload_mode;
-        lifted.ring_relation_mode = akita_types::RingRelationMode::QuotientLift;
+        lifted.ring_relation_mode = akita_params::RingRelationMode::QuotientLift;
         let mut reduced = lifted.clone();
-        reduced.ring_relation_mode = akita_types::RingRelationMode::ReducedEvaluation;
+        reduced.ring_relation_mode = akita_params::RingRelationMode::ReducedEvaluation;
 
         let lifted_moment =
             next_source_moment(&lifted, &opening, &[source], 128, 2).expect("lifted moment");
@@ -108,8 +109,8 @@ fn field_plane_moments_include_the_residual_top_plane() {
 fn bounded_source_charges_the_carry_plane_past_its_bound() {
     let per_scalar = |bound, log_basis, digits| {
         let norms = CommittedSourceContract::try_new(
-            akita_types::sis::CommittedSourceClass::BalancedSignedDigit,
-            akita_types::DecompositionParams {
+            akita_params::sis::CommittedSourceClass::BalancedSignedDigit,
+            akita_params::DecompositionParams {
                 log_basis,
                 log_commit_bound: bound,
                 log_open_bound: Some(128),

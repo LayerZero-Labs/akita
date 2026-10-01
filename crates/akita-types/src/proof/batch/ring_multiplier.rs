@@ -1,9 +1,9 @@
 //! Ring-level opening multipliers and terminal-functional preparation.
 
 use super::subfield::{subfield_basis_pairs, SubfieldMultiplierOpeningPoint};
-use crate::RingOpeningPoint;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
+use akita_params::RingOpeningPoint;
 use jolt_field::{ExtField, Field};
 
 /// Ring-level opening point whose outer weights act by ring multiplication.

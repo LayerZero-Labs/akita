@@ -16,15 +16,13 @@ use akita_config::CommitmentConfig;
 use akita_cpu_backend::evaluate_root_polynomial;
 use akita_cpu_backend::CpuBackend;
 use akita_cpu_backend::{DensePoly, OneHotPoly};
+use akita_params::lagrange_weights;
+use akita_params::CommittedGroupParams;
+use akita_params::{CommittedGroupBatchProfile, OpeningClaimsLayout};
 use akita_prover::CommitmentHandleMetadata;
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::AkitaSerialize;
-use akita_types::lagrange_weights;
-use akita_types::CommittedGroupParams;
-use akita_types::{
-    CommittedGroup, CommittedGroupBatchProfile, GroupBatchStatement, OpeningClaims,
-    OpeningClaimsLayout, PolynomialGroupClaims,
-};
+use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::{One, Ring, Zero};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -57,7 +55,7 @@ fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
         workspace_catalog.catalog_digest()
     );
     let key =
-        akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
+        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::new(14, 1));
     assert_eq!(
         scheme
             .schedules()
@@ -203,7 +201,7 @@ fn catalog_root_layout<C: CommitmentConfig>(
     num_vars: usize,
     num_polynomials: usize,
 ) -> CommittedGroupParams {
-    let key = akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(
+    let key = akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::new(
         num_vars,
         num_polynomials,
     ));
@@ -219,11 +217,11 @@ fn catalog_root_layout<C: CommitmentConfig>(
 
 fn catalog_profile<C: CommitmentConfig>(
     scheme: &AkitaCommitmentScheme<C>,
-    group: akita_types::PolynomialGroupLayout,
-) -> akita_types::GroupCommitPhaseParams {
+    group: akita_params::PolynomialGroupLayout,
+) -> akita_params::GroupCommitPhaseParams {
     scheme
         .schedules
-        .resolve_key(&akita_types::ScheduleLookupKey::single(group))
+        .resolve_key(&akita_params::ScheduleLookupKey::single(group))
         .expect("catalog profile")
         .profiles()
         .final_group
@@ -353,8 +351,8 @@ fn opening_from_poly(
     num_positions_per_block: usize,
     num_live_blocks: usize,
 ) -> OneHotF {
-    akita_types::dispatch_for_field!(
-        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+    akita_params::dispatch_for_field!(
+        akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
         OneHotF,
         ring_dimension,
         |D_OPEN| Ok(opening_from_poly_at::<D_OPEN>(

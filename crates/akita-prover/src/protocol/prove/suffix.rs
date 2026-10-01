@@ -54,12 +54,12 @@ where
         let (next_params, next_binding) = schedule.recursive_folds.get(index + 1).map_or(
             (
                 fold::FoldSuccessorParams::Terminal(&schedule.terminal),
-                akita_types::NextWitnessBindingPolicy::TerminalInnerState,
+                akita_params::NextWitnessBindingPolicy::TerminalInnerState,
             ),
             |next| {
                 (
                     fold::FoldSuccessorParams::Recursive(next),
-                    akita_types::NextWitnessBindingPolicy::OuterPayload,
+                    akita_params::NextWitnessBindingPolicy::OuterPayload,
                 )
             },
         );
@@ -231,7 +231,7 @@ where
                     params.blocks.positions_per_block,
                     params.blocks.live_blocks,
                     alpha_bits,
-                    akita_types::OpeningMethod::EvaluationTrace,
+                    akita_params::OpeningMethod::EvaluationTrace,
                     witness_source.manifest().logical_len(),
                 );
                 let prepared =
@@ -482,11 +482,11 @@ mod tests {
 
     type TestF = Fp32<251>;
 
-    fn evaluation_batch_plan() -> akita_types::GrindingPlan {
-        let challenge_order = akita_types::ChallengeFieldOrder::from_full_capacity(128).unwrap();
-        akita_types::GrindingPlan::new(
-            vec![akita_types::GrindingRun::proof_of_work(
-                akita_types::GrindingSite::EvaluationBatch { level: 0 },
+    fn evaluation_batch_plan() -> akita_params::GrindingPlan {
+        let challenge_order = akita_params::ChallengeFieldOrder::from_full_capacity(128).unwrap();
+        akita_params::GrindingPlan::new(
+            vec![akita_params::GrindingRun::proof_of_work(
+                akita_params::GrindingSite::EvaluationBatch { level: 0 },
                 1,
                 challenge_order,
             )

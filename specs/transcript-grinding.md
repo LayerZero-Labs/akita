@@ -522,7 +522,7 @@ The implementation evidence for this result is:
 | `crates/akita-challenges/src/fold_draw.rs` | Method, group, dimensions, family, and counts bound before the group root; packing rejects operator filtering |
 | `crates/akita-challenges/src/challenges.rs` and `sampler/xof.rs` in that crate | Claim-major addressing and independent indexed XOF inputs |
 | `crates/akita-challenges/src/config.rs` and `sampler/mod.rs` in that crate | Production support ladder, fixed operator policies, bounded coordinate rejection, runtime certificate containment |
-| `crates/akita-types/src/transcript_grinding/plan.rs` and `crates/akita-types/src/transcript_grinding.rs` | Geometry-derived runs, root-plus-coordinate multiplicity, structural count, response nonce width, and zero fold work bits |
+| `crates/akita-params/src/transcript_grinding/plan.rs` and `crates/akita-params/src/transcript_grinding.rs` | Geometry-derived runs, root-plus-coordinate multiplicity, structural count, response nonce width, and zero fold work bits |
 | `crates/akita-prover/src/protocol/fold_grind.rs` | Joint response-admission search across groups |
 | `crates/akita-verifier/src/stages/stage1.rs` | Nonterminal range and physical-L2 claims tied into the recursive relation |
 | `crates/akita-verifier/src/terminal/direct.rs` | Terminal representation/norm and direct relation checks |

@@ -346,9 +346,9 @@ to 127, while each operation initializes only the part needed by its basis.
 
 The main code path is:
 
-1. `DecompositionParams` in `crates/akita-types/src/config.rs` records
+1. `DecompositionParams` in `crates/akita-params/src/config.rs` records
    `log_basis`, `log_commit_bound`, and the optional `log_open_bound`.
-2. `crates/akita-types/src/sis/decomposition_digits.rs` computes the exact
+2. `crates/akita-params/src/sis/decomposition_digits.rs` computes the exact
    digit count for each protocol role.
 3. The generated schedule stores the selected counts in
    `CommittedGroupParams`.
@@ -357,12 +357,12 @@ The main code path is:
 5. `crates/akita-cpu-backend/src/kernels/linear/decompose.rs` uses the packed `i8`
    kernel. Wider inner decompositions use
    `crates/akita-cpu-backend/src/arithmetic/exact_i16.rs`.
-6. `crates/akita-types/src/sis/committed_source.rs` checks the accepted source
+6. `crates/akita-params/src/sis/committed_source.rs` checks the accepted source
    range and source class.
 
 Supporting limits live in these files:
 
-- `crates/akita-types/src/signed_digit.rs` selects `i8` or `i16` storage.
+- `crates/akita-params/src/signed_digit.rs` selects `i8` or `i16` storage.
 - `crates/akita-algebra/src/ring/crt_ntt_repr/lut.rs` prepares signed `i8`
   digits for the CRT and NTT commitment path.
 - `crates/akita-schedules/src/runtime.rs` validates schedule basis ranges.
@@ -416,8 +416,8 @@ A code review or security audit can follow the mechanism in this order.
    the same digits and reconstruction.
 
 The focused regression tests are in
-`crates/akita-types/src/sis/decomposition_digits.rs`,
-`crates/akita-types/src/sis/committed_source.rs`, and
+`crates/akita-params/src/sis/decomposition_digits.rs`,
+`crates/akita-params/src/sis/committed_source.rs`, and
 `crates/akita-algebra/src/ring/cyclotomic/tests.rs`. The Stage 1 range topology
 tests live in `crates/akita-types/src/proof/stage1.rs`. Together, these tests
 cover the asymmetric field boundary, the exact positive reach, the
