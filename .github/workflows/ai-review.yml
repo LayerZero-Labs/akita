@@ -1,0 +1,121 @@
+name: Author-requested AI review
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+concurrency:
+  group: ai-review-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  reserve:
+    if: >-
+      github.run_attempt == 1 &&
+      github.repository == 'LayerZero-Labs/akita' &&
+      github.event.issue.pull_request &&
+      github.event.comment.body == '/ai-review' &&
+      github.event.comment.user.id == github.event.issue.user.id &&
+      github.event.comment.user.type == 'User'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      ready: ${{ steps.reserve.outputs.ready }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Authorize and reserve one of three attempts
+        id: reserve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ai_review/run.py reserve --directory "$RUNNER_TEMP/ai-review"
+
+  collect:
+    needs: reserve
+    if: needs.reserve.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      ready: ${{ steps.collect.outputs.ready }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Authorize and collect pinned source
+        id: collect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ai_review/run.py collect --directory "$RUNNER_TEMP/ai-review"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.collect.outputs.ready == 'true'
+        with:
+          name: ai-review-snapshot
+          path: ${{ runner.temp }}/ai-review/snapshot.json
+          retention-days: 1
+          if-no-files-found: error
+
+  review:
+    needs: collect
+    if: github.run_attempt == 1 && needs.collect.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: non-main
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-review-snapshot
+          path: ${{ runner.temp }}/ai-review
+      - name: Review through bounded source tools
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AI_REVIEW_MODEL: ${{ vars.AI_REVIEW_MODEL || 'gpt-6-astra' }}
+        run: python3 scripts/ai_review/run.py review --directory "$RUNNER_TEMP/ai-review"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ai-review-result
+          path: ${{ runner.temp }}/ai-review/result.json
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    needs: [collect, review]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-review-snapshot
+          path: ${{ runner.temp }}/ai-review
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-review-result
+          path: ${{ runner.temp }}/ai-review
+      - name: Revalidate request and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ai_review/run.py publish --directory "$RUNNER_TEMP/ai-review"
