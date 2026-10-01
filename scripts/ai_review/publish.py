@@ -134,11 +134,17 @@ def review_body(state):
     return body
 
 
+def approval_scope(revisions, title, description):
+    """Approval follows PR content and target, not unrelated target-branch pushes."""
+    return {"revision": {key: revisions[key] for key in ("head", "head_ref", "base_ref")},
+            "title": title, "description": description}
+
+
 def sync_labels(github, number, state):
     # Only the newest verified review may determine labels, including on retries.
     # These destinations and label names never come from model output.
     pr = github.get(f"pulls/{number}")
-    scope = {"revision": revision(pr), "title": pr["title"], "description": pr.get("body") or ""}
+    scope = approval_scope(revision(pr), pr["title"], pr.get("body") or "")
     approved = (state is not None and state["head"] == pr["head"]["sha"]
                 and pr["state"] == "open"
                 and state.get("scope_digest") == digest(scope)
@@ -152,11 +158,11 @@ def sync_labels(github, number, state):
     if wanted - labels:
         github.get(endpoint, {"labels": sorted(wanted - labels)})
     if approved:
-        # Invalidation runs independently. Close the race where it removes the
-        # label between our first scope check and a stale add-label request.
+        # PR updates can race with this job even though label writers share a
+        # lock. Recheck the same approval scope after the add-label request.
         fresh = github.get(f"pulls/{number}")
-        if (fresh["state"] != "open" or revision(fresh) != revision(pr)
-                or fresh["title"] != pr["title"] or fresh.get("body") != pr.get("body")
+        if (fresh["state"] != "open"
+                or approval_scope(revision(fresh), fresh["title"], fresh.get("body") or "") != scope
                 or reopen_epoch(github, number) != state["reopen_epoch"]):
             current = {label["name"] for label in github.pages(endpoint)}
             if "ai-approved" in current:
@@ -169,7 +175,7 @@ def prepare_review(snapshot, proposal):
     state = {"repository": REPOSITORY, "number": snapshot["number"], "request": snapshot["request"],
              "head": snapshot["revision"]["head"], "findings": findings,
              "reopen_epoch": snapshot["reopen_epoch"],
-             "scope_digest": digest({key: snapshot[key] for key in ("revision", "title", "description")}),
+             "scope_digest": digest(approval_scope(snapshot["revision"], snapshot["title"], snapshot["description"])),
              "complete": result["complete"], "limitations": result["limitations"],
              "usefulness": result["usefulness"],
              "discussion_blockers": result["discussion_blockers"]}

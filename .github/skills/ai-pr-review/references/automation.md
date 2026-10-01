@@ -112,7 +112,9 @@ for one day for investigation/retry; repeat reviews use the PR state, not artifa
 After verified publication, the publisher adds `ai-reviewed` to the PR and adds
 `ai-approved` exactly when its deterministic approval decision permits the
 recommendation. A later blocking or incomplete review removes `ai-approved`;
-PR updates clear it as well. The labels are informational review status, not
+Head changes, retargeting, PR text changes and reopening invalidate approval.
+An ordinary target-branch advance preserves approval of the reviewed PR head;
+the label does not certify the latest merge result. The labels are informational review status, not
 triggers or merge authorization. The old `ai-review` selection label is retired.
 Publication retries must verify the latest review and inline-comment manifest
 before updating labels. PR reopening events invalidate older review approvals

@@ -95,6 +95,16 @@ deleted. Missing or unverifiable review history cannot grant approval.
 The publisher also rechecks PR state after adding approval to catch concurrent
 PR changes. Label updates are asynchronous and labels are not a
 merge authorization or proof that all current discussion has been checked.
+
+Approval covers the reviewed head commit, head and target branch names, PR title
+and description, and reopening history. An ordinary advance of the target branch
+does **not** invalidate approval; reconciliation and publication retries preserve
+the same decision. The label does not certify the latest merge result or changes
+merged into the target branch after review. Retargeting the PR or changing its head
+does invalidate approval. Collection and first publication still check the exact
+snapshotted base SHA. A base change detected during collection or before first
+publication rejects that snapshot.
+
 GitHub allows users with triage or higher access to edit labels; these labels
 are informational, not an admin-only security control. Repository setup must
 create `ai-reviewed` and `ai-approved` before this workflow is used.
@@ -234,5 +244,5 @@ comment cannot spoof state by copying a marker.
 Run local adversarial and regression tests with:
 
 ```sh
-python3 -m unittest discover -s scripts/tests -p 'test_ai_review.py' -v
+python3 -m unittest discover -s scripts/tests -p 'test_ai_review*.py' -v
 ```
