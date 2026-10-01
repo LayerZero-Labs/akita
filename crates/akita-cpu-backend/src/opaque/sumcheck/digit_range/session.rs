@@ -7,6 +7,9 @@ use akita_sumcheck::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use jolt_field::{Fold, Unreduced};
 use jolt_poly::UnivariatePolynomial;
 
+#[cfg(test)]
+mod tests;
+
 enum ActiveStage<E: Field> {
     Low(LowBasisRangeCheckProver<E>),
     Product2(ClassIndexedProductSubcheckProver<E, 2>),
@@ -143,6 +146,8 @@ struct PhysicalState<E: Field> {
     subclaim_weights: Vec<E>,
 }
 
+/// Calls rejected for invalid arguments leave the session unchanged.
+/// An internal failure leaves the session unusable.
 pub(crate) struct DigitRangeSession<E: Field> {
     source: CompactDigitSource,
     plan: DigitRangePlan,
@@ -378,14 +383,18 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
         round: usize,
         challenge: E,
     ) -> Result<(), AkitaError> {
-        let pending = self.pending.take().ok_or_else(|| {
-            AkitaError::InvalidInput("Stage 1 challenge arrived before its polynomial".into())
-        })?;
-        if pending.step != step || pending.round != round {
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.step != step || pending.round != round)
+        {
             return Err(AkitaError::InvalidInput(
                 "Stage 1 challenge step or round mismatch".into(),
             ));
         }
+        let pending = self.pending.take().ok_or_else(|| {
+            AkitaError::InvalidInput("Stage 1 challenge arrived before its polynomial".into())
+        })?;
         self.claim = match &pending.polynomial {
             Stage1RoundPolynomial::EqFactored(poly) => akita_sumcheck::advance_eq_factored_claim(
                 self.claim,
@@ -458,16 +467,20 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
                 })
             }
             Phase::FinalPublic => {
+                if self
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.step(self.product_index) != step)
+                {
+                    return Err(AkitaError::InvalidInput(
+                        "Stage 1 final transition step mismatch".into(),
+                    ));
+                }
                 let active = self.active.take().ok_or_else(|| {
                     AkitaError::Internal(
                         "stage 1 final public transition has no active stage".into(),
                     )
                 })?;
-                if active.step(self.product_index) != step {
-                    return Err(AkitaError::InvalidInput(
-                        "Stage 1 final transition step mismatch".into(),
-                    ));
-                }
                 let (range_image_evaluation, virtual_evaluations) = match active {
                     ActiveStage::Low(p) => (p.final_range_image_eval(), Vec::new()),
                     ActiveStage::Leaf(p) => (p.final_range_image_eval(), Vec::new()),
