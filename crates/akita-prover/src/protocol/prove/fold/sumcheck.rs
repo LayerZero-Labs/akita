@@ -39,22 +39,30 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage1Kern
         claim: E,
     ) -> Result<jolt_poly::OmittedConstantPoly<E>, AkitaError> {
         if round != self.next_round {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 equality-factored round index differs from adapter state".into(),
+            ));
         }
         let polynomial =
             self.backend
                 .stage1_round_polynomial(self.session, self.step, round, claim)?;
         let crate::backend::Stage1RoundPolynomial::EqFactored(polynomial) = polynomial else {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 equality-factored backend returned a standard polynomial".into(),
+            ));
         };
         if polynomial.degree() != self.degree {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 equality-factored polynomial degree differs from plan".into(),
+            ));
         }
         Ok(polynomial)
     }
     fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
         if round != self.next_round {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 equality-factored bind round differs from adapter state".into(),
+            ));
         }
         self.backend
             .bind_stage1_challenge(self.session, self.step, round, challenge)?;
@@ -63,7 +71,9 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage1Kern
     }
     fn finish(&mut self) -> Result<(), AkitaError> {
         if self.next_round != self.equality_point.len() {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 equality-factored sumcheck finished before all rounds were bound".into(),
+            ));
         }
         Ok(())
     }
@@ -103,22 +113,30 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage1Kern
         claim: E,
     ) -> Result<UnivariatePoly<E>, AkitaError> {
         if round != self.next_round {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 standard round index differs from adapter state".into(),
+            ));
         }
         let polynomial =
             self.backend
                 .stage1_round_polynomial(self.session, self.step, round, claim)?;
         let crate::backend::Stage1RoundPolynomial::Standard(polynomial) = polynomial else {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 standard backend returned an equality-factored polynomial".into(),
+            ));
         };
         if polynomial.coefficients().len() != self.degree + 1 {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 standard polynomial coefficient count differs from plan".into(),
+            ));
         }
         Ok(polynomial)
     }
     fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
         if round != self.next_round {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 standard bind round differs from adapter state".into(),
+            ));
         }
         self.backend
             .bind_stage1_challenge(self.session, self.step, round, challenge)?;
@@ -127,7 +145,9 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage1Kern
     }
     fn finish(&mut self) -> Result<(), AkitaError> {
         if self.next_round != self.rounds {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 standard sumcheck finished before all rounds were bound".into(),
+            ));
         }
         Ok(())
     }
@@ -152,7 +172,7 @@ where
         || domain.live_len() != rs.witness_len
         || plan.digit_range_plan().basis() != rs.b
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "ring-switch output disagrees with the relation/range-image plan".into(),
         ));
     }
@@ -160,7 +180,7 @@ where
         .tau0
         .len()
         .checked_sub(rs.digit_range_equality_low_variable_count)
-        .ok_or_else(|| AkitaError::InvalidSetup("digit-range equality width overflow".into()))?;
+        .ok_or_else(|| AkitaError::Internal("digit-range equality width overflow".into()))?;
     let equality_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
         &rs.tau0,
         digit_range_equality_col_bits,
@@ -187,9 +207,10 @@ where
         let shape = plan
             .digit_range_plan()
             .stage_shape(rounds, stage_index)
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| AkitaError::Internal("stage 1 product stage shape is missing".into()))?;
         let step = crate::backend::Stage1Step::Product(stage_index);
-        let stage = u32::try_from(stage_index).map_err(|_| AkitaError::InvalidProof)?;
+        let stage = u32::try_from(stage_index)
+            .map_err(|_| AkitaError::Internal("stage 1 product stage index exceeds u32".into()))?;
         let mut kernel = Stage1EqSumcheck {
             backend: ctx.backend(),
             session: &mut session_handle,
@@ -219,10 +240,14 @@ where
                 step,
             )?
         else {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 product transition did not return child claims".into(),
+            ));
         };
         if child_claims.len() != shape.child_claims {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 product child claim count differs from stage shape".into(),
+            ));
         }
         akita_types::stage1_child_claims::<F, E, _>(grinding, level, stage, &mut child_claims)?;
         let gamma = grinding.grinded_ext_challenge::<F, E>(
@@ -255,16 +280,21 @@ where
             step,
         )?
         else {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 fused range-norm transition did not return physical L2 claims".into(),
+            ));
         };
-        let physical = physical_plan.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let physical = physical_plan.as_ref().ok_or_else(|| {
+            AkitaError::Internal("stage 1 fused range-norm execution has no physical plan".into())
+        })?;
         if subclaims.len()
-            != physical
-                .shape()
-                .subclaim_count()
-                .ok_or(AkitaError::InvalidProof)?
+            != physical.shape().subclaim_count().ok_or_else(|| {
+                AkitaError::Internal("stage 1 physical L2 subclaim count overflow".into())
+            })?
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 physical L2 subclaim count differs from plan".into(),
+            ));
         }
         akita_types::l2_prefix::<F, E, _>(grinding, level, response_l2_sq, &mut subclaims)?;
         let norm_claim = if subclaims.is_empty() {
@@ -328,10 +358,14 @@ where
             step,
         )?
         else {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 fused range-norm transition did not return final evaluations".into(),
+            ));
         };
         if virtual_evaluations.len() != physical.shape().virtual_evaluation_count() {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 physical L2 virtual evaluation count differs from plan".into(),
+            ));
         }
         akita_types::l2_virtual_evaluations::<F, E, _>(grinding, level, &mut virtual_evaluations)?;
         (
@@ -340,7 +374,8 @@ where
         )
     } else {
         let step = crate::backend::Stage1Step::RangeLeaf;
-        let stage = u32::try_from(product_count).map_err(|_| AkitaError::InvalidProof)?;
+        let stage = u32::try_from(product_count)
+            .map_err(|_| AkitaError::Internal("stage 1 leaf stage index exceeds u32".into()))?;
         let mut kernel = Stage1EqSumcheck {
             backend: ctx.backend(),
             session: &mut session_handle,
@@ -374,34 +409,43 @@ where
             step,
         )?
         else {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 range-leaf transition did not return final evaluations".into(),
+            ));
         };
         if !virtual_evaluations.is_empty() {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 1 range-leaf transition returned physical L2 virtual evaluations".into(),
+            ));
         }
         (range_image_evaluation, None)
     };
     let final_claims =
         crate::backend::OpaqueStage1Kernel::finish_stage1(ctx.backend(), session_handle)?;
     if final_claims.final_claim() != claim || final_claims.point() != final_point {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "stage 1 backend final claim or point differs from sumcheck output".into(),
+        ));
     }
     let stage1_point = final_claims.point().to_vec();
     akita_types::stage1_range_image::<F, E, _>(
         grinding,
         level,
-        u32::try_from(product_count).map_err(|_| AkitaError::InvalidProof)?,
+        u32::try_from(product_count).map_err(|_| {
+            AkitaError::Internal("stage 1 range-image stage index exceeds u32".into())
+        })?,
         range_image_evaluation,
     )?;
     let physical_l2 = match physical_plan {
         Some(physical_plan) => {
-            let (response_l2_sq, virtual_evaluations) =
-                norm_proof.as_ref().ok_or(AkitaError::InvalidProof)?;
+            let (response_l2_sq, virtual_evaluations) = norm_proof.as_ref().ok_or_else(|| {
+                AkitaError::Internal("stage 1 physical L2 replay has no norm proof".into())
+            })?;
             let InnerCommitSecurityRoute::L2 {
                 response_l2_sq_cap, ..
             } = lp.inner().matrix.security_route()
             else {
-                return Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::Internal(
                     "physical L2 plan disagrees with the A security route".into(),
                 ));
             };
@@ -420,7 +464,7 @@ where
         }
         None => {
             if norm_proof.is_some() {
-                return Err(AkitaError::InvalidInput(
+                return Err(AkitaError::Internal(
                     "L-infinity route produced an L2 norm proof".into(),
                 ));
             }
@@ -466,7 +510,7 @@ where
         || domain.live_len() != rs.witness_len
         || plan.digit_range_plan().basis() != rs.b
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "ring-switch output disagrees with the relation/range-image plan".into(),
         ));
     }
@@ -500,14 +544,9 @@ where
         ctx.backend(),
         rs.relation_handle,
         relation_plan,
-    )
-    .map_err(|err| {
-        AkitaError::InvalidInput(format!(
-            "stage-2 prover initialization failed at fold level {level}: {err}"
-        ))
-    })?;
-    let level = u32::try_from(level)
-        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
+    )?;
+    let level =
+        u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
     let claim =
         crate::backend::OpaqueStage2Kernel::stage2_input_claim(ctx.backend(), &session_handle)?;
     let num_rounds =
@@ -519,7 +558,9 @@ where
                 + trace_opening_claim
                 + physical_l2_claim
     {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "stage 2 backend round count or input claim differs from relation plan".into(),
+        ));
     }
     let mut kernel = Stage2Sumcheck::<F, E, B> {
         backend: ctx.backend(),
@@ -543,7 +584,9 @@ where
     let final_output =
         crate::backend::OpaqueStage2Kernel::finish_stage2(ctx.backend(), session_handle)?;
     if claim != final_output.final_claim() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "stage 2 backend final claim differs from sumcheck output".into(),
+        ));
     }
     Ok(Stage2ProveOutput {
         challenges: sumcheck_challenges,
@@ -588,13 +631,11 @@ where
             )
             .entered();
             let level = u32::try_from(level)
-                .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
+                .map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
             let prefix_id = next_level_params
                 .setup_prefix()
                 .and_then(|group| group.slot_id())
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("Stage 3 requires a setup prefix".into())
-                })?;
+                .ok_or_else(|| AkitaError::Internal("Stage 3 requires a setup prefix".into()))?;
             let slot = prefix_slots.get(&prefix_id).ok_or_else(|| {
                 AkitaError::InvalidSetup("planned setup prefix is missing".into())
             })?;
@@ -626,7 +667,9 @@ where
             slot.public
                 .id
                 .serialize_compressed(&mut encoded_slot)
-                .map_err(|_| AkitaError::InvalidProof)?;
+                .map_err(|error| {
+                    AkitaError::Internal(format!("setup-prefix slot serialization failed: {error}"))
+                })?;
             akita_types::stage3_public_slot(grinding, level, &encoded_slot)?;
             akita_types::stage3_claim::<F, E, _>(grinding, level, setup_product_claim)?;
             let mut kernel = Stage3Sumcheck {
@@ -700,7 +743,9 @@ impl<F: Field, E: Field, B: crate::backend::OpaqueStage3Kernel<F, E>>
     }
     fn finish(&mut self) -> Result<(), AkitaError> {
         if self.next_round != self.rounds {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "stage 3 sumcheck finished before all rounds were bound".into(),
+            ));
         }
         Ok(())
     }
