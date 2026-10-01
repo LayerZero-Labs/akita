@@ -11,6 +11,8 @@ use akita_cpu_backend::AkitaProverSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_cpu_backend::SetupPrefixProverRegistry;
 use akita_error::AkitaError;
+#[cfg(feature = "disk-persistence")]
+use akita_params::{detect_field_modulus, digest_descriptor_bytes, FlatMatrix};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 #[cfg(feature = "disk-persistence")]
 use akita_serialization::{Compress, SerializationError, Validate};
@@ -18,8 +20,7 @@ use akita_serialization::{Compress, SerializationError, Validate};
 use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
-    detect_field_modulus, digest_descriptor_bytes, sample_akita_setup_seed, setup_seed_digest,
-    AkitaSetupDescriptor, AkitaSetupSeed, FlatMatrix,
+    sample_akita_setup_seed, setup_seed_digest, AkitaSetupDescriptor, AkitaSetupSeed,
 };
 use jolt_field::{CanonicalEncoding, Field};
 use jolt_field::{Unreduced, WithCommitAccumulator};

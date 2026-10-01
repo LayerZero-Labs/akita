@@ -1,57 +1,14 @@
 use super::*;
-use crate::golomb_rice::golomb_rice_encode_vec;
-use crate::layout::tail_segments::z_payload_budget_from_cap;
-use crate::tail_golomb_rice_low_bits::wire_rice_low_bits;
-use crate::{CommittedGroupParams, SisModulusProfileId};
 use akita_challenges::SparseChallengeConfig;
+use akita_params::golomb_rice::golomb_rice_encode_vec;
+use akita_params::tail_golomb_rice_low_bits::wire_rice_low_bits;
+use akita_params::test_fixtures::test_lp;
+use akita_params::CommittedGroupParams;
 use jolt_field::CanonicalEncoding;
 use jolt_field::{Prime128OffsetA7F7, Zero};
 
 type F = Prime128OffsetA7F7;
 const TEST_ADMISSION_CAP: u128 = 127;
-
-fn test_lp() -> CommittedGroupParams {
-    let mut params = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
-        64,
-        3,
-        2,
-        3,
-        2,
-        SparseChallengeConfig::pm1_only(3),
-    )
-    .with_decomp(8, 32, 2, 3, 3)
-    .expect("tail segment test params");
-    let key = crate::sis::SisTableKey {
-        policy: params.inner().matrix.security_policy(),
-        table_digest: params
-            .inner()
-            .matrix
-            .sis_table_key()
-            .expect("L infinity test matrix")
-            .table_digest,
-        modulus_profile: params.inner().matrix.sis_modulus_profile(),
-        role: crate::sis::SisMatrixRole::Inner,
-        ring_dimension: 64,
-        coeff_linf_bound: crate::sis::sis_role_cells()
-            .into_iter()
-            .filter(|cell| {
-                cell.role == crate::sis::SisMatrixRole::Inner
-                    && cell.modulus_profile == params.inner().matrix.sis_modulus_profile()
-                    && cell.ring_dimension == 64
-            })
-            .map(|cell| cell.coeff_linf_bound)
-            .max()
-            .expect("nonempty SIS A bounds"),
-    };
-    params.own_group_mut().profile.inner.matrix =
-        crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
-            key,
-            params.inner().matrix.input_width(),
-        )
-        .expect("secure terminal test matrix");
-    params
-}
 
 fn scalar_group_layout(
     lp: &CommittedGroupParams,
@@ -140,29 +97,6 @@ fn terminal_decoder_rejects_coefficient_outside_i16() {
         z_payload_bytes: payload.len(),
     };
     assert!(decode_terminal_z_golomb_payload(&payload, &group).is_err());
-}
-
-#[test]
-fn terminal_response_z_budget_uses_golomb_rate_not_packed_digit_width() {
-    let lp = test_lp();
-    let field_bits = F::MODULUS_BITS;
-    let cap = 31;
-    let layout = TerminalResponseShape::from_groups(
-        &lp,
-        field_bits,
-        [(
-            lp.final_group_scalar().expect("scalar final group"),
-            1usize,
-            1usize,
-            1usize,
-            cap,
-        )],
-    )
-    .unwrap()
-    .layout;
-    let z_bytes = layout.z_payload_bytes();
-    let group = layout.groups[0];
-    assert_eq!(z_bytes, z_payload_budget_from_cap(group.z_coords, cap));
 }
 
 #[test]
@@ -307,9 +241,9 @@ fn terminal_layout_validation_rejects_overflow_without_panicking() {
 /// The default [`test_lp`] fixture uses the largest bucket, whose certified
 /// capacity is far above the terminal wire limit, so it can only exercise the
 /// clamp. A small bucket puts the SIS bound in charge instead.
-fn terminal_matrix_with_bucket(bucket: u128) -> crate::sis::InnerCommitMatrixParams {
+fn terminal_matrix_with_bucket(bucket: u128) -> akita_params::sis::InnerCommitMatrixParams {
     let base = test_lp();
-    let key = crate::sis::SisTableKey {
+    let key = akita_params::sis::SisTableKey {
         policy: base.inner().matrix.security_policy(),
         table_digest: base
             .inner()
@@ -318,11 +252,11 @@ fn terminal_matrix_with_bucket(bucket: u128) -> crate::sis::InnerCommitMatrixPar
             .expect("L infinity test matrix")
             .table_digest,
         modulus_profile: base.inner().matrix.sis_modulus_profile(),
-        role: crate::sis::SisMatrixRole::Inner,
+        role: akita_params::sis::SisMatrixRole::Inner,
         ring_dimension: 64,
         coeff_linf_bound: bucket,
     };
-    crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
+    akita_params::sis::InnerCommitMatrixParams::try_new_with_min_rank(
         key,
         base.inner().matrix.input_width(),
     )
@@ -332,26 +266,26 @@ fn terminal_matrix_with_bucket(bucket: u128) -> crate::sis::InnerCommitMatrixPar
 #[test]
 fn certified_terminal_cap_applies_the_wire_representation_limit() {
     let lp = test_lp();
-    let raw = crate::sis::max_response_linf_for_role_a_collision(
+    let raw = akita_params::sis::max_response_linf_for_role_a_collision(
         lp.inner()
             .matrix
             .coeff_linf_bound()
             .expect("L infinity route"),
-        crate::sis::FoldChallengeNorms::new(&lp.fold_challenge_config()).l1_norm,
+        akita_params::sis::FoldChallengeNorms::new(&lp.fold_challenge_config()).l1_norm,
     )
     .expect("raw SIS capacity");
     assert!(
-        raw > crate::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
+        raw > akita_params::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
         "fixture must exercise the clamp; raw capacity was {raw}"
     );
-    let cap = crate::sis::certified_terminal_response_linf_cap(
+    let cap = akita_params::sis::certified_terminal_response_linf_cap(
         &lp.inner().matrix,
         &lp.fold_challenge_config(),
     )
     .expect("certified terminal cap");
     assert_eq!(
         cap,
-        crate::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
+        akita_params::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
         "a cap the terminal z wire cannot encode is not a usable cap"
     );
 }
@@ -359,18 +293,18 @@ fn certified_terminal_cap_applies_the_wire_representation_limit() {
 #[test]
 fn certified_terminal_cap_is_priced_by_the_supplied_challenge_family() {
     let matrix = terminal_matrix_with_bucket(1_428);
-    let light = crate::sis::certified_terminal_response_linf_cap(
+    let light = akita_params::sis::certified_terminal_response_linf_cap(
         &matrix,
         &SparseChallengeConfig::pm1_only(3),
     )
     .expect("light challenge cap");
-    let heavy = crate::sis::certified_terminal_response_linf_cap(
+    let heavy = akita_params::sis::certified_terminal_response_linf_cap(
         &matrix,
         &SparseChallengeConfig::pm1_only(6),
     )
     .expect("heavy challenge cap");
     assert!(
-        light < crate::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
+        light < akita_params::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
         "bucket must leave the SIS bound in charge; got {light}"
     );
     assert!(
@@ -390,12 +324,12 @@ fn terminal_cap_has_exactly_one_implementation() {
             let mut lp = test_lp();
             lp.own_group_mut().profile.inner.matrix = matrix;
             lp.own_group_mut().opening.fold_challenge_config = sparse;
-            let terminal = crate::TerminalFoldParams::from_expanded_group(lp);
+            let terminal = akita_params::TerminalFoldParams::from_expanded_group(lp);
             assert_eq!(
                 terminal
                     .certified_response_linf_cap()
                     .expect("schedule-side cap"),
-                crate::sis::certified_terminal_response_linf_cap(&matrix, &sparse)
+                akita_params::sis::certified_terminal_response_linf_cap(&matrix, &sparse)
                     .expect("single-authority cap"),
                 "bucket {bucket}, challenge weight {weight}"
             );

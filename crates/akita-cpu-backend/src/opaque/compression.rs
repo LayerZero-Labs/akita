@@ -2,10 +2,11 @@
 
 use super::{CompressionComputeBackend, OperationCtx};
 use akita_error::AkitaError;
-use akita_types::{
+use akita_params::{
     dispatch_for_field, field_modulus, CompressionChainPlan, CompressionChainWitness,
-    CompressionTerminalPayload, PackedNegativeBinary, RingRelationMode, RingVec,
+    CompressionTerminalPayload, PackedNegativeBinary, RingRelationMode,
 };
+use akita_types::RingVec;
 use jolt_field::{CanonicalEncoding, Field};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -246,18 +247,18 @@ where
     for (batch_index, ((&item_index, packed_digits), _)) in
         item_indices.iter().zip(packed).zip(expanded).enumerate()
     {
-        let negacyclic = negacyclic_outputs
-            .get(batch_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let negacyclic = negacyclic_outputs.get(batch_index).ok_or_else(|| {
+            AkitaError::Internal("compression negacyclic output batch is missing".into())
+        })?;
         if negacyclic.len() != first_map.output_rank() {
             return Err(AkitaError::InvalidSetup(
                 "compression backend returned the wrong output rank".into(),
             ));
         }
         if let Some(cyclic_outputs) = &cyclic_outputs {
-            let cyclic = cyclic_outputs
-                .get(batch_index)
-                .ok_or(AkitaError::InvalidProof)?;
+            let cyclic = cyclic_outputs.get(batch_index).ok_or_else(|| {
+                AkitaError::Internal("compression cyclic output batch is missing".into())
+            })?;
             if cyclic.len() != first_map.output_rank() {
                 return Err(AkitaError::InvalidSetup(
                     "compression backend returned the wrong output rank".into(),
@@ -325,7 +326,7 @@ where
     for ((_, ring_dimension, _, _), item_indices) in groups {
         for chunk in item_indices.chunks(MAX_COMPRESSION_RHS_BATCH) {
             let report = dispatch_for_field!(
-                akita_types::ProtocolDispatchSlot::Compression,
+                akita_params::ProtocolDispatchSlot::Compression,
                 F,
                 ring_dimension,
                 |D| execute_chunk::<F, B, Id, D>(ctx, items, chunk, map_index)
@@ -477,7 +478,9 @@ where
             }
             RingRelationMode::ReducedEvaluation => {
                 if !item.quotients.is_empty() {
-                    return Err(AkitaError::InvalidProof);
+                    return Err(AkitaError::Internal(
+                        "reduced compression evaluation unexpectedly retained quotients".into(),
+                    ));
                 }
                 CompressionRelationOutput::ReducedEvaluation
             }
@@ -499,7 +502,7 @@ mod tests {
     use super::*;
     use crate::opaque::{ComputeBackendSetup, CpuBackend};
     use crate::AkitaProverSetup;
-    use akita_types::{SetupMatrixCapacity, SisModulusProfileId};
+    use akita_params::{SetupMatrixCapacity, SisModulusProfileId};
     use jolt_field::{Prime128OffsetA7F7, Ring};
 
     type F = Prime128OffsetA7F7;
@@ -580,7 +583,7 @@ mod tests {
         );
         assert_eq!(
             batched[0].relation.quotient_lift().unwrap().len(),
-            akita_types::COMPRESSION_MAP_COUNT
+            akita_params::COMPRESSION_MAP_COUNT
         );
         assert_eq!(report.batches.len(), 2);
         assert!(report.batches.iter().all(|batch| batch.batch_size == 2));

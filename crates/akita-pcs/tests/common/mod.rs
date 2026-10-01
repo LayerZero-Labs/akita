@@ -19,16 +19,17 @@ pub(super) use akita_cpu_backend::OneHotPoly;
 use akita_cpu_backend::SetupPrefixProverRegistry;
 use akita_cpu_backend::{evaluate_root_polynomial, RootPolyShape};
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
+pub(super) use akita_params::{BasisMode, PrecommittedGroupProfiles};
+use akita_params::{
+    CommittedGroupBatchProfile, FlatMatrix, PolynomialGroupLayout, ScheduleLookupKey,
+    SetupPrefixSlotId,
+};
+pub(super) use akita_params::{CommittedGroupParams, FoldSchedule};
 pub(super) use akita_prover::SelectedProverOpeningData;
 use akita_types::{
-    AkitaExpandedSetup, AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix,
-    GroupBatchStatement, PolynomialGroupLayout, ScheduleLookupKey, SetupPrefixSlotId,
-    SetupPrefixVerifierRegistry,
+    AkitaExpandedSetup, AkitaVerifierSetup, GroupBatchStatement, SetupPrefixVerifierRegistry,
 };
-pub(super) use akita_types::{
-    BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims, PrecommittedGroupProfiles,
-};
-pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
+pub(super) use akita_types::{CommittedGroup, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::One;
 pub(super) use jolt_field::{CanonicalBytes, CanonicalEncoding, Field};
 pub(super) use rand::rngs::StdRng;
@@ -199,7 +200,7 @@ where
 pub(super) fn opening_from_poly_for_layout<P>(
     poly: &P,
     point: &[F],
-    layout: &akita_types::GroupOpenPhaseParams,
+    layout: &akita_params::GroupOpenPhaseParams,
     basis_mode: BasisMode,
 ) -> F
 where
@@ -221,7 +222,7 @@ where
 pub(super) fn opening_from_poly_with_basis<const D: usize, P>(
     poly: &P,
     point: &[F],
-    layout: &akita_types::GroupOpenPhaseParams,
+    layout: &akita_params::GroupOpenPhaseParams,
     basis_mode: BasisMode,
 ) -> F
 where

@@ -72,8 +72,8 @@ struct ProofState {
     group_counts: Arc<[usize]>,
     commitments: Mutex<HashMap<(u32, usize), u128>>,
     plan: Option<(
-        Arc<akita_types::FoldSchedule>,
-        akita_types::OpeningClaimsLayout,
+        Arc<akita_params::FoldSchedule>,
+        akita_params::OpeningClaimsLayout,
     )>,
 }
 
@@ -156,12 +156,12 @@ impl ScopeLease {
         commitment_id: u128,
     ) -> Result<(), AkitaError> {
         self.validate_context(context)?;
-        let group = context.group_index().ok_or(AkitaError::InvalidProof)?;
-        let mut commitments = self
-            .state
-            .commitments
-            .lock()
-            .map_err(|_| AkitaError::InvalidProof)?;
+        let group = context.group_index().ok_or_else(|| {
+            AkitaError::Internal("commitment admission lost its validated group context".into())
+        })?;
+        let mut commitments = self.state.commitments.lock().map_err(|_| {
+            AkitaError::Internal("admitted commitment map lock poisoned during admission".into())
+        })?;
         let key = (context.fold_level(), group);
         if commitments.get(&key).is_some_and(|&id| id != commitment_id) {
             return Err(AkitaError::InvalidInput(
@@ -178,12 +178,12 @@ impl ScopeLease {
         commitment_id: u128,
     ) -> Result<(), AkitaError> {
         self.validate_context(context)?;
-        let group = context.group_index().ok_or(AkitaError::InvalidProof)?;
-        let commitments = self
-            .state
-            .commitments
-            .lock()
-            .map_err(|_| AkitaError::InvalidProof)?;
+        let group = context.group_index().ok_or_else(|| {
+            AkitaError::Internal("commitment validation lost its validated group context".into())
+        })?;
+        let commitments = self.state.commitments.lock().map_err(|_| {
+            AkitaError::Internal("admitted commitment map lock poisoned during validation".into())
+        })?;
         #[cfg(test)]
         if self.state.plan.is_none() {
             return Ok(());
@@ -200,8 +200,8 @@ impl ScopeLease {
         &self,
     ) -> Result<
         (
-            Arc<akita_types::FoldSchedule>,
-            akita_types::OpeningClaimsLayout,
+            Arc<akita_params::FoldSchedule>,
+            akita_params::OpeningClaimsLayout,
         ),
         AkitaError,
     > {
@@ -255,8 +255,8 @@ impl BackendIdentity {
 
     pub(crate) fn begin_proof(
         &self,
-        plan: &akita_types::FoldSchedule,
-        layout: &akita_types::OpeningClaimsLayout,
+        plan: &akita_params::FoldSchedule,
+        layout: &akita_params::OpeningClaimsLayout,
     ) -> Result<ScopeLease, AkitaError> {
         plan.validate_structure()?;
         let mut group_counts = Vec::with_capacity(plan.recursive_folds.len() + 2);
@@ -283,8 +283,8 @@ impl BackendIdentity {
         &self,
         group_counts: Vec<usize>,
         plan: Option<(
-            Arc<akita_types::FoldSchedule>,
-            akita_types::OpeningClaimsLayout,
+            Arc<akita_params::FoldSchedule>,
+            akita_params::OpeningClaimsLayout,
         )>,
     ) -> Result<ScopeLease, AkitaError> {
         let sequence = self

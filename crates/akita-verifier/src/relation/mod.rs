@@ -4,12 +4,15 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
+use akita_params::{
+    dispatch_for_field, CommittedGroupParams, OpeningClaimsLayout, RelationAddressGeometry,
+    RingRelationMode, WitnessLayout,
+};
 use akita_types::{
-    dispatch_for_field, shared_setup_fold_gadget, AkitaExpandedSetup, CommittedGroupParams,
-    FpExtEncoding, OpeningClaimsLayout, OpeningFamily, PreparedRelationAddress,
-    PreparedRingMultiplier, RelationAddressGeometry, RingMultiplierOpeningPoint,
-    RingRelationGroupOpeningView, RingRelationInstance, RingRelationMode,
-    SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+    shared_setup_fold_gadget, AkitaExpandedSetup, FpExtEncoding, OpeningFamily,
+    PreparedRelationAddress, PreparedRingMultiplier, RingMultiplierOpeningPoint,
+    RingRelationGroupOpeningView, RingRelationInstance, SetupContributionGroupInputs,
+    SetupContributionPlan,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::sync::Arc;
@@ -274,7 +277,7 @@ where
                 .into_iter()
                 .map(|group| {
                     let multipliers = dispatch_for_field!(
-                        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+                        akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
                         F,
                         group.d_a,
                         |D_GROUP| {

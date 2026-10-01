@@ -287,7 +287,7 @@ Relevant sources:
   class-indexed range provers.
 - `crates/akita-cpu-backend/src/opaque/sumcheck/physical_l2_norm.rs` fuses the
   physical norm with the final range leaf.
-- `crates/akita-types/src/sis/physical_l2.rs` defines the direct and limb-Gram
+- `crates/akita-params/src/sis/physical_l2.rs` defines the direct and limb-Gram
   plans and reconstructs the integer norm.
 
 ## Prepared NTT state

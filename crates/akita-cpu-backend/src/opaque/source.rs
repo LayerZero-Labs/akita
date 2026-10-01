@@ -3,6 +3,7 @@ use crate::opaque::*;
 use crate::opaque::{OpeningFoldKernel, OpeningFoldOutput};
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
+use akita_params::*;
 use akita_types::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 type FoldedClaimEvals<F, const D: usize> =
@@ -34,7 +35,9 @@ where
             OpeningFoldKernel::evaluate_and_fold(backend, prepared, poly.opening_view()?, plan)?;
         return Ok((eval, folded));
     }
-    let multipliers = point.as_subfield().ok_or(AkitaError::InvalidProof)?;
+    let multipliers = point.as_subfield().ok_or_else(|| {
+        AkitaError::Internal("source opening multiplier point is neither base nor subfield".into())
+    })?;
     let plan = OpeningFoldPlan::Subfield {
         multipliers,
         num_positions_per_block,

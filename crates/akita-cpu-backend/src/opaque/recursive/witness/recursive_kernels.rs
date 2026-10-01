@@ -137,11 +137,11 @@ where
     let num_live_blocks = plan.live_blocks();
     let alpha_bits = plan.alpha_bits();
     let opening_method = plan.opening_method();
-    if let akita_types::OpeningMethod::SubringCoefficientPacking {
+    if let akita_params::OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension,
     } = opening_method
     {
-        let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(
+        let geometry = akita_params::SubringCoefficientPackingGeometry::try_new(
             E::DEGREE,
             D,
             challenge_subring_dimension,
@@ -171,7 +171,10 @@ where
                 crate::opaque::SubringCoefficientPackingPlan { point: &point },
             )?;
         let [partials] = partials_by_claim.as_slice() else {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "singleton witness coefficient packing kernel returned a different batch count"
+                    .into(),
+            ));
         };
         let scalar =
             crate::arithmetic::coefficient_packing_fold::coefficient_packing_scalar_opening::<F, E>(
@@ -206,10 +209,11 @@ where
         }
     } else {
         crate::opaque::OpeningFoldPlan::Subfield {
-            multipliers: point
-                .ring_multiplier_point
-                .as_subfield()
-                .ok_or(AkitaError::InvalidProof)?,
+            multipliers: point.ring_multiplier_point.as_subfield().ok_or_else(|| {
+                AkitaError::Internal(
+                    "witness opening multiplier point is neither base nor subfield".into(),
+                )
+            })?,
             num_positions_per_block,
         }
     };
@@ -243,7 +247,7 @@ where
         }
         let mut reduced_point = inner_point[..inner_point.len().min(packed_bits)].to_vec();
         reduced_point.resize(packed_bits, E::zero());
-        let weights = akita_types::basis_weights(&reduced_point, basis)?;
+        let weights = akita_params::basis_weights(&reduced_point, basis)?;
         let packed = akita_types::embed_ring_subfield_vector::<F, E, D>(
             &weights,
             AkitaError::InvalidInput(

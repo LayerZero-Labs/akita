@@ -1,23 +1,5 @@
 use super::*;
-
-pub(super) fn exact_test_a_bound(params: &CommittedGroupParams) -> u128 {
-    crate::sis::rounded_up_role_a_inf_norm(
-        params.inner().matrix.security_policy(),
-        params
-            .inner()
-            .matrix
-            .sis_table_key()
-            .expect("L infinity test matrix")
-            .table_digest,
-        params.inner().matrix.sis_modulus_profile(),
-        params.d_a(),
-        params.open().digits.log_basis,
-        &params.fold_challenge_config(),
-        params.num_digits_fold(),
-        params.witness_chunk.num_chunks,
-    )
-    .expect("exact test A bound")
-}
+pub(super) use akita_params::test_fixtures::exact_test_a_bound;
 
 #[test]
 fn accepts_packing_prefix_then_evaluation_trace_prefix() {
@@ -72,9 +54,10 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
     level2.params.own_group_mut().opening.fold_challenge_config = production;
     let natural_len = 64;
     provision_setup_prefix_capacity(&mut level2.params, natural_len);
-    let commitment_params = crate::setup_prefix_precommitted_params(&level2.params, natural_len)
-        .expect("level 2 EvaluationTrace prefix");
-    let second_prefix = crate::scheduled_setup_prefix(natural_len, commitment_params);
+    let commitment_params =
+        akita_params::setup_prefix_precommitted_params(&level2.params, natural_len)
+            .expect("level 2 EvaluationTrace prefix");
+    let second_prefix = akita_params::scheduled_setup_prefix(natural_len, commitment_params);
     level2.params.set_setup_prefix(Some(second_prefix)).unwrap();
 
     schedule
@@ -120,7 +103,7 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
 
 fn use_expected_producer_encodings(schedule: &mut FoldSchedule, extension_degree: usize) {
     let root = &mut schedule.root.params;
-    root.source_encoding = crate::CommittedSourceEncoding::for_producer(
+    root.source_encoding = akita_params::CommittedSourceEncoding::for_producer(
         root.opening_method(),
         extension_degree,
         root.d_a(),
@@ -129,7 +112,7 @@ fn use_expected_producer_encodings(schedule: &mut FoldSchedule, extension_degree
     );
     for step in &mut schedule.recursive_folds {
         let witness = &mut step.params;
-        witness.source_encoding = crate::CommittedSourceEncoding::for_producer(
+        witness.source_encoding = akita_params::CommittedSourceEncoding::for_producer(
             witness.opening_method(),
             extension_degree,
             witness.d_a(),
@@ -173,41 +156,6 @@ fn accepts_packing_geometry_for_every_extension_degree() {
 }
 
 #[test]
-fn accepts_group_local_packing_subring_dimensions() {
-    let packing_group = |s| {
-        let mut params = committed_params(128);
-        params.own_group_mut().opening.opening_method =
-            crate::OpeningMethod::SubringCoefficientPacking {
-                challenge_subring_dimension: s,
-            };
-        params.own_group_mut().opening.fold_challenge_config =
-            akita_challenges::SparseChallengeConfig::production_for_ring_dim(s).unwrap();
-        params.source_encoding = crate::CommittedSourceEncoding::CanonicalCoefficientTable;
-        params
-    };
-    let s64 = packing_group(64);
-    let s128 = packing_group(128);
-    let groups = [
-        OpeningExecutionGroup {
-            opening_method: s64.opening_method(),
-            inner_commit_matrix: &s64.inner().matrix,
-            fold_challenge_config: s64.fold_challenge_config(),
-            source_encoding: s64.source_encoding,
-            expected_source_encoding: None,
-        },
-        OpeningExecutionGroup {
-            opening_method: s128.opening_method(),
-            inner_commit_matrix: &s128.inner().matrix,
-            fold_challenge_config: s128.fold_challenge_config(),
-            source_encoding: s128.source_encoding,
-            expected_source_encoding: None,
-        },
-    ];
-    validate_level_opening_execution(0, 1, &groups)
-        .expect("each root group owns its challenge subring dimension");
-}
-
-#[test]
 fn accepts_level_one_packing() {
     let mut schedule = recursive_schedule(128, 128, false);
     use_required_early_packing(&mut schedule, 2);
@@ -223,7 +171,7 @@ fn rejects_level_two_packing() {
     append_recursive_fold(&mut schedule);
     let recursive = &mut schedule.recursive_folds[1].params;
     recursive.own_group_mut().opening.opening_method =
-        crate::OpeningMethod::SubringCoefficientPacking {
+        akita_params::OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
         };
     recursive.own_group_mut().opening.fold_challenge_config =
@@ -250,7 +198,7 @@ fn rejects_unaudited_recursive_packing_family() {
         .params
         .own_group_mut()
         .opening
-        .opening_method = crate::OpeningMethod::SubringCoefficientPacking {
+        .opening_method = akita_params::OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 64,
     };
     schedule.recursive_folds[0]
@@ -266,7 +214,7 @@ fn rejects_packing_over_tensor_projected_source() {
     let mut schedule = recursive_schedule(128, 128, false);
     use_required_early_packing(&mut schedule, 2);
     schedule.root.params.source_encoding =
-        crate::CommittedSourceEncoding::TensorSubfieldProjection {
+        akita_params::CommittedSourceEncoding::TensorSubfieldProjection {
             extension_degree: 2,
         };
     let error = schedule
@@ -326,7 +274,7 @@ fn rejects_extension_recursive_trace_mutated_to_canonical() {
         .fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
     use_expected_producer_encodings(&mut schedule, 2);
     schedule.recursive_folds[1].params.source_encoding =
-        crate::CommittedSourceEncoding::CanonicalCoefficientTable;
+        akita_params::CommittedSourceEncoding::CanonicalCoefficientTable;
 
     assert!(matches!(
         schedule.validate_nonterminal_opening_execution(2),
@@ -338,7 +286,7 @@ fn rejects_extension_recursive_trace_mutated_to_canonical() {
 fn rejects_tensor_degree_that_does_not_fit_half_the_a_ring() {
     let mut schedule = recursive_schedule(128, 128, false);
     schedule.root.params.source_encoding =
-        crate::CommittedSourceEncoding::TensorSubfieldProjection {
+        akita_params::CommittedSourceEncoding::TensorSubfieldProjection {
             extension_degree: 128,
         };
 

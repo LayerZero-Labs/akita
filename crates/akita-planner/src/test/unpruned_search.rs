@@ -29,7 +29,7 @@ struct UnprunedState {
     current_log_basis: u32,
     source_moment: Option<crate::response_model::SourceMomentEstimate>,
     dimension_ceiling: CommitmentRingDims,
-    payload_phase: akita_types::CommitmentPayloadPhase,
+    payload_phase: akita_params::CommitmentPayloadPhase,
     relation_state: OracleRelationState,
 }
 
@@ -86,8 +86,8 @@ impl OracleWork {
 
     fn record_candidate_route(&mut self, params: &CommittedGroupParams) -> Result<(), AkitaError> {
         let counter = match params.inner().matrix.security_route() {
-            akita_types::InnerCommitSecurityRoute::Linf(_) => &mut self.linf_candidates,
-            akita_types::InnerCommitSecurityRoute::L2 { .. } => &mut self.l2_candidates,
+            akita_params::InnerCommitSecurityRoute::Linf(_) => &mut self.linf_candidates,
+            akita_params::InnerCommitSecurityRoute::L2 { .. } => &mut self.l2_candidates,
         };
         *counter = counter.checked_add(1).ok_or_else(|| {
             AkitaError::InvalidSetup("unpruned candidate-route counter overflow".into())
@@ -114,7 +114,7 @@ struct RootCandidate<'a> {
 
 fn consider_complete_schedule(
     policy: &PlannerPolicy,
-    schedule_key: &akita_types::ScheduleLookupKey,
+    schedule_key: &akita_params::ScheduleLookupKey,
     root: RootCandidate<'_>,
     suffix: &ScheduleCandidate,
     complete_schedules: &std::cell::Cell<usize>,
@@ -159,7 +159,7 @@ fn consider_complete_schedule(
 pub(super) fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
-    source_contract: akita_types::sis::CommittedSourceContract,
+    source_contract: akita_params::sis::CommittedSourceContract,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
 ) -> Result<OracleSearchResult, AkitaError> {
     key.validate()?;
@@ -174,7 +174,7 @@ pub(super) fn find_schedule(
     let mut work = OracleWork::default();
     let mut memo = OracleMemo::new();
     let complete_schedules = std::cell::Cell::new(0usize);
-    let schedule_key = akita_types::ScheduleLookupKey::single(key);
+    let schedule_key = akita_params::ScheduleLookupKey::single(key);
     let ctx = UnprunedCtx {
         policy,
         ring_challenge_config: &ring_challenge_config,
@@ -237,7 +237,7 @@ pub(super) fn find_schedule(
                                 source_moment: next_source_moment,
                                 dimension_ceiling: root_dimensions,
                                 payload_phase:
-                                    akita_types::CommitmentPayloadPhase::CompressedPrefix,
+                                    akita_params::CommitmentPayloadPhase::CompressedPrefix,
                                 relation_state,
                             },
                             &mut memo,

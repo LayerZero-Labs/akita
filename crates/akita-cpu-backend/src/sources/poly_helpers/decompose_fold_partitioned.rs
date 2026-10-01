@@ -13,7 +13,7 @@ use super::{
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_types::SignedDigitKernel;
+use akita_params::SignedDigitKernel;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
 use std::ops::Range;
@@ -201,7 +201,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> FoldSource<D> for LiveRings<'
     }
 
     fn digit_abs_bound(&self) -> u64 {
-        akita_types::balanced_signed_digit_abs_bound(self.params.log_basis())
+        akita_params::balanced_signed_digit_abs_bound(self.params.log_basis())
             .expect("decompose-fold parameters must use a validated signed-digit basis")
     }
 
@@ -581,7 +581,7 @@ pub(crate) fn cached_digit_decompose_fold_partitioned<const D: usize>(
     log_basis: u32,
 ) -> Vec<[i32; D]> {
     let num_rings = digit_planes.len() / num_digits;
-    let digit_abs_bound = akita_types::balanced_signed_digit_abs_bound(log_basis)
+    let digit_abs_bound = akita_params::balanced_signed_digit_abs_bound(log_basis)
         .expect("cached decompose-fold basis must be validated")
         .min(u64::from(i8::MIN.unsigned_abs()));
     element_partitioned_decompose_fold(

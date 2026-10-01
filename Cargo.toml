@@ -11,6 +11,7 @@ members = [
   "crates/akita-sumcheck",
   "crates/akita-transcript",
   "crates/akita-types",
+  "crates/akita-params",
   "crates/akita-verifier",
   "crates/akita-prover",
   "crates/akita-planner",
