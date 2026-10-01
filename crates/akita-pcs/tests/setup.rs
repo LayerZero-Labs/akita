@@ -188,7 +188,7 @@ where
 
     let session = b"setup-tests/dense";
     let proof = scheme
-        .batched_prove(
+        .prove_standalone(
             &setup,
             prove_input::<Cfg>(
                 &pt[..],
@@ -205,7 +205,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 session,
                 verify_input::<Cfg>(
@@ -308,7 +308,7 @@ where
 
     let session = b"setup-tests/onehot";
     let proof = scheme
-        .batched_prove(
+        .prove_standalone(
             &setup,
             prove_input::<Cfg>(
                 &pt[..],
@@ -325,7 +325,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 session,
                 verify_input::<Cfg>(
@@ -348,7 +348,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &tampered,
                 session,
                 verify_input::<Cfg>(
@@ -368,7 +368,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &wrong_binding,
                 session,
                 verify_input::<Cfg>(
@@ -452,7 +452,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 
     let session = b"setup-tests/batched-dense";
     let proof = scheme
-        .batched_prove(
+        .prove_standalone(
             &setup,
             prove_input::<Cfg>(
                 &pt[..],
@@ -469,7 +469,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 session,
                 verify_input::<Cfg>(
@@ -557,7 +557,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
 
     let session = b"setup-tests/batched-onehot";
     let proof = scheme
-        .batched_prove(
+        .prove_standalone(
             &setup,
             prove_input::<Cfg>(
                 &pt[..],
@@ -574,7 +574,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 session,
                 verify_input::<Cfg>(

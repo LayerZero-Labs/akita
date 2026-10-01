@@ -64,7 +64,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         )
         .expect("commit");
     let proof = scheme
-        .batched_prove(
+        .prove_standalone(
             &setup,
             prove_input::<OneHotCfg>(&point, &[opening], &commitment, hint, scheme.schedules()),
             &stack,
@@ -75,7 +75,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 LABEL,
                 verify_input::<OneHotCfg>(&point, &[opening], &commitment, scheme.schedules()),
@@ -100,7 +100,7 @@ impl FoldLinfGrindFixture {
         self.scheme
             .verifier(self.verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     proof,
                     LABEL,
                     verify_input::<OneHotCfg>(

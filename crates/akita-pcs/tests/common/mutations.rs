@@ -1,15 +1,65 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
-use akita_transcript::{
-    ProofMessageRange, ProtocolMessageKind, ProtocolSiteId, SITE_FAMILY_SUMCHECK,
-};
-use akita_types::SumcheckProtocol;
+use akita_types::transcript::SITE_FAMILY_SUMCHECK;
+use akita_types::{ProtocolSiteId, SumcheckProtocol};
+use jolt_transcript::{TranscriptEvent, TranscriptOp};
+
+/// One recorded prover message: its site, its position among consecutive
+/// messages at that site, and its argument-string range.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MessageRange {
+    pub(crate) site: ProtocolSiteId,
+    pub(crate) ordinal: u32,
+    pub(crate) range: Range<usize>,
+}
+
+/// Every prover message in `events`, in transcript order.
+///
+/// Consecutive messages at one site (a bounded payload's length and body) get
+/// increasing ordinals so each stays an independent mutation target.
+pub(crate) fn message_ranges(events: &[TranscriptEvent]) -> Vec<MessageRange> {
+    let mut messages: Vec<MessageRange> = Vec::new();
+    let mut previous: Option<(ProtocolSiteId, u32)> = None;
+    for event in events {
+        let Some(range) = event.narg.clone() else {
+            previous = None;
+            continue;
+        };
+        assert_eq!(event.op, TranscriptOp::Message);
+        let site = ProtocolSiteId::from_bytes(event.site.0);
+        let ordinal = match previous {
+            Some((last, ordinal)) if last == site => ordinal + 1,
+            _ => 0,
+        };
+        previous = Some((site, ordinal));
+        messages.push(MessageRange {
+            site,
+            ordinal,
+            range,
+        });
+    }
+    messages
+}
+
+/// Assert that the messages tile `0..proof_len` without gaps or overlap.
+pub(crate) fn assert_messages_cover(messages: &[MessageRange], proof_len: usize) {
+    let mut cursor = 0usize;
+    for message in messages {
+        assert_eq!(
+            message.range.start, cursor,
+            "proof messages must be gap-free"
+        );
+        cursor = message.range.end;
+    }
+    assert_eq!(cursor, proof_len, "proof messages must cover the proof");
+}
 
 /// Semantic identity retained by the proof-mutation suites.
 ///
-/// Round and limb are deliberately excluded so one later representative can
-/// be selected within a single protocol site. Every coordinate that identifies
-/// an independently meaningful protocol occurrence remains in the bucket.
+/// Round is deliberately excluded so one later representative can be selected
+/// within a single protocol site. Every coordinate that identifies an
+/// independently meaningful protocol occurrence remains in the bucket.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct MutationBucket {
     pub(crate) family: u32,
@@ -18,12 +68,12 @@ pub(crate) struct MutationBucket {
     pub(crate) stage: u32,
     pub(crate) group: u32,
     pub(crate) detail: u32,
-    pub(crate) kind: u32,
+    pub(crate) ordinal: u32,
 }
 
 impl MutationBucket {
-    fn new(range: &ProofMessageRange) -> (Self, (u32, u32)) {
-        let site = ProtocolSiteId::from_bytes(range.context.site_id);
+    fn new(message: &MessageRange) -> (Self, u32) {
+        let site = message.site;
         (
             Self {
                 family: site.family,
@@ -32,9 +82,9 @@ impl MutationBucket {
                 stage: site.stage,
                 group: site.group,
                 detail: site.detail,
-                kind: range.context.kind,
+                ordinal: message.ordinal,
             },
-            (site.round, site.limb),
+            site.round,
         )
     }
 
@@ -45,28 +95,31 @@ impl MutationBucket {
     }
 }
 
-/// Select one later round/limb from every complete semantic protocol bucket.
+/// Select the latest round from every complete semantic protocol bucket.
 pub(crate) fn representative_mutation_ranges(
-    ranges: impl IntoIterator<Item = ProofMessageRange>,
-) -> Vec<(MutationBucket, ProofMessageRange)> {
+    messages: impl IntoIterator<Item = MessageRange>,
+) -> Vec<(MutationBucket, MessageRange)> {
     let mut selected = BTreeMap::new();
-    for range in ranges.into_iter().filter(|range| range.len != 0) {
-        let (bucket, rank) = MutationBucket::new(&range);
+    for message in messages
+        .into_iter()
+        .filter(|message| !message.range.is_empty())
+    {
+        let (bucket, rank) = MutationBucket::new(&message);
         if selected
             .get(&bucket)
             .is_none_or(|(selected_rank, _)| rank > *selected_rank)
         {
-            selected.insert(bucket, (rank, range));
+            selected.insert(bucket, (rank, message));
         }
     }
     selected
         .into_iter()
-        .map(|(bucket, (_, range))| (bucket, range))
+        .map(|(bucket, (_, message))| (bucket, message))
         .collect()
 }
 
 pub(crate) fn selected_sumcheck_protocols(
-    selected: &[(MutationBucket, ProofMessageRange)],
+    selected: &[(MutationBucket, MessageRange)],
 ) -> BTreeSet<SumcheckProtocol> {
     selected
         .iter()
@@ -74,55 +127,22 @@ pub(crate) fn selected_sumcheck_protocols(
         .collect()
 }
 
-/// Reconcile actual emission with every message's public byte grammar.
-pub(crate) fn assert_ranges_match_context(ranges: &[ProofMessageRange]) {
-    for range in ranges {
-        let maximum = usize::try_from(range.context.encoded_bytes)
-            .expect("native context byte count must fit usize");
-        if range.context.kind == ProtocolMessageKind::GrindingNonce as u32
-            || range.context.kind == ProtocolMessageKind::FoldResponseNonce as u32
-        {
-            assert!(range.len > 0 && range.len <= maximum);
-        } else {
-            assert_eq!(
-                range.len, maximum,
-                "fixed-width native emission must match its public grammar"
-            );
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_transcript::ProtocolContextRecord;
 
-    fn range(
-        protocol: SumcheckProtocol,
-        level: u32,
-        round: u32,
-        start: usize,
-    ) -> ProofMessageRange {
-        ProofMessageRange {
-            context: ProtocolContextRecord::new(
-                ProtocolSiteId {
-                    family: SITE_FAMILY_SUMCHECK,
-                    invocation: protocol.tag(),
-                    level,
-                    stage: 0,
-                    round,
-                    group: 0,
-                    limb: 0,
-                    detail: 3,
-                }
-                .to_bytes(),
-                ProtocolMessageKind::ProofAtoms as u32,
-                1,
-                1,
-                0,
-            ),
-            start,
-            len: 1,
+    fn message(protocol: SumcheckProtocol, level: u32, round: u32, start: usize) -> MessageRange {
+        MessageRange {
+            site: ProtocolSiteId {
+                family: SITE_FAMILY_SUMCHECK,
+                invocation: protocol.tag(),
+                level,
+                round,
+                detail: 3,
+                ..ProtocolSiteId::default()
+            },
+            ordinal: 0,
+            range: start..start + 1,
         }
     }
 
@@ -135,14 +155,14 @@ mod tests {
             SumcheckProtocol::Stage2,
             SumcheckProtocol::Stage3,
         ];
-        let mut ranges = Vec::new();
+        let mut messages = Vec::new();
         for (index, protocol) in protocols.into_iter().enumerate() {
-            ranges.push(range(protocol, 0, 0, index * 4));
-            ranges.push(range(protocol, 0, 3, index * 4 + 1));
-            ranges.push(range(protocol, 1, 1, index * 4 + 2));
+            messages.push(message(protocol, 0, 0, index * 4));
+            messages.push(message(protocol, 0, 3, index * 4 + 1));
+            messages.push(message(protocol, 1, 1, index * 4 + 2));
         }
 
-        let selected = representative_mutation_ranges(ranges);
+        let selected = representative_mutation_ranges(messages);
         assert_eq!(selected.len(), protocols.len() * 2);
         assert_eq!(
             selected_sumcheck_protocols(&selected),
@@ -152,7 +172,7 @@ mod tests {
             let selected_for_protocol = selected
                 .iter()
                 .filter(|(bucket, _)| bucket.sumcheck_protocol() == Some(protocol))
-                .map(|(bucket, range)| (bucket.level, range.start))
+                .map(|(bucket, message)| (bucket.level, message.range.start))
                 .collect::<Vec<_>>();
             assert_eq!(selected_for_protocol.len(), 2);
             assert!(selected_for_protocol.contains(&(0, protocol.tag() as usize * 4 + 1)));

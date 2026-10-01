@@ -99,7 +99,7 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
         .expect("L2 prover group")])
         .expect("L2 prover claims");
         let proof = scheme
-            .batched_prove(
+            .prove_standalone(
                 &setup,
                 selected_prover_data::<Cfg>(prover_claims, vec![hint], scheme.schedules()),
                 &stack,
@@ -119,7 +119,7 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
             scheme
                 .verifier(verifier_setup.clone())
                 .and_then(|verifier| {
-                    verifier.batched_verify(
+                    verifier.verify_standalone(
                         candidate,
                         LABEL,
                         selected_statement::<Cfg>(claims, scheme.schedules()),
@@ -198,7 +198,7 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
         .expect("terminal L2 prover group")])
         .expect("terminal L2 prover claims");
         let proof = scheme
-            .batched_prove(
+            .prove_standalone(
                 &setup,
                 selected_prover_data::<Cfg>(prover_claims, vec![hint], scheme.schedules()),
                 &stack,
@@ -218,7 +218,7 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
             scheme
                 .verifier(verifier_setup.clone())
                 .and_then(|verifier| {
-                    verifier.batched_verify(
+                    verifier.verify_standalone(
                         candidate,
                         LABEL,
                         selected_statement::<Cfg>(claims, scheme.schedules()),

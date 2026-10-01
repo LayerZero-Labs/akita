@@ -43,7 +43,7 @@ fn commit_prove_verify<Cfg, P>(
     .expect("prover data");
     let selection = prover_data.selection();
     let proof = scheme
-        .batched_prove(setup, prover_data, backend, label, BasisMode::Lagrange)
+        .prove_standalone(setup, prover_data, backend, label, BasisMode::Lagrange)
         .expect("prove");
     let verify_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point,
@@ -60,7 +60,7 @@ fn commit_prove_verify<Cfg, P>(
                 .clone(),
         )
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),

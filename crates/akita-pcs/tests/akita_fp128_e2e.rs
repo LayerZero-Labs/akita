@@ -359,13 +359,13 @@ fn fp128_onehot_batched() {
         let prover_data =
             prove_input::<OneHotCfg>(&pt[..], &openings, &commitment, hint, scheme.schedules());
         let proof = prove_matching_byte_model(scheme.schedules(), prover_data.selection(), || {
-            scheme.batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
+            scheme.prove_standalone(&setup, prover_data, &stack, session, BasisMode::Lagrange)
         });
 
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     verify_input::<OneHotCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
@@ -420,13 +420,13 @@ fn fp128_dense_batched() {
         let prover_data =
             prove_input::<DenseCfg>(&pt[..], &openings, &commitment, hint, scheme.schedules());
         let proof = prove_matching_byte_model(scheme.schedules(), prover_data.selection(), || {
-            scheme.batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
+            scheme.prove_standalone(&setup, prover_data, &stack, session, BasisMode::Lagrange)
         });
 
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     verify_input::<DenseCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
@@ -500,7 +500,7 @@ fn fp128_onehot_oversized_setup() {
 
         let session = b"completeness/fp128_onehot_oversized_setup";
         let proof = scheme
-            .batched_prove(
+            .prove_standalone(
                 &setup,
                 prove_input::<OneHotCfg>(
                     &pt[..],
@@ -519,7 +519,7 @@ fn fp128_onehot_oversized_setup() {
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     verify_input::<OneHotCfg>(
@@ -572,7 +572,7 @@ fn fp128_dense_monomial_basis() {
 
         let session = b"completeness/fp128_dense_monomial_basis";
         let proof = scheme
-            .batched_prove(
+            .prove_standalone(
                 &setup,
                 prove_input::<DenseCfg>(
                     &pt[..],
@@ -591,7 +591,7 @@ fn fp128_dense_monomial_basis() {
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     verify_input::<DenseCfg>(

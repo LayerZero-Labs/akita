@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-#[cfg(feature = "logging-transcript")]
+#[cfg(feature = "logging")]
 pub(crate) mod mutations;
 mod opening_oracles;
 pub(crate) mod proof_size;
@@ -29,8 +29,8 @@ pub(super) use akita_types::{
     BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims, PrecommittedGroupProfiles,
 };
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
+pub(super) use jolt_field::CanonicalEncoding;
 use jolt_field::One;
-pub(super) use jolt_field::{CanonicalBytes, CanonicalEncoding, Field};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::{Arc, Once};
@@ -70,36 +70,6 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("failed to spawn thread")
         .join()
         .expect("test thread panicked");
-}
-
-/// Stable digest used by versioned protocol epochs.
-pub(super) fn protocol_epoch_digest<FF>(payload: &[u8]) -> String
-where
-    FF: Field + CanonicalEncoding + CanonicalBytes + 'static,
-{
-    let mut transcript =
-        akita_transcript::new_prover_channel(b"akita/protocol-epoch/digest", payload).unwrap();
-    akita_transcript::prover_context(
-        &mut transcript,
-        akita_transcript::ProtocolContextRecord::new(
-            akita_transcript::ProtocolSiteId {
-                family: akita_transcript::SITE_FAMILY_ROOT_STATEMENT,
-                detail: 0x4550_4f43,
-                ..akita_transcript::ProtocolSiteId::default()
-            }
-            .to_bytes(),
-            akita_transcript::ProtocolMessageKind::Challenge as u32,
-            0,
-            0,
-            akita_transcript::field_challenge_bytes::<FF>(),
-        ),
-    );
-    akita_transcript::prover_field_challenge::<FF>(&mut transcript)
-        .expect("supported protocol field")
-        .to_bytes_le_vec()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 #[allow(clippy::type_complexity)]

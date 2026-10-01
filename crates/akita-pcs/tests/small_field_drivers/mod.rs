@@ -108,7 +108,7 @@ where
     let selection = prover_data.selection();
 
     let proof = prove_matching_byte_model(scheme.schedules(), selection, || {
-        scheme.batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
+        scheme.prove_standalone(&setup, prover_data, &stack, label, BasisMode::Lagrange)
     });
 
     let verify_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
@@ -121,7 +121,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
@@ -206,7 +206,7 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 proof,
                 label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),

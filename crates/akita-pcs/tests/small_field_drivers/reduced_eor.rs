@@ -24,7 +24,7 @@ fn verify(
         .scheme
         .verifier(roundtrip.verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 proof,
                 label,
                 GroupBatchStatement::new(roundtrip.selection, claims)?,

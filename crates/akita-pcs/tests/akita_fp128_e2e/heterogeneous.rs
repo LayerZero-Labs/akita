@@ -163,7 +163,7 @@ fn heterogeneous_group_types() {
 
         let session = b"completeness/heterogeneous_group_types";
         let proof = onehot_scheme
-            .batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
+            .prove_standalone(&setup, prover_data, &stack, session, BasisMode::Lagrange)
             .expect("heterogeneous prove");
 
         let verifier_setup = onehot_scheme
@@ -189,7 +189,7 @@ fn heterogeneous_group_types() {
         onehot_scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
@@ -336,7 +336,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
 
         let session = b"completeness/bounded_dense_precommit_with_onehot_final";
         let proof = onehot_scheme
-            .batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
+            .prove_standalone(&setup, prover_data, &stack, session, BasisMode::Lagrange)
             .expect("mixed-bound prove");
 
         let verifier_setup = onehot_scheme
@@ -352,7 +352,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         onehot_scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
@@ -381,7 +381,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         assert!(
             onehot_scheme
                 .verifier(verifier_setup.clone())
-                .and_then(|verifier| verifier.batched_verify(
+                .and_then(|verifier| verifier.verify_standalone(
                     &proof,
                     session,
                     GroupBatchStatement::new(selection, tampered).expect("statement"),
@@ -813,20 +813,25 @@ fn explicit_commitment_transfer_between_backends() {
         let prefixes = receiver
             .import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)
             .unwrap();
-        let proof = akita_prover::batched_prove::<Cfg, _>(
+        let mut transcript = jolt_transcript::ProverTranscript::<akita_pcs::AkitaSponge>::new(
+            &akita_pcs::PROOF_STREAM_PROTOCOL,
+            session,
+        );
+        akita_prover::batched_prove::<Cfg, _, _>(
             setup.expanded.descriptor(),
             &prefixes,
             scheme.schedules(),
             &receiver,
             prover_data,
-            session,
+            &mut transcript,
             BasisMode::Lagrange,
         )
         .expect("heterogeneous prove");
+        let proof = transcript.finish();
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     GroupBatchStatement::new(
@@ -873,7 +878,7 @@ where
         )
         .expect("commit");
     let proof = scheme
-        .batched_prove(
+        .prove_standalone(
             setup,
             prove_input::<Cfg>(point, &[opening], &commitment, hint, scheme.schedules()),
             backend,
@@ -890,7 +895,7 @@ where
                 .clone(),
         )
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 session,
                 verify_input::<Cfg>(point, &openings, &commitment, scheme.schedules()),

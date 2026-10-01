@@ -33,9 +33,11 @@ use crate::common::{dense_opening_lagrange, load_workspace_scheme, onehot_openin
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext, OneHotPoly};
+use akita_pcs::{AkitaSponge, PROOF_STREAM_PROTOCOL};
 use akita_prover::SelectedProverOpeningData;
 use akita_schedules::ResolvedScheduleRow;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
+use akita_types::ProtocolSiteId;
 use akita_types::{
     BasisMode, CommitmentPayloadMode, FpExtEncoding, GroupBatchStatement, GroupCommitPhaseParams,
     InnerCommitSecurityRoute, OpeningClaims, OpeningMethod, PhysicalL2NormProofShape,
@@ -45,6 +47,7 @@ use jolt_field::{
     CanonicalBytes, CanonicalEncoding, ExtField, Fold, PseudoMersenne, Ring, Unreduced,
     WithCommitAccumulator,
 };
+use jolt_transcript::{ProverTranscript, TranscriptEvent, VerifierTranscript};
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -220,10 +223,7 @@ where
 fn row_event_streams<Cfg, S>(
     scheme: &akita_pcs::AkitaCommitmentScheme<Cfg>,
     row: &ResolvedScheduleRow,
-) -> (
-    Vec<akita_transcript::TranscriptEvent>,
-    Vec<akita_transcript::TranscriptEvent>,
-)
+) -> (Vec<TranscriptEvent>, Vec<TranscriptEvent>)
 where
     Cfg: CommitmentConfig,
     Cfg::Field: CanonicalEncoding
@@ -332,11 +332,18 @@ where
         "claims must select the probed row"
     );
 
-    akita_transcript::clear_thread_events();
-    let proof = scheme
-        .batched_prove(&setup, prover_data, &backend, LABEL, BasisMode::Lagrange)
+    let mut prover = ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, LABEL);
+    scheme
+        .batched_prove(
+            &setup,
+            prover_data,
+            &backend,
+            &mut prover,
+            BasisMode::Lagrange,
+        )
         .expect("prove");
-    let prover_events = akita_transcript::thread_events();
+    let prover_events = prover.events().to_vec();
+    let proof = prover.finish();
 
     let verifier_claims = OpeningClaims::from_groups(
         commitments
@@ -354,34 +361,27 @@ where
             .collect(),
     )
     .expect("verifier claims");
-    akita_transcript::clear_thread_events();
+    let mut verifier =
+        VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, LABEL, &proof);
     scheme
         .verifier(verifier_setup)
-        .and_then(|verifier| {
-            verifier.batched_verify(
-                &proof,
-                LABEL,
+        .and_then(|akita| {
+            akita.batched_verify(
+                &mut verifier,
                 GroupBatchStatement::new(selection, verifier_claims).expect("statement"),
                 BasisMode::Lagrange,
             )
         })
         .expect("honest proof verifies");
-    let verifier_events = akita_transcript::thread_events();
+    let verifier_events = verifier.events().to_vec();
+    verifier.finish().expect("honest proof is consumed exactly");
     (prover_events, verifier_events)
 }
 
 /// Index and both sides of the first differing event, or the length mismatch.
-fn first_divergence(
-    prover: &[akita_transcript::TranscriptEvent],
-    verifier: &[akita_transcript::TranscriptEvent],
-) -> String {
-    let site = |event: Option<&akita_transcript::TranscriptEvent>| {
-        event.map(|akita_transcript::TranscriptEvent::Context(record)| {
-            (
-                akita_transcript::ProtocolSiteId::from_bytes(record.site_id),
-                record.kind,
-            )
-        })
+fn first_divergence(prover: &[TranscriptEvent], verifier: &[TranscriptEvent]) -> String {
+    let site = |event: Option<&TranscriptEvent>| {
+        event.map(|event| (ProtocolSiteId::from_bytes(event.site.0), event.op))
     };
     let index = prover
         .iter()

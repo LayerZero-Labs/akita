@@ -61,7 +61,7 @@ fn dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
         )
         .expect("commit");
     let proof = scheme
-        .batched_prove(
+        .prove_standalone(
             &setup,
             prove_input::<DenseCfg>(
                 &opening_point,
@@ -79,7 +79,7 @@ fn dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 b"hardening/proptest/native",
                 verify_input::<DenseCfg>(
@@ -96,7 +96,7 @@ fn dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
     trailing.push(0);
     assert!(scheme
         .verifier(verifier_setup.clone())
-        .and_then(|verifier| verifier.batched_verify(
+        .and_then(|verifier| verifier.verify_standalone(
             &trailing,
             b"hardening/proptest/native",
             verify_input::<DenseCfg>(&opening_point, &openings, &commitment, scheme.schedules(),),

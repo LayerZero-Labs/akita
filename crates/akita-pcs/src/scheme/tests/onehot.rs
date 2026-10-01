@@ -423,7 +423,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         PolynomialGroupClaims::new(point.clone(), openings.clone(), commitments[0].clone())
             .expect("valid one-hot prover group");
     let proof = scheme
-        .batched_prove(
+        .prove_standalone(
             &setup,
             selected_prover_data::<OneHotCfg, _>(
                 &scheme,
@@ -440,7 +440,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 b"test/batched-onehot-shape",
                 selected_statement::<OneHotCfg>(
