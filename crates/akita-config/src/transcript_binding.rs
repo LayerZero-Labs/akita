@@ -45,15 +45,6 @@ where
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ExtField: FpExtEncoding<F>,
 {
-    if !akita_transcript::field_sampling_is_certified(
-        F::NUM_BYTES,
-        F::MODULUS_BITS,
-        akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT,
-    ) {
-        return Err(AkitaError::InvalidSetup(
-            "native field-challenge sampling budget is not certified".into(),
-        ));
-    }
     let grinding_plan = derive_transcript_grinding_plan::<Cfg>(schedule, opening_batch)?;
     let instance_descriptor = AkitaInstanceDescriptor::new(
         AlgebraSection::for_fields::<F, Cfg::ExtField>()?,
