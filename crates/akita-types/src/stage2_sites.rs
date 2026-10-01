@@ -1,10 +1,10 @@
 //! Proof-stream atoms emitted after stage-2 sumcheck challenges.
 
+use crate::transcript::{ProtocolSiteId, SITE_FAMILY_STAGE2};
 use crate::GrindingReplay;
 use akita_error::AkitaError;
-use akita_transcript::{exchange_extension_group, ProtocolSiteId, SITE_FAMILY_STAGE2};
-use core::slice;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_field::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
+use jolt_transcript::Channel;
 
 fn witness_evaluation_site(level: u32) -> ProtocolSiteId {
     ProtocolSiteId {
@@ -26,22 +26,20 @@ pub fn stage2_w_eval<F, E, G>(
 ) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + CanonicalDecode,
     G: GrindingReplay,
 {
-    exchange_extension_group::<F, E, _>(
-        grinding.state_mut(),
-        witness_evaluation_site(level),
-        slice::from_mut(&mut evaluation),
-    )?;
+    let state = grinding.state_mut();
+    state.site(witness_evaluation_site(level).into());
+    state.exchange(&mut evaluation)?;
     Ok(evaluation)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transcript::test_transcripts::{prover as new_prover, verifier as new_verifier};
     use crate::{ChallengeFieldOrder, GrindingPlan, ProverGrinding, VerifierGrinding};
-    use akita_transcript::{new_prover_channel, new_verifier_channel};
     use jolt_field::{CanonicalBytes, FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
@@ -54,19 +52,21 @@ mod tests {
             ChallengeFieldOrder::from_full_capacity(128).unwrap(),
         )
         .unwrap();
-        let state = new_prover_channel(b"native-stage2", b"fixture").unwrap();
-        let mut prover = ProverGrinding::new(state, &plan);
+        let mut transcript = new_prover(b"native-stage2");
+        let mut prover = ProverGrinding::new(&mut transcript, &plan);
         let evaluation = E::from_u64(42);
         stage2_w_eval::<F, E, _>(&mut prover, 7, evaluation).unwrap();
-        let proof = prover.finish().unwrap();
+        prover.finish().unwrap();
+        let proof = transcript.finish();
         assert_eq!(proof.len(), E::DEGREE * F::NUM_BYTES);
 
-        let state = new_verifier_channel(b"native-stage2", b"fixture", &proof).unwrap();
-        let mut verifier = VerifierGrinding::new(state, &plan);
+        let mut transcript = new_verifier(b"native-stage2", &proof);
+        let mut verifier = VerifierGrinding::new(&mut transcript, &plan);
         assert_eq!(
             stage2_w_eval::<F, E, _>(&mut verifier, 7, E::zero()).unwrap(),
             evaluation
         );
         verifier.finish().unwrap();
+        transcript.finish().unwrap();
     }
 }

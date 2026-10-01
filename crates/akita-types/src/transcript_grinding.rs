@@ -1,16 +1,19 @@
 //! Public transcript-grinding policy and canonical replay plan.
 
 use crate::descriptor_bytes::digest_descriptor_bytes;
+use crate::transcript::ProtocolSiteId;
 use crate::OpeningMethod;
 use akita_error::AkitaError;
-use akita_transcript::nonce_max_bytes;
+use jolt_transcript::GRINDING_PREDICATE_LEN;
 
 mod challenge_order;
-pub use akita_transcript::{
-    GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
-    MAX_GRINDING_BITS,
-};
 pub use challenge_order::{grind_bits_for_loss, ChallengeFieldOrder};
+pub use jolt_transcript::{GRINDING_NONCE_SLACK_BITS, MAX_GRINDING_BITS};
+
+/// Byte length of the proof-of-work predicate, as bound into the policy encoding.
+pub const GRINDING_PREDICATE_BYTES: u8 = GRINDING_PREDICATE_LEN as u8;
+/// Low-bit-first predicate bit order, as bound into the policy encoding.
+pub const GRINDING_LITTLE_ENDIAN_BIT_ORDER: u8 = 0;
 
 /// Target work factor for every grinding-priced Fiat-Shamir query.
 pub const TRANSCRIPT_SECURITY_BITS: u16 = 128;
@@ -152,10 +155,10 @@ pub enum GrindingSite {
 }
 
 impl GrindingSite {
-    fn site_id(self, detail: u32) -> akita_transcript::ProtocolSiteId {
-        let mut site = akita_transcript::ProtocolSiteId {
+    fn site_id(self, detail: u32) -> ProtocolSiteId {
+        let mut site = ProtocolSiteId {
             detail,
-            ..akita_transcript::ProtocolSiteId::default()
+            ..ProtocolSiteId::default()
         };
         match self {
             Self::EvaluationBatch { level } => {
@@ -643,8 +646,8 @@ impl GrindingPlanAccumulator {
 
 mod replay;
 pub use replay::{
-    GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProofAcceptance,
-    ProverGrinding, VerifierGrinding,
+    GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProverGrinding,
+    VerifierGrinding,
 };
 
 impl GrindingPlan {
@@ -770,6 +773,12 @@ pub fn ring_switch_alpha_loss_factor(
     }
     .ok_or_else(|| AkitaError::InvalidSetup("ring-switch alpha degree overflow".into()))?;
     polynomial_identity_loss_factor(degree_bound)
+}
+
+/// Maximum bytes of one canonical nonce of `nonce_bits` bits: the transcript
+/// encodes nonces as little-endian base-128 groups.
+const fn nonce_max_bytes(nonce_bits: u8) -> usize {
+    (nonce_bits as usize).div_ceil(7)
 }
 
 fn push_u32(out: &mut Vec<u8>, value: u32) {

@@ -5,11 +5,11 @@
 //! Both roles name a site through [`FoldSite`] and convert it with
 //! [`FoldSite::id`].
 
-use akita_error::AkitaError;
-use akita_transcript::{
-    ProtocolSiteId, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_NEXT_WITNESS,
+use crate::transcript::{
+    ProtocolSiteId, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_FOLD_CHALLENGE, SITE_FAMILY_NEXT_WITNESS,
     SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_TERMINAL,
 };
+use akita_error::AkitaError;
 
 /// One fold-owned proof-stream site.
 ///
@@ -43,6 +43,8 @@ pub enum FoldSite {
     TerminalTFields { level: u32 },
     /// Terminal `z` response payload.
     TerminalZPayload { level: u32 },
+    /// Sparse fold-challenge root of one commitment group.
+    FoldChallenge { level: u32, group: u32 },
 }
 
 impl FoldSite {
@@ -101,6 +103,10 @@ impl FoldSite {
             Self::TerminalZPayload { level } => ProtocolSiteId {
                 round: 3,
                 ..site(SITE_FAMILY_TERMINAL, level, 0)
+            },
+            Self::FoldChallenge { level, group } => ProtocolSiteId {
+                group,
+                ..site(SITE_FAMILY_FOLD_CHALLENGE, level, 0)
             },
         })
     }

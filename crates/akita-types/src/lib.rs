@@ -39,6 +39,7 @@ mod stage2_sites;
 mod stage3_sites;
 pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
+pub mod transcript;
 mod transcript_grinding;
 #[path = "transcript_grinding/plan.rs"]
 mod transcript_grinding_plan;
@@ -192,16 +193,17 @@ pub use trace_weight::{
     ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
     EvaluationTraceGroupParameters, EvaluationTraceInputs,
 };
+pub use transcript::{extension_slots, AkitaSponge, ProtocolSiteId, PROOF_STREAM_PROTOCOL};
 pub use transcript_grinding::{
     grind_bits_for_loss, independent_batch_loss_factor, multilinear_point_loss_factor,
     polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
     ChallengeFieldOrder, GrindingPlan, GrindingQueryKind, GrindingReplay, GrindingRun,
-    GrindingSite, GrindingSumcheckProver, GrindingSumcheckVerifier, ProofAcceptance,
-    ProverGrinding, SumcheckProtocol, TranscriptGrindingCost, VerifierGrinding,
-    FOLD_COORDINATE_ORACLE_REVISION, FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS,
-    GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
-    GRINDING_PREDICATE_BYTES, GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS,
-    TRANSCRIPT_GRINDING_QUERY_LIMIT, TRANSCRIPT_SECURITY_BITS,
+    GrindingSite, GrindingSumcheckProver, GrindingSumcheckVerifier, ProverGrinding,
+    SumcheckProtocol, TranscriptGrindingCost, VerifierGrinding, FOLD_COORDINATE_ORACLE_REVISION,
+    FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS, GRINDING_ENCODING_VERSION,
+    GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
+    GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS, TRANSCRIPT_GRINDING_QUERY_LIMIT,
+    TRANSCRIPT_SECURITY_BITS,
 };
 pub use transcript_grinding_plan::{
     derive_transcript_grinding_plan_from_public_shape, transcript_grinding_cost_for_planner_edge,
