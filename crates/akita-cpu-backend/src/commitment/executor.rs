@@ -13,7 +13,8 @@ use crate::opaque::{
     CpuOuterCommitOperation, CpuPreparedSetup,
 };
 use akita_error::AkitaError;
-use akita_types::{AkitaExpandedSetup, CommittedGroup, GroupCommitPhaseParams};
+use akita_params::GroupCommitPhaseParams;
+use akita_types::{AkitaExpandedSetup, CommittedGroup};
 use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::sync::Arc;
 
@@ -145,14 +146,14 @@ where
             inner_owner,
             inner_context,
             inner_capabilities,
-            StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
+            StageDimensionCapabilities::cpu_role::<F>(akita_params::RingRole::Inner),
             Some(inner_operation.portable_exporter()),
         )?)?;
         builder.register_outer(PreparedOuterCommitment::new(
             outer_operation,
             outer_owner,
             outer_context,
-            StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Outer),
+            StageDimensionCapabilities::cpu_role::<F>(akita_params::RingRole::Outer),
         ))?;
         builder.register_compression(PreparedCompression::new(
             compression_operation.clone(),
@@ -723,7 +724,7 @@ mod tests {
     };
     use crate::{AkitaProverSetup, DensePoly};
     use akita_challenges::SparseChallengeConfig;
-    use akita_types::{
+    use akita_params::{
         CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
     };
     use jolt_field::{Prime64Offset59, Ring};
@@ -904,7 +905,7 @@ mod tests {
         executor.compression.as_mut().unwrap().capabilities =
             CompressionOperationCapabilities::new(
                 StageDimensionCapabilities::new(vec![32, 16]).unwrap(),
-                vec![akita_types::RingRelationMode::ReducedEvaluation],
+                vec![akita_params::RingRelationMode::ReducedEvaluation],
             )
             .unwrap();
         let source = CountingDense {
@@ -984,8 +985,8 @@ mod tests {
         fn compress(
             &self,
             binding: &CommitmentStateBinding,
-            plan: &akita_types::CompressionChainPlan,
-            relation_mode: akita_types::RingRelationMode,
+            plan: &akita_params::CompressionChainPlan,
+            relation_mode: akita_params::RingRelationMode,
             _u: akita_types::RingVec<F>,
         ) -> Result<super::super::CompressionStageOutput<F>, AkitaError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
@@ -1090,7 +1091,7 @@ mod tests {
                 compression_context,
                 CompressionOperationCapabilities::new(
                     StageDimensionCapabilities::new(vec![32, 16]).unwrap(),
-                    vec![akita_types::RingRelationMode::QuotientLift],
+                    vec![akita_params::RingRelationMode::QuotientLift],
                 )
                 .unwrap(),
                 None,
@@ -1179,7 +1180,7 @@ mod tests {
                 compression_context,
                 CompressionOperationCapabilities::new(
                     StageDimensionCapabilities::new(vec![32, 16]).unwrap(),
-                    vec![akita_types::RingRelationMode::QuotientLift],
+                    vec![akita_params::RingRelationMode::QuotientLift],
                 )
                 .unwrap(),
                 None,

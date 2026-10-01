@@ -3,7 +3,7 @@ use crate::kernels::linear::{
     fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
 use akita_algebra::CyclotomicRing;
-use akita_types::layout::FlatMatrix;
+use akita_params::layout::FlatMatrix;
 use jolt_field::{
     CanonicalEncoding, Field, One, Prime128Offset275, Prime32Offset99, Prime64Offset59, Ring,
 };

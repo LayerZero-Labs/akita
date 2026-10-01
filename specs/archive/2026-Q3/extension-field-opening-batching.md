@@ -1363,7 +1363,7 @@ configs.
   encoding, compact digit extraction, and trace dispatch boundary.
 - `crates/akita-types/src/proof/{batch,mod,relation}.rs` owns the `F, L` proof
   payload shape and serialized sizes.
-- `crates/akita-types/src/schedule.rs` owns the physical recursive W length
+- `crates/akita-params/src/schedule.rs` owns the physical recursive W length
   versus terminal witness shape distinction.
 - `crates/akita-prover/src/protocol/flow.rs` owns root/recursive materialization
   and terminal witness compaction.

@@ -28,13 +28,13 @@ fn dense_group_commit_freezes_scalar_s_profile() {
 
     assert_eq!(
         commitment.profile.group,
-        akita_types::PolynomialGroupLayout::new(NUM_VARS, 1)
+        akita_params::PolynomialGroupLayout::new(NUM_VARS, 1)
     );
     assert_eq!(
         commitment.profile,
         catalog_profile(
             &scheme,
-            akita_types::PolynomialGroupLayout::new(NUM_VARS, 1)
+            akita_params::PolynomialGroupLayout::new(NUM_VARS, 1)
         )
     );
     assert_eq!(

@@ -9,15 +9,15 @@ use akita_serialization::{
 };
 use jolt_field::{CanonicalEncoding, Field};
 
-use crate::golomb_rice::{
+use crate::proof::RingVec;
+use akita_params::golomb_rice::{
     golomb_rice_decode_vec, golomb_rice_max_quotient_for_cap, golomb_rice_zigzag_width,
 };
-use crate::layout::field_bytes;
-use crate::layout::tail_segments::{
+use akita_params::layout::field_bytes;
+use akita_params::layout::tail_segments::{
     TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
 };
-use crate::proof::RingVec;
-use crate::TerminalFoldParams;
+use akita_params::TerminalFoldParams;
 
 /// Clear terminal response carried on the wire.
 #[derive(Debug, Clone, PartialEq, Eq)]

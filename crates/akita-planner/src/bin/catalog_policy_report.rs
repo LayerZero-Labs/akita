@@ -1,44 +1,44 @@
 //! Per-level schedule policy fields included in catalog audit reports.
 
+use akita_params::FoldSchedule;
 use akita_planner::EmitSpec;
-use akita_types::FoldSchedule;
 
-pub(super) fn source_encoding_signature(value: akita_types::CommittedSourceEncoding) -> String {
+pub(super) fn source_encoding_signature(value: akita_params::CommittedSourceEncoding) -> String {
     match value {
-        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable => "canonical".into(),
-        akita_types::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree } => {
+        akita_params::CommittedSourceEncoding::CanonicalCoefficientTable => "canonical".into(),
+        akita_params::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree } => {
             format!("tensor-k{extension_degree}")
         }
     }
 }
 
-fn security_route_signature(value: akita_types::InnerCommitSecurityRoute) -> &'static str {
+fn security_route_signature(value: akita_params::InnerCommitSecurityRoute) -> &'static str {
     match value {
-        akita_types::InnerCommitSecurityRoute::Linf(_) => "Linf",
-        akita_types::InnerCommitSecurityRoute::L2 { .. } => "L2",
+        akita_params::InnerCommitSecurityRoute::Linf(_) => "Linf",
+        akita_params::InnerCommitSecurityRoute::L2 { .. } => "L2",
     }
 }
 
-fn relation_mode_signature(value: akita_types::RingRelationMode) -> &'static str {
+fn relation_mode_signature(value: akita_params::RingRelationMode) -> &'static str {
     match value {
-        akita_types::RingRelationMode::QuotientLift => "quotient",
-        akita_types::RingRelationMode::ReducedEvaluation => "reduced-evaluation",
+        akita_params::RingRelationMode::QuotientLift => "quotient",
+        akita_params::RingRelationMode::ReducedEvaluation => "reduced-evaluation",
     }
 }
 
 fn removed_quotient_coefficients(
     spec: &EmitSpec,
-    params: &akita_types::CommittedGroupParams,
+    params: &akita_params::CommittedGroupParams,
     input_witness_len: usize,
 ) -> Result<(usize, usize), String> {
     if !params.ring_relation_mode.is_reduced_evaluation() {
         return Ok((0, 0));
     }
-    let final_group = akita_types::PolynomialGroupLayout::singleton(
-        akita_types::padded_boolean_opening_vars(input_witness_len)
+    let final_group = akita_params::PolynomialGroupLayout::singleton(
+        akita_params::padded_boolean_opening_vars(input_witness_len)
             .map_err(|error| format!("derive quotient-report group: {error}"))?,
     );
-    let breakdown = akita_types::QuotientCoefficientBreakdown::for_reduced_counterfactual(
+    let breakdown = akita_params::QuotientCoefficientBreakdown::for_reduced_counterfactual(
         params,
         final_group,
         spec.policy.claim_ext_degree,
@@ -49,20 +49,20 @@ fn removed_quotient_coefficients(
 }
 
 fn opening_policy_signature(
-    opening_method: akita_types::OpeningMethod,
-    source_encoding: akita_types::CommittedSourceEncoding,
+    opening_method: akita_params::OpeningMethod,
+    source_encoding: akita_params::CommittedSourceEncoding,
     extension_degree: usize,
     d_a: usize,
-    security_route: akita_types::InnerCommitSecurityRoute,
+    security_route: akita_params::InnerCommitSecurityRoute,
 ) -> Result<String, String> {
     let opening = match opening_method {
-        akita_types::OpeningMethod::EvaluationTrace => {
+        akita_params::OpeningMethod::EvaluationTrace => {
             "ET,s=-,h=-,partial=-,quotient=-".to_string()
         }
-        akita_types::OpeningMethod::SubringCoefficientPacking {
+        akita_params::OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension,
         } => {
-            let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(
+            let geometry = akita_params::SubringCoefficientPackingGeometry::try_new(
                 extension_degree,
                 d_a,
                 challenge_subring_dimension,
@@ -125,17 +125,17 @@ pub(super) fn catalog_policy_signature(
             removed_quotient_coefficients(spec, params, input_witness_len)?;
         let eor = if matches!(
             params.opening_method(),
-            akita_types::OpeningMethod::EvaluationTrace
+            akita_params::OpeningMethod::EvaluationTrace
         ) {
-            let final_group = akita_types::PolynomialGroupLayout::singleton(
-                akita_types::padded_boolean_opening_vars(input_witness_len)
+            let final_group = akita_params::PolynomialGroupLayout::singleton(
+                akita_params::padded_boolean_opening_vars(input_witness_len)
                     .map_err(|error| format!("derive opening arity: {error}"))?,
             );
             let opening_shape = params
                 .opening_layout_for_final_group(final_group)
                 .and_then(|layout| layout.aggregate_polynomial_group_layout())
                 .map_err(|error| format!("derive level opening shape: {error}"))?;
-            akita_types::extension_opening_reduction_level_bytes(
+            akita_params::extension_opening_reduction_level_bytes(
                 spec.policy
                     .challenge_field_bits()
                     .map_err(|error| format!("derive challenge width: {error}"))?,
@@ -177,7 +177,7 @@ pub(super) fn catalog_policy_signature(
                     ";pre{index}={}",
                     opening_policy_signature(
                         group.opening.opening_method,
-                        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
+                        akita_params::CommittedSourceEncoding::CanonicalCoefficientTable,
                         spec.policy.claim_ext_degree,
                         group.profile.inner.matrix.ring_dimension(),
                         group.profile.inner.matrix.security_route(),
@@ -195,7 +195,7 @@ pub(super) fn catalog_policy_signature(
                 ";prefix={}",
                 opening_policy_signature(
                     prefix.opening.opening_method,
-                    akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
+                    akita_params::CommittedSourceEncoding::CanonicalCoefficientTable,
                     spec.policy.claim_ext_degree,
                     prefix.profile.inner.matrix.ring_dimension(),
                     prefix.profile.inner.matrix.security_route(),
@@ -205,22 +205,22 @@ pub(super) fn catalog_policy_signature(
         }
         signature.push(']');
     }
-    let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
+    let terminal_eor = akita_params::extension_opening_reduction_level_bytes(
         spec.policy
             .challenge_field_bits()
             .map_err(|error| format!("derive challenge width: {error}"))?,
         spec.policy.claim_ext_degree,
-        akita_types::PolynomialGroupLayout::singleton(
-            akita_types::padded_boolean_opening_vars(schedule.terminal.input_witness_len)
+        akita_params::PolynomialGroupLayout::singleton(
+            akita_params::padded_boolean_opening_vars(schedule.terminal.input_witness_len)
                 .map_err(|error| format!("derive terminal opening arity: {error}"))?,
         ),
     )
     .map_err(|error| format!("derive terminal EOR bytes: {error}"))?;
-    let terminal_source = akita_types::CommittedSourceEncoding::for_producer(
-        akita_types::OpeningMethod::EvaluationTrace,
+    let terminal_source = akita_params::CommittedSourceEncoding::for_producer(
+        akita_params::OpeningMethod::EvaluationTrace,
         spec.policy.claim_ext_degree,
         schedule.terminal.d_a(),
-        akita_types::padded_boolean_opening_vars(schedule.terminal.input_witness_len)
+        akita_params::padded_boolean_opening_vars(schedule.terminal.input_witness_len)
             .map_err(|error| format!("derive terminal source arity: {error}"))?,
         false,
     );

@@ -78,13 +78,13 @@ where
     };
     let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
         grinding,
-        akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+        akita_params::SumcheckProtocol::ExtensionOpeningReduction,
         level,
         0,
     );
     let shape = akita_sumcheck::SumcheckShape::new(
         max_tail_vars,
-        akita_types::EXTENSION_OPENING_REDUCTION_DEGREE,
+        akita_params::EXTENSION_OPENING_REDUCTION_DEGREE,
     )?;
     let (rho, claim) = akita_sumcheck::prove_sumcheck::<F, E, _, _>(
         &mut kernel,
@@ -152,7 +152,7 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueEorKernel<
         self.rounds
     }
     fn degree_bound(&self) -> usize {
-        akita_types::EXTENSION_OPENING_REDUCTION_DEGREE
+        akita_params::EXTENSION_OPENING_REDUCTION_DEGREE
     }
     fn input_claim(&self) -> E {
         self.claim

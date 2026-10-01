@@ -30,7 +30,8 @@ pub(crate) use session::DigitRangeSession;
 
 use crate::sources::packed_digits::PackedSignedDigits;
 use akita_error::AkitaError;
-use akita_types::{DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
+use akita_params::{DigitRangePlan, FlatBooleanDomain};
+use akita_types::DigitRangeEqualityPoint;
 use class_indexed_product::ClassIndexedProductSubcheckProver;
 use class_indexed_range_leaf::ClassIndexedRangeLeafProver;
 use compact_digit_source::CompactDigitSource;

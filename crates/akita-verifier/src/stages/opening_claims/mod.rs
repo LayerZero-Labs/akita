@@ -2,7 +2,8 @@
 //! the shared evaluation-batch draw that finalizes the fold prefix.
 
 use akita_error::AkitaError;
-use akita_types::{OpeningClaimsLayout, OpeningFamily, PreparedOpeningPoint};
+use akita_params::OpeningClaimsLayout;
+use akita_types::{OpeningFamily, PreparedOpeningPoint};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 mod coefficient_packing;
@@ -56,7 +57,7 @@ where
     }
     let row_coefficients = akita_types::row_coefficients::<F, E, _>(
         opening_shape,
-        akita_types::GrindingSite::EvaluationBatch { level },
+        akita_params::GrindingSite::EvaluationBatch { level },
         grinding,
     )?;
     let trace_claim_coefficients = material.reduction_factors.as_ref().map_or_else(

@@ -112,7 +112,7 @@ pub(super) fn retain(
 fn oracle_frontier_retains_lower_query_tradeoffs() -> Result<(), AkitaError> {
     let challenge = SparseChallengeConfig::pm1_only(3);
     let mut params = CommittedGroupParams::params_only(
-        akita_types::SisModulusProfileId::Q32Offset99,
+        akita_params::SisModulusProfileId::Q32Offset99,
         64,
         3,
         2,
@@ -123,7 +123,7 @@ fn oracle_frontier_retains_lower_query_tradeoffs() -> Result<(), AkitaError> {
     .with_decomp(1, 64, 2, 2, 2)?;
     let inner = params.inner().matrix;
     params.own_group_mut().profile.inner.matrix =
-        akita_types::InnerCommitMatrixParams::new_unchecked(
+        akita_params::InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
             inner
                 .sis_table_key()
@@ -136,8 +136,8 @@ fn oracle_frontier_retains_lower_query_tradeoffs() -> Result<(), AkitaError> {
             inner.ring_dimension(),
         );
     let (terminal_params, linf_cap) =
-        akita_types::TerminalFoldParams::try_from_expanded_group(params)?;
-    let response_shape = akita_types::TerminalResponseShape::derive(&terminal_params, linf_cap)?;
+        akita_params::TerminalFoldParams::try_from_expanded_group(params)?;
+    let response_shape = akita_params::TerminalResponseShape::derive(&terminal_params, linf_cap)?;
     let candidate =
         |payload_bytes, expanded_query_count| -> Result<ScheduleCandidate, AkitaError> {
             Ok(ScheduleCandidate {

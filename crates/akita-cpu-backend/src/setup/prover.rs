@@ -3,10 +3,11 @@
 use akita_error::AkitaError;
 
 use crate::commitment::SetupPrefixProverRegistry;
+use akita_params::{FlatMatrix, SetupMatrixCapacity};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
     derive_public_matrix_prefix, sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor,
-    AkitaVerifierSetup, FlatMatrix, SetupMatrixCapacity, SetupPrefixVerifierRegistry,
+    AkitaVerifierSetup, SetupPrefixVerifierRegistry,
 };
 use jolt_field::{CanonicalEncoding, Field};
 use std::sync::Arc;
@@ -214,13 +215,13 @@ mod tests {
     #[test]
     fn prover_setup_check_validates_prefix_slots() {
         use crate::commitment::{PortableCommitmentHandle, SetupPrefixSlot};
-        use akita_types::{
+        use akita_params::{
             scheduled_setup_prefix, CompressionChainPlan, CompressionChainWitness,
             GroupCommitPhaseParams, GroupOpenPhaseParams, InnerCommitMatrixParams,
-            OuterCommitMatrixParams, PackedNegativeBinary, PolynomialGroupLayout, RingVec,
-            SetupPrefixPublicCommitment, SisMatrixRole, SisModulusProfileId, SisTableDigest,
-            SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+            OuterCommitMatrixParams, PackedNegativeBinary, PolynomialGroupLayout, SisMatrixRole,
+            SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
         };
+        use akita_types::{RingVec, SetupPrefixPublicCommitment};
 
         const PREFIX_D: usize = 64;
 
@@ -232,7 +233,7 @@ mod tests {
         .expect("generate setup");
         let decomposed =
             RingVec::from_coeffs_with_ring_dim(Vec::new(), PREFIX_D).expect("empty A-native hint");
-        let inner_bound = akita_types::sis::rounded_up_role_a_inf_norm(
+        let inner_bound = akita_params::sis::rounded_up_role_a_inf_norm(
             DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q128OffsetA7F7,
@@ -305,18 +306,18 @@ mod tests {
             profile: GroupCommitPhaseParams {
                 version: GroupCommitPhaseParams::VERSION,
                 group: PolynomialGroupLayout::singleton(PREFIX_D.trailing_zeros() as usize),
-                blocks: akita_types::BlockGeometry::new(1, 1, 1),
-                outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-                inner: akita_types::RoleParams::new(
-                    akita_types::GadgetDigits::new(1, 1),
+                blocks: akita_params::BlockGeometry::new(1, 1, 1),
+                outer_slice_count: akita_params::CommitmentSliceCount::ONE,
+                inner: akita_params::RoleParams::new(
+                    akita_params::GadgetDigits::new(1, 1),
                     inner_commit_matrix,
                 ),
-                outer: akita_types::RoleParams::new(
-                    akita_types::GadgetDigits::new(1, 1),
+                outer: akita_params::RoleParams::new(
+                    akita_params::GadgetDigits::new(1, 1),
                     outer_commit_matrix,
                 ),
             },
-            opening: akita_types::GroupOpeningPlan::evaluation_trace(
+            opening: akita_params::GroupOpeningPlan::evaluation_trace(
                 akita_challenges::SparseChallengeConfig::pm1_only(0),
                 1,
                 1,
