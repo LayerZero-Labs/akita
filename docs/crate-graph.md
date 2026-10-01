@@ -17,7 +17,7 @@ orchestration lives in `akita-pcs`.
 | `jolt-field` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
 | `akita-serialization` | Serialization, validation, compression traits |
 | `akita-algebra` | Modules, NTTs, cyclotomic rings, polynomials |
-| `akita-transcript` | Fiat-Shamir transcript and descriptor preamble |
+| `jolt-transcript` (external) | Fiat-Shamir proof channel (NARG prover/verifier transcripts, sponges, grinding) |
 | `akita-challenges` | Challenge sampling helpers |
 | `akita-sumcheck` | Sumcheck proofs, drivers, folding, batching |
 | `akita-types` | Proof/setup/schedule/layout shapes, SIS floors, proof-size helpers |
@@ -39,7 +39,7 @@ graph TD
   Ser["akita-serialization"]
   Field["jolt-field (external)"]
   Algebra["akita-algebra"]
-  Transcript["akita-transcript"]
+  Transcript["jolt-transcript (external)"]
   Challenges["akita-challenges"]
   Sumcheck["akita-sumcheck"]
   Types["akita-types"]
@@ -56,8 +56,8 @@ graph TD
   Algebra --> Error
   Algebra --> Field
   Algebra --> Ser
-  Transcript --> Error
   Transcript --> Field
+  Error --> Transcript
   Challenges --> Error
   Challenges --> Field
   Challenges --> Transcript
@@ -86,7 +86,6 @@ graph TD
   Config --> Error
   Config --> Challenges
   Config --> Field
-  Config --> Transcript
   Config --> Types
   Config --> Schedules
   Verifier --> Error
@@ -115,7 +114,6 @@ graph TD
   Cpu --> Field
   Cpu --> Ser
   Cpu --> Sumcheck
-  Cpu --> Transcript
   Cpu --> Types
   Setup --> Error
   Setup --> Algebra

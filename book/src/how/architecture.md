@@ -15,7 +15,7 @@ orchestration lives in `akita-pcs`.
 | `jolt-field` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
 | `akita-serialization` | Serialization, validation, and compression traits |
 | `akita-algebra` | Modules, vectors, NTTs, cyclotomic rings, sparse challenges, polynomials |
-| `akita-transcript` | Spongefish-backed Fiat-Shamir transcript, descriptor preamble, logging checks |
+| `jolt-transcript` (external) | Fiat-Shamir proof channel: prover/verifier transcripts, sponges, grinding, event log |
 | `akita-challenges` | Fiat-Shamir challenge sampling helpers |
 | `akita-sumcheck` | Sumcheck proofs, drivers, compact folding, batching, accumulation |
 | `akita-types` | Proof, setup, schedule, layout, commitment, and transcript-append shapes; SIS floors; layout and proof-size helpers |
@@ -155,7 +155,7 @@ Mixed-dimension malformed proof rejection is covered by
 | `DensePoly`, `OneHotPoly`, `CommitmentSource`, `CommitmentExecutor` | D-free polynomial storage, commitment representations, and the checked split-or-fused commitment boundary |
 | `ProverBackend`, focused opaque kernel traits | Public protocol operations with backend-owned opening, EOR, fold, and sumcheck state |
 | `WitnessLayout`, `WitnessUnitLayout` | Canonical digit-innermost group-and-chunk ranges ([opening layout](./proving/opening-points-layout.md)) |
-| `Vec<u8>` returned by `batched_prove` | Canonical Spongefish argument stream, consumed in protocol order by `batched_verify` with EOF and grinding-plan completion |
+| `Vec<u8>` returned by `prove_standalone` | Canonical argument stream, consumed in protocol order by `verify_standalone` with grinding-plan completion and an exact-consumption check |
 | `PolynomialGroupClaims` | One commitment group's complete opening point, evaluations, and commitment |
 | `OpeningClaims` | Ordered group-owned public claims in transcript order |
 | `OpeningClaimsLayout` | Value-free group arities and polynomial counts for setup and schedule lookup |
@@ -165,7 +165,7 @@ Mixed-dimension malformed proof rejection is covered by
 | `OpeningScheduleSelection`, `GroupBatchStatement` | Exact generated-row identity and verifier-side self-describing opening statement |
 | `ValidatedScheduleCatalog` | Config-free, semantically audited expanded rows with canonical lookup indexes and artifact I/O |
 | `TrustedScheduleCatalog<Cfg>` | Config-bound trusted parameter passed to setup, prover, and verifier APIs |
-| Spongefish prover/verifier states | Fiat--Shamir state, proof emission/receipt, domain separation, challenges, and EOF checking |
+| `ProverTranscript<H>`, `VerifierTranscript<H>` | Caller-owned Fiat--Shamir state: proof emission/receipt, domain separation, challenges, and the final consumption check |
 | `AkitaInstanceDescriptor` | Canonical transcript preamble binding algebra, setup, plan, and call shape |
 
 Opening batch kernels validate one authoritative challenge partition against every

@@ -217,7 +217,7 @@ commitment, direct witness, or transcript input must be rejected with
 ### Crates in scope
 
 - `akita-verifier`
-- Verifier-reachable paths in `akita-types`, `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, and verifier-used `jolt-field` code
+- Verifier-reachable paths in `akita-types`, `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-challenges`, and verifier-used `jolt-field` and `jolt-transcript` code
 - `akita-config` (every `CommitmentConfig` method reachable from `batched_verify`)
 - `akita-schedules` artifact identity, row resolution, and canonical
   resolved-row audit paths

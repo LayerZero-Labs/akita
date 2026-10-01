@@ -25,13 +25,13 @@ argument below. Bounded fold-response search lets an honest folded witness
 satisfy the scheduled representation and norm bounds. These mechanisms
 share one public, schedule-derived `GrindingPlan` and one plan cursor.
 
-All nonzero grinding values are inline Spongefish proof messages. A
-proof-of-work nonce and a fold-response nonce each use the same canonical
-unsigned LEB128 codec under distinct context kinds. There is no nonce prefix,
-bit-packed stream, proof shape, or separate replay transcript. Zero-bit
-proof-of-work sites emit no nonce and make no grinding-specific state
-transition. Receipt, absorption, challenge extraction, and EOF checking
-are authoritative.
+All nonzero grinding values are inline `jolt-transcript` proof messages. A
+proof-of-work nonce and a fold-response nonce each use the transcript's
+canonical unsigned LEB128 codec under distinct diagnostic sites. There is no
+nonce prefix, bit-packed stream, proof shape, or separate replay transcript.
+Zero-bit proof-of-work sites emit no nonce and make no grinding-specific state
+transition. Receipt, absorption, challenge extraction, and the outermost
+transcript's exact-consumption check are authoritative.
 
 The sparse fold sampler derives every claim-major block coordinate from an
 indexed SHAKE256 query. This preserves the configured coordinate law while
@@ -561,8 +561,8 @@ allocate from a proof-controlled length.
 
 | Component | Responsibility |
 |---|---|
-| Spongefish | State, argument bytes, nonce receipt/absorption, challenge squeeze, EOF |
-| `akita-transcript` | Positional codecs, diagnostic context records, public-state previews, predicate and bounded search primitive |
+| `jolt-transcript` | State, argument bytes, canonical nonce codec, previews, grinding predicate and search, challenge squeeze, exact consumption |
+| `akita-types` (`transcript`) | Standalone protocol identity, default sponge, diagnostic site coordinates |
 | `akita-types` | Grinding sites, policy, plan, cursor, plan-owning adapters |
 | `akita-config` | Derive and descriptor-bind the public plan |
 | `akita-prover` | Fold-response candidate computation and honest bounded search |
@@ -579,17 +579,18 @@ structured proof replay, or alternate verifier is prohibited.
 - Zero-bit, nonzero, maximum-target, exhaustion, incomplete-plan, out-of-range,
   truncation, mutation, and trailing-byte cases reject correctly; diagnostic
   site sequences agree between prover and verifier.
-- Preview output matches live prover and verifier replay for both Blake2b and
-  Keccak, multiple groups, and multiple candidate counts.
+- Preview output matches live prover and verifier replay for multiple groups
+  and multiple candidate counts.
 - Unsuccessful previews leave live state and proof output unchanged.
 - Prover and verifier sparse roots agree, and the indexed SHAKE256
   implementation matches an independent 40-byte-input reference.
 - Reprogramming one indexed coordinate changes only that coordinate.
 - Signed-sparse and operator-rejected marginal distribution, support, unit
   difference, and norm-policy tests remain green for both opening methods.
-- Runtime plan completion and Spongefish EOF are both necessary for acceptance.
-- CI rejects unchecked proof decoding, raw-state access outside the reviewed
-  allowlist, and bypass state constructors in protocol code.
+- Runtime plan completion and the outermost transcript's exact-consumption
+  check are both necessary for acceptance.
+- CI rejects unchecked proof decoding and transcript construction in protocol
+  code outside the reviewed allowlist.
 - Planner artifacts are regenerated and checked whenever policy, byte cost, or
   plan identity changes.
 

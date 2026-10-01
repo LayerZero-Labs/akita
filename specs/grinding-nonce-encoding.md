@@ -972,9 +972,9 @@ choice if the sole objective is the smallest fixed worst-case nonce section.
 
 Current PR:
 
-- `crates/akita-transcript/src/proof_stream/nonce.rs` — unsigned LEB128 codec;
-- `crates/akita-transcript/src/proof_stream.rs` — preview, commit, receipt,
-  absorption, and challenge extraction;
+- `jolt-transcript` (`grinding.rs`, `prover.rs`, `verifier.rs`, `preview.rs`;
+  originally `akita-transcript`) — unsigned LEB128 codec, preview, commit,
+  receipt, absorption, and challenge extraction;
 - `crates/akita-types/src/transcript_grinding/replay.rs` — public plan
   cursor and verifier checks;
 - `crates/akita-types/src/transcript_grinding/plan.rs` — canonical plan
