@@ -201,7 +201,7 @@ fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
         dense
             .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
             .expect("dense compact fold"),
-        dense.fold_blocks_ring(&position_rings, POSITIONS),
+        dense.fold_blocks_ring(&position_rings, POSITIONS).unwrap(),
     );
 
     let onehot = OneHotPoly::<F>::new(

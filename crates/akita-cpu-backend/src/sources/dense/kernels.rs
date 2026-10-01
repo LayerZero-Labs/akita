@@ -46,7 +46,7 @@ where
                 live_block_weights,
                 position_weights,
                 num_positions_per_block,
-            ),
+            )?,
             OpeningFoldPlan::Subfield {
                 multipliers,
                 num_positions_per_block,
@@ -79,12 +79,12 @@ where
                 actual: plan.challenges.len(),
             });
         }
-        Ok(source.poly.decompose_fold::<D>(
+        source.poly.decompose_fold::<D>(
             plan.challenges,
             plan.num_positions_per_block,
             plan.num_digits,
             plan.log_basis,
-        ))
+        )
     }
 }
 
@@ -110,12 +110,12 @@ where
                         .iter()
                         .zip(challenges.chunks_exact(challenges_per_poly))
                         .map(|(poly, poly_challenges)| {
-                            Ok(poly.decompose_fold::<D>(
+                            poly.decompose_fold::<D>(
                                 poly_challenges,
                                 num_positions_per_block,
                                 num_digits,
                                 log_basis,
-                            ))
+                            )
                         }),
                 )?,
             )),
@@ -139,7 +139,7 @@ where
                             num_positions_per_block,
                             num_digits,
                             log_basis,
-                        ))
+                        )?)
                     {
                         chunk.push(Ok(witness));
                     }

@@ -66,7 +66,9 @@ where
                     .scope_lease()
                     .validate_commitment(context, handle.committed.commitment_id)?;
                 if handle.committed.parameters != parameters.profile {
-                    return Err(AkitaError::InvalidProof);
+                    return Err(AkitaError::InvalidInput(
+                        "commitment profile differs from the admitted group profile".into(),
+                    ));
                 }
                 if handle.committed.metadata.num_vars() < plan.point().len()
                     || handle.committed.parameters.inner.matrix.ring_dimension()
@@ -95,11 +97,19 @@ where
                     &schedule
                         .recursive_folds
                         .get(context.fold_level() as usize - 1)
-                        .ok_or(AkitaError::InvalidProof)?
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "admitted witness opening recursive fold is missing".into(),
+                            )
+                        })?
                         .params
                 };
                 witness.operation_binding().validate_group(
-                    context.group_index().ok_or(AkitaError::InvalidProof)?,
+                    context.group_index().ok_or_else(|| {
+                        AkitaError::Internal(
+                            "admitted witness opening lost its ordered group context".into(),
+                        )
+                    })?,
                     parameters.groups().len(),
                 )?;
                 dispatch_for_field!(
@@ -178,7 +188,11 @@ where
         }
         if context.group_index().is_some() {
             binding.validate_group(
-                context.group_index().ok_or(AkitaError::InvalidProof)?,
+                context.group_index().ok_or_else(|| {
+                    AkitaError::Internal(
+                        "opening fold probe lost its explicit group context".into(),
+                    )
+                })?,
                 usize::MAX,
             )?;
         }

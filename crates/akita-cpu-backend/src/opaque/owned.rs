@@ -190,7 +190,11 @@ where
                         D,
                         challenge_subring_dimension,
                     )?;
-                    let first = polys.first().ok_or(AkitaError::InvalidProof)?;
+                    let first = polys.first().ok_or_else(|| {
+                        AkitaError::Internal(
+                            "admitted coefficient packing source has no polynomial".into(),
+                        )
+                    })?;
                     let live = <P as RootPolyShape<F, D>>::num_live_ring_elems(*first);
                     let vars = RootPolyMeta::<F>::num_vars(*first);
                     if polys.iter().any(|p| {
@@ -465,12 +469,16 @@ impl<F: Field, E> CpuBackend<F, E> {
 
 impl<F: Field + CanonicalEncoding> SourceCoefficients<F> for crate::DensePoly<F> {
     fn source_coefficients(&self) -> Result<std::borrow::Cow<'_, [F]>, AkitaError> {
-        let len = akita_error::checked::pow2(RootPolyMeta::<F>::num_vars(self))
-            .ok_or(AkitaError::InvalidProof)?;
+        let len =
+            akita_error::checked::pow2(RootPolyMeta::<F>::num_vars(self)).ok_or_else(|| {
+                AkitaError::Internal("dense source coefficient extent overflow".into())
+            })?;
         Ok(std::borrow::Cow::Borrowed(
-            self.field_coeffs()
-                .get(..len)
-                .ok_or(AkitaError::InvalidProof)?,
+            self.field_coeffs().get(..len).ok_or_else(|| {
+                AkitaError::Internal(
+                    "dense source coefficients do not cover the declared arity".into(),
+                )
+            })?,
         ))
     }
 }
@@ -479,7 +487,9 @@ impl<F: Field + CanonicalEncoding, I: crate::OneHotIndex> SourceCoefficients<F>
 {
     fn source_coefficients(&self) -> Result<std::borrow::Cow<'_, [F]>, AkitaError> {
         let len = akita_error::checked::product([self.onehot_k(), self.indices().len()])
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("one-hot source coefficient extent overflow".into())
+            })?;
         let mut values = vec![F::zero(); len];
         for (chunk, index) in self.indices().iter().enumerate() {
             if let Some(index) = index {

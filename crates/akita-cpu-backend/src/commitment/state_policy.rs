@@ -411,7 +411,7 @@ impl<F: Field> ResidentCommitmentState<F> {
     #[cfg(test)]
     pub(crate) fn retained_bytes(&self) -> Result<usize, AkitaError> {
         let inner = self.inner.lock().map_err(|_| {
-            AkitaError::InvalidInput("resident inner-relation material lock is poisoned".into())
+            AkitaError::Internal("resident inner-relation material lock is poisoned".into())
         })?;
         let inner_bytes = match &*inner {
             ResidentInnerState::Image(image) => image.retained_bytes(),
@@ -425,9 +425,7 @@ impl<F: Field> ResidentCommitmentState<F> {
         let compression_bytes = match self.compression.as_ref() {
             Some(compression) => {
                 let compression = compression.lock().map_err(|_| {
-                    AkitaError::InvalidInput(
-                        "resident compression material lock is poisoned".into(),
-                    )
+                    AkitaError::Internal("resident compression material lock is poisoned".into())
                 })?;
                 match &*compression {
                     ResidentCompressionState::Image(image) => image.retained_bytes(),
@@ -448,7 +446,7 @@ impl<F: Field> ResidentCommitmentState<F> {
 
     fn frozen_inner_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
         let mut inner = self.inner.lock().map_err(|_| {
-            AkitaError::InvalidInput("resident inner-relation material lock is poisoned".into())
+            AkitaError::Internal("resident inner-relation material lock is poisoned".into())
         })?;
         let image = match std::mem::replace(&mut *inner, ResidentInnerState::Failed) {
             ResidentInnerState::Image(image) => image,
@@ -485,7 +483,7 @@ impl<F: Field> ResidentCommitmentState<F> {
             return Ok(None);
         };
         let mut compression = compression.lock().map_err(|_| {
-            AkitaError::InvalidInput("resident compression material lock is poisoned".into())
+            AkitaError::Internal("resident compression material lock is poisoned".into())
         })?;
         let image = match std::mem::replace(&mut *compression, ResidentCompressionState::Failed) {
             ResidentCompressionState::Image(image) => image,
