@@ -11,13 +11,14 @@ use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig, TrustedS
 #[cfg(test)]
 use akita_error::checked;
 use akita_error::AkitaError;
-use akita_types::sis::CommittedSourceContract;
+use akita_params::sis::CommittedSourceContract;
 #[cfg(test)]
-use akita_types::CommittedGroupParams;
-use akita_types::{
-    validate_role_dims, validate_role_dims_for_field, AkitaExpandedSetup, CommitmentRingDims,
-    GadgetDigits, GroupCommitPhaseParams, PrecommittedGroupProfiles, ScheduleLookupKey,
+use akita_params::CommittedGroupParams;
+use akita_params::{
+    validate_role_dims, validate_role_dims_for_field, CommitmentRingDims, GadgetDigits,
+    GroupCommitPhaseParams, PrecommittedGroupProfiles, ScheduleLookupKey,
 };
+use akita_types::AkitaExpandedSetup;
 #[cfg(test)]
 use akita_types::{Commitment, CommittedGroup, FpExtEncoding};
 use jolt_field::{CanonicalEncoding, Field};
@@ -149,7 +150,7 @@ where
         )));
     }
 
-    let required = akita_types::commit_only_setup_field_elements(
+    let required = akita_params::commit_only_setup_field_elements(
         &profile.inner.matrix,
         &profile.outer.matrix,
         profile.outer_slice_count,
@@ -223,7 +224,7 @@ where
 pub(crate) fn resolve_polynomial_group_layout<F, P>(
     polys: &[P],
     setup: &AkitaExpandedSetup<F>,
-) -> Result<akita_types::PolynomialGroupLayout, AkitaError>
+) -> Result<akita_params::PolynomialGroupLayout, AkitaError>
 where
     F: Field,
     P: CommitmentSource<F>,
@@ -254,7 +255,7 @@ where
             num_vars, setup.descriptor.max_num_vars
         )));
     }
-    Ok(akita_types::PolynomialGroupLayout::new(
+    Ok(akita_params::PolynomialGroupLayout::new(
         num_vars,
         polys.len(),
     ))

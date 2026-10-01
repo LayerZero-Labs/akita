@@ -32,7 +32,7 @@ pub(crate) fn build_w_evals_compact(
             actual: live_physical_cols,
         });
     }
-    let opening_x_cols = akita_types::opening_domain_len(opening_source_len)?;
+    let opening_x_cols = akita_params::opening_domain_len(opening_source_len)?;
     let col_bits = opening_x_cols.trailing_zeros() as usize;
     if extension_degree == 1 {
         let ring_bits = d.trailing_zeros() as usize;
@@ -52,7 +52,7 @@ pub(crate) fn build_w_evals_compact(
             .slice(physical_index * d..(physical_index + 1) * d)?
             .decode_range(0, &mut ring)?;
         let opening_index =
-            akita_types::checked_opening_source_index(opening_source_len, physical_index)?;
+            akita_params::checked_opening_source_index(opening_source_len, physical_index)?;
         let dst = &mut compact[opening_index * packed_len..(opening_index + 1) * packed_len];
         dst[..half].copy_from_slice(&ring[..half]);
         for (slot, low) in (half..packed_len).enumerate() {

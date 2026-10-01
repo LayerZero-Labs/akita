@@ -187,8 +187,8 @@ degree schedule, regenerate the tables, and restore the byte-exact assertion.
 - `specs/transcript-hardening.md` — `PlanSection` binds the effective schedule digest.
 - Key sources: `crates/akita-planner/src/schedule_params.rs`,
   `crates/akita-planner/src/ajtai_params.rs`,
-  `crates/akita-types/src/layout/params.rs`,
-  `crates/akita-types/src/schedule.rs`,
-  `crates/akita-types/src/proof_size.rs`,
+  `crates/akita-params/src/layout/params.rs`,
+  `crates/akita-params/src/schedule.rs`,
+  `crates/akita-params/src/proof_size.rs`,
   `crates/akita-config/src/lib.rs`.
 - Profile command: `AKITA_MODE=onehot_fp128_d32 AKITA_NUM_VARS=32 cargo run --release --example profile`.

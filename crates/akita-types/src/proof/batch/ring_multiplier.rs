@@ -1,9 +1,9 @@
 //! Ring-level opening multipliers and terminal-functional preparation.
 
 use super::subfield::{subfield_basis_pairs, SubfieldMultiplierOpeningPoint};
-use crate::RingOpeningPoint;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
+use akita_params::RingOpeningPoint;
 use jolt_field::{ExtField, Field};
 
 /// Ring-level opening point whose outer weights act by ring multiplication.
@@ -326,10 +326,15 @@ mod tests {
     #[test]
     fn subfield_multiplier_rejects_bad_shift_without_changing_output() {
         const D: usize = 64;
-        let point =
-            crate::prepare_opening_point::<F, E, D>(&[], crate::BasisMode::Lagrange, 2, 1, 6)
-                .unwrap()
-                .ring_multiplier_point;
+        let point = crate::prepare_opening_point::<F, E, D>(
+            &[],
+            akita_params::BasisMode::Lagrange,
+            2,
+            1,
+            6,
+        )
+        .unwrap()
+        .ring_multiplier_point;
         let subfield = point.as_subfield().unwrap();
         let mut output = CyclotomicRing::<F, D>::zero();
         assert!(matches!(

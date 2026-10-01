@@ -1477,9 +1477,9 @@ fully folded into the Book.
 * Akita paper, `sections/akita/3_preliminaries.tex`, for physical ring norms and
   the logical-to-physical boundary.
 * Hachi, Lemma 7, for denominator clearing in weak binding.
-* `crates/akita-types/src/sis/norm_bound.rs`.
-* `crates/akita-types/src/sis/physical_l2.rs`.
-* `crates/akita-types/src/schedule/profiles.rs`.
+* `crates/akita-params/src/sis/norm_bound.rs`.
+* `crates/akita-params/src/sis/physical_l2.rs`.
+* `crates/akita-params/src/schedule/profiles.rs`.
 * `crates/akita-challenges/src/config.rs`.
 * `crates/akita-challenges/src/sampler/mod.rs`.
 * `crates/akita-planner/src/response_model.rs`.

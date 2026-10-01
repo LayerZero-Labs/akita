@@ -69,7 +69,7 @@ pub(crate) fn derive_recursive_candidate_views(
         let fold_best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
         let mut terminal_best = None;
         let mut fold_best = std::collections::BTreeMap::<
-            akita_types::RingRelationMode,
+            akita_params::RingRelationMode,
             (LayoutCandidateScore, usize, CommittedGroupParams, usize),
         >::new();
         context.walk_splits(
@@ -101,7 +101,7 @@ pub(crate) fn derive_recursive_candidate_views(
             },
             |score, split, candidate, next_witness_len| {
                 let mode = candidate.ring_relation_mode;
-                if mode == akita_types::RingRelationMode::QuotientLift
+                if mode == akita_params::RingRelationMode::QuotientLift
                     && terminal_best
                         .as_ref()
                         .is_none_or(|(best_score, best_split, _, _)| {

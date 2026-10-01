@@ -26,7 +26,7 @@ fn chunked_fold_matches_windowed_reference_and_global() {
         .unwrap();
 
     for chunk_count in [2, 4, 8] {
-        let ranges = akita_types::dyadic_block_ranges(challenges.len(), chunk_count).unwrap();
+        let ranges = akita_params::dyadic_block_ranges(challenges.len(), chunk_count).unwrap();
         let chunks = poly
             .decompose_fold_chunked::<D>(&challenges, &ranges, POSITIONS, 2, 4)
             .unwrap();

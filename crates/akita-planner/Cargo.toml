@@ -15,7 +15,7 @@ akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-fe
 akita-config = { version = "0.1.0", path = "../akita-config", optional = true, default-features = false }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 akita-sis-estimator = { version = "0.1.0", path = "../akita-sis-estimator", optional = true }
-akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 libm = "0.2"
 
 [features]
@@ -24,13 +24,13 @@ transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-config?/transcript-blake2b",
   "akita-schedules/transcript-blake2b",
-  "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
 ]
 transcript-keccak = [
   "akita-challenges/transcript-keccak",
   "akita-config?/transcript-keccak",
   "akita-schedules/transcript-keccak",
-  "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
 ]
 catalog-gen = ["dep:akita-config"]
 catalog-check = ["catalog-gen"]
@@ -41,7 +41,7 @@ test-support = []
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
 ] }
-akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false, features = [
   "test-support",
 ] }
 

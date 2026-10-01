@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_types::BasisMode;
+use akita_params::BasisMode;
 use akita_verifier::evaluation_trace_benchmark_case;
 use std::hint::black_box;
 

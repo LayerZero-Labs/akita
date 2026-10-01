@@ -93,7 +93,7 @@ where
     }
     let row_coefficients = akita_types::row_coefficients::<F, E, _>(
         opening_batch,
-        akita_types::GrindingSite::EvaluationBatch { level },
+        akita_params::GrindingSite::EvaluationBatch { level },
         grinding,
     )?;
     let resolved = resolve_evaluation_trace_claim(

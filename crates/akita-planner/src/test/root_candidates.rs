@@ -81,11 +81,11 @@ pub(crate) fn exhaustive_root_candidates_for_reference(
     for block_index_bits in (min_split..=max_split).rev() {
         let position_index_bits = reduced_vars - block_index_bits;
         let num_live_blocks = 1usize << block_index_bits;
-        for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+        for outer_slice_count in akita_params::CommitmentSliceCount::ALL {
             if outer_slice_count
                 .validate_for_commitment(
                     0,
-                    akita_types::CommitmentPayloadMode::Compressed,
+                    akita_params::CommitmentPayloadMode::Compressed,
                     num_live_blocks,
                 )
                 .is_err()

@@ -22,7 +22,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise ReviewError("HTTP redirect refused")
 
 
-def request(origin, path, token, payload=None):
+def request(origin, path, token, payload=None, method=None):
     if origin not in ("https://api.github.com", "https://api.openai.com"):
         raise ReviewError("Unknown API origin")
     if not path.startswith("/") or path.startswith("//"):
@@ -30,7 +30,7 @@ def request(origin, path, token, payload=None):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     if origin == "https://api.github.com":
         headers.update({"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"})
-    req = urllib.request.Request(origin + path, headers=headers,
+    req = urllib.request.Request(origin + path, headers=headers, method=method,
                                  data=None if payload is None else json.dumps(payload).encode())
     try:
         with urllib.request.build_opener(NoRedirect).open(req, timeout=180) as response:
@@ -48,8 +48,8 @@ class GitHub:
     def __init__(self, token):
         self.token = token
 
-    def get(self, path, payload=None):
-        return request("https://api.github.com", f"/repos/{REPOSITORY}/{path}", self.token, payload)
+    def get(self, path, payload=None, method=None):
+        return request("https://api.github.com", f"/repos/{REPOSITORY}/{path}", self.token, payload, method)
 
     def pages(self, path):
         items = []
@@ -124,3 +124,12 @@ def authorize(github, event):
 def revision(pr):
     return {"head": sha(pr["head"]["sha"]), "base": sha(pr["base"]["sha"]),
             "base_ref": pr["base"]["ref"], "head_ref": pr["head"]["ref"]}
+
+
+def reopen_epoch(github, number):
+    """Use durable GitHub event IDs; identical code can still have been reopened."""
+    ids = [event["id"] for event in github.pages(f"issues/{number}/events")
+           if event.get("event") == "reopened"]
+    if any(type(value) is not int or value <= 0 for value in ids):
+        raise ReviewError("Invalid PR lifecycle event")
+    return max(ids, default=0)
