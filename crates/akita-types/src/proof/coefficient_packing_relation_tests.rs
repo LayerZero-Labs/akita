@@ -6,12 +6,12 @@ use jolt_field::{
     Prime64Offset59, Ring, Zero,
 };
 
-use crate::InnerCommitMatrixParams;
 use crate::{
-    relation_claim_from_compressed_rhs_extension, relation_rhs_coeff_len, BasisMode,
-    CommitmentRingDims, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening,
-    RingVec, SisModulusProfileId,
+    relation_claim_from_compressed_rhs_extension, relation_rhs_coeff_len,
+    RingMultiplierOpeningPoint, RingRelationGroupOpening, RingVec,
 };
+use akita_params::InnerCommitMatrixParams;
+use akita_params::{BasisMode, CommitmentRingDims, RingOpeningPoint, SisModulusProfileId};
 
 type F = Prime64Offset59;
 type E = Ext2<F>;
@@ -35,7 +35,7 @@ fn packing_rejects_tensor_projected_commitment_source() {
     );
     let extension_degree = <E as ExtField<F>>::DEGREE;
     fixture.params.source_encoding =
-        crate::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree };
+        akita_params::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree };
     assert!(matches!(
         RelationWitnessGeometry::for_level(
             &fixture.params,

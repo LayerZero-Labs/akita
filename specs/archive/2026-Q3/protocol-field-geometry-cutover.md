@@ -335,7 +335,7 @@ let requires_extension_reduction = E::EXT_DEGREE > 1;
 
 #### Diff 6 — planner root EOR bytes
 
-**File:** `crates/akita-types/src/layout/proof_size.rs`
+**File:** `crates/akita-params/src/layout/proof_size.rs`
 
 **Today:**
 
@@ -520,7 +520,7 @@ Phase C is documentation + deserialize belt-and-suspenders.
 - `crates/akita-prover/src/protocol/core/{fold,root_fold,suffix}.rs`
 - `crates/akita-verifier/src/protocol/core/{fold,root_fold,suffix}.rs`
 - `crates/akita-types/src/proof/batch.rs` (`root_tensor_projection_enabled`)
-- `crates/akita-types/src/layout/proof_size.rs` (`extension_opening_reduction_level_bytes`)
+- `crates/akita-params/src/layout/proof_size.rs` (`extension_opening_reduction_level_bytes`)
 - `crates/akita-types/src/proof/wire.rs`
 - `crates/akita-planner/src/schedule_params.rs` (root EOR bytes)
 - [`specs/runtime-ring-cutover.md`](../../runtime-ring-cutover.md) (prerequisite, implemented #249)

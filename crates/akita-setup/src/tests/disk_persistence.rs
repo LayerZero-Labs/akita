@@ -335,7 +335,7 @@ fn concurrent_public_matrix_writers_join_at_largest_prefix() {
 #[test]
 fn load_rejects_cached_matrix_that_does_not_match_seed() {
     with_test_cache_dir("corrupt-matrix", || {
-        use akita_types::FlatMatrix;
+        use akita_params::FlatMatrix;
 
         const MAX_VARS: usize = 14;
 

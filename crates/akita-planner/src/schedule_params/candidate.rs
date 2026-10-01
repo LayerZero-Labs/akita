@@ -12,13 +12,13 @@ pub(crate) struct AbCommitmentCandidateRequest<'a> {
     pub(crate) ring_challenge_cfg: &'a SparseChallengeConfig,
     pub(crate) challenge_dimension: usize,
     pub(crate) dimensions: CommitmentRingDims,
-    pub(crate) payload_mode: akita_types::CommitmentPayloadMode,
+    pub(crate) payload_mode: akita_params::CommitmentPayloadMode,
     pub(crate) num_claims: usize,
     pub(crate) num_live_ring_elements_per_claim: usize,
     pub(crate) num_live_blocks: usize,
     pub(crate) num_positions_per_block: usize,
     pub(crate) num_chunks: usize,
-    pub(crate) outer_slice_count: akita_types::CommitmentSliceCount,
+    pub(crate) outer_slice_count: akita_params::CommitmentSliceCount,
     pub(crate) witness_norms: FoldWitnessNorms,
     pub(crate) log_basis_open: u32,
     pub(crate) width_s: usize,
@@ -59,10 +59,10 @@ pub(super) struct InnerCommitmentCandidate {
 pub(super) struct OuterCommitmentCandidateRequest<'a> {
     policy: &'a PlannerPolicy,
     dimensions: CommitmentRingDims,
-    payload_mode: akita_types::CommitmentPayloadMode,
+    payload_mode: akita_params::CommitmentPayloadMode,
     num_claims: usize,
     num_live_blocks: usize,
-    outer_slice_count: akita_types::CommitmentSliceCount,
+    outer_slice_count: akita_params::CommitmentSliceCount,
     log_basis_open: u32,
     num_digits_outer: usize,
     inner_output_rank: usize,
@@ -84,7 +84,7 @@ pub(super) fn derive_outer_commitment_candidate(
         num_digits_outer,
         inner_output_rank,
     } = request;
-    let Ok(slice_geometry) = akita_types::CommitmentSliceGeometry::try_new(
+    let Ok(slice_geometry) = akita_params::CommitmentSliceGeometry::try_new(
         outer_slice_count,
         num_live_blocks,
         num_claims,
@@ -98,7 +98,7 @@ pub(super) fn derive_outer_commitment_candidate(
     let Some(norm_t) = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         policy.sis_modulus_profile,
-        akita_types::SisMatrixRole::Outer,
+        akita_params::SisMatrixRole::Outer,
         dimensions.d_b(),
         log_basis_open,
     ) else {
@@ -107,7 +107,7 @@ pub(super) fn derive_outer_commitment_candidate(
     let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
         sis_key_at_dimension(
             policy,
-            akita_types::SisMatrixRole::Outer,
+            akita_params::SisMatrixRole::Outer,
             dimensions.d_b(),
             norm_t,
         ),
@@ -118,7 +118,7 @@ pub(super) fn derive_outer_commitment_candidate(
     let complete_source_coefficients = outer_slice_count
         .complete_source_coefficients(outer_commit_matrix.output_rank(), dimensions.d_b())?;
     if payload_mode.is_compressed()
-        && akita_types::CompressionChainPlan::try_for_complete_source(
+        && akita_params::CompressionChainPlan::try_for_complete_source(
             outer_commit_matrix.sis_modulus_profile(),
             complete_source_coefficients,
         )?
@@ -188,7 +188,7 @@ pub(super) fn derive_inner_commitment_candidate(
         return Ok(None);
     };
     let Ok(inner_commit_matrix) = InnerCommitMatrixParams::try_new_with_min_rank(
-        sis_key_at_dimension(policy, akita_types::SisMatrixRole::Inner, d_a, norm_s),
+        sis_key_at_dimension(policy, akita_params::SisMatrixRole::Inner, d_a, norm_s),
         width_s,
     ) else {
         return Ok(None);

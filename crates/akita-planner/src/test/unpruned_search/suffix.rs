@@ -7,8 +7,8 @@ fn evaluation_trace_work(
     state: UnprunedState,
     dimensions: CommitmentRingDims,
 ) -> Result<Option<OpeningWork>, AkitaError> {
-    let opening_shape = akita_types::PolynomialGroupLayout::singleton(
-        akita_types::padded_boolean_opening_vars(state.input_witness_len)?,
+    let opening_shape = akita_params::PolynomialGroupLayout::singleton(
+        akita_params::padded_boolean_opening_vars(state.input_witness_len)?,
     );
     let Ok(ring_challenge) = (ctx.ring_challenge_config)(dimensions.d_a()) else {
         return Ok(None);

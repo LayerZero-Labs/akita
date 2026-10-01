@@ -58,11 +58,11 @@ fn selected_families(names: &[String]) -> Result<Vec<&'static GeneratedFamily>, 
         .collect()
 }
 
-fn group_label(group: akita_types::PolynomialGroupLayout) -> String {
+fn group_label(group: akita_params::PolynomialGroupLayout) -> String {
     format!("{}x{}", group.num_vars(), group.num_polynomials())
 }
 
-fn digest_label(digest: akita_types::ScheduleRowDigest) -> String {
+fn digest_label(digest: akita_params::ScheduleRowDigest) -> String {
     let mut label = String::with_capacity(64);
     for byte in digest.as_bytes() {
         write!(&mut label, "{byte:02x}").expect("writing to String cannot fail");
@@ -142,7 +142,7 @@ fn main() -> Result<(), String> {
             .minimum_log2_rop;
         for resolved in catalog.rows() {
             let profiles = resolved.profiles();
-            let key = akita_types::ScheduleLookupKey {
+            let key = akita_params::ScheduleLookupKey {
                 final_group: profiles.final_group.group,
                 precommitteds: profiles.precommitteds.clone(),
             };

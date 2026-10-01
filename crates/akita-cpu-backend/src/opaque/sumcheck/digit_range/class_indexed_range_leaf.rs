@@ -513,7 +513,7 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
 mod tests {
     use super::*;
     use crate::sources::packed_digits::PackedSignedDigits;
-    use akita_types::{DigitRangePlan, FlatBooleanDomain};
+    use akita_params::{DigitRangePlan, FlatBooleanDomain};
     use jolt_field::{Ext2, One, Prime64Offset59, Zero};
 
     type F = Ext2<Prime64Offset59>;

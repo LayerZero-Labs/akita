@@ -1,6 +1,7 @@
 use super::*;
 use akita_challenges::{SparseChallenge, PRODUCTION_FOLD_CHALLENGE_RING_DIMS};
-use akita_types::{basis_weights, BasisMode, PreparedSubringCoefficientPackingPoint};
+use akita_params::{basis_weights, BasisMode};
+use akita_types::PreparedSubringCoefficientPackingPoint;
 use jolt_field::{
     Ext2, ExtField, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Zero,
 };
@@ -679,9 +680,8 @@ fn malformed_reference_inputs_reject_without_panicking() {
 mod packing_relation {
     use super::*;
     use akita_algebra::ring::scalar_powers;
-    use akita_types::{
-        coefficient_packing_fixture, RingRelationGroupOpeningView, SisModulusProfileId,
-    };
+    use akita_params::SisModulusProfileId;
+    use akita_types::{coefficient_packing_fixture, RingRelationGroupOpeningView};
     use jolt_field::canonical_extension_basis;
 
     #[test]

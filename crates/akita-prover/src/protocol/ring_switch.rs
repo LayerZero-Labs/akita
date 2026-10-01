@@ -1,10 +1,11 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
 use akita_error::AkitaError;
+use akita_params::CommittedGroupParams;
+use akita_types::FpExtEncoding;
 use akita_types::GrindingReplay;
 use akita_types::{
     CoefficientPackingBatchSemantics, OpeningFamily, RelationRangeImagePlan, RingRelationInstance,
 };
-use akita_types::{CommittedGroupParams, FpExtEncoding};
 use jolt_field::{CanonicalEncoding, Field, MulBaseUnreduced, Ring};
 
 pub(crate) enum NextWitnessState<F: Field> {
@@ -20,7 +21,7 @@ pub struct RingSwitchOutput<E: Field, RelationHandle> {
     /// Public logical length bound to the opaque witness handle.
     pub(crate) witness_len: usize,
     /// Canonical flat relation-witness domain and coefficient/lane split.
-    pub(crate) relation_address_geometry: akita_types::RelationAddressGeometry,
+    pub(crate) relation_address_geometry: akita_params::RelationAddressGeometry,
     /// Whether the validated payload requires compression binary constraints.
     pub(crate) compressed: bool,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
@@ -113,9 +114,9 @@ where
         ));
     }
     let relation_plan = RelationRangeImagePlan::new(
-        akita_types::RelationWitnessGeometry::for_level(lp, opening_batch, E::DEGREE)?,
+        akita_params::RelationWitnessGeometry::for_level(lp, opening_batch, E::DEGREE)?,
         geometry,
-        akita_types::DigitRangePlan::new(1usize << lp.open().digits.log_basis)?,
+        akita_params::DigitRangePlan::new(1usize << lp.open().digits.log_basis)?,
         witness_layout.clone(),
         opening_batch,
     )?;
@@ -136,13 +137,13 @@ where
         ));
     }
     let alpha = grinding
-        .grinded_ext_challenge::<F, E>(akita_types::GrindingSite::RingSwitchAlpha { level })?;
+        .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::RingSwitchAlpha { level })?;
     let tau0 = grinding.grinded_ext_challenges::<F, E>(
-        akita_types::GrindingSite::Tau0Point { level },
+        akita_params::GrindingSite::Tau0Point { level },
         column_bits + coefficient_bits,
     )?;
     let tau1 = grinding.grinded_ext_challenges::<F, E>(
-        akita_types::GrindingSite::Tau1Point { level },
+        akita_params::GrindingSite::Tau1Point { level },
         lp.relation_row_index_num_vars(opening_batch)?,
     )?;
 

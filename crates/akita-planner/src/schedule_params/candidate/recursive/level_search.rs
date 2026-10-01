@@ -7,7 +7,7 @@ pub(super) struct RecursiveLevelSearch {
     pub(super) reduced_vars: usize,
     pub(super) current_witness_len: usize,
     pub(super) opening_layout: OpeningClaimsLayout,
-    pub(super) setup_prefixes: Vec<Option<akita_types::GroupOpenPhaseParams>>,
+    pub(super) setup_prefixes: Vec<Option<akita_params::GroupOpenPhaseParams>>,
 }
 
 pub(super) fn prepare_recursive_level_search(
@@ -74,7 +74,7 @@ pub(super) fn prepare_recursive_level_search(
             }
             groups
                 .into_iter()
-                .map(|group| Some(akita_types::scheduled_setup_prefix(natural_len, group)))
+                .map(|group| Some(akita_params::scheduled_setup_prefix(natural_len, group)))
                 .collect()
         }
         RecursiveSetupPrefix::None => vec![None],
@@ -90,7 +90,7 @@ pub(super) fn prepare_recursive_level_search(
 }
 
 pub(super) fn attach_recursive_setup_prefix(
-    setup_prefix: Option<&akita_types::GroupOpenPhaseParams>,
+    setup_prefix: Option<&akita_params::GroupOpenPhaseParams>,
     extension_degree: usize,
     mut candidate_params: CommittedGroupParams,
 ) -> Result<CommittedGroupParams, AkitaError> {

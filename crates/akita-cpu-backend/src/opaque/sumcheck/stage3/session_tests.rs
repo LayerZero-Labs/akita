@@ -125,7 +125,7 @@ fn stage3_retains_setup_across_cache_eviction() {
     let setup = crate::AkitaProverSetup::<Base>::generate_with_capacity(
         2,
         1,
-        akita_types::SetupMatrixCapacity {
+        akita_params::SetupMatrixCapacity {
             num_field_elements: 64,
         },
     )

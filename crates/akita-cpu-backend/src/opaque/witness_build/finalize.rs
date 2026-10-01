@@ -12,12 +12,13 @@ use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::balanced_decompose_coefficients_pow2_i8_into;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_error::AkitaError;
+use akita_params::{
+    dispatch_for_field, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
+    CompressionWitnessSpan, PackedNegativeBinary, RingRole, WitnessLayout, WitnessUnitLayout,
+};
 use akita_serialization::AkitaSerialize;
 use akita_types::{
-    dispatch_for_field, emit_witness_e_planes, emit_witness_t_planes, r_decomp_levels,
-    CommitmentRingDims, CommittedGroupParams, CompressionWitnessSpan, DigitBlocks,
-    PackedNegativeBinary, RingRelationInstance, RingRole, RingVec, WitnessLayout,
-    WitnessUnitLayout,
+    emit_witness_e_planes, emit_witness_t_planes, DigitBlocks, RingRelationInstance, RingVec,
 };
 use jolt_field::{CanonicalEncoding, Field, Ring};
 
@@ -213,7 +214,7 @@ impl<'a> CpuRecursiveWitnessUnitPlan<'a> {
 }
 
 pub(crate) struct PreparedRingSwitchGroup<F: Field + CanonicalEncoding> {
-    pub(crate) params: akita_types::GroupOpenPhaseParams,
+    pub(crate) params: akita_params::GroupOpenPhaseParams,
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) e_hat: DigitBlocks,
     pub(crate) t_hat: DigitBlocks,
@@ -644,7 +645,7 @@ where
     // segment carries all quotient rows in canonical relation order.
     let tail = match (lp.ring_relation_mode, d_quotients) {
         (
-            akita_types::RingRelationMode::QuotientLift,
+            akita_params::RingRelationMode::QuotientLift,
             RelationDQuotientWitness::QuotientLift(d_quotients),
         ) => PreparedWitnessTail::QuotientLift(
             compute_multi_group_relation_quotient::<F, O, B>(
@@ -664,7 +665,7 @@ where
             })?,
         ),
         (
-            akita_types::RingRelationMode::ReducedEvaluation,
+            akita_params::RingRelationMode::ReducedEvaluation,
             RelationDQuotientWitness::ReducedEvaluation,
         ) => PreparedWitnessTail::ReducedEvaluation,
         _ => return Err(AkitaError::InvalidProof),

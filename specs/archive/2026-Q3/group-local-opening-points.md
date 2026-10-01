@@ -220,7 +220,7 @@ evaluation-trace inputs derived from each group point.
 The code before this record has four paths for the same mathematical
 operation, and they have drifted:
 
-- `akita_types::layout::opening_point::lagrange_weights` owns a serial
+- `akita_params::layout::opening_point::lagrange_weights` owns a serial
   full-table expansion loop;
 - `EqPolynomial::evals_serial` owns a second serial full-table loop;
 - `EqPolynomial::evals_cached_with_scaling` owns a third serial recurrence
@@ -979,7 +979,7 @@ the exact `2^s - 1` multiplication and subtraction count.
 **Primary diff surface.**
 
 - `crates/akita-algebra/src/eq_poly.rs`
-- `crates/akita-types/src/layout/opening_point.rs`
+- `crates/akita-params/src/layout/opening_point.rs`
 - their unit tests and exports only if the public boundary changes
 
 **Completion gate.** A grep/review finds one serial full-table traversal and
@@ -1141,7 +1141,7 @@ selected setup-prefix registry and cache round-trip checks pass.
 
 **Primary diff surface.**
 
-- `crates/akita-types/src/proof_size.rs`
+- `crates/akita-params/src/proof_size.rs`
 - `crates/akita-planner/src/schedule_params.rs`
 - `crates/akita-schedules/src/runtime.rs`
 - `crates/akita-schedules/src/generated/`

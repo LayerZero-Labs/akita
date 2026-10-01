@@ -6,7 +6,8 @@ use crate::commitment::{
 use crate::opaque::RecursiveWitnessFlat;
 use crate::opaque::{CommitInnerPlan, ComputeBackendSetup};
 use crate::{AkitaProverSetup, DensePoly, OneHotPoly};
-use akita_types::{RingVec, SetupMatrixCapacity};
+use akita_params::SetupMatrixCapacity;
+use akita_types::RingVec;
 use jolt_field::{Prime128Offset275, Ring};
 
 type F = Prime128Offset275;
