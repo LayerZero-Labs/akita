@@ -347,7 +347,7 @@ fn materialize_cpu_sources(
 fn begin_stage3_without_a_next_fold_rejects_the_level() {
     use crate::opaque::{CpuBackend, OpaqueStage3Kernel, ProofScope, Stage3Request};
     use akita_config::proof_optimized::fp64;
-    use akita_types::{PolynomialGroupLayout, ScheduleLookupKey, SetupPrefixSlotId};
+    use akita_params::{PolynomialGroupLayout, ScheduleLookupKey, SetupPrefixSlotId};
 
     let fixture = fixture();
     let catalog = akita_config::test_support::workspace_schedule_catalog::<fp64::OneHot>().unwrap();
