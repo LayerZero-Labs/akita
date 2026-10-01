@@ -7,7 +7,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(super) fn debug_dense_round_at_zero(&self) -> Option<E> {
         let Phase::Coefficient {
             witness, relation, ..
-        } = self.phase.as_ref()?
+        } = &self.phase
         else {
             return None;
         };
@@ -27,20 +27,22 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         for left in (0..witness_len).step_by(2) {
             let p0 = match relation {
                 CoefficientRelation::Factored(weights) => {
-                    self.factored_relation_pair(weights)(left).0
+                    self.state.factored_relation_pair(weights)(left).0
                 }
                 CoefficientRelation::ReducedDense(weights) => weights.evaluations()[left],
             };
-            let t0 = self.linear_terms.pair_from_flat_index(left).0;
+            let t0 = self.state.linear_terms.pair_from_flat_index(left).0;
             at_zero += witness_at(left) * (p0 + t0);
         }
-        at_zero += self.prev_norm_poly.as_ref()?.evaluate(E::zero());
-        if let Some(additional) = &self.additional_relation_terms {
+        at_zero += self.state.prev_norm_poly.as_ref()?.evaluate(E::zero());
+        if let Some(additional) = &self.state.additional_relation_terms {
             at_zero += additional.debug_round_at_zero(witness_at);
         }
         Some(at_zero)
     }
+}
 
+impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
     #[tracing::instrument(
         skip_all,
         name = "RelationRangeImageProver::compute_round_compact_dense_terms"
@@ -286,7 +288,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             |left| (dense[left], dense[left + 1]),
         )
     }
+}
 
+impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[cfg(test)]
     pub(super) fn compute_round_compact_dense_polys(
         &self,
@@ -295,20 +299,21 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let weights = self
             .quotient_weights()
             .expect("factored dense test helper requires quotient weights");
-        let (virt_terms, relation_message) =
-            self.compute_round_compact_dense_terms(compact_witness, weights);
-        let relation_pair = self.factored_relation_pair(weights);
+        let (virt_terms, relation_message) = self
+            .state
+            .compute_round_compact_dense_terms(compact_witness, weights);
+        let relation_pair = self.state.factored_relation_pair(weights);
         let mut relation_claim = E::zero();
         for left in (0..compact_witness.len()).step_by(2) {
             let (p0, p1) = relation_pair(left);
-            let (t0, t1) = self.linear_terms.pair_from_flat_index(left);
+            let (t0, t1) = self.state.linear_terms.pair_from_flat_index(left);
             let w0 = compact_witness.get(left).map_or(0, i8::from);
             let w1 = compact_witness.get(left + 1).map_or(0, i8::from);
             relation_claim +=
                 E::from_i64(i64::from(w0)) * (p0 + t0) + E::from_i64(i64::from(w1)) * (p1 + t1);
         }
         (
-            self.norm_poly_from_terms(virt_terms),
+            self.state.norm_poly_from_terms(virt_terms),
             relation_message.into_polynomial(relation_claim),
         )
     }

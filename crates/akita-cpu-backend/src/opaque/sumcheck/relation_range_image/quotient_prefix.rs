@@ -752,7 +752,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
                 let half = (self.b / 2) as i16;
                 let lut = CompactPairFoldLut::from_contiguous_range(-half, half - 1, r0);
                 (
-                    RelationRangeImageProver::<E>::materialize_compact_witness(witness, &lut),
+                    RelationRoundState::<E>::materialize_compact_witness(witness, &lut),
                     PrefixNormRound::Polynomial(self.norm_cache.round1_norm_poly(r0)),
                 )
             }
@@ -930,12 +930,14 @@ impl<E: Field + Ring + Unreduced + Fold> CompactQuotientPrefix<E> {
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[cfg(test)]
     pub(super) fn compact_quotient_prefix(&self) -> Option<&CompactQuotientPrefix<E>> {
-        match self.phase.as_ref()? {
+        match &self.phase {
             Phase::CompactPrefix { engine, .. } => Some(engine),
             Phase::Coefficient { .. } | Phase::Lane { .. } => None,
         }
     }
+}
 
+impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
     pub(super) fn norm_poly_from_prefix(&self, norm: PrefixNormRound<E>) -> UnivariatePoly<E> {
         match norm {
             PrefixNormRound::Polynomial(poly) => poly,
@@ -958,25 +960,19 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 }
 
-impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
+impl<E: Field + Ring + Unreduced + Fold> RelationRoundState<E> {
     /// Bind `r` in a compact-prefix round. The round before the last prefix
     /// round also materializes the folded witness and caches the last prefix
     /// round's message.
     pub(super) fn ingest_compact_prefix_challenge(
         &mut self,
-        witness: PackedSignedDigits,
-        mut weights: RelationWeightFactorization<E>,
-        mut engine: Box<CompactQuotientPrefix<E>>,
+        weights: &mut RelationWeightFactorization<E>,
+        engine: &mut CompactQuotientPrefix<E>,
         r: E,
-    ) -> Phase<E> {
+    ) {
         fold_evals_in_place(weights.common_alpha_factor_mut(), r);
         self.split_eq.bind(r);
         self.linear_terms.fold_coefficients(r);
         engine.bind(r);
-        Phase::CompactPrefix {
-            witness,
-            weights,
-            engine,
-        }
     }
 }

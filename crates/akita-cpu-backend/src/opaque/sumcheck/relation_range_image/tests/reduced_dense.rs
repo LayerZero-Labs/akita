@@ -2,9 +2,9 @@ use super::*;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 #[test]
-fn expected_final_claim_rejects_missing_phase_without_panicking() {
+fn expected_final_claim_rejects_unfinished_prover_without_panicking() {
     let stage1_point = [F::from_u64(3), F::from_u64(5)];
-    let mut prover = new_stage2_test_prover(
+    let prover = new_stage2_test_prover(
         F::one(),
         vec![0, 1],
         vec![F::one(); 2],
@@ -17,10 +17,10 @@ fn expected_final_claim_rejects_missing_phase_without_panicking() {
             coefficient_bits: 1,
         },
     );
-    prover.phase = None;
 
     let result = catch_unwind(AssertUnwindSafe(|| prover.expected_final_claim()));
-    assert!(matches!(result, Ok(Err(AkitaError::Internal(_)))));
+    assert!(matches!(result, Ok(Err(AkitaError::Internal(message)))
+        if message == "final witness remained compact after final fold"));
 }
 
 #[test]

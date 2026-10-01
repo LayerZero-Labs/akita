@@ -348,7 +348,12 @@ pub(crate) fn accumulate_relation_eval_coeffs_signed<E: Field + Unreduced>(
 /// the round polynomial is:
 /// `batching_coeff * virtual_round(t) + relation_round(t)`.
 pub(crate) struct RelationRangeImageProver<E: Field> {
-    phase: Option<Phase<E>>,
+    phase: Phase<E>,
+    state: RelationRoundState<E>,
+}
+
+/// Round kernels borrow this state independently of the installed phase.
+pub(crate) struct RelationRoundState<E: Field> {
     input_claim: E,
     split_eq: GruenSplitEq<E>,
 
@@ -398,7 +403,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[cfg(test)]
     #[inline]
     fn quotient_weights(&self) -> Option<&RelationWeightFactorization<E>> {
-        match self.phase.as_ref()? {
+        match &self.phase {
             Phase::CompactPrefix { weights, .. } => Some(weights),
             Phase::Coefficient {
                 relation: CoefficientRelation::Factored(weights),
@@ -411,7 +416,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             | Phase::Lane { .. } => None,
         }
     }
+}
 
+impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
     // Fused relation (`alpha * m`) + structured-linear addend for one witness
     // corner. `witness_idx0` is the first flat index of an adjacent pair in
     // the Boolean `w` table (`lane * coeff_count + coefficient`).

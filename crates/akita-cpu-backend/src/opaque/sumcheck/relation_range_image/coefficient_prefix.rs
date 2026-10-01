@@ -1,7 +1,7 @@
 use super::*;
 use crate::opaque::sumcheck::par_fold_by_grain;
 
-impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
+impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
     #[tracing::instrument(
         skip_all,
         name = "RelationRangeImageProver::compute_compact_partial_lane_coefficient_round_terms"

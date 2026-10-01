@@ -70,7 +70,7 @@ fn fold_lane_and_compute_next_round<
     (virt.totals(), relation.finish())
 }
 
-impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
+impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
     #[tracing::instrument(
         skip_all,
         name = "RelationRangeImageProver::fuse_folded_coefficients_and_compute_next_round"
