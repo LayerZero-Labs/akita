@@ -158,7 +158,9 @@ where
             .commitment
             .rows
             .first()
-            .ok_or(AkitaError::InvalidProof)?
+            .ok_or_else(|| {
+                AkitaError::Internal("cached setup prefix has no public commitment row".into())
+            })?
             .clone();
         // Setup prefixes are public uniform field elements, planned as
         // full-width balanced digits rather than under any family's contract.

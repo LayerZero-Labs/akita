@@ -199,7 +199,11 @@ where
     let e_hat = concatenated
         .as_ref()
         .or_else(|| openings.first().map(PreparedOpeningWitness::e_hat))
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::Internal(
+                "prepared opening relation has no first or concatenated E digit input".into(),
+            )
+        })?;
     if d_row_len == 0 {
         let quotients = match relation_mode {
             akita_params::RingRelationMode::QuotientLift => {
