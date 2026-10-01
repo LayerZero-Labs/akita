@@ -1,9 +1,9 @@
-use crate::{
+use akita_algebra::offset_eq::{EqPairTensorFamily, OffsetEqWindow};
+use akita_error::AkitaError;
+use akita_params::{
     CommitmentRingDims, CommitmentSliceGeometry, CommittedGroupParams, OpeningClaimsLayout,
     SetupProjectionGeometry, WitnessLayout,
 };
-use akita_algebra::offset_eq::{EqPairTensorFamily, OffsetEqWindow};
-use akita_error::AkitaError;
 use jolt_field::Field;
 use std::{ops::Range, sync::Arc};
 
@@ -105,7 +105,7 @@ impl SetupContributionGroupInputs {
         &self,
         level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
-    ) -> Result<crate::GroupOpenPhaseParams, AkitaError> {
+    ) -> Result<akita_params::GroupOpenPhaseParams, AkitaError> {
         level_params.group_params(opening_batch, self.group_id)
     }
 
@@ -306,7 +306,7 @@ pub struct SetupContributionPlan<E: Field> {
     pub(crate) d_physical_cols: usize,
     pub(crate) d_weights: Arc<[E]>,
     pub(crate) relation_address: PreparedRelationAddress<E>,
-    pub(crate) relation_address_geometry: crate::RelationAddressGeometry,
+    pub(crate) relation_address_geometry: akita_params::RelationAddressGeometry,
     pub(crate) projection_geometry: SetupProjectionGeometry,
 }
 
@@ -413,7 +413,7 @@ impl<E: Field> PhysicalBSetupPlan<E> {
 /// [`SetupContributionPlan::groups`].
 pub struct SetupContributionGroupPlan<E: Field> {
     pub(crate) group_id: usize,
-    pub(crate) opening_method: crate::OpeningMethod,
+    pub(crate) opening_method: akita_params::OpeningMethod,
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) a_ratio: usize,
     pub(crate) b_ratio: usize,
@@ -441,7 +441,7 @@ pub struct SetupContributionGroupPlan<E: Field> {
     /// The non-empty witness units of this group, in layout order. The E and
     /// T roles are partitioned by them, and the verifier's Stage-3 B tensors
     /// are rebuilt from them, so no second layout is ever consulted.
-    pub(crate) active_units: Arc<[crate::WitnessUnitLayout]>,
+    pub(crate) active_units: Arc<[akita_params::WitnessUnitLayout]>,
     /// All physical units, including empty chunks that retain replicated Z.
     pub(crate) num_physical_units: usize,
     pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
@@ -462,7 +462,7 @@ impl<E: Field> SetupContributionGroupPlan<E> {
     ) -> Self {
         Self {
             group_id: 0,
-            opening_method: crate::OpeningMethod::EvaluationTrace,
+            opening_method: akita_params::OpeningMethod::EvaluationTrace,
             role_dims: CommitmentRingDims::uniform(64),
             a_ratio: 1,
             b_ratio: 1,
@@ -523,7 +523,7 @@ impl<E: Field> SetupContributionGroupPlan<E> {
 
     /// Opening method of the consuming fold.
     #[must_use]
-    pub const fn opening_method(&self) -> crate::OpeningMethod {
+    pub const fn opening_method(&self) -> akita_params::OpeningMethod {
         self.opening_method
     }
 
@@ -679,7 +679,7 @@ impl<E: Field> SetupContributionGroupPlan<E> {
 
     /// The non-empty witness units of this group, in layout order.
     #[must_use]
-    pub fn active_units(&self) -> &[crate::WitnessUnitLayout] {
+    pub fn active_units(&self) -> &[akita_params::WitnessUnitLayout] {
         &self.active_units
     }
 

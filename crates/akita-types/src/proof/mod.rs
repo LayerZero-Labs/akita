@@ -103,9 +103,9 @@ pub use tail_segments::{
 };
 pub use witness_emission::{emit_witness_e_planes, emit_witness_t_planes, WitnessCoefficientSink};
 
-use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
+use akita_params::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};

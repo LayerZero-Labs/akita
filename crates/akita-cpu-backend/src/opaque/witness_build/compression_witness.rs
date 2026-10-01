@@ -7,10 +7,11 @@ use crate::opaque::compression::{
 };
 use crate::opaque::{CompressionComputeBackend, OperationCtx};
 use akita_error::AkitaError;
-use akita_types::{
+use akita_params::{
     CompressionChainPlan, CompressionChainWitness, CompressionTerminalPayload, RelationRhsLayout,
-    RingRelationMode, RingVec,
+    RingRelationMode,
 };
+use akita_types::RingVec;
 use jolt_field::{CanonicalEncoding, Field};
 
 /// Semantic source of one compression chain.
@@ -85,7 +86,11 @@ impl<F: Field> CompressionSourceWitness<F> {
         self.material
             .quotients()
             .and_then(|quotients| quotients.get(map_index))
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::Internal(
+                    "compression source quotient for the retained map is missing".into(),
+                )
+            })
     }
 }
 

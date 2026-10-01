@@ -104,7 +104,7 @@ where
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
     let mut evaluation = E::zero();
-    let row_families = akita_types::RelationWitnessGeometry::for_level(
+    let row_families = akita_params::RelationWitnessGeometry::for_level(
         &inputs.level_params,
         &inputs.opening_batch,
         1,
@@ -115,7 +115,7 @@ where
     .unwrap();
     let d_row_start = row_families
         .iter()
-        .position(|family| matches!(family, akita_types::RelationRowFamily::Opening { .. }))
+        .position(|family| matches!(family, akita_params::RelationRowFamily::Opening { .. }))
         .unwrap();
     let coefficient_dimension = plan
         .relation_address_geometry()

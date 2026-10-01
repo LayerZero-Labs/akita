@@ -1,7 +1,7 @@
 //! Planner-free runtime schedule expansion support.
 
 use akita_error::AkitaError;
-use akita_types::{
+use akita_params::{
     ChunkedWitnessCfg, CommittedGroupParams, DecompositionParams, FoldParams, FoldSchedule,
     FoldScheduleEstimate, FoldSuccessor, OpeningClaimsLayout, PlannedFoldSchedule,
     PolynomialGroupLayout, RingRole, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
@@ -223,8 +223,8 @@ pub struct PlannerPolicy {
     pub decomposition: DecompositionParams,
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: SisSecurityPolicyId,
-    pub sis_table_digest: akita_types::SisTableDigest,
-    pub sis_l2_table_digest: akita_types::SisL2TableDigest,
+    pub sis_table_digest: akita_params::SisTableDigest,
+    pub sis_l2_table_digest: akita_params::SisL2TableDigest,
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     /// Inclusive A/source decomposition basis domain at every level.
@@ -284,8 +284,8 @@ impl PlannerPolicy {
     /// Exact challenge-field order used by transcript grinding plans.
     pub fn transcript_grinding_order(
         &self,
-    ) -> Result<akita_types::ChallengeFieldOrder, AkitaError> {
-        akita_types::ChallengeFieldOrder::from_field(
+    ) -> Result<akita_params::ChallengeFieldOrder, AkitaError> {
+        akita_params::ChallengeFieldOrder::from_field(
             self.decomposition.field_bits(),
             self.chal_ext_degree,
             self.sis_modulus_profile.modulus(),
@@ -303,7 +303,7 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     // bound the digit math is unable to represent. Defense in depth: a schedule
     // resolved from an in-process policy never passes through `SetupSection`.
     policy.decomposition.validate()?;
-    if !akita_types::sis::SUPPORTED_SIS_SECURITY_POLICIES.contains(&policy.sis_security_policy) {
+    if !akita_params::sis::SUPPORTED_SIS_SECURITY_POLICIES.contains(&policy.sis_security_policy) {
         return Err(AkitaError::InvalidSetup(format!(
             "unsupported SIS security policy {:?}",
             policy.sis_security_policy
@@ -330,7 +330,7 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
         ));
     }
     if policy.selective_l2_response_model_enabled()
-        && policy.sis_l2_table_digest != akita_types::SisL2TableDigest::CURRENT
+        && policy.sis_l2_table_digest != akita_params::SisL2TableDigest::CURRENT
     {
         return Err(AkitaError::InvalidSetup(
             "selective L2 planning requires the current audited Euclidean table".into(),
@@ -411,11 +411,11 @@ fn role_name(role: RingRole) -> &'static str {
     }
 }
 
-fn sis_role(role: RingRole) -> akita_types::SisMatrixRole {
+fn sis_role(role: RingRole) -> akita_params::SisMatrixRole {
     match role {
-        RingRole::Inner => akita_types::SisMatrixRole::Inner,
-        RingRole::Outer => akita_types::SisMatrixRole::Outer,
-        RingRole::Opening => akita_types::SisMatrixRole::Open,
+        RingRole::Inner => akita_params::SisMatrixRole::Inner,
+        RingRole::Outer => akita_params::SisMatrixRole::Outer,
+        RingRole::Opening => akita_params::SisMatrixRole::Open,
     }
 }
 
@@ -424,8 +424,8 @@ fn validate_scheduled_dimension(
     role: RingRole,
     dimension: usize,
 ) -> Result<(), AkitaError> {
-    let tier = akita_types::protocol_dispatch_tier_for_sis_profile(policy.sis_modulus_profile);
-    if !akita_types::dispatch::role_dim_supported_for_tier(tier, role, dimension) {
+    let tier = akita_params::protocol_dispatch_tier_for_sis_profile(policy.sis_modulus_profile);
+    if !akita_params::dispatch::role_dim_supported_for_tier(tier, role, dimension) {
         return Err(AkitaError::InvalidSetup(format!(
             "scheduled {} dimension D{dimension} is unsupported by the {:?} protocol dispatch",
             role_name(role),
@@ -438,7 +438,7 @@ fn validate_scheduled_dimension(
             role_name(role)
         ))
     })?;
-    if !akita_types::sis::sis_role_dimension_supported(
+    if !akita_params::sis::sis_role_dimension_supported(
         sis_role(role),
         policy.sis_modulus_profile,
         dimension_u32,
@@ -449,7 +449,8 @@ fn validate_scheduled_dimension(
             policy.sis_modulus_profile
         )));
     }
-    if role == RingRole::Inner && !akita_types::SUPPORTED_CHALLENGE_RING_DIMS.contains(&dimension) {
+    if role == RingRole::Inner && !akita_params::SUPPORTED_CHALLENGE_RING_DIMS.contains(&dimension)
+    {
         return Err(AkitaError::InvalidSetup(format!(
             "scheduled A dimension D{dimension} has no production fold-challenge configuration"
         )));
@@ -493,7 +494,7 @@ pub struct CandidateFoldStep {
 #[derive(Clone, Debug)]
 /// Fully priced terminal response awaiting schedule materialization.
 pub struct CandidateTerminalResponse {
-    pub params: akita_types::TerminalFoldParams,
+    pub params: akita_params::TerminalFoldParams,
     pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
     pub input_witness_len: usize,
     pub estimated_direct_payload_bytes: usize,
@@ -505,7 +506,7 @@ pub struct CandidateTerminalResponse {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CandidateMaterializationCost {
     pub proof_bytes: usize,
-    pub grinding: akita_types::TranscriptGrindingCost,
+    pub grinding: akita_params::TranscriptGrindingCost,
     pub num_setup_field_elements: usize,
     pub first_direct_setup_field_len: Option<usize>,
 }
@@ -528,7 +529,7 @@ pub fn stage3_payload_bytes_for_successor(
         ));
     }
     let challenge_field_bits = policy.challenge_field_bits()?;
-    Ok(akita_types::proof_size::stage3_setup_product_bytes(
+    Ok(akita_params::proof_size::stage3_setup_product_bytes(
         challenge_field_bits,
         prefix.d_setup(),
         n_prefix / prefix.d_setup(),
@@ -540,7 +541,7 @@ pub fn stage3_payload_bytes_for_successor(
 pub struct NonterminalLevelPayloadBytes {
     pub direct: usize,
     pub stage3: usize,
-    pub relation_geometry: akita_types::RelationAddressGeometry,
+    pub relation_geometry: akita_params::RelationAddressGeometry,
 }
 
 #[doc(hidden)]
@@ -562,7 +563,7 @@ pub fn nonterminal_level_payload_bytes(
         successor.ring_dimension(),
         output_witness_len,
     )?;
-    let direct = akita_types::nonterminal_level_layout(
+    let direct = akita_params::nonterminal_level_layout(
         policy.decomposition.field_bits(),
         challenge_field_bits,
         params,
@@ -572,10 +573,10 @@ pub fn nonterminal_level_payload_bytes(
     .encoded_len()?;
     let eor = if matches!(
         params.opening_method(),
-        akita_types::OpeningMethod::EvaluationTrace
+        akita_params::OpeningMethod::EvaluationTrace
     ) {
         let opening_shape = opening_layout.aggregate_polynomial_group_layout()?;
-        akita_types::extension_opening_reduction_level_bytes(
+        akita_params::extension_opening_reduction_level_bytes(
             challenge_field_bits,
             policy.claim_ext_degree,
             opening_shape,
@@ -601,7 +602,7 @@ struct ExpandedScheduleProofComponents {
 }
 
 fn expanded_schedule_proof_components(
-    key: &akita_types::ScheduleLookupKey,
+    key: &akita_params::ScheduleLookupKey,
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,
 ) -> Result<ExpandedScheduleProofComponents, AkitaError> {
@@ -651,19 +652,19 @@ fn expanded_schedule_proof_components(
     let terminal_predecessor_rounds = predecessor_rounds.ok_or_else(|| {
         AkitaError::InvalidSetup("terminal proof is missing predecessor relation geometry".into())
     })?;
-    let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
+    let terminal_eor = akita_params::extension_opening_reduction_level_bytes(
         policy.challenge_field_bits()?,
         policy.claim_ext_degree,
         PolynomialGroupLayout::singleton(terminal_predecessor_rounds),
     )?;
-    let terminal_planner_bytes = akita_types::terminal_response_planner_bytes(
+    let terminal_planner_bytes = akita_params::terminal_response_planner_bytes(
         field_bits,
         &schedule.terminal.response_shape,
         schedule.terminal.response_l2_sq_cap(),
     )?;
     let terminal_max_bytes =
-        akita_types::terminal_response_max_bytes(field_bits, &schedule.terminal.response_shape)?;
-    let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
+        akita_params::terminal_response_max_bytes(field_bits, &schedule.terminal.response_shape)?;
+    let grinding_plan = akita_params::derive_transcript_grinding_plan_from_public_shape(
         schedule,
         &key.opening_layout()?,
         policy.transcript_grinding_order()?,
@@ -685,7 +686,7 @@ fn expanded_schedule_proof_components(
 /// The objective uses additive per-message canonical nonce maxima and the
 /// planner's terminal-response estimate. It is not a parser bound.
 pub fn expanded_schedule_proof_estimate_bytes(
-    key: &akita_types::ScheduleLookupKey,
+    key: &akita_params::ScheduleLookupKey,
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,
 ) -> Result<usize, AkitaError> {
@@ -702,7 +703,7 @@ pub fn expanded_schedule_proof_estimate_bytes(
 /// Unlike the schedule-selection estimate, this uses every inline nonce's
 /// maximum canonical LEB128 width and the scheduled terminal response cap.
 pub fn expanded_schedule_proof_bound(
-    key: &akita_types::ScheduleLookupKey,
+    key: &akita_params::ScheduleLookupKey,
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,
 ) -> Result<usize, AkitaError> {
@@ -777,7 +778,7 @@ pub fn materialize_candidate_schedule(
         first_direct_setup_field_len: None,
         selected_offload_edges: 0,
     };
-    let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
+    let grinding_plan = akita_params::derive_transcript_grinding_plan_from_public_shape(
         &schedule,
         root_layout,
         policy.transcript_grinding_order()?,
@@ -824,7 +825,7 @@ pub fn materialize_candidate_schedule(
         schedule.validate_structure()?;
     }
     let recomputed_num_setup_field_elements =
-        akita_types::setup_matrix_capacity_for_schedule(&schedule)?.num_field_elements;
+        akita_params::setup_matrix_capacity_for_schedule(&schedule)?.num_field_elements;
     if recomputed_num_setup_field_elements != cached_num_setup_field_elements {
         return Err(AkitaError::InvalidSetup(format!(
             "cached setup capacity {cached_num_setup_field_elements} field elements disagrees with materialized capacity {recomputed_num_setup_field_elements}"
@@ -851,7 +852,7 @@ pub fn first_direct_setup_field_len_for_schedule(
             continue;
         }
         return if successor_index == 0 {
-            akita_types::active_setup_field_len(&schedule.root.params, root_layout)
+            akita_params::active_setup_field_len(&schedule.root.params, root_layout)
         } else {
             active_setup_field_len_for_recursive_producer(
                 &schedule.recursive_folds[successor_index - 1],
@@ -860,7 +861,7 @@ pub fn first_direct_setup_field_len_for_schedule(
     }
 
     schedule.recursive_folds.last().map_or_else(
-        || akita_types::active_setup_field_len(&schedule.root.params, root_layout),
+        || akita_params::active_setup_field_len(&schedule.root.params, root_layout),
         active_setup_field_len_for_recursive_producer,
     )
 }
@@ -870,7 +871,7 @@ pub fn first_direct_setup_capacity_for_schedule(
     schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
-    Ok(akita_types::padded_setup_prefix_len(
+    Ok(akita_params::padded_setup_prefix_len(
         first_direct_setup_field_len_for_schedule(schedule, root_layout)?,
     ))
 }
@@ -883,8 +884,8 @@ fn active_setup_field_len_for_recursive_producer(
         .setup_prefix()
         .map(|prefix| prefix.setup_natural_len.expect("setup prefix group"));
     let layout =
-        akita_types::suffix_opening_layout(producer.input_witness_len, incoming_prefix_len)?;
-    akita_types::active_setup_field_len(&producer.params, &layout)
+        akita_params::suffix_opening_layout(producer.input_witness_len, incoming_prefix_len)?;
+    akita_params::active_setup_field_len(&producer.params, &layout)
 }
 
 /// Derive the canonical next-witness field length for a scalar planner level.
@@ -903,7 +904,7 @@ pub fn planned_next_witness_len(
     }
     let opening_batch =
         params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
-    let quotient_plan = akita_types::RelationQuotientPlan::for_field_bits(params, field_bits)?;
+    let quotient_plan = akita_params::RelationQuotientPlan::for_field_bits(params, field_bits)?;
     if !params.compression_sources_supported()? {
         return Ok(None);
     }
@@ -917,7 +918,7 @@ pub fn planned_next_witness_len(
         )?));
     }
     let relation_geometry =
-        akita_types::RelationWitnessGeometry::for_level(params, &opening_batch, extension_degree)?;
+        akita_params::RelationWitnessGeometry::for_level(params, &opening_batch, extension_degree)?;
     Ok(Some(
         WitnessLayout::new(
             params,
@@ -933,7 +934,7 @@ pub fn planned_next_witness_len(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::DEFAULT_SIS_SECURITY_POLICY;
+    use akita_params::DEFAULT_SIS_SECURITY_POLICY;
 
     const A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER: &[usize] = &[64, 512];
     const SUFFIX_DIMENSIONS: &[usize] = &[64];
@@ -961,8 +962,8 @@ mod tests {
             },
             sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
             sis_security_policy: DEFAULT_SIS_SECURITY_POLICY,
-            sis_table_digest: akita_types::SisTableDigest::CURRENT,
-            sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
+            sis_table_digest: akita_params::SisTableDigest::CURRENT,
+            sis_l2_table_digest: akita_params::SisL2TableDigest::CURRENT,
             claim_ext_degree: 1,
             chal_ext_degree: 1,
             inner_basis_range: (3, 16),
@@ -1004,7 +1005,7 @@ mod tests {
     #[test]
     fn typed_response_model_requires_current_l2_table_identity() {
         let mut policy = adaptive_policy();
-        policy.sis_l2_table_digest = akita_types::SisL2TableDigest([0; 32]);
+        policy.sis_l2_table_digest = akita_params::SisL2TableDigest([0; 32]);
         let error = validate_policy(&policy).expect_err("stale L2 table identity");
         assert!(error
             .to_string()

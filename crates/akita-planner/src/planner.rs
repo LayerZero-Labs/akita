@@ -3,15 +3,16 @@
 use std::time::Instant;
 
 use akita_error::{checked, AkitaError};
-use akita_types::sis::{
+use akita_params::sis::{
     decomposed_s_block_ring_count, num_digits_open, rounded_up_collision_inf_norm,
     rounded_up_role_a_inf_norm, CommittedSourceContract, HonestFoldPolicy, HonestFoldSizingQuery,
     OpenCommitMatrixParams, SisMatrixRole,
 };
-use akita_types::{
+use akita_params::ScheduleLookupKey;
+use akita_params::{
     CommitmentRingDims, CommittedGroupParams, DecompositionParams, GroupCommitPhaseParams,
     GroupOpenPhaseParams, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedGroupAdmissionPolicy, ScheduleLookupKey,
+    PrecommittedGroupAdmissionPolicy,
 };
 
 use akita_schedules::planner_support::projected_collision_role_price;
@@ -43,7 +44,7 @@ pub(crate) struct ScheduleSearchOptions<'a> {
     pub(crate) relation_traversal_order: super::schedule_params::RelationTraversalOrder,
     pub(crate) relation_mode_filter: super::schedule_params::RelationModeFilter,
     pub(crate) root_main_constraint: Option<&'a CommittedGroupParams>,
-    pub(crate) adaptation_guide: Option<&'a akita_types::FoldSchedule>,
+    pub(crate) adaptation_guide: Option<&'a akita_params::FoldSchedule>,
     #[cfg(test)]
     pub(crate) query_prefix_count: u64,
 }
@@ -208,7 +209,7 @@ struct RootFinalGroupCandidateInput<'a> {
     log_basis_open: u32,
     position_index_bits: usize,
     block_index_bits: usize,
-    outer_slice_count: akita_types::CommitmentSliceCount,
+    outer_slice_count: akita_params::CommitmentSliceCount,
     precommitted_groups: &'a [GroupOpenPhaseParams],
     precommitted_d_width: usize,
 }
@@ -403,14 +404,14 @@ pub(crate) fn root_level_candidates_for_prepared_producers(
         let position_index_bits = reduced_vars - block_index_bits;
         let num_live_blocks = 1usize << block_index_bits;
         let mut slice_candidates = Vec::new();
-        for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+        for outer_slice_count in akita_params::CommitmentSliceCount::ALL {
             if guide.is_some_and(|guide| outer_slice_count != guide.outer_slice_count) {
                 continue;
             }
             if outer_slice_count
                 .validate_for_commitment(
                     0,
-                    akita_types::CommitmentPayloadMode::Compressed,
+                    akita_params::CommitmentPayloadMode::Compressed,
                     num_live_blocks,
                 )
                 .is_err()
@@ -521,7 +522,7 @@ fn root_final_group_level_params_candidate(
         ring_challenge_cfg: &ctx.opening.challenge_config(),
         challenge_dimension: ctx.opening.challenge_dimension(d_a),
         dimensions,
-        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+        payload_mode: akita_params::CommitmentPayloadMode::Compressed,
         num_claims: ctx.main_num_polys,
         num_live_ring_elements_per_claim,
         num_live_blocks,
@@ -541,7 +542,7 @@ fn root_final_group_level_params_candidate(
     let inner_commit_matrix = ab_candidate.inner_commit_matrix;
     let outer_commit_matrix = ab_candidate.outer_commit_matrix;
 
-    let Ok(main_d_width) = akita_types::opening_d_segment_width(
+    let Ok(main_d_width) = akita_params::opening_d_segment_width(
         ctx.opening.method(),
         policy.claim_ext_degree,
         d_a,
@@ -554,7 +555,7 @@ fn root_final_group_level_params_candidate(
     };
     let Some((open_key, main_d_width)) = projected_collision_role_price(
         policy,
-        akita_types::SisMatrixRole::Open,
+        akita_params::SisMatrixRole::Open,
         dimensions.d_d(),
         dimensions.d_d(),
         main_d_width,
@@ -575,29 +576,29 @@ fn root_final_group_level_params_candidate(
     let groups = precommitted_groups
         .iter()
         .copied()
-        .chain(std::iter::once(akita_types::GroupOpenPhaseParams {
-            profile: akita_types::GroupCommitPhaseParams {
-                version: akita_types::GroupCommitPhaseParams::VERSION,
-                group: akita_types::PolynomialGroupLayout::new(
+        .chain(std::iter::once(akita_params::GroupOpenPhaseParams {
+            profile: akita_params::GroupCommitPhaseParams {
+                version: akita_params::GroupCommitPhaseParams::VERSION,
+                group: akita_params::PolynomialGroupLayout::new(
                     ctx.final_num_vars,
                     ctx.main_num_polys,
                 ),
-                blocks: akita_types::BlockGeometry::new(
+                blocks: akita_params::BlockGeometry::new(
                     num_live_ring_elements_per_claim,
                     num_positions_per_block,
                     num_live_blocks,
                 ),
                 outer_slice_count,
-                inner: akita_types::RoleParams::new(
-                    akita_types::GadgetDigits::new(log_basis_inner, num_digits_inner),
+                inner: akita_params::RoleParams::new(
+                    akita_params::GadgetDigits::new(log_basis_inner, num_digits_inner),
                     inner_commit_matrix,
                 ),
-                outer: akita_types::RoleParams::new(
-                    akita_types::GadgetDigits::new(log_basis_open, num_digits_outer),
+                outer: akita_params::RoleParams::new(
+                    akita_params::GadgetDigits::new(log_basis_open, num_digits_outer),
                     outer_commit_matrix,
                 ),
             },
-            opening: akita_types::GroupOpeningPlan {
+            opening: akita_params::GroupOpeningPlan {
                 opening_method: ctx.opening.method(),
                 fold_challenge_config: ctx.opening.challenge_config(),
                 log_basis_open,
@@ -610,9 +611,9 @@ fn root_final_group_level_params_candidate(
     let params = CommittedGroupParams::try_new(
         groups,
         open_commit_matrix,
-        akita_types::CommitmentPayloadMode::Compressed,
-        akita_types::RingRelationMode::QuotientLift,
-        akita_types::CommittedSourceEncoding::for_producer(
+        akita_params::CommitmentPayloadMode::Compressed,
+        akita_params::RingRelationMode::QuotientLift,
+        akita_params::CommittedSourceEncoding::for_producer(
             ctx.opening.method(),
             policy.claim_ext_degree,
             d_a,
@@ -621,7 +622,7 @@ fn root_final_group_level_params_candidate(
         ),
         // Root folds use the ordinary single-chunk precommit path before the
         // schedule-level chunk policy is applied.
-        akita_types::ChunkedWitnessCfg::default(),
+        akita_params::ChunkedWitnessCfg::default(),
     )?;
 
     Ok(Some(params))
@@ -874,7 +875,7 @@ pub(crate) fn find_schedule_in_relation_order(
         source_moment: None,
         dimension_ceiling,
         topology: super::schedule_params::SuffixTopology::Direct {
-            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            payload_phase: akita_params::CommitmentPayloadPhase::CompressedPrefix,
             relation_phase: super::schedule_params::RingRelationPhase::QuotientPrefix,
         },
     };

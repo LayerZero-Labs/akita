@@ -56,7 +56,7 @@ impl ProjectionMask {
 #[derive(Clone, Copy)]
 pub(super) struct PricedChildEdge {
     edge_price: super::ChildEdgePrice,
-    edge_grinding_cost: akita_types::TranscriptGrindingCost,
+    edge_grinding_cost: akita_params::TranscriptGrindingCost,
 }
 
 pub(super) fn price_child_edge(
@@ -119,8 +119,8 @@ pub(super) fn consider_child_suffixes<'a>(
 
 fn parent_visible_cost(
     policy: &PlannerPolicy,
-    first: Option<&akita_types::CommittedGroupParams>,
-    terminal: Option<&akita_types::TerminalFoldParams>,
+    first: Option<&akita_params::CommittedGroupParams>,
+    terminal: Option<&akita_params::TerminalFoldParams>,
 ) -> Result<ParentObservableKey, AkitaError> {
     ParentObservableKey::new(policy, first, terminal)
 }
@@ -160,7 +160,7 @@ fn setup_envelope_score(
     if selection_policy
         == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
     {
-        akita_types::padded_setup_prefix_len(setup_field_elements)
+        akita_params::padded_setup_prefix_len(setup_field_elements)
     } else {
         setup_field_elements
     }
@@ -208,7 +208,7 @@ impl DescriptorOrderContext {
             fold_count: candidate.folds.len(),
             first_fold_descriptor: candidate
                 .first_fold_params()
-                .map(akita_types::CommittedGroupParams::canonical_descriptor_bytes)
+                .map(akita_params::CommittedGroupParams::canonical_descriptor_bytes)
                 .map(Arc::from),
         }
     }

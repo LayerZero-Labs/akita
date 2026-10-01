@@ -8,9 +8,10 @@ use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 use crate::field_reduction::trace_open_ring_row;
-use crate::{
+use crate::{FpExtEncoding, PreparedOpeningPoint};
+use akita_params::{
     dispatch_for_field, gadget_row_scalars, BasisMode, CommittedGroupParams, FlatBooleanDomain,
-    FpExtEncoding, OpeningClaimsLayout, PreparedOpeningPoint, WitnessLayout,
+    OpeningClaimsLayout, WitnessLayout,
 };
 
 /// Reject extension degrees with no evaluation-trace implementation.
@@ -263,9 +264,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        basis_weights, basis_weights_prefix, embed_ring_subfield_scalar, embed_ring_subfield_vector,
-    };
+    use crate::{embed_ring_subfield_scalar, embed_ring_subfield_vector};
+    use akita_params::{basis_weights, basis_weights_prefix};
     use jolt_field::{Ext2, Field, Fp32, FpExt4, FpExt8};
     use rand::{rngs::StdRng, SeedableRng};
 

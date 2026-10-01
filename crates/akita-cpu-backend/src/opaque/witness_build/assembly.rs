@@ -9,8 +9,9 @@ use super::prepared_openings::{
 };
 use crate::opaque::OperationCtx;
 use akita_error::AkitaError;
+use akita_params::{dispatch_for_field, CommittedGroupParams};
 use akita_serialization::AkitaSerialize;
-use akita_types::{dispatch_for_field, CommittedGroupParams, RingRelationInstance, RingVec};
+use akita_types::{RingRelationInstance, RingVec};
 use jolt_field::{CanonicalEncoding, Field, Ring};
 
 pub(crate) struct PreparedRelationPayload<F: Field + CanonicalEncoding> {
@@ -40,8 +41,8 @@ pub(crate) fn begin_cpu_recursive_witness<F, E>(
     prepared_group_openings: &[crate::opaque::CpuPreparedOpeningHandle<F, E>],
     commitment_material: Vec<CpuCommitmentMaterial<F>>,
     level: &CommittedGroupParams,
-    opening_batch: &akita_types::OpeningClaimsLayout,
-    relation_rhs_layout: &akita_types::RelationRhsLayout,
+    opening_batch: &akita_params::OpeningClaimsLayout,
+    relation_rhs_layout: &akita_params::RelationRhsLayout,
     group_commitments: &[RingVec<F>],
 ) -> Result<
     crate::opaque::RecursiveWitnessBuildStart<F, E, crate::opaque::CpuWitnessBuildHandle<F>>,
@@ -69,7 +70,7 @@ where
         });
     }
     let geometry =
-        akita_types::RelationWitnessGeometry::for_level(level, opening_batch, E::DEGREE)?;
+        akita_params::RelationWitnessGeometry::for_level(level, opening_batch, E::DEGREE)?;
     let mut group_openings = Vec::with_capacity(opening_batch.num_groups());
     let mut public_groups = Vec::with_capacity(opening_batch.num_groups());
     for (group_index, opening) in prepared_group_openings.iter().enumerate() {
@@ -187,11 +188,11 @@ where
         inner_relation,
         compression,
     } = assembly_state;
-    if fold_inputs.len() != opening_batch.num_groups()
-        || group_openings.len() != fold_inputs.len()
-        || inner_relation.len() != fold_inputs.len()
-    {
-        return Err(AkitaError::InvalidProof);
+    if group_openings.len() != fold_inputs.len() || inner_relation.len() != fold_inputs.len() {
+        return Err(AkitaError::Internal(
+            "retained witness build opening or inner-relation count differs from the fold count"
+                .into(),
+        ));
     }
     let mut group_witnesses = Vec::with_capacity(fold_inputs.len());
     for (group_index, ((fold, opening), inner_relation)) in fold_inputs
@@ -243,8 +244,8 @@ where
 fn prepare_relation_payload<F, B>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     level: &CommittedGroupParams,
-    opening_batch: &akita_types::OpeningClaimsLayout,
-    layout: &akita_types::RelationRhsLayout,
+    opening_batch: &akita_params::OpeningClaimsLayout,
+    layout: &akita_params::RelationRhsLayout,
     commitments: &[RingVec<F>],
     materials: Vec<CpuCommitmentMaterial<F>>,
     v: &RingVec<F>,
@@ -286,9 +287,11 @@ where
             .map(|(relation_group_index, &group_index)| {
                 let (planned_group_index, plan) =
                     layout.group_compression_plan(relation_group_index)?;
-                let commitment = commitments
-                    .get(group_index)
-                    .ok_or(AkitaError::InvalidProof)?;
+                let commitment = commitments.get(group_index).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "compressed relation payload public commitment is missing".into(),
+                    )
+                })?;
                 if planned_group_index != group_index
                     || commitment.coeff_len() != plan.terminal_coefficients()
                 {
@@ -299,7 +302,12 @@ where
                 let material = outer
                     .get_mut(group_index)
                     .and_then(Option::take)
-                    .ok_or(AkitaError::InvalidProof)?
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "compressed relation payload outer material is missing or consumed"
+                                .into(),
+                        )
+                    })?
                     .into_material();
                 CompressionSourceWitness::from_outer_state(
                     group_index,
@@ -323,7 +331,9 @@ where
             .plan()
             .maps()
             .last()
-            .ok_or(AkitaError::InvalidProof)?
+            .ok_or_else(|| {
+                AkitaError::Internal("opening compression witness has no terminal map".into())
+            })?
             .ring_dimension();
         let opening_payload = RingVec::from_coeffs_with_ring_dim(
             opening.terminal.coefficients().to_vec(),
@@ -364,9 +374,9 @@ where
 
     let mut coefficients = Vec::new();
     for &group_index in &order {
-        let commitment = commitments
-            .get(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let commitment = commitments.get(group_index).ok_or_else(|| {
+            AkitaError::Internal("raw relation payload public commitment is missing".into())
+        })?;
         let dims = level.group_role_dims_geometry(opening_batch, group_index)?;
         let params = level.group_params_geometry(opening_batch, group_index)?;
         if !commitment.can_decode_vec(dims.d_b())

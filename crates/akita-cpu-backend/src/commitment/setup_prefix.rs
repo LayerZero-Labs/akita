@@ -1,13 +1,11 @@
 //! Backend-owned setup-prefix material and persistence.
 use super::PortableCommitmentHandle;
 use akita_error::AkitaError;
+use akita_params::{setup_prefix_compression_plan, SetupPrefixSlotId};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use akita_types::{
-    setup_prefix_compression_plan, AkitaSetupSeed, SetupPrefixPublicCommitment, SetupPrefixSlotId,
-    SetupPrefixVerifierSlot,
-};
+use akita_types::{AkitaSetupSeed, SetupPrefixPublicCommitment, SetupPrefixVerifierSlot};
 use jolt_field::Field;
 use std::{
     collections::BTreeMap,

@@ -57,10 +57,10 @@ mod small_field_drivers;
 
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_cpu_backend::CpuBackend;
-use akita_types::{
-    lagrange_weights, BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims, PolynomialGroupLayout, ScheduleLookupKey,
+use akita_params::{
+    lagrange_weights, BasisMode, OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey,
 };
+use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use common::proof_size::prove_matching_byte_model;
 use common::*;
 use jolt_field::{ExtField, One, Ring};

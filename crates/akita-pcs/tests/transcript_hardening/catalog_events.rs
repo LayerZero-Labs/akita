@@ -33,14 +33,14 @@ use crate::common::{dense_opening_lagrange, load_workspace_scheme, onehot_openin
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext, OneHotPoly};
+use akita_params::{
+    BasisMode, CommitmentPayloadMode, GroupCommitPhaseParams, InnerCommitSecurityRoute,
+    OpeningMethod, PhysicalL2NormProofShape, RingRelationMode,
+};
 use akita_prover::SelectedProverOpeningData;
 use akita_schedules::ResolvedScheduleRow;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_types::{
-    BasisMode, CommitmentPayloadMode, FpExtEncoding, GroupBatchStatement, GroupCommitPhaseParams,
-    InnerCommitSecurityRoute, OpeningClaims, OpeningMethod, PhysicalL2NormProofShape,
-    PolynomialGroupClaims, RingRelationMode,
-};
+use akita_types::{FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::{
     CanonicalBytes, CanonicalEncoding, ExtField, Fold, PseudoMersenne, Ring, Unreduced,
     WithCommitAccumulator,

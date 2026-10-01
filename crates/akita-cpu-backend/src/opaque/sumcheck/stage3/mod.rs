@@ -17,12 +17,12 @@ use akita_algebra::ring::scalar_powers;
 use jolt_poly::UnivariatePoly;
 
 use akita_error::AkitaError;
+use akita_params::{CommittedGroupParams, RelationAddressGeometry, SetupProjectionGeometry};
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     ensure_setup_envelope, setup_prefix_coverage_eval_len, shared_setup_fold_gadget,
-    AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding, PreparedRelationAddress,
-    RelationAddressGeometry, RingRelationInstance, SetupContributionGroupInputs,
-    SetupContributionPlan, SetupProjectionGeometry,
+    AkitaExpandedSetup, FpExtEncoding, PreparedRelationAddress, RingRelationInstance,
+    SetupContributionGroupInputs, SetupContributionPlan,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use product_table::{RectangularSetupProductTerm, SetupProductSource};
@@ -174,7 +174,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn build_setup_product_term<F, E>(
     expanded: Arc<AkitaExpandedSetup<F>>,
-    prefix: &akita_types::SetupPrefixSlotId,
+    prefix: &akita_params::SetupPrefixSlotId,
     lp: &CommittedGroupParams,
     next_fold_level_params: &CommittedGroupParams,
     relation: &RingRelationInstance<F>,

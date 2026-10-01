@@ -1,12 +1,12 @@
 //! Census live B/D source-image sizes across stock generated/offline keys.
 
 use akita_error::AkitaError;
-use akita_planner::generated_families::{
-    emitted_scalar_keys, GeneratedFamily, GenerationPreplans, ALL_GENERATED_FAMILIES,
-};
-use akita_types::{
+use akita_params::{
     CompressionChainPlan, FoldSchedule, OpenCommitMatrixParams, OuterCommitMatrixParams,
     SisModulusProfileId,
+};
+use akita_planner::generated_families::{
+    emitted_scalar_keys, GeneratedFamily, GenerationPreplans, ALL_GENERATED_FAMILIES,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
@@ -89,7 +89,7 @@ fn record_outer(
     profile: SisModulusProfileId,
     field_bytes: usize,
     matrix: &OuterCommitMatrixParams,
-    slice_count: akita_types::CommitmentSliceCount,
+    slice_count: akita_params::CommitmentSliceCount,
 ) -> Result<(), String> {
     record(
         stats,

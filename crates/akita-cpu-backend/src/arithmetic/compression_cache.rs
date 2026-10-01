@@ -52,9 +52,10 @@ impl CompressionNttCache {
             domains,
         };
         let entry = {
-            let mut slots = self.slots.lock().map_err(|_| {
-                AkitaError::InvalidSetup("compression NTT cache lock poisoned".into())
-            })?;
+            let mut slots = self
+                .slots
+                .lock()
+                .map_err(|_| AkitaError::Internal("compression NTT cache lock poisoned".into()))?;
             Arc::clone(
                 slots
                     .entry(key)
@@ -137,7 +138,8 @@ mod tests {
     use crate::opaque::{CompressionComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend};
     use crate::opaque::{CpuBackend, CpuPreparedSetup};
     use crate::AkitaProverSetup;
-    use akita_types::{NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
+    use akita_params::SetupMatrixCapacity;
+    use akita_types::{NttCacheKey, NttTransformDomain};
     use jolt_field::Prime64Offset59;
 
     type F = Prime64Offset59;

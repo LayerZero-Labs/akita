@@ -163,7 +163,7 @@ where
         let params = BalancedDecomposePow2Params::new(num_digits, log_basis);
 
         // The single-digit scratch is i8; wider bases need the checked i16 kernel below.
-        if num_digits == 1 && log_basis <= akita_types::MAX_I8_LOG_BASIS {
+        if num_digits == 1 && log_basis <= akita_params::MAX_I8_LOG_BASIS {
             if let Some(small_coeffs) = self.small_i8_ring_coeffs::<D>() {
                 let coeff_accum: Vec<[i32; D]> = {
                     let _span =

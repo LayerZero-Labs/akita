@@ -3,7 +3,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::time::Duration;
 
-use akita_types::{CommitmentRingDims, RingRelationMode};
+use akita_params::{CommitmentRingDims, RingRelationMode};
 
 use crate::{
     schedule_params::{

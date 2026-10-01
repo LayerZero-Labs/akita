@@ -1,5 +1,5 @@
 use akita_error::AkitaError;
-use akita_types::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
+use akita_params::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
 
 /// Canonical reason an otherwise-considered reduced transition is ineligible.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

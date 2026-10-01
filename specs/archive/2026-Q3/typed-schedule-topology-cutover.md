@@ -1760,9 +1760,9 @@ construct and hard to audit.
 
 - [`crates/akita-planner/src/generated/mod.rs`](../crates/akita-planner/src/generated/mod.rs)
 - [`crates/akita-planner/src/generated/walk.rs`](../crates/akita-planner/src/generated/walk.rs)
-- [`crates/akita-types/src/schedule.rs`](../crates/akita-types/src/schedule.rs)
-- [`crates/akita-types/src/layout/params.rs`](../crates/akita-types/src/layout/params.rs)
-- [`crates/akita-types/src/layout/ring_dims.rs`](../crates/akita-types/src/layout/ring_dims.rs)
+- [`crates/akita-params/src/schedule.rs`](../crates/akita-params/src/schedule.rs)
+- [`crates/akita-params/src/layout/params.rs`](../crates/akita-params/src/layout/params.rs)
+- [`crates/akita-params/src/layout/ring_dims.rs`](../crates/akita-params/src/layout/ring_dims.rs)
 - [`crates/akita-types/src/proof/levels.rs`](../crates/akita-types/src/proof/levels.rs)
 - [`specs/setup-offloading-planner.md`](setup-offloading-planner.md)
 - [`specs/multi-group-batching.md`](multi-group-batching.md)
