@@ -21,6 +21,35 @@ use super::test_fixtures::{
 };
 
 #[test]
+fn packing_batch_rejects_out_of_range_prepared_point_group() {
+    let fixture = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        64,
+        64,
+        4,
+        4,
+        10,
+        1,
+        1,
+    );
+    let points = [(fixture.opening_batch.num_groups(), &fixture.prepared_point)];
+    assert!(matches!(
+        prepare_coefficient_packing_batch_semantics(CoefficientPackingBatchSemanticInputs {
+            level_params: &fixture.params,
+            opening_batch: &fixture.opening_batch,
+            relation_plan: &fixture.relation_plan,
+            relation: &fixture.relation,
+            prepared_points: &points,
+            alpha: E::from_u64(3),
+            tau1: &fixture.tau1,
+            claim_coefficients: &fixture.claim_coefficients,
+        }),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
+#[test]
 fn packing_rejects_tensor_projected_commitment_source() {
     let mut fixture = fixture::<F, E>(
         SisModulusProfileId::Q64Offset59,
