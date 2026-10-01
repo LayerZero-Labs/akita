@@ -13,10 +13,8 @@ use akita_error::checked;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use akita_types::{
-    AkitaExpandedSetup, AkitaSetupDescriptor, AkitaVerifierSetup, CommittedGroup, FlatMatrix,
-    OpeningScheduleSelection, SetupPrefixVerifierRegistry, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
-};
+use akita_types::{AkitaExpandedSetup, AkitaSetupDescriptor, AkitaVerifierSetup, CommittedGroup, SetupPrefixVerifierRegistry, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS};
+use akita_params::{FlatMatrix, OpeningScheduleSelection};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::sync::Arc;
 
@@ -703,7 +701,7 @@ where
         let resolved = schedules
             .resolve_selection(schedule_selection)
             .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-        let key = akita_types::ScheduleLookupKey {
+        let key = akita_params::ScheduleLookupKey {
             final_group: resolved.profiles().final_group.group,
             precommitteds: resolved.profiles().precommitteds.clone(),
         };

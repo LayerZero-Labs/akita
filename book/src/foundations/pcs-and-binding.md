@@ -336,7 +336,7 @@ folding, ring-relation, sumcheck, and Fiat–Shamir bounds.
 
 ## Implementation map
 
-- `crates/akita-types/src/sis/` owns matrix and norm security parameters.
+- `crates/akita-params/src/sis/` owns matrix and norm security parameters.
   Schedule validation checks the selected geometry against those parameters.
 - `crates/akita-prover/src/protocol/fold_grind.rs` performs bounded honest
   response search.

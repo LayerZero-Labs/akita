@@ -8,7 +8,8 @@ use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::opaque::{CommitInnerPlan, DigitRowsComputeBackend};
 use akita_algebra::ring::CyclotomicRing;
 use akita_error::{checked, AkitaError};
-use akita_types::{dispatch_for_field, DigitBlocks, RingVec};
+use akita_params::dispatch_for_field;
+use akita_types::{DigitBlocks, RingVec};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::mem::size_of;
@@ -88,7 +89,7 @@ fn commit_outer_slices<'a, F, B, const D_B: usize>(
     prepared: &B::PreparedSetup,
     n_b: usize,
     polynomial_digits: impl IntoIterator<Item = &'a DigitBlocks>,
-    geometry: &akita_types::CommitmentSliceGeometry,
+    geometry: &akita_params::CommitmentSliceGeometry,
     log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D_B>>, AkitaError>
 where
@@ -348,7 +349,7 @@ where
                 ));
             }
             dispatch_for_field!(
-                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+                akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
                 F,
                 plan.ring_dimension,
                 |D| self
@@ -423,11 +424,11 @@ impl<'a, F: Field, E> CpuOuterCommitOperation<'a, F, E> {
         F: CanonicalEncoding,
     {
         dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+            akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
             F,
             inner_plan.ring_dimension,
             |D_A| dispatch_for_field!(
-                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
+                akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Outer),
                 F,
                 outer_plan.ring_dimension(),
                 |D_B| compute_outer_commitment_from_rows::<F, CpuBackend<F, E>, D_A, D_B>(
@@ -484,7 +485,7 @@ mod tests {
     };
     use crate::opaque::ComputeBackendSetup;
     use crate::{AkitaProverSetup, DensePoly};
-    use akita_types::SetupMatrixCapacity;
+    use akita_params::SetupMatrixCapacity;
     use jolt_field::{Prime128Offset275, Ring};
 
     type F = Prime128Offset275;
