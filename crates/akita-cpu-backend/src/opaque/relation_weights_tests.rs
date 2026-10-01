@@ -58,7 +58,7 @@ fn deferred_setup_rejects_setup_terms_and_factorization() {
             TestField::one(),
             RelationWeightContribution::SetupMatrix,
         ),
-        Err(AkitaError::InvalidSetup(_))
+        Err(AkitaError::Internal(_))
     ));
     weights
         .push(
@@ -71,7 +71,7 @@ fn deferred_setup_rejects_setup_terms_and_factorization() {
         .unwrap();
     assert!(matches!(
         weights.into_factorization(),
-        Err(AkitaError::InvalidSetup(_))
+        Err(AkitaError::Internal(_))
     ));
 }
 
@@ -85,7 +85,7 @@ fn factorization_rejects_an_unaligned_alpha_reset() {
             TestField::one(),
             RelationWeightContribution::Constraint,
         ),
-        Err(AkitaError::InvalidSetup(_))
+        Err(AkitaError::Internal(_))
     ));
 }
 

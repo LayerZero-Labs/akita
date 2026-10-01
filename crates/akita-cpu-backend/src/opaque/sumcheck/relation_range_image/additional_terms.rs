@@ -83,29 +83,29 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
         binary_batching: E,
     ) -> Result<Self, AkitaError> {
         if !domain_len.is_power_of_two() || compact_witness.len() > domain_len {
-            return Err(AkitaError::InvalidSize {
-                expected: domain_len,
-                actual: compact_witness.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "additional relation domain or witness length: expected {domain_len}, actual {}",
+                compact_witness.len(),
+            )));
         }
         let expected_equality_variables = domain_len.trailing_zeros() as usize;
         if binary_equality_point.len() != expected_equality_variables {
-            return Err(AkitaError::InvalidSize {
-                expected: expected_equality_variables,
-                actual: binary_equality_point.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "binary equality point length: expected {expected_equality_variables}, actual {}",
+                binary_equality_point.len(),
+            )));
         }
         let mut collapsed_linear = Vec::<(usize, E)>::with_capacity(linear_weights.len());
         for (index, value) in linear_weights {
             if index >= domain_len {
-                return Err(AkitaError::InvalidSize {
-                    expected: domain_len,
-                    actual: index.saturating_add(1),
-                });
+                return Err(AkitaError::Internal(format!(
+                    "compression relation support extent: expected {domain_len}, actual {}",
+                    index.saturating_add(1),
+                )));
             }
             if let Some((previous_index, previous_value)) = collapsed_linear.last_mut() {
                 if index < *previous_index {
-                    return Err(AkitaError::InvalidInput(
+                    return Err(AkitaError::Internal(
                         "compression relation weights are not sorted".into(),
                     ));
                 }
@@ -125,13 +125,13 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
                 || interval.start < previous_end
                 || interval.end > domain_len
             {
-                return Err(AkitaError::InvalidInput(
+                return Err(AkitaError::Internal(
                     "negative-binary support interval is malformed".into(),
                 ));
             }
             binary_support_len = binary_support_len
                 .checked_add(interval.len())
-                .ok_or_else(|| AkitaError::InvalidSetup("binary support length overflow".into()))?;
+                .ok_or_else(|| AkitaError::Internal("binary support length overflow".into()))?;
             previous_end = interval.end;
         }
 
@@ -140,7 +140,7 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
         let capacity = collapsed_linear
             .len()
             .checked_add(binary_support_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("sparse weight capacity overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("sparse weight capacity overflow".into()))?;
         let binary_equality = OffsetEqWindow::new(binary_equality_point)?;
         let binary_indices = binary_intervals
             .iter()
@@ -157,7 +157,11 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
                 (Some(&(linear_index, _)), Some(&(binary_index, _))) => {
                     match linear_index.cmp(&binary_index) {
                         Ordering::Less => {
-                            let (index, linear) = linear.next().ok_or(AkitaError::InvalidProof)?;
+                            let (index, linear) = linear.next().ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "peeked linear weight disappeared before binary weight".into(),
+                                )
+                            })?;
                             weights.push(SparseWeight {
                                 index,
                                 linear,
@@ -165,8 +169,18 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
                             });
                         }
                         Ordering::Equal => {
-                            let (index, linear) = linear.next().ok_or(AkitaError::InvalidProof)?;
-                            let (_, binary) = binary.next().ok_or(AkitaError::InvalidProof)?;
+                            let (index, linear) = linear.next().ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "peeked linear relation weight disappeared at the shared index"
+                                        .into(),
+                                )
+                            })?;
+                            let (_, binary) = binary.next().ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "peeked binary relation weight disappeared at the shared index"
+                                        .into(),
+                                )
+                            })?;
                             weights.push(SparseWeight {
                                 index,
                                 linear,
@@ -174,7 +188,11 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
                             });
                         }
                         Ordering::Greater => {
-                            let (index, binary) = binary.next().ok_or(AkitaError::InvalidProof)?;
+                            let (index, binary) = binary.next().ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "peeked binary weight disappeared before linear weight".into(),
+                                )
+                            })?;
                             weights.push(SparseWeight {
                                 index,
                                 linear: E::zero(),
@@ -443,7 +461,9 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
             || self.weights.len() > 1
             || self.weights.first().is_some_and(|weight| weight.index != 0)
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "terminal sparse relation support is not fully folded".into(),
+            ));
         }
         let Some(weight) = self.weights.first() else {
             return Ok(E::zero());

@@ -52,9 +52,10 @@ impl CompressionNttCache {
             domains,
         };
         let entry = {
-            let mut slots = self.slots.lock().map_err(|_| {
-                AkitaError::InvalidSetup("compression NTT cache lock poisoned".into())
-            })?;
+            let mut slots = self
+                .slots
+                .lock()
+                .map_err(|_| AkitaError::Internal("compression NTT cache lock poisoned".into()))?;
             Arc::clone(
                 slots
                     .entry(key)
@@ -68,7 +69,7 @@ impl CompressionNttCache {
         });
         let slot = build_result.as_ref().map_err(Clone::clone)?;
         if slot.ring_d != D {
-            return Err(AkitaError::InvalidSetup(format!(
+            return Err(AkitaError::Internal(format!(
                 "prepared compression NTT ring_d mismatch: stored {}, requested {D}",
                 slot.ring_d
             )));
@@ -76,9 +77,7 @@ impl CompressionNttCache {
         let typed = slot
             .cache
             .downcast_ref::<PreparedNttCache<D>>()
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("prepared compression NTT type mismatch".into())
-            })?;
+            .ok_or_else(|| AkitaError::Internal("prepared compression NTT type mismatch".into()))?;
         f(typed)
     }
 

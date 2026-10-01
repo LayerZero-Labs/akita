@@ -129,7 +129,7 @@ impl InnerImageExportOperation<F> for RecordingInnerConsumer {
     ) -> Result<Vec<RingVec<F>>, AkitaError> {
         self.events
             .lock()
-            .map_err(|_| AkitaError::InvalidInput("fused event recorder is poisoned".into()))?
+            .map_err(|_| AkitaError::Internal("fused event recorder is poisoned".into()))?
             .push(FusedEvent::InnerStateConsumed);
         self.inner.export_inner_rows(plan, image)
     }
@@ -147,7 +147,7 @@ impl PortableCompressionStateExport<F> for RecordingCompressionConsumer {
     ) -> Result<PortableCompressionState<F>, AkitaError> {
         self.events
             .lock()
-            .map_err(|_| AkitaError::InvalidInput("fused event recorder is poisoned".into()))?
+            .map_err(|_| AkitaError::Internal("fused event recorder is poisoned".into()))?
             .push(FusedEvent::CompressionStateConsumed);
         self.inner.export_compression_state(state)
     }
@@ -157,7 +157,7 @@ impl RecordingFused<'_> {
     fn record(&self, event: FusedEvent) -> Result<(), AkitaError> {
         self.events
             .lock()
-            .map_err(|_| AkitaError::InvalidInput("fused event recorder is poisoned".into()))?
+            .map_err(|_| AkitaError::Internal("fused event recorder is poisoned".into()))?
             .push(event);
         Ok(())
     }

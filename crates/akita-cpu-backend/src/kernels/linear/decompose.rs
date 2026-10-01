@@ -8,9 +8,7 @@ pub(crate) fn try_centered_i8<F: Field + CanonicalEncoding>(
     q: u128,
     half_q: u128,
 ) -> Option<i8> {
-    let canonical = coeff
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128");
+    let canonical = coeff.to_u128_checked()?;
     let centered = if canonical > half_q {
         -((q - canonical) as i128)
     } else {

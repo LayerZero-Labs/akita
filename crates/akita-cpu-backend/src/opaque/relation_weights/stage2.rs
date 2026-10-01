@@ -22,9 +22,11 @@ impl<E: Field> CompiledStage2Weights<E> {
     fn add_response_norm_weights(&mut self, weights: Vec<E>) -> Result<(), AkitaError> {
         match &mut self.ordinary {
             RelationWeightDescription::ReducedEvaluations { evaluations, .. } => {
-                let destination = evaluations
-                    .get_mut(..weights.len())
-                    .ok_or(AkitaError::InvalidProof)?;
+                let destination = evaluations.get_mut(..weights.len()).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "response norm weights exceed the reduced relation destination".into(),
+                    )
+                })?;
                 for (destination, weight) in destination.iter_mut().zip(weights) {
                     *destination += weight;
                 }
@@ -78,7 +80,7 @@ fn factor_response_norm_weights<E: Field + Ring>(
         let expected_row_stride = limb_axis
             .len
             .checked_mul(ring_axis.len)
-            .ok_or_else(|| AkitaError::InvalidSetup("response-norm row stride overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("response-norm row stride overflow".into()))?;
         if family.scalar != E::one()
             || ring_axis.len == 0
             || ring_axis.left_stride != 1
@@ -106,18 +108,20 @@ fn factor_response_norm_weights<E: Field + Ring>(
             .checked_sub(1)
             .and_then(|row| row.checked_mul(row_axis.left_stride))
             .and_then(|offset| family.left_offset.checked_add(offset))
-            .ok_or_else(|| AkitaError::InvalidSetup("response-norm row offset overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("response-norm row offset overflow".into()))?;
         let last_limb_start = limb_axis
             .len
             .checked_sub(1)
             .and_then(|limb| limb.checked_mul(limb_axis.left_stride))
             .and_then(|offset| last_row_start.checked_add(offset))
-            .ok_or_else(|| AkitaError::InvalidSetup("response-norm limb offset overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("response-norm limb offset overflow".into()))?;
         let left_end = last_limb_start
             .checked_add(ring_axis.len)
-            .ok_or_else(|| AkitaError::InvalidSetup("response-norm span overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("response-norm span overflow".into()))?;
         if left_end > output_len {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "response norm factor span exceeds its output length".into(),
+            ));
         }
 
         for row in 0..row_axis.len {
@@ -128,34 +132,41 @@ fn factor_response_norm_weights<E: Field + Ring>(
                     row.checked_mul(row_lane_stride)
                         .and_then(|offset| base.checked_add(offset))
                 })
-                .ok_or_else(|| AkitaError::InvalidSetup("response-norm lane overflow".into()))?;
+                .ok_or_else(|| {
+                    AkitaError::Internal("response-norm target row lane overflow".into())
+                })?;
             let physical_row = row
                 .checked_mul(row_axis.right_stride)
                 .and_then(|offset| family.right_offset.checked_add(offset))
-                .ok_or_else(|| AkitaError::InvalidSetup("response-norm address overflow".into()))?;
+                .ok_or_else(|| {
+                    AkitaError::Internal("response-norm physical row address overflow".into())
+                })?;
             for limb in 0..limb_axis.len {
                 let limb_start = limb
                     .checked_mul(limb_lane_stride)
                     .and_then(|offset| target_row_lane.checked_add(offset))
                     .ok_or_else(|| {
-                        AkitaError::InvalidSetup("response-norm lane overflow".into())
+                        AkitaError::Internal("response-norm limb start lane overflow".into())
                     })?;
-                let limb_weight = limb_weights
-                    .get(limb)
-                    .copied()
-                    .ok_or(AkitaError::InvalidProof)?;
+                let limb_weight = limb_weights.get(limb).copied().ok_or_else(|| {
+                    AkitaError::Internal("response norm limb has no compiled weight".into())
+                })?;
                 for ring_chunk in 0..ring_chunks {
                     let lane = limb_start.checked_add(ring_chunk).ok_or_else(|| {
-                        AkitaError::InvalidSetup("response-norm lane overflow".into())
+                        AkitaError::Internal("response-norm ring chunk lane overflow".into())
                     })?;
                     if lane >= live_lane_count {
-                        return Err(AkitaError::InvalidProof);
+                        return Err(AkitaError::Internal(
+                            "response norm lane exceeds the live relation lane count".into(),
+                        ));
                     }
                     let physical_coefficient = ring_chunk
                         .checked_mul(coefficient_count)
                         .and_then(|offset| physical_row.checked_add(offset))
                         .ok_or_else(|| {
-                            AkitaError::InvalidSetup("response-norm address overflow".into())
+                            AkitaError::Internal(
+                                "response-norm physical coefficient address overflow".into(),
+                            )
                         })?;
                     debug_assert!(physical_coefficient.is_multiple_of(coefficient_count));
                     lane_weights[lane] +=
@@ -187,10 +198,10 @@ where
             request.opening_source_len,
             request.opening_ring_dimension,
         ])
-        .ok_or(AkitaError::InvalidProof)?
+        .ok_or_else(|| AkitaError::Internal("stage 2 opening domain product overflow".into()))?
             != plan.domain_len()
     {
-        return Err(AkitaError::InvalidInput(
+        return Err(AkitaError::Internal(
             "Stage 2 opening domain differs from its relation".into(),
         ));
     }
@@ -198,7 +209,7 @@ where
     if layout.live_coeff_len() != plan.witness_len()
         || request.relation_plan.digit_witness_domain().domain_len() != plan.domain_len()
     {
-        return Err(AkitaError::InvalidInput(
+        return Err(AkitaError::Internal(
             "Stage 2 geometry differs from its relation".into(),
         ));
     }
@@ -216,7 +227,9 @@ where
     } else if points.len() == request.groups.len() {
         OpeningFamily::SubringCoefficientPacking(points.as_slice())
     } else {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "stage 2 packing opening point count differs from its groups".into(),
+        ));
     };
     let ordinary = match parameters.ring_relation_mode {
         akita_types::RingRelationMode::QuotientLift => {
@@ -242,7 +255,9 @@ where
         }
         akita_types::RingRelationMode::ReducedEvaluation => {
             if !points.is_empty() {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "reduced relation mode contains packing opening points".into(),
+                ));
             }
             build_reduced_dense_relation_weights(
                 setup,
@@ -279,7 +294,9 @@ where
             .to_vec()
     } else {
         if !plan.binary_batching().is_zero() {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "uncompressed stage 2 relation has nonzero binary batching".into(),
+            ));
         }
         Vec::new()
     };
@@ -293,7 +310,7 @@ where
         if akita_types::PhysicalResponsePlan::new(parameters, request.relation_plan)?.as_ref()
             != Some(norm.plan)
         {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "physical L2 request differs from its schedule".into(),
             ));
         }
@@ -518,7 +535,7 @@ mod tests {
         };
         assert!(matches!(
             compiled.add_response_norm_weights(vec![extension(2); 3]),
-            Err(AkitaError::InvalidProof)
+            Err(AkitaError::Internal(_))
         ));
     }
 }

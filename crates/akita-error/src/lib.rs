@@ -12,7 +12,7 @@ pub mod narrowing;
 /// Errors that can occur in Akita PCS operations.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AkitaError {
-    /// Proof verification failed.
+    /// Proof bytes failed a protocol check during verification.
     #[error("Invalid proof")]
     InvalidProof,
 
@@ -45,4 +45,17 @@ pub enum AkitaError {
     /// Setup data is missing or invalid.
     #[error("Invalid or missing setup file: {0}")]
     InvalidSetup(String),
+
+    /// An invariant that Akita maintains itself failed after the inputs were
+    /// admitted. This reports a bug in Akita or in a custom backend, not a
+    /// rejected proof and not a caller mistake. The message names the failed
+    /// invariant.
+    ///
+    /// The variant is not tied to the prover: setup and cache code report
+    /// their own failed invariants the same way. It must never stand in for a
+    /// rejection. A check on a proof, a commitment, or any other untrusted
+    /// value returns [`AkitaError::InvalidProof`], even when only a bug in an
+    /// honest prover could make it fail.
+    #[error("Internal error: {0}")]
+    Internal(String),
 }

@@ -29,7 +29,7 @@ pub(crate) fn mat_vec_mul_ntt_single_i8<F: Field + CanonicalEncoding, const D: u
         let rows: Vec<&[_]> = (0..num_rows)
             .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
             .collect();
-        mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, base.params())
+        mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, base.params())?
     } else if let Some(base) = slot.q64_base() {
         let neg = base
             .negacyclic()
@@ -37,7 +37,7 @@ pub(crate) fn mat_vec_mul_ntt_single_i8<F: Field + CanonicalEncoding, const D: u
         let rows: Vec<&[_]> = (0..num_rows)
             .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
             .collect();
-        mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, base.params())
+        mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, base.params())?
     } else if let Some(base) = slot.q128_base() {
         let neg = base
             .negacyclic()
@@ -45,7 +45,7 @@ pub(crate) fn mat_vec_mul_ntt_single_i8<F: Field + CanonicalEncoding, const D: u
         let rows: Vec<&[_]> = (0..num_rows)
             .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
             .collect();
-        mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, base.params())
+        mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, base.params())?
     } else {
         return Err(AkitaError::InvalidSetup(
             "signed-i8 matvec requires a base-profile NTT cache".into(),
@@ -76,7 +76,7 @@ pub(crate) fn mat_vec_mul_ntt_single_i8_cyclic<F: Field + CanonicalEncoding, con
         let rows: Vec<&[_]> = (0..num_rows)
             .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
             .collect();
-        mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, base.params())
+        mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, base.params())?
     } else if let Some(base) = slot.q64_base() {
         let cyc = base
             .cyclic()
@@ -84,7 +84,7 @@ pub(crate) fn mat_vec_mul_ntt_single_i8_cyclic<F: Field + CanonicalEncoding, con
         let rows: Vec<&[_]> = (0..num_rows)
             .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
             .collect();
-        mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, base.params())
+        mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, base.params())?
     } else if let Some(base) = slot.q128_base() {
         let cyc = base
             .cyclic()
@@ -92,7 +92,7 @@ pub(crate) fn mat_vec_mul_ntt_single_i8_cyclic<F: Field + CanonicalEncoding, con
         let rows: Vec<&[_]> = (0..num_rows)
             .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
             .collect();
-        mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, base.params())
+        mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, base.params())?
     } else {
         return Err(AkitaError::InvalidSetup(
             "cyclic NTT domain not prepared".into(),
@@ -110,16 +110,16 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
     vec: &[[i8; D]],
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<CyclotomicRing<F, D>> {
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
     let n_a = ntt_mat.len();
     let inner_width = ntt_mat.first().map_or(0, |row| row.len());
     if inner_width == 0 || n_a == 0 {
-        return vec![CyclotomicRing::<F, D>::zero(); n_a];
+        return Ok(vec![CyclotomicRing::<F, D>::zero(); n_a]);
     }
 
     let vec_len = vec.len().min(inner_width);
     if vec_len == 0 {
-        return vec![CyclotomicRing::<F, D>::zero(); n_a];
+        return Ok(vec![CyclotomicRing::<F, D>::zero(); n_a]);
     }
     let digit_bound = balanced_digit_abs_bound(log_basis);
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
@@ -127,9 +127,11 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
         digit_rows_within_digit_bound::<D>(vec, vec_len, digit_bound),
         "single digit vector contains digits outside its log_basis range"
     );
-    let chunk_width = safe_crt_chunk_width::<F, W, K, D>(params, vec_len, digit_bound)
-        .expect("single i8 CRT term must fit supported parameters");
-    drive_single_chunked_matvec(
+    let chunk_width =
+        safe_crt_chunk_width::<F, W, K, D>(params, vec_len, digit_bound).ok_or_else(|| {
+            AkitaError::Internal("single i8 CRT capacity cannot fit a single term".into())
+        })?;
+    Ok(drive_single_chunked_matvec(
         n_a,
         vec_len,
         chunk_width,
@@ -149,7 +151,7 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
             }
         },
         |acc, params| acc.to_ring(params),
-    )
+    ))
 }
 
 pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
@@ -162,16 +164,16 @@ pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
     vec: &[[i8; D]],
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<CyclotomicRing<F, D>> {
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
     let n_a = ntt_mat.len();
     let inner_width = ntt_mat.first().map_or(0, |row| row.len());
     if inner_width == 0 || n_a == 0 {
-        return vec![CyclotomicRing::<F, D>::zero(); n_a];
+        return Ok(vec![CyclotomicRing::<F, D>::zero(); n_a]);
     }
 
     let vec_len = vec.len().min(inner_width);
     if vec_len == 0 {
-        return vec![CyclotomicRing::<F, D>::zero(); n_a];
+        return Ok(vec![CyclotomicRing::<F, D>::zero(); n_a]);
     }
     let digit_bound = balanced_digit_abs_bound(log_basis);
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
@@ -179,9 +181,11 @@ pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
         digit_rows_within_digit_bound::<D>(vec, vec_len, digit_bound),
         "single cyclic digit vector contains digits outside its log_basis range"
     );
-    let chunk_width = safe_crt_chunk_width::<F, W, K, D>(params, vec_len, digit_bound)
-        .expect("single i8 CRT term must fit supported parameters");
-    drive_single_chunked_matvec(
+    let chunk_width =
+        safe_crt_chunk_width::<F, W, K, D>(params, vec_len, digit_bound).ok_or_else(|| {
+            AkitaError::Internal("cyclic i8 CRT capacity cannot fit a single term".into())
+        })?;
+    Ok(drive_single_chunked_matvec(
         n_a,
         vec_len,
         chunk_width,
@@ -201,5 +205,5 @@ pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
             }
         },
         |acc, params| acc.to_ring_cyclic(params),
-    )
+    ))
 }

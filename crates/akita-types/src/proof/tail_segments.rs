@@ -230,11 +230,10 @@ pub fn build_terminal_response_from_payload<F>(
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
 {
-    let group = scheduled_shape
-        .layout
-        .groups
-        .first()
-        .ok_or(AkitaError::InvalidProof)?;
+    let group =
+        scheduled_shape.layout.groups.first().ok_or_else(|| {
+            AkitaError::Internal("terminal response schedule has no group".into())
+        })?;
     if scheduled_shape.layout.groups.len() != 1
         || e_folded.coeff_len() != group.e_field_elems
         || t_fields.coeff_len() != group.t_field_elems

@@ -156,12 +156,12 @@ impl ScopeLease {
         commitment_id: u128,
     ) -> Result<(), AkitaError> {
         self.validate_context(context)?;
-        let group = context.group_index().ok_or(AkitaError::InvalidProof)?;
-        let mut commitments = self
-            .state
-            .commitments
-            .lock()
-            .map_err(|_| AkitaError::InvalidProof)?;
+        let group = context.group_index().ok_or_else(|| {
+            AkitaError::Internal("commitment admission lost its validated group context".into())
+        })?;
+        let mut commitments = self.state.commitments.lock().map_err(|_| {
+            AkitaError::Internal("admitted commitment map lock poisoned during admission".into())
+        })?;
         let key = (context.fold_level(), group);
         if commitments.get(&key).is_some_and(|&id| id != commitment_id) {
             return Err(AkitaError::InvalidInput(
@@ -178,12 +178,12 @@ impl ScopeLease {
         commitment_id: u128,
     ) -> Result<(), AkitaError> {
         self.validate_context(context)?;
-        let group = context.group_index().ok_or(AkitaError::InvalidProof)?;
-        let commitments = self
-            .state
-            .commitments
-            .lock()
-            .map_err(|_| AkitaError::InvalidProof)?;
+        let group = context.group_index().ok_or_else(|| {
+            AkitaError::Internal("commitment validation lost its validated group context".into())
+        })?;
+        let commitments = self.state.commitments.lock().map_err(|_| {
+            AkitaError::Internal("admitted commitment map lock poisoned during validation".into())
+        })?;
         #[cfg(test)]
         if self.state.plan.is_none() {
             return Ok(());
@@ -209,7 +209,7 @@ impl ScopeLease {
         self.state
             .plan
             .clone()
-            .ok_or_else(|| AkitaError::InvalidInput("proof has no admitted plan".into()))
+            .ok_or_else(|| AkitaError::Internal("proof has no admitted plan".into()))
     }
 
     fn finish(&self) -> Result<(), AkitaError> {
@@ -238,7 +238,7 @@ impl BackendIdentity {
     pub(crate) fn new(setup_digest: [u8; 32]) -> Result<Arc<Self>, AkitaError> {
         let backend_id = NEXT_BACKEND_ID
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-            .map_err(|_| AkitaError::InvalidInput("backend identity exhausted".into()))?;
+            .map_err(|_| AkitaError::Internal("backend identity exhausted".into()))?;
         Ok(Arc::new(Self {
             backend_id,
             setup_digest,
@@ -290,7 +290,7 @@ impl BackendIdentity {
         let sequence = self
             .next_scope
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-            .map_err(|_| AkitaError::InvalidInput("proof scope identity exhausted".into()))?;
+            .map_err(|_| AkitaError::Internal("proof scope identity exhausted".into()))?;
         let scope =
             ProofScopeId::from_raw((u128::from(self.backend_id) << 64) | u128::from(sequence));
         Ok(ScopeLease {
@@ -318,7 +318,7 @@ impl BackendIdentity {
         self.next_operation
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .map(u128::from)
-            .map_err(|_| AkitaError::InvalidInput("operation identity exhausted".into()))
+            .map_err(|_| AkitaError::Internal("operation identity exhausted".into()))
     }
 }
 

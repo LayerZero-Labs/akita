@@ -17,20 +17,20 @@ impl<E: Field + Ring, const LANES: usize> ProductNodeTable<E, LANES> {
         leaf_polynomials: &[Vec<E>],
         stage_index: usize,
     ) -> Result<Self, AkitaError> {
-        let expected_lanes = plan
-            .product_stage_lane_count(stage_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let expected_lanes = plan.product_stage_lane_count(stage_index).ok_or_else(|| {
+            AkitaError::Internal("digit-range class table stage has no planned lane count".into())
+        })?;
         if LANES != expected_lanes {
-            return Err(AkitaError::InvalidSize {
-                expected: expected_lanes,
-                actual: LANES,
-            });
+            return Err(AkitaError::Internal(format!(
+                "range-class implementation lane count: expected {expected_lanes}, actual {LANES}"
+            )));
         }
         if leaf_polynomials.len() != plan.leaf_factor_count() {
-            return Err(AkitaError::InvalidSize {
-                expected: plan.leaf_factor_count(),
-                actual: leaf_polynomials.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "range-class leaf polynomial count: expected {}, actual {}",
+                plan.leaf_factor_count(),
+                leaf_polynomials.len(),
+            )));
         }
         let leaves_per_lane = leaf_polynomials.len() / LANES;
         let class_count = plan.basis() / 2;

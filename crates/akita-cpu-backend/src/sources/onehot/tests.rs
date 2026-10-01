@@ -501,12 +501,16 @@ fn single_chunk_onehot_evaluate_and_fold_matches_factorized_eval() {
     let position_weights = vec![F::from_u64(3), F::from_u64(5)];
     let live_block_weights = vec![F::from_u64(7), F::from_u64(11)];
 
-    let (eval, folded) = poly.evaluate_and_fold::<D>(
-        &live_block_weights,
-        &position_weights,
-        num_positions_per_block,
-    );
-    let expected_folded = poly.fold_blocks::<D>(&position_weights, num_positions_per_block);
+    let (eval, folded) = poly
+        .evaluate_and_fold::<D>(
+            &live_block_weights,
+            &position_weights,
+            num_positions_per_block,
+        )
+        .unwrap();
+    let expected_folded = poly
+        .fold_blocks::<D>(&position_weights, num_positions_per_block)
+        .unwrap();
     assert_eq!(folded, expected_folded);
 
     let full_scalars: Vec<F> = live_block_weights
@@ -535,7 +539,9 @@ fn single_chunk_onehot_ring_fold_matches_dense_materialization() {
 
     assert_eq!(
         poly.fold_blocks_ring(&position_weights, num_positions_per_block),
-        dense.fold_blocks_ring(&position_weights, num_positions_per_block)
+        dense
+            .fold_blocks_ring(&position_weights, num_positions_per_block)
+            .unwrap()
     );
 }
 
@@ -554,7 +560,9 @@ fn onehot_ring_fold_matches_dense_for_partial_final_slice() {
 
     assert_eq!(
         poly.fold_blocks_ring(&position_weights, num_positions_per_block),
-        dense.fold_blocks_ring(&position_weights, num_positions_per_block)
+        dense
+            .fold_blocks_ring(&position_weights, num_positions_per_block)
+            .unwrap()
     );
 }
 
@@ -581,12 +589,16 @@ fn multi_chunk_onehot_evaluate_and_fold_matches_factorized_eval() {
     let position_weights = vec![F::from_u64(2), F::from_u64(4)];
     let live_block_weights = vec![F::from_u64(3), F::from_u64(5)];
 
-    let (eval, folded) = poly.evaluate_and_fold::<D>(
-        &live_block_weights,
-        &position_weights,
-        num_positions_per_block,
-    );
-    let expected_folded = poly.fold_blocks::<D>(&position_weights, num_positions_per_block);
+    let (eval, folded) = poly
+        .evaluate_and_fold::<D>(
+            &live_block_weights,
+            &position_weights,
+            num_positions_per_block,
+        )
+        .unwrap();
+    let expected_folded = poly
+        .fold_blocks::<D>(&position_weights, num_positions_per_block)
+        .unwrap();
     assert_eq!(folded, expected_folded);
 
     let full_scalars: Vec<F> = live_block_weights
@@ -630,10 +642,21 @@ fn multi_chunk_onehot_ring_fold_matches_dense_materialization() {
 
     assert_eq!(
         poly.fold_blocks_ring(&position_weights, num_positions_per_block),
-        dense.fold_blocks_ring(&position_weights, num_positions_per_block)
+        dense
+            .fold_blocks_ring(&position_weights, num_positions_per_block)
+            .unwrap()
     );
 }
 
 mod decompose_fold;
 mod layout_and_ownership;
 mod optimized_commit;
+
+#[test]
+fn base_fold_rejects_zero_block_width() {
+    let poly = OneHotPoly::<Prime24Offset3>::new(64, vec![Some(1usize)]).unwrap();
+    assert!(matches!(
+        poly.fold_blocks::<64>(&[], 0),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
