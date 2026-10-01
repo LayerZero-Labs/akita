@@ -3,6 +3,7 @@
 import base64
 import html
 import json
+import os
 import re
 
 from collect import discussions, previous_state
@@ -123,7 +124,7 @@ def sync_labels(github, number, state):
     # These destinations and label names never come from model output.
     pr = github.get(f"pulls/{number}")
     scope = {"revision": revision(pr), "title": pr["title"], "description": pr.get("body") or ""}
-    approved = (state["head"] == pr["head"]["sha"]
+    approved = (state is not None and state["head"] == pr["head"]["sha"]
                 and pr["state"] == "open"
                 and state.get("scope_digest") == digest(scope)
                 and state.get("reopen_epoch") == reopen_epoch(github, number)
@@ -132,7 +133,7 @@ def sync_labels(github, number, state):
     labels = {label["name"] for label in github.pages(endpoint)}
     if not approved and "ai-approved" in labels:
         github.get(f"{endpoint}/ai-approved", method="DELETE")
-    wanted = {"ai-reviewed"} | ({"ai-approved"} if approved else set())
+    wanted = ({"ai-reviewed"} if state is not None else set()) | ({"ai-approved"} if approved else set())
     if wanted - labels:
         github.get(endpoint, {"labels": sorted(wanted - labels)})
     if approved:
@@ -186,6 +187,35 @@ def verify_review(github, number, review_id, body):
     return state
 
 
+def latest_verified_review(github, number):
+    reviews = [r for r in github.pages(f"pulls/{number}/reviews")
+               if r.get("user", {}).get("login") == "github-actions[bot]"
+               and r.get("user", {}).get("type") == "Bot"
+               and (r.get("body") or "").startswith(MARKER)]
+    latest = max(reviews, key=lambda r: (r.get("submitted_at") or "", r["id"]), default=None)
+    if latest is None:
+        return None
+    return verify_review(github, number, latest["id"], latest["body"])
+
+
+def reconcile(github, event):
+    """Reconcile live metadata under the same job lock as publication."""
+    number = event.get("pull_request", {}).get("number")
+    if (os.environ.get("GITHUB_REPOSITORY", REPOSITORY) != REPOSITORY
+            or event.get("repository", {}).get("full_name") != REPOSITORY
+            or event.get("action") not in ("synchronize", "edited", "reopened")
+            or type(number) is not int or number <= 0):
+        raise ReviewError("Not an eligible PR update event")
+    # The event may be delayed/replayed; its old PR contents are not current.
+    # No author command, artifact, or model invocation is needed for recovery.
+    try:
+        state = latest_verified_review(github, number)
+    except (ReviewError, KeyError, TypeError, ValueError):
+        sync_labels(github, number, None)
+        raise ReviewError("Latest review could not be verified; approval cleared") from None
+    sync_labels(github, number, state)
+
+
 def publish(github, event, snapshot, proposal):
     payload = prepare_review(snapshot, proposal)
     pr = authorize(github, event)
@@ -194,12 +224,9 @@ def publish(github, event, snapshot, proposal):
     comments = discussions(github, pr["number"])
     if any(c["own"] and previous_state([c], pr["number"])["request"] == snapshot["request"]
            for c in comments):
-        latest = previous_state(comments, pr["number"])
-        selected = next((c for c in comments if c["own"] and c["kind"] == "review"
-                         and previous_state([c], pr["number"]) == latest), None)
-        if selected is None:
+        state = latest_verified_review(github, pr["number"])
+        if state is None:
             raise ReviewError("No submitted review available for label recovery")
-        state = verify_review(github, pr["number"], selected["id"], selected["body"])
         sync_labels(github, pr["number"], state)
         return "already-published"
     if (revision(pr) != snapshot["revision"] or comments != snapshot["comments"]

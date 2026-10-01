@@ -50,13 +50,19 @@ comment contents/coordinates against the publication manifest in its state marke
 A marker alone does not establish successful publication.
 
 `ai-reviewed` remains as review history. New commits (including force pushes),
-PR edits and reopening clear `ai-approved` through a metadata-only job with no
-checkout or OpenAI access.
+PR edits and reopening reconcile `ai-approved` against the current PR and latest
+verified review. This job checks out only trusted scripts from `main`; it never
+checks out PR code or accesses OpenAI.
 The invalidation queue is separate from comment-triggered review runs, so an
 unrelated comment cannot replace pending invalidation. Snapshots record the latest
 GitHub reopening event ID; an old review cannot restore approval after reopening.
-The publisher also rechecks PR state after adding approval to catch updates racing
-with the separate invalidation job. Label updates are asynchronous and labels are not a
+Publication and reconciliation share a job-level lock. The outer event queues
+admit at most one of each job, so neither can replace the other in that lock's
+pending slot. Delayed or replayed updates preserve a newer valid approval, and
+reconciliation can recover labels from verified PR history after artifacts are
+deleted. Missing or unverifiable review history cannot grant approval.
+The publisher also rechecks PR state after adding approval to catch concurrent
+PR changes. Label updates are asynchronous and labels are not a
 merge authorization or proof that all current discussion has been checked.
 GitHub allows users with triage or higher access to edit labels; these labels
 are informational, not an admin-only security control. Repository setup must
@@ -83,8 +89,8 @@ checkout, so a PR cannot overwrite the trusted scripts or skill.
 | Collect | Read-only GitHub token | Revalidate author and current write access, read trusted comments, collect pinned public git objects |
 | Review | Environment OpenAI key, read-only job permission | Send source evidence to the fixed OpenAI Responses endpoint; offer bounded in-memory source reads/searches |
 | Publish | PR write token; no OpenAI key | Validate the structured result, recheck authorization and snapshot, submit one COMMENT review with new inline findings on the original PR |
-| Invalidate approval | PR write token; no OpenAI key | On PR updates, remove only `ai-approved` without checking out source or running a review |
 | Cleanup | Actions write token; no OpenAI key | After successful publication and label updates, delete only this run's snapshot and result artifacts |
+| Reconcile | Contents read + PR write token; no OpenAI key | Run trusted `main` scripts, verify the latest review against live PR metadata, and synchronize labels under the publication lock |
 
 The model receives neither credential nor process/environment access. The source
 tools cannot fetch URLs, traverse the filesystem, invoke a shell, or write to

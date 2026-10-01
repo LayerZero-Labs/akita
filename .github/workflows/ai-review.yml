@@ -18,22 +18,23 @@ jobs:
     if: github.repository == 'LayerZero-Labs/akita' && github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    concurrency:
+      group: ai-review-labels-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     permissions:
+      contents: read
       pull-requests: write
     steps:
-      # Metadata only: no checkout, PR execution, model call or environment secret.
-      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      # Trusted main scripts only; never check out the PR or use a model key.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          script: |
-            try {
-              await github.rest.issues.removeLabel({
-                ...context.repo,
-                issue_number: context.payload.pull_request.number,
-                name: 'ai-approved',
-              });
-            } catch (error) {
-              if (error.status !== 404) throw error;
-            }
+          ref: refs/heads/main
+          persist-credentials: false
+          sparse-checkout: scripts/ai_review
+      - name: Reconcile approval against the latest verified review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ai_review/run.py reconcile --directory "$RUNNER_TEMP/ai-review"
 
   reserve:
     if: >-
@@ -124,6 +125,11 @@ jobs:
     needs: [collect, review]
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # The outer event queues admit at most one publisher and one reconciler,
+    # so this shared lock has at most one pending job (no replacement).
+    concurrency:
+      group: ai-review-labels-${{ github.event.issue.number }}
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: write
