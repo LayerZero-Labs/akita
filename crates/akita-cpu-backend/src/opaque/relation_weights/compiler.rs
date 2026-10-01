@@ -1,7 +1,9 @@
 use super::*;
+use akita_params::{
+    CommitmentSliceGeometry, RelationQuotientLayout, RingRelationMode, WitnessLayout,
+};
 use akita_types::{
-    CommitmentSliceGeometry, RelationQuotientLayout, RelationRangeImageGroupPlan,
-    RingMultiplierOpeningPoint, RingRelationGroupOpeningView, RingRelationMode, WitnessLayout,
+    RelationRangeImageGroupPlan, RingMultiplierOpeningPoint, RingRelationGroupOpeningView,
 };
 
 pub(super) struct RelationWeightCompilation<'a, F: Field, E: Field> {

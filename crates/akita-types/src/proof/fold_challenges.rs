@@ -4,10 +4,8 @@ use akita_challenges::{Challenges, FoldChallengeDrawDomain, FoldDraw};
 use akita_error::AkitaError;
 use jolt_field::{ExtField, Field};
 
-use crate::{
-    CoefficientPackingChallenges, InnerCommitSecurityRoute, OpeningMethod,
-    SubringCoefficientPackingGeometry,
-};
+use crate::CoefficientPackingChallenges;
+use akita_params::{InnerCommitSecurityRoute, OpeningMethod, SubringCoefficientPackingGeometry};
 
 /// Runtime value carried by one of Akita's two opening methods.
 ///
@@ -39,7 +37,7 @@ impl OpeningFamily<Challenges, CoefficientPackingChallenges> {
 /// method and certified A-security route.
 pub fn draw_group_fold_challenges<F, E, D>(
     draw: &mut D,
-    params: &crate::GroupOpenPhaseParams,
+    params: &akita_params::GroupOpenPhaseParams,
     group_index: usize,
     num_claims: usize,
 ) -> Result<GroupFoldChallenges, AkitaError>

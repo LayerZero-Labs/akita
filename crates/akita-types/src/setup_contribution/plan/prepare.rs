@@ -32,7 +32,7 @@ impl<E: Field> SetupContributionPlan<E> {
             validate_setup_inputs(level_params, opening_batch, witness_layout, groups)?;
             validate_static_inputs(level_params, opening_batch, &eq_tau1)?
         };
-        let relation_geometry = crate::RelationWitnessGeometry::for_level(
+        let relation_geometry = akita_params::RelationWitnessGeometry::for_level(
             level_params,
             opening_batch,
             extension_degree,
@@ -79,15 +79,17 @@ impl<E: Field> SetupContributionPlan<E> {
             let row_families = relation_geometry.rhs_layout().row_families()?;
             let d_row_start = row_families
                 .iter()
-                .position(|family| matches!(family, crate::RelationRowFamily::Opening { .. }))
+                .position(|family| {
+                    matches!(family, akita_params::RelationRowFamily::Opening { .. })
+                })
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D rows are missing".into()))?;
             let d_row_end = d_row_start
                 .checked_add(d_rows)
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D row range overflow".into()))?;
             if d_row_end > rows
-                || row_families[d_row_start..d_row_end]
-                    .iter()
-                    .any(|family| !matches!(family, crate::RelationRowFamily::Opening { .. }))
+                || row_families[d_row_start..d_row_end].iter().any(|family| {
+                    !matches!(family, akita_params::RelationRowFamily::Opening { .. })
+                })
             {
                 return Err(AkitaError::InvalidSetup(
                     "setup D rows disagree with the relation layout".into(),
@@ -133,7 +135,7 @@ impl<E: Field> SetupContributionPlan<E> {
                         .checked_mul(t_vector_width)
                         .and_then(|cols| cols.checked_mul(*b_subcolumns))
                         .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
-                    let slice_geometry = crate::CommitmentSliceGeometry::try_new(
+                    let slice_geometry = akita_params::CommitmentSliceGeometry::try_new(
                         group_params.outer_slice_count(),
                         num_live_blocks,
                         group.num_claims,
@@ -186,7 +188,7 @@ impl<E: Field> SetupContributionPlan<E> {
                             .ok_or(AkitaError::InvalidProof)?
                     } else {
                         fold_gadget_storage =
-                            crate::gadget_row_scalars::<F>(group.depth_fold, log_basis_open);
+                            akita_params::gadget_row_scalars::<F>(group.depth_fold, log_basis_open);
                         &fold_gadget_storage
                     };
                     let fold_gadget: std::sync::Arc<[E]> = group_fold_gadget
@@ -243,7 +245,7 @@ impl<E: Field> SetupContributionPlan<E> {
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
-        let projection_geometry = crate::SetupProjectionGeometry::from_groups(
+        let projection_geometry = akita_params::SetupProjectionGeometry::from_groups(
             relation_address_geometry.role_dims(),
             d_rows,
             d_physical_cols,
@@ -346,7 +348,7 @@ impl<E: Field> SetupContributionPlan<E> {
         d_physical_cols: usize,
         d_weights: std::sync::Arc<[E]>,
         mut groups: Vec<SetupContributionGroupPlan<E>>,
-        role_dims: crate::CommitmentRingDims,
+        role_dims: akita_params::CommitmentRingDims,
     ) -> Result<Self, AkitaError> {
         let d_rows = d_weights.len();
         let mut a_footprint = 0usize;
@@ -433,7 +435,7 @@ fn validate_static_inputs<E: Field>(
             ));
         }
         let role_dims = level_params.group_role_dims(opening_batch, group_index)?;
-        let expected_b_width = crate::CommitmentSliceGeometry::try_new(
+        let expected_b_width = akita_params::CommitmentSliceGeometry::try_new(
             group_params.outer_slice_count(),
             num_live_blocks,
             group_layout.num_polynomials(),

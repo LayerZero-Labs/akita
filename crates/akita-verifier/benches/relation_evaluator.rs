@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_types::{CommitmentRingDims, RingRelationMode};
+use akita_params::{CommitmentRingDims, RingRelationMode};
 use akita_verifier::{
     relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
 };

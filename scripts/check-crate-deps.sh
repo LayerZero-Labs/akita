@@ -13,6 +13,12 @@ if [ "$#" -gt 0 ]; then
   forbidden=("$@")
 else
   case "${pkg}" in
+    akita-params)
+      forbidden=(akita-types akita-prover akita-verifier akita-cpu-backend akita-pcs akita-setup akita-config akita-schedules akita-planner)
+      ;;
+    akita-sis-estimator)
+      forbidden=(akita-types)
+      ;;
     akita-verifier)
       forbidden=(akita-planner akita-prover akita-cpu-backend akita-pcs)
       ;;
@@ -26,7 +32,7 @@ else
       forbidden=(akita-planner akita-prover akita-cpu-backend akita-verifier akita-pcs)
       ;;
     akita-schedules)
-      forbidden=(akita-planner akita-config akita-prover akita-cpu-backend akita-verifier akita-setup akita-pcs)
+      forbidden=(akita-types akita-planner akita-config akita-prover akita-cpu-backend akita-verifier akita-setup akita-pcs)
       ;;
     akita-planner)
       # `akita-planner` is offline-only. It may use `akita-config` behind its

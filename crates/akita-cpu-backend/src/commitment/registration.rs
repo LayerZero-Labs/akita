@@ -1,6 +1,7 @@
 use crate::opaque::CommitInnerPlan;
 use akita_error::AkitaError;
-use akita_types::{AkitaSetupDescriptor, CompressionChainPlan, RingRelationMode};
+use akita_params::{CompressionChainPlan, RingRelationMode};
+use akita_types::AkitaSetupDescriptor;
 use std::any::Any;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};

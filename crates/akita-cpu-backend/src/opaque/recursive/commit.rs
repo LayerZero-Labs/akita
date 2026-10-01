@@ -2,7 +2,7 @@ use super::{CpuWitnessHandle, RecursiveWitnessFlat};
 use crate::commitment::CommitmentExecutor;
 
 use akita_error::AkitaError;
-use akita_types::dispatch_for_field;
+use akita_params::dispatch_for_field;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 impl CpuWitnessHandle {
@@ -13,7 +13,7 @@ impl CpuWitnessHandle {
     ) -> Result<Self, AkitaError> {
         let logical_len = inner.live_coeff_len();
         let commitment_domain_len =
-            akita_types::witness_commitment_domain_len(logical_len, commitment_ring_dimension)?;
+            akita_params::witness_commitment_domain_len(logical_len, commitment_ring_dimension)?;
         Ok(Self {
             pending_successor: None,
             relation_plan: None,
@@ -37,7 +37,7 @@ impl CpuWitnessHandle {
         let logical = self.logical.align_for_commitment_ring_dim(ring_dim)?;
         let manifest = crate::opaque::RecursiveWitnessManifest::try_new(
             logical.live_coeff_len(),
-            akita_types::witness_commitment_domain_len(logical.live_coeff_len(), ring_dim)?,
+            akita_params::witness_commitment_domain_len(logical.live_coeff_len(), ring_dim)?,
             ring_dim,
         )?;
         Ok(Self {
@@ -175,7 +175,7 @@ where
             ));
         }
         if witness.manifest.logical_len() != plan.logical_len()
-            || akita_types::witness_commitment_domain_len(
+            || akita_params::witness_commitment_domain_len(
                 plan.logical_len(),
                 plan.ring_dimension(),
             )? != plan.padded_len()
@@ -209,10 +209,12 @@ where
         );
         let tensor = match (terminal, plan.source_encoding()) {
             (true, _) => E::DEGREE != 1,
-            (false, Some(akita_types::CommittedSourceEncoding::CanonicalCoefficientTable)) => false,
+            (false, Some(akita_params::CommittedSourceEncoding::CanonicalCoefficientTable)) => {
+                false
+            }
             (
                 false,
-                Some(akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
+                Some(akita_params::CommittedSourceEncoding::TensorSubfieldProjection {
                     extension_degree,
                 }),
             ) if extension_degree == E::DEGREE => true,
@@ -260,10 +262,10 @@ where
         material.bind(successor.clone());
         material.bind_commitment(successor.operation_id(), public.clone());
         let binding = match (public, plan.binding()) {
-            (Some(public), akita_types::NextWitnessBindingPolicy::OuterPayload) => {
+            (Some(public), akita_params::NextWitnessBindingPolicy::OuterPayload) => {
                 crate::opaque::NextWitnessBindingMessage::OuterPayload(public)
             }
-            (None, akita_types::NextWitnessBindingPolicy::TerminalInnerState) => {
+            (None, akita_params::NextWitnessBindingPolicy::TerminalInnerState) => {
                 crate::opaque::NextWitnessBindingMessage::TerminalInnerState(
                     crate::opaque::TerminalCommitmentMaterialKernel::terminal_message(
                         self, &material,

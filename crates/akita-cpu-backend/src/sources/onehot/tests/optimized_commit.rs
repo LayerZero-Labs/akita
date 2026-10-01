@@ -66,7 +66,7 @@ fn retained_sweeps_match_across_polys_and_dimensions() {
 fn automatic_scratch_fits_large_blocks() {
     use crate::opaque::{CommitInnerPlan, ComputeBackendSetup};
     use crate::AkitaProverSetup;
-    use akita_types::SetupMatrixCapacity;
+    use akita_params::SetupMatrixCapacity;
 
     type F = Prime128Offset275;
     const D: usize = 64;
@@ -114,7 +114,7 @@ fn automatic_scratch_fits_large_blocks() {
 fn every_stored_index_width_reaches_the_same_commitment_sweep() {
     use crate::opaque::{CommitInnerPlan, ComputeBackendSetup};
     use crate::AkitaProverSetup;
-    use akita_types::SetupMatrixCapacity;
+    use akita_params::SetupMatrixCapacity;
 
     type F = Prime128Offset275;
     const D: usize = 64;

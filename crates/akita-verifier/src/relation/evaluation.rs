@@ -17,10 +17,12 @@ use super::{
 use crate::setup_contribution::{evaluate_structured_group, DirectScan};
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_error::AkitaError;
+use akita_params::{
+    gadget_row_scalars, r_decomp_levels, RelationAddressGeometry, RelationQuotientLayout,
+    RelationRowFamily, RelationWitnessGeometry,
+};
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding,
-    PreparedRelationAddress, RelationAddressGeometry, RelationQuotientLayout, RelationRowFamily,
-    RelationWitnessGeometry, SetupContributionPlan,
+    AkitaExpandedSetup, FpExtEncoding, PreparedRelationAddress, SetupContributionPlan,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
@@ -387,7 +389,7 @@ where
             RelationRowFamily::CompressionF { .. }
                 | RelationRowFamily::CompressionH { .. }
                 | RelationRowFamily::Consistency {
-                    opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { .. },
+                    opening_method: akita_params::OpeningMethod::SubringCoefficientPacking { .. },
                     ..
                 }
         ) {

@@ -1,11 +1,11 @@
 //! Protocol commitment/opening wrapper types.
 
 use crate::proof::{RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS};
-use crate::sis::{
+use akita_params::sis::{
     InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisModulusProfileId,
     SisSecurityPolicyId, SisTableDigest,
 };
-use crate::{
+use akita_params::{
     CommitmentSliceCount, CompressionChainPlan, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
 
@@ -340,19 +340,19 @@ where
             version,
             group,
 
-            blocks: crate::BlockGeometry::new(
+            blocks: akita_params::BlockGeometry::new(
                 num_live_ring_elements_per_claim,
                 num_positions_per_block,
                 num_live_blocks,
             ),
 
             outer_slice_count,
-            inner: crate::RoleParams::new(
-                crate::GadgetDigits::new(log_basis_inner, num_digits_inner),
+            inner: akita_params::RoleParams::new(
+                akita_params::GadgetDigits::new(log_basis_inner, num_digits_inner),
                 inner_commit_matrix,
             ),
-            outer: crate::RoleParams::new(
-                crate::GadgetDigits::new(log_basis_outer, num_digits_outer),
+            outer: akita_params::RoleParams::new(
+                akita_params::GadgetDigits::new(log_basis_outer, num_digits_outer),
                 outer_commit_matrix,
             ),
         };
@@ -432,12 +432,13 @@ mod committed_group_tests {
     type F = Fp32<4294967197>;
 
     fn group() -> CommittedGroup<F> {
-        let a_bound = *crate::sis::inner_coeff_linf_bounds(SisModulusProfileId::Q32Offset99, 64)
-            .first()
-            .expect("D64 exact A bounds");
+        let a_bound =
+            *akita_params::sis::inner_coeff_linf_bounds(SisModulusProfileId::Q32Offset99, 64)
+                .first()
+                .expect("D64 exact A bounds");
         let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
-            crate::SisTableKey {
-                policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+            akita_params::SisTableKey {
+                policy: akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
                 table_digest: SisTableDigest::CURRENT,
                 modulus_profile: SisModulusProfileId::Q32Offset99,
                 role: SisMatrixRole::Inner,
@@ -449,8 +450,8 @@ mod committed_group_tests {
         .expect("audited A profile");
         let outer_width = inner_commit_matrix.output_rank();
         let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
-            crate::SisTableKey {
-                policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+            akita_params::SisTableKey {
+                policy: akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
                 table_digest: SisTableDigest::CURRENT,
                 modulus_profile: SisModulusProfileId::Q32Offset99,
                 role: SisMatrixRole::Outer,
@@ -463,13 +464,19 @@ mod committed_group_tests {
         let profile = GroupCommitPhaseParams {
             version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::new(11, 1),
-            blocks: crate::BlockGeometry::new(32, 32, 1),
+            blocks: akita_params::BlockGeometry::new(32, 32, 1),
             outer_slice_count: CommitmentSliceCount::ONE,
-            inner: crate::RoleParams::new(crate::GadgetDigits::new(1, 1), inner_commit_matrix),
-            outer: crate::RoleParams::new(crate::GadgetDigits::new(1, 1), outer_commit_matrix),
+            inner: akita_params::RoleParams::new(
+                akita_params::GadgetDigits::new(1, 1),
+                inner_commit_matrix,
+            ),
+            outer: akita_params::RoleParams::new(
+                akita_params::GadgetDigits::new(1, 1),
+                outer_commit_matrix,
+            ),
         };
         let source_coefficients = outer_commit_matrix.output_rank() * 64;
-        let payload_coefficients = crate::CompressionChainPlan::for_complete_source(
+        let payload_coefficients = akita_params::CompressionChainPlan::for_complete_source(
             outer_commit_matrix.sis_modulus_profile(),
             source_coefficients,
         )
