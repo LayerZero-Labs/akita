@@ -1,6 +1,6 @@
 //! Real proof lengths against the schedule byte model.
 //!
-//! [`akita_schedules::expanded_schedule_native_proof_bound`] prices a schedule
+//! [`akita_schedules::expanded_schedule_proof_bound`] prices a schedule
 //! as its fixed-width sections plus two variable-width sections at their caps:
 //! the terminal Golomb-Rice `z` payload and the canonical LEB128 grinding
 //! nonces. The planner ranks schedules with the same byte formulas, and the
@@ -18,7 +18,7 @@
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
-use akita_types::{AkitaScheduleLookupKey, OpeningScheduleSelection};
+use akita_types::{OpeningScheduleSelection, ScheduleLookupKey};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use tracing::field::{Field, Visit};
@@ -78,13 +78,13 @@ pub(crate) fn prove_matching_byte_model<Cfg: CommitmentConfig>(
     let resolved = schedules
         .resolve_selection(selection)
         .expect("selected schedule");
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group: resolved.profiles().final_group.group,
         precommitteds: resolved.profiles().precommitteds.clone(),
     };
     let schedule = resolved.schedule();
     let policy = akita_config::policy_of::<Cfg>();
-    let bound = akita_schedules::expanded_schedule_native_proof_bound(&key, schedule, &policy)
+    let bound = akita_schedules::expanded_schedule_proof_bound(&key, schedule, &policy)
         .expect("native proof bound");
     let z_payload_cap = schedule.terminal.response_shape.layout.z_payload_bytes();
     let nonce_max = akita_types::derive_transcript_grinding_plan_from_public_shape(
@@ -94,7 +94,7 @@ pub(crate) fn prove_matching_byte_model<Cfg: CommitmentConfig>(
         policy.claim_ext_degree,
     )
     .expect("grinding plan")
-    .native_nonce_max_bytes();
+    .nonce_max_bytes();
     let model_fixed = bound
         .checked_sub(z_payload_cap)
         .and_then(|rest| rest.checked_sub(nonce_max))
