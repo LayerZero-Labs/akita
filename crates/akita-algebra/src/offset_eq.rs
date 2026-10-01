@@ -1387,20 +1387,21 @@ impl<F: Field> OffsetEqWindow<F> {
     ) -> Result<(), AkitaError> {
         while !output.is_empty() {
             let low = start & self.low_mask;
-            let available_low = self
-                .eq_low
-                .len()
-                .checked_sub(low)
-                .ok_or(AkitaError::InvalidProof)?;
+            let available_low = self.eq_low.len().checked_sub(low).ok_or_else(|| {
+                AkitaError::Internal("bounded equality low index exceeds the prepared table".into())
+            })?;
             let take = available_low.min(output.len());
-            let low_end = low.checked_add(take).ok_or(AkitaError::InvalidProof)?;
-            let low_values = self
-                .eq_low
-                .get(low..low_end)
-                .ok_or(AkitaError::InvalidProof)?;
-            let (destination, tail) = output
-                .split_at_mut_checked(take)
-                .ok_or(AkitaError::InvalidProof)?;
+            let low_end = low.checked_add(take).ok_or_else(|| {
+                AkitaError::Internal("bounded equality low interval end overflow".into())
+            })?;
+            let low_values = self.eq_low.get(low..low_end).ok_or_else(|| {
+                AkitaError::Internal(
+                    "bounded equality low interval exceeds the prepared table".into(),
+                )
+            })?;
+            let (destination, tail) = output.split_at_mut_checked(take).ok_or_else(|| {
+                AkitaError::Internal("bounded equality destination split exceeds the output".into())
+            })?;
             let high = start >> self.low_bits;
             let Some(scale) = eq_high.get(high).copied() else {
                 destination.fill(F::zero());
