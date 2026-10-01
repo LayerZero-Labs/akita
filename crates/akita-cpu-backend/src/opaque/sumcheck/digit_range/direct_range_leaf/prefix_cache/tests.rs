@@ -11,6 +11,13 @@ use jolt_poly::{OmittedConstantPoly, UnivariatePoly};
 
 type F = Prime128Offset275;
 
+fn interpolation<E: Field + Ring>() -> QuarticInterpolation<E> {
+    match RangePrefixBasis::new(RangePoly::Quartic).unwrap() {
+        RangePrefixBasis::Quartic(interpolation) => interpolation,
+        RangePrefixBasis::Quadratic => unreachable!("test requests quartic interpolation"),
+    }
+}
+
 fn stage1_prefix_points<E: Field + Ring>() -> [PrefixPoint<E>; 4] {
     [
         PrefixPoint::Finite(E::one()),
@@ -37,7 +44,9 @@ fn stage1_local_norm_eval<E: Field + Ring>(
     y: PrefixPoint<E>,
     b: usize,
 ) -> E {
-    RangePoly::new(b).eval(bilinear_eval_on_prefix_points(s_quad, x, y))
+    RangePoly::new(b)
+        .unwrap()
+        .eval(bilinear_eval_on_prefix_points(s_quad, x, y))
 }
 
 #[inline]
@@ -48,7 +57,7 @@ fn stage1_local_norm_raw_eval<E: Field + Ring>(
     b: usize,
 ) -> E {
     let [_, bx, cy, dxy] = bilinear_coeffs_from_quad(s_quad);
-    let degree = RangePoly::new(b).num_coefficients();
+    let degree = RangePoly::new(b).unwrap().num_coefficients();
     let pow = |base: E| {
         let mut out = E::one();
         for _ in 0..degree {
@@ -59,7 +68,7 @@ fn stage1_local_norm_raw_eval<E: Field + Ring>(
 
     match (x, y) {
         (PrefixPoint::Finite(x), PrefixPoint::Finite(y)) => {
-            RangePoly::new(b).eval(bilinear_eval(s_quad, x, y))
+            RangePoly::new(b).unwrap().eval(bilinear_eval(s_quad, x, y))
         }
         (PrefixPoint::Infinity, PrefixPoint::Finite(y)) => pow(bx + y * dxy),
         (PrefixPoint::Finite(x), PrefixPoint::Infinity) => pow(cy + x * dxy),
@@ -90,7 +99,10 @@ fn build_stage1_prefix_grid_from_m_compact<E: Field + Ring + Unreduced>(
             });
         quad_class_weights[class] += quad_weights[quad];
     }
-    build_stage1_prefix_grid(&quad_class_weights, b)
+    build_stage1_prefix_grid(
+        &quad_class_weights,
+        RangePrefixBasis::new(RangePoly::new(b).unwrap()).unwrap(),
+    )
 }
 
 fn stage1_storage_vector_from_quad<E: Field + Ring>(quad: [E; 4], b: usize) -> Vec<E> {
@@ -131,8 +143,10 @@ fn reconstruct_stage1_round0_poly<E: Field + Ring>(
     let evals: Vec<E> = (0..=5u64)
         .map(|x_raw| {
             let x = E::from_u64(x_raw);
-            let q_x0 = eval_stage1_biquartic_from_full_grid(full_grid, x, E::zero());
-            let q_x1 = eval_stage1_biquartic_from_full_grid(full_grid, x, E::one());
+            let q_x0 =
+                eval_stage1_biquartic_from_full_grid(full_grid, x, E::zero(), interpolation());
+            let q_x1 =
+                eval_stage1_biquartic_from_full_grid(full_grid, x, E::one(), interpolation());
             linear_eq_eval(tau0, x) * (l1_at_0 * q_x0 + l1_at_1 * q_x1)
         })
         .collect();
@@ -163,7 +177,7 @@ fn reconstruct_stage1_round1_poly<E: Field + Ring>(
             let y = E::from_u64(y_raw);
             l0_at_r0
                 * linear_eq_eval(tau1, y)
-                * eval_stage1_biquartic_from_full_grid(full_grid, r0, y)
+                * eval_stage1_biquartic_from_full_grid(full_grid, r0, y, interpolation())
         })
         .collect();
     let mut polynomial = UnivariatePoly::from_evals(&evals);
@@ -227,7 +241,7 @@ fn gaussian_rank(mut rows: Vec<Vec<F>>) -> usize {
 fn stage1_norm_round_values(s_quad: [F; 4], tau0: F, tau1: F, r0: F, b: usize) -> Vec<F> {
     let l0 = |x: F| tau0 * x + (F::one() - tau0) * (F::one() - x);
     let l1 = |y: F| tau1 * y + (F::one() - tau1) * (F::one() - y);
-    let q = |x: F, y: F| RangePoly::new(b).eval(bilinear_eval(s_quad, x, y));
+    let q = |x: F, y: F| RangePoly::new(b).unwrap().eval(bilinear_eval(s_quad, x, y));
 
     let mut out = Vec::new();
     for x in 0..=5u64 {
@@ -501,8 +515,12 @@ fn stage1_storage_domain_matches_local_round_messages() {
                     let proof = Stage1PrefixGrid {
                         evals_except_boolean_core: stage1_storage_vector_from_quad(quad, 8),
                     };
-                    let cache = Stage1PrefixCache::new(&proof, &[tau0, tau1], 8)
-                        .expect("stage1 prefix state should build");
+                    let cache = Stage1PrefixCache::new(
+                        &proof,
+                        &[tau0, tau1],
+                        RangePrefixBasis::Quartic(interpolation()),
+                    )
+                    .expect("stage1 prefix state should build");
                     let round_values = stage1_norm_round_values(quad, tau0, tau1, r0, 8);
                     let mut round0 = UnivariatePoly::from_evals(&round_values[..6]);
                     round0.trim_trailing_zeros();
@@ -535,7 +553,12 @@ fn stage1_prefix_proof_reconstructs_first_two_rounds() {
     let tau0 = ordered_equality_point(&tau0_raw, col_bits, ring_bits);
 
     let proof = build_stage1_prefix_grid_from_m_compact(&w_compact, &tau0, b);
-    let cache = Stage1PrefixCache::new(&proof, &tau0, b).expect("stage1 prefix state should build");
+    let cache = Stage1PrefixCache::new(
+        &proof,
+        &tau0,
+        RangePrefixBasis::new(RangePoly::new(b).unwrap()).unwrap(),
+    )
+    .expect("stage1 prefix state should build");
 
     let mut prover = LowBasisRangeCheckProver::<F>::new(
         packed(&w_compact),
@@ -560,6 +583,7 @@ fn stage1_prefix_proof_reconstructs_first_two_rounds() {
 fn stage1_b8_reconstructed_eq_polys_keep_degree4_storage_width() {
     let state = Stage1B8PrefixCache {
         full_grid: [F::zero(); 25],
+        interpolation: interpolation(),
         tau0: F::from_u64(3),
         tau1: F::from_u64(5),
     };
@@ -584,4 +608,18 @@ fn stage1_b8_reconstructed_eq_polys_keep_degree4_storage_width() {
         .expect("eq-factored poly should deserialize at degree 4");
         assert_eq!(decoded, poly);
     }
+}
+
+#[test]
+fn quartic_prefix_rejects_characteristic_three_at_construction() {
+    type F3 = jolt_field::Fp32<3>;
+    assert!(matches!(
+        RangePrefixBasis::<F3>::new(RangePoly::Quartic),
+        Err(AkitaError::InvalidInput(message))
+            if message == "stage1 prefix interpolation requires invertible 3"
+    ));
+    assert!(matches!(
+        RangePrefixBasis::<F3>::new(RangePoly::Quadratic),
+        Ok(RangePrefixBasis::Quadratic)
+    ));
 }

@@ -7,7 +7,7 @@ use crate::sources::packed_digits::PackedSignedDigits;
 
 /// Collision class of one balanced digit under `digit * (digit + 1)`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct RangeImageClass(u8);
+pub(super) struct RangeImageClass(pub(super) u8);
 
 impl RangeImageClass {
     pub(super) const PADDING: Self = Self(0);
@@ -25,6 +25,7 @@ impl RangeImageClass {
     }
 
     #[inline(always)]
+    #[cfg(test)]
     pub(super) fn index(self) -> usize {
         usize::from(self.0)
     }
@@ -45,7 +46,7 @@ pub(crate) struct CompactDigitSource {
     digits: PackedSignedDigits,
     ordered_range_class_pairs: Arc<[u16]>,
     domain: FlatBooleanDomain,
-    class_count: usize,
+    class_count: u8,
 }
 
 impl CompactDigitSource {
@@ -60,7 +61,8 @@ impl CompactDigitSource {
                 actual: digits.len(),
             });
         }
-        let class_count = plan.basis() / 2;
+        // DigitRangePlan admits log bases 2..=6, so the class count is 2..=32.
+        let class_count = 1u8 << (plan.log_basis() - 1);
         let ordered_range_class_pairs = if !plan.product_stage_arities().is_empty() {
             Self::ordered_range_class_pairs(&digits, class_count)
         } else {
@@ -87,18 +89,21 @@ impl CompactDigitSource {
         }
     }
 
-    fn ordered_range_class_pairs(digits: &PackedSignedDigits, class_count: usize) -> Arc<[u16]> {
+    fn ordered_range_class_pairs(digits: &PackedSignedDigits, class_count: u8) -> Arc<[u16]> {
         let mut digits = digits.iter();
         std::iter::from_fn(|| {
             digits.next().map(|digit| {
-                let left = RangeImageClass::from_balanced_digit(digit, class_count).index();
+                let left = RangeImageClass::from_balanced_digit(digit, usize::from(class_count)).0;
                 let right = digits
                     .next()
-                    .map(|digit| RangeImageClass::from_balanced_digit(digit, class_count))
+                    .map(|digit| {
+                        RangeImageClass::from_balanced_digit(digit, usize::from(class_count))
+                    })
                     .unwrap_or(RangeImageClass::PADDING)
-                    .index();
-                u16::try_from(left * class_count + right)
-                    .expect("supported ordered range-class pair fits u16")
+                    .0;
+                // An i8 digit's class is at most 127; even with a u8 class
+                // count, 127 * 255 + 127 fits u16.
+                u16::from(left) * u16::from(class_count) + u16::from(right)
             })
         })
         .collect()
@@ -117,7 +122,11 @@ impl CompactDigitSource {
     }
 
     pub(super) fn class_count(&self) -> usize {
-        self.class_count
+        usize::from(self.class_count)
+    }
+
+    pub(super) fn classes(&self) -> std::ops::Range<u8> {
+        0..self.class_count
     }
 
     pub(super) fn pair_count(&self) -> usize {
