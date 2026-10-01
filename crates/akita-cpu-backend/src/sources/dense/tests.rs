@@ -340,3 +340,124 @@ fn fold_operations_reject_invalid_ring_views() {
         Err(AkitaError::InvalidInput(_))
     ));
 }
+
+mod batch_only {
+    use super::*;
+    use crate::commitment::{
+        AvailablePolynomialTypes, CommitSourceDescriptor, PolynomialRepresentation,
+        PolynomialTypeSelection,
+    };
+    use crate::opaque::*;
+    use crate::sources::poly::SourceCoefficients;
+
+    struct BatchOnlySource(DensePoly<F>);
+
+    impl RootPolyMeta<F> for BatchOnlySource {
+        fn num_vars(&self) -> usize {
+            RootPolyMeta::num_vars(&self.0)
+        }
+    }
+    impl<const D: usize> RootPolyShape<F, D> for BatchOnlySource {
+        fn num_ring_elems(&self) -> usize {
+            RootPolyShape::<F, D>::num_ring_elems(&self.0)
+        }
+    }
+    impl<const D: usize> RootOpeningSource<F, D> for BatchOnlySource {
+        type OpeningView<'a> = ();
+        type OpeningBatchView<'a> = Vec<&'a DensePoly<F>>;
+        fn opening_view(&self) -> Result<(), AkitaError> {
+            Err(AkitaError::InvalidInput("batch-only source".into()))
+        }
+        fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Vec<&'a DensePoly<F>>, AkitaError> {
+            Ok(polys.iter().map(|poly| &poly.0).collect())
+        }
+    }
+    impl SourceCoefficients<F> for BatchOnlySource {
+        fn source_coefficients(&self) -> Result<std::borrow::Cow<'_, [F]>, AkitaError> {
+            self.0.source_coefficients()
+        }
+    }
+    impl CommitmentSource<F> for BatchOnlySource {
+        fn descriptor(&self) -> Result<CommitSourceDescriptor, AkitaError> {
+            self.0.descriptor()
+        }
+        fn committed_centered_reach(
+            &self,
+            modulus: u128,
+            threshold: u128,
+        ) -> Result<(u128, u128), AkitaError> {
+            self.0.committed_centered_reach(modulus, threshold)
+        }
+        fn available_polynomial_types(
+            &self,
+            plan: &CommitInnerPlan,
+        ) -> Result<AvailablePolynomialTypes, AkitaError> {
+            self.0.available_polynomial_types(plan)
+        }
+        fn represent_as(
+            &self,
+            selected: PolynomialTypeSelection,
+            plan: &CommitInnerPlan,
+        ) -> Result<PolynomialRepresentation<'_, F>, AkitaError> {
+            self.0.represent_as(selected, plan)
+        }
+    }
+    impl<const D: usize> OpeningBatchKernel<Vec<&DensePoly<F>>, F, D> for CpuBackend<F, F> {
+        fn evaluate_and_fold_batch(
+            &self,
+            prepared: Option<&Self::PreparedSetup>,
+            source: Vec<&DensePoly<F>>,
+            plan: OpeningFoldPlan<'_, F>,
+        ) -> Result<Vec<OpeningFoldOutput<F, D>>, AkitaError> {
+            self.evaluate_and_fold_batch(
+                prepared,
+                <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&source)?,
+                plan,
+            )
+        }
+        fn decompose_fold_batch(
+            &self,
+            prepared: Option<&Self::PreparedSetup>,
+            source: Vec<&DensePoly<F>>,
+            plan: DecomposeFoldBatchPlan<'_>,
+        ) -> Result<CpuFoldResponses, AkitaError> {
+            self.decompose_fold_batch(
+                prepared,
+                <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&source)?,
+                plan,
+            )
+        }
+    }
+    impl<const D: usize> SubringCoefficientPackingBatchKernel<Vec<&DensePoly<F>>, F, F, D>
+        for CpuBackend<F, F>
+    {
+        fn coefficient_packing_partials_batch(
+            &self,
+            prepared: Option<&Self::PreparedSetup>,
+            source: Vec<&DensePoly<F>>,
+            plan: SubringCoefficientPackingPlan<'_, F>,
+        ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+            self.coefficient_packing_partials_batch(
+                prepared,
+                <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&source)?,
+                plan,
+            )
+        }
+    }
+
+    #[test]
+    fn import_source_admits_batch_only_opening_kernels() {
+        let setup = crate::AkitaProverSetup::<F>::generate_with_capacity(
+            9,
+            1,
+            akita_params::SetupMatrixCapacity {
+                num_field_elements: 4096,
+            },
+        )
+        .unwrap();
+        let backend = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
+        let poly = DensePoly::from_field_evals(9, vec![F::from_u64(1); 512]).unwrap();
+        // No OpeningFoldKernel<()> implementation exists for this source's singleton view.
+        assert!(backend.import_source(vec![BatchOnlySource(poly)]).is_ok());
+    }
+}
