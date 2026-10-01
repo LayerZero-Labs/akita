@@ -32,17 +32,31 @@ where
     let max_tail_vars = opening_batch
         .max_num_vars()
         .checked_sub(split_bits)
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::Internal(
+                "eor maximum opening width is smaller than tensor split width".into(),
+            )
+        })?;
     let prepared = backend.prepare_eor(session, context, opening_batch, group_inputs)?;
     let num_claims = opening_batch.num_total_polynomials();
-    if prepared.openings != expected_openings
-        || prepared.openings.len() != num_claims
-        || prepared.proof_partials.len()
-            != width
-                .checked_mul(num_claims)
-                .ok_or(AkitaError::InvalidProof)?
+    if prepared.openings.len() != num_claims {
+        return Err(AkitaError::Internal(
+            "eor backend opening count differs from opening layout".into(),
+        ));
+    }
+    if prepared.proof_partials.len()
+        != width
+            .checked_mul(num_claims)
+            .ok_or_else(|| AkitaError::Internal("eor proof partial count overflow".into()))?
     {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "eor backend proof partial count differs from tensor claim width".into(),
+        ));
+    }
+    if prepared.openings != expected_openings {
+        return Err(AkitaError::Internal(
+            "eor backend openings differ from generated suffix claims".into(),
+        ));
     }
     let prefix = akita_types::eor_prefix::<F, E, _>(
         grinding,
@@ -67,7 +81,9 @@ where
             )
         })?;
     if input_claim != expected {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "eor backend input claim differs from weighted public partials".into(),
+        ));
     }
     let mut kernel = EorSumcheck::<F, E, B> {
         backend,
@@ -100,7 +116,9 @@ where
             .fold(E::zero(), |sum, (value, weight)| sum + *value * *weight)
             != claim
     {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "eor backend final claims differ from sumcheck output".into(),
+        ));
     }
     let mut final_factors = Vec::with_capacity(group_inputs.len());
     let mut protocol_points = Vec::with_capacity(group_inputs.len());
@@ -108,10 +126,14 @@ where
         let tail = input
             .point
             .get(split_bits..)
-            .ok_or(AkitaError::InvalidProof)?;
-        let local = rho.get(..tail.len()).ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| AkitaError::Internal("eor group point has no tensor tail".into()))?;
+        let local = rho.get(..tail.len()).ok_or_else(|| {
+            AkitaError::Internal("eor challenge point is shorter than group tensor tail".into())
+        })?;
         let mut factor = tensor_equality_factor_eval_at_point::<F, E>(tail, &eta, local)?;
-        for extra in rho.get(tail.len()..).ok_or(AkitaError::InvalidProof)? {
+        for extra in rho.get(tail.len()..).ok_or_else(|| {
+            AkitaError::Internal("eor challenge point has no extra-coordinate range".into())
+        })? {
             factor *= E::one() - *extra;
         }
         let point = dispatch_for_field!(
