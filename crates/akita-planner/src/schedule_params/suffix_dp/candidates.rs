@@ -242,7 +242,7 @@ fn opening_work_domain(
                         root_key,
                         ctx.precommitted_source_contracts,
                     )?;
-                    Ok(products)
+                    Ok::<_, AkitaError>(products)
                 })
                 .transpose()?
         } else {

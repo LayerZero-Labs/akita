@@ -59,3 +59,12 @@ pub enum AkitaError {
     #[error("Internal error: {0}")]
     Internal(String),
 }
+
+/// Every transcript failure rejects the proof: a verifier transcript fails
+/// only on malformed or missing proof bytes, and a prover transcript only on
+/// a message outside its public bound.
+impl From<jolt_transcript::TranscriptError> for AkitaError {
+    fn from(_: jolt_transcript::TranscriptError) -> Self {
+        Self::InvalidProof
+    }
+}
