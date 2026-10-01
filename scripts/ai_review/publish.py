@@ -100,18 +100,41 @@ def validate(snapshot, proposal):
     return findings
 
 
+def approval_recommended(state):
+    return (state["complete"] and not state["discussion_blockers"]
+            and all(f["status"] == "fixed" or (f["status"] == "open" and f["priority"] == "nit")
+                    for f in state["findings"]))
+
+
+def sync_labels(github, number, state):
+    # Only the newest verified review may determine labels, including on retries.
+    # These destinations and label names never come from model output.
+    pr = github.get(f"pulls/{number}")
+    scope = {"revision": revision(pr), "title": pr["title"], "description": pr.get("body") or ""}
+    approved = (state["head"] == pr["head"]["sha"]
+                and state.get("scope_digest") == digest(scope)
+                and approval_recommended(state))
+    endpoint = f"issues/{number}/labels"
+    labels = {label["name"] for label in github.pages(endpoint)}
+    if not approved and "ai-approved" in labels:
+        github.get(f"{endpoint}/ai-approved", method="DELETE")
+    wanted = {"ai-reviewed"} | ({"ai-approved"} if approved else set())
+    if wanted - labels:
+        github.get(endpoint, {"labels": sorted(wanted - labels)})
+
+
 def prepare_review(snapshot, proposal):
     findings = validate(snapshot, proposal)
     result = proposal["result"]
     state = {"repository": REPOSITORY, "number": snapshot["number"], "request": snapshot["request"],
              "head": snapshot["revision"]["head"], "findings": findings,
+             "scope_digest": digest({key: snapshot[key] for key in ("revision", "title", "description")}),
              "complete": result["complete"], "limitations": result["limitations"],
              "discussion_blockers": result["discussion_blockers"]}
     encoded = base64.b64encode(json.dumps(state).encode()).decode()
     body = f"{MARKER}{encoded} -->"
     remaining = [finding for finding in findings if finding["status"] != "fixed"]
-    if (result["complete"] and not result["discussion_blockers"]
-            and all(f["status"] == "open" and f["priority"] == "nit" for f in remaining)):
+    if approval_recommended(state):
         reason = "only optional nits remain" if remaining else "no unresolved findings"
         body += f"\n\nRecommended for approval: {reason} in this automated review."
     comments = []
@@ -135,6 +158,7 @@ def publish(github, event, snapshot, proposal):
     comments = discussions(github, pr["number"])
     if any(c["own"] and previous_state([c], pr["number"])["request"] == snapshot["request"]
            for c in comments):
+        sync_labels(github, pr["number"], previous_state(comments, pr["number"]))
         return "already-published"
     if (revision(pr) != snapshot["revision"] or comments != snapshot["comments"]
             or pr["title"] != snapshot["title"] or (pr.get("body") or "") != snapshot["description"]):
@@ -149,4 +173,6 @@ def publish(github, event, snapshot, proposal):
     if (verified.get("body") != payload["body"] or verified.get("commit_id") != payload["commit_id"]
             or verified.get("state") != "COMMENTED" or actual != expected):
         raise ReviewError("Published review could not be verified; do not blindly retry")
+    sync_labels(github, pr["number"], previous_state(
+        [{"id": posted["id"], "own": True, "body": verified["body"]}], pr["number"]))
     return "published"

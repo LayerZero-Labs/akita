@@ -39,17 +39,27 @@ class FakeGitHub:
         self.permission = "write"
         self.comments = [self.command]
         self.reviews, self.inline, self.writes = [], [], []
+        self.labels = {"documentation"}
         self.permissions_checked = []
 
-    def get(self, path, payload=None):
+    def get(self, path, payload=None, method=None):
+        if method == "DELETE":
+            if path != "issues/7/labels/ai-approved":
+                raise AssertionError(path)
+            self.writes.append((path, None))
+            self.labels.discard("ai-approved")
+            return [{"name": name} for name in self.labels]
         if payload is not None:
             self.writes.append((path, payload))
+            if path == "issues/7/labels":
+                self.labels.update(payload["labels"])
+                return [{"name": name} for name in self.labels]
             if path == "issues/7/comments":
                 posted = {"id": 1000 + len(self.comments), "body": payload["body"],
                           "user": {"login": "github-actions[bot]", "type": "Bot", "id": 1}}
                 self.comments.append(posted)
                 return posted
-            posted = {"id": 99, "user": {"login": "github-actions[bot]", "type": "Bot", "id": 1},
+            posted = {"id": 99 + len(self.reviews), "user": {"login": "github-actions[bot]", "type": "Bot", "id": 1},
                       "body": payload["body"], "submitted_at": "later",
                       "state": "COMMENTED", "commit_id": payload["commit_id"]}
             self.reviews.append(posted)
@@ -57,8 +67,8 @@ class FakeGitHub:
                                 "user": posted["user"], "pull_request_review_id": posted["id"]}
                                for i, c in enumerate(payload["comments"]))
             return posted
-        if path == "pulls/7/reviews/99":
-            return self.reviews[-1]
+        if path.startswith("pulls/7/reviews/"):
+            return next(r for r in self.reviews if r["id"] == int(path.split("/")[-1]))
         if path == "pulls/7":
             return self.pr
         if path.startswith("issues/comments/"):
@@ -70,6 +80,8 @@ class FakeGitHub:
         return user.get("id") == 42 and self.permission in ("admin", "maintain", "write")
 
     def pages(self, path):
+        if path == "issues/7/labels":
+            return [{"name": name} for name in self.labels]
         return {"issues/7/comments": self.comments, "pulls/7/reviews": self.reviews,
                 "pulls/7/comments": self.inline, "pulls/7/reviews/99/comments": self.inline}[path]
 
@@ -300,6 +312,88 @@ class SourceToolTests(unittest.TestCase):
 
 
 class PublicationTests(unittest.TestCase):
+    def test_blocking_or_incomplete_review_removes_only_approval_label(self):
+        for complete, blockers in ((True, []), (False, []), (True, ["An unresolved human finding"])):
+            gh = FakeGitHub()
+            gh.labels.update({"ai-reviewed", "ai-approved"})
+            value = snapshot(gh)
+            result = proposal(value)
+            result["result"].update(complete=complete, discussion_blockers=blockers)
+            if not complete or blockers:
+                result["result"]["findings"] = []
+            publish(gh, EVENT, value, result)
+            self.assertEqual(gh.labels, {"documentation", "ai-reviewed"})
+
+    def test_label_failure_is_repaired_without_publishing_another_review(self):
+        gh = FakeGitHub()
+        value = snapshot(gh)
+        result = proposal(value)
+        result["result"]["findings"] = []
+        original = gh.get
+
+        def fail_label_write(path, payload=None, method=None):
+            if path == "issues/7/labels" and payload:
+                raise ReviewError("Label write failed")
+            return original(path, payload, method)
+
+        with patch.object(gh, "get", side_effect=fail_label_write):
+            with self.assertRaises(ReviewError):
+                publish(gh, EVENT, value, result)
+        self.assertEqual(len(gh.reviews), 1)
+        self.assertEqual(gh.labels, {"documentation"})
+        self.assertEqual(publish(gh, EVENT, value, result), "already-published")
+        self.assertEqual(len(gh.reviews), 1)
+        self.assertEqual(gh.labels, {"documentation", "ai-reviewed", "ai-approved"})
+
+    def test_old_event_replay_uses_latest_review_and_cannot_restore_old_approval(self):
+        gh = FakeGitHub()
+        old = snapshot(gh)
+        clean = proposal(old)
+        clean["result"]["findings"] = []
+        publish(gh, EVENT, old, clean)
+        event = copy.deepcopy(EVENT)
+        event["comment"]["id"] = 13
+        gh.comments.append({**COMMAND, "id": 13})
+        current = snapshot(gh)
+        current["request"] = 13
+        current["prior"] = previous_state(discussions(gh, 7), 7)
+        seal(current)
+        publish(gh, event, current, proposal(current))
+        self.assertNotIn("ai-approved", gh.labels)
+        publish(gh, EVENT, old, clean)
+        self.assertNotIn("ai-approved", gh.labels)
+        self.assertEqual(len(gh.reviews), 2)
+
+    def test_changed_revision_or_description_cannot_reapply_approval_on_retry(self):
+        for change in ("head", "base", "description"):
+            gh = FakeGitHub()
+            value = snapshot(gh)
+            result = proposal(value)
+            result["result"]["findings"] = []
+            publish(gh, EVENT, value, result)
+            if change == "description":
+                gh.pr["body"] = "New scope"
+            else:
+                gh.pr[change]["sha"] = "c" * 40
+            publish(gh, EVENT, value, result)
+            self.assertEqual(gh.labels, {"documentation", "ai-reviewed"})
+
+    def test_failed_review_verification_does_not_add_labels(self):
+        gh = FakeGitHub()
+        value = snapshot(gh)
+        original = gh.get
+
+        def corrupt_readback(path, payload=None, method=None):
+            response = original(path, payload, method)
+            if path.startswith("pulls/7/reviews/"):
+                return {**response, "body": "Unexpected content"}
+            return response
+
+        with patch.object(gh, "get", side_effect=corrupt_readback):
+            with self.assertRaises(ReviewError):
+                publish(gh, EVENT, value, proposal(value))
+        self.assertEqual(gh.labels, {"documentation"})
+
     def test_clean_and_nit_only_reviews_recommend_approval_once(self):
         for priority in (None, "nit", "P0", "P1", "P2", "P3"):
             with self.subTest(priority=priority):
@@ -320,7 +414,10 @@ class PublicationTests(unittest.TestCase):
                 state = previous_state(discussions(gh, 7), 7)
                 self.assertEqual(state["request"], value["request"])
                 self.assertEqual(publish(gh, EVENT, value, result), "already-published")
-                self.assertEqual(len(gh.writes), 1)
+                self.assertEqual(len(gh.writes), 2)
+                self.assertIn("ai-reviewed", gh.labels)
+                self.assertEqual("ai-approved" in gh.labels, priority in (None, "nit"))
+                self.assertIn("documentation", gh.labels)
 
     def test_prior_findings_control_approval_even_when_no_new_findings_exist(self):
         for priority, status, recommend in (("P1", "open", False), ("P1", "fixed", True),
@@ -378,7 +475,7 @@ class PublicationTests(unittest.TestCase):
         result = proposal(value)
         self.assertEqual(publish(gh, EVENT, value, result), "published")
         self.assertEqual(publish(gh, EVENT, value, result), "already-published")
-        self.assertEqual(len(gh.writes), 1)
+        self.assertEqual(len(gh.writes), 2)
         self.assertEqual(gh.writes[0][0], "pulls/7/reviews")
         self.assertEqual(gh.writes[0][1]["comments"][0]["side"], "RIGHT")
         self.assertNotIn("###", gh.writes[0][1]["body"])

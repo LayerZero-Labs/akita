@@ -22,7 +22,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise ReviewError("HTTP redirect refused")
 
 
-def request(origin, path, token, payload=None):
+def request(origin, path, token, payload=None, method=None):
     if origin not in ("https://api.github.com", "https://api.openai.com"):
         raise ReviewError("Unknown API origin")
     if not path.startswith("/") or path.startswith("//"):
@@ -30,7 +30,7 @@ def request(origin, path, token, payload=None):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     if origin == "https://api.github.com":
         headers.update({"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"})
-    req = urllib.request.Request(origin + path, headers=headers,
+    req = urllib.request.Request(origin + path, headers=headers, method=method,
                                  data=None if payload is None else json.dumps(payload).encode())
     try:
         with urllib.request.build_opener(NoRedirect).open(req, timeout=180) as response:
@@ -48,8 +48,8 @@ class GitHub:
     def __init__(self, token):
         self.token = token
 
-    def get(self, path, payload=None):
-        return request("https://api.github.com", f"/repos/{REPOSITORY}/{path}", self.token, payload)
+    def get(self, path, payload=None, method=None):
+        return request("https://api.github.com", f"/repos/{REPOSITORY}/{path}", self.token, payload, method)
 
     def pages(self, path):
         items = []

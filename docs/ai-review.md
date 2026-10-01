@@ -1,10 +1,11 @@
-# Author-requested AI reviews
+# AI PR review
 
 An author with current repository write, maintain, or admin permission can post
 exactly `/ai-review` on their open, same-repository PR, with no spaces, newlines
 or additional text. The workflow posts its
 findings inline on the corresponding source lines in the PR diff. It
-does not require the `ai-review` label. Other users, external contributors, forks,
+uses the command to select PRs; the obsolete `ai-review` label is retired.
+Other users, external contributors, forks,
 bots, edited comments and comments containing additional instructions cannot
 trigger it. The workflow must first land on the default branch (`main`), because
 [GitHub runs issue-comment workflows from that branch](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#issue_comment).
@@ -36,6 +37,23 @@ uncertain findings, or incomplete coverage prevent the recommendation, even if
 there are no new findings. This is a COMMENT review proposing approval; it does
 not submit GitHub's formal APPROVE action.
 
+After publication and read-back verification, the workflow adds `ai-reviewed`
+to the **PR**. It also adds `ai-approved` when that review recommends approval,
+including a review with no inline findings or only optional nits. A later
+published review with blockers or incomplete coverage removes `ai-approved`.
+The same approval decision controls both the prose and label; model text cannot
+select labels. Existing unrelated PR labels are preserved. A failed publication
+does not add labels; retrying a failed label update repairs labels without
+posting the review again and uses the latest published review, not an old result.
+
+`ai-reviewed` remains as review history. New commits (including force pushes),
+PR edits and reopening clear `ai-approved` through a metadata-only job with no
+checkout or OpenAI access. Label updates are asynchronous and labels are not a
+merge authorization or proof that all current discussion has been checked.
+GitHub allows users with triage or higher access to edit labels; these labels
+are informational, not an admin-only security control. Repository setup must
+create `ai-reviewed` and `ai-approved` before this workflow is used.
+
 The repository copy of the [review skill](../.github/skills/ai-pr-review/SKILL.md)
 is the source of truth for automation. Its
 [automation contract](../.github/skills/ai-pr-review/references/automation.md)
@@ -57,6 +75,7 @@ checkout, so a PR cannot overwrite the trusted scripts or skill.
 | Collect | Read-only GitHub token | Revalidate author and current write access, read trusted comments, collect pinned public git objects |
 | Review | Environment OpenAI key, read-only job permission | Send source evidence to the fixed OpenAI Responses endpoint; offer bounded in-memory source reads/searches |
 | Publish | PR write token; no OpenAI key | Validate the structured result, recheck authorization and snapshot, submit one COMMENT review with new inline findings on the original PR |
+| Invalidate approval | PR write token; no OpenAI key | On PR updates, remove only `ai-approved` without checking out source or running a review |
 
 The model receives neither credential nor process/environment access. The source
 tools cannot fetch URLs, traverse the filesystem, invoke a shell, or write to
