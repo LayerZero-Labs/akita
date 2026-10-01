@@ -33,5 +33,5 @@ pub use config::{
 };
 pub use fold_draw::{
     fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, PreviewFoldDraw,
-    ProverFoldDraw, VerifierFoldDraw,
+    TranscriptFoldDraw, FOLD_CHALLENGE_SEED_LEN,
 };

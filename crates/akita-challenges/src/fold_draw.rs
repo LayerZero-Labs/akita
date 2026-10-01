@@ -3,7 +3,10 @@
 use crate::sampler::MAX_STACK_RING_DIM;
 use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig};
 use akita_error::AkitaError;
-use akita_transcript::FOLD_CHALLENGE_SEED_LEN;
+use jolt_transcript::{Channel, Preview, SiteId, Sponge};
+
+/// Byte length of every fold-challenge seed.
+pub const FOLD_CHALLENGE_SEED_LEN: usize = 32;
 
 const FOLD_CHALLENGE_ROUND_DOMAIN: &[u8] = b"akita/fold-challenge-round/v1";
 /// Label suffix of the sparse-challenge Fiat–Shamir absorb buffer for one draw
@@ -57,9 +60,6 @@ pub trait FoldDraw {
         &mut self,
         payload: &[u8],
     ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError>;
-
-    #[cfg(feature = "logging-transcript")]
-    fn record_challenge_range(&mut self, _group_index: usize, _coordinate_count: usize) {}
 
     #[allow(clippy::too_many_arguments)]
     fn draw_folding_challenges_with_rejection(
@@ -129,124 +129,57 @@ pub trait FoldDraw {
         let challenges = crate::sampler::sample_indexed_challenges_from_seed(
             &seed, ring_d, total, cfg, rejection,
         )?;
-        #[cfg(feature = "logging-transcript")]
-        self.record_challenge_range(group_index, total);
         Challenges::from_sparse(challenges, num_live_blocks, num_claims)
     }
 }
 
-fn fold_record(
-    level: u32,
-    group: u32,
-    payload_len: usize,
-) -> akita_transcript::ProtocolContextRecord {
-    let encoded_bytes = payload_len as u64;
-    akita_transcript::ProtocolContextRecord::new(
-        akita_transcript::ProtocolSiteId {
-            family: akita_transcript::SITE_FAMILY_FOLD_CHALLENGE,
-            level,
-            group,
-            ..akita_transcript::ProtocolSiteId::default()
-        }
-        .to_bytes(),
-        akita_transcript::ProtocolMessageKind::Challenge as u32,
-        encoded_bytes,
-        encoded_bytes,
-        FOLD_CHALLENGE_SEED_LEN as u64,
-    )
-}
-
 /// One group-local fold-root draw against a candidate public state.
-pub struct PreviewFoldDraw<'a> {
-    preview: &'a mut akita_transcript::FoldPreview,
+pub struct PreviewFoldDraw<'a, H> {
+    preview: &'a mut Preview<H>,
 }
 
-impl<'a> PreviewFoldDraw<'a> {
-    /// Bind this short-lived draw adapter to one schedule-derived fold group.
+impl<'a, H> PreviewFoldDraw<'a, H> {
+    /// Bind this short-lived draw adapter to one candidate preview.
     #[must_use]
-    pub const fn new(preview: &'a mut akita_transcript::FoldPreview) -> Self {
+    pub const fn new(preview: &'a mut Preview<H>) -> Self {
         Self { preview }
     }
 }
 
-impl FoldDraw for PreviewFoldDraw<'_> {
+impl<H: Sponge> FoldDraw for PreviewFoldDraw<'_, H> {
     fn absorb_and_squeeze(
         &mut self,
         payload: &[u8],
     ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
-        Ok(self.preview.fold_root(payload))
+        self.preview.absorb_bytes(payload);
+        Ok(self.preview.squeeze())
     }
 }
 
-/// One group-local fold-root draw against the live prover channel.
-pub struct ProverFoldDraw<'a> {
-    state: &'a mut akita_transcript::ProverChannel,
-    level: u32,
-    group: u32,
+/// One group-local fold-root draw against a live prover or verifier transcript.
+pub struct TranscriptFoldDraw<'a, C> {
+    channel: &'a mut C,
+    site: SiteId,
 }
 
-impl<'a> ProverFoldDraw<'a> {
-    /// Bind this short-lived draw adapter to one schedule-derived fold group.
+impl<'a, C> TranscriptFoldDraw<'a, C> {
+    /// Bind this short-lived draw adapter to one schedule-derived fold group site.
     #[must_use]
-    pub const fn new(
-        state: &'a mut akita_transcript::ProverChannel,
-        level: u32,
-        group: u32,
-    ) -> Self {
-        Self {
-            state,
-            level,
-            group,
-        }
+    pub const fn new(channel: &'a mut C, site: SiteId) -> Self {
+        Self { channel, site }
     }
 }
 
-impl FoldDraw for ProverFoldDraw<'_> {
+impl<C: Channel> FoldDraw for TranscriptFoldDraw<'_, C> {
+    // Absorbed unframed, exactly as `Preview::absorb_bytes` replays it, so a
+    // previewed fold-response candidate draws the live root.
     fn absorb_and_squeeze(
         &mut self,
         payload: &[u8],
     ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
-        Ok(akita_transcript::prover_fold_root(
-            self.state,
-            fold_record(self.level, self.group, payload.len()),
-            payload,
-        ))
-    }
-}
-
-/// One group-local fold-root draw against the live verifier channel.
-pub struct VerifierFoldDraw<'a, 'proof> {
-    state: &'a mut akita_transcript::VerifierChannel<'proof>,
-    level: u32,
-    group: u32,
-}
-
-impl<'a, 'proof> VerifierFoldDraw<'a, 'proof> {
-    /// Bind this short-lived draw adapter to one schedule-derived fold group.
-    #[must_use]
-    pub const fn new(
-        state: &'a mut akita_transcript::VerifierChannel<'proof>,
-        level: u32,
-        group: u32,
-    ) -> Self {
-        Self {
-            state,
-            level,
-            group,
-        }
-    }
-}
-
-impl FoldDraw for VerifierFoldDraw<'_, '_> {
-    fn absorb_and_squeeze(
-        &mut self,
-        payload: &[u8],
-    ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
-        akita_transcript::verifier_fold_root(
-            self.state,
-            fold_record(self.level, self.group, payload.len()),
-            payload,
-        )
+        self.channel.site(self.site);
+        self.channel.public_all(payload);
+        Ok(self.channel.challenge_bytes())
     }
 }
 
