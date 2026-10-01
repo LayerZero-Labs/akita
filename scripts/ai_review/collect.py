@@ -6,7 +6,7 @@ import os
 import re
 import subprocess
 
-from common import MARKER, REPOSITORY, ReviewError, authorize, digest, revision, sha
+from common import MARKER, REPOSITORY, ReviewError, authorize, digest, reopen_epoch, revision, sha
 
 # GitHub-issued identities, verified via /users/cursor[bot] and /apps/cursor.
 # Keep this allowlist in trusted workflow code, never in PR-controlled config.
@@ -134,6 +134,7 @@ def tree(commit, blobs):
 def collect(github, event):
     pr = authorize(github, event)
     number = pr["number"]
+    epoch = reopen_epoch(github, number)
     comments = discussions(github, number)
     prior = previous_state(comments, number)
     if any(c["own"] and previous_state([c], number)["request"] == event["comment"]["id"]
@@ -158,12 +159,14 @@ def collect(github, event):
              {"head": revisions["head"], "base": merge_base,
               **({"previous": prior["head"]} if prior else {})}.items()}
     snapshot = {"repository": REPOSITORY, "number": number, "request": event["comment"]["id"],
+                "reopen_epoch": epoch,
                 "revision": revisions, "merge_base": merge_base, "title": pr["title"],
                 "description": pr.get("body") or "", "comments": comments, "prior": prior,
                 "diff": diff, "delta": delta, "changed": changed, "anchors": anchors,
                 "trees": trees, "blobs": blobs}
     fresh = authorize(github, event)
-    if revision(fresh) != revisions or discussions(github, number) != comments:
+    if (revision(fresh) != revisions or discussions(github, number) != comments
+            or reopen_epoch(github, number) != epoch):
         raise ReviewError("PR changed during collection; post a new command")
     snapshot["digest"] = digest(snapshot)
     return snapshot

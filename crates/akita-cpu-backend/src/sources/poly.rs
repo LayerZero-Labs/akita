@@ -185,7 +185,7 @@ where
         point: &[F],
         num_positions_per_block: usize,
         num_live_blocks: usize,
-        basis: akita_types::BasisMode,
+        basis: akita_params::BasisMode,
     ) -> Result<F, AkitaError>;
 }
 
@@ -194,7 +194,7 @@ fn evaluate_root_polynomial_with_kernel<F, P, const D: usize>(
     point: &[F],
     num_positions_per_block: usize,
     num_live_blocks: usize,
-    basis: akita_types::BasisMode,
+    basis: akita_params::BasisMode,
     evaluate: impl FnOnce(&[F], &[F], usize) -> Result<akita_algebra::CyclotomicRing<F, D>, AkitaError>,
 ) -> Result<F, AkitaError>
 where
@@ -210,7 +210,7 @@ where
     }
     let mut point = point.to_vec();
     point.resize(target_num_vars, F::zero());
-    let ring_point = akita_types::ring_opening_point_from_field(
+    let ring_point = akita_params::ring_opening_point_from_field(
         &point[alpha_bits..],
         num_positions_per_block,
         num_live_blocks,
@@ -222,7 +222,7 @@ where
         num_positions_per_block,
     )?;
     let inner =
-        akita_types::reduce_inner_opening_to_ring_element::<F, D>(&point[..alpha_bits], basis)?;
+        akita_params::reduce_inner_opening_to_ring_element::<F, D>(&point[..alpha_bits], basis)?;
     Ok(value.coefficient_inner_product(&inner))
 }
 impl<F: Field + CanonicalEncoding, const D: usize> RootPolynomialEvaluator<F, D>
@@ -233,7 +233,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> RootPolynomialEvaluator<F, D>
         point: &[F],
         positions: usize,
         blocks: usize,
-        basis: akita_types::BasisMode,
+        basis: akita_params::BasisMode,
     ) -> Result<F, AkitaError> {
         evaluate_root_polynomial_with_kernel::<F, _, D>(
             self,
@@ -258,7 +258,7 @@ impl<F: Field + CanonicalEncoding + Unreduced, I: crate::opaque::OneHotIndex, co
         point: &[F],
         positions: usize,
         blocks: usize,
-        basis: akita_types::BasisMode,
+        basis: akita_params::BasisMode,
     ) -> Result<F, AkitaError> {
         evaluate_root_polynomial_with_kernel::<F, _, D>(
             self,
@@ -281,7 +281,7 @@ pub fn evaluate_root_polynomial<F, P, const D: usize>(
     point: &[F],
     num_positions_per_block: usize,
     num_live_blocks: usize,
-    basis: akita_types::BasisMode,
+    basis: akita_params::BasisMode,
 ) -> Result<F, AkitaError>
 where
     F: Field + CanonicalEncoding,

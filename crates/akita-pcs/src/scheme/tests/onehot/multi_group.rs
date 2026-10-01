@@ -6,21 +6,21 @@ fn multi_group_key<Cfg: CommitmentConfig>(
     final_num_vars: usize,
     pre_sizes: &[usize],
     final_size: usize,
-) -> akita_types::ScheduleLookupKey {
+) -> akita_params::ScheduleLookupKey {
     let precommitteds = pre_sizes
         .iter()
         .map(|&num_polynomials| {
             schedules
-                .resolve_key(&akita_types::ScheduleLookupKey::single(
-                    akita_types::PolynomialGroupLayout::new(pre_num_vars, num_polynomials),
+                .resolve_key(&akita_params::ScheduleLookupKey::single(
+                    akita_params::PolynomialGroupLayout::new(pre_num_vars, num_polynomials),
                 ))
                 .expect("independent row")
                 .profiles()
                 .final_group
         })
         .collect();
-    akita_types::ScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::new(final_num_vars, final_size),
+    akita_params::ScheduleLookupKey {
+        final_group: akita_params::PolynomialGroupLayout::new(final_num_vars, final_size),
         precommitteds,
     }
 }
@@ -29,7 +29,7 @@ fn multi_group_key<Cfg: CommitmentConfig>(
 /// one caller-materialized scheme and exact lookup key.
 fn multi_group_root_round_trip_onehot<ProtocolCfg>(
     scheme: &AkitaCommitmentScheme<ProtocolCfg>,
-    multi_group_key: &akita_types::ScheduleLookupKey,
+    multi_group_key: &akita_params::ScheduleLookupKey,
     check_group_binding: bool,
     max_cached_ring_switch_elements: usize,
 ) -> Vec<u8>
@@ -129,19 +129,21 @@ where
             "root fold must retain the configured chunk count"
         );
         let relation_geometry =
-            akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+            akita_params::RelationWitnessGeometry::for_evaluation_trace_execution(
                 root_commitment,
                 &opening_layout,
             )
             .expect("evaluation-trace relation geometry");
-        let witness_layout = akita_types::WitnessLayout::new(
+        let witness_layout = akita_params::WitnessLayout::new(
             root_commitment,
             &opening_layout,
             &relation_geometry,
             root_commitment.witness_chunk.num_chunks,
-            akita_types::RelationQuotientPlan::quotient_lift(
-                akita_types::r_decomp_levels::<OneHotF>(root_commitment.open().digits.log_basis),
-            )
+            akita_params::RelationQuotientPlan::quotient_lift(akita_params::r_decomp_levels::<
+                OneHotF,
+            >(
+                root_commitment.open().digits.log_basis,
+            ))
             .expect("quotient-lift relation plan"),
         )
         .expect("group-by-chunk witness layout");
@@ -159,7 +161,7 @@ where
             )
         })
         .collect();
-    let precommitteds = akita_types::PrecommittedGroupProfiles::from_profiles(
+    let precommitteds = akita_params::PrecommittedGroupProfiles::from_profiles(
         pre_commitments
             .iter()
             .map(|group| *group.profile())

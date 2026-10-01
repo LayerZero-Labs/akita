@@ -57,6 +57,7 @@ version = "0.1.0"
 dependencies = [
  "akita-challenges",
  "akita-error",
+ "akita-params",
  "akita-schedules",
  "akita-serialization",
  "akita-transcript",
@@ -73,6 +74,7 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-error",
+ "akita-params",
  "akita-prover",
  "akita-serialization",
  "akita-sumcheck",
@@ -95,6 +97,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-params"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-challenges",
+ "akita-error",
+ "akita-serialization",
+ "akita-sumcheck",
+ "akita-transcript",
+ "blake2",
+ "jolt-field",
+ "num-bigint 0.5.1",
+ "rand 0.8.8",
+ "serde",
+ "sha3 0.12.0",
+]
+
+[[package]]
 name = "akita-pcs"
 version = "0.1.0"
 dependencies = [
@@ -103,6 +123,7 @@ dependencies = [
  "akita-config",
  "akita-cpu-backend",
  "akita-error",
+ "akita-params",
  "akita-planner",
  "akita-prover",
  "akita-schedules",
@@ -141,9 +162,9 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-error",
+ "akita-params",
  "akita-schedules",
  "akita-sis-estimator",
- "akita-types",
  "libm",
 ]
 
@@ -155,6 +176,7 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-error",
+ "akita-params",
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
@@ -170,7 +192,7 @@ version = "0.1.0"
 dependencies = [
  "akita-challenges",
  "akita-error",
- "akita-types",
+ "akita-params",
  "serde",
  "serde_json",
 ]
@@ -193,6 +215,7 @@ dependencies = [
  "akita-config",
  "akita-cpu-backend",
  "akita-error",
+ "akita-params",
  "akita-serialization",
  "akita-types",
  "jolt-field",
@@ -203,7 +226,7 @@ dependencies = [
 name = "akita-sis-estimator"
 version = "0.1.0"
 dependencies = [
- "akita-types",
+ "akita-params",
  "criterion",
  "libm",
  "num-bigint 0.5.1",
@@ -242,18 +265,15 @@ dependencies = [
  "akita-algebra",
  "akita-challenges",
  "akita-error",
+ "akita-params",
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
- "blake2",
  "criterion",
  "jolt-field",
  "jolt-poly",
- "num-bigint 0.5.1",
  "rand 0.8.8",
  "rand_core 0.6.4",
- "serde",
- "sha3 0.12.0",
  "shake",
  "tracing",
 ]
@@ -266,6 +286,7 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-error",
+ "akita-params",
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",

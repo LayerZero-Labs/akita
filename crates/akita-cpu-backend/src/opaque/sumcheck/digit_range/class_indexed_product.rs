@@ -13,8 +13,8 @@ use super::round_accumulation::accumulate_equality_weighted_values;
 use super::{MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
+use akita_params::DigitRangePlan;
 use akita_sumcheck::EqFactoredSumcheckInstanceProver;
-use akita_types::DigitRangePlan;
 use jolt_field::{Field, Ring};
 use jolt_field::{Fold, Unreduced};
 use jolt_poly::OmittedConstantPoly;
@@ -736,7 +736,7 @@ mod tests {
     #[test]
     fn final_child_claims_reject_every_unfinished_storage_phase() {
         use crate::sources::packed_digits::PackedSignedDigits;
-        use akita_types::FlatBooleanDomain;
+        use akita_params::FlatBooleanDomain;
         use jolt_field::Zero;
         type F = Prime128Offset275;
         let plan = DigitRangePlan::new(16).unwrap();

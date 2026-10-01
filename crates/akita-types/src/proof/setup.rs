@@ -1,8 +1,8 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
 use super::setup_prefix::SetupPrefixVerifierRegistry;
-use crate::FlatMatrix;
 use akita_error::AkitaError;
+use akita_params::FlatMatrix;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -334,7 +334,7 @@ impl SetupSeedPageXof {
 }
 
 fn field_modulus_bytes<F: Field + CanonicalEncoding>() -> [u8; 32] {
-    crate::field_modulus_be_bytes::<F>()
+    akita_params::field_modulus_be_bytes::<F>()
         .expect("setup fields must have a modulus of at most 256 bits")
 }
 
@@ -645,48 +645,59 @@ mod tests {
     type SmallF = Fp64<4294967197>;
     const SMALL_D: usize = 64;
 
-    fn prefix_commitment_params(n_prefix: usize, d_setup: usize) -> crate::GroupOpenPhaseParams {
-        let a_bound = *crate::sis::inner_coeff_linf_bounds(
-            crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+    fn prefix_commitment_params(
+        n_prefix: usize,
+        d_setup: usize,
+    ) -> akita_params::GroupOpenPhaseParams {
+        let a_bound = *akita_params::sis::inner_coeff_linf_bounds(
+            akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
             u32::try_from(d_setup).expect("test ring dimension"),
         )
         .first()
         .expect("exact prefix A bounds");
-        let inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
-            crate::SisTableKey {
-                policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                table_digest: crate::sis::SisTableDigest::CURRENT,
-                modulus_profile: crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-                role: crate::sis::SisMatrixRole::Inner,
+        let inner_commit_matrix = akita_params::InnerCommitMatrixParams::try_new_with_min_rank(
+            akita_params::SisTableKey {
+                policy: akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: akita_params::sis::SisTableDigest::CURRENT,
+                modulus_profile: akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+                role: akita_params::sis::SisMatrixRole::Inner,
                 ring_dimension: u32::try_from(d_setup).expect("test ring dimension"),
                 coeff_linf_bound: a_bound,
             },
             1,
         )
         .expect("audited prefix A matrix");
-        let outer_commit_matrix = crate::OuterCommitMatrixParams::try_new_with_min_rank(
-            crate::SisTableKey {
-                policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                table_digest: crate::sis::SisTableDigest::CURRENT,
-                modulus_profile: crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-                role: crate::sis::SisMatrixRole::Outer,
+        let outer_commit_matrix = akita_params::OuterCommitMatrixParams::try_new_with_min_rank(
+            akita_params::SisTableKey {
+                policy: akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: akita_params::sis::SisTableDigest::CURRENT,
+                modulus_profile: akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+                role: akita_params::sis::SisMatrixRole::Outer,
                 ring_dimension: u32::try_from(d_setup).expect("test ring dimension"),
                 coeff_linf_bound: 3,
             },
             inner_commit_matrix.output_rank() * (n_prefix / d_setup),
         )
         .expect("audited prefix B matrix");
-        crate::GroupOpenPhaseParams {
+        akita_params::GroupOpenPhaseParams {
             setup_natural_len: None,
-            profile: crate::GroupCommitPhaseParams {
-                version: crate::GroupCommitPhaseParams::VERSION,
-                group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
-                blocks: crate::BlockGeometry::new(n_prefix / d_setup, 1, n_prefix / d_setup),
-                outer_slice_count: crate::CommitmentSliceCount::ONE,
-                inner: crate::RoleParams::new(crate::GadgetDigits::new(1, 1), inner_commit_matrix),
-                outer: crate::RoleParams::new(crate::GadgetDigits::new(1, 1), outer_commit_matrix),
+            profile: akita_params::GroupCommitPhaseParams {
+                version: akita_params::GroupCommitPhaseParams::VERSION,
+                group: akita_params::PolynomialGroupLayout::singleton(
+                    n_prefix.trailing_zeros() as usize
+                ),
+                blocks: akita_params::BlockGeometry::new(n_prefix / d_setup, 1, n_prefix / d_setup),
+                outer_slice_count: akita_params::CommitmentSliceCount::ONE,
+                inner: akita_params::RoleParams::new(
+                    akita_params::GadgetDigits::new(1, 1),
+                    inner_commit_matrix,
+                ),
+                outer: akita_params::RoleParams::new(
+                    akita_params::GadgetDigits::new(1, 1),
+                    outer_commit_matrix,
+                ),
             },
-            opening: crate::GroupOpeningPlan::evaluation_trace(
+            opening: akita_params::GroupOpeningPlan::evaluation_trace(
                 akita_challenges::SparseChallengeConfig::pm1_only(0),
                 1,
                 1,
@@ -714,14 +725,14 @@ mod tests {
         let d_setup = 64;
         let commitment_params = prefix_commitment_params(d_setup, d_setup);
         let matrix = &commitment_params.profile.outer.matrix;
-        let payload_coefficients = crate::CompressionChainPlan::for_complete_source(
+        let payload_coefficients = akita_params::CompressionChainPlan::for_complete_source(
             matrix.sis_modulus_profile(),
             matrix.output_rank() * matrix.ring_dimension(),
         )
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
         let slot = SetupPrefixVerifierSlot {
-            id: crate::scheduled_setup_prefix(d_setup - 1, commitment_params)
+            id: akita_params::scheduled_setup_prefix(d_setup - 1, commitment_params)
                 .slot_id()
                 .expect("setup prefix group"),
             commitment: SetupPrefixPublicCommitment {

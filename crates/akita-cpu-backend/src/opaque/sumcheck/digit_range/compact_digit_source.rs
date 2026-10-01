@@ -1,5 +1,5 @@
 use akita_error::AkitaError;
-use akita_types::{DigitRangePlan, FlatBooleanDomain};
+use akita_params::{DigitRangePlan, FlatBooleanDomain};
 use jolt_field::{Field, Ring};
 use std::sync::Arc;
 

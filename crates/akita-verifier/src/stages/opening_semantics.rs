@@ -7,9 +7,10 @@ use crate::stages::relation_claim::RelationClaim;
 use crate::stages::ring_switch::RingSwitchVerifyOutput;
 use crate::stages::stage2::Stage2OpeningSemantics;
 use akita_error::AkitaError;
+use akita_params::{BasisMode, CommittedGroupParams, OpeningClaimsLayout};
 use akita_types::{
-    ensure_trace_stage2_supported, proof::relation::relation_row_weight, BasisMode,
-    CommittedGroupParams, EvaluationTraceInputs, FpExtEncoding, OpeningClaimsLayout, OpeningFamily,
+    ensure_trace_stage2_supported, proof::relation::relation_row_weight, EvaluationTraceInputs,
+    FpExtEncoding, OpeningFamily,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 

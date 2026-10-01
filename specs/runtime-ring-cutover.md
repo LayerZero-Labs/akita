@@ -180,7 +180,7 @@ that
    reads for role-specific data),
 2. extracts the ring dimension of the **specific role** this operation
    touches (`d_a`, `d_b`, or `d_d` from [`CommitmentRingDims`]),
-3. invokes `akita_types::dispatch_for_field!(slot, F, role_d, |D| kernel::<D>(…))`
+3. invokes `akita_params::dispatch_for_field!(slot, F, role_d, |D| kernel::<D>(…))`
    exactly once for that operation,
 4. converts any D-typed kernel output back to D-free storage inside the
    dispatch arm,

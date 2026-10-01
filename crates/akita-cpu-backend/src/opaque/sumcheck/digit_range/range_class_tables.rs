@@ -2,7 +2,7 @@ use super::class_indexed_product::ProductArity;
 use super::compact_digit_source::RangeImageClass;
 use super::{compose_small_poly_with_affine, SmallPoly, MAX_TREE_STAGE_Q_DEGREE};
 use akita_error::AkitaError;
-use akita_types::DigitRangePlan;
+use akita_params::DigitRangePlan;
 use jolt_field::Fold;
 use jolt_field::{Field, Ring};
 

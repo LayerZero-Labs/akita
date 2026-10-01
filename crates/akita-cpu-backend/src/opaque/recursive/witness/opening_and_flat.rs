@@ -8,7 +8,7 @@ use crate::sources::poly_helpers::packed_tight_digit_fold_partitioned;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
-use akita_types::WitnessLayout;
+use akita_params::WitnessLayout;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
@@ -39,7 +39,7 @@ where
                 "recursive witness opening plan disagrees with its witness length".into(),
             ));
         }
-        let (partials, tensor_evals) = akita_types::dispatch_for_field!(
+        let (partials, tensor_evals) = akita_params::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
             plan.ring_dimension(),
@@ -171,7 +171,7 @@ impl RecursiveWitnessFlat {
             ));
         }
         let committed_len =
-            akita_types::witness_commitment_domain_len(self.digits.len(), ring_dim)?;
+            akita_params::witness_commitment_domain_len(self.digits.len(), ring_dim)?;
         self.committed_coeff_len = Some(committed_len);
         self.commitment_ring_dim = Some(ring_dim);
         Ok(self)

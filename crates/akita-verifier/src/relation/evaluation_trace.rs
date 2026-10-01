@@ -12,9 +12,9 @@ use akita_algebra::offset_eq::{
 };
 use akita_algebra::poly::multilinear_eval;
 use akita_error::AkitaError;
+use akita_params::{basis_weights, BasisMode};
 use akita_types::{
-    basis_weights, prepare_evaluation_trace_group_parameters, BasisMode, EvaluationTraceInputs,
-    FpExtEncoding,
+    prepare_evaluation_trace_group_parameters, EvaluationTraceInputs, FpExtEncoding,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
@@ -514,11 +514,12 @@ mod tests {
     use crate::benchmark_support::evaluation_trace_benchmark_case;
     use akita_algebra::CyclotomicRing;
     use akita_config::proof_optimized::fp128;
-    use akita_types::{
+    use akita_params::{
         basis_weights_prefix, ring_opening_point_from_field, BasisMode, CommittedGroupParams,
-        DigitRangePlan, OpeningClaimsLayout, PreparedOpeningPoint, RelationAddressGeometry,
-        RelationRangeImagePlan, RingMultiplierOpeningPoint, SisModulusProfileId, WitnessLayout,
+        DigitRangePlan, OpeningClaimsLayout, RelationAddressGeometry, SisModulusProfileId,
+        WitnessLayout,
     };
+    use akita_types::{PreparedOpeningPoint, RelationRangeImagePlan, RingMultiplierOpeningPoint};
     use jolt_field::Zero;
 
     #[test]
@@ -663,7 +664,7 @@ mod tests {
         .with_decomp(64, (1usize << NUM_VARIABLES) / D, 2, 2, 2)
         .expect("local EvaluationTrace geometry");
         let relation_witness_geometry =
-            akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+            akita_params::RelationWitnessGeometry::for_evaluation_trace_execution(
                 &level_params,
                 &opening_batch,
             )
@@ -673,7 +674,7 @@ mod tests {
             &opening_batch,
             &relation_witness_geometry,
             2,
-            akita_types::RelationQuotientPlan::for_field_bits(&level_params, F::MODULUS_BITS)
+            akita_params::RelationQuotientPlan::for_field_bits(&level_params, F::MODULUS_BITS)
                 .expect("relation quotient plan"),
         )
         .expect("two-chunk witness layout");
@@ -708,8 +709,8 @@ mod tests {
         let padded_point = (0..NUM_VARIABLES)
             .map(|index| E::from_u64(17 + 2 * index as u64))
             .collect();
-        let prepared_point = akita_types::dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        let prepared_point = akita_params::dispatch_for_field!(
+            akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
             F,
             group_params.inner_commit_matrix_params().ring_dimension(),
             |D_G| {

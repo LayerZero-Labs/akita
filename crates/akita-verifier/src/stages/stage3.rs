@@ -10,13 +10,11 @@ use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_algebra::ring::eval_ring_at_pows_fast;
 use akita_algebra::ring::evaluate_power_sequence_mle;
 use akita_error::AkitaError;
+use akita_params::{CommittedGroupParams, SETUP_SUMCHECK_DEGREE};
 use akita_serialization::AkitaSerialize;
 #[cfg(test)]
 use akita_types::AkitaExpandedSetup;
-use akita_types::{
-    setup_prefix_coverage_eval_len, AkitaVerifierSetup, CommittedGroupParams,
-    PreparedRelationAddress, SETUP_SUMCHECK_DEGREE,
-};
+use akita_types::{setup_prefix_coverage_eval_len, AkitaVerifierSetup, PreparedRelationAddress};
 #[cfg(test)]
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
@@ -103,7 +101,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
         let claim = akita_types::stage3_claim::<F, E, _>(grinding, level, E::zero())?;
         let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
             grinding,
-            akita_types::SumcheckProtocol::Stage3,
+            akita_params::SumcheckProtocol::Stage3,
             level,
             0,
         );
@@ -310,7 +308,7 @@ mod tests {
         };
         let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             descriptor,
-            akita_types::FlatMatrix::from_flat_data(
+            akita_params::FlatMatrix::from_flat_data(
                 (0..setup_eval_len * RING_D)
                     .map(|index| F::from_u64(11 + index as u64))
                     .collect(),
