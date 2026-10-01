@@ -53,25 +53,21 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         live_pairs: usize,
         relation_pair: impl Fn(usize) -> (E, E) + Sync,
     ) -> (NormRoundTerms<'_, E>, RoundMessage<E>) {
-        if let Some(recovery) = self.split_eq.prepare_linear_q_recovery() {
-            let (norm, relation) = self.compute_round_compact_dense_terms_with_skip_linear::<true>(
+        let recovery = self.split_eq.prepare_linear_q_recovery();
+        let (norm, relation) = if recovery.is_some() {
+            self.compute_round_compact_dense_terms_with_skip_linear::<true>(
                 compact_witness,
                 live_pairs,
                 relation_pair,
-            );
-            (
-                NormRoundTerms::SkipLinear([norm[0], norm[2]], recovery),
-                relation,
             )
         } else {
-            let (norm, relation) = self
-                .compute_round_compact_dense_terms_with_skip_linear::<false>(
-                    compact_witness,
-                    live_pairs,
-                    relation_pair,
-                );
-            (NormRoundTerms::Full(norm), relation)
-        }
+            self.compute_round_compact_dense_terms_with_skip_linear::<false>(
+                compact_witness,
+                live_pairs,
+                relation_pair,
+            )
+        };
+        (NormRoundTerms::from_totals(norm, recovery), relation)
     }
 
     fn compute_round_compact_dense_terms_with_skip_linear<const SKIP_LINEAR: bool>(
@@ -196,24 +192,21 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         live_pairs: usize,
         relation_pair: impl Fn(usize) -> (E, E) + Sync,
     ) -> (NormRoundTerms<'_, E>, RoundMessage<E>) {
-        if let Some(recovery) = self.split_eq.prepare_linear_q_recovery() {
-            let (norm, relation) = self.compute_folded_dense_round_terms_with_skip_linear::<true>(
+        let recovery = self.split_eq.prepare_linear_q_recovery();
+        let (norm, relation) = if recovery.is_some() {
+            self.compute_folded_dense_round_terms_with_skip_linear::<true>(
                 folded_witness,
                 live_pairs,
                 relation_pair,
-            );
-            (
-                NormRoundTerms::SkipLinear([norm[0], norm[2]], recovery),
-                relation,
             )
         } else {
-            let (norm, relation) = self.compute_folded_dense_round_terms_with_skip_linear::<false>(
+            self.compute_folded_dense_round_terms_with_skip_linear::<false>(
                 folded_witness,
                 live_pairs,
                 relation_pair,
-            );
-            (NormRoundTerms::Full(norm), relation)
-        }
+            )
+        };
+        (NormRoundTerms::from_totals(norm, recovery), relation)
     }
 
     fn compute_folded_dense_round_terms_with_skip_linear<const SKIP_LINEAR: bool>(

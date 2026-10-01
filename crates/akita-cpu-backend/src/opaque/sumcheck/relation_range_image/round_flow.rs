@@ -17,7 +17,7 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
 }
 
 impl<E: Field + Ring + Unreduced + Fold> RelationRoundState<E> {
-    pub(super) fn compute_current_round_message_from_state(
+    fn compute_current_round_message_from_state(
         &mut self,
         phase: &mut Phase<E>,
     ) -> RoundMessage<E> {
@@ -334,7 +334,7 @@ mod tests {
     use jolt_field::{Ext2, ExtField, Prime64Offset59};
 
     #[test]
-    fn round_hooks_after_completion_still_panic() {
+    fn round_hooks_after_completion_panic() {
         use jolt_field::{One, Prime128Offset275 as E};
         use std::panic::{catch_unwind, AssertUnwindSafe};
         for compute in [true, false] {

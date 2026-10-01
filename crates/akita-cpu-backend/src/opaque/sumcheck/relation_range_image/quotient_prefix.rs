@@ -848,10 +848,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             (6, true) => self.lookup_round::<16, true>(split_eq, out),
             _ => unreachable!("compact prefix rounds are capped by MAX_PREFIX_ROUNDS"),
         };
-        match recovery {
-            Some(recovery) => NormRoundTerms::SkipLinear([totals[0], totals[2]], recovery),
-            None => NormRoundTerms::Full(totals),
-        }
+        NormRoundTerms::from_totals(totals, recovery)
     }
 
     fn lookup_round<const G: usize, const SKIP_LINEAR: bool>(

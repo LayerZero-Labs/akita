@@ -204,8 +204,8 @@ impl<E: Field> GruenSplitEq<E> {
 
     /// Returns whether the current Gruen linear factor lets us recover the
     /// omitted linear coefficient of the inner polynomial from `s(0) + s(1)`.
+    /// Returns `false` after the last round because there is no current round to recover.
     pub fn can_recover_linear_q_term_from_claim(&self) -> bool {
-        let _ = self.current_tau();
         self.prepare_linear_q_recovery().is_some()
     }
 
@@ -425,6 +425,7 @@ mod tests {
                     split.bind(F::from_u64(round as u64 + 11));
                 }
                 assert!(split.prepare_linear_q_recovery().is_none());
+                assert!(!split.can_recover_linear_q_term_from_claim());
             }
         }
         assert!(saw_zero_at_one);

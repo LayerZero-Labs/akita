@@ -82,27 +82,27 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         next_alpha_factor: &[E],
         challenge: E,
     ) -> (Vec<E>, NormRoundTerms<'_, E>, RoundMessage<E>) {
-        if let Some(recovery) = self.split_eq.prepare_linear_q_recovery() {
-            let (output, norm, relation) = self.fuse_folded_coefficients_with::<true, false>(
+        let recovery = self.split_eq.prepare_linear_q_recovery();
+        let (output, norm, relation) = if recovery.is_some() {
+            self.fuse_folded_coefficients_with::<true, false>(
                 folded_witness,
                 weights,
                 next_alpha_factor,
                 challenge,
-            );
-            (
-                output,
-                NormRoundTerms::SkipLinear([norm[0], norm[2]], recovery),
-                relation,
             )
         } else {
-            let (output, norm, relation) = self.fuse_folded_coefficients_with::<false, false>(
+            self.fuse_folded_coefficients_with::<false, false>(
                 folded_witness,
                 weights,
                 next_alpha_factor,
                 challenge,
-            );
-            (output, NormRoundTerms::Full(norm), relation)
-        }
+            )
+        };
+        (
+            output,
+            NormRoundTerms::from_totals(norm, recovery),
+            relation,
+        )
     }
 
     pub(super) fn fuse_folded_coefficients_and_compute_next_round_norm_terms(
@@ -112,28 +112,23 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         next_alpha_factor: &[E],
         challenge: E,
     ) -> (Vec<E>, NormRoundTerms<'_, E>) {
-        let (output, norm, _) = if let Some(recovery) = self.split_eq.prepare_linear_q_recovery() {
-            let (output, norm, relation) = self.fuse_folded_coefficients_with::<true, true>(
+        let recovery = self.split_eq.prepare_linear_q_recovery();
+        let (output, norm, _) = if recovery.is_some() {
+            self.fuse_folded_coefficients_with::<true, true>(
                 folded_witness,
                 weights,
                 next_alpha_factor,
                 challenge,
-            );
-            (
-                output,
-                NormRoundTerms::SkipLinear([norm[0], norm[2]], recovery),
-                relation,
             )
         } else {
-            let (output, norm, relation) = self.fuse_folded_coefficients_with::<false, true>(
+            self.fuse_folded_coefficients_with::<false, true>(
                 folded_witness,
                 weights,
                 next_alpha_factor,
                 challenge,
-            );
-            (output, NormRoundTerms::Full(norm), relation)
+            )
         };
-        (output, norm)
+        (output, NormRoundTerms::from_totals(norm, recovery))
     }
 
     fn fuse_folded_coefficients_with<const SKIP_LINEAR: bool, const SKIP_RELATION: bool>(

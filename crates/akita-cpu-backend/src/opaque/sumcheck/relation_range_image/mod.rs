@@ -136,6 +136,16 @@ enum NormRoundTerms<'a, E: Field> {
     SkipLinear([E; 2], PreparedLinearQRecovery<'a, E>),
 }
 
+impl<'a, E: Field> NormRoundTerms<'a, E> {
+    #[inline]
+    fn from_totals(totals: [E; 3], recovery: Option<PreparedLinearQRecovery<'a, E>>) -> Self {
+        match recovery {
+            Some(recovery) => Self::SkipLinear([totals[0], totals[2]], recovery),
+            None => Self::Full(totals),
+        }
+    }
+}
+
 type CompactRelAccum<E> = [<E as Unreduced>::SmallProduct; 4];
 
 /// Internal round state stores the message value at one and its top two
@@ -341,7 +351,7 @@ pub(crate) struct RelationRangeImageProver<E: Field> {
 }
 
 /// Round kernels borrow this state independently of the installed phase.
-pub(crate) struct RelationRoundState<E: Field> {
+struct RelationRoundState<E: Field> {
     input_claim: E,
     split_eq: GruenSplitEq<E>,
 
@@ -413,7 +423,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
 
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn accumulate_fused_relation_linear_signed(
+    fn accumulate_fused_relation_linear_signed(
         &self,
         rel: &mut [E::SmallProduct; 4],
         w0: i64,

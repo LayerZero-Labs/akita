@@ -289,10 +289,7 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
             mem::swap(witness, &mut self.witness_scratch);
             mem::swap(&mut self.weights, &mut self.weight_scratch);
         }
-        let norm = match recovery {
-            Some(recovery) => NormRoundTerms::SkipLinear([norm[0], norm[2]], recovery),
-            None => NormRoundTerms::Full(norm),
-        };
+        let norm = NormRoundTerms::from_totals(norm, recovery);
         (norm, relation)
     }
 }

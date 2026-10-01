@@ -400,7 +400,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
     }
 
     #[inline]
-    pub(super) fn coefficient_rounds_completed(&self) -> usize {
+    fn coefficient_rounds_completed(&self) -> usize {
         self.rounds_completed.min(self.coefficient_bits())
     }
 
