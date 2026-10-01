@@ -1,8 +1,8 @@
 use super::*;
 use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
+use akita_params::SetupMatrixCapacity;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_types::SetupMatrixCapacity;
 #[cfg(feature = "disk-persistence")]
 use jolt_field::Zero;
 
@@ -33,7 +33,7 @@ impl CommitmentConfig for WrongModulusProfileConfig {
     const RING_DIMENSION_SCHEDULE_MODE: akita_config::RingDimensionScheduleMode =
         Cfg::RING_DIMENSION_SCHEDULE_MODE;
 
-    fn decomposition() -> akita_types::DecompositionParams {
+    fn decomposition() -> akita_params::DecompositionParams {
         Cfg::decomposition()
     }
 
@@ -43,8 +43,8 @@ impl CommitmentConfig for WrongModulusProfileConfig {
         Cfg::ring_challenge_config(d)
     }
 
-    fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
-        akita_types::SisModulusProfileId::Q64Offset59
+    fn sis_modulus_profile() -> akita_params::SisModulusProfileId {
+        akita_params::SisModulusProfileId::Q64Offset59
     }
 
     fn opening_basis_range() -> (u32, u32) {
@@ -55,7 +55,7 @@ impl CommitmentConfig for WrongModulusProfileConfig {
         Cfg::inner_basis_range()
     }
 
-    fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+    fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
         Cfg::committed_source_class()
     }
 }

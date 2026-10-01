@@ -1,6 +1,6 @@
 //! Stable policy identity shared by trusted artifacts and offline generation.
 
-use akita_types::digest_descriptor_bytes;
+use akita_params::digest_descriptor_bytes;
 
 use crate::{PlannerPolicy, RingDimensionScheduleMode};
 
@@ -54,11 +54,11 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     digest_descriptor_bytes(&bytes)
 }
 
-fn sis_modulus_profile_tag(family: akita_types::SisModulusProfileId) -> u64 {
+fn sis_modulus_profile_tag(family: akita_params::SisModulusProfileId) -> u64 {
     match family {
-        akita_types::SisModulusProfileId::Q32Offset99 => 0,
-        akita_types::SisModulusProfileId::Q64Offset59 => 1,
-        akita_types::SisModulusProfileId::Q128OffsetA7F7 => 2,
+        akita_params::SisModulusProfileId::Q32Offset99 => 0,
+        akita_params::SisModulusProfileId::Q64Offset59 => 1,
+        akita_params::SisModulusProfileId::Q128OffsetA7F7 => 2,
     }
 }
 
@@ -95,7 +95,7 @@ fn write_ring_dimension_schedule_mode(bytes: &mut Vec<u8>, mode: RingDimensionSc
     }
 }
 
-fn write_decomposition(bytes: &mut Vec<u8>, decomposition: akita_types::DecompositionParams) {
+fn write_decomposition(bytes: &mut Vec<u8>, decomposition: akita_params::DecompositionParams) {
     write_u64(bytes, u64::from(decomposition.log_basis));
     write_u64(bytes, u64::from(decomposition.log_commit_bound));
     match decomposition.log_open_bound {

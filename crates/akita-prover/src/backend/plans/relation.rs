@@ -6,7 +6,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 /// The public relation and challenge history defining its setup contribution.
 pub struct RelationWeightRequest<'a, F: Field, E: Field> {
     pub relation: &'a akita_types::RingRelationInstance<F>,
-    pub parameters: &'a akita_types::CommittedGroupParams,
+    pub parameters: &'a akita_params::CommittedGroupParams,
     pub alpha: E,
     pub tau1: &'a [E],
     pub claim_coefficients: &'a [E],
@@ -26,25 +26,25 @@ pub struct PhysicalL2WeightRequest<'a, E: Field> {
 /// Public evaluation-trace parameters; contains no witness or CPU tables.
 pub struct EvaluationTraceDescription<'a, E: Field> {
     pub group_parameters: Vec<EvaluationTraceGroupParameters<E>>,
-    pub digit_witness_domain: akita_types::FlatBooleanDomain,
+    pub digit_witness_domain: akita_params::FlatBooleanDomain,
     pub relation_coefficient_block_len: usize,
-    pub witness_layout: &'a akita_types::WitnessLayout,
-    pub level_params: &'a akita_types::CommittedGroupParams,
-    pub opening_batch: &'a akita_types::OpeningClaimsLayout,
+    pub witness_layout: &'a akita_params::WitnessLayout,
+    pub level_params: &'a akita_params::CommittedGroupParams,
+    pub opening_batch: &'a akita_params::OpeningClaimsLayout,
     pub claim_coefficients: &'a [E],
 }
 
 impl<'a, E: Field> EvaluationTraceDescription<'a, E> {
     #[allow(clippy::too_many_arguments)]
     pub fn try_new<F>(
-        digit_witness_domain: akita_types::FlatBooleanDomain,
+        digit_witness_domain: akita_params::FlatBooleanDomain,
         relation_coefficient_block_len: usize,
-        witness_layout: &'a akita_types::WitnessLayout,
-        level_params: &'a akita_types::CommittedGroupParams,
-        opening_batch: &'a akita_types::OpeningClaimsLayout,
+        witness_layout: &'a akita_params::WitnessLayout,
+        level_params: &'a akita_params::CommittedGroupParams,
+        opening_batch: &'a akita_params::OpeningClaimsLayout,
         prepared_points: &[akita_types::PreparedOpeningPoint<F, E>],
         claim_coefficients: &'a [E],
-        basis: akita_types::BasisMode,
+        basis: akita_params::BasisMode,
     ) -> Result<Self, AkitaError>
     where
         F: Field + CanonicalEncoding + Ring,

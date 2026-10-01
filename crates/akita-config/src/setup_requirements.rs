@@ -2,7 +2,7 @@
 
 use crate::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_types::{
+use akita_params::{
     setup_matrix_capacity_for_schedule, FoldSchedule, SetupMatrixCapacity, SetupPrefixSlotId,
 };
 use std::collections::BTreeSet;
@@ -122,7 +122,7 @@ impl<F> SetupRequirements<F> {
                 if profile.group.num_vars() <= max_num_vars
                     && profile.group.num_polynomials() <= max_num_batched_polys
                 {
-                    scan.observe(akita_types::commit_only_setup_field_elements(
+                    scan.observe(akita_params::commit_only_setup_field_elements(
                         &profile.inner.matrix,
                         &profile.outer.matrix,
                         profile.outer_slice_count,

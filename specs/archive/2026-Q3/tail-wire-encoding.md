@@ -64,8 +64,8 @@ handoff into the terminal, replace outer `u` with canonical inner `t`.
 The feature introduces or modifies:
 
 - A **segment-typed tail witness** representation replacing the historical single-width `PackedDigits` blob: Golomb-Rice for `z` only and raw canonical field coefficients for `e`/`t`. Boundaries derive from the schedule/shape (headerless wire). Wire `rice_low_bits` is never on the wire; both sides derive it from the fold `‖z‖_inf` cap (`min(β_inf, t*)` or `β_inf` alone) for `z` only.
-- A **canonical, total Golomb-Rice codec** (`akita-types`, verifier-reachable, no-panic) with zigzag sign mapping and standard unary+remainder Rice encoding only. Decode rejects unary runs longer than [`golomb_rice_max_quotient_for_cap`](../crates/akita-types/src/golomb_rice.rs). **#190 applies it to `z` only.**
-- A per-level **fold `‖z‖_inf` cap accessor** via [`LevelParams::fold_witness_linf_cap_for_claims`](../crates/akita-types/src/layout/params.rs) and the deterministic cap→wire low-bits rules in [`tail_golomb_rice_low_bits`](../crates/akita-types/src/tail_golomb_rice_low_bits.rs) for the folded-response `z` segment.
+- A **canonical, total Golomb-Rice codec** (`akita-types`, verifier-reachable, no-panic) with zigzag sign mapping and standard unary+remainder Rice encoding only. Decode rejects unary runs longer than [`golomb_rice_max_quotient_for_cap`](../crates/akita-params/src/golomb_rice.rs). **#190 applies it to `z` only.**
+- A per-level **fold `‖z‖_inf` cap accessor** via [`LevelParams::fold_witness_linf_cap_for_claims`](../crates/akita-params/src/layout/params.rs) and the deterministic cap→wire low-bits rules in [`tail_golomb_rice_low_bits`](../crates/akita-params/src/tail_golomb_rice_low_bits.rs) for the folded-response `z` segment.
 - **Terminal `t`-state cutover**: the predecessor fold stops sending outer
   `u = B * decompose(t)` and binds canonical inner `t` rings as the terminal's
   public state; the terminal later checks their challenge-folded A relation.
@@ -186,7 +186,7 @@ retained ZK `PackedDigits` arm are historical.
 ### Terminal `t`-state / u-elision
 
 Intermediate relations use `consistency | A(n_a) | B(n_b) | D(n_d)`
-(`crates/akita-types/src/layout/params.rs`). Public openings bind through the
+(`crates/akita-params/src/layout/params.rs`). Public openings bind through the
 fused trace term in stage-2 sumcheck, not through M public rows. Every terminal
 reveals `e_folded` in cleartext, so the D-role commitment `v = D * e_hat` and
 its rows are gone. Because the terminal state is predecessor-bound `t`, the B
@@ -293,7 +293,7 @@ cap_rice_low_bits = rice_low_bits_for_cap(cap)                   (= max(0, floor
 wire_rice_low_bits = cap_rice_low_bits - WIRE_RICE_LOW_BITS_DELTA  (= cap low bits - 2 today)
 ```
 
-`cap` is the same bound already used by [`fold_witness_digit_plan`](../crates/akita-types/src/sis/norm_bound.rs) and grind acceptance. It is **not** the level variance envelope `isqrt_ceil(β_inf² · T_level · ρ²)` from PR #174's `t*` analysis: that quantity aggregates coordinates and is far too loose for per-coordinate Golomb-Rice parameterization (it would imply `cap_rice_low_bits ≈ 22` on fp128 D64 where `cap_rice_low_bits = 12` suffices).
+`cap` is the same bound already used by [`fold_witness_digit_plan`](../crates/akita-params/src/sis/norm_bound.rs) and grind acceptance. It is **not** the level variance envelope `isqrt_ceil(β_inf² · T_level · ρ²)` from PR #174's `t*` analysis: that quantity aggregates coordinates and is far too loose for per-coordinate Golomb-Rice parameterization (it would imply `cap_rice_low_bits ≈ 22` on fp128 D64 where `cap_rice_low_bits = 12` suffices).
 
 `rice_low_bits_for_cap` is the cap-derived Rice low-bit width covering every admitted `z` coefficient magnitude at the planner reference. `wire_rice_low_bits` is what prover and verifier use on the wire (#209). The codec is canonical because standard Rice is bijective for a fixed `rice_low_bits` on `[-cap, cap]`, and wire payloads must use the minimal byte length (partial-byte zero padding only). Decode and grind use the cap-derived maximum quotient; no alternate wire shape exists.
 
@@ -328,7 +328,7 @@ Transcript binding (S3 acceptance): absorb **canonical encoded segment bytes** i
 
 ### Proof-size accounting
 
-`direct_witness_bytes` (`crates/akita-types/src/layout/proof_size.rs:32-41`) gains a segment-typed arm: runtime sizing sums exact encoded segment sizes; **planner** sizing uses a conservative upper bound on entropy segments (`~num_coords * (cap_rice_low_bits + 2)` bits for Gaussian `z` under [`TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO`]), consistent with the repo's `actual <= planned + ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES` profile gate.
+`direct_witness_bytes` (`crates/akita-params/src/layout/proof_size.rs:32-41`) gains a segment-typed arm: runtime sizing sums exact encoded segment sizes; **planner** sizing uses a conservative upper bound on entropy segments (`~num_coords * (cap_rice_low_bits + 2)` bits for Gaussian `z` under [`TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO`]), consistent with the repo's `actual <= planned + ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES` profile gate.
 `level_proof_bytes` drops `next_commit_bytes` for the last recursive transition.
 The terminal direct witness owns the sole raw `t` payload. Its only layout
 drops `v`/stage 1 and B.
@@ -385,6 +385,6 @@ Remaining audit/measurement items:
 - `crates/akita-types/src/proof/direct_witness.rs` (`TerminalResponse`),
   `crates/akita-types/src/proof/tail_segments.rs` (segment layout and transcript
   slicing), and `crates/akita-types/src/proof/levels.rs` (`TerminalLevelProof`).
-- `crates/akita-types/src/proof_size.rs:72-106` and `crates/akita-types/src/layout/proof_size.rs` (proof-byte and witness accounting).
+- `crates/akita-params/src/proof_size.rs:72-106` and `crates/akita-params/src/layout/proof_size.rs` (proof-byte and witness accounting).
 - `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs` (intermediate A/B/D row roles), `crates/akita-prover/src/protocol/ring_switch/commit.rs` (ordinary outer `u` versus terminal inner `t`).
 - Profile: `AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile`.

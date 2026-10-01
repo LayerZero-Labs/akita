@@ -14,10 +14,12 @@ default = ["transcript-blake2b"]
 transcript-blake2b = [
   "akita-config/transcript-blake2b",
   "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
 ]
 transcript-keccak = [
   "akita-config/transcript-keccak",
   "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
 ]
 trusted-benchmark-artifact = []
 
@@ -32,6 +34,7 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 akita-serialization = { version = "0.1.0", path = "../../../crates/akita-serialization" }
 akita-schedules = { version = "0.1.0", path = "../../../crates/akita-schedules" }
 akita-types = { version = "0.1.0", path = "../../../crates/akita-types", default-features = false }
+akita-params = { version = "0.1.0", path = "../../../crates/akita-params", default-features = false }
 
 [dev-dependencies]
 akita-challenges = { version = "0.1.0", path = "../../../crates/akita-challenges", default-features = false }

@@ -1633,7 +1633,7 @@ open review blockers are resolved.
   current production sparse families and role dimensions.
 - [EOR streamed prover](archive/2026-Q3/eor-streamed-prover.md), historical EOR prover path and
   performance context.
-- [`crates/akita-types/src/layout/proof_size.rs`](../crates/akita-types/src/layout/proof_size.rs),
+- [`crates/akita-params/src/layout/proof_size.rs`](../crates/akita-params/src/layout/proof_size.rs),
   canonical current EOR byte formula.
 - [`crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`](../crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs),
   current high-half, consistency, and A quotient construction.

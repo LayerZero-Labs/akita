@@ -75,7 +75,7 @@ Key abstractions / surfaces introduced or modified:
   `PlannerPolicy` and read by prover/verifier/commit. New preset
   `fp128::D64OneHotTiered` sets it `true`.
 - **`LevelParams.f_key: Option<AjtaiKeyParams>`** and
-  **`LevelParams.tier_split: usize`** (`crates/akita-types/src/layout/params.rs`)
+  **`LevelParams.tier_split: usize`** (`crates/akita-params/src/layout/params.rs`)
   — the second-tier matrix dimensions and the split factor `f`. `tier_split == 1`
   and `f_key == None` is the non-tiered *relation layout* (single-tier A→B);
   it does not imply schedule bytes match pre-PR `main` (see bundled planner
@@ -190,7 +190,7 @@ guarantee.
    pre-migration `main`: `log_basis: 3, n_a: 7, n_b: 2` (same `position_index_bits`/`block_index_bits`).
 2. **`optimal_block_geometry_split` / schedule-DP tie-break.** Fold split search iterates
    `r` descending (`(1..reduced_vars).rev()` in
-   [`digit_math.rs`](crates/akita-types/src/layout/digit_math.rs) and
+   [`digit_math.rs`](crates/akita-params/src/layout/digit_math.rs) and
    `(min_block_index_bits..=max_block_index_bits).rev()` in the root DP in
    [`schedule_params.rs`](crates/akita-planner/src/schedule_params.rs)). When
    fold-digit or proof-size scores tie, the first candidate wins — a
@@ -306,7 +306,7 @@ One flat random vector `shared_matrix` backs all role matrices; each role is a
 prefix `ring_view::<D>(rows, cols)` of it
 ([`crates/akita-types/src/proof/setup.rs`](crates/akita-types/src/proof/setup.rs)).
 Per level (`LevelParams`,
-[`crates/akita-types/src/layout/params.rs`](crates/akita-types/src/layout/params.rs)):
+[`crates/akita-params/src/layout/params.rs`](crates/akita-params/src/layout/params.rs)):
 
 - `A` (inner): `n_a × width_s`, `width_s = num_positions_per_block · delta_commit`
   (`decomposed_s_block_ring_count`).
@@ -328,7 +328,7 @@ random `alpha`; the dominant step is the setup-contribution scan whose length is
 
 The SIS sizing is monotone in width: `min_secure_rank(SisTableKey, width)` is
 non-decreasing in `width`
-([`crates/akita-types/src/sis/ajtai_key.rs`](crates/akita-types/src/sis/ajtai_key.rs)).
+([`crates/akita-params/src/sis/ajtai_key.rs`](crates/akita-params/src/sis/ajtai_key.rs)).
 So a narrower `B` can take a **smaller rank** `n_b`, shrinking the footprint
 super-linearly in `f`.
 
@@ -400,7 +400,7 @@ pub struct D64OneHotTiered;
 
 impl_proof_optimized_preset!(
     D64OneHotTiered, Field, Field,
-    akita_types::SisModulusProfileId::Q128OffsetA7F7, 64, 128, 1, 256,
+    akita_params::SisModulusProfileId::Q128OffsetA7F7, 64, 128, 1, 256,
     /* tiered = */ true
 );
 ```
@@ -484,7 +484,7 @@ Notes and edge cases:
 
 #### 1d. `LevelParams`, descriptor, and `shipped_table`
 
-- `LevelParams` (`crates/akita-types/src/layout/params.rs`) gains
+- `LevelParams` (`crates/akita-params/src/layout/params.rs`) gains
   `f_key: Option<AjtaiKeyParams>` and `tier_split: usize`. `with_decomp` /
   `with_layout` / `params_only` / `log_basis_stub` initialize them to
   `None` / `1`. `append_descriptor_bytes` serializes `tier_split` and the
@@ -588,7 +588,7 @@ Two points to confirm in review (the spec does not assume them silently):
 ### Part 3 — Relation update and end-to-end flow
 
 The current virtual `M` row layout
-([`params.rs:309`](crates/akita-types/src/layout/params.rs),
+([`params.rs:309`](crates/akita-params/src/layout/params.rs),
 [`relation_quotient.rs:376`](crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs))
 is:
 
@@ -635,7 +635,7 @@ consistency block, mirroring how `A` is already an inner tier under `B`.
 The current offsets are open-coded at three sites with the same
 `consistency | public | D | B | A` arithmetic:
 `LevelParams::relation_matrix_row_count_for`
-([`params.rs:329`](crates/akita-types/src/layout/params.rs)),
+([`params.rs:329`](crates/akita-params/src/layout/params.rs)),
 `compute_relation_quotient` / `generate_relation_rhs`
 (`d_start = 1 + num_public; b_start = d_start + n_d_active; a_start = b_start +
 commitment_row_count` in
@@ -691,8 +691,8 @@ keep `b_key.row_len()`. Concretely:
   validation in `api/commitment.rs` and `batched.rs`
   (`recommit_direct_witness_group`, `verify_root_direct_commitments_with_params`);
   the per-commitment proof-size term in
-  [`proof_size.rs`](crates/akita-types/src/proof_size.rs) /
-  [`layout/proof_size.rs`](crates/akita-types/src/layout/proof_size.rs) and
+  [`proof_size.rs`](crates/akita-params/src/proof_size.rs) /
+  [`layout/proof_size.rs`](crates/akita-params/src/layout/proof_size.rs) and
   `level_proof_bytes`; the `ABSORB_COMMITMENT` length check; the `COMMIT` block
   RHS length in `generate_relation_rhs` / `relation_claim_from_rows_extension`.
 - **Keep `b_key.row_len()`** (= `n_b'`, the first-tier matrix rows): the small-`B`
@@ -731,7 +731,7 @@ Threading (each must add the `u_len` term; all are no-ops when `f_key == None`):
   `d_blinding_offset`, and `offset_r` shifted by `u_len`. The `u` segment follows
   `t̂` in the witness layout.
 - **`w_ring_element_count_with_counts_for_layout_bits`**
-  ([`schedule.rs:252`](crates/akita-types/src/schedule.rs)): add a `u_count`
+  ([`schedule.rs:252`](crates/akita-params/src/schedule.rs)): add a `u_count`
   term to the sum `e_hat + t_hat + (+u_count) + z_pre + r`. The existing `r`
   term already grows automatically because `relation_matrix_row_count_for` now counts the `F`
   and `B_inner` rows.
@@ -1050,10 +1050,10 @@ small-`B'`→decompose→`F`. Apply `effective_commit_rows` across the
   [`crates/akita-types/src/setup_contribution.rs`](crates/akita-types/src/setup_contribution.rs),
   [`crates/akita-verifier/src/protocol/slice_mle/setup_contribution/evaluator.rs`](crates/akita-verifier/src/protocol/slice_mle/setup_contribution/evaluator.rs).
 - Layout / SIS sizing:
-  [`crates/akita-types/src/layout/params.rs`](crates/akita-types/src/layout/params.rs),
-  [`crates/akita-types/src/sis/decomposition_digits.rs`](crates/akita-types/src/sis/decomposition_digits.rs),
-  [`crates/akita-types/src/sis/ajtai_key.rs`](crates/akita-types/src/sis/ajtai_key.rs),
-  [`crates/akita-types/src/sis/norm_bound.rs`](crates/akita-types/src/sis/norm_bound.rs).
+  [`crates/akita-params/src/layout/params.rs`](crates/akita-params/src/layout/params.rs),
+  [`crates/akita-params/src/sis/decomposition_digits.rs`](crates/akita-params/src/sis/decomposition_digits.rs),
+  [`crates/akita-params/src/sis/ajtai_key.rs`](crates/akita-params/src/sis/ajtai_key.rs),
+  [`crates/akita-params/src/sis/norm_bound.rs`](crates/akita-params/src/sis/norm_bound.rs).
 - Planner:
   [`crates/akita-planner/src/schedule_params.rs`](crates/akita-planner/src/schedule_params.rs),
   [`crates/akita-planner/src/resolve.rs`](crates/akita-planner/src/resolve.rs),

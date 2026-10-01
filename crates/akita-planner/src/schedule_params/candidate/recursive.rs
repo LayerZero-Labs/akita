@@ -27,7 +27,7 @@ pub(crate) use views::derive_recursive_candidate_views;
 #[derive(Clone, Copy)]
 pub(crate) struct RecursiveCandidateRequest<'a> {
     pub(crate) policy: &'a PlannerPolicy,
-    pub(crate) payload_mode: akita_types::CommitmentPayloadMode,
+    pub(crate) payload_mode: akita_params::CommitmentPayloadMode,
     pub(crate) opening: PlannerOpeningCandidate,
     pub(crate) dimensions: CommitmentRingDims,
     pub(crate) current_witness_len: usize,
@@ -45,7 +45,7 @@ pub(crate) struct RecursiveCandidateRequest<'a> {
 #[derive(Clone, Copy)]
 pub(crate) struct CandidateLayoutGuide {
     pub(crate) position_index_bits: usize,
-    pub(crate) outer_slice_count: akita_types::CommitmentSliceCount,
+    pub(crate) outer_slice_count: akita_params::CommitmentSliceCount,
     pub(crate) inner_route: CandidateInnerRoute,
     pub(crate) setup_prefix: Option<SetupPrefixLayoutGuide>,
 }
@@ -57,10 +57,10 @@ pub(crate) enum CandidateInnerRoute {
 }
 
 impl CandidateInnerRoute {
-    pub(crate) const fn of(route: akita_types::InnerCommitSecurityRoute) -> Self {
+    pub(crate) const fn of(route: akita_params::InnerCommitSecurityRoute) -> Self {
         match route {
-            akita_types::InnerCommitSecurityRoute::Linf(_) => Self::Linf,
-            akita_types::InnerCommitSecurityRoute::L2 { .. } => Self::L2,
+            akita_params::InnerCommitSecurityRoute::Linf(_) => Self::Linf,
+            akita_params::InnerCommitSecurityRoute::L2 { .. } => Self::L2,
         }
     }
 }
@@ -69,7 +69,7 @@ impl CandidateInnerRoute {
 pub(crate) struct SetupPrefixLayoutGuide {
     pub(crate) log_basis_inner: u32,
     pub(crate) position_index_bits: usize,
-    pub(crate) outer_slice_count: akita_types::CommitmentSliceCount,
+    pub(crate) outer_slice_count: akita_params::CommitmentSliceCount,
 }
 
 enum RecursiveSetupPrefix<'a> {
@@ -231,7 +231,7 @@ impl RecursiveCandidateContext<'_, '_> {
         else {
             return Ok(None);
         };
-        let Ok(width_w) = akita_types::opening_d_segment_width(
+        let Ok(width_w) = akita_params::opening_d_segment_width(
             request.opening.method(),
             policy.claim_ext_degree,
             d_a,
@@ -244,7 +244,7 @@ impl RecursiveCandidateContext<'_, '_> {
         };
         let Some((open_key, width_w)) = projected_collision_role_price(
             policy,
-            akita_types::SisMatrixRole::Open,
+            akita_params::SisMatrixRole::Open,
             dimensions.d_d(),
             dimensions.d_d(),
             width_w,
@@ -276,7 +276,7 @@ impl RecursiveCandidateContext<'_, '_> {
     ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
         let request = self.request;
         let d_a = request.dimensions.d_a();
-        let source_encoding = akita_types::CommittedSourceEncoding::for_producer(
+        let source_encoding = akita_params::CommittedSourceEncoding::for_producer(
             request.opening.method(),
             request.policy.claim_ext_degree,
             d_a,
@@ -287,7 +287,7 @@ impl RecursiveCandidateContext<'_, '_> {
             return Ok(Vec::new());
         }
         let mut candidates = Vec::new();
-        for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+        for outer_slice_count in akita_params::CommitmentSliceCount::ALL {
             if request
                 .guide
                 .is_some_and(|guide| outer_slice_count != guide.outer_slice_count)
@@ -325,38 +325,38 @@ impl RecursiveCandidateContext<'_, '_> {
                 let params = CommittedGroupParams::try_new(
                     // A recursive candidate consumes no frozen groups, so its own
                     // new group is the whole list.
-                    vec![akita_types::GroupOpenPhaseParams {
-                        profile: akita_types::GroupCommitPhaseParams {
-                            version: akita_types::GroupCommitPhaseParams::VERSION,
+                    vec![akita_params::GroupOpenPhaseParams {
+                        profile: akita_params::GroupCommitPhaseParams {
+                            version: akita_params::GroupCommitPhaseParams::VERSION,
                             // It commits one polynomial over the witness arriving at
                             // its level.
-                            group: akita_types::PolynomialGroupLayout::singleton(
-                                akita_types::padded_boolean_opening_vars(
+                            group: akita_params::PolynomialGroupLayout::singleton(
+                                akita_params::padded_boolean_opening_vars(
                                     request.current_witness_len,
                                 )?,
                             ),
-                            blocks: akita_types::BlockGeometry::new(
+                            blocks: akita_params::BlockGeometry::new(
                                 core.num_ring_elems,
                                 core.num_positions_per_block,
                                 core.num_live_blocks,
                             ),
                             outer_slice_count,
-                            inner: akita_types::RoleParams::new(
-                                akita_types::GadgetDigits::new(
+                            inner: akita_params::RoleParams::new(
+                                akita_params::GadgetDigits::new(
                                     request.log_basis_inner,
                                     core.num_digits_inner,
                                 ),
                                 core.inner_commit_matrix,
                             ),
-                            outer: akita_types::RoleParams::new(
-                                akita_types::GadgetDigits::new(
+                            outer: akita_params::RoleParams::new(
+                                akita_params::GadgetDigits::new(
                                     request.log_basis_open,
                                     core.num_digits_open,
                                 ),
                                 outer_commit_matrix,
                             ),
                         },
-                        opening: akita_types::GroupOpeningPlan {
+                        opening: akita_params::GroupOpeningPlan {
                             opening_method: request.opening.method(),
                             fold_challenge_config: request.opening.challenge_config(),
                             log_basis_open: request.log_basis_open,
@@ -474,7 +474,7 @@ impl RecursiveCandidateContext<'_, '_> {
                         else {
                             continue;
                         };
-                        if relation_mode == akita_types::RingRelationMode::QuotientLift
+                        if relation_mode == akita_params::RingRelationMode::QuotientLift
                             && (bounds.score.is_some_and(|bound| bound > score.0)
                                 || bounds
                                     .witness_body
@@ -502,7 +502,7 @@ fn best_linf_candidates_for(
 ) -> Result<Vec<BestLinfCandidate>, AkitaError> {
     // Larger `r` wins exact score ties independently for each relation mode.
     let mut best = std::collections::BTreeMap::<
-        akita_types::RingRelationMode,
+        akita_params::RingRelationMode,
         (LayoutCandidateScore, usize, CommittedGroupParams, usize),
     >::new();
     let best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);

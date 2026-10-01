@@ -9,8 +9,9 @@ use super::prepared_openings::{
 };
 use crate::opaque::OperationCtx;
 use akita_error::AkitaError;
+use akita_params::{dispatch_for_field, CommittedGroupParams};
 use akita_serialization::AkitaSerialize;
-use akita_types::{dispatch_for_field, CommittedGroupParams, RingRelationInstance, RingVec};
+use akita_types::{RingRelationInstance, RingVec};
 use jolt_field::{CanonicalEncoding, Field, Ring};
 
 pub(crate) struct PreparedRelationPayload<F: Field + CanonicalEncoding> {
@@ -40,8 +41,8 @@ pub(crate) fn begin_cpu_recursive_witness<F, E>(
     prepared_group_openings: &[crate::opaque::CpuPreparedOpeningHandle<F, E>],
     commitment_material: Vec<CpuCommitmentMaterial<F>>,
     level: &CommittedGroupParams,
-    opening_batch: &akita_types::OpeningClaimsLayout,
-    relation_rhs_layout: &akita_types::RelationRhsLayout,
+    opening_batch: &akita_params::OpeningClaimsLayout,
+    relation_rhs_layout: &akita_params::RelationRhsLayout,
     group_commitments: &[RingVec<F>],
 ) -> Result<
     crate::opaque::RecursiveWitnessBuildStart<F, E, crate::opaque::CpuWitnessBuildHandle<F>>,
@@ -69,7 +70,7 @@ where
         });
     }
     let geometry =
-        akita_types::RelationWitnessGeometry::for_level(level, opening_batch, E::DEGREE)?;
+        akita_params::RelationWitnessGeometry::for_level(level, opening_batch, E::DEGREE)?;
     let mut group_openings = Vec::with_capacity(opening_batch.num_groups());
     let mut public_groups = Vec::with_capacity(opening_batch.num_groups());
     for (group_index, opening) in prepared_group_openings.iter().enumerate() {
@@ -243,8 +244,8 @@ where
 fn prepare_relation_payload<F, B>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     level: &CommittedGroupParams,
-    opening_batch: &akita_types::OpeningClaimsLayout,
-    layout: &akita_types::RelationRhsLayout,
+    opening_batch: &akita_params::OpeningClaimsLayout,
+    layout: &akita_params::RelationRhsLayout,
     commitments: &[RingVec<F>],
     materials: Vec<CpuCommitmentMaterial<F>>,
     v: &RingVec<F>,

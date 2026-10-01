@@ -27,6 +27,7 @@ akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
@@ -38,6 +39,7 @@ transcript-blake2b = [
   "akita-sumcheck/transcript-blake2b",
   "akita-transcript/transcript-blake2b",
   "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
 ]
 transcript-keccak = [
   "akita-challenges/transcript-keccak",
@@ -45,6 +47,7 @@ transcript-keccak = [
   "akita-sumcheck/transcript-keccak",
   "akita-transcript/transcript-keccak",
   "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
 ]
 benchmark-support = []
 parallel = [
@@ -54,6 +57,7 @@ parallel = [
   "jolt-field/parallel",
   "akita-sumcheck/parallel",
   "akita-types/parallel",
+  "akita-params/parallel",
 ]
 
 [lints]

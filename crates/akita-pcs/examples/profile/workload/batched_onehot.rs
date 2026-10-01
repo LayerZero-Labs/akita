@@ -11,11 +11,12 @@ use crate::report::{
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_cpu_backend::CpuBackend;
 use akita_cpu_backend::OneHotPoly;
-use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_types::{
-    BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
-    OpeningClaimsLayout, PolynomialGroupLayout, SetupContributionMode,
+use akita_params::{
+    BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, OpeningClaimsLayout,
+    PolynomialGroupLayout, SetupContributionMode,
 };
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
+use akita_types::FpExtEncoding;
 use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 use rand::rngs::StdRng;
@@ -156,7 +157,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         OpeningClaimsLayout::from_root_groups(&[], group_layout).expect("same-point opening batch");
     let schedule = scheme
         .schedules()
-        .resolve_key(&akita_types::ScheduleLookupKey::single(group_layout))
+        .resolve_key(&akita_params::ScheduleLookupKey::single(group_layout))
         .expect("batched schedule")
         .schedule()
         .clone();
