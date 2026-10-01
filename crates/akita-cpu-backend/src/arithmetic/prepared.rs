@@ -4,9 +4,10 @@ use crate::arithmetic::requirements::RoutedNttRequirement;
 use crate::kernels::linear::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile};
 use crate::opaque::ComputeBackendSetup;
 use akita_error::AkitaError;
+use akita_params::dispatch_for_field;
 use akita_types::{
-    dispatch_for_field, prepare_ntt_cache, AkitaExpandedSetup, NttCacheKey, NttCacheMode,
-    NttTransformDomain, PreparedNttCache,
+    prepare_ntt_cache, AkitaExpandedSetup, NttCacheKey, NttCacheMode, NttTransformDomain,
+    PreparedNttCache,
 };
 use jolt_field::{CanonicalEncoding, Field};
 use std::any::Any;

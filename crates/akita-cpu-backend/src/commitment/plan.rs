@@ -1,6 +1,6 @@
 use crate::opaque::CommitInnerPlan;
 use akita_error::{checked, AkitaError};
-use akita_types::{
+use akita_params::{
     validate_setup_prefix_domain, CommitmentPayloadMode, CommitmentSliceGeometry,
     CommittedGroupParams, CompressionChainPlan, GroupCommitPhaseParams, RingRelationMode,
     SetupPrefixSlotId, SisModulusProfileId, TerminalFoldParams,
@@ -139,14 +139,14 @@ impl CommitmentExecutionPlan {
             .ok_or_else(|| AkitaError::InvalidSetup("commitment A width overflow".into()))?;
         let outer = self.uncompressed().map(|plan| {
             let outer = plan.outer();
-            akita_types::CommitmentSetupMatrixShape {
+            akita_params::CommitmentSetupMatrixShape {
                 rows: outer.n_b(),
                 columns: outer.geometry().physical_input_width(),
                 ring_dimension: outer.ring_dimension(),
             }
         });
-        akita_types::commitment_execution_setup_field_elements(
-            akita_types::CommitmentSetupMatrixShape {
+        akita_params::commitment_execution_setup_field_elements(
+            akita_params::CommitmentSetupMatrixShape {
                 rows: inner.n_a,
                 columns: inner_width,
                 ring_dimension: inner.ring_dimension,
@@ -174,7 +174,7 @@ impl CommitmentExecutionPlan {
     /// material exists and which form it takes.
     pub(crate) fn for_relation_group(
         params: &CommittedGroupParams,
-        opening_batch: &akita_types::OpeningClaimsLayout,
+        opening_batch: &akita_params::OpeningClaimsLayout,
         group_index: usize,
         fold_level: usize,
     ) -> Result<Self, AkitaError> {
@@ -329,7 +329,7 @@ impl CommitmentExecutionPlan {
 mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
-    use akita_types::{CommitmentPayloadMode, SisModulusProfileId};
+    use akita_params::{CommitmentPayloadMode, SisModulusProfileId};
 
     fn recursive_params(payload_mode: CommitmentPayloadMode) -> CommittedGroupParams {
         let mut params = CommittedGroupParams::params_only(

@@ -1,6 +1,6 @@
 use super::{BackendKindId, PolynomialType};
 use akita_error::AkitaError;
-use akita_types::{RingRelationMode, RingRole};
+use akita_params::{RingRelationMode, RingRole};
 use jolt_field::{CanonicalEncoding, Field};
 
 /// Inner-operation capabilities used while compiling one request.
@@ -94,23 +94,23 @@ impl StageDimensionCapabilities {
     }
 
     pub(crate) fn cpu_role<F: Field + CanonicalEncoding>(role: RingRole) -> Self {
-        let tier = akita_types::protocol_dispatch_tier::<F>();
+        let tier = akita_params::protocol_dispatch_tier::<F>();
         Self {
-            dimensions: akita_types::SUPPORTED_COMMITMENT_RING_DIMS
+            dimensions: akita_params::SUPPORTED_COMMITMENT_RING_DIMS
                 .into_iter()
                 .filter(|dimension| {
-                    akita_types::dispatch::role_dim_supported_for_tier(tier, role, *dimension)
+                    akita_params::dispatch::role_dim_supported_for_tier(tier, role, *dimension)
                 })
                 .collect(),
         }
     }
 
     pub(crate) fn cpu_compression<F: Field + CanonicalEncoding>() -> Self {
-        let tier = akita_types::protocol_dispatch_tier::<F>();
+        let tier = akita_params::protocol_dispatch_tier::<F>();
         let mut dimensions = vec![8, 16, 32];
-        dimensions.extend(akita_types::SUPPORTED_COMMITMENT_RING_DIMS);
+        dimensions.extend(akita_params::SUPPORTED_COMMITMENT_RING_DIMS);
         dimensions.retain(|dimension| {
-            akita_types::compression_ring_dim_supported_for_tier(tier, *dimension)
+            akita_params::compression_ring_dim_supported_for_tier(tier, *dimension)
         });
         Self { dimensions }
     }

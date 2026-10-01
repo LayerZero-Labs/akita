@@ -158,7 +158,7 @@ doc/comment mentions are **not** compiler-checked and need explicit grep.
 - `num_w_vectors` (count of root relation $\mathbf{w}$ vectors; a public
   `CommitmentGroupScheduleKey` field and the ABI-stable `GeneratedCommitmentGroupScheduleKey`
   field; the multiplicand of `w_ring_element_count` at
-  `crates/akita-types/src/schedule.rs:261-264`).
+  `crates/akita-params/src/schedule.rs:261-264`).
 - `next_w_commitment`, `next_w_eval` (commitment/MLE of full $\mathbf{w}$).
 - `final_witness` proof field (terminal cleartext $\mathbf{w}$).
 - `ABSORB_TERMINAL_W_REMAINDER` (remainder of $\mathbf{w}$ outside logical
@@ -337,4 +337,4 @@ worktree (this PR's branch). Implement directly on it; no new worktree needed.
 - `specs/terminal-fold-cutover.md` (terminal cleartext absorb at the
   ex-`ABSORB_SUMCHECK_W` slot).
 - `crates/akita-transcript/src/labels.rs:79-81` (label + misleading comment).
-- `crates/akita-types/src/schedule.rs:80-81,261-264` (`num_w_vectors` semantics).
+- `crates/akita-params/src/schedule.rs:80-81,261-264` (`num_w_vectors` semantics).

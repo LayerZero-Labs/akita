@@ -2,10 +2,10 @@
 
 use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog, ValidatedScheduleCatalog};
 use akita_error::AkitaError;
-use akita_planner::{find_schedule_for_test_relation_mode, TestRelationModeFilter};
-use akita_types::{
+use akita_params::{
     CommittedGroupBatchProfile, GroupCommitPhaseParams, OpeningScheduleSelection, ScheduleLookupKey,
 };
+use akita_planner::{find_schedule_for_test_relation_mode, TestRelationModeFilter};
 
 /// Two valid catalogs for the same opening key, differing only in the
 /// planner's permitted ring-relation modes.
@@ -19,7 +19,7 @@ pub(crate) struct CrossModeCatalogs<Cfg: CommitmentConfig> {
 fn planned_row<Base: CommitmentConfig>(
     key: &ScheduleLookupKey,
     relation_modes: TestRelationModeFilter,
-) -> Result<(CommittedGroupBatchProfile, akita_types::FoldSchedule), AkitaError> {
+) -> Result<(CommittedGroupBatchProfile, akita_params::FoldSchedule), AkitaError> {
     if !key.precommitteds.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "cross-mode fixture supports one final group only".into(),

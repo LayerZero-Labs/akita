@@ -4,21 +4,23 @@ use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::SparseChallengeConfig;
-use akita_types::{
-    build_reduced_compression_relation_weights, gadget_row_scalars, AkitaSetupDescriptor,
-    CommitmentPayloadMode, FlatMatrix, GroupCommitPhaseParams, GroupOpenPhaseParams,
-    GroupOpeningPlan, InnerCommitMatrixParams, NegativeBinarySupport, OpenCommitMatrixParams,
+use akita_params::{
+    gadget_row_scalars, CommitmentPayloadMode, FlatMatrix, GroupCommitPhaseParams,
+    GroupOpenPhaseParams, GroupOpeningPlan, InnerCommitMatrixParams, OpenCommitMatrixParams,
     OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout, RelationQuotientPlan,
     RelationRowFamily, RelationWitnessGeometry, RingRelationMode, SisModulusProfileId,
     WitnessLayout,
+};
+use akita_types::{
+    build_reduced_compression_relation_weights, AkitaSetupDescriptor, NegativeBinarySupport,
 };
 use jolt_field::{Ext2, ExtField, One, Prime64Offset59, Zero};
 
 type F = Prime64Offset59;
 type E = Ext2<F>;
 
-fn certify_test_matrices(params: &mut akita_types::CommittedGroupParams) {
-    let inner_bound = *akita_types::sis::inner_coeff_linf_bounds(
+fn certify_test_matrices(params: &mut akita_params::CommittedGroupParams) {
+    let inner_bound = *akita_params::sis::inner_coeff_linf_bounds(
         params.inner().matrix.sis_modulus_profile(),
         u32::try_from(params.d_a()).unwrap(),
     )
@@ -46,7 +48,7 @@ fn certify_test_matrices(params: &mut akita_types::CommittedGroupParams) {
     );
 }
 
-fn retarget_outer_and_open(params: &mut akita_types::CommittedGroupParams, dimension: usize) {
+fn retarget_outer_and_open(params: &mut akita_params::CommittedGroupParams, dimension: usize) {
     let d_a = params.d_a();
     let outer = params.outer().matrix;
     params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
@@ -114,7 +116,7 @@ fn compression_span<'a>(
 ) -> (
     Option<usize>,
     usize,
-    &'a akita_types::CompressionWitnessSpan,
+    &'a akita_params::CompressionWitnessSpan,
 ) {
     match *family {
         RelationRowFamily::CompressionF {
@@ -141,7 +143,7 @@ fn compression_span<'a>(
 
 #[allow(clippy::too_many_arguments)]
 fn literal_reduced_compression_table(
-    params: &akita_types::CommittedGroupParams,
+    params: &akita_params::CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     layout: &WitnessLayout,
     setup: &AkitaExpandedSetup<F>,
@@ -231,7 +233,7 @@ fn literal_reduced_compression_table(
                     row_weights[row] * residue;
             }
         }
-        if map_index + 1 < akita_types::COMPRESSION_MAP_COUNT {
+        if map_index + 1 < akita_params::COMPRESSION_MAP_COUNT {
             let successor_layer = &layout.compression_layers()[map_index + 1];
             let successor = match group_index {
                 Some(group_index) => successor_layer
@@ -261,7 +263,7 @@ fn literal_reduced_compression_table(
 }
 
 fn compressed_reduced_fixture() -> (
-    akita_types::CommittedGroupParams,
+    akita_params::CommittedGroupParams,
     OpeningClaimsLayout,
     WitnessLayout,
     AkitaExpandedSetup<F>,
@@ -270,7 +272,7 @@ fn compressed_reduced_fixture() -> (
     usize,
 ) {
     let root_challenge = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
-    let mut params = akita_types::CommittedGroupParams::params_only(
+    let mut params = akita_params::CommittedGroupParams::params_only(
         SisModulusProfileId::Q64Offset59,
         128,
         2,
@@ -284,14 +286,14 @@ fn compressed_reduced_fixture() -> (
     retarget_outer_and_open(&mut params, 64);
     params.payload_mode = CommitmentPayloadMode::Compressed;
     params.ring_relation_mode = RingRelationMode::ReducedEvaluation;
-    params.witness_chunk = akita_types::ChunkedWitnessCfg {
+    params.witness_chunk = akita_params::ChunkedWitnessCfg {
         num_chunks: 2,
         num_activated_levels: 1,
     };
     params.own_group_mut().profile.group = PolynomialGroupLayout::new(10, 1);
 
     let frozen_challenge = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
-    let mut frozen = akita_types::CommittedGroupParams::params_only(
+    let mut frozen = akita_params::CommittedGroupParams::params_only(
         SisModulusProfileId::Q64Offset59,
         64,
         2,
@@ -383,7 +385,7 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
         compressed_reduced_fixture();
     assert_eq!(
         layout.compression_layers().len(),
-        akita_types::COMPRESSION_MAP_COUNT
+        akita_params::COMPRESSION_MAP_COUNT
     );
     assert_eq!(params.precommitted_groups().len() + 1, 2);
     assert_eq!(params.witness_chunk.num_chunks, 2);

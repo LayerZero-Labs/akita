@@ -2,7 +2,8 @@
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
-use akita_types::{AkitaVerifierSetup, OpeningScheduleSelection, ScheduleRowDigest};
+use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
+use akita_types::AkitaVerifierSetup;
 use jolt_field::CanonicalEncoding;
 
 use crate::prepared_cache::{terminal_ntt_cache_requirement, TerminalNttCache};
@@ -154,10 +155,12 @@ mod tests {
     use super::*;
     use crate::build_riscv64_terminal_ntt_cache;
     use akita_config::proof_optimized::fp128::OneHot;
+    use akita_params::{
+        verifier_setup_matrix_capacity_for_schedule, FlatMatrix, FoldSchedule,
+        PolynomialGroupLayout, ScheduleLookupKey,
+    };
     use akita_types::{
-        verifier_setup_matrix_capacity_for_schedule, AkitaExpandedSetup, AkitaSetupDescriptor,
-        AkitaSetupSeed, FlatMatrix, FoldSchedule, PolynomialGroupLayout, ScheduleLookupKey,
-        SetupPrefixVerifierRegistry,
+        AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, SetupPrefixVerifierRegistry,
     };
     use jolt_field::Ring;
     use std::sync::Arc;

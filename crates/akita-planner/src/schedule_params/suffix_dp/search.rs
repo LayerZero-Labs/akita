@@ -153,7 +153,7 @@ fn price_planned_fold_candidate(
         next_source_moment,
     } = candidate;
     if let Some(natural_prefix_len) = state.topology.incoming_setup_prefix() {
-        let padded_prefix_len = akita_types::padded_setup_prefix_len(natural_prefix_len);
+        let padded_prefix_len = akita_params::padded_setup_prefix_len(natural_prefix_len);
         if !offloaded_witness_contracts(
             state.current_witness_len,
             state.current_lb,
@@ -175,8 +175,8 @@ fn price_planned_fold_candidate(
             .topology
             .incoming_setup_prefix()
             .is_none_or(|incoming_len| {
-                akita_types::padded_setup_prefix_len(natural_len)
-                    < akita_types::padded_setup_prefix_len(incoming_len)
+                akita_params::padded_setup_prefix_len(natural_len)
+                    < akita_params::padded_setup_prefix_len(incoming_len)
             });
     if matches!(
         ctx.policy.selection_policy,

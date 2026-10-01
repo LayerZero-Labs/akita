@@ -2,7 +2,7 @@
 
 use crate::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_types::{ChallengeFieldOrder, FoldSchedule, GrindingPlan, OpeningClaimsLayout};
+use akita_params::{ChallengeFieldOrder, FoldSchedule, GrindingPlan, OpeningClaimsLayout};
 use jolt_field::{CanonicalEncoding, ExtField};
 
 /// Derive the only accepted grinding plan for one effective schedule and call.
@@ -26,7 +26,7 @@ where
         extension_degree,
         Cfg::sis_modulus_profile().modulus(),
     )?;
-    akita_types::derive_transcript_grinding_plan_from_public_shape(
+    akita_params::derive_transcript_grinding_plan_from_public_shape(
         schedule,
         root_layout,
         challenge_order,
@@ -38,7 +38,7 @@ where
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
-    use akita_types::{GrindingQueryKind, GrindingSite, GRINDING_NONCE_SLACK_BITS};
+    use akita_params::{GrindingQueryKind, GrindingSite, GRINDING_NONCE_SLACK_BITS};
 
     #[test]
     fn production_onehot_plan_is_canonical_and_fully_priced() {
@@ -46,7 +46,7 @@ mod tests {
             .expect("one-hot schedule catalog");
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
         let row = catalog
-            .resolve_key(&akita_types::ScheduleLookupKey::single(
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
                 layout.root_final_group_layout().expect("root group"),
             ))
             .expect("generated production row");
@@ -103,25 +103,25 @@ mod tests {
             .expect("one-hot schedule catalog");
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
         let row = catalog
-            .resolve_key(&akita_types::ScheduleLookupKey::single(
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
                 layout.root_final_group_layout().expect("root group"),
             ))
             .expect("generated production row");
         let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout)
             .expect("grinding plan");
         let root = &row.schedule().root;
-        let rounds = akita_types::sumcheck_rounds(root.params.d_a(), root.output_witness_len);
+        let rounds = akita_params::sumcheck_rounds(root.params.d_a(), root.output_witness_len);
         let basis = 1usize
             .checked_shl(root.params.open().digits.log_basis)
             .expect("digit range basis");
-        let range = akita_types::DigitRangePlan::new(basis).expect("digit range plan");
+        let range = akita_params::DigitRangePlan::new(basis).expect("digit range plan");
         let (stages, _) = range
             .proof_shapes_for_route(rounds, root.params.inner().matrix.security_route())
             .expect("Stage 1 shapes");
 
         for run in plan.runs() {
             let GrindingSite::SumcheckRound {
-                protocol: akita_types::SumcheckProtocol::Stage1,
+                protocol: akita_params::SumcheckProtocol::Stage1,
                 level: 0,
                 stage,
                 ..
@@ -149,13 +149,13 @@ mod tests {
                 Cfg::sis_modulus_profile().modulus(),
             )
             .unwrap();
-            for exponent in 0..akita_types::MAX_GRINDING_BITS {
+            for exponent in 0..akita_params::MAX_GRINDING_BITS {
                 assert_eq!(
-                    akita_types::grind_bits_for_loss(1u64 << exponent, order).unwrap(),
+                    akita_params::grind_bits_for_loss(1u64 << exponent, order).unwrap(),
                     exponent + 1,
                 );
             }
-            assert_eq!(akita_types::grind_bits_for_loss(3, order).unwrap(), 2);
+            assert_eq!(akita_params::grind_bits_for_loss(3, order).unwrap(), 2);
         }
         check::<fp128::OneHot>();
         check::<crate::proof_optimized::fp64::OneHot>();
@@ -224,7 +224,7 @@ mod tests {
                             [usize::try_from(level - 1).expect("fold level fits usize")]
                         .params
                     };
-                    let akita_types::InnerCommitSecurityRoute::L2 {
+                    let akita_params::InnerCommitSecurityRoute::L2 {
                         norm_proof_shape, ..
                     } = params.inner().matrix.security_route()
                     else {
@@ -255,7 +255,7 @@ mod tests {
                             matches!(
                                 run.site(),
                                 GrindingSite::SumcheckRound {
-                                    protocol: akita_types::SumcheckProtocol::Stage3,
+                                    protocol: akita_params::SumcheckProtocol::Stage3,
                                     level: run_level,
                                     ..
                                 } if run_level == level

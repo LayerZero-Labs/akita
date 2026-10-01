@@ -94,9 +94,9 @@ collision_A     = ceil_supported_linf_bound(collision_A_inf)
 balanced `δ_fold`-digit coefficients lie in the verifier-certified interval.
 
 This is implemented in
-[`crates/akita-types/src/sis/norm_bound.rs`](../crates/akita-types/src/sis/norm_bound.rs)
+[`crates/akita-params/src/sis/norm_bound.rs`](../crates/akita-params/src/sis/norm_bound.rs)
 (with fold-linf cap sizing in
-[`fold_linf_cap.rs`](../crates/akita-types/src/sis/fold_linf_cap.rs)):
+[`fold_linf_cap.rs`](../crates/akita-params/src/sis/fold_linf_cap.rs)):
 `rounded_up_role_a_inf_norm` prices the
 `4·ω·balanced_digit_interval_diameter` coefficient-`L∞` envelope into the audited
 A-role collision target; each call site then derives the level's secure A-role
@@ -257,7 +257,7 @@ regenerating the SIS-floor security tables and one deferred follow-up:
   one-hot and all fp32/fp64/fp128 families keep folding.
 ## Follow-up fix (2026-06-02): root-dense witness L∞ off-by-one
 
-While reviewing the consolidated `akita_types::sis` module, a second, smaller
+While reviewing the consolidated `akita_params::sis` module, a second, smaller
 soundness bug surfaced in the *same* A-role collision norm — this one
 resolves the spec's Open Question 3 below.
 
@@ -355,7 +355,7 @@ inequality:
    collision norm, so Module-SIS binding is no longer guaranteed.
 
 2. **Optimization (in scope, secondary).** The folded-witness digit bound in
-   [`crates/akita-types/src/layout/digit_math.rs`](../crates/akita-types/src/layout/digit_math.rs)
+   [`crates/akita-params/src/layout/digit_math.rs`](../crates/akita-params/src/layout/digit_math.rs)
    (`compute_num_digits_fold_with_claims`, line 148) uses only the
    `||c||_1 · ||s||_inf` side of the inequality
    (`β = challenge_l1_mass · num_claims · 2^(block_index_bits + log_basis − 1)`). Taking
@@ -488,7 +488,7 @@ witness `||s_i||_1` is small (sparse / one-hot).
 Both call sites should read as the inequality above:
 
 ```rust
-// crates/akita-types/src/layout/digit_math.rs
+// crates/akita-params/src/layout/digit_math.rs
 
 /// Worst-case `||c · s||_inf` in the negacyclic ring, from the per-element
 /// L1/L∞ bounds:
@@ -694,11 +694,11 @@ no-panic + planner determinism contracts):
 
 **Fold β / `δ_fold`:**
 
-- `crates/akita-types/src/layout/digit_math.rs` —
+- `crates/akita-params/src/layout/digit_math.rs` —
   `compute_num_digits_fold_with_claims` (reported site) and its use inside
   `optimal_block_geometry_split`. Both thread the commit-block `witness_infinity_norm` and
   `K` in.
-- `crates/akita-types/src/layout/params.rs:340` — `LevelParams::num_digits_fold`
+- `crates/akita-params/src/layout/params.rs:340` — `LevelParams::num_digits_fold`
   (runtime, verifier-reachable).
 - `crates/akita-prover/src/protocol/ring_relation.rs:40` —
   `beta_linf_fold_bound` is a **parallel prover-side copy** used by
@@ -811,7 +811,7 @@ output.
   task.)
 - Code: `crates/akita-planner/src/ajtai_params.rs`,
   `crates/akita-types/src/sis_offline.rs`,
-  `crates/akita-types/src/layout/digit_math.rs`,
+  `crates/akita-params/src/layout/digit_math.rs`,
   `crates/akita-types/src/sis_floor.rs`,
   `crates/akita-prover/src/protocol/ring_relation.rs`,
   `crates/akita-prover/src/backend/onehot/{entries,blocks,decompose_fold}.rs`,
