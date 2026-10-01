@@ -1,5 +1,5 @@
 #![allow(private_bounds)]
-use crate::opaque::OpeningFoldKernel;
+use crate::opaque::{OpeningBatchKernel, OpeningFoldKernel};
 
 use crate::opaque::ComputeBackendSetup;
 use crate::opaque::RingSwitchRelationView;
@@ -310,6 +310,7 @@ where
 pub(crate) trait OpeningProveBackendFor<F, P, const D: usize>:
     ComputeBackendSetup<F>
     + for<'a> OpeningFoldKernel<<P as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>
+    + for<'a> OpeningBatchKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>
     + for<'a> FoldResponseKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>
 where
     F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
@@ -325,6 +326,7 @@ where
     P: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F>
         + for<'a> OpeningFoldKernel<<P as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>
+        + for<'a> OpeningBatchKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>
         + for<'a> FoldResponseKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>,
 {
 }

@@ -141,8 +141,7 @@ where
         ));
     }
     let final_group_index = level_params.validate_opening_batch(&opening_batch)?;
-    let mut prepared_group_openings = Vec::with_capacity(opening_batch.num_groups());
-    let mut scalar_openings = Vec::with_capacity(opening_batch.num_total_polynomials());
+    let mut requests = Vec::with_capacity(opening_batch.num_groups());
     for (group_index, group_lp) in level_params.groups().iter().enumerate() {
         let ring_dimension = group_lp.inner_commit_matrix_params().ring_dimension();
         let group_alpha_bits = ring_dimension.trailing_zeros() as usize;
@@ -190,12 +189,21 @@ where
             group_lp.opening_method(),
             logical_len,
         );
-        let prepared = backend.prepare_opening(
-            opening.proof_session(),
-            opening.for_group(group_index).proof_context(),
+        requests.push(crate::backend::GroupOpeningRequest {
+            context: context.for_group(group_index),
             source,
-            &plan,
-        )?;
+            plan,
+        });
+    }
+    let prepared_group_openings = backend.prepare_openings(session, &requests)?;
+    if prepared_group_openings.len() != requests.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: requests.len(),
+            actual: prepared_group_openings.len(),
+        });
+    }
+    let mut scalar_openings = Vec::with_capacity(opening_batch.num_total_polynomials());
+    for (group_index, prepared) in prepared_group_openings.iter().enumerate() {
         if prepared.scalar_openings().len()
             != opening_batch.group_layout(group_index)?.num_polynomials()
         {
@@ -232,11 +240,10 @@ where
                     group: group_index,
                 }
                 .id()?,
-                group_protocol_point,
+                requests[group_index].plan.point(),
             )?;
         }
         scalar_openings.extend_from_slice(prepared.scalar_openings());
-        prepared_group_openings.push(prepared);
     }
     if reduction.is_none() {
         akita_transcript::public_extensions::<F, E, _>(
