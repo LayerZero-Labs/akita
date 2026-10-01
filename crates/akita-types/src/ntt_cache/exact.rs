@@ -403,8 +403,8 @@ fn prepare_ifma52_tail<F: Field + CanonicalEncoding, W: PrimeWidth, const D: usi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FlatMatrix;
     use akita_algebra::CyclotomicRing;
+    use akita_params::FlatMatrix;
     use jolt_field::Prime32Offset99;
 
     #[test]

@@ -8,7 +8,7 @@ use super::{
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_types::sis::compute_num_digits_field_width;
+use akita_params::sis::compute_num_digits_field_width;
 use jolt_field::CanonicalEncoding;
 use jolt_field::{Fp64, Prime128Offset275, Ring, Zero};
 
@@ -136,7 +136,8 @@ fn all_fold_sources_share_rotated_narrow_and_chunked_results() {
 #[test]
 fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
     use crate::opaque::{DensePoly, OneHotPoly, RecursiveWitnessFlat};
-    use akita_types::{prepare_opening_point, BasisMode};
+    use akita_params::BasisMode;
+    use akita_types::prepare_opening_point;
     use jolt_field::{ExtField, FpExt4, Prime32Offset99};
 
     type F = Prime32Offset99;
@@ -654,7 +655,7 @@ fn fp128_boundary_values_fold_through_rotated_and_sparse_paths() {
     const D: usize = 64;
     const POSITIONS: usize = 2;
 
-    let q = akita_types::field_modulus::<F>().expect("test field fits in u128");
+    let q = akita_params::field_modulus::<F>().expect("test field fits in u128");
     let dense = SparseChallenge {
         positions: (0..D as u32).collect(),
         coeffs: (0..D)

@@ -709,9 +709,9 @@ The slices below are compile checkpoints. Each slice deletes the path it replace
 Files centered on this slice:
 
 ```text
-crates/akita-types/src/layout/params.rs
-crates/akita-types/src/layout/params/precommitted.rs
-crates/akita-types/src/layout/digit_math.rs
+crates/akita-params/src/layout/params.rs
+crates/akita-params/src/layout/params/precommitted.rs
+crates/akita-params/src/layout/digit_math.rs
 crates/akita-planner/src/schedule_params.rs
 crates/akita-challenges/src/challenges.rs
 ```
@@ -730,7 +730,7 @@ Steps:
 Files centered on this slice:
 
 ```text
-crates/akita-types/src/layout/opening_point.rs
+crates/akita-params/src/layout/opening_point.rs
 crates/akita-prover/src/protocol/core/fold.rs
 crates/akita-verifier/src/protocol/core/fold.rs
 crates/akita-prover/src/protocol/core/root_fold.rs
@@ -753,7 +753,7 @@ Steps:
 Files centered on this slice:
 
 ```text
-crates/akita-types/src/witness.rs
+crates/akita-params/src/witness.rs
 crates/akita-types/src/proof/ring_relation.rs
 crates/akita-types/src/proof/tail_segments.rs
 crates/akita-types/src/proof/witness_layout_contract.rs
@@ -885,9 +885,9 @@ Steps:
 * [`specs/PRUNING.md`](PRUNING.md)
 * [`specs/multi-group-batching.md`](multi-group-batching.md)
 * [`book/src/how/recursion.md`](../book/src/how/recursion.md)
-* `crates/akita-types/src/layout/params.rs`
-* `crates/akita-types/src/layout/params/precommitted.rs`
-* `crates/akita-types/src/witness.rs`
+* `crates/akita-params/src/layout/params.rs`
+* `crates/akita-params/src/layout/params/precommitted.rs`
+* `crates/akita-params/src/witness.rs`
 * `crates/akita-types/src/proof/ring_relation.rs`
 * `crates/akita-types/src/trace_weight`
 

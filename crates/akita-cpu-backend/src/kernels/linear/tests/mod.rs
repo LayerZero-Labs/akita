@@ -12,7 +12,7 @@ use akita_algebra::ntt::{
     PrimeWidth,
 };
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
-use akita_types::layout::{FlatMatrix, RingMatrixView};
+use akita_params::layout::{FlatMatrix, RingMatrixView};
 use akita_types::{
     prepare_ntt_cache, select_crt_ntt_params, NttCacheMode, PreparedNttCache, ProtocolCrtNttParams,
 };

@@ -1,6 +1,6 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::{FoldSchedule, GroupOpenPhaseParams, InnerCommitSecurityRoute, OpeningMethod};
+use akita_params::{FoldSchedule, GroupOpenPhaseParams, InnerCommitSecurityRoute, OpeningMethod};
 
 use crate::proof_optimized::fp128;
 use crate::{
@@ -189,7 +189,8 @@ fn catalog_binding_revalidates_recursive_setup_prefix_challenge_hook() {
 fn dense_recursive_artifacts_cover_benchmark_sizes_and_offload_setup() {
     use crate::proof_optimized::{fp32, fp64};
     use crate::recursive_commitment::RecursiveScheduleConfig;
-    use akita_types::{PolynomialGroupLayout, ScheduleLookupKey};
+    use akita_params::PolynomialGroupLayout;
+    use akita_params::ScheduleLookupKey;
 
     fn check<Cfg: RecursiveScheduleConfig>(sizes: &[usize]) {
         type Recursive<C> = RecursiveCommitmentConfig<C>;

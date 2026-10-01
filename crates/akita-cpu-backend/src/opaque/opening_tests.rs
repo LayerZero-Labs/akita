@@ -2,6 +2,7 @@ use crate::opaque::CpuBackend as GenericCpuBackend;
 use crate::opaque::RecursiveWitnessFlat;
 use akita_config::proof_optimized::fp128::OneHot;
 use akita_error::AkitaError;
+use akita_params::*;
 use akita_prover::backend::*;
 use akita_sumcheck::SumcheckKernel;
 use akita_transcript::{new_prover_channel, new_verifier_channel};
@@ -161,18 +162,18 @@ fn prove_eor(
         rho,
     })
 }
-fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPlan {
-    let challenge_order = akita_types::ChallengeFieldOrder::from_full_capacity(128).unwrap();
-    let mut runs = vec![akita_types::GrindingRun::proof_of_work(
-        akita_types::GrindingSite::ExtensionOpeningPoint { level: 1 },
+fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_params::GrindingPlan {
+    let challenge_order = akita_params::ChallengeFieldOrder::from_full_capacity(128).unwrap();
+    let mut runs = vec![akita_params::GrindingRun::proof_of_work(
+        akita_params::GrindingSite::ExtensionOpeningPoint { level: 1 },
         1,
         challenge_order,
     )
     .unwrap()];
     if batches_claims {
         runs.push(
-            akita_types::GrindingRun::proof_of_work(
-                akita_types::GrindingSite::ExtensionOpeningClaimBatch { level: 1 },
+            akita_params::GrindingRun::proof_of_work(
+                akita_params::GrindingSite::ExtensionOpeningClaimBatch { level: 1 },
                 1,
                 challenge_order,
             )
@@ -181,9 +182,9 @@ fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPl
     }
     for round in 0..rounds {
         runs.push(
-            akita_types::GrindingRun::proof_of_work(
-                akita_types::GrindingSite::SumcheckRound {
-                    protocol: akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+            akita_params::GrindingRun::proof_of_work(
+                akita_params::GrindingSite::SumcheckRound {
+                    protocol: akita_params::SumcheckProtocol::ExtensionOpeningReduction,
                     level: 1,
                     stage: 0,
                     round: u32::try_from(round).unwrap(),
@@ -194,7 +195,7 @@ fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPl
             .unwrap(),
         );
     }
-    akita_types::GrindingPlan::new(runs, challenge_order).unwrap()
+    akita_params::GrindingPlan::new(runs, challenge_order).unwrap()
 }
 
 fn direct_eq_at_boolean<E: Field>(point: &[E], index: usize) -> E {
@@ -334,7 +335,7 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
             .unwrap();
             let inner = &params.inner().matrix;
             let inner_bound =
-                *akita_types::sis::inner_coeff_linf_bounds(inner.sis_modulus_profile(), D as u32)
+                *akita_params::sis::inner_coeff_linf_bounds(inner.sis_modulus_profile(), D as u32)
                     .first()
                     .expect("audited setup-prefix A bound");
             params.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(

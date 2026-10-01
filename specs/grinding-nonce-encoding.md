@@ -977,7 +977,7 @@ Current PR:
   absorption, and challenge extraction;
 - `crates/akita-types/src/transcript_grinding/replay.rs` — public plan
   cursor and verifier checks;
-- `crates/akita-types/src/transcript_grinding/plan.rs` — canonical plan
+- `crates/akita-params/src/transcript_grinding/plan.rs` — canonical plan
   derivation and the complete component catalog;
 - `crates/akita-schedules/src/runtime.rs` — maximum planner estimate
   versus complete proof bound;
@@ -989,7 +989,7 @@ Current PR:
 
 - `crates/akita-types/src/transcript_grinding/replay.rs` — packed writer,
   reader, bit cursor, and transcript adapter;
-- `crates/akita-types/src/transcript_grinding/plan.rs` — public site and width
+- `crates/akita-params/src/transcript_grinding/plan.rs` — public site and width
   derivation;
 - `crates/akita-types/src/proof/wire.rs` — structured proof serialization;
 - `crates/akita-transcript/src/grinding.rs` — fixed PoW transcript payload;

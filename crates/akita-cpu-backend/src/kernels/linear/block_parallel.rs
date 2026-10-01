@@ -360,7 +360,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
     let digit_bound = balanced_digit_abs_bound(log_basis);
     let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
         .ok_or_else(|| {
-            AkitaError::Internal("single-row i8 CRT capacity cannot fit a single term".into())
+            AkitaError::InvalidSetup("single-row i8 CRT capacity cannot fit a single term".into())
         })?;
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     let mat_row = &ntt_mat[0];

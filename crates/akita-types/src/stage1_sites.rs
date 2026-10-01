@@ -64,10 +64,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        ChallengeFieldOrder, GrindingPlan, GrindingRun, GrindingSite, ProverGrinding,
-        VerifierGrinding,
-    };
+    use crate::{ProverGrinding, VerifierGrinding};
+    use akita_params::{ChallengeFieldOrder, GrindingPlan, GrindingRun, GrindingSite};
     use akita_transcript::{new_prover_channel, new_verifier_channel};
     use jolt_field::{FpExt4, Prime32Offset99, Ring, Zero};
 

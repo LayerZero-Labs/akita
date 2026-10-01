@@ -7,23 +7,25 @@ fn covers_prefix_compressed_raw_terminal_and_l2_routes() {
     schedule.recursive_folds[1].params.payload_mode = CommitmentPayloadMode::Raw;
 
     let terminal_matrix = schedule.terminal.inner.matrix;
-    let table_key = crate::sis::sis_l2_table_key_for_collision_sq(
-        crate::DEFAULT_SIS_SECURITY_POLICY,
-        crate::SisL2TableDigest::CURRENT,
+    let table_key = akita_params::sis::sis_l2_table_key_for_collision_sq(
+        akita_params::DEFAULT_SIS_SECURITY_POLICY,
+        akita_params::SisL2TableDigest::CURRENT,
         terminal_matrix.sis_modulus_profile(),
         u32::try_from(terminal_matrix.ring_dimension()).expect("test ring dimension"),
         1u128 << 50,
     )
     .expect("generated L2 key");
-    schedule.terminal.inner.matrix = crate::InnerCommitMatrixParams::try_new_l2_with_min_rank(
-        table_key,
-        terminal_matrix.input_width(),
-        1u128 << 30,
-        crate::PhysicalL2NormProofShape::Direct {
-            physical_response_len: terminal_matrix.input_width() * terminal_matrix.ring_dimension(),
-        },
-    )
-    .expect("audited terminal L2 matrix");
+    schedule.terminal.inner.matrix =
+        akita_params::InnerCommitMatrixParams::try_new_l2_with_min_rank(
+            table_key,
+            terminal_matrix.input_width(),
+            1u128 << 30,
+            akita_params::PhysicalL2NormProofShape::Direct {
+                physical_response_len: terminal_matrix.input_width()
+                    * terminal_matrix.ring_dimension(),
+            },
+        )
+        .expect("audited terminal L2 matrix");
 
     let occurrences = schedule
         .sis_occurrences()
@@ -46,20 +48,26 @@ fn covers_prefix_compressed_raw_terminal_and_l2_routes() {
             && occurrence.role == ScheduleSisRole::Compression
     }));
 
-    let canonical_setup = crate::setup_matrix_field_elements_for_schedule(&schedule)
+    let canonical_setup = akita_params::setup_matrix_field_elements_for_schedule(&schedule)
         .expect("canonical occurrence setup envelope");
     let mut level_accumulation = 1;
-    crate::accumulate_matrix_field_elements_for_level(
+    akita_params::accumulate_matrix_field_elements_for_level(
         &schedule.root.params,
         &mut level_accumulation,
     )
     .expect("root setup envelope");
     for fold in &schedule.recursive_folds {
-        crate::accumulate_matrix_field_elements_for_level(&fold.params, &mut level_accumulation)
-            .expect("recursive setup envelope");
+        akita_params::accumulate_matrix_field_elements_for_level(
+            &fold.params,
+            &mut level_accumulation,
+        )
+        .expect("recursive setup envelope");
     }
-    crate::accumulate_terminal_matrix_field_elements(&schedule.terminal, &mut level_accumulation)
-        .expect("terminal setup envelope");
+    akita_params::accumulate_terminal_matrix_field_elements(
+        &schedule.terminal,
+        &mut level_accumulation,
+    )
+    .expect("terminal setup envelope");
     assert_eq!(canonical_setup, level_accumulation);
 }
 
@@ -90,7 +98,7 @@ fn covers_precommitted_groups_and_preserves_their_identity_binding() {
     let a_bound = execution_admission::exact_test_a_bound(&group_params);
     let inner = group_params.inner().matrix;
     group_params.own_group_mut().profile.inner.matrix =
-        crate::sis::InnerCommitMatrixParams::new_unchecked(
+        akita_params::sis::InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
             inner
                 .sis_table_key()
@@ -104,7 +112,7 @@ fn covers_precommitted_groups_and_preserves_their_identity_binding() {
         );
     let outer = group_params.outer().matrix;
     group_params.own_group_mut().profile.outer.matrix =
-        crate::sis::OuterCommitMatrixParams::new_unchecked(
+        akita_params::sis::OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),
@@ -118,7 +126,7 @@ fn covers_precommitted_groups_and_preserves_their_identity_binding() {
         .d_segment_width(1, schedule.root.params.role_dims().d_d())
         .expect("root precommitted D width");
     let open = schedule.root.params.open().matrix;
-    let widened_open = crate::sis::OpenCommitMatrixParams::new_unchecked(
+    let widened_open = akita_params::sis::OpenCommitMatrixParams::new_unchecked(
         open.security_policy(),
         open.sis_table_key().table_digest,
         open.sis_modulus_profile(),
@@ -154,7 +162,7 @@ fn covers_precommitted_groups_and_preserves_their_identity_binding() {
         ),
         precommitteds: vec![schedule.root.params.precommitted_groups()[0].profile],
     };
-    let digest = crate::schedule_row_digest(&profiles, &schedule).expect("row digest");
+    let digest = akita_params::schedule_row_digest(&profiles, &schedule).expect("row digest");
     let mut changed = schedule;
     changed
         .root
@@ -162,12 +170,12 @@ fn covers_precommitted_groups_and_preserves_their_identity_binding() {
         .preceding_group_mut_for_test(0)
         .unwrap()
         .opening
-        .opening_method = crate::OpeningMethod::SubringCoefficientPacking {
+        .opening_method = akita_params::OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 64,
     };
     assert_ne!(
         digest,
-        crate::schedule_row_digest(&profiles, &changed)
+        akita_params::schedule_row_digest(&profiles, &changed)
             .expect("changed root precommitted opening-method digest")
     );
     assert!(changed.validate_structure().is_ok());

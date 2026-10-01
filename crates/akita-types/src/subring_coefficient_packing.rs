@@ -8,8 +8,8 @@ use jolt_field::Field;
 #[cfg(test)]
 use jolt_field::{Ring, Zero};
 
-use crate::layout::subring_packing_geometry::SubringCoefficientPackingGeometry;
-use crate::{basis_weights, basis_weights_prefix, BasisMode};
+use akita_params::layout::subring_packing_geometry::SubringCoefficientPackingGeometry;
+use akita_params::{basis_weights, basis_weights_prefix, BasisMode};
 
 /// Canonical opening-point split for subring coefficient packing.
 ///
