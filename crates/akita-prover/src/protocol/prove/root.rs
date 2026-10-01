@@ -106,7 +106,9 @@ where
         proof_session,
     )?;
     if suffix.num_levels != schedule.num_fold_levels() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "proved suffix fold count differs from schedule".into(),
+        ));
     }
     guard.finish()?;
     grinding.finish()
