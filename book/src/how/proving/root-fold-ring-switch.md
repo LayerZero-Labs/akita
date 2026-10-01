@@ -217,10 +217,10 @@ recursive folds and the terminal use `EvaluationTrace`; packing adds neither
 an EOR payload nor a packing terminal.
 
 This chapter documents the implemented relation and schedule boundary. The
-active design record gives the formal planner and soundness requirements,
-including the implemented coordinatewise CWSS accounting. The equations here
-are protocol relations; by themselves, they are not an end-to-end soundness
-theorem.
+active design record gives the planner and algebraic soundness requirements.
+Indexed coordinates supply fork structure for the accepting-tree extractor;
+the [indexed fold bound](../../../../specs/transcript-grinding.md#indexed-address-fold-bound)
+charges every adversarially touched or verifier-completed coordinate stream.
 
 ## The root fold
 
@@ -240,9 +240,9 @@ below describes this mode.
 weights and creates no polynomial-modulus quotient rows or quotient digits.
 Production schedules admit it only as a monotone, setup-direct
 `EvaluationTrace` suffix beginning at absolute level 2. Coefficient packing
-remains quotient-lift-only. The [ring-relation realization
-chapter](./akita-fold-realizations.md#reduced-evaluation) gives the reduced
-weights and complete schedule restrictions.
+remains quotient-lift-only. [Checking ring relations over a
+field](./ring-relation-checking.md) derives both methods and their schedule
+restrictions. This section explains how the prover computes the quotients.
 
 This operation is distinct from EOR. EOR changes an extension-valued opening
 claim before the lattice relation is formed. In `QuotientLift` mode, ring
@@ -379,6 +379,6 @@ quotient checked by the verifier.
   expands those semantics into local Stage 2 term tables.
 - `crates/akita-verifier/src/coefficient_packing_relation/` builds the
   verifier's compact factors from the same validated groups.
-- `crates/akita-verifier/src/protocol/core/fold/` replays the relation and
+- `crates/akita-verifier/src/fold/` replays the relation and
   rejects a proof whose dimensions or quotient structure do not match the
   selected schedule.

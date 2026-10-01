@@ -1,4 +1,4 @@
-use akita_error::AkitaError;
+use akita_error::{narrowing::usize_to_u32, AkitaError};
 
 /// Owned flat storage for sparse entries grouped by logical block.
 ///
@@ -43,7 +43,7 @@ impl<E> FlatBlocks<E> {
     }
 
     fn entry_offset(&self) -> Result<u32, AkitaError> {
-        checked_entry_offset(self.entries.len())
+        usize_to_u32(self.entries.len(), "flat block entry count")
     }
 
     fn advance_to_block(
@@ -107,22 +107,9 @@ impl<E> FlatBlocks<E> {
     }
 }
 
-fn checked_entry_offset(len: usize) -> Result<u32, AkitaError> {
-    u32::try_from(len).map_err(|_| {
-        AkitaError::InvalidInput(format!("flat block entry count {len} exceeds u32::MAX"))
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{checked_entry_offset, FlatBlocks};
-
-    #[test]
-    fn rejects_entry_offset_above_u32_max() {
-        if let Some(too_large) = (u32::MAX as usize).checked_add(1) {
-            assert!(checked_entry_offset(too_large).is_err());
-        }
-    }
+    use super::FlatBlocks;
 
     #[test]
     fn push_entry_rejects_out_of_range_block_in_release_builds() {

@@ -71,7 +71,7 @@ impl<E: Field + Ring + Unreduced + Fold> EqFactoredSumcheckInstanceProver<E>
         self.split_eq.current_tau()
     }
 
-    fn compute_round_eq_factored(&mut self, round: usize) -> OmittedConstantPoly<E> {
+    fn compute_round_eq_factored(&mut self, round: usize, _claim: E) -> OmittedConstantPoly<E> {
         debug_assert_eq!(round, self.rounds_completed);
         if let Some(poly) = self.cached_round_poly.take() {
             poly

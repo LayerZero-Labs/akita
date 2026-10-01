@@ -5,8 +5,8 @@ use super::{
 };
 use crate::parallel::ProfileThreadPools;
 use crate::report::{
-    emit_native_proof_tail_report, emit_runtime_schedule_summary, print_native_proof_summary,
-    report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
+    emit_proof_tail_report, emit_runtime_schedule_summary, print_proof_summary, report_crt_profile,
+    report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use crate::workspace_schedules::load_workspace_scheme;
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
@@ -167,12 +167,12 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     let pre_key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
     let pre_descriptor = base_scheme
         .schedules()
-        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(pre_key))
+        .resolve_key(&akita_types::ScheduleLookupKey::single(pre_key))
         .expect("independent profile")
         .profiles()
         .final_group;
     let final_group = PolynomialGroupLayout::new(final_num_vars, final_num_polys);
-    let multi_group_key = akita_types::AkitaScheduleLookupKey {
+    let multi_group_key = akita_types::ScheduleLookupKey {
         final_group,
         precommitteds: vec![pre_descriptor; PRE_GROUPS],
     };
@@ -242,16 +242,38 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         let mut pre_hints = Vec::with_capacity(PRE_GROUPS);
         let mut pre_openings = Vec::with_capacity(PRE_GROUPS);
 
+        // Build witnesses and opening evaluations before starting the commit
+        // timer so it covers only source import and commitment.
+        let pre_fixtures = pre_points
+            .iter()
+            .enumerate()
+            .map(|(group_idx, pre_point)| {
+                let polys = vec![make_profile_onehot_poly::<Cfg>(
+                    pre_num_vars,
+                    0x0bee_fcaf_2100_0000 + group_idx as u64,
+                )];
+                let openings = polys
+                    .iter()
+                    .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, pre_point))
+                    .collect::<Vec<_>>();
+                (polys, openings)
+            })
+            .collect::<Vec<_>>();
+        let final_polys = (0..final_num_polys)
+            .map(|poly_idx| {
+                make_profile_onehot_poly::<Cfg>(
+                    final_num_vars,
+                    0x0bee_fcaf_2800_0000 + poly_idx as u64,
+                )
+            })
+            .collect::<Vec<_>>();
+        let final_openings = final_polys
+            .iter()
+            .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &final_point))
+            .collect::<Vec<_>>();
+
         let t_commit = Instant::now();
-        for (group_idx, pre_point) in pre_points.iter().enumerate() {
-            let polys = vec![make_profile_onehot_poly::<Cfg>(
-                pre_num_vars,
-                0x0bee_fcaf_2100_0000 + group_idx as u64,
-            )];
-            let openings = polys
-                .iter()
-                .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, pre_point))
-                .collect::<Vec<_>>();
+        for (polys, openings) in pre_fixtures {
             let source = backend
                 .import_source(polys)
                 .expect("import precommit sources");
@@ -271,18 +293,6 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             pre_openings.push(openings);
         }
 
-        let final_polys = (0..final_num_polys)
-            .map(|poly_idx| {
-                make_profile_onehot_poly::<Cfg>(
-                    final_num_vars,
-                    0x0bee_fcaf_2800_0000 + poly_idx as u64,
-                )
-            })
-            .collect::<Vec<_>>();
-        let final_openings = final_polys
-            .iter()
-            .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &final_point))
-            .collect::<Vec<_>>();
         let precommitteds = akita_types::PrecommittedGroupProfiles::from_profiles(
             pre_commitments
                 .iter()
@@ -370,7 +380,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     assert_observed_proof_size(label, &proof);
     let grinding_plan = derive_transcript_grinding_plan::<ProofCfg>(&schedule, &opening_layout)
         .expect("profile grinding plan");
-    print_native_proof_summary(label, &proof, &schedule, &grinding_plan);
+    print_proof_summary(label, &proof, &schedule, &grinding_plan);
     report_proof_size_against_planner(
         label,
         &proof,
@@ -386,7 +396,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         Cfg::EXT_DEGREE,
     )
     .expect("runtime schedule report geometry");
-    emit_native_proof_tail_report(label, &schedule, Cfg::decomposition().field_bits());
+    emit_proof_tail_report(label, &schedule, Cfg::decomposition().field_bits());
     tracing::info!(
         label,
         ext_degree = Cfg::EXT_DEGREE,

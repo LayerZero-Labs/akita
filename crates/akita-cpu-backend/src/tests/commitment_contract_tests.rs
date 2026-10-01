@@ -109,7 +109,7 @@ fn run_custom_commit_source_contract() {
         .expect("workspace schedule catalog");
     let dense = DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("dense oracle");
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
-    let key = akita_types::AkitaScheduleLookupKey::single(
+    let key = akita_types::ScheduleLookupKey::single(
         opening_batch
             .root_final_group_layout()
             .expect("root group layout"),

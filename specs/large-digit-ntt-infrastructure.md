@@ -440,9 +440,9 @@ Primary implemented files:
 - `crates/akita-types/src/ntt_cache.rs`: canonical exactness selector, unified
   preparation API, prepared layouts, checked type erasure, and verifier cache.
 - `crates/akita-types/src/proof/setup.rs`: derived verifier-cache access.
-- `crates/akita-verifier/src/protocol/core/terminal_{direct,ntt}.rs`: i16
+- `crates/akita-verifier/src/terminal/{direct,ntt}.rs`: i16
   boundary and terminal relation kernel.
-- `crates/akita-verifier/src/protocol/core/verify.rs`: schedule-level warming.
+- `crates/akita-verifier/src/fold/verify.rs`: schedule-level warming.
 - `crates/akita-prover/src/kernels/linear/`: canonicalized i8 kernel surface.
 - `crates/akita-pcs/benches/ring_ntt.rs`: residue, mixed matvec,
   reconstruction, LUT, terminal, and cache-construction comparisons.
@@ -458,7 +458,7 @@ Primary implemented files:
 | `akita-types/src/proof/setup.rs` | requests an exact negacyclic prefix by `(base prefix, tail prefix, width, log_basis)` without exposing a physical profile enum |
 | `akita-algebra/src/ring/crt_ntt_repr/mixed.rs` | keeps only `I16TailParams` and one shape-checked operation over separate base and tail slices; the public aggregate element type is gone |
 | `akita-algebra/src/ring/crt_ntt_repr/ops.rs` | owns the homogeneous signed-i16 matvec and common SIMD pointwise dispatch |
-| `akita-verifier/src/protocol/core/terminal_ntt.rs` | coalesces terminal group requirements during warm-up and invokes the unified signed-i16 cache operation |
+| `akita-verifier/src/terminal/ntt.rs` | coalesces terminal group requirements during warm-up and invokes the unified signed-i16 cache operation |
 | `akita-cpu-backend/src/arithmetic/` | CPU caches use checked standard type erasure internally; backend traits no longer expose prepared NTT slots |
 | prover linear kernels | consume typed prepared caches inside CPU execution and call canonical algebra operations directly |
 | tests/benches/docs | cover layout selection, prefix reuse, type mismatch rejection, scaling, cache construction, and final vocabulary |
@@ -825,7 +825,7 @@ the exact field/ring/width CRT selector remains in
 | prime/order and SIMD arithmetic | `crates/akita-algebra/src/ntt/tables.rs`, `crates/akita-algebra/src/ntt/avx/`, `crates/akita-algebra/src/ntt/neon/i16_kernels.rs`, `crates/akita-algebra/src/ntt/neon/i32_kernels.rs`, `crates/akita-algebra/src/ntt/neon/tests.rs`, `crates/akita-algebra/src/ntt/butterfly.rs` |
 | CRT exactness and reconstruction | `crates/akita-algebra/src/ring/crt_ntt_repr/`, `crates/akita-types/src/ntt_cache.rs` |
 | cache API and type erasure | `crates/akita-types/src/ntt_cache.rs`, `crates/akita-types/src/proof/setup.rs` |
-| terminal verifier and no-panic behavior | `crates/akita-verifier/src/protocol/core/terminal_direct.rs`, `terminal_ntt.rs`, `verify.rs` |
+| terminal verifier and no-panic behavior | `crates/akita-verifier/src/terminal/direct.rs`, `terminal/ntt.rs`, `fold/verify.rs` |
 | backend portability | `crates/akita-prover/src/backend/`, `crates/akita-cpu-backend/src/opaque/backend.rs`, `crates/akita-cpu-backend/src/arithmetic/` |
 | dead-code cutover | deleted `partial_split_ntt.rs`; `crates/akita-prover/src/kernels/linear/` |
 | schedule capability | `crates/akita-config/src/proof_optimized/tests.rs` |

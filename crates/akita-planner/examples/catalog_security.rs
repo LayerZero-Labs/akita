@@ -142,7 +142,7 @@ fn main() -> Result<(), String> {
             .minimum_log2_rop;
         for resolved in catalog.rows() {
             let profiles = resolved.profiles();
-            let key = akita_types::AkitaScheduleLookupKey {
+            let key = akita_types::ScheduleLookupKey {
                 final_group: profiles.final_group.group,
                 precommitteds: profiles.precommitteds.clone(),
             };

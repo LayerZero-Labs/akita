@@ -66,7 +66,7 @@ Estimates are neither serialized nor Fiat–Shamir bound.
 The public search entry point is
 `find_schedule(&key, final_source_contract, &precommitted_source_contracts, &policy, ring_challenge_config)`.
 
-`key: AkitaScheduleLookupKey` describes the supported root opening shape.
+`key: ScheduleLookupKey` describes the supported root opening shape.
 Single-group openings store one `PolynomialGroupLayout` in `final_group` and
 leave `precommitteds` empty:
 
@@ -203,14 +203,14 @@ recursion. Runtime verification never invokes this search.
 
 The planner uses the same byte formulas that runtime schedule expansion uses:
 
-- `native_nonterminal_level_layout` for a fold level's fixed native messages.
+- `nonterminal_level_layout` for a fold level's fixed messages.
 - `terminal_response_bytes` for the terminal witness.
 - `extension_opening_reduction_proof_bytes` for extension-field opening reductions.
-- the canonical grinding plan for additive per-message native nonce maxima.
+- the canonical grinding plan for additive per-message nonce maxima.
 - `w_ring_element_count_with_counts_for_layout_bits` to compute witness sizes
   under the schedule-selected row layout.
 
-`native_nonterminal_level_layout` is also schedule-shaped: it prices an outer commitment on
+`nonterminal_level_layout` is also schedule-shaped: it prices an outer commitment on
 ordinary recursive edges and zero outgoing-commitment bytes for the
 `TerminalInnerState` handoff. Level bodies contain no nonce field. The exact
 stream byte count is rounded once across the complete plan. Terminal proof

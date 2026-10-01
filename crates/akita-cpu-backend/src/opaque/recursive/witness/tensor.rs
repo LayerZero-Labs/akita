@@ -5,7 +5,7 @@ use crate::arithmetic::extension_opening_reduction::{
     tensor_column_partials_split_fold, TensorColumnSource,
 };
 use akita_algebra::SplitEqEvals;
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_types::tensor_opening_split;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
@@ -29,13 +29,9 @@ where
                 "extension-opening tensor split exceeds recursive witness arity".to_string(),
             ));
         }
-        let table_len = 1usize
-            .checked_shl(u32::try_from(num_vars - split_bits).map_err(|_| {
-                AkitaError::InvalidInput("recursive tensor table dimension overflow".to_string())
-            })?)
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("recursive tensor table length overflow".to_string())
-            })?;
+        let table_len = checked::pow2(num_vars - split_bits).ok_or_else(|| {
+            AkitaError::InvalidInput("recursive tensor table length overflow".to_string())
+        })?;
         let pack = |tail: usize| {
             E::from_base_fn(|column| {
                 tail.checked_mul(width)

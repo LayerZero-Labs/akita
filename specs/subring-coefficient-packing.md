@@ -831,9 +831,9 @@ The implemented transcript structure is specified normatively in
 [`specs/transcript-grinding.md`](transcript-grinding.md). For a fixed group root
 and the fixed shared fold-response nonce, coordinate `(claim, block)` is a
 separate indexed random-oracle query. Reprogramming it leaves every other fold
-coordinate and the live transcript state unchanged. Thus the implementation
-supplies the coordinatewise CWSS transcripts below without relying
-on extraction from full-vector forks.
+coordinate and the live transcript state unchanged. This supplies the fork
+structure used by the accepting-tree extraction and indexed-address bound in
+the [grinding specification](transcript-grinding.md#fold-extraction-from-accepting-children).
 
 Consider two accepting transcripts with the same pre-challenge commitments and
 different challenge at one claim/block position. Let
@@ -855,20 +855,23 @@ relations gives
 L(G(z - z')) = delta(Y) e_j           in C.
 ```
 
-Because `delta` is a unit in both rings, these equations determine the opened
-`t_j` and `e_j` from the fork. The existing B/F binding of `t_hat`, D/H binding
-of `e_hat`, A binding of the folded source, range proof for all digit planes,
-and quotient checks then give the same weak-opening/MSIS reduction as the
-current fold.
+Because `delta` is a unit in both rings, these equations algebraically
+determine the opened `t_j` and `e_j` from such an accepting fork. The complete
+accepting descendant trees authenticate the native relations and scheduled
+response bounds. Cross-multiplying unit differences against those bounded
+responses yields the scheduled short collision if two weak openings disagree;
+unit division alone does not preserve coefficient norms.
 
-The extractor takes one central accepting vector and one coordinatewise fork
-for every claim and block position. The CWSS sum charges the support of every
-coordinate. The online random-oracle reduction separately charges group-root
-queries, indexed coordinate queries, and repeated roots caused by the shared
-fold-response nonce. Root collisions, root prequeries, sum-check errors, the
-`(2s - 1)/|E|` ring-switch error, and all A/B/D/F/H MSIS terms remain additive.
-This accounting does not claim extraction from challenge entropy alone or from
-two arbitrary full-vector forks.
+A binary CWSS extractor uses one central accepting vector and one
+coordinatewise accepting fork for every claim and block position. Its
+whole-fold error ledger includes every coordinate and group. The indexed
+random-oracle reduction instead charges every touched coordinate address and
+every untouched address completed by final verification, including fresh
+queries induced by shared fold-response nonce trials.
+Root collisions, root prequeries, sum-check errors, the `(2s - 1)/|E|`
+ring-switch error, and A/B/D/F/H MSIS terms also belong in the composition.
+The [indexed fold bound](transcript-grinding.md#indexed-address-fold-bound)
+gives the adaptive query accounting and its reduction-cost boundary.
 
 ### Ring-switch polynomial check
 
@@ -1261,7 +1264,7 @@ It does not add a semantic preference for smaller `s` or larger `d_A`.
 
 Adaptive direct catalogs use `MinFirstDirectSetupThenExactProofAndWorkV5`:
 first-direct padded setup capacity, exact additive proof-and-work score,
-native proof bytes, exact total setup field elements, root output-witness
+proof bytes, exact total setup field elements, root output-witness
 length, and the canonical descriptor.
 
 The additive work term includes each fold's outgoing witness and, for a direct
@@ -1270,7 +1273,7 @@ Offloaded edges have no direct-scan charge. Recursive catalogs use
 `MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6`, which first compares
 the next-power-of-two capacity covering the total setup envelope.
 Exact setup differences within one recursive capacity bucket are tolerated
-before comparing first-direct capacity, the proof-and-work score, native proof bytes, and first-direct
+before comparing first-direct capacity, the proof-and-work score, proof bytes, and first-direct
 output-witness length. A numeric tie then goes
 directly to the canonical descriptor. No direct objective component for `s`,
 `d_A`, rank, fold count, or measured wall-clock time is added.
@@ -1337,7 +1340,7 @@ rows had first-direct padded capacities of 131,072 and 262,144 fields. Their
 six-level schedules used 458,752 and 524,288 total setup fields and modeled
 62,447 and 63,254 proof bytes. Those historical results are recorded in the
 [catalog evidence note](evidence/subring-coefficient-packing/README.md#current-fp32-nv20-adaptive-objective).
-The current catalog is regenerated under the proof-only native policy above.
+The current catalog is regenerated under the proof-only policy above.
 
 ### B slicing interaction
 
@@ -1636,7 +1639,7 @@ open review blockers are resolved.
   current high-half, consistency, and A quotient construction.
 - [`crates/akita-prover/src/protocol/ring_switch/relation_weights.rs`](../crates/akita-prover/src/protocol/ring_switch/relation_weights.rs),
   current structured relation weights and challenge reuse.
-- [`crates/akita-verifier/src/protocol/ring_switch.rs`](../crates/akita-verifier/src/protocol/ring_switch.rs),
+- [`crates/akita-verifier/src/relation/mod.rs`](../crates/akita-verifier/src/relation/mod.rs),
   current `c_alphas` preparation.
-- [`crates/akita-verifier/src/protocol/evaluation_trace.rs`](../crates/akita-verifier/src/protocol/evaluation_trace.rs),
+- [`crates/akita-verifier/src/relation/evaluation_trace.rs`](../crates/akita-verifier/src/relation/evaluation_trace.rs),
   current trace-based scalar-opening contraction.

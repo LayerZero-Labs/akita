@@ -310,7 +310,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
         akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
     let layout = scheme
         .schedules()
-        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+        .resolve_key(&akita_types::ScheduleLookupKey::single(
             opening_layout
                 .root_final_group_layout()
                 .expect("root group"),
@@ -499,7 +499,7 @@ fn bench_dense_nv14(c: &mut Criterion) {
 }
 fn bench_dense_nv14_quotient(c: &mut Criterion) {
     let key =
-        akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
+        akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
     let catalogs = cross_mode_catalogs::<fp128::Dense>(&key).expect("cross-mode catalogs");
     assert_eq!(
         catalogs
@@ -514,7 +514,7 @@ fn bench_dense_nv14_quotient(c: &mut Criterion) {
 }
 fn bench_dense_nv14_reduced(c: &mut Criterion) {
     let key =
-        akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
+        akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
     let catalogs = cross_mode_catalogs::<fp128::Dense>(&key).expect("cross-mode catalogs");
     assert_eq!(
         catalogs

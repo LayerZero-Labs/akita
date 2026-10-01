@@ -74,7 +74,7 @@ fn prove_and_verify_with_fault(fault: Fault) -> (FaultOutcome, FaultReport) {
 
 fn schedule() -> akita_types::FoldSchedule {
     let scheme = workspace_scheme::<Cfg>().expect("workspace schedule artifact");
-    let key = akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(
+    let key = akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(
         NUM_VARS, 1,
     ));
     let selection = scheme.schedules().resolve_key(&key).expect("schedule row");

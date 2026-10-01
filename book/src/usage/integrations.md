@@ -83,7 +83,7 @@ securely identifies, everything the verifier needs:
 - the exact generated schedule selection;
 - the ordered commitments;
 - the ordered opening points and claimed values;
-- the native proof bytes;
+- the proof bytes;
 - the session bytes used by this host protocol.
 
 This bundle is more than a transport format. It is the complete public claim.

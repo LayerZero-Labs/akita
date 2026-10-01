@@ -8,7 +8,7 @@
 | PR            | [#466](https://github.com/LayerZero-Labs/akita/pull/466) |
 | Supersedes    | |
 | Superseded-by | |
-| Book-chapter  | book/src/how/proving/akita-fold-realizations.md |
+| Book-chapter  | book/src/how/proving/ring-relation-checking.md |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
 **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **NOT RECOMMENDED**, **MAY**, and
@@ -252,7 +252,7 @@ search.
   fold-level raw-or-compressed choice with its current monotone cutover policy.
 - Changing the Linf/L2 security argument, challenge distribution, or norm-proof
   semantics.
-- Changing coefficient-packing eligibility, EOR policy, role-native layouts,
+- Changing coefficient-packing eligibility, EOR policy, role-layouts,
   or setup-offload feasibility outside the restrictions above.
 - Preserving old schedule descriptors, generated catalog rows, setup artifacts,
   or proof bytes.

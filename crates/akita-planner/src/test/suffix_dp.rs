@@ -211,7 +211,7 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
             relation_geometry,
             &layout,
             successor,
-            policy.decomposition.field_bits(),
+            policy.transcript_grinding_order().unwrap(),
             policy.claim_ext_degree,
             1,
         )
@@ -309,7 +309,7 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
     let candidate = |queries| super::ScheduleCandidate {
         first_direct_setup_field_len: std::num::NonZeroUsize::new(1),
         first_direct_output_witness_len: 512,
-        cost: super::NativeProofCost::new(1, 0, queries, 512).expect("candidate cost"),
+        cost: super::ProofCost::new(1, 0, queries, 512).expect("candidate cost"),
         setup_field_elements: 1,
         folds: super::super::CandidateFoldChain::default().prepend(super::CandidateFoldStep {
             params: std::sync::Arc::new(params.clone()),
@@ -341,8 +341,9 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
     let opening_layout = super::suffix_opening_layout(1_024, None).expect("opening layout");
     let incoming =
         super::PendingQueryEdge::new(state, &opening_layout, &params, 512).expect("incoming edge");
+    let challenge_order = policy.transcript_grinding_order().unwrap();
     let edge_queries = incoming
-        .candidate_grinding_cost(&policy, &candidate(0))
+        .candidate_grinding_cost(&policy, challenge_order, &candidate(0))
         .expect("edge grinding cost")
         .expanded_query_count;
     let suffix_queries = 10;
@@ -355,10 +356,10 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
     };
 
     assert!(prefix
-        .admits(&policy, &candidate(suffix_queries))
+        .admits(&policy, challenge_order, &candidate(suffix_queries))
         .expect("query admission"));
     assert!(!prefix
-        .admits(&policy, &candidate(suffix_queries + 1))
+        .admits(&policy, challenge_order, &candidate(suffix_queries + 1))
         .expect("query rejection"));
 }
 
@@ -373,9 +374,8 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     };
     policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
-    let key = akita_types::AkitaScheduleLookupKey::single(
-        akita_types::PolynomialGroupLayout::singleton(14),
-    );
+    let key =
+        akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::singleton(14));
     let root = crate::planner::find_schedule(
         &key,
         OneHot::committed_source_contract().unwrap(),
@@ -390,6 +390,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     policy.opening_basis_range = (6, 6);
     let ctx = super::SuffixCtx {
         policy: &policy,
+        challenge_order: policy.transcript_grinding_order().unwrap(),
         diagnostics: None,
         ring_challenge_config: &OneHot::ring_challenge_config,
         key: key.final_group,
@@ -489,7 +490,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
             candidate.next_witness_len,
         )
         .unwrap()
-        .candidate_grinding_cost(&policy, child_candidate)
+        .candidate_grinding_cost(&policy, ctx.challenge_order, child_candidate)
         .unwrap()
         .expanded_query_count
     };
@@ -507,6 +508,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     let parent_queries = incoming
         .grinding_cost(
             &policy,
+            ctx.challenge_order,
             akita_types::FoldSuccessor::Recursive(&low_query.params),
         )
         .unwrap()

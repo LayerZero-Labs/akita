@@ -1,4 +1,4 @@
-//! Feature-gated diagnostics for native Spongefish protocol contexts.
+//! Feature-gated diagnostics for Spongefish protocol contexts.
 
 use crate::ProtocolContextRecord;
 use std::cell::RefCell;
@@ -9,7 +9,7 @@ thread_local! {
     static PENDING_PROOF_RANGE: RefCell<Option<(ProtocolContextRecord, usize)>> = const { RefCell::new(None) };
 }
 
-/// One native transcript event recorded for structural diagnostics.
+/// One proof channel event recorded for structural diagnostics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TranscriptEvent {
     /// Fixed-format diagnostic metadata for a message group or challenge.
@@ -65,14 +65,14 @@ pub(crate) fn finish_proof_ranges(end: usize) {
     finish_pending(end);
 }
 
-/// Clear native transcript events recorded by the current thread.
+/// Clear proof channel events recorded by the current thread.
 pub fn clear_thread_events() {
     THREAD_EVENTS.with(|events| events.borrow_mut().clear());
     THREAD_PROOF_RANGES.with(|ranges| ranges.borrow_mut().clear());
     PENDING_PROOF_RANGE.with(|pending| *pending.borrow_mut() = None);
 }
 
-/// Clone native transcript events recorded by the current thread.
+/// Clone proof channel events recorded by the current thread.
 #[must_use]
 pub fn thread_events() -> Vec<TranscriptEvent> {
     THREAD_EVENTS.with(|events| events.borrow().clone())
@@ -87,19 +87,19 @@ pub fn thread_proof_ranges() -> Vec<ProofMessageRange> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{new_native_prover, new_native_verifier, prover_context, verifier_context};
+    use crate::{new_prover_channel, new_verifier_channel, prover_context, verifier_context};
 
     #[test]
-    fn prover_and_verifier_record_identical_native_contexts() {
+    fn prover_and_verifier_record_identical_proof_stream_contexts() {
         let record = ProtocolContextRecord::new([7; 32], 3, 2, 64, 32);
 
         clear_thread_events();
-        let mut prover = new_native_prover(b"logging", b"instance").unwrap();
+        let mut prover = new_prover_channel(b"logging", b"instance").unwrap();
         prover_context(&mut prover, record);
         let prover_events = thread_events();
 
         clear_thread_events();
-        let mut verifier = new_native_verifier(b"logging", b"instance", &[]).unwrap();
+        let mut verifier = new_verifier_channel(b"logging", b"instance", &[]).unwrap();
         verifier_context(&mut verifier, record);
         assert_eq!(thread_events(), prover_events);
         assert_eq!(prover_events, vec![TranscriptEvent::Context(record)]);

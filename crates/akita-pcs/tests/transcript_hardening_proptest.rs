@@ -19,7 +19,7 @@ fn batch_case(index: usize) -> (usize, usize) {
     }
 }
 
-fn native_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
+fn dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
     init_rayon_pool();
     let scheme = load_workspace_scheme::<DenseCfg>().expect("workspace schedule catalog");
 
@@ -28,7 +28,7 @@ fn native_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         OpeningClaimsLayout::new(num_vars, total_claims).expect("valid opening batch");
     let layout = scheme
         .schedules()
-        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+        .resolve_key(&akita_types::ScheduleLookupKey::single(
             opening_batch
                 .root_final_group_layout()
                 .expect("batched group layout"),
@@ -115,7 +115,7 @@ fn seed_corpus_covers_nv_basis_and_batch_shapes() {
             (2, BasisMode::Monomial, 0x1005),
             (3, BasisMode::Lagrange, 0x1006),
         ] {
-            native_dense_round_trip(shape_index, basis_mode, seed);
+            dense_round_trip(shape_index, basis_mode, seed);
         }
     });
 }
@@ -131,7 +131,7 @@ proptest! {
     })]
 
     #[test]
-    fn native_stream_fuzzes_batch_shapes(shape_index in 0usize..4, seed in any::<u64>()) {
-        run_on_large_stack(move || native_dense_round_trip(shape_index, BasisMode::Lagrange, seed));
+    fn stream_fuzzes_batch_shapes(shape_index in 0usize..4, seed in any::<u64>()) {
+        run_on_large_stack(move || dense_round_trip(shape_index, BasisMode::Lagrange, seed));
     }
 }

@@ -19,10 +19,10 @@ pub use artifact::{
 pub use policy_digest::policy_digest;
 pub use resolve::ResolvedScheduleRow;
 pub use runtime::{
-    expanded_schedule_native_proof_bound, expanded_schedule_native_proof_estimate_bytes,
-    validate_policy, PlannerCostModelId, PlannerPolicy, RecursiveSetupSearchPolicy,
-    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId,
-    SelectiveL2ResponseModelId, ADAPTIVE_SEARCH_LEVELS,
+    expanded_schedule_proof_bound, expanded_schedule_proof_estimate_bytes, validate_policy,
+    PlannerCostModelId, PlannerPolicy, RecursiveSetupSearchPolicy, RecursiveSplitSearchPolicy,
+    RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2ResponseModelId,
+    ADAPTIVE_SEARCH_LEVELS,
 };
 
 /// Shared schedule-construction primitives used by offline search and artifact validation.
@@ -33,9 +33,8 @@ pub mod planner_support {
         SelectiveL2CandidateGeometry,
     };
     pub use crate::runtime::{
-        candidate_grinding_cost, first_direct_setup_capacity_for_schedule,
-        first_direct_setup_field_len_for_schedule, materialize_candidate_schedule,
-        nonterminal_level_payload_bytes, planned_next_witness_len,
+        first_direct_setup_capacity_for_schedule, first_direct_setup_field_len_for_schedule,
+        materialize_candidate_schedule, nonterminal_level_payload_bytes, planned_next_witness_len,
         stage3_payload_bytes_for_successor, validate_policy, CandidateFoldStep,
         CandidateMaterializationCost, CandidateTerminalResponse, NonterminalLevelPayloadBytes,
         MAX_RECURSION_DEPTH,

@@ -33,7 +33,6 @@ where
     let layout = claims.opening_layout();
     resolved.validate_opening_layout(layout)?;
     let schedule = resolved.schedule();
-    schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
     let proof_session = backend.begin_proof(expanded, schedules, schedule, layout)?;
     let guard = crate::backend::ProofScope::admitted(backend, proof_session);
     let proof_session = guard.session();
@@ -53,10 +52,10 @@ where
         Cfg::Field,
         Cfg,
     >(expanded, layout, selection, schedule, basis)?;
-    let native = akita_transcript::new_native_prover(transcript_session, &descriptor_bytes)
+    let channel = akita_transcript::new_prover_channel(transcript_session, &descriptor_bytes)
         .map_err(|_| AkitaError::InvalidSetup("native transcript initialization failed".into()))?;
-    let mut grinding = akita_types::NativeProverGrinding::new(native, &grinding_plan);
-    claims.append_to_native(&schedule.root.params, &mut grinding)?;
+    let mut grinding = akita_types::ProverGrinding::new(channel, &grinding_plan);
+    claims.append_to(&schedule.root.params, &mut grinding)?;
     let root_claims = claims.map_groups(OpeningSource::Commitment)?;
     let (next_params, next_binding) = schedule.recursive_folds.first().map_or(
         (

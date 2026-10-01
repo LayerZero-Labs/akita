@@ -5,8 +5,8 @@ use super::{
 };
 use crate::parallel::ProfileThreadPools;
 use crate::report::{
-    emit_native_proof_tail_report, emit_runtime_schedule_summary, print_native_proof_summary,
-    report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
+    emit_proof_tail_report, emit_runtime_schedule_summary, print_proof_summary, report_crt_profile,
+    report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_cpu_backend::CpuBackend;
@@ -156,14 +156,14 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         OpeningClaimsLayout::from_root_groups(&[], group_layout).expect("same-point opening batch");
     let schedule = scheme
         .schedules()
-        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(group_layout))
+        .resolve_key(&akita_types::ScheduleLookupKey::single(group_layout))
         .expect("batched schedule")
         .schedule()
         .clone();
     let effective_schedule = plan.unwrap_or(&schedule);
     let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
         .expect("profile grinding plan");
-    print_native_proof_summary(label, &proof, effective_schedule, &grinding_plan);
+    print_proof_summary(label, &proof, effective_schedule, &grinding_plan);
     if let Some(plan) = plan {
         report_proof_size_against_planner(
             label,
@@ -180,7 +180,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
-        emit_native_proof_tail_report(label, plan, Cfg::decomposition().field_bits());
+        emit_proof_tail_report(label, plan, Cfg::decomposition().field_bits());
     } else {
         report_proof_size_against_planner(
             label,
@@ -197,7 +197,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
-        emit_native_proof_tail_report(label, &schedule, Cfg::decomposition().field_bits());
+        emit_proof_tail_report(label, &schedule, Cfg::decomposition().field_bits());
     }
     tracing::info!(
         label,

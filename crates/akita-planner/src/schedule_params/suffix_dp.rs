@@ -6,8 +6,8 @@ use std::{
 
 use akita_error::AkitaError;
 use akita_types::{
-    active_setup_field_len, native_terminal_response_planner_bytes, AkitaScheduleLookupKey,
-    CommitmentRingDims, CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout,
+    active_setup_field_len, terminal_response_planner_bytes, CommitmentRingDims,
+    CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey,
     TerminalResponseShape,
 };
 
@@ -17,7 +17,7 @@ use super::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
     dimension_candidates, level_setup_field_elements, suffix_opening_layout,
     terminal_setup_field_elements, CandidateFoldStep, CandidateInnerRoute, CandidateLayoutGuide,
-    CandidateTerminalResponse, CompleteObjectiveBound, FoldCandidatePolicy, NativeProofCost,
+    CandidateTerminalResponse, CompleteObjectiveBound, FoldCandidatePolicy, ProofCost,
     RecursiveCandidateRequest, RecursiveFoldWork, RelationCandidateTopology, RelationModeFilter,
     RelationSearchDomain, RelationTraversalOrder, RingRelationPhase, ScheduleCandidate,
     SetupPrefixCapacity, SetupPrefixLayoutGuide, SetupPrefixSearchCache, SplitBoundPolicy,
@@ -36,6 +36,7 @@ mod terminal;
 pub(super) use candidates::packing_precommit_opening_products;
 #[cfg(test)]
 pub(super) use candidates::state_allows_terminal_seed;
+pub(crate) use candidates::MAX_PRECOMMIT_OPENING_PRODUCTS;
 use frontier::{consider_child_suffixes, price_child_edge, ProjectedFrontier, Projection};
 pub(crate) use search::derive_selected_suffix_schedule;
 use source::attach_source_moments;
@@ -76,6 +77,7 @@ fn offloaded_witness_contracts(
 
 struct ChildEdge<'a> {
     policy: &'a PlannerPolicy,
+    challenge_order: akita_types::ChallengeFieldOrder,
     diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
     opening_layout: &'a OpeningClaimsLayout,
     level: u32,
@@ -104,7 +106,7 @@ impl ChildEdge<'_> {
             relation_geometry,
             self.opening_layout,
             successor,
-            self.policy.decomposition.field_bits(),
+            self.challenge_order,
             self.policy.claim_ext_degree,
             self.level,
         )
@@ -140,6 +142,7 @@ impl PendingQueryEdge {
     fn grinding_cost(
         &self,
         policy: &PlannerPolicy,
+        challenge_order: akita_types::ChallengeFieldOrder,
         successor: akita_types::FoldSuccessor<'_>,
     ) -> Result<akita_types::TranscriptGrindingCost, AkitaError> {
         let payload = akita_schedules::planner_support::nonterminal_level_payload_bytes(
@@ -154,7 +157,7 @@ impl PendingQueryEdge {
             payload.relation_geometry,
             &self.opening_layout,
             successor,
-            policy.decomposition.field_bits(),
+            challenge_order,
             policy.claim_ext_degree,
             self.level,
         )
@@ -163,13 +166,14 @@ impl PendingQueryEdge {
     fn candidate_grinding_cost(
         &self,
         policy: &PlannerPolicy,
+        challenge_order: akita_types::ChallengeFieldOrder,
         candidate: &ScheduleCandidate,
     ) -> Result<akita_types::TranscriptGrindingCost, AkitaError> {
         let successor = candidate.folds.first().map_or_else(
             || akita_types::FoldSuccessor::Terminal(&candidate.terminal.params),
             |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
         );
-        self.grinding_cost(policy, successor)
+        self.grinding_cost(policy, challenge_order, successor)
     }
 }
 
@@ -185,9 +189,12 @@ impl QueryPrefix {
     fn admits(
         &self,
         policy: &PlannerPolicy,
+        challenge_order: akita_types::ChallengeFieldOrder,
         candidate: &ScheduleCandidate,
     ) -> Result<bool, AkitaError> {
-        let edge = self.incoming.candidate_grinding_cost(policy, candidate)?;
+        let edge = self
+            .incoming
+            .candidate_grinding_cost(policy, challenge_order, candidate)?;
         let total = self
             .finalized_query_count
             .checked_add(edge.expanded_query_count)
@@ -199,12 +206,15 @@ impl QueryPrefix {
     fn advance(
         &self,
         policy: &PlannerPolicy,
+        challenge_order: akita_types::ChallengeFieldOrder,
         successor: &CommittedGroupParams,
         incoming: PendingQueryEdge,
     ) -> Result<Option<Self>, AkitaError> {
-        let edge = self
-            .incoming
-            .grinding_cost(policy, akita_types::FoldSuccessor::Recursive(successor))?;
+        let edge = self.incoming.grinding_cost(
+            policy,
+            challenge_order,
+            akita_types::FoldSuccessor::Recursive(successor),
+        )?;
         let finalized_query_count = self
             .finalized_query_count
             .checked_add(edge.expanded_query_count)
@@ -221,10 +231,11 @@ impl QueryPrefix {
     fn admits_result(
         &self,
         policy: &PlannerPolicy,
+        challenge_order: akita_types::ChallengeFieldOrder,
         result: &SuffixResult,
     ) -> Result<bool, AkitaError> {
         for candidate in result.payload_candidates().chain(result.setup_candidates()) {
-            if !self.admits(policy, candidate)? {
+            if !self.admits(policy, challenge_order, candidate)? {
                 return Ok(false);
             }
         }
@@ -261,7 +272,7 @@ impl QuerySearch {
                 let incoming =
                     PendingQueryEdge::new(state, opening_layout, params, next_witness_len)?;
                 prefix
-                    .advance(ctx.policy, params, incoming)
+                    .advance(ctx.policy, ctx.challenge_order, params, incoming)
                     .map(|next| next.map(Self::Restricted))
             }
         }
@@ -270,11 +281,12 @@ impl QuerySearch {
     fn admits_terminal(
         &self,
         policy: &PlannerPolicy,
+        challenge_order: akita_types::ChallengeFieldOrder,
         candidate: &ScheduleCandidate,
     ) -> Result<bool, AkitaError> {
         match self {
             Self::Unconstrained | Self::Root(_) => Ok(true),
-            Self::Restricted(prefix) => prefix.admits(policy, candidate),
+            Self::Restricted(prefix) => prefix.admits(policy, challenge_order, candidate),
         }
     }
 }
@@ -289,7 +301,7 @@ struct ChildEdgePrice {
 struct PendingScheduleCandidate {
     first_direct_setup_field_len: Option<NonZeroUsize>,
     first_direct_output_witness_len: usize,
-    cost: NativeProofCost,
+    cost: ProofCost,
     setup_field_elements: usize,
     first_fold: CandidateFoldStep,
     suffix_folds: super::CandidateFoldChain,
@@ -522,7 +534,7 @@ fn child_choice(
         .ok_or_else(|| AkitaError::InvalidSetup("edge work overflow".into()))?;
     let cost = suffix.cost.checked_prepend(
         edge_payload_bytes,
-        edge_grinding_cost.native_nonce_max_bytes,
+        edge_grinding_cost.nonce_max_bytes,
         edge_grinding_cost.total_nonce_bits,
         edge_grinding_cost.expanded_query_count,
         work_elements,
@@ -554,7 +566,7 @@ fn direct_edge_lower_bound(
         1,
         output_witness_len,
     )?;
-    let proof_bytes = akita_types::native_nonterminal_level_layout(
+    let proof_bytes = akita_types::nonterminal_level_layout(
         policy.decomposition.field_bits(),
         policy.challenge_field_bits()?,
         params,
@@ -562,7 +574,7 @@ fn direct_edge_lower_bound(
         None,
     )?
     .encoded_len()?;
-    let lower_bound_cost = NativeProofCost::new(proof_bytes, 0, 0, output_witness_len as u128)?;
+    let lower_bound_cost = ProofCost::new(proof_bytes, 0, 0, output_witness_len as u128)?;
     Ok(CompleteObjectiveBound::for_direct_edge(
         policy,
         SetupPrefixCapacity::for_natural_len(natural_setup_field_len).field_elements(),
@@ -757,12 +769,12 @@ fn price_terminal_candidate(
             AkitaError::InvalidSetup("direct setup field length must be nonzero".into())
         })?),
         first_direct_output_witness_len: 0,
-        cost: NativeProofCost::new(total, 0, 0, 0)?,
+        cost: ProofCost::new(total, 0, 0, 0)?,
         setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
         folds: super::CandidateFoldChain::default(),
         terminal: Arc::new(direct_step),
     };
-    if !query_search.admits_terminal(policy, &candidate)? {
+    if !query_search.admits_terminal(policy, ctx.challenge_order, &candidate)? {
         return Ok(());
     }
     frontiers.projected.consider_candidate(
@@ -804,6 +816,7 @@ fn price_level_candidate_with_children(
     let level_setup_field_elements = level_setup_field_elements(candidate_params)?;
     let direct_edge = ChildEdge {
         policy,
+        challenge_order: ctx.challenge_order,
         diagnostics: ctx.diagnostics,
         opening_layout,
         level: u32::try_from(state.level)

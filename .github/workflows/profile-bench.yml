@@ -25,7 +25,7 @@ env:
   #
   # Ring-degree choice differs by field:
   # - Small prime fields use generated adaptive catalogs. fp32 admits A through
-  #   D1024 with a D64/D128 suffix; fp64 admits A through D512 with a D64 suffix.
+  #   D1024 with a D64/D128 suffix; fp64 admits A through D2048 with a D64/D128 suffix.
   # - fp128: `onehot_fp128` is the canonical direct one-hot profile. Recursive
   #   and distributed profiles use the corresponding adaptive catalogs.
   AKITA_BENCH_MODE: onehot_fp128
@@ -34,9 +34,9 @@ env:
   # This lets the runner reach a steady state and warms operating system file
   # caches. Each measured process constructs fresh setup and local state.
   AKITA_BENCH_WARMUPS: "1"
-  # The profile example emits native LEB128 nonce accounting and every public
+  # The profile example emits LEB128 nonce accounting and every public
   # grinding-plan run. The detailed report separates semantic nonce bits,
-  # native worst-case bytes, and expanded query counts by fold and query.
+  # worst-case bytes, and expanded query counts by fold and query.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

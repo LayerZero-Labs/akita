@@ -63,8 +63,8 @@ digits for polynomial-modulus quotients. Compressed payloads add the digits
 used by their compression chains, and quotient lifting also adds the
 compression quotients. A raw reduced-evaluation fold has neither kind of
 auxiliary data. The
-[physical realizations](./proving/akita-fold-realizations.md) define the exact
-segments for each admitted case.
+[complete witness layouts](./proving/ring-relation-checking.md#what-enters-the-next-witness)
+define the segments for each admitted case.
 
 Equation (3) is prover state. A nonterminal fold does not send this full
 witness to the verifier. Instead, it binds the witness and reduces its
@@ -222,7 +222,7 @@ explains how they use the predecessor's binding.
 
 ## Proof anatomy and schedule ownership
 
-The proof is one native Spongefish argument stream. The validated schedule
+The proof is one Spongefish argument stream. The validated schedule
 fixes the messages for one root fold, zero or more recursive folds, and one
 terminal fold. Each nonterminal level emits its opening payload, Stage 1 and
 Stage 2 data, and optional Stage 3 data in protocol order. Extension-opening
@@ -250,9 +250,11 @@ still enforce their explicit minimum contraction policy.
   successor's physical witness, commitment, or terminal inner state.
 - `crates/akita-types/src/proof/levels.rs` defines the level records and
   successor-binding variants.
-- `crates/akita-verifier/src/protocol/core/fold/mod.rs` binds the successor
+- `crates/akita-verifier/src/fold/mod.rs` binds the successor
   before replaying ring switching and the sumcheck stages.
-- `crates/akita-verifier/src/protocol/core/suffix.rs` carries the resulting
-  point and value into the next fold and validates terminal-state identity.
+- `crates/akita-verifier/src/fold/suffix.rs` carries the resulting
+  point and value into the next fold, and
+  `crates/akita-verifier/src/fold/terminal.rs` validates terminal-state
+  identity.
 - `crates/akita-pcs/tests/transcript_hardening.rs` checks transcript agreement
   and the ordering of the final witness binding.

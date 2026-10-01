@@ -69,7 +69,7 @@ fn assert_independent_rounds(
     );
     let mut normalized_claim = F::zero();
     for round in 0..num_vars {
-        let message = prover.compute_round_eq_factored(round);
+        let message = prover.compute_round_eq_factored(round, normalized_claim);
         assert_eq!(prover.current_tau(), tau[round], "{shape} round={round}");
         assert_eq!(prover.degree_bound(), roots.len());
         assert_eq!(message.degree(), roots.len(), "{shape} round={round}");

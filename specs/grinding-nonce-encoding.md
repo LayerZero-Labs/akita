@@ -13,8 +13,11 @@
 ## Summary
 
 This document explains Akita's transcript grinding from first principles and
-then compares the packed nonce representation on `origin/main` with the inline
-unsigned LEB128 representation in PR #37.
+then compares the historical packed nonce representation with the current inline
+unsigned LEB128 representation introduced in PR #37. References to main's
+packed format in Sections 3 and 4 describe that historical comparison; the
+current protocol uses inline nonces. Sections 1 and 2 use the current exact
+field-cardinality pricing policy.
 
 The two encodings do not define grinding security. They transport the bounded
 integer selected by grinding. The public grinding plan, nonce range, predicate,
@@ -55,24 +58,19 @@ d / |E|
 where `E` is the challenge field. More generally, Akita assigns a public loss
 factor `L` to a challenge site whose bad fraction is at most `L / |E|`.
 
-For the production profiles, the nominal challenge capacity is 128 bits. A
-loss factor larger than one would reduce the classical work needed to search
-for a bad challenge by approximately `log2(L)` bits. Akita restores that work
-factor with transcript proof-of-work.
-
-For nominal challenge capacity `C`, Akita computes:
+The production challenge fields have cardinality just below `2^128`. A
+loss factor larger than one, and even the small field-order deficit at loss
+one, must be included in the work calculation. Akita chooses the least
+nonnegative integer `g` satisfying:
 
 ```text
-loss_bits = ceil(log2(L))
-g = max(0, 128 + loss_bits - C)
+L * 2^128 <= |E| * 2^g
 ```
 
-`g` is the number of *grind bits*. With the production convention `C = 128`,
-this simplifies to:
-
-```text
-g = ceil(log2(L))
-```
+The comparison uses exact integer arithmetic with `|E| = p^e`, where `p` is
+the base modulus and `e` is the challenge extension degree. In the supported
+128-bit towers, a power-of-two loss requires one more bit than its binary
+logarithm. The nominal modulus bit width cannot replace the field cardinality.
 
 Before drawing the protected challenge, the prover searches for a nonce whose
 separate 32-byte predicate begins with `g` zero bits, read low bit first. One
@@ -146,13 +144,13 @@ The 12-bit nonce is therefore honest-prover rejection sampling. It does not add
 verifier's response checks. Every adversarial trial is still included in
 Akita's random-oracle query accounting.
 
-## 2. Where `origin/main` uses grinding
+## 2. Where Akita uses grinding
 
 The grinding plan is derived only from trusted public data:
 
 - the selected fold schedule;
 - the normalized opening layout;
-- field modulus bits and extension degree; and
+- the validated base-field modulus and challenge extension degree; and
 - protocol policy and loss bounds.
 
 Its digest is bound into the instance descriptor. Proof bytes do not choose the
@@ -180,7 +178,8 @@ When the opening method and extension degree require a reduction, the plan
 contains:
 
 - one complete extension-opening point draw;
-- an optional reduction-claim batching challenge; and
+- an optional reduction-claim batching challenge (see
+  [claim batching](#claim-batching-sites)); and
 - one distinct proof-of-work site for every extension-opening-reduction
   sumcheck round.
 
@@ -188,13 +187,15 @@ contains:
 
 Depending on the public layout, the plan contains:
 
-- an optional evaluation/row batching challenge;
+- an optional evaluation/row batching challenge (see
+  [claim batching](#claim-batching-sites));
 - exactly one 12-bit fold-response search for the level; and
 - one zero-width fold-challenge-group entry per commitment group, with
   multiplicity covering the group root and every indexed sparse coordinate.
 
-The sparse fold challenges themselves do not receive extra proof-of-work. Their
-certified challenge support is accounted for separately.
+The sparse fold challenges themselves do not receive extra proof-of-work.
+Their certified support and the indexed-address soundness bound are
+described in the [transcript grinding specification](transcript-grinding.md#indexed-address-fold-bound).
 
 #### Ring switch and evaluation points
 
@@ -235,9 +236,27 @@ The plan contains:
 - for a recursive successor with a setup prefix, one site for every Stage 3
   sumcheck round.
 
-Some named sites have loss factor one. In a 128-bit-capacity profile they have
-`g = 0`, so they consume no nonce bits and do no PoW transition. They remain in
-the plan to keep the query catalog and replay order complete.
+#### Claim-batching sites
+
+The evaluation/row batching challenge and the reduction-claim batching
+challenge each draw one independent, unnormalized coefficient per opened
+polynomial. A layout with a single polynomial draws nothing and has no plan
+entry. For `N > 1` polynomials, each site has loss factor `N`, not one.
+
+The loss of one would be the one-shot bound for a discrepancy vector fixed
+before the draw. Knowledge extraction instead separates the claims with a
+coordinate-wise tree: one base coefficient vector plus one sibling per
+coordinate, `N + 1` children in total. The opening is recovered from the
+subtree below this challenge, so the site is priced at the tree charge
+`N / |E|`. For example, nine polynomials over `|E| = (2^64 - 59)^2` need
+`g = 4`, because `9 * 2^128 / |E|` lies in `(8, 16]`.
+
+#### Loss-one sites
+
+Some named sites have loss factor one. In the production field towers they
+have `g = 1`, because the exact challenge-set cardinality is below `2^128`.
+Their semantic nonce width is eight bits. A genuinely zero-bit site in a
+larger challenge field remains in the plan and emits no nonce.
 
 ### 2.2 Terminal level
 
@@ -257,26 +276,26 @@ prover sends a new round polynomial before each round challenge. That polynomial
 fixes a new conditional bad set, so two rounds cannot be merged into one
 security event merely because they belong to the same sumcheck.
 
-For a sumcheck round with declared polynomial degree `d`, main uses:
+For a sumcheck round with declared polynomial degree `d`, Akita uses:
 
 ```text
 L = max(d, 1)
-g = max(0, 128 + ceil(log2(L)) - C)
+g = least nonnegative integer with L * 2^128 <= |E| * 2^g
 ```
 
-For production profiles with `C = 128`:
+For the production field towers with exact cardinality just below `2^128`:
 
 | Round degree | Loss factor | Grind bits | Nonce width |
 | ---: | ---: | ---: | ---: |
-| 1 | 1 | 0 | 0 |
-| 2 | 2 | 1 | 8 |
+| 1 | 1 | 1 | 8 |
+| 2 | 2 | 2 | 9 |
 | 3 | 3 | 2 | 9 |
-| 4 | 4 | 2 | 9 |
-| 5–8 | 5–8 | 3 | 10 |
+| 4 | 4 | 3 | 10 |
+| 5–7 | 5–7 | 3 | 10 |
+| 8 | 8 | 4 | 11 |
 
-Consequently, yes: ordinary degree-2 or degree-3 sumcheck rounds have their own
-nonzero proof-of-work nonce. A degree-1 round still has its own plan entry but
-needs no proof bytes.
+Consequently, every degree-1, degree-2, or degree-3 sumcheck round in these
+production towers has its own nonzero proof-of-work nonce.
 
 In the current plan builder:
 
@@ -648,7 +667,7 @@ Unsigned LEB128 can have redundant mathematical representations unless the
 decoder enforces shortest form. For example, both `00` and `80 00` evaluate to
 zero, but Akita accepts only `00`.
 
-Akita's native decoder rejects:
+Akita's decoder rejects:
 
 - a redundant terminal zero group such as `80 00`;
 - an unterminated sequence such as a lone `80`;
@@ -686,7 +705,7 @@ encoded as the one byte `00`.
 ## 7. How PR #37 uses LEB128 with Spongefish
 
 PR #37 removes the global `TranscriptNonceStream`. At every nonzero PoW or
-fold-response site, the nonce is an inline native Spongefish prover message.
+fold-response site, the nonce is an inline Spongefish prover message.
 
 For PoW:
 
@@ -710,7 +729,7 @@ LEB128 says where that individual integer ends.
 
 Because the LEB128 proof bytes are now the absorbed transcript bytes, this is a
 protocol change rather than only a storage change. Challenges differ from main,
-and the native protocol uses a new version.
+and the protocol uses a new version.
 
 ## 8. Detailed size comparison
 
@@ -720,10 +739,10 @@ For nonzero semantic widths `b_i`, three quantities must remain distinct:
 main packed size
     = ceil(sum(b_i) / 8)
 
-native LEB128 actual size
+LEB128 actual size
     = sum(LEB128_length(chosen_nonce_i))
 
-native LEB128 maximum
+LEB128 maximum
     = sum(ceil(b_i / 7))
 ```
 
@@ -785,7 +804,7 @@ ceil(10 * 9 / 8) = 12 bytes
 For each PoW attempt, success probability is `1/4`. An honest first winner is
 normally a very small integer, so almost every LEB128 nonce is one byte. Ten
 rounds will normally use about ten bytes. A prover deliberately choosing values
-at least 128 could make every nonce two bytes, for a 20-byte native maximum.
+at least 128 could make every nonce two bytes, for a 20-byte maximum.
 
 This explains both why LEB128 performs well for the honest prover and why its
 parser bound cannot use the honest measurement.
@@ -810,7 +829,7 @@ For the recorded fp128 one-hot, one-polynomial, `nv=36` parity workload:
 | Representation | Nonce bytes | Complete proof bytes |
 | --- | ---: | ---: |
 | Pinned main packed stream | 400 | 69,776 |
-| Native LEB128 candidate | 335 | 69,756 |
+| LEB128 candidate | 335 | 69,756 |
 
 LEB128 saved 65 nonce bytes for that honest run. The complete proof saved only
 20 bytes because PR #37 also changes other framing and transcript-dependent
@@ -859,9 +878,9 @@ sum(actual LEB128 lengths) > ceil(sum(scheduled widths) / 8)
 
 They tie when the two sides are equal.
 
-## 10. Why LEB128 aligns with native Spongefish
+## 10. Why LEB128 aligns with Spongefish
 
-Spongefish's native model couples proof I/O and transcript state:
+Spongefish's model couples proof I/O and transcript state:
 
 ```text
 prover_message(value):
@@ -881,7 +900,7 @@ the proof bytes cannot diverge from the absorbed bytes.
 
 Main's aggregate stream does not fit this model naturally. Bits for different
 future sites share bytes and live in a proof-level prefix. Retaining it beside
-native Spongefish would require:
+Spongefish would require:
 
 - a second proof cursor;
 - external plan-aware bit parsing;
@@ -890,31 +909,31 @@ native Spongefish would require:
 - separate exhaustion checks for Spongefish and the nonce stream.
 
 That hybrid can be implemented soundly, but it offloads less work to
-Spongefish and recreates the synchronization boundary that native proof
+Spongefish and recreates the synchronization boundary that proof
 messages are intended to remove.
 
 LEB128 is not required by Spongefish. A fixed-width inline nonce codec would
-also align with native messages. LEB128 is the selected compromise because it
-combines native local framing with good honest-prover size.
+also align with messages. LEB128 is the selected compromise because it
+combines local framing with good honest-prover size.
 
 ## 11. Safety and accounting rules for the LEB128 design
 
-The native design is safe only if it keeps three different size concepts
+The design is safe only if it keeps three different size concepts
 separate:
 
-1. **Native-maximum planner objective.** Schedule selection adds the canonical
+1. **Maximum planner objective.** Schedule selection adds the canonical
    per-message LEB128 maxima, `sum(ceil(width_i / 7))`. This aligns the modeled
-   nonce cost with the native format, but the complete objective is still a
+   nonce cost with the format, but the complete objective is still a
    model because terminal response pricing is not an exact wire bound.
-2. **Native parser maximum.** Recursive and ordinary input boundaries use the
-   sum of per-message LEB128 maxima, along with all other native grammar and
+2. **Parser maximum.** Recursive and ordinary input boundaries use the
+   sum of per-message LEB128 maxima, along with all other grammar and
    terminal framing bounds.
 3. **Actual honest size.** Profiling measures the concrete LEB128 lengths of
    the accepted nonces.
 
 The planner objective is not a parser bound because it does not price every
 component with the conservative grammar maximum. The actual honest size is not
-a malicious-proof bound. Changing from aggregate packed-bit pricing to native
+a malicious-proof bound. Changing from aggregate packed-bit pricing to
 per-message maxima changes the optimization policy and therefore requires
 regenerating every schedule catalog.
 
@@ -943,7 +962,7 @@ PR #37 stores each nonzero nonce as an inline canonical unsigned LEB128
 Spongefish message. That representation is locally parseable, couples receipt
 with absorption, and is usually smaller for the honest PoW search because it
 does not pay proof bytes for unused search slack. Its malicious maximum can be
-larger, so native parser bounds must use per-message maxima.
+larger, so parser bounds must use per-message maxima.
 
 For Akita's goal of offloading proof transport and transcript state to
 Spongefish, LEB128 is the cleaner architecture. Main remains the stronger
@@ -953,15 +972,15 @@ choice if the sole objective is the smallest fixed worst-case nonce section.
 
 Current PR:
 
-- `crates/akita-transcript/src/native/nonce.rs` — unsigned LEB128 codec;
-- `crates/akita-transcript/src/native.rs` — native preview, commit, receipt,
+- `crates/akita-transcript/src/proof_stream/nonce.rs` — unsigned LEB128 codec;
+- `crates/akita-transcript/src/proof_stream.rs` — preview, commit, receipt,
   absorption, and challenge extraction;
-- `crates/akita-types/src/transcript_grinding/native_replay.rs` — public plan
+- `crates/akita-types/src/transcript_grinding/replay.rs` — public plan
   cursor and verifier checks;
 - `crates/akita-types/src/transcript_grinding/plan.rs` — canonical plan
   derivation and the complete component catalog;
-- `crates/akita-schedules/src/runtime.rs` — native-maximum planner estimate
-  versus complete native proof bound;
+- `crates/akita-schedules/src/runtime.rs` — maximum planner estimate
+  versus complete proof bound;
 - `specs/transcript-grinding.md` — authoritative grinding contract;
 - `book/src/how/transcript.md` — current transcript architecture and verifier
   requirements.
@@ -975,5 +994,5 @@ Current PR:
 - `crates/akita-types/src/proof/wire.rs` — structured proof serialization;
 - `crates/akita-transcript/src/grinding.rs` — fixed PoW transcript payload;
 - `crates/akita-prover/src/protocol/core/prove.rs` — packed stream completion;
-- `crates/akita-verifier/src/protocol/core/verify.rs` — packed replay and final
+- `crates/akita-verifier/src/fold/verify.rs` — packed replay and final
   cursor checks.
