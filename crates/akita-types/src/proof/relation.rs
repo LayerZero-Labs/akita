@@ -1,7 +1,5 @@
 //! Shared protocol relation helpers.
 
-use crate::dispatch_for_field;
-use crate::layout::relation_layout::{RelationRhsLayout, RelationRowFamily};
 use crate::proof::RingVec;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
@@ -10,6 +8,8 @@ use akita_algebra::ring::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
+use akita_params::dispatch_for_field;
+use akita_params::layout::relation_layout::{RelationRhsLayout, RelationRowFamily};
 use jolt_field::{CanonicalEncoding, Field, MulBaseUnreduced};
 use std::iter::repeat_n;
 
@@ -33,7 +33,7 @@ pub fn relation_rhs_row_count(layout: &RelationRhsLayout) -> usize {
         .saturating_add(layout.n_d);
     layout.compression.as_ref().map_or(base, |compression| {
         base.saturating_add(
-            crate::COMPRESSION_MAP_COUNT.saturating_mul(compression.group_plans.len() + 1),
+            akita_params::COMPRESSION_MAP_COUNT.saturating_mul(compression.group_plans.len() + 1),
         )
     })
 }
@@ -158,7 +158,7 @@ where
 ///
 /// Each segment is validated under its role dimension before concatenation.
 /// The returned [`RingVec`] uses compact mode (`ring_dim = 0`); interpret segments
-/// through [`CommitmentRingDims`](crate::layout::CommitmentRingDims) when borrowing typed rows.
+/// through [`CommitmentRingDims`](akita_params::layout::CommitmentRingDims) when borrowing typed rows.
 ///
 /// # Errors
 ///
@@ -295,17 +295,17 @@ pub fn assemble_compressed_relation_rhs<F: Field>(
             .checked_mul(layout.d_ring_dimension)
             .ok_or_else(|| AkitaError::InvalidSetup("relation D width overflow".into()))?,
     ));
-    for map_index in 0..crate::COMPRESSION_MAP_COUNT {
+    for map_index in 0..akita_params::COMPRESSION_MAP_COUNT {
         for (payload, plan) in group_terminal_payloads.iter().zip(&compression.group_plans) {
             let map = plan.maps()[map_index];
-            if map_index + 1 == crate::COMPRESSION_MAP_COUNT {
+            if map_index + 1 == akita_params::COMPRESSION_MAP_COUNT {
                 coefficients.extend_from_slice(payload);
             } else {
                 coefficients.extend(repeat_n(F::zero(), map.output_coefficients()));
             }
         }
         let opening_map = compression.opening_plan.maps()[map_index];
-        if map_index + 1 == crate::COMPRESSION_MAP_COUNT {
+        if map_index + 1 == akita_params::COMPRESSION_MAP_COUNT {
             coefficients.extend_from_slice(opening_terminal_payload);
         } else {
             coefficients.extend(repeat_n(F::zero(), opening_map.output_coefficients()));
@@ -664,7 +664,7 @@ where
         if matches!(
             family,
             RelationRowFamily::Consistency {
-                opening_method: crate::OpeningMethod::SubringCoefficientPacking { .. },
+                opening_method: akita_params::OpeningMethod::SubringCoefficientPacking { .. },
                 ..
             }
         ) {

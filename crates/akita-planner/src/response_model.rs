@@ -14,8 +14,8 @@
 //! Markov interpretation once that envelope bounds the conditional mean.
 
 use akita_error::{checked, AkitaError};
-use akita_types::sis::CommittedSourceContract;
-use akita_types::{CommittedGroupParams, OpeningClaimsLayout, WitnessLayout};
+use akita_params::sis::CommittedSourceContract;
+use akita_params::{CommittedGroupParams, OpeningClaimsLayout, WitnessLayout};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -654,7 +654,7 @@ pub(crate) fn root_group_source_moments(
             .ok_or_else(|| AkitaError::InvalidSetup("source peak moment overflow".into()))?;
         let moment = if matches!(
             contract.class(),
-            akita_types::sis::CommittedSourceClass::UnitOneHot { .. }
+            akita_params::sis::CommittedSourceClass::UnitOneHot { .. }
         ) {
             let mut components = [SourceMomentComponent::default(); SOURCE_COMPONENT_COUNT];
             components[Z_COMPONENT] = SourceMomentComponent {
@@ -710,13 +710,13 @@ pub(crate) fn next_source_moment(
         ));
     }
     let relation_geometry =
-        akita_types::RelationWitnessGeometry::for_level(params, opening_layout, extension_degree)?;
+        akita_params::RelationWitnessGeometry::for_level(params, opening_layout, extension_degree)?;
     let layout = WitnessLayout::new(
         params,
         opening_layout,
         &relation_geometry,
         params.witness_chunk.num_chunks,
-        akita_types::RelationQuotientPlan::for_field_bits(params, field_bits)?,
+        akita_params::RelationQuotientPlan::for_field_bits(params, field_bits)?,
     )?;
     let mut logical_components = [SourceMomentComponent::default(); SOURCE_COMPONENT_COUNT];
     let final_group_index = opening_layout.root_final_group_index()?;

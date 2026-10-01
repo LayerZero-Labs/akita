@@ -5,13 +5,13 @@ mod common;
 
 use akita_config::proof_optimized::fp128;
 use akita_cpu_backend::{CommitmentHandle, CpuBackend, DensePoly, GroupContext};
+use akita_params::{BasisMode, PolynomialGroupLayout};
 use akita_prover::{
     ProofAdmission, ProofContext, ProofScope, ProofScopeConsumer, SelectedProverOpeningData,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_types::{
-    BasisMode, Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims, PolynomialGroupLayout, RingVec,
+    Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, RingVec,
 };
 use jolt_field::{One, Ring};
 use std::sync::Arc;
@@ -187,7 +187,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
                 GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
-        let key = akita_types::ScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
+        let key = akita_params::ScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
         let schedule = scheme.schedules().resolve_key(&key).unwrap().schedule();
         let layout = key.opening_layout().unwrap();
         let mut absent_schedule = schedule.clone();
@@ -319,7 +319,7 @@ fn admission_uses_the_extension_field_owned_by_the_configuration() {
         let scheme = common::load_workspace_scheme::<SmallCfg>().unwrap();
         let setup = scheme.setup_prover(NV, 1).unwrap();
         let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
-        let key = akita_types::ScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
+        let key = akita_params::ScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
         let row = scheme.schedules().resolve_key(&key).unwrap();
         let session = <CpuBackend<SmallF, SmallE> as ProofAdmission<SmallF, SmallE>>::begin_proof(
             &backend,

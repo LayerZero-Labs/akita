@@ -2,11 +2,10 @@
 
 use akita_challenges::VerifierFoldDraw;
 use akita_error::AkitaError;
+use akita_params::{CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
 use akita_types::GrindingReplay;
-use akita_types::{
-    draw_group_fold_challenges, CommittedGroupParams, GroupFoldChallenges, OpeningClaimsLayout,
-};
+use akita_types::{draw_group_fold_challenges, GroupFoldChallenges};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 /// Spongefish replay of all sparse fold roots for one recursive level.

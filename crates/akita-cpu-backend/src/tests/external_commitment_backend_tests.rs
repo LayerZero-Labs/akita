@@ -10,9 +10,10 @@ use crate::commitment::{
 use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::{
-    CommittedGroupParams, RingRelationMode, RingVec, SetupMatrixCapacity, SisModulusProfileId,
+use akita_params::{
+    CommittedGroupParams, RingRelationMode, SetupMatrixCapacity, SisModulusProfileId,
 };
+use akita_types::RingVec;
 use jolt_field::{Prime64Offset59, Ring};
 use std::sync::Arc;
 
@@ -50,7 +51,7 @@ impl CompressionOperation<F> for ExternalCompression {
     fn compress(
         &self,
         binding: &CommitmentStateBinding,
-        plan: &akita_types::CompressionChainPlan,
+        plan: &akita_params::CompressionChainPlan,
         relation_mode: RingRelationMode,
         _u: RingVec<F>,
     ) -> Result<CompressionStageOutput<F>, AkitaError> {

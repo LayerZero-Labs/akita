@@ -2,9 +2,9 @@ use super::*;
 
 fn set_valid_setup_prefix(params: &mut CommittedGroupParams, natural_len: usize) {
     provision_setup_prefix_capacity(params, natural_len);
-    let commitment_params = crate::setup_prefix_precommitted_params(params, natural_len)
+    let commitment_params = akita_params::setup_prefix_precommitted_params(params, natural_len)
         .expect("setup-prefix commitment params");
-    let prefix = crate::scheduled_setup_prefix(natural_len, commitment_params);
+    let prefix = akita_params::scheduled_setup_prefix(natural_len, commitment_params);
     params
         .set_setup_prefix(Some(prefix))
         .expect("valid setup-prefix topology");

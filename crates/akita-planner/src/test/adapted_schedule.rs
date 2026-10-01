@@ -5,10 +5,10 @@ use akita_config::{
     proof_optimized::fp128::{Dense, DenseBounded, OneHot},
     CommitmentConfig,
 };
-use akita_types::CommittedGroupBatchProfile;
+use akita_params::CommittedGroupBatchProfile;
 
 fn producer<Cfg: CommitmentConfig>(
-    profile: akita_types::GroupCommitPhaseParams,
+    profile: akita_params::GroupCommitPhaseParams,
 ) -> crate::emit::PrecommittedProducer {
     crate::emit::PrecommittedProducer::try_new(
         profile,
@@ -19,7 +19,7 @@ fn producer<Cfg: CommitmentConfig>(
 
 fn grouped_request<Cfg: CommitmentConfig>(
     final_group: PolynomialGroupLayout,
-    profiles: &[akita_types::GroupCommitPhaseParams],
+    profiles: &[akita_params::GroupCommitPhaseParams],
 ) -> crate::emit::GroupedGenerationRequest {
     crate::emit::GroupedGenerationRequest::new(
         final_group,
@@ -27,7 +27,7 @@ fn grouped_request<Cfg: CommitmentConfig>(
     )
 }
 
-fn assert_frozen_skeleton(main: &akita_types::FoldSchedule, adapted: &akita_types::FoldSchedule) {
+fn assert_frozen_skeleton(main: &akita_params::FoldSchedule, adapted: &akita_params::FoldSchedule) {
     assert_eq!(adapted.recursive_folds.len(), main.recursive_folds.len());
     for (adapted, main) in adapted.recursive_folds.iter().zip(&main.recursive_folds) {
         assert_eq!(adapted.params.role_dims(), main.params.role_dims());

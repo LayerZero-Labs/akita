@@ -9,7 +9,8 @@ use crate::opaque::DensePoly;
 #[cfg(test)]
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
-use akita_types::{AkitaExpandedSetup, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlotId};
+use akita_params::SetupPrefixSlotId;
+use akita_types::{AkitaExpandedSetup, RingVec, SetupPrefixPublicCommitment};
 use jolt_field::{CanonicalEncoding, Field};
 
 pub(crate) struct ValidatedSetupPrefixCommitment<'a> {
@@ -179,12 +180,12 @@ mod tests {
     };
     use crate::AkitaProverSetup;
     use akita_challenges::SparseChallengeConfig;
-    use akita_serialization::AkitaSerialize;
-    use akita_types::{
+    use akita_params::{
         active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
         CompressionChainPlan, InnerCommitMatrixParams, OpeningClaimsLayout,
         OuterCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId, SisTableKey,
     };
+    use akita_serialization::AkitaSerialize;
     use jolt_field::Prime128OffsetA7F7 as F;
     use std::sync::Arc;
 
@@ -208,13 +209,13 @@ mod tests {
         .with_decomp(
             1,
             4,
-            akita_types::sis::compute_num_digits_field_width(128, 3),
+            akita_params::sis::compute_num_digits_field_width(128, 3),
             2,
             2,
         )
         .expect("level params");
         let inner = params.inner().matrix;
-        let coeff_linf_bound = *akita_types::sis::inner_coeff_linf_bounds(
+        let coeff_linf_bound = *akita_params::sis::inner_coeff_linf_bounds(
             inner.sis_modulus_profile(),
             u32::try_from(ring_dimension).expect("ring dimension"),
         )
@@ -229,7 +230,7 @@ mod tests {
                         .expect("L infinity test matrix")
                         .table_digest,
                     modulus_profile: inner.sis_modulus_profile(),
-                    role: akita_types::sis::SisMatrixRole::Inner,
+                    role: akita_params::sis::SisMatrixRole::Inner,
                     ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
                     coeff_linf_bound,
                 },
@@ -252,7 +253,7 @@ mod tests {
                     policy: outer.security_policy(),
                     table_digest: outer.sis_table_key().table_digest,
                     modulus_profile: outer.sis_modulus_profile(),
-                    role: akita_types::sis::SisMatrixRole::Outer,
+                    role: akita_params::sis::SisMatrixRole::Outer,
                     ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
                     coeff_linf_bound: 3,
                 },
@@ -377,7 +378,7 @@ mod tests {
                     inner.owner().clone(),
                     inner_context,
                     capabilities,
-                    StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
+                    StageDimensionCapabilities::cpu_role::<F>(akita_params::RingRole::Inner),
                     None,
                 )
                 .unwrap(),
@@ -388,7 +389,7 @@ mod tests {
                 outer,
                 inner.owner().clone(),
                 outer_context,
-                StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Outer),
+                StageDimensionCapabilities::cpu_role::<F>(akita_params::RingRole::Outer),
             ))
             .unwrap();
         builder

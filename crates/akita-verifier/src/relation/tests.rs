@@ -1,11 +1,13 @@
 use super::*;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
+use akita_params::{
+    CommitmentRingDims, FlatMatrix, OpenCommitMatrixParams, OpeningClaimsLayout,
+    OuterCommitMatrixParams, RingOpeningPoint, SisModulusProfileId,
+};
 use akita_types::{
-    relation_rhs_coeff_len, AkitaSetupDescriptor, CommitmentRingDims, FlatMatrix,
-    OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress,
-    RingOpeningPoint, RingRelationGroupOpening, RingVec, SetupContributionGroupInputs,
-    SetupContributionPlan, SisModulusProfileId,
+    relation_rhs_coeff_len, AkitaSetupDescriptor, PreparedRelationAddress,
+    RingRelationGroupOpening, RingVec, SetupContributionGroupInputs, SetupContributionPlan,
 };
 use jolt_field::{Fp32, One, Prime128OffsetA7F7, Zero};
 
@@ -55,7 +57,7 @@ impl MixedReplayFixture {
     }
 }
 
-fn mixed_replay_fixture(mode: akita_types::RingRelationMode) -> MixedReplayFixture {
+fn mixed_replay_fixture(mode: akita_params::RingRelationMode) -> MixedReplayFixture {
     let mut lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D_INNER,
@@ -91,7 +93,7 @@ fn mixed_replay_fixture(mode: akita_types::RingRelationMode) -> MixedReplayFixtu
 
     let opening_batch = OpeningClaimsLayout::new(0, 1).unwrap();
     let relation_geometry =
-        akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
+        akita_params::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
             .unwrap();
     let challenges = Challenges::from_sparse(
         (0..lp.blocks().live_blocks)
@@ -192,7 +194,7 @@ fn mixed_replay_fixture(mode: akita_types::RingRelationMode) -> MixedReplayFixtu
     }
 }
 
-fn mixed_relation_fixture(mode: akita_types::RingRelationMode) -> MixedRelationFixture {
+fn mixed_relation_fixture(mode: akita_params::RingRelationMode) -> MixedRelationFixture {
     let fixture = mixed_replay_fixture(mode);
     let evaluator = fixture.prepare_evaluator().unwrap();
     MixedRelationFixture {
@@ -232,7 +234,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
     )
     .with_decomp(1, 1, 1, 1, 1)
     .unwrap();
-    let relation_geometry = akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+    let relation_geometry = akita_params::RelationWitnessGeometry::for_evaluation_trace_execution(
         &valid_lp,
         &opening_batch,
     )
@@ -242,7 +244,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
         &opening_batch,
         &relation_geometry,
         1,
-        akita_types::RelationQuotientPlan::quotient_lift(1).unwrap(),
+        akita_params::RelationQuotientPlan::quotient_lift(1).unwrap(),
     )
     .unwrap();
     let setup_groups = vec![SetupContributionGroupInputs {
@@ -283,7 +285,7 @@ fn prepared_relation_accepts_exact_deferred_setup_claim() {
         setup,
         point,
         alpha,
-    } = mixed_relation_fixture(akita_types::RingRelationMode::QuotientLift);
+    } = mixed_relation_fixture(akita_params::RingRelationMode::QuotientLift);
     let relation_address_geometry = evaluator.relation_address_geometry;
     let address_point = &point[relation_address_geometry.relation_coefficient_variable_count()..];
     let fold_gadget = evaluator
@@ -351,7 +353,7 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
         setup,
         point,
         alpha,
-    } = mixed_relation_fixture(akita_types::RingRelationMode::ReducedEvaluation);
+    } = mixed_relation_fixture(akita_params::RingRelationMode::ReducedEvaluation);
     let geometry = evaluator.relation_address_geometry;
     let coefficient_bits = geometry.relation_coefficient_variable_count();
     let (coefficient_point, address_point) = point.split_at(coefficient_bits);
@@ -410,7 +412,7 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
 
     let mut mismatched = evaluator.clone();
     mismatched.flat_context.level_params.ring_relation_mode =
-        akita_types::RingRelationMode::QuotientLift;
+        akita_params::RingRelationMode::QuotientLift;
     assert!(mismatched
         .eval_flat_at_point::<MixedF>(&point, &setup, alpha,)
         .is_err());

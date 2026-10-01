@@ -2,11 +2,13 @@ use super::*;
 
 use akita_algebra::{poly::multilinear_eval, CyclotomicRing};
 use akita_config::proof_optimized::fp128;
-use akita_types::{
+use akita_params::{
     basis_weights_prefix, r_decomp_levels, ring_opening_point_from_field, BasisMode,
-    CommittedGroupParams, DigitRangePlan, FpExtEncoding, OpeningClaimsLayout, PreparedOpeningPoint,
-    RelationAddressGeometry, RelationRangeImagePlan, RingMultiplierOpeningPoint,
+    CommittedGroupParams, DigitRangePlan, OpeningClaimsLayout, RelationAddressGeometry,
     SisModulusProfileId, WitnessLayout,
+};
+use akita_types::{
+    FpExtEncoding, PreparedOpeningPoint, RelationRangeImagePlan, RingMultiplierOpeningPoint,
 };
 use jolt_field::{Ext2, ExtField, One, Ring, Zero};
 
@@ -88,7 +90,7 @@ where
     .with_decomp(64, (1usize << NUM_VARIABLES) / D, 2, 2, 2)
     .expect("local EvaluationTrace geometry");
     let relation_witness_geometry =
-        akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+        akita_params::RelationWitnessGeometry::for_evaluation_trace_execution(
             &level_params,
             &opening_batch,
         )
@@ -98,7 +100,7 @@ where
         &opening_batch,
         &relation_witness_geometry,
         2,
-        akita_types::RelationQuotientPlan::quotient_lift(r_decomp_levels::<F>(
+        akita_params::RelationQuotientPlan::quotient_lift(r_decomp_levels::<F>(
             level_params.open().digits.log_basis,
         ))
         .unwrap(),
@@ -131,8 +133,8 @@ where
         .map(|index| E::from_u64(17 + 2 * index as u64))
         .collect();
     let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-    let prepared_point = akita_types::dispatch_for_field!(
-        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+    let prepared_point = akita_params::dispatch_for_field!(
+        akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
         F,
         group_params.inner_commit_matrix_params().ring_dimension(),
         |D_G| {
