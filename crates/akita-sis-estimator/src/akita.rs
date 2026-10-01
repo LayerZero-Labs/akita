@@ -57,12 +57,12 @@ impl AkitaModulusProfileId {
     }
 }
 
-impl From<akita_types::sis::SisModulusProfileId> for AkitaModulusProfileId {
-    fn from(profile: akita_types::sis::SisModulusProfileId) -> Self {
+impl From<akita_params::sis::SisModulusProfileId> for AkitaModulusProfileId {
+    fn from(profile: akita_params::sis::SisModulusProfileId) -> Self {
         match profile {
-            akita_types::sis::SisModulusProfileId::Q32Offset99 => Self::Q32Offset99,
-            akita_types::sis::SisModulusProfileId::Q64Offset59 => Self::Q64Offset59,
-            akita_types::sis::SisModulusProfileId::Q128OffsetA7F7 => Self::Q128OffsetA7F7,
+            akita_params::sis::SisModulusProfileId::Q32Offset99 => Self::Q32Offset99,
+            akita_params::sis::SisModulusProfileId::Q64Offset59 => Self::Q64Offset59,
+            akita_params::sis::SisModulusProfileId::Q128OffsetA7F7 => Self::Q128OffsetA7F7,
         }
     }
 }

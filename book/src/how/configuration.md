@@ -77,12 +77,12 @@ witness lengths before it uses the schedule.
 
 **Implementation map**
 
-- `crates/akita-types/src/layout/params.rs` defines `CommittedGroupParams`.
-- `crates/akita-types/src/schedule/profiles.rs` defines
+- `crates/akita-params/src/layout/params.rs` defines `CommittedGroupParams`.
+- `crates/akita-params/src/schedule/profiles.rs` defines
   `GroupCommitPhaseParams`.
-- `crates/akita-types/src/layout/params/precommitted.rs` defines
+- `crates/akita-params/src/layout/params/precommitted.rs` defines
   `GroupOpenPhaseParams` and `GroupOpeningPlan`.
-- `crates/akita-types/src/schedule.rs` defines `FoldParams`,
+- `crates/akita-params/src/schedule.rs` defines `FoldParams`,
   `TerminalFoldParams`, and `FoldSchedule`.
 - `crates/akita-schedules/src/resolve.rs` validates artifact rows before the
   prover or verifier uses them.
@@ -102,7 +102,7 @@ an error rather than panicking.
 - [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner overview, search model, and artifact generation.
 - `crates/akita-planner/src/` owns search and emission. Runtime catalog
   expansion and audit live in `crates/akita-schedules/src/`.
-- `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`nonterminal_level_layout`, planned witness sizing).
+- `crates/akita-params/src/proof_size.rs` and `crates/akita-params/src/layout/proof_size.rs` (`nonterminal_level_layout`, planned witness sizing).
 - `crates/akita-planner/src/generated_families.rs`,
   `crates/akita-planner/src/emit/`, and
   `crates/akita-schedules/src/artifact.rs`.

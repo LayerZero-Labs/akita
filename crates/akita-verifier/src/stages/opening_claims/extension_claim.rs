@@ -2,6 +2,8 @@
 
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
 use akita_error::AkitaError;
+use akita_params::{dispatch_for_field, TerminalFoldParams};
+use akita_params::{BasisMode, CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
 use akita_types::GrindingReplay;
 use akita_types::{
@@ -9,9 +11,8 @@ use akita_types::{
     derive_tensor_extension_opening_claim_from_partials, prepare_opening_point,
     ring_subfield_packed_extension_opening_point, tensor_equality_factor_eval_at_point,
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
-    BasisMode, CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, PreparedOpeningPoint,
+    FpExtEncoding, PreparedOpeningPoint,
 };
-use akita_types::{dispatch_for_field, TerminalFoldParams};
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 pub(crate) struct PreparedProtocolPoint<F: Field, E: Field> {
@@ -106,7 +107,7 @@ where
     ) -> Result<(E, Vec<E>), AkitaError> {
         let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
             self.grinding,
-            akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+            akita_params::SumcheckProtocol::ExtensionOpeningReduction,
             self.level,
             0,
         );
@@ -116,7 +117,7 @@ where
             input_claim,
             akita_sumcheck::SumcheckShape::new(
                 num_rounds,
-                akita_types::EXTENSION_OPENING_REDUCTION_DEGREE,
+                akita_params::EXTENSION_OPENING_REDUCTION_DEGREE,
             )?,
         )?;
         Ok((replay.output_claim, replay.challenges))
@@ -454,9 +455,9 @@ where
 mod tests {
     use super::*;
 
+    use akita_params::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
     use akita_sumcheck::SumcheckInstanceProver;
     use akita_transcript::{new_prover_channel, new_verifier_channel};
-    use akita_types::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
     use jolt_field::{FpExt4, Prime32Offset99, Zero};
     use jolt_poly::UnivariatePoly;
 
@@ -516,18 +517,18 @@ mod tests {
         let partials = vec![E::zero(); width];
         let plan = {
             let challenge_order =
-                akita_types::ChallengeFieldOrder::from_full_capacity(128).unwrap();
-            let mut runs = vec![akita_types::GrindingRun::proof_of_work(
-                akita_types::GrindingSite::ExtensionOpeningPoint { level },
+                akita_params::ChallengeFieldOrder::from_full_capacity(128).unwrap();
+            let mut runs = vec![akita_params::GrindingRun::proof_of_work(
+                akita_params::GrindingSite::ExtensionOpeningPoint { level },
                 1,
                 challenge_order,
             )
             .unwrap()];
             for round in 0..rounds {
                 runs.push(
-                    akita_types::GrindingRun::proof_of_work(
-                        akita_types::GrindingSite::SumcheckRound {
-                            protocol: akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+                    akita_params::GrindingRun::proof_of_work(
+                        akita_params::GrindingSite::SumcheckRound {
+                            protocol: akita_params::SumcheckProtocol::ExtensionOpeningReduction,
                             level,
                             stage: 0,
                             round: u32::try_from(round).unwrap(),
@@ -538,7 +539,7 @@ mod tests {
                     .unwrap(),
                 );
             }
-            akita_types::GrindingPlan::new(runs, challenge_order).unwrap()
+            akita_params::GrindingPlan::new(runs, challenge_order).unwrap()
         };
 
         let state = new_prover_channel(b"native-eor-verifier", b"fixture").unwrap();
@@ -554,7 +555,7 @@ mod tests {
         let mut sumcheck = ZeroEorProver { rounds };
         let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
             &mut prover,
-            akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+            akita_params::SumcheckProtocol::ExtensionOpeningReduction,
             level,
             0,
         );

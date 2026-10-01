@@ -42,8 +42,8 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
     let evals = make_dense_evals::<Cfg>(NV);
     let poly = DensePoly::<F>::from_field_evals(NV, &evals).expect("dense poly");
     let layout = schedules
-        .resolve_key(&akita_types::ScheduleLookupKey::single(
-            akita_types::PolynomialGroupLayout::new(NV, 1),
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
+            akita_params::PolynomialGroupLayout::new(NV, 1),
         ))
         .expect("layout")
         .schedule()

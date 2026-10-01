@@ -1,9 +1,10 @@
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_error::AkitaError;
+use akita_params::SubringCoefficientPackingGeometry;
 pub(super) use akita_prover::backend::*;
 use akita_types::{
     PreparedSubringCoefficientPackingPoint, RingMultiplierOpeningPoint,
-    SubfieldMultiplierOpeningPoint, SubringCoefficientPackingGeometry,
+    SubfieldMultiplierOpeningPoint,
 };
 use jolt_field::Field;
 use std::ops::Range;
@@ -321,7 +322,7 @@ pub struct CommitInnerPlan {
 
 impl CommitInnerPlan {
     /// Build inner-commit parameters from a frozen standalone precommit profile.
-    pub(crate) fn from_profile(profile: &akita_types::GroupCommitPhaseParams) -> Self {
+    pub(crate) fn from_profile(profile: &akita_params::GroupCommitPhaseParams) -> Self {
         Self {
             ring_dimension: profile.inner.matrix.ring_dimension(),
             num_live_blocks: profile.blocks.live_blocks,
@@ -368,13 +369,13 @@ pub(crate) struct ValidatedFoldRelationPlan<'a, F: Field> {
 
 impl<'a, F: Field> ValidatedFoldRelationPlan<'a, F> {
     pub(crate) fn new(
-        opening_method: akita_types::OpeningMethod,
+        opening_method: akita_params::OpeningMethod,
         n_a: usize,
         log_basis_open: u32,
         log_basis_outer: u32,
         evaluation_trace: Option<(&'a RingMultiplierOpeningPoint<F>, usize, usize, u32)>,
     ) -> Result<Self, AkitaError> {
-        let expects_trace = matches!(opening_method, akita_types::OpeningMethod::EvaluationTrace);
+        let expects_trace = matches!(opening_method, akita_params::OpeningMethod::EvaluationTrace);
         if n_a == 0 || expects_trace != evaluation_trace.is_some() {
             return Err(AkitaError::InvalidInput(
                 "fold relation plan disagrees with its opening family".into(),

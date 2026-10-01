@@ -67,7 +67,7 @@ fn fold_endpoint_probe(
         1,
     )
     .unwrap();
-    let ranges = akita_types::dyadic_block_ranges(blocks, blocks).unwrap();
+    let ranges = akita_params::dyadic_block_ranges(blocks, blocks).unwrap();
     let geometry = if chunked {
         FoldProbeGeometry::SparseChunked {
             chunk_ranges: &ranges,
@@ -83,7 +83,7 @@ fn fold_endpoint_probe(
         1,
         1,
         1,
-        akita_types::OpeningMethod::EvaluationTrace,
+        akita_params::OpeningMethod::EvaluationTrace,
         ValidatedFoldAcceptancePlan::new(128, 127, None),
     )
     .unwrap();
@@ -137,7 +137,7 @@ fn chunked_probe_dispatches_and_traverses_once() {
             1,
         )
         .unwrap();
-        let ranges = akita_types::dyadic_block_ranges(blocks, chunks).unwrap();
+        let ranges = akita_params::dyadic_block_ranges(blocks, chunks).unwrap();
         let plan = ValidatedFoldProbePlan::new::<D>(
             &challenges,
             1,
@@ -148,7 +148,7 @@ fn chunked_probe_dispatches_and_traverses_once() {
             1,
             1,
             1,
-            akita_types::OpeningMethod::EvaluationTrace,
+            akita_params::OpeningMethod::EvaluationTrace,
             crate::opaque::ValidatedFoldAcceptancePlan::new(u128::MAX, u128::MAX, None),
         )
         .unwrap();
@@ -192,7 +192,7 @@ fn chunk_admission_precedes_cancelling_aggregation() {
         1,
     )
     .unwrap();
-    let ranges = akita_types::dyadic_block_ranges(2, 2).unwrap();
+    let ranges = akita_params::dyadic_block_ranges(2, 2).unwrap();
     let plan = ValidatedFoldProbePlan::new::<D>(
         &challenges,
         1,
@@ -203,7 +203,7 @@ fn chunk_admission_precedes_cancelling_aggregation() {
         1,
         1,
         1,
-        akita_types::OpeningMethod::EvaluationTrace,
+        akita_params::OpeningMethod::EvaluationTrace,
         crate::opaque::ValidatedFoldAcceptancePlan::new(10, 10, None),
     )
     .unwrap();
@@ -306,7 +306,7 @@ fn accepted_fold_rejects_substituted_challenges_and_opening_computation() {
         1,
     )
     .unwrap();
-    let ranges = akita_types::dyadic_block_ranges(2, 2).unwrap();
+    let ranges = akita_params::dyadic_block_ranges(2, 2).unwrap();
     let plan = ValidatedFoldProbePlan::new::<D>(
         &challenges,
         1,
@@ -317,7 +317,7 @@ fn accepted_fold_rejects_substituted_challenges_and_opening_computation() {
         1,
         1,
         1,
-        akita_types::OpeningMethod::EvaluationTrace,
+        akita_params::OpeningMethod::EvaluationTrace,
         ValidatedFoldAcceptancePlan::new(u128::MAX, u128::MAX, None),
     )
     .unwrap();

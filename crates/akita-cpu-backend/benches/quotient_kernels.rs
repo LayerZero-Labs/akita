@@ -2,7 +2,7 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_cpu_backend::benchmark_support::fused_split_eq_quotients_prover_bounds;
-use akita_types::layout::FlatMatrix;
+use akita_params::layout::FlatMatrix;
 use akita_types::{prepare_ntt_cache, NttCacheMode};
 use criterion::{criterion_group, criterion_main, Criterion};
 use jolt_field::{CanonicalEncoding, Prime128Offset275};

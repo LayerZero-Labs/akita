@@ -67,9 +67,9 @@ where
         context: &super::ProofContext,
         prepared_opening_handles: &[Self::PreparedOpeningHandle],
         commitment_material_handles: Vec<Self::CommitmentMaterialHandle>,
-        level: &akita_types::CommittedGroupParams,
-        opening_batch: &akita_types::OpeningClaimsLayout,
-        relation_rhs_layout: &akita_types::RelationRhsLayout,
+        level: &akita_params::CommittedGroupParams,
+        opening_batch: &akita_params::OpeningClaimsLayout,
+        relation_rhs_layout: &akita_params::RelationRhsLayout,
         group_commitments: &[akita_types::RingVec<F>],
     ) -> Result<RecursiveWitnessBuildStart<F, E, Self::WitnessBuildHandle>, AkitaError>;
 

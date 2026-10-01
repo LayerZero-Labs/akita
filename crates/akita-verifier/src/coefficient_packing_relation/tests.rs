@@ -3,12 +3,12 @@ use super::*;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
+use akita_params::{BasisMode, SisModulusProfileId};
 use akita_types::{
     coefficient_packing_fixture, coefficient_packing_multigroup_fixture,
     coefficient_packing_relation_events, prepare_coefficient_packing_batch_semantics,
-    validate_coefficient_packing_batch_groups, BasisMode, CoefficientPackingFixture,
+    validate_coefficient_packing_batch_groups, CoefficientPackingFixture,
     CoefficientPackingGroupSemantics, PreparedSubringCoefficientPackingPoint, RelationWeightEvent,
-    SisModulusProfileId,
 };
 use jolt_field::{
     Ext2, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring, Zero,

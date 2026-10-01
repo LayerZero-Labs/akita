@@ -5,9 +5,10 @@ use crate::commitment::{
 };
 use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;
-use akita_types::{
-    CommittedGroupParams, RingVec, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
+use akita_params::{
+    CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
 };
+use akita_types::RingVec;
 use jolt_field::{Prime64Offset59, Ring};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

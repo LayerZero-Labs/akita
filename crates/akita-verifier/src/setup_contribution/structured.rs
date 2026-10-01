@@ -43,7 +43,7 @@ where
         .ok_or(AkitaError::InvalidProof)?;
     let uses_evaluation_trace_consistency = matches!(
         group.opening_method(),
-        akita_types::OpeningMethod::EvaluationTrace
+        akita_params::OpeningMethod::EvaluationTrace
     );
     let block_claims = group
         .num_claims()

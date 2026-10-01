@@ -39,10 +39,10 @@ mod tests {
     use akita_algebra::ntt::ifma52::ifma52_enabled;
     use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES};
     use akita_config::proof_optimized::fp128::OneHot;
+    use akita_params::{FlatMatrix, PolynomialGroupLayout, ScheduleLookupKey};
     use akita_types::{
         ntt_cache_requires_exactness_tail, prepare_ntt_cache, AkitaExpandedSetup,
-        AkitaSetupDescriptor, AkitaVerifierSetup, FlatMatrix, NttCacheMode, PolynomialGroupLayout,
-        ScheduleLookupKey, SetupPrefixVerifierRegistry,
+        AkitaSetupDescriptor, AkitaVerifierSetup, NttCacheMode, SetupPrefixVerifierRegistry,
     };
     use jolt_field::Ring;
     use jolt_field::{Prime128Offset275 as F, Prime32Offset99 as F32, Prime64Offset59 as F64};

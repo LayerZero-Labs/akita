@@ -1,7 +1,7 @@
 use super::compiler::RelationWeightGroupPlan;
 use super::lane_weights::{lane_windows_mut, LaneWindow};
 use akita_error::AkitaError;
-use akita_types::{WitnessLayout, WitnessUnitLayout};
+use akita_params::{WitnessLayout, WitnessUnitLayout};
 use jolt_field::Field;
 use std::ops::Range;
 
