@@ -1,6 +1,6 @@
 //! Fold-challenge draw for every opening group of one recursive level.
 
-use akita_challenges::VerifierFoldDraw;
+use akita_challenges::TranscriptFoldDraw;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_types::GrindingReplay;
@@ -8,10 +8,11 @@ use akita_types::{
     draw_group_fold_challenges, CommittedGroupParams, GroupFoldChallenges, OpeningClaimsLayout,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_transcript::Sponge;
 
 /// Spongefish replay of all sparse fold roots for one recursive level.
-pub(crate) fn derive_multi_group_stage1_challenges<F, E>(
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+pub(crate) fn derive_multi_group_stage1_challenges<F, E, H: Sponge>(
+    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
     level: u32,
     opening_batch: &OpeningClaimsLayout,
     lp: &CommittedGroupParams,
@@ -26,7 +27,8 @@ where
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
         let group = u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?;
         let drawn = {
-            let mut live = VerifierFoldDraw::new(grinding.state_mut(), level, group);
+            let fold_site = akita_types::FoldSite::FoldChallenge { level, group }.id()?;
+            let mut live = TranscriptFoldDraw::new(grinding.state_mut(), fold_site.into());
             draw_group_fold_challenges::<F, E, _>(&mut live, &group_lp, group_index, k_g)?
         };
         let coordinate_count = group_lp

@@ -19,7 +19,8 @@ use akita_types::{
     OpeningFamily, ReducedCompressionRelationWeights,
 };
 use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_field::{CanonicalDecode, CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_transcript::Sponge;
 
 pub(crate) struct EvaluationTraceStage2<E: Field> {
     pub(crate) trace: PreparedEvaluationTrace<E>,
@@ -349,8 +350,8 @@ pub(crate) struct Stage2Output<E: Field> {
 
 /// Replay the Stage 2 rounds from the batched Stage 1, relation, opening, and
 /// physical L2 input claims.
-pub(crate) fn replay_stage2<F, E>(
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+pub(crate) fn replay_stage2<F, E, H: Sponge>(
+    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
     level: u32,
     stage1: &Stage1Replay<'_, E>,
     relation_claim: E,
@@ -359,13 +360,13 @@ pub(crate) fn replay_stage2<F, E>(
 ) -> Result<Stage2RoundReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + CanonicalDecode,
 {
     let input_claim = stage1.batching_coeff * stage1.range_image_evaluation
         + relation_claim
         + opening_semantics.opening_claim()
         + stage1.physical_l2_claim;
-    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
+    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E, _>::new(
         grinding,
         akita_types::SumcheckProtocol::Stage2,
         level,

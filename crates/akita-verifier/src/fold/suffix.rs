@@ -14,6 +14,7 @@ use akita_types::{
     SetupContributionMode, TerminalFoldParams,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
+use jolt_transcript::{Channel, Sponge};
 
 pub(super) struct SuffixVerifierState<F: Field, E: Field> {
     pub opening_point: Vec<E>,
@@ -78,9 +79,9 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_fold_replay<'a, F, E>(
+fn prepare_fold_replay<'a, F, E, H: Sponge>(
     setup: &'a AkitaVerifierSetup<F>,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
     level: u32,
     current_state: &SuffixVerifierState<F, E>,
     lp: &'a CommittedGroupParams,
@@ -96,15 +97,17 @@ where
     if current_state.witness.coeff_len() != payload_geometry.transmitted_coefficients() {
         return Err(AkitaError::InvalidProof);
     }
-    akita_transcript::public_fields_verifier(
-        grinding.state_mut(),
+    grinding.state_mut().site(
         akita_types::FoldSite::WitnessCommitment {
             level,
             ring_dimension: payload_geometry.transcript_ring_dimension(),
         }
-        .id()?,
-        current_state.witness.coeffs(),
-    )?;
+        .id()?
+        .into(),
+    );
+    grinding
+        .state_mut()
+        .public_all(current_state.witness.coeffs());
     let recursive_num_vars = lp.recursive_opening_num_vars()?;
     if current_state.opening_point.len() > recursive_num_vars {
         return Err(AkitaError::InvalidProof);
@@ -140,7 +143,7 @@ where
         lp.opening_method(),
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
     ) {
-        verify_coefficient_packing_suffix_prefix::<F, E>(
+        verify_coefficient_packing_suffix_prefix::<F, E, _>(
             &block_claims,
             &openings,
             &opening_batch,
@@ -153,21 +156,20 @@ where
         let prepared =
             prepare_single_field_suffix_groups::<F, E>(&block_claims, lp, &opening_batch)?;
         for (group_index, point) in group_points.iter().enumerate() {
-            akita_transcript::public_extensions::<F, E, _>(
-                grinding.state_mut(),
+            grinding.state_mut().site(
                 akita_types::FoldSite::GroupPoint {
                     level,
                     group: group_index,
                 }
-                .id()?,
-                point,
-            )?;
+                .id()?
+                .into(),
+            );
+            grinding.state_mut().public_all(point);
         }
-        akita_transcript::public_extensions::<F, E, _>(
-            grinding.state_mut(),
-            akita_types::FoldSite::Openings { level }.id()?,
-            &openings,
-        )?;
+        grinding
+            .state_mut()
+            .site(akita_types::FoldSite::Openings { level }.id()?.into());
+        grinding.state_mut().public_all(&openings);
         FoldClaimMaterial {
             prepared_points: prepared
                 .into_iter()
@@ -178,7 +180,7 @@ where
             reduction_factors: None,
         }
     } else {
-        verify_extension_claim_suffix_prefix::<F, E>(
+        verify_extension_claim_suffix_prefix::<F, E, _>(
             &group_points,
             &openings,
             &opening_batch,
@@ -190,17 +192,20 @@ where
     };
     let relation_geometry = RelationWitnessGeometry::for_level(lp, &opening_batch, E::DEGREE)?;
     let opening_geometry = relation_geometry.rhs_layout().opening_payload_geometry()?;
-    let opening_payload = akita_transcript::receive_field_group::<F>(
-        grinding.state_mut(),
-        akita_types::FoldSite::OpeningPayload {
-            level,
-            ring_dimension: opening_geometry.transcript_ring_dimension(),
-        }
-        .id()?,
-        opening_geometry.transmitted_coefficients(),
-    )
+    let opening_payload = {
+        let state = grinding.state_mut();
+        state.site(
+            akita_types::FoldSite::OpeningPayload {
+                level,
+                ring_dimension: opening_geometry.transcript_ring_dimension(),
+            }
+            .id()?
+            .into(),
+        );
+        state.receive_n::<F>(opening_geometry.transmitted_coefficients())
+    }
     .map(RingVec::from_coeffs)?;
-    let prefix = finalize_claims::<F, E>(&opening_batch, material, grinding, level)?;
+    let prefix = finalize_claims::<F, E, _>(&opening_batch, material, grinding, level)?;
     let commitment_payloads =
         suffix_commitment_payloads::<F, E>(setup, lp, &opening_batch, &current_state.witness)?;
     let (next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
@@ -275,10 +280,10 @@ where
     })
 }
 
-pub(super) fn verify_suffix<F, E>(
+pub(super) fn verify_suffix<F, E, H: Sponge>(
     setup: &AkitaVerifierSetup<F>,
     terminal_ntt: &TerminalNttCache,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
     schedule: &FoldSchedule,
     mut current_state: SuffixVerifierState<F, E>,
 ) -> Result<(), AkitaError>
@@ -292,7 +297,7 @@ where
             return Err(AkitaError::InvalidProof);
         }
         let next = schedule.recursive_folds.get(offset + 1);
-        let prepared = prepare_fold_replay::<F, E>(
+        let prepared = prepare_fold_replay::<F, E, _>(
             setup,
             grinding,
             level,

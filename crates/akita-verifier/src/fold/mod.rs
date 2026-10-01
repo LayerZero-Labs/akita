@@ -32,6 +32,7 @@ use akita_types::{
 };
 use challenges::derive_multi_group_stage1_challenges;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_transcript::{Channel, Sponge};
 use relation_instance::{assemble_relation_instance, validate_fold_payloads};
 
 pub(crate) type SetupPrefixOpening<E> = (Vec<E>, E);
@@ -71,9 +72,9 @@ pub(crate) struct FoldVerifyOutput<F: Field, E: Field> {
 /// successor witness, ring switch, Stage 1, Stage 2 rounds, Stage 3, and the
 /// Stage 2 output check, which needs the Stage 3 setup claim.
 #[inline(never)]
-pub(crate) fn verify_fold<F, E>(
+pub(crate) fn verify_fold<F, E, H: Sponge>(
     setup: &AkitaVerifierSetup<F>,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
     prepared: PreparedFoldReplay<'_, F, E>,
 ) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
@@ -83,7 +84,7 @@ where
     let level = prepared.level;
     let relation_geometry = validate_fold_payloads(&prepared)?;
     grinding.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
-    let group_challenges = derive_multi_group_stage1_challenges::<F, E>(
+    let group_challenges = derive_multi_group_stage1_challenges::<F, E, _>(
         grinding,
         level,
         &prepared.opening_shape,
@@ -92,7 +93,7 @@ where
     let relation_instance =
         assemble_relation_instance(&prepared, &relation_geometry, group_challenges)?;
     let next_witness = receive_next_witness(grinding, &prepared)?;
-    let rs = ring_switch_verifier::<F, E>(
+    let rs = ring_switch_verifier::<F, E, _>(
         &RingSwitchReplay {
             setup: setup.expanded(),
             relation: &relation_instance,
@@ -112,7 +113,7 @@ where
         &prepared.prefix,
         &rs,
     )?;
-    let stage1 = verify_stage1::<F, E>(
+    let stage1 = verify_stage1::<F, E, _>(
         &rs,
         prepared.lp,
         &relation.range_image_plan,
@@ -138,7 +139,7 @@ where
         &rs,
         &relation,
     )?;
-    let stage2_rounds = replay_stage2::<F, E>(
+    let stage2_rounds = replay_stage2::<F, E, _>(
         grinding,
         level,
         &stage1,
@@ -147,7 +148,7 @@ where
         prepared.level_layout.stage2_sumcheck(),
     )?;
     let stage3 = match prepared.stage3 {
-        Some(next_params) => Some(verify_stage3::<F, E>(
+        Some(next_params) => Some(verify_stage3::<F, E, _>(
             setup,
             &rs,
             &stage2_rounds.challenges,
@@ -175,8 +176,8 @@ where
 }
 
 /// Receive the successor witness payload for the next fold or the terminal.
-fn receive_next_witness<F, E>(
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+fn receive_next_witness<F, E, H: Sponge>(
+    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
     prepared: &PreparedFoldReplay<'_, F, E>,
 ) -> Result<RingVec<F>, AkitaError>
 where
@@ -190,24 +191,26 @@ where
                     "native successor payload disagrees with the level grammar".into(),
                 ));
             }
-            akita_transcript::receive_field_group::<F>(
-                grinding.state_mut(),
+            let state = grinding.state_mut();
+            state.site(
                 akita_types::FoldSite::NextWitnessPayload {
                     level: prepared.level,
                 }
-                .id()?,
-                coefficient_count,
-            )
+                .id()?
+                .into(),
+            );
+            state.receive_n::<F>(coefficient_count)
         }
         NextWitnessPlan::TerminalT { coefficient_count } => {
-            akita_transcript::receive_field_group::<F>(
-                grinding.state_mut(),
+            let state = grinding.state_mut();
+            state.site(
                 akita_types::FoldSite::NextWitnessInnerState {
                     level: prepared.level,
                 }
-                .id()?,
-                coefficient_count,
-            )
+                .id()?
+                .into(),
+            );
+            state.receive_n::<F>(coefficient_count)
         }
     }
     .map(RingVec::from_coeffs)?;

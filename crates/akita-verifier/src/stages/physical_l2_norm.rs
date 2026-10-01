@@ -10,6 +10,7 @@ use akita_types::{
     SisModulusProfileId,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_transcript::Sponge;
 
 pub(crate) struct PhysicalL2VerifierReplay<E: Field> {
     pub(crate) point: Vec<E>,
@@ -208,12 +209,12 @@ where
 
 /// Replay a physical-L2 proof directly from the Spongefish stream.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_physical_l2_norm<F, E>(
+pub(crate) fn verify_physical_l2_norm<F, E, H: Sponge>(
     plan: &PhysicalResponsePlan,
     range: PhysicalL2RangeClaim<'_, E>,
     profile: SisModulusProfileId,
     cap: u128,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
     level: u32,
 ) -> Result<PhysicalL2VerifierReplay<E>, AkitaError>
 where
@@ -232,7 +233,7 @@ where
             (layout.subclaim_count(), layout.limb_count())
         }
     };
-    let mut subclaims = akita_transcript::extension_slots::<E>(subclaim_count)?;
+    let mut subclaims = akita_types::extension_slots::<E>(subclaim_count)?;
     let response_l2_sq = akita_types::l2_prefix::<F, E, _>(grinding, level, 0, &mut subclaims)?;
     let mut subclaim_weights = Vec::new();
     let norm_input_claim = match plan.shape() {
@@ -255,7 +256,7 @@ where
     let norm_merge =
         grinding.grinded_ext_challenge::<F, E>(akita_types::GrindingSite::L2NormMerge { level })?;
     let input_claim = range.input_claim + norm_merge * norm_input_claim;
-    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
+    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E, _>::new(
         grinding,
         akita_types::SumcheckProtocol::PhysicalL2,
         level,
@@ -270,7 +271,7 @@ where
             range.leaf_coefficients.len(),
         )?,
     )?;
-    let mut virtual_evaluations = akita_transcript::extension_slots::<E>(virtual_count)?;
+    let mut virtual_evaluations = akita_types::extension_slots::<E>(virtual_count)?;
     akita_types::l2_virtual_evaluations::<F, E, _>(grinding, level, &mut virtual_evaluations)?;
     let range_image_evaluation =
         akita_types::stage1_range_image::<F, E, _>(grinding, level, range.range_stage, E::zero())?;

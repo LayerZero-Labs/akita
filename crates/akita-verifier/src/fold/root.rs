@@ -10,11 +10,12 @@ use akita_types::{
     TerminalFoldParams,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_transcript::{Channel, Sponge};
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn verify_root<F, E>(
+pub(super) fn verify_root<F, E, H: Sponge>(
     setup: &AkitaVerifierSetup<F>,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
@@ -50,22 +51,23 @@ where
             .last()
             .ok_or(AkitaError::InvalidProof)?
             .ring_dimension();
-        akita_transcript::public_fields_verifier(
-            grinding.state_mut(),
+        grinding.state_mut().site(
             akita_types::FoldSite::RootCommitment {
                 group: group_index,
                 ring_dimension: ring_dim,
             }
-            .id()?,
-            commitment.rows().coeffs(),
-        )?;
+            .id()?
+            .into(),
+        );
+        grinding.state_mut().public_all(commitment.rows().coeffs());
     }
     for (group_index, group) in claims.groups().iter().enumerate() {
-        akita_transcript::public_extensions::<F, E, _>(
-            grinding.state_mut(),
-            akita_types::FoldSite::RootPoint { group: group_index }.id()?,
-            group.point(),
-        )?;
+        grinding.state_mut().site(
+            akita_types::FoldSite::RootPoint { group: group_index }
+                .id()?
+                .into(),
+        );
+        grinding.state_mut().public_all(group.point());
     }
     let openings = claims.flat_evaluations();
     let material = verify_coefficient_packing_root_prefix::<F, E>(
@@ -75,23 +77,25 @@ where
         basis,
         root_lp,
     )?;
-    akita_transcript::public_extensions::<F, E, _>(
-        grinding.state_mut(),
-        akita_types::FoldSite::Openings { level: 0 }.id()?,
-        &openings,
-    )?;
+    grinding
+        .state_mut()
+        .site(akita_types::FoldSite::Openings { level: 0 }.id()?.into());
+    grinding.state_mut().public_all(&openings);
     let payload_geometry = relation_layout.opening_payload_geometry()?;
-    let opening_payload = akita_transcript::receive_field_group::<F>(
-        grinding.state_mut(),
-        akita_types::FoldSite::OpeningPayload {
-            level: 0,
-            ring_dimension: payload_geometry.transcript_ring_dimension(),
-        }
-        .id()?,
-        payload_geometry.transmitted_coefficients(),
-    )
+    let opening_payload = {
+        let state = grinding.state_mut();
+        state.site(
+            akita_types::FoldSite::OpeningPayload {
+                level: 0,
+                ring_dimension: payload_geometry.transcript_ring_dimension(),
+            }
+            .id()?
+            .into(),
+        );
+        state.receive_n::<F>(payload_geometry.transmitted_coefficients())
+    }
     .map(RingVec::from_coeffs)?;
-    let prefix = finalize_claims::<F, E>(opening_batch, material, grinding, 0)?;
+    let prefix = finalize_claims::<F, E, _>(opening_batch, material, grinding, 0)?;
     let order = opening_batch.root_group_order()?;
     let commitment_payloads = order
         .into_iter()

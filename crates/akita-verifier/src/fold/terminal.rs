@@ -12,10 +12,11 @@ use akita_types::{
     prepare_opening_point, FpExtEncoding, OpeningClaimsLayout, RingVec, TerminalFoldParams,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
+use jolt_transcript::{Channel, Sponge};
 
-pub(super) fn verify_terminal_suffix<F, E>(
+pub(super) fn verify_terminal_suffix<F, E, H: Sponge>(
     terminal_ntt: &TerminalNttCache,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
     level: u32,
     current_state: &SuffixVerifierState<F, E>,
     scheduled: &TerminalFoldParams,
@@ -41,11 +42,14 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    akita_transcript::public_fields_verifier(
-        grinding.state_mut(),
-        akita_types::FoldSite::TerminalTFields { level }.id()?,
-        current_state.witness.coeffs(),
-    )?;
+    grinding.state_mut().site(
+        akita_types::FoldSite::TerminalTFields { level }
+            .id()?
+            .into(),
+    );
+    grinding
+        .state_mut()
+        .public_all(current_state.witness.coeffs());
     let recursive_num_vars = scheduled.recursive_opening_num_vars()?;
     if current_state.opening_point.len() > recursive_num_vars {
         return Err(AkitaError::InvalidProof);
@@ -69,7 +73,7 @@ where
         )?;
         (prepared, current_state.opening_point.clone(), None)
     } else {
-        let replay = verify_extension_claim_terminal_suffix::<F, E>(
+        let replay = verify_extension_claim_terminal_suffix::<F, E, _>(
             &current_state.opening_point,
             current_state.opening,
             &opening_batch,
@@ -85,17 +89,17 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         (group.prepared, group.protocol, replay.final_relation)
     };
-    akita_transcript::public_extensions::<F, E, _>(
-        grinding.state_mut(),
-        akita_types::FoldSite::TerminalPoint { level }.id()?,
-        &protocol_point,
-    )?;
+    grinding
+        .state_mut()
+        .site(akita_types::FoldSite::TerminalPoint { level }.id()?.into());
+    grinding.state_mut().public_all(&protocol_point);
     if final_relation.is_none() {
-        akita_transcript::public_extensions::<F, E, _>(
-            grinding.state_mut(),
-            akita_types::FoldSite::TerminalOpening { level }.id()?,
-            std::slice::from_ref(&current_state.opening),
-        )?;
+        grinding.state_mut().site(
+            akita_types::FoldSite::TerminalOpening { level }
+                .id()?
+                .into(),
+        );
+        grinding.state_mut().public(&current_state.opening);
     }
     let row_coefficients = akita_types::row_coefficients::<F, E, _>(
         &opening_batch,
@@ -105,11 +109,15 @@ where
     if row_coefficients.as_slice() != [E::one()] {
         return Err(AkitaError::InvalidProof);
     }
-    let e_fields = akita_transcript::receive_field_group::<F>(
-        grinding.state_mut(),
-        akita_types::FoldSite::TerminalEFields { level }.id()?,
-        group.e_field_elems,
-    )
+    let e_fields = {
+        let state = grinding.state_mut();
+        state.site(
+            akita_types::FoldSite::TerminalEFields { level }
+                .id()?
+                .into(),
+        );
+        state.receive_n::<F>(group.e_field_elems)
+    }
     .map(RingVec::from_coeffs)?;
     grinding.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
     let operator_rejection = if scheduled.response_l2_sq_cap().is_some() {
@@ -124,7 +132,9 @@ where
         None
     };
     let challenges = {
-        let mut draw = akita_challenges::VerifierFoldDraw::new(grinding.state_mut(), level, 0);
+        let fold_site = akita_types::FoldSite::FoldChallenge { level, group: 0 }.id()?;
+        let mut draw =
+            akita_challenges::TranscriptFoldDraw::new(grinding.state_mut(), fold_site.into());
         draw.draw_folding_challenges_with_rejection(
             akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
             scheduled.d_a(),
@@ -136,11 +146,17 @@ where
         )?
     };
     grinding.record_fold_challenges(level, 0, scheduled.blocks.live_blocks)?;
-    let z_payload = akita_transcript::receive_bounded_bytes(
-        grinding.state_mut(),
-        akita_types::FoldSite::TerminalZPayload { level }.id()?,
-        group.z_payload_bytes,
-    )?;
+    let z_payload = {
+        let state = grinding.state_mut();
+        state.site(
+            akita_types::FoldSite::TerminalZPayload { level }
+                .id()?
+                .into(),
+        );
+        state
+            .receive_bounded_bytes(group.z_payload_bytes)
+            .map(<[u8]>::to_vec)
+    }?;
     scheduled.validate_terminal_linf_cap(group.z_linf_cap)?;
     let terminal_response = akita_types::TerminalResponse {
         layout: scheduled.response_shape.layout.clone(),

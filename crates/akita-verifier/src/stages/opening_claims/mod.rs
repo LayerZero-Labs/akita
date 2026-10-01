@@ -4,6 +4,7 @@
 use akita_error::AkitaError;
 use akita_types::{OpeningClaimsLayout, OpeningFamily, PreparedOpeningPoint};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_transcript::Sponge;
 
 mod coefficient_packing;
 mod extension_claim;
@@ -39,10 +40,10 @@ pub(crate) struct FoldClaimMaterial<F: Field, E: Field> {
     pub(crate) reduction_factors: Option<Vec<E>>,
 }
 
-pub(crate) fn finalize_claims<F, E>(
+pub(crate) fn finalize_claims<F, E, H: Sponge>(
     opening_shape: &OpeningClaimsLayout,
     material: FoldClaimMaterial<F, E>,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
     level: u32,
 ) -> Result<FoldPrefix<F, E>, AkitaError>
 where
