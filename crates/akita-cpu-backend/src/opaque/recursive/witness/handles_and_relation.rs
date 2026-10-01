@@ -119,11 +119,11 @@ where
 
     pub(crate) fn relation_opening<const D: usize>(
         &self,
-        level: &akita_types::CommittedGroupParams,
-        opening_batch: &akita_types::OpeningClaimsLayout,
-        geometry: &akita_types::RelationWitnessGeometry,
+        level: &akita_params::CommittedGroupParams,
+        opening_batch: &akita_params::OpeningClaimsLayout,
+        geometry: &akita_params::RelationWitnessGeometry,
         group_index: usize,
-        group_dims: akita_types::CommitmentRingDims,
+        group_dims: akita_params::CommitmentRingDims,
     ) -> Result<
         (
             crate::opaque::PreparedOpeningWitness<F>,
@@ -140,7 +140,7 @@ where
                 point,
                 folded_by_claim,
             } => {
-                if group.opening_method() != akita_types::OpeningMethod::EvaluationTrace
+                if group.opening_method() != akita_params::OpeningMethod::EvaluationTrace
                     || point.ring_multiplier_point.position_len() != group.num_positions_per_block()
                     || point.ring_multiplier_point.fold_len() != group.num_live_blocks()
                     || folded_by_claim.len()
@@ -246,7 +246,7 @@ impl CpuWitnessHandle {
     pub(crate) fn initialize_relation_plan<F>(
         &mut self,
         relation: &akita_types::RingRelationInstance<F>,
-        level: &akita_types::CommittedGroupParams,
+        level: &akita_params::CommittedGroupParams,
     ) -> Result<(), AkitaError>
     where
         F: Field + CanonicalEncoding,
@@ -269,12 +269,12 @@ impl CpuWitnessHandle {
             self.manifest.commitment_ring_dimension(),
             witness_layout.live_coeff_len(),
         )?;
-        let digit_range = akita_types::DigitRangePlan::new(
+        let digit_range = akita_params::DigitRangePlan::new(
             akita_error::checked::pow2(level.open().digits.log_basis as usize)
                 .ok_or(AkitaError::InvalidProof)?,
         )?;
         self.relation_plan = Some(Arc::new(akita_types::RelationRangeImagePlan::new(
-            akita_types::RelationWitnessGeometry::for_level(
+            akita_params::RelationWitnessGeometry::for_level(
                 level,
                 opening_batch,
                 relation.extension_degree(),

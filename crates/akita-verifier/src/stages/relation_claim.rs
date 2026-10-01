@@ -9,9 +9,10 @@ use crate::coefficient_packing_relation::{
 use crate::stages::opening_claims::{FoldPrefix, PreparedFoldOpeningPoint};
 use crate::stages::ring_switch::RingSwitchVerifyOutput;
 use akita_error::AkitaError;
+use akita_params::{CommittedGroupParams, DigitRangePlan, RelationWitnessGeometry};
 use akita_types::{
-    relation_claim_from_compressed_rhs_extension, CommittedGroupParams, DigitRangePlan,
-    FpExtEncoding, RelationRangeImagePlan, RelationWitnessGeometry, RingRelationInstance,
+    relation_claim_from_compressed_rhs_extension, FpExtEncoding, RelationRangeImagePlan,
+    RingRelationInstance,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 

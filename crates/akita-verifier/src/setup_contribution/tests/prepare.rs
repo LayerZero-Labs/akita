@@ -19,7 +19,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         4,
         (0..8).map(|index| test_scalar(11 + index)).collect(),
     );
-    let joint_geometry = akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+    let joint_geometry = akita_params::RelationWitnessGeometry::for_evaluation_trace_execution(
         &inputs.level_params,
         &inputs.opening_batch,
     )
@@ -29,7 +29,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         &inputs.opening_batch,
         &joint_geometry,
         1,
-        akita_types::RelationQuotientPlan::quotient_lift(inputs.depth_fold().unwrap()).unwrap(),
+        akita_params::RelationQuotientPlan::quotient_lift(inputs.depth_fold().unwrap()).unwrap(),
     )
     .unwrap();
     let relation_geometry = inputs
@@ -114,7 +114,7 @@ fn empty_chunk_slot_plans() -> (SetupContributionPlan<F>, SetupContributionPlan<
     );
     let role_dims = CommitmentRingDims::uniform(TEST_D);
     let address_bits =
-        akita_types::RelationAddressGeometry::new(role_dims, TEST_D, opening_source_len)
+        akita_params::RelationAddressGeometry::new(role_dims, TEST_D, opening_source_len)
             .unwrap()
             .relation_lane_variable_count();
     let full_vec_randomness = (0..address_bits)
@@ -141,7 +141,7 @@ fn empty_chunk_slot_plans() -> (SetupContributionPlan<F>, SetupContributionPlan<
         &groups,
         PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
         Some(&fold_gadget),
-        akita_types::RelationAddressGeometry::new(role_dims, TEST_D, opening_source_len).unwrap(),
+        akita_params::RelationAddressGeometry::new(role_dims, TEST_D, opening_source_len).unwrap(),
     )
     .unwrap();
     (direct, deferred)

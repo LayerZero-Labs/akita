@@ -49,11 +49,13 @@ pub use setup_index_weight::SetupIndexWeightMle;
 pub(crate) use structured::evaluate_structured_group;
 
 use akita_error::{checked, AkitaError};
+use akita_params::{
+    dispatch_for_field, RelationAddressGeometry, RingMatrixView, SetupProjectionGeometry,
+};
 use akita_types::{
-    checked_slice, dispatch_for_field, factor_aligned_role_tensors, project_role_tensors,
-    role_projection_evaluation, role_tensors_are_aligned, AkitaExpandedSetup,
-    PhysicalBWeightSegment, PhysicalBWeightTerm, RelationAddressGeometry, RingMatrixView,
-    SetupContributionGroupPlan, SetupContributionPlan, SetupProjectionGeometry,
+    checked_slice, factor_aligned_role_tensors, project_role_tensors, role_projection_evaluation,
+    role_tensors_are_aligned, AkitaExpandedSetup, PhysicalBWeightSegment, PhysicalBWeightTerm,
+    SetupContributionGroupPlan, SetupContributionPlan,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
@@ -64,7 +66,7 @@ where
     F: Field + CanonicalEncoding,
     E: Field + ExtField<F>,
 {
-    akita_types::gadget_row_scalars::<F>(depth, log_basis)
+    akita_params::gadget_row_scalars::<F>(depth, log_basis)
         .into_iter()
         .map(|weight| E::one().mul_base(weight))
         .collect()

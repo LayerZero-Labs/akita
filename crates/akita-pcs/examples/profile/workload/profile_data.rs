@@ -1,7 +1,7 @@
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::evaluate_root_polynomial;
 use akita_cpu_backend::{OneHotIndex, OneHotPoly};
-use akita_types::{lagrange_weights, BasisMode, CommittedGroupParams};
+use akita_params::{lagrange_weights, BasisMode, CommittedGroupParams};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};

@@ -21,11 +21,9 @@ use crate::sources::packed_digits::PackedSignedDigitView;
 use crate::validation::signed_digit_kernel_for_setup;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
+use akita_params::{balanced_signed_digit_abs_bound, field_modulus, SignedDigitKernel};
 use akita_types::RingVec;
-use akita_types::{
-    balanced_signed_digit_abs_bound, dense_i8_commit_prefers_exact_ifma52, field_modulus,
-    NttCacheKey, NttTransformDomain, SignedDigitKernel,
-};
+use akita_types::{dense_i8_commit_prefers_exact_ifma52, NttCacheKey, NttTransformDomain};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::array::from_fn;

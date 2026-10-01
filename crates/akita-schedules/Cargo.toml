@@ -12,16 +12,16 @@ readme = "../../README.md"
 default = ["transcript-blake2b"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
-  "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
 ]
 transcript-keccak = [
   "akita-challenges/transcript-keccak",
-  "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
 ]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
-akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 

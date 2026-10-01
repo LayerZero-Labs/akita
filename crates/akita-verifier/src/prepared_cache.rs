@@ -4,10 +4,11 @@ use std::any::Any;
 use std::collections::BTreeMap;
 
 use akita_error::AkitaError;
+use akita_params::{dispatch_for_field, FoldSchedule, ScheduleRowDigest};
 use akita_types::{
-    build_riscv64_scalar_q128_cache_artifact, decode_riscv64_scalar_q128_cache, dispatch_for_field,
-    prepare_joined_exact_ntt_cache, setup_seed_digest, AkitaVerifierSetup, FoldSchedule,
-    PreparedNttCache, PreparedVerifierNttCacheBinding, ScheduleRowDigest,
+    build_riscv64_scalar_q128_cache_artifact, decode_riscv64_scalar_q128_cache,
+    prepare_joined_exact_ntt_cache, setup_seed_digest, AkitaVerifierSetup, PreparedNttCache,
+    PreparedVerifierNttCacheBinding,
 };
 use jolt_field::{CanonicalEncoding, Field};
 
@@ -100,7 +101,7 @@ impl TerminalNttCache {
         let mut entries = BTreeMap::new();
         for (ring_d, requirement) in Self::join(requirements) {
             let entry = dispatch_for_field!(
-                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+                akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
                 F,
                 ring_d,
                 |D| {
@@ -143,7 +144,7 @@ impl TerminalNttCache {
             setup_field_elements: setup.expanded().descriptor.num_field_elements,
         };
         let entry = dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+            akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
             F,
             requirement.ring_dimension,
             |D| {
@@ -233,9 +234,10 @@ pub fn build_riscv64_terminal_ntt_cache<F: Field + CanonicalEncoding>(
 mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128::OneHot;
+    use akita_params::{FlatMatrix, PolynomialGroupLayout, ScheduleLookupKey};
     use akita_types::{
-        prepared_verifier_ntt_cache_metadata, AkitaExpandedSetup, AkitaSetupDescriptor, FlatMatrix,
-        PolynomialGroupLayout, ScheduleLookupKey, SetupPrefixVerifierRegistry,
+        prepared_verifier_ntt_cache_metadata, AkitaExpandedSetup, AkitaSetupDescriptor,
+        SetupPrefixVerifierRegistry,
     };
     use jolt_field::{Prime128Offset275 as F, Ring};
     use std::sync::Arc;

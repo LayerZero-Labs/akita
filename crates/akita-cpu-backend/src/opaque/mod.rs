@@ -171,9 +171,9 @@ where
         context: &crate::opaque::ProofContext,
         prepared_opening_handles: &[Self::PreparedOpeningHandle],
         commitment_material_handles: Vec<Self::CommitmentMaterialHandle>,
-        level: &akita_types::CommittedGroupParams,
-        opening_batch: &akita_types::OpeningClaimsLayout,
-        relation_rhs_layout: &akita_types::RelationRhsLayout,
+        level: &akita_params::CommittedGroupParams,
+        opening_batch: &akita_params::OpeningClaimsLayout,
+        relation_rhs_layout: &akita_params::RelationRhsLayout,
         group_commitments: &[akita_types::RingVec<F>],
     ) -> Result<crate::opaque::RecursiveWitnessBuildStart<F, E, Self::WitnessBuildHandle>, AkitaError>
     {
@@ -636,15 +636,15 @@ where
             || plan.ring_dimension() != terminal.d_a()
             || plan.positions_per_block() != terminal.blocks.positions_per_block
             || plan.live_blocks() != terminal.blocks.live_blocks
-            || plan.opening_method() != akita_types::OpeningMethod::EvaluationTrace
+            || plan.opening_method() != akita_params::OpeningMethod::EvaluationTrace
         {
             return Err(AkitaError::InvalidInput(
                 "native terminal opening differs from the admitted terminal fold".into(),
             ));
         }
         let binding = self.next_binding(parent)?;
-        let opening = akita_types::dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        let opening = akita_params::dispatch_for_field!(
+            akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
             F,
             plan.ring_dimension(),
             |D| {
@@ -741,8 +741,8 @@ where
                 "terminal fold probe differs from the admitted policy".into(),
             ));
         }
-        akita_types::dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        akita_params::dispatch_for_field!(
+            akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
             F,
             plan.ring_dimension(),
             |D| {
@@ -790,8 +790,8 @@ where
     ) -> Result<Vec<u8>, AkitaError> {
         let binding = terminal_fold_handle.binding();
         self.validate_binding(&binding)?;
-        akita_types::dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        akita_params::dispatch_for_field!(
+            akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
             F,
             plan.ring_dimension(),
             |D| {

@@ -6,7 +6,7 @@ use akita_algebra::offset_eq::{EqPairTensorAxis, EqPairTensorFamily};
 use akita_error::AkitaError;
 use jolt_field::{Field, Ring};
 
-use crate::{
+use akita_params::{
     CommittedGroupParams, DigitRangePlan, FlatBooleanDomain, InnerCommitSecurityRoute,
     OpeningClaimsLayout, PhysicalL2NormProofShape, RelationAddressGeometry, RelationRowFamily,
     RelationWitnessGeometry, WitnessLayout,
@@ -534,7 +534,7 @@ impl RelationRangeImagePlan {
         }
         let row_geometries = relation_witness_geometry.rhs_layout().row_geometries()?;
         match witness_layout.relation_quotient_layout() {
-            crate::RelationQuotientLayout::QuotientLift { rows, .. } => {
+            akita_params::RelationQuotientLayout::QuotientLift { rows, .. } => {
                 if rows.len() != row_geometries.len()
                     || rows
                         .iter()
@@ -546,7 +546,7 @@ impl RelationRangeImagePlan {
                     ));
                 }
             }
-            crate::RelationQuotientLayout::ReducedEvaluation => {}
+            akita_params::RelationQuotientLayout::ReducedEvaluation => {}
         }
 
         Ok(Self {
@@ -637,7 +637,7 @@ impl RelationRangeImagePlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
+    use akita_params::{
         dyadic_block_ranges, CommitmentRingDims, CommitmentSliceCount, PolynomialGroupLayout,
         RelationGroupRows, RelationRhsLayout, RelationRowGeometry, WitnessQuotientRowLayout,
         WitnessUnitLayout,
@@ -691,13 +691,13 @@ mod tests {
                 group_index,
                 role_dims,
                 opening_geometry,
-                opening_method: crate::OpeningMethod::EvaluationTrace,
+                opening_method: akita_params::OpeningMethod::EvaluationTrace,
                 n_a: 1,
                 physical_b_rows: 1,
                 outer_slice_count: CommitmentSliceCount::ONE,
             })
             .collect();
-        RelationWitnessGeometry::from_parts(
+        RelationWitnessGeometry::from_parts_for_test(
             1,
             RelationRhsLayout::new_for_test(role_dims.d_d(), 1, groups),
         )

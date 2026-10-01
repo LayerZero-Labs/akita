@@ -1,7 +1,8 @@
 //! Canonical proof-stream grammar for extension-opening reduction.
 
-use crate::{tensor_opening_split, GrindingReplay, GrindingSite, OpeningClaimsLayout};
+use crate::{tensor_opening_split, GrindingReplay};
 use akita_error::{checked, AkitaError};
+use akita_params::{GrindingSite, OpeningClaimsLayout};
 use akita_transcript::{
     exchange_extension_group, public_extensions, ProtocolSiteId,
     SITE_FAMILY_EXTENSION_OPENING_REDUCTION,
@@ -142,10 +143,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        ChallengeFieldOrder, GrindingPlan, GrindingRun, PolynomialGroupLayout, ProverGrinding,
-        VerifierGrinding,
-    };
+    use crate::{ProverGrinding, VerifierGrinding};
+    use akita_params::{ChallengeFieldOrder, GrindingPlan, GrindingRun, PolynomialGroupLayout};
     use akita_transcript::{new_prover_channel, new_verifier_channel};
     use jolt_field::{FpExt4, Prime32Offset99, Ring, Zero};
 

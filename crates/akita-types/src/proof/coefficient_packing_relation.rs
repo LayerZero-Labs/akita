@@ -14,11 +14,11 @@ use super::{
     relation_row_weight, RelationWeightContribution, RelationWeightEvent,
     RingRelationGroupOpeningView, RingRelationInstance,
 };
-use crate::{
+use crate::{FpExtEncoding, PreparedSubringCoefficientPackingPoint, RelationRangeImagePlan};
+use akita_params::{
     gadget_row_scalars, r_decomp_levels, validate_role_dims_for_field, CommittedGroupParams,
-    FpExtEncoding, OpeningClaimsLayout, OpeningMethod, PreparedSubringCoefficientPackingPoint,
-    RelationRangeImagePlan, RelationRowFamily, RelationWitnessGeometry, SignedDigitKernel,
-    SubringCoefficientPackingGeometry, WitnessLayout, WitnessUnitLayout,
+    OpeningClaimsLayout, OpeningMethod, RelationRowFamily, RelationWitnessGeometry,
+    SignedDigitKernel, SubringCoefficientPackingGeometry, WitnessLayout, WitnessUnitLayout,
 };
 
 mod expanded;

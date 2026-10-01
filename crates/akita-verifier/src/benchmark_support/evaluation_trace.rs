@@ -7,7 +7,7 @@ use crate::relation::evaluation_trace::{
     PreparedEvaluationTraceUnit,
 };
 use akita_error::AkitaError;
-use akita_types::BasisMode;
+use akita_params::BasisMode;
 use jolt_field::Ring;
 
 /// Exact synthetic trace fixture for production-kernel benchmarks.
@@ -30,7 +30,7 @@ pub fn evaluation_trace_benchmark_case(
     witness_chunks: usize,
     basis: BasisMode,
 ) -> Result<EvaluationTraceBenchmarkCase, AkitaError> {
-    use akita_types::dyadic_block_ranges;
+    use akita_params::dyadic_block_ranges;
     use jolt_field::Prime128OffsetA7F7 as F;
 
     const SOURCE_RING_DIMENSION: usize = 128;

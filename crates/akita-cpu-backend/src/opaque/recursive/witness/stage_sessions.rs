@@ -209,7 +209,7 @@ where
             round,
             previous_claim,
         );
-        if polynomial.degree() > akita_types::EXTENSION_OPENING_REDUCTION_DEGREE
+        if polynomial.degree() > akita_params::EXTENSION_OPENING_REDUCTION_DEGREE
             || polynomial.evaluate(E::zero()) + polynomial.evaluate(E::one()) != previous_claim
         {
             return Err(AkitaError::InvalidInput(

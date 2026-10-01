@@ -4,7 +4,8 @@ use super::{
 };
 use crate::opaque::CommitInnerPlan;
 use akita_error::AkitaError;
-use akita_types::{CompressionChainPlan, RingRelationMode, RingVec};
+use akita_params::{CompressionChainPlan, RingRelationMode};
+use akita_types::RingVec;
 use jolt_field::Field;
 
 /// State output of one inner commitment stage.
@@ -214,7 +215,8 @@ pub(crate) trait InnerImageExportOperation<F: Field>: Send + Sync {
 mod tests {
     use super::*;
     use crate::commitment::{CommitmentStateBinding, StateOwnerCapability};
-    use akita_types::{AkitaSetupDescriptor, AkitaSetupSeed, SisModulusProfileId};
+    use akita_params::SisModulusProfileId;
+    use akita_types::{AkitaSetupDescriptor, AkitaSetupSeed};
     use jolt_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;

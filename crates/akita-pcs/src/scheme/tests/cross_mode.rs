@@ -4,7 +4,7 @@ use super::*;
 use crate::test_support::cross_mode_catalogs;
 
 fn statement<'a>(
-    selection: akita_types::OpeningScheduleSelection,
+    selection: akita_params::OpeningScheduleSelection,
     point: &[F],
     opening: F,
     commitment: &'a CommittedGroup<F>,
@@ -27,8 +27,8 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
             const NUM_VARS: usize = 14;
             const LABEL: &[u8] = b"test/cross-relation-mode";
 
-            let key = akita_types::ScheduleLookupKey::single(
-                akita_types::PolynomialGroupLayout::new(NUM_VARS, 1),
+            let key = akita_params::ScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::new(NUM_VARS, 1),
             );
             let catalogs = cross_mode_catalogs::<Cfg>(&key).expect("valid cross-mode catalogs");
             let quotient_scheme = Scheme::new(catalogs.quotient);

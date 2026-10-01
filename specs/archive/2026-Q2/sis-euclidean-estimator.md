@@ -48,7 +48,7 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
    (provenance header, `--jobs`, no `SIGALRM` hang guard), and check in Akita-local golden
    CSV plus a regen/check script. *(Done.)*
 3. **Akita (S5b, same PR #155):** stitch emitted rows into
-   `crates/akita-types/src/sis/generated_sis_table/`, rename `collision_inf` →
+   `crates/akita-params/src/sis/generated_sis_table/`, rename `collision_inf` →
    `collision_l2_sq` (`u128`), and wire L2 A-role / B/D pricing from `norm_bound.rs`
    (Lemma 7 on fold response `z`; see parent spec). The stitched table carries two
    complementary key families: **derived** keys `K = d · B²` for coefficient-`L∞`
@@ -210,7 +210,7 @@ scripts/sis_golden/
   golden.csv                       committed reference grid (Akita-only)
   check.py                         replay + drift gate (manual / optional CI hash)
 
-crates/akita-types/src/sis/
+crates/akita-params/src/sis/
   generated_sis_table/             split consumer modules (S5b stitch)
 ```
 
@@ -369,7 +369,7 @@ Historical baseline before reliability work: `2bfb768`.
 ## References
 
 - [`scripts/gen_sis_table.py`](../scripts/gen_sis_table.py)
-- [`crates/akita-types/src/sis/ajtai_key.rs`](../crates/akita-types/src/sis/ajtai_key.rs)
+- [`crates/akita-params/src/sis/ajtai_key.rs`](../crates/akita-params/src/sis/ajtai_key.rs)
 - lattice-estimator: `malb/lattice-estimator` — `estimator/sis_lattice.py`
   (`cost_euclidean`), `estimator/reduction.py` (`BDGL16`, `beta`, `_delta`)
 - [`specs/SPEC_REVIEW.md`](SPEC_REVIEW.md)

@@ -3,10 +3,10 @@
 use std::collections::BTreeSet;
 
 use akita_error::AkitaError;
-use akita_schedules::suffix_opening_layout;
-use akita_types::{
+use akita_params::{
     active_setup_field_len, padded_setup_prefix_len, FoldSchedule, SetupPrefixSlotId,
 };
+use akita_schedules::suffix_opening_layout;
 
 fn setup_prefix_slot_matches(
     slot: &SetupPrefixSlotId,
@@ -34,7 +34,7 @@ fn setup_prefix_slot_matches(
 /// length against the producer whose setup contribution it replaces.
 pub fn required_setup_prefix_slot_ids_for_schedule(
     schedule: &FoldSchedule,
-    root_layout: &akita_types::OpeningClaimsLayout,
+    root_layout: &akita_params::OpeningClaimsLayout,
 ) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
     schedule.validate_structure()?;
 

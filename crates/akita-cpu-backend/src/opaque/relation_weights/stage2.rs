@@ -187,7 +187,7 @@ where
     let parameters = request.parameters;
     let instance = request.relation;
     if parameters.payload_mode.is_compressed()
-        && parameters.ring_relation_mode == akita_types::RingRelationMode::QuotientLift
+        && parameters.ring_relation_mode == akita_params::RingRelationMode::QuotientLift
         && akita_error::checked::product([
             request.opening_source_len,
             request.opening_ring_dimension,
@@ -226,7 +226,7 @@ where
         ));
     };
     let ordinary = match parameters.ring_relation_mode {
-        akita_types::RingRelationMode::QuotientLift => {
+        akita_params::RingRelationMode::QuotientLift => {
             let weights = build_relation_lane_weights(RelationLaneWeightInputs {
                 setup: RelationSetupSource::Matrix(setup),
                 instance,
@@ -247,7 +247,7 @@ where
             })?;
             RelationWeightDescription::QuotientFactored(weights.into_factorization()?)
         }
-        akita_types::RingRelationMode::ReducedEvaluation => {
+        akita_params::RingRelationMode::ReducedEvaluation => {
             if !points.is_empty() {
                 return Err(AkitaError::Internal(
                     "reduced relation mode contains packing opening points".into(),
@@ -266,7 +266,7 @@ where
         }
     };
     let linear = if parameters.payload_mode.is_compressed()
-        && parameters.ring_relation_mode == akita_types::RingRelationMode::QuotientLift
+        && parameters.ring_relation_mode == akita_params::RingRelationMode::QuotientLift
     {
         let weights = akita_types::build_compression_relation_weights(
             setup,
