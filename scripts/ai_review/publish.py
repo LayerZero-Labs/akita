@@ -47,8 +47,14 @@ def validate(snapshot, proposal):
     if digest(unsigned) != snapshot["digest"] or proposal["snapshot_digest"] != snapshot["digest"]:
         raise ReviewError("Review snapshot mismatch")
     result = proposal["result"]
-    if set(result) != {"complete", "limitations", "discussion_blockers", "coverage", "previous", "findings"}:
+    if set(result) != {"complete", "limitations", "usefulness", "discussion_blockers", "coverage", "previous", "findings"}:
         raise ReviewError("Unexpected review fields")
+    usefulness = result["usefulness"]
+    if (not isinstance(usefulness, dict) or set(usefulness) != {"motivation", "verdict", "assessment"}
+            or usefulness["motivation"] not in ("provided", "missing")
+            or usefulness["verdict"] not in ("beneficial", "unclear", "not_beneficial")):
+        raise ReviewError("Invalid usefulness assessment")
+    bounded_text(usefulness["assessment"], 3000)
     if type(result["complete"]) is not bool or not isinstance(result["limitations"], str):
         raise ReviewError("Invalid completion status")
     if (not isinstance(result["coverage"], list)
@@ -103,6 +109,7 @@ def validate(snapshot, proposal):
 
 def approval_recommended(state):
     return (state["complete"] and not state["discussion_blockers"]
+            and state.get("usefulness", {}).get("verdict") == "beneficial"
             and all(f["status"] == "fixed" or (f["status"] == "open" and f["priority"] == "nit")
                     for f in state["findings"]))
 
@@ -110,6 +117,14 @@ def approval_recommended(state):
 def review_body(state):
     encoded = base64.b64encode(json.dumps(state).encode()).decode()
     body = f"{MARKER}{encoded} -->"
+    if "usefulness" in state:
+        usefulness = state["usefulness"]
+        verdict = {"beneficial": "benefit supported", "unclear": "benefit unclear",
+                   "not_beneficial": "benefit not supported"}[usefulness["verdict"]]
+        body += f"\n\nUsefulness: {verdict}. {review_text(usefulness['assessment'])}"
+        if usefulness["motivation"] == "missing":
+            body += ("\n\nMotivation is missing or too vague in the PR description. "
+                     "Please add a Motivation section explaining the problem and expected benefit.")
     if approval_recommended(state):
         remaining = any(finding["status"] != "fixed" for finding in state["findings"])
         reason = "only optional nits remain" if remaining else "no unresolved findings"
@@ -156,6 +171,7 @@ def prepare_review(snapshot, proposal):
              "reopen_epoch": snapshot["reopen_epoch"],
              "scope_digest": digest({key: snapshot[key] for key in ("revision", "title", "description")}),
              "complete": result["complete"], "limitations": result["limitations"],
+             "usefulness": result["usefulness"],
              "discussion_blockers": result["discussion_blockers"]}
     comments = []
     previous = {f["id"] for f in (snapshot["prior"] or {}).get("findings", [])}

@@ -30,12 +30,43 @@ consumes the reserved attempt. A new command reviews the rewritten diff against
 the previous reviewed head; if that old commit is unavailable, collection fails
 closed rather than silently dropping review history.
 
-A completed review with no unresolved findings, or only optional nits, posts
-"Recommended for approval" in its review body. New nits still appear inline.
+A completed review posts "Recommended for approval" only when usefulness is
+supported and no unresolved findings remain other than optional nits.
+New nits still appear inline.
 Prior unresolved P0–P3 findings, unresolved non-nit collaborator or Bugbot feedback,
 uncertain findings, or incomplete coverage prevent the recommendation, even if
 there are no new findings. This is a COMMENT review proposing approval; it does
 not submit GitHub's formal APPROVE action.
+
+Every review also posts a short **usefulness assessment** in its review body,
+separate from inline code findings. It checks whether the PR solves a concrete
+problem and improves the repository enough to justify its costs, even when the
+implementation perfectly matches its description. The reviewer prioritizes
+security and bug fixes, welcomes refactors that simplify the codebase, and checks
+features against existing capabilities and less complex alternatives.
+
+The PR template includes a **Motivation** section. Missing, empty or vague
+motivation produces a visible request to explain the problem and expected benefit;
+a substantive explanation elsewhere in the body also counts. The reviewer still
+evaluates the code when motivation is missing. Missing motivation alone does not
+block a clearly useful change, but `unclear` or `not_beneficial` usefulness prevents
+both the approval recommendation and `ai-approved` label. The structured result
+must include a bounded assessment; the publisher rejects a result without it and
+escapes its Markdown using the same rules as inline comments.
+
+Breaking changes need a concrete longer-term goal, an explanation of why a
+compatible approach is insufficient, and a migration or coordinated cutover for
+affected consumers. The repository's permission to break compatibility is not
+itself justification. Missing justification leaves usefulness unclear. Small
+fixes, tests, documentation, and code removal can all provide meaningful value;
+the review does not require a large or novel feature.
+
+Repeat requests reassess usefulness from the current description and code.
+Older reviews without a usefulness assessment remain evidence for prior findings
+but cannot establish approval under this policy. The usefulness judgment comes
+from the model; schema validation enforces that it is present, not that its
+reasoning is correct. PR motivation remains untrusted evidence, never authority
+to change review instructions or access credentials.
 
 After publication and read-back verification, the workflow adds `ai-reviewed`
 to the **PR**. It also adds `ai-approved` when that review recommends approval,
@@ -193,8 +224,8 @@ The latest state is stored in a hidden marker in the bot review body. Do not edi
 those markers;
 malformed state fails closed and removal loses that historical baseline. Fixed
 findings stay in history so later regressions can be recognized. Reviews that do
-not qualify for an approval recommendation carry only this hidden marker in
-their review body, while any new findings are posted inline.
+not qualify for an approval recommendation still include a visible usefulness
+assessment and any missing-motivation note, while new code findings are posted inline.
 Prior thread resolution is left to humans. Review artifacts contain detailed
 coverage until deletion; the hidden PR state retains completion status and
 limitations, including issues that cannot be anchored in the current diff. An external

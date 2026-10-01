@@ -1,6 +1,6 @@
 ---
 name: ai-pr-review
-description: Run deep GitHub PR reviews selected explicitly by the user or an authorized author-command workflow, checking spec alignment, regressions, missing components, deslop, duplication and over-complication. Prepare informal, priority-labeled inline comments for user review before submission; approve clean PRs when publication is authorized.
+description: Run deep GitHub PR reviews selected explicitly by the user or an authorized author-command workflow, evaluating usefulness, spec alignment, regressions, missing components, deslop, duplication and over-complication. Prepare informal, priority-labeled inline comments for user review before submission; approve clean PRs when publication is authorized.
 ---
 
 # AI PR review
@@ -48,6 +48,7 @@ Read [github-workflow.md](references/github-workflow.md) for pagination, stack d
 
 Read and apply both Cursor skills embedded below, plus [review-rubric.md](references/review-rubric.md) for specification, behavior and inline-comment guidance, in every review. Use the same depth for an individual PR and each member of a stack. Scale tool use to the change, not the number of lines in the prompt.
 
+- **Usefulness and motivation:** Independently evaluate whether the PR meaningfully improves the repository, even if it implements its description perfectly. Apply the usefulness criteria in the rubric, challenge the claimed need against existing code, and reassess the benefit on every repeat review. Include the conclusion and evidence in the review report; identify missing motivation and do not recommend approval while the benefit remains unclear or unsupported.
 - **Spec alignment and missing pieces:** Extract each promised behavior and invariant from the live specs, PR description, linked issues and design discussion. Locate the implementation and the test that would fail if the promise were broken. Investigate requirements with no implementation, code that implements a different contract, and tests that merely repeat the implementation's assumptions.
 - **Regressions and expected behavior:** Compare the changed behavior with the base revision. Trace it from real entry points through callers, state changes, outputs and error paths. Exercise relevant boundary cases and supported feature combinations. For optimizations or refactors, check that the externally observable behavior and enforced invariants are preserved wherever the contract requires it.
 - **Completeness and integration:** Follow new components to their actual consumers. Look for code that exists but is never reached, partially wired flags/configuration, stale callers, missing validation, and required docs, generated artifacts or tests that were left behind. Check the assembled stack as well as each incremental PR.
