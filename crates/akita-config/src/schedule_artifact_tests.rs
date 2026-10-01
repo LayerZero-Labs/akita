@@ -112,7 +112,7 @@ fn row_admission_audits_recursive_setup_prefix_policy() {
             .get_mut(prefix_index)
             .expect("recursive setup-prefix fold");
         let mut prefix = *fold.params.setup_prefix().expect("setup-prefix group");
-        prefix.opening.log_basis_open = 127;
+        prefix.opening.num_digits_open -= 1;
         fold.params
             .set_setup_prefix(Some(prefix))
             .expect("valid prefix topology");
