@@ -61,23 +61,22 @@ impl<'a> GrindingPlanCursor<'a> {
     }
 
     fn consume_run(&mut self, site: GrindingSite, multiplicity: usize) -> Result<(), AkitaError> {
-        let run = self
-            .plan
-            .runs
-            .get(self.run_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let run = self.plan.runs.get(self.run_index).ok_or_else(|| {
+            AkitaError::Internal("fold-challenge replay has no remaining plan run".into())
+        })?;
         if self.run_offset != 0
             || run.site != site
             || run.grind_bits != 0
             || run.nonce_bits != 0
             || usize::try_from(run.multiplicity).ok() != Some(multiplicity)
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "fold-challenge replay request differs from the next plan run".into(),
+            ));
         }
-        self.run_index = self
-            .run_index
-            .checked_add(1)
-            .ok_or(AkitaError::InvalidProof)?;
+        self.run_index = self.run_index.checked_add(1).ok_or_else(|| {
+            AkitaError::Internal("fold-challenge replay run index overflows usize".into())
+        })?;
         Ok(())
     }
 
@@ -99,9 +98,13 @@ fn next_entry(
     site: GrindingSite,
     kind: GrindingQueryKind,
 ) -> Result<GrindingPlanEntry, AkitaError> {
-    let entry = cursor.next().ok_or(AkitaError::InvalidProof)?;
+    let entry = cursor.next().ok_or_else(|| {
+        AkitaError::Internal("grinding query replay has no remaining plan entry".into())
+    })?;
     if entry.site != site || site.kind() != kind {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "grinding query replay site or kind differs from the next plan entry".into(),
+        ));
     }
     Ok(entry)
 }
@@ -709,7 +712,9 @@ where
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
         if invocation != 0 {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "grinding sumcheck verifier invocation is not zero".into(),
+            ));
         }
         self.grinding
             .grinded_ext_challenge::<F, E>(GrindingSite::SumcheckRound {
@@ -839,6 +844,87 @@ mod tests {
             .unwrap();
         assert_eq!(verifier_challenges, prover_challenges);
         verifier.finish().unwrap();
+    }
+
+    #[test]
+    fn query_cursor_errors_poison_both_replay_roles() {
+        let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
+        let site = GrindingSite::EvaluationBatch { level: 0 };
+        let wrong_site = GrindingSite::EvaluationBatch { level: 1 };
+        let wrong_kind = GrindingSite::FoldResponse { level: 0 };
+        for (runs, requested) in [
+            (vec![], site),
+            (
+                vec![GrindingRun::proof_of_work(site, 1, order).unwrap()],
+                wrong_site,
+            ),
+            (vec![GrindingRun::fold_response(0)], wrong_kind),
+        ] {
+            let plan = GrindingPlan::new(runs, order).unwrap();
+            let state = new_prover_channel(b"cursor-query", b"fixture").unwrap();
+            let mut prover = ProverGrinding::new(state, &plan);
+            assert!(matches!(
+                prover.grind_query(requested),
+                Err(AkitaError::Internal(_))
+            ));
+            assert!(matches!(prover.finish(), Err(AkitaError::Internal(_))));
+
+            let state = new_verifier_channel(b"cursor-query", b"fixture", &[]).unwrap();
+            let mut verifier = VerifierGrinding::new(state, &plan);
+            assert!(matches!(
+                verifier.grind_query(requested),
+                Err(AkitaError::Internal(_))
+            ));
+            assert!(verifier.state_mut().verifier_message::<[u8; 32]>().is_err());
+            assert!(matches!(verifier.finish(), Err(AkitaError::InvalidProof)));
+        }
+    }
+
+    #[test]
+    fn fold_run_cursor_errors_poison_both_replay_roles() {
+        let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
+        for runs in [
+            vec![],
+            vec![GrindingRun::fold_challenge_group(1, 0, 2).unwrap()],
+            vec![GrindingRun::fold_challenge_group(0, 1, 2).unwrap()],
+            vec![GrindingRun::fold_challenge_group(0, 0, 1).unwrap()],
+            vec![GrindingRun::fold_response(0)],
+        ] {
+            let plan = GrindingPlan::new(runs, order).unwrap();
+            let state = new_prover_channel(b"cursor-run", b"fixture").unwrap();
+            let mut prover = ProverGrinding::new(state, &plan);
+            assert!(matches!(
+                prover.record_fold_challenges(0, 0, 2),
+                Err(AkitaError::Internal(_))
+            ));
+            assert!(matches!(prover.finish(), Err(AkitaError::Internal(_))));
+
+            let state = new_verifier_channel(b"cursor-run", b"fixture", &[]).unwrap();
+            let mut verifier = VerifierGrinding::new(state, &plan);
+            assert!(matches!(
+                verifier.record_fold_challenges(0, 0, 2),
+                Err(AkitaError::Internal(_))
+            ));
+            assert!(verifier.state_mut().verifier_message::<[u8; 32]>().is_err());
+            assert!(matches!(verifier.finish(), Err(AkitaError::InvalidProof)));
+        }
+    }
+
+    #[test]
+    fn grinding_sumcheck_rejects_unscheduled_invocation() {
+        let plan = plan();
+        let state = new_verifier_channel(b"sumcheck-invocation", b"fixture", &[]).unwrap();
+        let mut verifier = VerifierGrinding::new(state, &plan);
+        let mut channel = GrindingSumcheckVerifier::<F, F>::new(
+            &mut verifier,
+            super::super::SumcheckProtocol::Stage1,
+            0,
+            0,
+        );
+        assert!(matches!(
+            channel.round_challenge(1, 0),
+            Err(AkitaError::Internal(_))
+        ));
     }
 
     #[test]

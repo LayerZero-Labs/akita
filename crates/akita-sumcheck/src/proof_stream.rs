@@ -118,7 +118,11 @@ fn context(
     let kind = match role {
         SumcheckRole::Claim => ProtocolMessageKind::PublicValue,
         SumcheckRole::RoundBody => ProtocolMessageKind::ProofAtoms,
-        SumcheckRole::Challenge => return Err(AkitaError::InvalidProof),
+        SumcheckRole::Challenge => {
+            return Err(AkitaError::Internal(
+                "sumcheck message context cannot use the challenge role".into(),
+            ));
+        }
     };
     Ok(ProtocolContextRecord::new(
         site.to_bytes(),

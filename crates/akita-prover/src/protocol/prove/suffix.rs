@@ -478,9 +478,9 @@ mod tests {
     use super::*;
     use crate::protocol::prove::fold_kernels::prepare_evaluation_trace_claim;
     use akita_transcript::new_prover_channel;
-    use jolt_field::{Fp32, One, Zero};
+    use jolt_field::{One, Prime32Offset99, Zero};
 
-    type TestF = Fp32<251>;
+    type TestF = Prime32Offset99;
 
     fn evaluation_batch_plan() -> akita_types::GrindingPlan {
         let challenge_order = akita_types::ChallengeFieldOrder::from_full_capacity(128).unwrap();
