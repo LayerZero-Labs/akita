@@ -358,7 +358,7 @@ impl<'plan> ProverGrinding<'plan> {
     ) -> Result<(), AkitaError> {
         let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse)?;
         if !value_fits(counter, entry.nonce_bits) {
-            return Err(AkitaError::Internal(
+            return Err(AkitaError::InvalidInput(
                 "fold-response nonce exceeds its scheduled bit width".into(),
             ));
         }
@@ -398,17 +398,17 @@ impl<'plan> ProverGrinding<'plan> {
             )
         })?;
         if entry.site != site {
-            return Err(AkitaError::Internal(
+            return Err(AkitaError::InvalidInput(
                 "fold-response preview site differs from grinding plan".into(),
             ));
         }
         if site.kind() != GrindingQueryKind::FoldResponse {
-            return Err(AkitaError::Internal(
+            return Err(AkitaError::InvalidInput(
                 "fold-response preview query kind is not FoldResponse".into(),
             ));
         }
         if !value_fits(counter, entry.nonce_bits) {
-            return Err(AkitaError::Internal(
+            return Err(AkitaError::InvalidInput(
                 "fold-response preview nonce exceeds scheduled bit width".into(),
             ));
         }
@@ -425,7 +425,7 @@ impl<'plan> ProverGrinding<'plan> {
         let result = coordinate_count
             .checked_add(1)
             .ok_or_else(|| {
-                AkitaError::Internal("fold-challenge coordinate multiplicity overflow".into())
+                AkitaError::InvalidInput("fold-challenge coordinate count overflow".into())
             })
             .and_then(|multiplicity| {
                 self.cursor.consume_run(
@@ -647,7 +647,7 @@ where
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
         if invocation != 0 {
-            return Err(AkitaError::Internal(
+            return Err(AkitaError::InvalidInput(
                 "grinding sumcheck prover invocation is not zero".into(),
             ));
         }
@@ -935,13 +935,34 @@ mod tests {
         )
         .unwrap();
         let state = new_prover_channel(b"native-grinding", b"fixture").unwrap();
+        let mut preview_prover = ProverGrinding::new(state, &plan);
+        assert!(matches!(
+            preview_prover.preview_fold_response(
+                GrindingSite::FoldResponse { level: 0 },
+                super::super::FOLD_RESPONSE_ATTEMPTS,
+            ),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            preview_prover.preview_fold_response(GrindingSite::FoldResponse { level: 1 }, 0),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        preview_prover
+            .preview_fold_response(GrindingSite::FoldResponse { level: 0 }, 0)
+            .unwrap();
+        preview_prover
+            .commit_fold_response(GrindingSite::FoldResponse { level: 0 }, 0)
+            .unwrap();
+        preview_prover.finish().unwrap();
+
+        let state = new_prover_channel(b"native-grinding", b"fixture").unwrap();
         let mut prover = ProverGrinding::new(state, &plan);
         assert!(matches!(
             prover.commit_fold_response(
                 GrindingSite::FoldResponse { level: 0 },
                 super::super::FOLD_RESPONSE_ATTEMPTS,
             ),
-            Err(AkitaError::Internal(_))
+            Err(AkitaError::InvalidInput(_))
         ));
         assert!(matches!(prover.finish(), Err(AkitaError::Internal(_))));
 
@@ -963,6 +984,46 @@ mod tests {
                 assert!(matches!(verifier.finish(), Err(AkitaError::InvalidProof)));
             }
         }
+    }
+
+    #[test]
+    fn grinding_preview_rejects_non_fold_response_query_kind() {
+        let plan = plan();
+        let state = new_prover_channel(b"native-grinding", b"fixture").unwrap();
+        let prover = ProverGrinding::new(state, &plan);
+        assert!(matches!(
+            prover.preview_fold_response(GrindingSite::EvaluationBatch { level: 0 }, 0),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn grinding_rejects_fold_challenge_coordinate_count_overflow() {
+        let plan = plan();
+        let state = new_prover_channel(b"native-grinding", b"fixture").unwrap();
+        let mut prover = ProverGrinding::new(state, &plan);
+        assert!(matches!(
+            prover.record_fold_challenges(0, 0, usize::MAX),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(prover.finish(), Err(AkitaError::Internal(_))));
+    }
+
+    #[test]
+    fn grinding_sumcheck_prover_rejects_nonzero_invocation() {
+        let plan = plan();
+        let state = new_prover_channel(b"native-grinding", b"fixture").unwrap();
+        let mut prover = ProverGrinding::new(state, &plan);
+        let mut channel = GrindingSumcheckProver::<F, F>::new(
+            &mut prover,
+            super::super::SumcheckProtocol::Stage1,
+            0,
+            0,
+        );
+        assert!(matches!(
+            channel.round_challenge(1, 0),
+            Err(AkitaError::InvalidInput(_))
+        ));
     }
 
     #[test]
