@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use akita_error::AkitaError;
 
-use akita_types::{basis_weights_prefix, BasisMode};
+use akita_params::{basis_weights_prefix, BasisMode};
 use jolt_field::solinas::parallel::*;
 use jolt_field::Field;
 

@@ -7,8 +7,8 @@
 //! setup scan, closed-form structured groups, and the setup-index weight MLE
 //! at the stage-3 challenge point) lives in `akita-verifier`.
 
-use crate::{CommittedGroupParams, OpeningClaimsLayout};
 use akita_error::{checked, AkitaError};
+use akita_params::{CommittedGroupParams, OpeningClaimsLayout};
 use jolt_field::{CanonicalEncoding, Field};
 
 mod geometry;
@@ -42,7 +42,7 @@ pub fn shared_setup_fold_gadget<F: Field + CanonicalEncoding>(
         .max()
         .unwrap_or(first.depth_fold);
     let _ = opening_batch;
-    Some(crate::gadget_row_scalars::<F>(
+    Some(akita_params::gadget_row_scalars::<F>(
         max_depth,
         level_params.open().digits.log_basis,
     ))

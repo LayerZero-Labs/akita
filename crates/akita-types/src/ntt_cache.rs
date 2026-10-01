@@ -16,8 +16,8 @@ use akita_error::AkitaError;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{cfg_iter, CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
 
-use crate::dispatch::compression_ring_dim_supported_for_tier;
-use crate::{
+use akita_params::dispatch::compression_ring_dim_supported_for_tier;
+use akita_params::{
     balanced_signed_digit_abs_bound, field_modulus, ntt_max_ring_d, ntt_min_ring_d,
     ntt_ring_degree_supported_for_field, protocol_dispatch_tier, ProtocolRingDispatchTierId,
     RingMatrixView, SisModulusProfileId,

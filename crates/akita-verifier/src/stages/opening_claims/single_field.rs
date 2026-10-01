@@ -3,11 +3,9 @@
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction symbols in scope.
 use akita_error::AkitaError;
+use akita_params::{dispatch_for_field, BasisMode, CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
-use akita_types::{
-    dispatch_for_field, prepare_opening_point, BasisMode, CommittedGroupParams, FpExtEncoding,
-    OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
-};
+use akita_types::{prepare_opening_point, FpExtEncoding, OpeningClaims, PreparedOpeningPoint};
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// Recursive-suffix single-field preparation: per-group `prepare_opening_point`

@@ -133,8 +133,8 @@ fn write_rust_split(
     config: &EuclideanWidthTableConfig,
     output: Option<&Path>,
 ) -> io::Result<()> {
-    let default_out_dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../akita-types/src/sis/generated_l2_sis_table");
+    let default_out_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../akita-params/src/sis/generated_l2_sis_table");
     let out_dir = output.unwrap_or(default_out_dir.as_path());
     fs::create_dir_all(out_dir)?;
     let audit_source = csv_source(rows);

@@ -13,12 +13,13 @@ use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_cpu_backend::DensePoly;
 use akita_cpu_backend::RootPolyShape;
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend, SourceHandle};
+use akita_params::{
+    BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, OpeningClaimsLayout,
+    PolynomialGroupLayout,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_types::{
-    BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
-    OpeningClaimsLayout, PolynomialGroupLayout,
-};
+use akita_types::FpExtEncoding;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{
     AdditiveGroup, CanonicalBytes, CanonicalEncoding, ExtField, Field, MulBaseUnreduced,
@@ -132,7 +133,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         Some(
             scheme
                 .schedules()
-                .resolve_key(&akita_types::ScheduleLookupKey::single(group_layout))
+                .resolve_key(&akita_params::ScheduleLookupKey::single(group_layout))
                 .expect("runtime schedule")
                 .schedule()
                 .clone(),

@@ -8,15 +8,17 @@ use crate::backend::{
 };
 use akita_challenges::{FoldDraw, PreviewFoldDraw, ProverFoldDraw};
 use akita_error::AkitaError;
+#[cfg(test)]
+use akita_params::OpeningMethod;
+use akita_params::{
+    dyadic_block_ranges, CommittedGroupParams, InnerCommitSecurityRoute, OpeningClaimsLayout,
+    TerminalFoldParams, TerminalResponseShape, FOLD_RESPONSE_ATTEMPTS,
+};
+use akita_types::draw_group_fold_challenges;
 use akita_types::GrindingReplay;
 use akita_types::GroupFoldChallenges;
-use akita_types::{
-    draw_group_fold_challenges, dyadic_block_ranges, CommittedGroupParams,
-    InnerCommitSecurityRoute, OpeningClaimsLayout, TerminalFoldParams, TerminalResponseShape,
-    FOLD_RESPONSE_ATTEMPTS,
-};
 #[cfg(test)]
-use akita_types::{OpeningFamily, OpeningMethod};
+use akita_types::OpeningFamily;
 use jolt_field::Unreduced;
 use jolt_field::{CanonicalEncoding, Field, Ring};
 
@@ -33,7 +35,7 @@ pub(crate) struct FoldGrindGroup<'group, G: ?Sized> {
     pub(crate) group_index: usize,
     pub(crate) opening: &'group G,
     pub(crate) num_polynomials: usize,
-    pub(crate) params: akita_types::GroupOpenPhaseParams,
+    pub(crate) params: akita_params::GroupOpenPhaseParams,
 }
 
 impl<G: ?Sized> Copy for FoldGrindGroup<'_, G> {}
@@ -104,7 +106,7 @@ where
         None
     };
     let point_indices = [0usize];
-    let site = akita_types::GrindingSite::FoldResponse { level };
+    let site = akita_params::GrindingSite::FoldResponse { level };
     let (nonce, (fold_handle, challenges, encoding, diagnostics)) =
         first_jointly_accepted_nonce(FOLD_RESPONSE_ATTEMPTS, |nonce| {
             let mut preview_state = grinding.preview_fold_response(site, nonce)?;
@@ -244,7 +246,7 @@ where
             "fold grind batch has no groups".to_string(),
         ));
     }
-    let site = akita_types::GrindingSite::FoldResponse { level };
+    let site = akita_params::GrindingSite::FoldResponse { level };
     let (nonce, mut candidate_outputs) =
         first_jointly_accepted_nonce(max_grind_attempts, |nonce| {
             let mut candidate_outputs = Vec::with_capacity(groups.len());
@@ -273,7 +275,7 @@ where
                             FoldProbeGeometry::SparseChunked { chunk_ranges }
                         });
                     let context = opening_ctx.for_group(group.group_index);
-                    let outcome = akita_types::dispatch_for_field!(
+                    let outcome = akita_params::dispatch_for_field!(
                         ProtocolDispatchSlot::Role(RingRole::Inner),
                         F,
                         group.params.inner_commit_matrix_params().ring_dimension(),
@@ -440,7 +442,7 @@ where
         }
         let delta_fold = group.params.num_digits_fold();
         let (digit_negative_abs_bound, digit_positive_bound) =
-            akita_types::sis::balanced_digit_representable_bounds(
+            akita_params::sis::balanced_digit_representable_bounds(
                 group.params.log_basis_open(),
                 delta_fold,
             );
@@ -480,7 +482,7 @@ where
 mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
-    use akita_types::SisModulusProfileId;
+    use akita_params::SisModulusProfileId;
 
     type F = jolt_field::Prime128Offset275;
 

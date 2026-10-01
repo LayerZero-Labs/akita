@@ -4,7 +4,7 @@ use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
 
 // Same four-digit setup as the existing recursive witness session tests.
 fn stage1_session() -> DigitRangeSession<F> {
-    let domain = akita_types::FlatBooleanDomain::new(4, 2).unwrap();
+    let domain = akita_params::FlatBooleanDomain::new(4, 2).unwrap();
     let equality = akita_types::DigitRangeEqualityPoint::from_column_then_ring_challenges(
         &[F::from_u64(3), F::from_u64(5)],
         1,
@@ -13,7 +13,7 @@ fn stage1_session() -> DigitRangeSession<F> {
     .unwrap();
     let prover = DigitRangeProver::from_packed_digits(
         PackedSignedDigits::from_i8_digits_auto(vec![-2, -1, 0, 1]),
-        akita_types::DigitRangePlan::new(16).unwrap(),
+        akita_params::DigitRangePlan::new(16).unwrap(),
         domain,
         equality,
     )

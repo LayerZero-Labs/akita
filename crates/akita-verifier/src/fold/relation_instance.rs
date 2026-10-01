@@ -4,11 +4,12 @@
 use super::PreparedFoldReplay;
 use crate::stages::opening_claims::PreparedFoldOpeningPoint;
 use akita_error::AkitaError;
+use akita_params::dispatch_for_field;
+use akita_params::RelationWitnessGeometry;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
-    assemble_compressed_relation_rhs, assemble_relation_rhs, dispatch_for_field, FpExtEncoding,
-    GroupFoldChallenges, OpeningFamily, RelationWitnessGeometry, RingRelationGroupOpening,
-    RingRelationInstance, RingVec,
+    assemble_compressed_relation_rhs, assemble_relation_rhs, FpExtEncoding, GroupFoldChallenges,
+    OpeningFamily, RingRelationGroupOpening, RingRelationInstance, RingVec,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 

@@ -128,7 +128,7 @@ Sidekick use:
 
 Ask Composer to inspect only `scripts/sis_golden/`, `scripts/gen_sis_table.py`,
 `scripts/stitch_generated_sis_table.py`, and
-`crates/akita-types/src/sis/ajtai_key.rs`. It should report the smallest patch
+`crates/akita-params/src/sis/ajtai_key.rs`. It should report the smallest patch
 surface and the exact Sage commands. It must not edit.
 
 Audit focus:

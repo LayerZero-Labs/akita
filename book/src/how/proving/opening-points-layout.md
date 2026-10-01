@@ -67,7 +67,7 @@ t_hat[claim][block_idx][A_row][B_subcolumn][outer_digit][B_coefficient]
 Only live subcolumns are stored. When every role dimension equals A, the
 subcolumn axis has length one and the byte order is the uniform layout.
 
-[`WitnessLayout`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/witness.rs)
+[`WitnessLayout`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-params/src/witness.rs)
 is the range authority shared by planning, proving, setup, relation evaluation,
 recursive handoff, and verification. Units are ordered by chunk and then
 authenticated relation group. Each unit records its exact
