@@ -167,10 +167,9 @@ impl OpeningClaimsLayout {
     /// Commitment-group index used as the final/new group for multi-group root schedules.
     pub fn root_final_group_index(&self) -> Result<usize, AkitaError> {
         self.check()?;
-        self.groups
-            .len()
-            .checked_sub(1)
-            .ok_or(AkitaError::InvalidProof)
+        self.groups.len().checked_sub(1).ok_or_else(|| {
+            AkitaError::Internal("validated opening layout has no final group".into())
+        })
     }
 
     /// Group processing order for multi-group root schedules: final/new group first.
@@ -207,10 +206,14 @@ impl OpeningClaimsLayout {
                 .iter()
                 .map(|group| group.num_polynomials()),
         )
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::Internal("validated root claim range start overflows usize".into())
+        })?;
         let end = start
             .checked_add(self.groups[group_index].num_polynomials())
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("validated root claim range end overflows usize".into())
+            })?;
         Ok(start..end)
     }
 
@@ -286,7 +289,11 @@ impl OpeningClaimsLayout {
             scaled.extend(
                 row_coefficients
                     .get(range)
-                    .ok_or(AkitaError::InvalidProof)?
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "validated row coefficients do not cover the group claim range".into(),
+                        )
+                    })?
                     .iter()
                     .map(|&coefficient| coefficient * factor),
             );

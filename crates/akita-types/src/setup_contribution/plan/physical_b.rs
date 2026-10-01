@@ -68,9 +68,11 @@ pub(super) fn build_physical_b_weight_segments<E: Field>(
                     }
                     let logical_row =
                         geometry.logical_row_index(slice_index, physical_row, physical_rows)?;
-                    let row_weight = *logical_row_weights
-                        .get(logical_row)
-                        .ok_or(AkitaError::InvalidProof)?;
+                    let row_weight = *logical_row_weights.get(logical_row).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "physical B logical row exceeds the validated row weight table".into(),
+                        )
+                    })?;
                     let logical_start = polynomial
                         .checked_mul(geometry.num_live_blocks())
                         .and_then(|base| base.checked_add(block_range.start))

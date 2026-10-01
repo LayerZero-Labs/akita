@@ -118,7 +118,11 @@ fn context(
     let kind = match role {
         SumcheckRole::Claim => ProtocolMessageKind::PublicValue,
         SumcheckRole::RoundBody => ProtocolMessageKind::ProofAtoms,
-        SumcheckRole::Challenge => return Err(AkitaError::InvalidProof),
+        SumcheckRole::Challenge => {
+            return Err(AkitaError::Internal(
+                "sumcheck message context cannot use the challenge role".into(),
+            ));
+        }
     };
     Ok(ProtocolContextRecord::new(
         site.to_bytes(),
@@ -813,6 +817,29 @@ mod tests {
             );
             verifier_field_challenge(&mut self.state)
         }
+    }
+
+    #[test]
+    fn sumcheck_rejects_round_polynomial_that_contradicts_the_claim() {
+        let (evaluations, claim) = fixture();
+        let mut instance = DenseInstance {
+            evaluations,
+            rounds: 4,
+            claim: claim + F::one(),
+        };
+        let mut channel = TestProverChannel {
+            state: new_prover_channel(b"native-sumcheck", b"fixture").unwrap(),
+            invocation: 7,
+        };
+        assert!(matches!(
+            prove_sumcheck(
+                &mut crate::InfallibleSumcheck(&mut instance),
+                &mut channel,
+                SumcheckShape::new(4, 1).unwrap(),
+                7,
+            ),
+            Err(AkitaError::InvalidInput(_))
+        ));
     }
 
     #[test]

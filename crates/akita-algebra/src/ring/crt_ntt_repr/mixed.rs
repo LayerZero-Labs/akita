@@ -241,7 +241,10 @@ mod tests {
             mat_vec_i16_with_tail::<Prime64Offset59, Q64_NUM_PRIMES, D>(
                 &wide, &tail, 1, 1, &rhs, &params
             ),
-            Err(AkitaError::InvalidProof)
+            Err(AkitaError::InvalidSize {
+                expected: 1,
+                actual: 2
+            })
         ));
     }
 }

@@ -330,9 +330,9 @@ impl CommittedGroupParams {
         // concrete final layout.
         let mut previous_group = None;
         for group_index in 0..self.preceding_group_count() {
-            let group_params = self
-                .preceding_group_params(group_index)
-                .ok_or(AkitaError::InvalidProof)?;
+            let group_params = self.preceding_group_params(group_index).ok_or_else(|| {
+                AkitaError::Internal("validated opening batch is missing a preceding group".into())
+            })?;
             // Repeated producers carry identical parameters. Their
             // group-local checks run once per run of equal groups.
             if previous_group != Some(group_params) {
@@ -375,7 +375,11 @@ impl CommittedGroupParams {
             self.role_dims()
         } else {
             self.preceding_group_params(group_index)
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "opening role dimensions group index is out of range".into(),
+                    )
+                })?
                 .role_dims(self.open().matrix.ring_dimension())
         };
         dims.validate_role_projection()?;
@@ -397,7 +401,11 @@ impl CommittedGroupParams {
             self.role_dims()
         } else {
             self.preceding_group_params(group_index)
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "opening geometry role dimensions group index is out of range".into(),
+                    )
+                })?
                 .role_dims(self.open().matrix.ring_dimension())
         };
         dims.validate_role_projection()?;
@@ -509,7 +517,9 @@ impl CommittedGroupParams {
         self.validated_groups(opening_batch)?
             .get(group_index)
             .copied()
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("opening parameters group index is out of range".into())
+            })
     }
 
     /// Every group of this fold's opening batch, after validating the batch
@@ -543,7 +553,11 @@ impl CommittedGroupParams {
             .as_slice()
             .get(group_index)
             .copied()
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "opening geometry parameters group index is out of range".into(),
+                )
+            })
     }
 
     /// One opening method family shared by every group in this fold.
@@ -554,7 +568,9 @@ impl CommittedGroupParams {
         let groups = self.validated_groups(opening_batch)?;
         let first = groups
             .first()
-            .ok_or(AkitaError::InvalidProof)?
+            .ok_or_else(|| {
+                AkitaError::Internal("validated opening groups have no first opening method".into())
+            })?
             .opening_method();
         for group in &groups[1..] {
             let next = group.opening_method();
@@ -631,7 +647,9 @@ impl CommittedGroupParams {
     ) -> Result<usize, AkitaError> {
         let final_group_index = self.validate_opening_batch(opening_batch)?;
         if group_index > final_group_index {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "group A start index is out of range".into(),
+            ));
         }
         if group_index == final_group_index {
             return Ok(self.a_start());
@@ -648,9 +666,9 @@ impl CommittedGroupParams {
             )
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         for prior_index in 0..group_index {
-            let prior = self
-                .preceding_group_params(prior_index)
-                .ok_or(AkitaError::InvalidProof)?;
+            let prior = self.preceding_group_params(prior_index).ok_or_else(|| {
+                AkitaError::Internal("validated group A start is missing a prior group".into())
+            })?;
             start = start
                 .checked_add(1)
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
@@ -679,7 +697,11 @@ impl CommittedGroupParams {
     ) -> Result<usize, AkitaError> {
         self.group_a_start(opening_batch, group_index)?
             .checked_sub(1)
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::Internal(
+                    "validated group A start has no preceding consistency row".into(),
+                )
+            })
     }
 
     fn group_a_rows(
@@ -692,7 +714,11 @@ impl CommittedGroupParams {
         } else {
             Ok(self
                 .preceding_group_params(group_index)
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "validated group A rows are missing a preceding group".into(),
+                    )
+                })?
                 .profile
                 .inner
                 .matrix
@@ -709,9 +735,9 @@ impl CommittedGroupParams {
             self.outer_slice_count()
                 .logical_output_rows(self.outer().matrix.output_rank())
         } else {
-            let group = self
-                .preceding_group_params(group_index)
-                .ok_or(AkitaError::InvalidProof)?;
+            let group = self.preceding_group_params(group_index).ok_or_else(|| {
+                AkitaError::Internal("validated group B rows are missing a preceding group".into())
+            })?;
             group
                 .profile
                 .outer_slice_count

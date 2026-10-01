@@ -986,10 +986,14 @@ where
 
 fn validate_i16_rhs<const D: usize>(log_basis: u32, rhs: &[[i16; D]]) -> Result<u64, AkitaError> {
     let Some(bound) = balanced_signed_digit_abs_bound(log_basis) else {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidInput(
+            "signed i16 digit basis out of range".into(),
+        ));
     };
     if rhs.is_empty() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidInput(
+            "signed i16 right-hand side must be non-empty".into(),
+        ));
     }
     // At basis 16 every i16 value is already inside the balanced digit range.
     if bound == 1u64 << (i16::BITS - 1) {
@@ -998,7 +1002,9 @@ fn validate_i16_rhs<const D: usize>(log_basis: u32, rhs: &[[i16; D]]) -> Result<
     let digits_valid =
         akita_algebra::ntt::i16_values_in_balanced_range(rhs.as_flattened(), bound as i16);
     if !digits_valid {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidInput(
+            "signed i16 right-hand side contains a digit outside the balanced range".into(),
+        ));
     }
     Ok(bound)
 }
