@@ -2,13 +2,11 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::AkitaError;
+use akita_params::{PhysicalL2NormProofShape, SisModulusProfileId};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::GrindingReplay;
-use akita_types::{
-    reconstruct_l2_sq_from_gram, FpExtEncoding, PhysicalL2NormProofShape, PhysicalResponsePlan,
-    SisModulusProfileId,
-};
+use akita_types::{reconstruct_l2_sq_from_gram, FpExtEncoding, PhysicalResponsePlan};
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 pub(crate) struct PhysicalL2VerifierReplay<E: Field> {
@@ -239,7 +237,7 @@ where
         PhysicalL2NormProofShape::Direct { .. } => E::from_u128(response_l2_sq),
         PhysicalL2NormProofShape::LimbGram { .. } => {
             let gamma = grinding.grinded_ext_challenge::<F, E>(
-                akita_types::GrindingSite::L2SubclaimBatch { level },
+                akita_params::GrindingSite::L2SubclaimBatch { level },
             )?;
             let mut power = E::one();
             for _ in 0..subclaims.len() {
@@ -252,12 +250,12 @@ where
                 .fold(E::zero(), |sum, (&claim, &weight)| sum + claim * weight)
         }
     };
-    let norm_merge =
-        grinding.grinded_ext_challenge::<F, E>(akita_types::GrindingSite::L2NormMerge { level })?;
+    let norm_merge = grinding
+        .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::L2NormMerge { level })?;
     let input_claim = range.input_claim + norm_merge * norm_input_claim;
     let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
         grinding,
-        akita_types::SumcheckProtocol::PhysicalL2,
+        akita_params::SumcheckProtocol::PhysicalL2,
         level,
         0,
     );

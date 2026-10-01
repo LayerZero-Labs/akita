@@ -5,10 +5,11 @@
 
 use super::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_types::{
+use akita_params::{
     setup_matrix_field_elements_for_schedule, verifier_setup_matrix_capacity_for_schedule,
-    AkitaExpandedSetup, FoldSchedule, OpeningClaimsLayout,
+    FoldSchedule, OpeningClaimsLayout,
 };
+use akita_types::AkitaExpandedSetup;
 use jolt_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
 /// Minimum proof-optimized log-basis.
@@ -29,12 +30,12 @@ pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 pub(crate) const PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX: u32 = 16;
 
 const fn proof_optimized_inner_basis_range(
-    profile: akita_types::SisModulusProfileId,
+    profile: akita_params::SisModulusProfileId,
 ) -> (u32, u32) {
     let max = match profile {
-        akita_types::SisModulusProfileId::Q32Offset99 => 10,
-        akita_types::SisModulusProfileId::Q64Offset59
-        | akita_types::SisModulusProfileId::Q128OffsetA7F7 => PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX,
+        akita_params::SisModulusProfileId::Q32Offset99 => 10,
+        akita_params::SisModulusProfileId::Q64Offset59
+        | akita_params::SisModulusProfileId::Q128OffsetA7F7 => PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX,
     };
     (PROOF_OPTIMIZED_LOG_BASIS_MIN, max)
 }
@@ -44,7 +45,7 @@ const fn proof_optimized_inner_basis_range(
 /// built-in external schedule artifacts use K=256; downstream configurations
 /// may generate artifacts from another policy-owned chunk size.
 pub const STANDARD_ONEHOT_CHUNK_SIZE: usize =
-    akita_types::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE;
+    akita_params::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE;
 
 /// Shared short ring-challenge policy for every proof-optimized preset.
 ///
@@ -129,15 +130,15 @@ macro_rules! impl_proof_optimized_preset {
         const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode = $mode;
     };
     (@committed_source_class unit_one_hot) => {
-        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
-            akita_types::sis::CommittedSourceClass::UnitOneHot {
+        fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
+            akita_params::sis::CommittedSourceClass::UnitOneHot {
                 source_chunk_size: STANDARD_ONEHOT_CHUNK_SIZE,
             }
         }
     };
     (@committed_source_class balanced_digits) => {
-        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
-            akita_types::sis::CommittedSourceClass::BalancedSignedDigit
+        fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
+            akita_params::sis::CommittedSourceClass::BalancedSignedDigit
         }
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, source = $source:ident, schedule_family = $family_name:literal, ring_dimension_schedule_mode = $mode:expr) => {
@@ -155,8 +156,8 @@ macro_rules! impl_proof_optimized_preset {
             }
             impl_proof_optimized_preset!(@options $($options)*);
 
-            fn decomposition() -> akita_types::DecompositionParams {
-                akita_types::DecompositionParams {
+            fn decomposition() -> akita_params::DecompositionParams {
+                akita_params::DecompositionParams {
                     log_basis: 3,
                     log_commit_bound: $log_commit_bound,
                     log_open_bound: if $log_commit_bound < $field_bits {
@@ -173,7 +174,7 @@ macro_rules! impl_proof_optimized_preset {
                 $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
             }
 
-            fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+            fn sis_modulus_profile() -> akita_params::SisModulusProfileId {
                 $family
             }
 

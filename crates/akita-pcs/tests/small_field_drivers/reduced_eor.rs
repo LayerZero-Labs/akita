@@ -2,10 +2,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use akita_config::proof_optimized::fp32;
 use akita_error::AkitaError;
-use akita_types::{
-    BasisMode, GroupBatchStatement, OpeningClaims, OpeningMethod, PolynomialGroupClaims,
-    RingRelationMode,
-};
+use akita_params::{BasisMode, OpeningMethod, RingRelationMode};
+use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 
 use super::small_field_drivers::SingleGroupRoundtrip;
 

@@ -52,7 +52,7 @@ fn padded_setup_envelope_first(
 ) -> CompleteScheduleScore {
     CompleteScheduleScore {
         objective: CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
-            setup_envelope_capacity: akita_types::padded_setup_prefix_len(setup_field_elements),
+            setup_envelope_capacity: akita_params::padded_setup_prefix_len(setup_field_elements),
             first_direct_setup_capacity,
             exact_score: (proof_bytes as u128) * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
             proof_bytes,
@@ -90,7 +90,7 @@ fn setup_first_score_uses_total_setup_only_after_primary_coordinates() {
 fn padded_setup_envelope_tolerates_raw_setup_within_one_capacity() {
     let smaller_direct_capacity = padded_setup_envelope_first(5_680_128, 2_097_152, 1_000, 101, 2);
     let smaller_raw_setup = padded_setup_envelope_first(8_388_608, 8_388_608, 1, 99, 1);
-    assert_eq!(akita_types::padded_setup_prefix_len(5_680_128), 8_388_608);
+    assert_eq!(akita_params::padded_setup_prefix_len(5_680_128), 8_388_608);
     assert!(smaller_direct_capacity < smaller_raw_setup);
 
     let next_capacity = padded_setup_envelope_first(8_388_609, 1, 1, 1, 1);
@@ -200,7 +200,7 @@ fn objective_bounds_prune_only_strict_numeric_losses() {
     .is_strictly_worse_for_recursive_payload(incumbent));
     let padded_envelope_bound = |setup_field_elements, first_direct_setup_capacity, proof_bytes| {
         CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
-            setup_envelope_capacity: akita_types::padded_setup_prefix_len(setup_field_elements),
+            setup_envelope_capacity: akita_params::padded_setup_prefix_len(setup_field_elements),
             first_direct_setup_capacity,
             exact_score: (proof_bytes as u128) * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
             proof_bytes,
@@ -220,8 +220,8 @@ fn complete_candidate(
     output_witness_len: usize,
 ) -> super::ScheduleCandidate {
     let challenge = akita_challenges::SparseChallengeConfig::pm1_only(3);
-    let mut params = akita_types::CommittedGroupParams::params_only(
-        akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    let mut params = akita_params::CommittedGroupParams::params_only(
+        akita_params::SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         4,
@@ -233,7 +233,7 @@ fn complete_candidate(
     .expect("candidate parameters");
     let inner = params.inner().matrix;
     params.own_group_mut().profile.inner.matrix =
-        akita_types::sis::InnerCommitMatrixParams::new_unchecked(
+        akita_params::sis::InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
             inner
                 .sis_table_key()
@@ -247,9 +247,9 @@ fn complete_candidate(
         );
     assert_eq!(params.open().digits.log_basis, 3);
     let (terminal_params, linf_cap) =
-        akita_types::TerminalFoldParams::try_from_expanded_group(params.clone())
+        akita_params::TerminalFoldParams::try_from_expanded_group(params.clone())
             .expect("terminal parameters");
-    let response_shape = akita_types::TerminalResponseShape::derive(&terminal_params, linf_cap)
+    let response_shape = akita_params::TerminalResponseShape::derive(&terminal_params, linf_cap)
         .expect("terminal response shape");
     let terminal = akita_schedules::planner_support::CandidateTerminalResponse {
         params: terminal_params,

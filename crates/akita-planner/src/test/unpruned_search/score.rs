@@ -38,20 +38,20 @@ pub(super) fn schedule_descriptor_bytes(
     let steps = candidate
         .folds
         .iter()
-        .map(|fold| akita_types::FoldScheduleDescriptorStep {
+        .map(|fold| akita_params::FoldScheduleDescriptorStep {
             params: fold.params.as_ref(),
             payload_mode: fold.params.payload_mode,
             input_witness_len: fold.input_witness_len,
             output_witness_len: fold.output_witness_len,
         });
-    let terminal = akita_types::TerminalFoldParams {
+    let terminal = akita_params::TerminalFoldParams {
         fold_challenge_config: candidate.terminal.sparse_challenge_config,
         response_shape: candidate.terminal.response_shape.clone(),
         input_witness_len: candidate.terminal.input_witness_len,
         ..candidate.terminal.params.clone()
     };
     let mut descriptor = Vec::new();
-    akita_types::FoldSchedule::append_descriptor_bytes_from_steps(
+    akita_params::FoldSchedule::append_descriptor_bytes_from_steps(
         &mut descriptor,
         steps,
         &terminal,

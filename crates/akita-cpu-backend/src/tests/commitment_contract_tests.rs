@@ -18,7 +18,7 @@ use crate::{AkitaProverSetup, CpuBackend, DensePoly, GroupContext};
 use akita_config::proof_optimized::fp64;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_types::{CommittedSourceEncoding, OpeningClaimsLayout};
+use akita_params::{CommittedSourceEncoding, OpeningClaimsLayout};
 use jolt_field::Ring;
 
 type Cfg = fp64::Dense;
@@ -109,7 +109,7 @@ fn run_custom_commit_source_contract() {
         .expect("workspace schedule catalog");
     let dense = DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("dense oracle");
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
-    let key = akita_types::ScheduleLookupKey::single(
+    let key = akita_params::ScheduleLookupKey::single(
         opening_batch
             .root_final_group_layout()
             .expect("root group layout"),
@@ -226,7 +226,7 @@ fn run_custom_commit_source_contract() {
     );
     assert!(portable_inner == resident_inner);
 
-    let relation_geometry = akita_types::RelationWitnessGeometry::for_level(
+    let relation_geometry = akita_params::RelationWitnessGeometry::for_level(
         &params,
         &opening_batch,
         <<Cfg as CommitmentConfig>::ExtField as jolt_field::ExtField<F>>::DEGREE,

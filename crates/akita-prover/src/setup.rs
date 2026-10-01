@@ -2,8 +2,9 @@
 
 use crate::backend::CommitmentHandleMetadata;
 use akita_error::AkitaError;
+use akita_params::SetupPrefixSlotId;
 use akita_serialization::Valid;
-use akita_types::{SetupPrefixSlotId, SetupPrefixVerifierSlot};
+use akita_types::SetupPrefixVerifierSlot;
 use jolt_field::Field;
 use std::collections::BTreeMap;
 

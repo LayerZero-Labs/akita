@@ -83,7 +83,7 @@ This is an organizational refactor. The implementation must preserve:
    This is a breaking change, accepted under the no-backward-compat goal. `akita_types::scheduled_next_level_params` and `scheduled_fold_execution` are updated to accept `Result`-returning callbacks.
 8. **Single source of truth per concern.**
    - One SIS-floor lookup: `akita_types::min_rank_for_secure_width` (drop `akita_planner/src/sis_security.rs`).
-   - One production proof-size model: `akita_types::layout::proof_size`. The benchmark-only variants in `akita_planner/src/proof_size.rs` are kept under distinct names (e.g. `optimized_stage1_bytes`) and are confined to the universal-benchmark planner.
+   - One production proof-size model: `akita_params::layout::proof_size`. The benchmark-only variants in `akita_planner/src/proof_size.rs` are kept under distinct names (e.g. `optimized_stage1_bytes`) and are confined to the universal-benchmark planner.
    - One runtime schedule type: `akita_types::Schedule`. The benchmark planner's internal `search::Schedule` is renamed `BenchmarkSchedule` and confined to `akita-planner`.
 9. **Feature flags.** `akita-cfg` exposes a `planner` feature that gates the `akita-planner` dependency and the planner-backed default bodies on `Cfg`. `akita-scheme`, `akita-setup`, and `akita-pcs` enable `akita-cfg/planner` so their stock builds work end-to-end. Crates that want a planner-free graph disable the feature and supply custom `Cfg` impls that override every default. `parallel` and `zk` features survive in the same crates as today, propagated through `akita-cfg` to `akita-planner` and `akita-types` as needed.
 10. **Generated tables remain the production fast path.** `Cfg::get_params_for_prove` (and the other parameter accessors) check the generated schedule table first; when the table contains an entry for the lookup key, the trait returns the materialized `Schedule` immediately, with no DP search. Planner DP runs only on table miss, and only when the `planner` feature is enabled. Verifier replay therefore does not run from-scratch DP in any production build.
@@ -188,7 +188,7 @@ If `gen_schedule_tables` produces a non-cosmetic diff, or if `schedule.total_byt
 
 `akita-types` continues to be the wire-data crate. After the refactor it owns:
 
-- Layout primitives: [`LevelParams`](crates/akita-types/src/layout/params.rs), `AjtaiKeyParams`, `RelationMatrixRowLayout`, `RingOpeningPoint<F>`, `BasisMode`, `BlockOrder`.
+- Layout primitives: [`LevelParams`](crates/akita-params/src/layout/params.rs), `AjtaiKeyParams`, `RelationMatrixRowLayout`, `RingOpeningPoint<F>`, `BasisMode`, `BlockOrder`.
 - Runtime schedule types: `Schedule`, `Step`, `FoldStep`, `DirectStep`, `AkitaSchedulePlan` and the `AkitaPlanned*` sub-structs, `AkitaScheduleInputs`, `CommitmentGroupScheduleKey`.
 - Generated schedule table types: `GeneratedScheduleTable`, `GeneratedScheduleTableEntry`, `GeneratedCommitmentGroupScheduleKey`, `GeneratedStep`, `GeneratedFoldStep`, `GeneratedDirectStep`.
 - **Generated schedule table data** (`crates/akita-types/src/generated/fp*.rs`) stays in `akita-types`. The data is small, pure, and does not bring search code with it. The `gen_schedule_tables` binary in `akita-planner` writes its output back into `crates/akita-types/src/generated/`. We pick this over moving the data files because (a) presets get to keep their `Cfg::schedule_table()` returning a static table without crossing crates, and (b) `akita-types` is already the canonical home for verifier-reachable static data.
@@ -234,7 +234,7 @@ crates/akita-planner/
         └── tune_small_field_schedules.rs — moved from akita-config
 ```
 
-`PlannerConfig`, `sis_security.rs`, and the duplicate `proof_size.rs::field_bytes`/`ring_vec_bytes`/`stage1_bytes_*`/`packed_digits_bytes`/`baseline_*` style helpers are deleted (their callers move to `akita_types::layout::proof_size`).
+`PlannerConfig`, `sis_security.rs`, and the duplicate `proof_size.rs::field_bytes`/`ring_vec_bytes`/`stage1_bytes_*`/`packed_digits_bytes`/`baseline_*` style helpers are deleted (their callers move to `akita_params::layout::proof_size`).
 
 The production `find_optimal_schedule` takes a value-typed `SearchOptions`:
 
@@ -846,10 +846,10 @@ pub fn table_entry(
 - `crates/akita-config/` → renamed to `crates/akita-cfg/`. Internal modules `schedule_policy.rs` and `sis_policy.rs` move to `akita-planner` (as `materialize.rs` and `derivation.rs`, or whatever final names). `bin/` moves to `akita-planner/src/bin/`.
 - `crates/akita-planner/src/lib.rs::PlannerConfig` — deleted; replaced by `SearchOptions` and `PlanPolicy` value structs.
 - `crates/akita-planner/src/sis_security.rs` — deleted; callers use `akita_types::min_rank_for_secure_width` directly.
-- `crates/akita-planner/src/proof_size.rs` — pruned to only the benchmark-optimized variants (renamed `optimized_*`); duplicates of `akita_types::layout::proof_size` are deleted.
+- `crates/akita-planner/src/proof_size.rs` — pruned to only the benchmark-optimized variants (renamed `optimized_*`); duplicates of `akita_params::layout::proof_size` are deleted.
 - `crates/akita-config/src/lib.rs::PlannerFallbackConfig` — deleted; `akita-cfg` exposes a `planner` feature that gates the optional `akita-planner` dependency and the planner-backed default method bodies.
 - `crates/akita-prover/**::*_with_policy` and `crates/akita-verifier/**::*_with_policy` — deleted (replaced by `<Cfg>` generic siblings, full inventory above).
-- `crates/akita-types/src/layout/sis_derivation.rs` — search/derivation loops move to `akita-planner`. Pure layout helpers that the verifier still uses (`level_layout_from_params`, `recursive_level_layout_from_params`, `recursive_level_decomposition_from_root`) stay in `akita-types`.
+- `crates/akita-params/src/layout/sis_derivation.rs` — search/derivation loops move to `akita-planner`. Pure layout helpers that the verifier still uses (`level_layout_from_params`, `recursive_level_layout_from_params`, `recursive_level_decomposition_from_root`) stay in `akita-types`.
 
 ### Alternatives Considered
 
@@ -864,7 +864,7 @@ pub fn table_entry(
 ## Documentation
 
 - `AGENTS.md` — update the "Crate Structure" section to remove `akita-config` and add `akita-cfg`. Update "Key Abstractions" to list `Cfg` (replacing the `CommitmentConfig` + `ScheduleProvider` + `PlannerConfig` triad). Update "Verifier No-Panic Contract" to add `akita-cfg` and the verifier-reachable parts of `akita-planner` to the list of no-panic-boundary crates.
-- Crate-level docs: rewrite the top-of-file `//!` doc in `crates/akita-cfg/src/lib.rs`, `crates/akita-planner/src/lib.rs`, and `crates/akita-types/src/layout/mod.rs`.
+- Crate-level docs: rewrite the top-of-file `//!` doc in `crates/akita-cfg/src/lib.rs`, `crates/akita-planner/src/lib.rs`, and `crates/akita-params/src/layout/mod.rs`.
 - `crates/akita-pcs/examples/profile/` — update `Cfg` references and example imports.
 - `specs/akita-pcs-crate-decomposition.md` — add a "Superseded by" link where it described `akita-config`.
 - `profile/akita-recursion/README.md` — note the import path change (`akita_config` → `akita_cfg`) for the guest/artifact glue (this is the only change the profile subworkspace needs; it remains pinned to its own toolchain).

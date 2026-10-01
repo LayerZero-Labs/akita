@@ -159,10 +159,10 @@ implementation acceptance criteria live in
 
 **Implementation map**
 
-- `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `l2_table.rs`,
+- `crates/akita-params/src/sis/mod.rs`, `ajtai_key.rs`, `l2_table.rs`,
   `physical_l2.rs`, `generated_sis_table/`, and `norm_bound.rs`.
 - `docs/security-posture.md`, `specs/sis-quantum128-scalar-n-table.md`.
-- `crates/akita-types/src/sis/generated_sis_table/policy_audit.csv` (canonical
+- `crates/akita-params/src/sis/generated_sis_table/policy_audit.csv` (canonical
   production table certificate).
 
 ## Norm bounds and weak binding
@@ -382,7 +382,7 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
 
 **Implementation map**
 
-- `crates/akita-types/src/sis/norm_bound.rs` owns the two physical collision
+- `crates/akita-params/src/sis/norm_bound.rs` owns the two physical collision
   formulas. `crates/akita-types/src/proof/relation_range_image.rs` owns the
   physical response map. `crates/akita-cpu-backend/src/opaque/sumcheck/physical_l2_norm.rs`
   and `crates/akita-verifier/src/stages/physical_l2_norm.rs` own proof and replay.
@@ -390,7 +390,7 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
 - `specs/fold-linf-rejection.md` (fold digit-count tightening).
 - `specs/selective-l2-fold-security-sizing.md` (implemented physical norm correction
   and optional L2 route).
-- `crates/akita-types/src/config.rs` (`DecompositionParams::log_commit_bound`) and
+- `crates/akita-params/src/config.rs` (`DecompositionParams::log_commit_bound`) and
   `crates/akita-cpu-backend/src/commitment/api.rs`
   (`ensure_sources_fit_accepted_interval`) own the declared
   committed-source bound and the producer-side range check.

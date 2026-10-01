@@ -2,15 +2,16 @@
 mod support;
 
 use super::*;
-use crate::layout::GroupOpenPhaseParams;
-use crate::r_decomp_levels;
 use crate::DigitBlocks;
-use crate::{
-    emit_witness_e_planes, emit_witness_t_planes, relation_rhs_coeff_len, InnerCommitMatrixParams,
-    OpenCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout, RingOpeningPoint,
-};
+use crate::{emit_witness_e_planes, emit_witness_t_planes, relation_rhs_coeff_len};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
+use akita_params::layout::GroupOpenPhaseParams;
+use akita_params::r_decomp_levels;
+use akita_params::{
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
+    PolynomialGroupLayout, RingOpeningPoint,
+};
 use jolt_field::{Fp32, One, Zero};
 use support::{flatten_markers, marker};
 
@@ -21,15 +22,15 @@ const MULTI_GROUP_D: usize = 64;
 fn relation_layout(
     lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
-) -> crate::RelationRhsLayout {
-    crate::RelationWitnessGeometry::for_evaluation_trace_execution(lp, opening_batch)
+) -> akita_params::RelationRhsLayout {
+    akita_params::RelationWitnessGeometry::for_evaluation_trace_execution(lp, opening_batch)
         .expect("relation geometry")
         .rhs_layout()
         .clone()
 }
 
 fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
-    let inner_bound = *crate::sis::inner_coeff_linf_bounds(
+    let inner_bound = *akita_params::sis::inner_coeff_linf_bounds(
         lp.inner().matrix.sis_modulus_profile(),
         u32::try_from(lp.d_a()).expect("test ring dimension"),
     )
@@ -72,7 +73,7 @@ fn opening_point(lp: &CommittedGroupParams) -> RingOpeningPoint<F> {
 
 fn test_level_params(_num_fold_claims: usize) -> CommittedGroupParams {
     let mut params = CommittedGroupParams::params_only(
-        crate::SisModulusProfileId::Q32Offset99,
+        akita_params::SisModulusProfileId::Q32Offset99,
         D,
         2,
         1,
@@ -163,7 +164,7 @@ fn chunk_test_level_params(
 ) -> CommittedGroupParams {
     // num_live_blocks = 2^block_index_bits, num_positions_per_block = 2^position_index_bits, single-tier.
     let mut params = CommittedGroupParams::params_only(
-        crate::SisModulusProfileId::Q32Offset99,
+        akita_params::SisModulusProfileId::Q32Offset99,
         D,
         2,
         1,
@@ -233,7 +234,7 @@ fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
     for w in [1usize, 2, 4, 8] {
         let mut lp = chunk_test_level_params(3, num_claims); // num_live_blocks = 8
         if w > 1 {
-            lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
+            lp.witness_chunk = akita_params::witness::ChunkedWitnessCfg {
                 num_chunks: w,
                 num_activated_levels: 1,
             };
@@ -292,7 +293,7 @@ fn resolve_rejects_bad_chunk_count() {
     let num_claims = 2;
     // num_chunks = 3 is not a power of two.
     let mut lp = chunk_test_level_params(3, num_claims);
-    lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
+    lp.witness_chunk = akita_params::witness::ChunkedWitnessCfg {
         num_chunks: 3,
         num_activated_levels: 1,
     };
@@ -305,14 +306,14 @@ fn resolve_rejects_bad_chunk_count() {
 fn resolve_preserves_empty_chunk_slots() {
     let num_claims = 2;
     let mut lp = chunk_test_level_params(2, num_claims);
-    lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
+    lp.witness_chunk = akita_params::witness::ChunkedWitnessCfg {
         num_chunks: 8,
         num_activated_levels: 1,
     };
     let layout = build_instance(&lp, num_claims, 4)
         .segment_layout(&lp, None)
         .expect("layout with empty chunk slots");
-    let expected_ranges = crate::dyadic_block_ranges(4, 8).expect("chunk ranges");
+    let expected_ranges = akita_params::dyadic_block_ranges(4, 8).expect("chunk ranges");
     assert_eq!(layout.units().len(), 8);
     for (unit, expected_range) in layout.units().iter().zip(expected_ranges) {
         assert_eq!(unit.global_block_range(), expected_range);
@@ -379,11 +380,11 @@ fn relation_segment_layout_uses_same_axis_contract() {
 }
 
 fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout) {
-    use crate::schedule::GroupCommitPhaseParams;
+    use akita_params::schedule::GroupCommitPhaseParams;
     let fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(MULTI_GROUP_D)
         .expect("multi-group test ring dimension has a production challenge");
     let lp = CommittedGroupParams::params_only(
-        crate::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::SisModulusProfileId::Q128OffsetA7F7,
         MULTI_GROUP_D,
         3,
         2,
@@ -394,7 +395,7 @@ fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout
     .with_decomp(4, 16, 2, 2, 2)
     .expect("multi-group main params");
     let mut precommit_lp = CommittedGroupParams::params_only(
-        crate::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::SisModulusProfileId::Q128OffsetA7F7,
         MULTI_GROUP_D,
         3,
         2,
@@ -411,7 +412,7 @@ fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout
             PolynomialGroupLayout::new(4, 1),
             &precommit_lp,
         ),
-        opening: crate::GroupOpeningPlan::evaluation_trace(
+        opening: akita_params::GroupOpeningPlan::evaluation_trace(
             precommit_lp.fold_challenge_config(),
             precommit_lp.open().digits.log_basis,
             precommit_lp.open().digits.num_digits,
@@ -494,7 +495,7 @@ fn multi_group_segment_layout_total_matches_next_w_len() {
 #[test]
 fn multi_group_segment_layout_resolves_group_shard_product() {
     let (mut lp, opening_batch) = multi_group_one_three_fixture();
-    lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
+    lp.witness_chunk = akita_params::witness::ChunkedWitnessCfg {
         num_chunks: 2,
         num_activated_levels: 1,
     };
@@ -651,7 +652,7 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
     const PACK_D_A: usize = 256;
     const PACK_D_D: usize = 64;
     let mut lp = CommittedGroupParams::params_only(
-        crate::SisModulusProfileId::Q32Offset99,
+        akita_params::SisModulusProfileId::Q32Offset99,
         PACK_D_A,
         2,
         1,
@@ -662,9 +663,10 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
     .with_decomp(4, 8, 1, 2, 2)
     .expect("packing params");
     lp.own_group_mut().opening.num_digits_fold = 3;
-    lp.own_group_mut().opening.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: 64,
-    };
+    lp.own_group_mut().opening.opening_method =
+        akita_params::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
     lp.own_group_mut().opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(64).expect("packing config");
     certify_test_sis_bounds(&mut lp);
@@ -722,8 +724,9 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
     );
     assert!(group_opening.evaluation_trace_multiplier_point().is_err());
 
-    let relation_geometry = crate::RelationWitnessGeometry::for_level(&lp, &opening_batch, 2)
-        .expect("relation geometry");
+    let relation_geometry =
+        akita_params::RelationWitnessGeometry::for_level(&lp, &opening_batch, 2)
+            .expect("relation geometry");
     let rhs_len = relation_rhs_coeff_len(relation_geometry.rhs_layout()).expect("rhs len");
     let instance = RingRelationInstance::<F>::new(
         vec![group_opening],

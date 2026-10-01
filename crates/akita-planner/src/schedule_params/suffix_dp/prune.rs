@@ -1,7 +1,7 @@
 use std::cell::OnceCell;
 
 use akita_error::AkitaError;
-use akita_types::{active_setup_field_len, OpeningClaimsLayout};
+use akita_params::{active_setup_field_len, OpeningClaimsLayout};
 
 use crate::schedule_params::{level_setup_field_elements, pareto};
 
@@ -16,7 +16,7 @@ pub(super) fn level_candidates(
         let params = &candidate.params;
         let outer_payload_coeffs = params.outer_payload_geometry()?.transmitted_coefficients();
         let coords = [
-            akita_types::padded_setup_prefix_len(active_setup_field_len(params, opening_layout)?),
+            akita_params::padded_setup_prefix_len(active_setup_field_len(params, opening_layout)?),
             level_setup_field_elements(params)?,
             outer_payload_coeffs,
             params
@@ -45,10 +45,10 @@ pub(super) fn level_candidates(
                     && best_candidate.params.role_dims() == candidate_entry.params.role_dims()
                     && matches!(
                         best_candidate.params.opening_method(),
-                        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+                        akita_params::OpeningMethod::SubringCoefficientPacking { .. }
                     ) == matches!(
                         candidate_entry.params.opening_method(),
-                        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+                        akita_params::OpeningMethod::SubringCoefficientPacking { .. }
                     )
                     && std::mem::discriminant(
                         &best_candidate.params.inner().matrix.security_route(),

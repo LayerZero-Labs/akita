@@ -60,7 +60,7 @@ pub struct DenseMultiChunk;
 ///
 /// # Why the bound is `65` and not `64`
 ///
-/// [`akita_types::DecompositionParams::log_commit_bound`] is a **signed** bit
+/// [`akita_params::DecompositionParams::log_commit_bound`] is a **signed** bit
 /// width: `k` denotes the centered range `[-2^(k-1), 2^(k-1) - 1]`, because the
 /// gadget decomposition works on centered representatives and balanced digits are
 /// themselves signed. A `u64` reaches `u64::MAX = 2^64 - 1`, so it needs one sign
@@ -111,7 +111,7 @@ impl_proof_optimized_preset!(
     Dense,
     Field,
     Field,
-    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    akita_params::SisModulusProfileId::Q128OffsetA7F7,
     128,
     128,
     source = balanced_digits,
@@ -128,7 +128,7 @@ impl_proof_optimized_preset!(
     DenseBounded,
     Field,
     Field,
-    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    akita_params::SisModulusProfileId::Q128OffsetA7F7,
     128,
     // One declaration, not two: the macro takes an expression, so the preset is
     // configured from the same constant callers read. A signed bit width of 65 is
@@ -148,7 +148,7 @@ impl_proof_optimized_preset!(
     OneHot,
     Field,
     Field,
-    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    akita_params::SisModulusProfileId::Q128OffsetA7F7,
     128,
     1,
     source = unit_one_hot,
@@ -164,7 +164,7 @@ impl_proof_optimized_preset!(
 impl_multi_chunk_companion!(
     OneHotMultiChunk,
     OneHot,
-    akita_types::MultiChunkProfileId::W8R2,
+    akita_params::MultiChunkProfileId::W8R2,
     "fp128_onehot_multi_chunk"
 );
 
@@ -178,19 +178,19 @@ impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunk {
 impl_multi_chunk_companion!(
     OneHotMultiChunkW2R2,
     OneHot,
-    akita_types::MultiChunkProfileId::W2R2,
+    akita_params::MultiChunkProfileId::W2R2,
     "fp128_onehot_multi_chunk_w2r2"
 );
 impl_multi_chunk_companion!(
     OneHotMultiChunkW4R2,
     OneHot,
-    akita_types::MultiChunkProfileId::W4R2,
+    akita_params::MultiChunkProfileId::W4R2,
     "fp128_onehot_multi_chunk_w4r2"
 );
 impl_multi_chunk_companion!(
     DenseMultiChunk,
     Dense,
-    akita_types::MultiChunkProfileId::W8R2,
+    akita_params::MultiChunkProfileId::W8R2,
     "fp128_dense_multi_chunk"
 );
 

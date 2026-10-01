@@ -1,23 +1,23 @@
 use super::*;
 
 fn reference_setup_field_elements(params: &CommittedGroupParams) -> Result<usize, AkitaError> {
-    let mut elements = akita_types::SetupMatrixCapacity::minimum().num_field_elements;
-    akita_types::accumulate_matrix_field_elements_for_level(params, &mut elements)?;
+    let mut elements = akita_params::SetupMatrixCapacity::minimum().num_field_elements;
+    akita_params::accumulate_matrix_field_elements_for_level(params, &mut elements)?;
     Ok(elements)
 }
 
 fn reference_terminal_setup_field_elements(
-    params: &akita_types::TerminalFoldParams,
+    params: &akita_params::TerminalFoldParams,
 ) -> Result<usize, AkitaError> {
-    let mut elements = akita_types::SetupMatrixCapacity::minimum().num_field_elements;
-    akita_types::accumulate_terminal_matrix_field_elements(params, &mut elements)?;
+    let mut elements = akita_params::SetupMatrixCapacity::minimum().num_field_elements;
+    akita_params::accumulate_terminal_matrix_field_elements(params, &mut elements)?;
     Ok(elements)
 }
 
 fn reference_payload_bytes(
     field_bits: u32,
-    profile: akita_types::SisModulusProfileId,
-    geometry: akita_types::CommitmentPayloadGeometry,
+    profile: akita_params::SisModulusProfileId,
+    geometry: akita_params::CommitmentPayloadGeometry,
 ) -> Result<usize, AkitaError> {
     if profile.field_bits() != field_bits {
         return Err(AkitaError::InvalidSetup(
@@ -26,7 +26,7 @@ fn reference_payload_bytes(
     }
     geometry
         .transmitted_coefficients()
-        .checked_mul(akita_types::field_bytes(field_bits))
+        .checked_mul(akita_params::field_bytes(field_bits))
         .ok_or_else(|| AkitaError::InvalidSetup("reference payload bytes overflow".into()))
 }
 
@@ -37,13 +37,13 @@ fn reference_level_proof_bytes(
     successor: Option<&CommittedGroupParams>,
     output_witness_len: usize,
 ) -> Result<usize, AkitaError> {
-    let challenge_bytes = akita_types::field_bytes(challenge_field_bits);
-    let rounds = akita_types::sumcheck_rounds(params.d_a(), output_witness_len);
+    let challenge_bytes = akita_params::field_bytes(challenge_field_bits);
+    let rounds = akita_params::sumcheck_rounds(params.d_a(), output_witness_len);
     let stage2_bytes = rounds
         .checked_mul(3)
         .and_then(|count| count.checked_mul(challenge_bytes))
         .ok_or_else(|| AkitaError::InvalidSetup("reference Stage-2 size overflow".into()))?;
-    let range_plan = akita_types::DigitRangePlan::new(1usize << params.open().digits.log_basis)?;
+    let range_plan = akita_params::DigitRangePlan::new(1usize << params.open().digits.log_basis)?;
     let (range_stages, norm) =
         range_plan.proof_shapes_for_route(rounds, params.inner().matrix.security_route())?;
     let mut stage1_bytes = challenge_bytes;
@@ -118,7 +118,7 @@ pub(super) fn terminal(
         return Ok(None);
     }
     let (mut terminal_params, certified_linf_cap) =
-        match akita_types::TerminalFoldParams::try_from_expanded_group(params.clone()) {
+        match akita_params::TerminalFoldParams::try_from_expanded_group(params.clone()) {
             Ok(result) => result,
             Err(AkitaError::InvalidSetup(_)) => return Ok(None),
             Err(error) => return Err(error),
@@ -153,7 +153,7 @@ pub(super) fn terminal(
                 fold_digit_count: params.num_digits_fold(),
                 fold_challenge_config: &l2_challenge,
                 response_l2_sq_cap,
-                norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
+                norm_proof_shape: Some(akita_params::PhysicalL2NormProofShape::Direct {
                     physical_response_len,
                 }),
             },
@@ -189,8 +189,8 @@ pub(super) fn terminal(
         })
         .unwrap_or(certified_linf_cap);
     let response_shape =
-        akita_types::TerminalResponseShape::derive(&terminal_params, encoding_scale)?;
-    let terminal_bytes = akita_types::terminal_response_planner_bytes(
+        akita_params::TerminalResponseShape::derive(&terminal_params, encoding_scale)?;
+    let terminal_bytes = akita_params::terminal_response_planner_bytes(
         ctx.policy.decomposition.field_bits(),
         &response_shape,
         terminal_params.response_l2_sq_cap(),
@@ -202,7 +202,7 @@ pub(super) fn terminal(
         })?;
     Ok(Some(ScheduleCandidate {
         first_direct_setup_field_len: std::num::NonZeroUsize::new(
-            akita_types::active_setup_field_len(
+            akita_params::active_setup_field_len(
                 params,
                 &suffix_opening_layout(state.input_witness_len, None)?,
             )?,
@@ -244,8 +244,8 @@ pub(super) fn prepend_fold(
         AkitaError::InvalidSetup("unpruned traversal fold proof size overflow".into())
     })?;
     let successor = child.folds.first().map_or_else(
-        || akita_types::FoldSuccessor::Terminal(&child.terminal.params),
-        |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
+        || akita_params::FoldSuccessor::Terminal(&child.terminal.params),
+        |fold| akita_params::FoldSuccessor::Recursive(fold.params.as_ref()),
     );
     let relation_geometry = params.relation_address_geometry(
         &opening_layout,
@@ -253,7 +253,7 @@ pub(super) fn prepend_fold(
         successor.ring_dimension(),
         output_witness_len,
     )?;
-    let edge_grinding_cost = akita_types::transcript_grinding_cost_for_planner_edge(
+    let edge_grinding_cost = akita_params::transcript_grinding_cost_for_planner_edge(
         params,
         relation_geometry,
         &opening_layout,
@@ -263,7 +263,7 @@ pub(super) fn prepend_fold(
         u32::try_from(level)
             .map_err(|_| AkitaError::InvalidSetup("unpruned fold level exceeds u32".into()))?,
     )?;
-    let natural_setup_field_len = akita_types::active_setup_field_len(params, &opening_layout)?;
+    let natural_setup_field_len = akita_params::active_setup_field_len(params, &opening_layout)?;
     let scan_work = crate::schedule_params::direct_setup_scan_work_elements(
         natural_setup_field_len,
         relation_geometry.relation_coefficient_block_len(),
@@ -300,7 +300,7 @@ pub(super) fn prepend_fold(
 
 pub(super) fn prepend_root(
     policy: &PlannerPolicy,
-    schedule_key: &akita_types::ScheduleLookupKey,
+    schedule_key: &akita_params::ScheduleLookupKey,
     input_witness_len: usize,
     root_params: &CommittedGroupParams,
     output_witness_len: usize,
@@ -313,8 +313,8 @@ pub(super) fn prepend_root(
                 AkitaError::InvalidSetup("unpruned root setup field length must be nonzero".into())
             })?;
     let successor = suffix.folds.first().map_or_else(
-        || akita_types::FoldSuccessor::Terminal(&suffix.terminal.params),
-        |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
+        || akita_params::FoldSuccessor::Terminal(&suffix.terminal.params),
+        |fold| akita_params::FoldSuccessor::Recursive(fold.params.as_ref()),
     );
     let root_bytes = reference_level_proof_bytes(
         policy.decomposition.field_bits(),
@@ -329,7 +329,7 @@ pub(super) fn prepend_root(
         successor.ring_dimension(),
         output_witness_len,
     )?;
-    let root_grinding_cost = akita_types::transcript_grinding_cost_for_planner_edge(
+    let root_grinding_cost = akita_params::transcript_grinding_cost_for_planner_edge(
         root_params,
         relation_geometry,
         &opening_layout,
@@ -374,24 +374,24 @@ pub(super) fn prepend_root(
         .folds
         .to_vec()
         .into_iter()
-        .map(|fold| akita_types::FoldParams {
+        .map(|fold| akita_params::FoldParams {
             params: (*fold.params).clone(),
             input_witness_len: fold.input_witness_len,
             output_witness_len: fold.output_witness_len,
         });
-    let schedule = akita_types::FoldSchedule {
+    let schedule = akita_params::FoldSchedule {
         root: folds.next().ok_or_else(|| {
             AkitaError::UnsupportedSchedule("oracle candidate has no root fold".into())
         })?,
         recursive_folds: folds.collect(),
-        terminal: akita_types::TerminalFoldParams {
+        terminal: akita_params::TerminalFoldParams {
             fold_challenge_config: candidate.terminal.sparse_challenge_config,
             response_shape: candidate.terminal.response_shape.clone(),
             input_witness_len: candidate.terminal.input_witness_len,
             ..candidate.terminal.params.clone()
         },
     };
-    let plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
+    let plan = akita_params::derive_transcript_grinding_plan_from_public_shape(
         &schedule,
         &opening_layout,
         policy.transcript_grinding_order()?,

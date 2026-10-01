@@ -79,7 +79,7 @@ pub struct ValidatedFoldProbePlan<'a> {
     num_positions_per_block: usize,
     num_digits: usize,
     log_basis: u32,
-    opening_method: akita_types::OpeningMethod,
+    opening_method: akita_params::OpeningMethod,
     acceptance: ValidatedFoldAcceptancePlan,
 }
 
@@ -93,7 +93,7 @@ impl<'a> ValidatedFoldProbePlan<'a> {
         num_positions_per_block: usize,
         num_digits: usize,
         log_basis: u32,
-        opening_method: akita_types::OpeningMethod,
+        opening_method: akita_params::OpeningMethod,
         acceptance: ValidatedFoldAcceptancePlan,
     ) -> Result<Self, AkitaError> {
         if challenges.is_empty()
@@ -117,7 +117,7 @@ impl<'a> ValidatedFoldProbePlan<'a> {
         if let FoldProbeGeometry::SparseChunked { chunk_ranges } = geometry {
             if chunk_ranges.len() < 2
                 || chunk_ranges
-                    != akita_types::dyadic_block_ranges(expected_live_blocks, chunk_ranges.len())?
+                    != akita_params::dyadic_block_ranges(expected_live_blocks, chunk_ranges.len())?
             {
                 return Err(AkitaError::InvalidInput(
                     "chunked fold probe requires the canonical dyadic ranges".into(),
@@ -162,7 +162,7 @@ impl<'a> ValidatedFoldProbePlan<'a> {
         self.log_basis
     }
 
-    pub const fn opening_method(&self) -> akita_types::OpeningMethod {
+    pub const fn opening_method(&self) -> akita_params::OpeningMethod {
         self.opening_method
     }
 
@@ -182,8 +182,8 @@ pub struct ValidatedRecursiveWitnessPlan<'a, F: Field> {
 /// Validated public inputs for one consumer-owned Stage 1 session.
 #[derive(Clone)]
 pub struct ValidatedStage1Plan<E: Field> {
-    digit_range: akita_types::DigitRangePlan,
-    domain: akita_types::FlatBooleanDomain,
+    digit_range: akita_params::DigitRangePlan,
+    domain: akita_params::FlatBooleanDomain,
     equality: akita_types::DigitRangeEqualityPoint<E>,
     physical: Option<akita_types::PhysicalResponsePlan>,
     witness_len: usize,
@@ -192,8 +192,8 @@ pub struct ValidatedStage1Plan<E: Field> {
 impl<E: Field> ValidatedStage1Plan<E> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
-        digit_range: akita_types::DigitRangePlan,
-        domain: akita_types::FlatBooleanDomain,
+        digit_range: akita_params::DigitRangePlan,
+        domain: akita_params::FlatBooleanDomain,
         equality: akita_types::DigitRangeEqualityPoint<E>,
         physical: Option<akita_types::PhysicalResponsePlan>,
         witness_len: usize,
@@ -207,10 +207,10 @@ impl<E: Field> ValidatedStage1Plan<E> {
         }
     }
 
-    pub const fn digit_range(&self) -> akita_types::DigitRangePlan {
+    pub const fn digit_range(&self) -> akita_params::DigitRangePlan {
         self.digit_range
     }
-    pub const fn domain(&self) -> akita_types::FlatBooleanDomain {
+    pub const fn domain(&self) -> akita_params::FlatBooleanDomain {
         self.domain
     }
     pub fn equality(&self) -> akita_types::DigitRangeEqualityPoint<E> {
@@ -246,8 +246,8 @@ impl<'a, F: Field> ValidatedRecursiveWitnessPlan<'a, F> {
 /// Public successor commitment parameters; execution policy belongs to the backend.
 #[derive(Debug, Clone)]
 pub enum WitnessCommitmentParameters {
-    Recursive(akita_types::CommittedGroupParams),
-    Terminal(akita_types::TerminalFoldParams),
+    Recursive(akita_params::CommittedGroupParams),
+    Terminal(akita_params::TerminalFoldParams),
 }
 
 /// Validated public geometry for committing an opaque recursive witness.
@@ -258,8 +258,8 @@ pub struct ValidatedRecursiveWitnessCommitPlan {
     ring_dimension: usize,
 
     parameters: WitnessCommitmentParameters,
-    source_encoding: Option<akita_types::CommittedSourceEncoding>,
-    binding: akita_types::NextWitnessBindingPolicy,
+    source_encoding: Option<akita_params::CommittedSourceEncoding>,
+    binding: akita_params::NextWitnessBindingPolicy,
 }
 
 impl ValidatedRecursiveWitnessCommitPlan {
@@ -269,8 +269,8 @@ impl ValidatedRecursiveWitnessCommitPlan {
         ring_dimension: usize,
 
         parameters: WitnessCommitmentParameters,
-        source_encoding: Option<akita_types::CommittedSourceEncoding>,
-        binding: akita_types::NextWitnessBindingPolicy,
+        source_encoding: Option<akita_params::CommittedSourceEncoding>,
+        binding: akita_params::NextWitnessBindingPolicy,
     ) -> Self {
         Self {
             logical_len,
@@ -294,10 +294,10 @@ impl ValidatedRecursiveWitnessCommitPlan {
     pub const fn parameters(&self) -> &WitnessCommitmentParameters {
         &self.parameters
     }
-    pub const fn source_encoding(&self) -> Option<akita_types::CommittedSourceEncoding> {
+    pub const fn source_encoding(&self) -> Option<akita_params::CommittedSourceEncoding> {
         self.source_encoding
     }
-    pub const fn binding(&self) -> akita_types::NextWitnessBindingPolicy {
+    pub const fn binding(&self) -> akita_params::NextWitnessBindingPolicy {
         self.binding
     }
 }
@@ -306,12 +306,12 @@ impl ValidatedRecursiveWitnessCommitPlan {
 #[derive(Clone, Copy)]
 pub struct ValidatedRecursiveGroupOpeningPlan<'a, E: Field> {
     point: &'a [E],
-    basis: akita_types::BasisMode,
+    basis: akita_params::BasisMode,
     ring_dimension: usize,
     positions_per_block: usize,
     live_blocks: usize,
     alpha_bits: usize,
-    opening_method: akita_types::OpeningMethod,
+    opening_method: akita_params::OpeningMethod,
     witness_len: usize,
 }
 
@@ -319,12 +319,12 @@ impl<'a, E: Field> ValidatedRecursiveGroupOpeningPlan<'a, E> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
         point: &'a [E],
-        basis: akita_types::BasisMode,
+        basis: akita_params::BasisMode,
         ring_dimension: usize,
         positions_per_block: usize,
         live_blocks: usize,
         alpha_bits: usize,
-        opening_method: akita_types::OpeningMethod,
+        opening_method: akita_params::OpeningMethod,
         witness_len: usize,
     ) -> Self {
         Self {
@@ -341,7 +341,7 @@ impl<'a, E: Field> ValidatedRecursiveGroupOpeningPlan<'a, E> {
     pub const fn point(&self) -> &'a [E] {
         self.point
     }
-    pub const fn basis(&self) -> akita_types::BasisMode {
+    pub const fn basis(&self) -> akita_params::BasisMode {
         self.basis
     }
     pub const fn ring_dimension(&self) -> usize {
@@ -356,7 +356,7 @@ impl<'a, E: Field> ValidatedRecursiveGroupOpeningPlan<'a, E> {
     pub const fn alpha_bits(&self) -> usize {
         self.alpha_bits
     }
-    pub const fn opening_method(&self) -> akita_types::OpeningMethod {
+    pub const fn opening_method(&self) -> akita_params::OpeningMethod {
         self.opening_method
     }
     pub const fn witness_len(&self) -> usize {
