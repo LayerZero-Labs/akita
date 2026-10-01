@@ -3,7 +3,7 @@
 use akita_error::AkitaError;
 
 use crate::proof::DigitBlocks;
-use crate::WitnessUnitLayout;
+use akita_params::WitnessUnitLayout;
 
 /// Destination for canonical witness coefficient emission.
 pub trait WitnessCoefficientSink {

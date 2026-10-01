@@ -7,7 +7,8 @@ use crate::opaque::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_types::{DigitBlocks, RingRelationMode};
+use akita_params::RingRelationMode;
+use akita_types::DigitBlocks;
 use jolt_field::{CanonicalEncoding, Field};
 
 use super::relation_quotient::quotient_from_cyclic_and_reduced;
@@ -111,7 +112,7 @@ mod tests {
         let setup = AkitaProverSetup::<F>::generate_with_capacity(
             8,
             1,
-            akita_types::SetupMatrixCapacity {
+            akita_params::SetupMatrixCapacity {
                 num_field_elements: 4 * D,
             },
         )

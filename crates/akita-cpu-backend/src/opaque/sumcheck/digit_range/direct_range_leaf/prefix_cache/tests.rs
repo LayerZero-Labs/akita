@@ -540,7 +540,7 @@ fn stage1_prefix_proof_reconstructs_first_two_rounds() {
     let mut prover = LowBasisRangeCheckProver::<F>::new(
         packed(&w_compact),
         &tau0,
-        akita_types::DigitRangePlan::new(b).unwrap(),
+        akita_params::DigitRangePlan::new(b).unwrap(),
         live_x_cols,
         col_bits,
         ring_bits,

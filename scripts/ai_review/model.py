@@ -18,6 +18,11 @@ INTEGER = {"type": "integer"}
 RESULT_SCHEMA = object_schema({
     "complete": {"type": "boolean"},
     "limitations": STRING,
+    "usefulness": object_schema({
+        "motivation": {"type": "string", "enum": ["provided", "missing"]},
+        "verdict": {"type": "string", "enum": ["beneficial", "unclear", "not_beneficial"]},
+        "assessment": {"type": "string", "description": "Evaluate the PR's net repository benefit, separately from correctness or description alignment. Cite concrete evidence, costs, and any missing justification."},
+    }),
     "discussion_blockers": {"type": "array", "items": STRING,
                             "description": "Unresolved non-nit findings already raised in eligible human or allowlisted bot discussion, with source evidence. Do not duplicate them inline."},
     "coverage": {"type": "array", "items": STRING},

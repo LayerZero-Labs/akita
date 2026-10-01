@@ -56,7 +56,7 @@ fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
     );
     assert!(relation_modes[..cutover]
         .iter()
-        .all(|mode| *mode == akita_types::RingRelationMode::QuotientLift));
+        .all(|mode| *mode == akita_params::RingRelationMode::QuotientLift));
     assert!(relation_modes[cutover..]
         .iter()
         .all(|mode| mode.is_reduced_evaluation()));
@@ -84,7 +84,7 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
     policy.inner_basis_range.1 = policy.inner_basis_range.0;
     policy.opening_basis_range.1 = policy.opening_basis_range.0;
     let key = onehot_group(20, 1);
-    let lookup_key = akita_types::ScheduleLookupKey::single(key);
+    let lookup_key = akita_params::ScheduleLookupKey::single(key);
     let canonical = crate::planner::find_schedule_in_relation_order(
         &lookup_key,
         OneHot::committed_source_contract().unwrap(),

@@ -233,9 +233,9 @@ prepared state. Malformed terminal bytes return `AkitaError` or
   decoded response norm, ring relations, and opening trace.
 - `crates/akita-verifier/src/terminal/ntt.rs` evaluates the
   exact A product.
-- `crates/akita-types/src/golomb_rice.rs` implements the codec and its
+- `crates/akita-params/src/golomb_rice.rs` implements the codec and its
   canonical-decoding tests.
-- `crates/akita-types/src/layout/tail_segments.rs` defines the response
+- `crates/akita-params/src/layout/tail_segments.rs` defines the response
   layout and transcript segments, and
   `crates/akita-types/src/proof/tail_segments.rs` defines the wire response.
 - `crates/akita-types/src/field_reduction.rs` implements subfield recovery.

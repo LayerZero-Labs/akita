@@ -6,6 +6,7 @@ use crate::opaque::*;
 use jolt_poly::UnivariatePoly;
 
 use akita_error::AkitaError;
+use akita_params::*;
 use akita_serialization::AkitaSerialize;
 use akita_types::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced};

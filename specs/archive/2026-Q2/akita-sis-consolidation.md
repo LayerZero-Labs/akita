@@ -23,10 +23,10 @@ computation — is currently spread across at least four files in two crates:
   `sis_derived_root_params_for_layout`, `root_level_params_for_layout_with_log_basis`).
 - `crates/akita-types/src/sis_floor.rs` (`SisModulusProfileId`, `sis_max_widths`,
   `min_rank_for_secure_width`, `ceil_supported_collision`).
-- `crates/akita-types/src/layout/digit_math.rs` (`num_digits_for_bound`,
+- `crates/akita-params/src/layout/digit_math.rs` (`num_digits_for_bound`,
   `compute_num_digits*`, `ring_product_infinity_norm_bound`,
   `witness_block_l1_norm`, `fold_witness_norms`, `compute_num_digits_fold_with_claims`,
-  `optimal_block_geometry_split`) and `crates/akita-types/src/layout/sis_derivation.rs`
+  `optimal_block_geometry_split`) and `crates/akita-params/src/layout/sis_derivation.rs`
   (`decomp_depths`, `level_layout_from_params`, `recursive_level_layout_from_params`).
 
 The same A-role collision formula already exists in **two** copies
@@ -34,11 +34,11 @@ The same A-role collision formula already exists in **two** copies
 re-derived in the planner DP and in the runtime table expansion. This duplication
 is the source of the drift risk this spec eliminates.
 
-**Goal:** create a new module **`akita_types::sis`** that owns every SIS/Ajtai
+**Goal:** create a new module **`akita_params::sis`** that owns every SIS/Ajtai
 *leaf primitive* — norm bounds, Ajtai-key sizing, and decomposition digit/width
 counts — behind a small, readable API. All other code (including
 `akita-planner`) computes SIS/Ajtai quantities **only** through
-`akita_types::sis`. The "connecting" wrappers (`compute_ajtai_key_params_*`,
+`akita_params::sis`. The "connecting" wrappers (`compute_ajtai_key_params_*`,
 `ajtai_*_width_bucket`, the `WitnessType` dispatcher) are deleted; each call site
 instead wires the three leaf calls (`norm → width → rank → AjtaiKeyParams::try_new`)
 explicitly.
@@ -53,7 +53,7 @@ explicitly.
 
 ### Goal
 
-Introduce `crates/akita-types/src/sis/` with three primitive submodules and make
+Introduce `crates/akita-params/src/sis/` with three primitive submodules and make
 it the single source of truth for SIS/Ajtai sizing:
 
 - `norm_bound.rs` — weak-binding collision norms per witness role
@@ -67,7 +67,7 @@ it the single source of truth for SIS/Ajtai sizing:
 
 No SIS/Ajtai sizing logic remains in `akita-planner`, nor scattered across
 `akita-types`; the rest of the code only *orchestrates* (assembles
-`AjtaiKeyParams` / `LevelParams` from the `akita_types::sis` primitives).
+`AjtaiKeyParams` / `LevelParams` from the `akita_params::sis` primitives).
 
 ### Invariants
 
@@ -75,7 +75,7 @@ No SIS/Ajtai sizing logic remains in `akita-planner`, nor scattered across
   tables, `min_secure_rank`, `ceil_supported_collision`, each role's collision
   norm, the `||c·s||_inf` ring-product bound, each role's digit count, and each
   role's committed width. Grep for the old symbol names must resolve only into
-  `akita_types::sis` (plus its `akita_types::` re-exports). The two existing
+  `akita_params::sis` (plus its `akita_types::` re-exports). The two existing
   copies of the A-role collision formula collapse to one.
 - **Behavior-preserving.** The SIS-floor tables and every numeric result are
   byte-for-byte identical to today. The generated schedule tables,
@@ -118,7 +118,7 @@ crates/akita-types/src/
 
 `crates/akita-types/src/lib.rs` adds `pub mod sis;` and re-exports the types that
 are part of the `akita-types` public vocabulary at their **current** paths
-(`akita_types::SisModulusProfileId`, `akita_types::AjtaiKeyParams`) so the ~32
+(`akita_params::SisModulusProfileId`, `akita_types::AjtaiKeyParams`) so the ~32
 references to `SisModulusProfileId` and ~10 to `AjtaiKeyParams` keep compiling
 untouched:
 
@@ -272,7 +272,7 @@ Every place that needs an Ajtai key does the explicit three-step the user
 specified (no `compute_ajtai_key_params_*` wrapper):
 
 ```rust
-use akita_types::sis::*;
+use akita_params::sis::*;
 
 // A key
 let norm_s   = rounded_up_norm_s(family, d, decomp, &stage1, is_root, onehot_k, nu)
@@ -309,18 +309,18 @@ formula, only the wiring above). See Open Questions on inline vs. one helper.
 | `akita-types/src/sis_floor.rs` | `min_rank_for_secure_width` | **move + rename** → `sis::min_secure_rank` |
 | `akita-types/src/sis_floor.rs` | `ceil_supported_collision` | **move** → `sis/ajtai_key.rs` |
 | `akita-types/src/sis_floor.rs` | (file) | **delete** once emptied |
-| `akita-types/src/layout/params.rs` | `AjtaiKeyParams` | **move** → `sis/ajtai_key.rs`; `akita-types` re-exports; descriptor encoding stays in the descriptor module |
+| `akita-params/src/layout/params.rs` | `AjtaiKeyParams` | **move** → `sis/ajtai_key.rs`; `akita-types` re-exports; descriptor encoding stays in the descriptor module |
 | `akita-types/src/sis_offline.rs` | `a_role_witness_infinity_norm`, `a_role_collision_infinity_norm` | **move** → `sis/norm_bound.rs` (private), folded into `rounded_up_norm_s` |
 | `akita-types/src/sis_offline.rs` | `sis_secure_level_params`, `sis_derived_root_params_for_layout`, `root_level_params_for_layout_with_log_basis`, `SisRoleWidths`, `SisCollisionBounds` | **delete**; LevelParams assembly becomes orchestration (the 3-step pattern) at the call sites |
 | `akita-types/src/sis_offline.rs` | (file) | **delete** once emptied |
-| `akita-types/src/layout/digit_math.rs` | `compute_num_digits*`, `num_digits_for_bound`, `balanced_digit_max`, `ring_product_infinity_norm_bound`, `witness_block_l1_norm`, `fold_witness_norms`, `FoldWitnessNorms`, `FoldChallengeNorms`, `compute_num_digits_fold_with_claims` | **move** → `sis/` (`decomposition_digits.rs` + `norm_bound.rs`) |
-| `akita-types/src/layout/digit_math.rs` | `gadget_row_scalars` | **stays** in `layout` (field/gadget helper, not SIS) |
-| `akita-types/src/layout/digit_math.rs` | `optimal_block_geometry_split` | **move** → `akita-planner` (a planning *search*, not a leaf primitive; uses only `sis` primitives) |
-| `akita-types/src/layout/sis_derivation.rs` | `decomp_depths` | **move** → `sis/decomposition_digits.rs` |
-| `akita-types/src/layout/sis_derivation.rs` | `level_layout_from_params`, `recursive_level_layout_from_params` | **keep as orchestration**, rewired onto `sis` (these build `LevelParams`; see Open Questions on relocation) |
+| `akita-params/src/layout/digit_math.rs` | `compute_num_digits*`, `num_digits_for_bound`, `balanced_digit_max`, `ring_product_infinity_norm_bound`, `witness_block_l1_norm`, `fold_witness_norms`, `FoldWitnessNorms`, `FoldChallengeNorms`, `compute_num_digits_fold_with_claims` | **move** → `sis/` (`decomposition_digits.rs` + `norm_bound.rs`) |
+| `akita-params/src/layout/digit_math.rs` | `gadget_row_scalars` | **stays** in `layout` (field/gadget helper, not SIS) |
+| `akita-params/src/layout/digit_math.rs` | `optimal_block_geometry_split` | **move** → `akita-planner` (a planning *search*, not a leaf primitive; uses only `sis` primitives) |
+| `akita-params/src/layout/sis_derivation.rs` | `decomp_depths` | **move** → `sis/decomposition_digits.rs` |
+| `akita-params/src/layout/sis_derivation.rs` | `level_layout_from_params`, `recursive_level_layout_from_params` | **keep as orchestration**, rewired onto `sis` (these build `LevelParams`; see Open Questions on relocation) |
 | `akita-planner/src/ajtai_params.rs` | `WitnessType`, `binding_norm`, `decomposed_num_digits`, `ajtai_{a,b,d}_width_bucket`, `compute_ajtai_key_params_{a,b,d}`, `compute_all_ajtai_keys_params`, `key_with_secure_rank` | **delete** the whole file; replace call sites with the 3-step pattern (optionally one `build_level_ajtai_keys` helper) |
 | `akita-prover/src/protocol/ring_relation.rs` | `beta_linf_fold_bound_with_num_claims` | **rewire** to `sis::rounded_up_norm_z` (drops the duplicated β formula) |
-| `akita-types/src/layout/params.rs` | `LevelParams::{num_digits_fold, fold_witness_norms, challenge_infinity_norm}` | **rewire** to delegate to `sis` (no inline formula) |
+| `akita-params/src/layout/params.rs` | `LevelParams::{num_digits_fold, fold_witness_norms, challenge_infinity_norm}` | **rewire** to delegate to `sis` (no inline formula) |
 | `scripts/gen_sis_table.py` | output target | **update** to write `sis/floor.rs` |
 
 ### `akita_types::sis_floor` path
@@ -328,7 +328,7 @@ formula, only the wiring above). See Open Questions on inline vs. one helper.
 `min_rank_for_secure_width` / `ceil_supported_collision` are imported from
 `akita_types::sis_floor` in ~6 files (planner + types). Decision: either keep a
 thin `pub mod sis_floor { pub use crate::sis::{...}; }` shim, or migrate those
-imports to `akita_types::sis::{...}` directly (recommended — one canonical path
+imports to `akita_params::sis::{...}` directly (recommended — one canonical path
 for the SIS function surface). The widely-referenced **types**
 (`SisModulusProfileId`, `AjtaiKeyParams`) stay re-exported at `akita_types::` to
 keep their ~40 references untouched.
@@ -352,7 +352,7 @@ keep their ~40 references untouched.
 
 ### Acceptance Criteria
 
-- [ ] `akita_types::sis` module exists with `ajtai_key`, `norm_bound`,
+- [ ] `akita_params::sis` module exists with `ajtai_key`, `norm_bound`,
   `decomposition_digits` (+ private `floor`), exposing exactly:
   `SisModulusProfileId`, `AjtaiKeyParams`, `min_secure_rank`,
   `ceil_supported_collision`, `rounded_up_norm_{s,t,w,z}`, `num_digits_*`,
@@ -363,7 +363,7 @@ keep their ~40 references untouched.
   no longer exist anywhere.
 - [ ] `sis_floor.rs` and `sis_offline.rs` are deleted; the A-role collision
   formula exists in exactly one place (`sis/norm_bound.rs`).
-- [ ] `grep` for each moved symbol resolves into `akita_types::sis` (plus the
+- [ ] `grep` for each moved symbol resolves into `akita_params::sis` (plus the
   documented type re-exports).
 - [ ] All numeric outputs unchanged: `sis` legacy-value tests, the
   `generated_tables` drift guard, and `proof_size_comparison` pass without
@@ -416,7 +416,7 @@ again inside `AjtaiKeyParams::try_new`); net lookups are unchanged or fewer.
    Either way, `optimal_block_geometry_split` is a *search* and should leave the `sis`
    module.
 3. **`akita_types::sis_floor` path.** Delete it and migrate the ~6 importers to
-   `akita_types::sis::{...}` (recommended), or keep a thin re-export shim?
+   `akita_params::sis::{...}` (recommended), or keep a thin re-export shim?
 4. **`build_level_ajtai_keys` helper.** Provide one thin orchestration helper in
    `akita-planner` for the three-key wiring, or fully inline the 3-step at each of
    the (≈3) call sites for maximum explicitness?
@@ -431,6 +431,6 @@ again inside `AjtaiKeyParams::try_new`); net lookups are unchanged or fewer.
   duplicated A-role formula this spec consolidates.
 - Current code: `crates/akita-planner/src/ajtai_params.rs`,
   `crates/akita-types/src/{sis_floor.rs, sis_offline.rs}`,
-  `crates/akita-types/src/layout/{digit_math.rs, sis_derivation.rs, params.rs}`,
+  `crates/akita-params/src/layout/{digit_math.rs, sis_derivation.rs, params.rs}`,
   `crates/akita-prover/src/protocol/ring_relation.rs`,
   `scripts/gen_sis_table.py`.

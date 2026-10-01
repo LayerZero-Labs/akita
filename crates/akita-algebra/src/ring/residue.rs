@@ -306,7 +306,7 @@ mod tests {
         }
 
         // This is the complete commitment-dimension admission surface. Keep
-        // it synchronized with `akita_types::SUPPORTED_COMMITMENT_RING_DIMS`.
+        // it synchronized with `akita_params::SUPPORTED_COMMITMENT_RING_DIMS`.
         check_admitted_dimensions!(Prime32Offset99, FpExt4<Prime32Offset99>, 101);
         check_admitted_dimensions!(Prime64Offset59, Ext2<Prime64Offset59>, 201);
         check_admitted_dimensions!(Prime128OffsetA7F7, Prime128OffsetA7F7, 301);

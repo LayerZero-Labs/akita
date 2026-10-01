@@ -54,7 +54,7 @@ It already records the canonical public routing:
 - `point_group_counts[point_idx]`: number of distinct groups touched by each point.
 
 After the opening-claims cutover, the main schedule-facing projection is
-`AkitaScheduleLookupKey` in `crates/akita-types/src/schedule.rs`:
+`AkitaScheduleLookupKey` in `crates/akita-params/src/schedule.rs`:
 
 ```rust
 pub struct AkitaScheduleLookupKey {
@@ -330,7 +330,7 @@ pub struct GeneratedFoldStep {
 ```
 
 The generated row stores only fold decisions. Runtime expansion derives the
-single terminal [`TerminalWitnessPlan`](../crates/akita-types/src/schedule.rs)
+single terminal [`TerminalWitnessPlan`](../crates/akita-params/src/schedule.rs)
 from the last fold's checked parameters; there is no generated terminal marker.
 
 Do not store cached materialization results in generated entries. In particular,
