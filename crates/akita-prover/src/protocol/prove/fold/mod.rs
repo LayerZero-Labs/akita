@@ -50,7 +50,7 @@ pub(in crate::protocol::prove) struct PreparedFold<
     clippy::too_many_arguments,
     clippy::type_complexity
 )]
-pub(super) fn prepare_fold<'claims, 'source, F, E, B>(
+pub(super) fn prepare_fold<'claims, 'source, F, E, B, H: Sponge>(
     backend: &B,
     block_claims: ProverOpeningData<
         'claims,
@@ -60,7 +60,7 @@ pub(super) fn prepare_fold<'claims, 'source, F, E, B>(
     >,
     commitment_material: Vec<B::CommitmentMaterialHandle>,
     pad_base_evals: bool,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, H>,
     level: u32,
     level_params: &CommittedGroupParams,
     basis: BasisMode,
@@ -103,7 +103,7 @@ where
             .iter()
             .flat_map(|g| g.evaluations().iter().copied())
             .collect::<Vec<_>>();
-        let reduced = prove_extension_opening_reduction::<F, E, B>(
+        let reduced = prove_extension_opening_reduction::<F, E, B, _>(
             backend,
             session,
             &context,
@@ -209,25 +209,24 @@ where
             return Err(AkitaError::InvalidProof);
         }
         if pad_base_evals {
-            akita_transcript::public_extensions::<F, E, _>(
-                grinding.state_mut(),
+            grinding.state_mut().site(
                 akita_types::FoldSite::GroupPoint {
                     level,
                     group: group_index,
                 }
-                .id()?,
-                group_protocol_point,
-            )?;
+                .id()?
+                .into(),
+            );
+            grinding.state_mut().public_all(group_protocol_point);
         }
         scalar_openings.extend_from_slice(prepared.scalar_openings());
         prepared_group_openings.push(prepared);
     }
     if reduction.is_none() {
-        akita_transcript::public_extensions::<F, E, _>(
-            grinding.state_mut(),
-            akita_types::FoldSite::Openings { level }.id()?,
-            &scalar_openings,
-        )?;
+        grinding
+            .state_mut()
+            .site(akita_types::FoldSite::Openings { level }.id()?.into());
+        grinding.state_mut().public_all(&scalar_openings);
     }
     let crate::protocol::ring_relation::PreparedRingRelationOutput {
         relation:
@@ -238,7 +237,7 @@ where
             },
         trace_claim,
         row_coefficients,
-    } = RingRelationProver::prepare::<F, E, B>(
+    } = RingRelationProver::prepare::<F, E, B, _>(
         opening,
         prepared_group_openings,
         commitment_material,
@@ -314,8 +313,8 @@ struct CommittedNextWitness<F: Field, WitnessHandle, M> {
     commitment_material_handle: M,
 }
 
-fn prepare_physical_l2_batch<F, E>(
-    grinding: &mut akita_types::ProverGrinding<'_>,
+fn prepare_physical_l2_batch<F, E, H: Sponge>(
+    grinding: &mut akita_types::ProverGrinding<'_, H>,
     level: usize,
     physical_l2: Option<PhysicalL2ProverReplay<E>>,
 ) -> Result<Option<PhysicalL2ProverReplay<E>>, AkitaError>
@@ -335,8 +334,8 @@ where
     Ok(Some(replay))
 }
 
-fn prepare_stage2_compression<F, E, H>(
-    grinding: &mut akita_types::ProverGrinding<'_>,
+fn prepare_stage2_compression<F, E, H, S: Sponge>(
+    grinding: &mut akita_types::ProverGrinding<'_, S>,
     level: usize,
     rs: &mut RingSwitchOutput<E, H>,
 ) -> Result<E, AkitaError>
@@ -448,9 +447,9 @@ where
 /// Build, commit, and transcript-bind the witness consumed by the successor.
 /// The logical witness is computed once and retained for ring switching.
 #[allow(clippy::too_many_arguments)]
-fn commit_next_witness<F, E, B>(
+fn commit_next_witness<F, E, B, H: Sponge>(
     backend: &B,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, H>,
     level: u32,
     next_params: FoldSuccessorParams<'_>,
     expected_output_witness_len: usize,
@@ -501,22 +500,24 @@ where
             crate::backend::NextWitnessBindingMessage::OuterPayload(public_commitment),
             akita_types::NextWitnessBindingPolicy::OuterPayload,
         ) => {
-            akita_transcript::send_field_group(
-                grinding.state_mut(),
-                akita_types::FoldSite::NextWitnessPayload { level }.id()?,
-                public_commitment.coeffs(),
-            )?;
+            grinding.state_mut().site(
+                akita_types::FoldSite::NextWitnessPayload { level }
+                    .id()?
+                    .into(),
+            );
+            grinding.state_mut().send_all(public_commitment.coeffs());
             NextWitnessState::OuterPayload(public_commitment)
         }
         (
             crate::backend::NextWitnessBindingMessage::TerminalInnerState(message),
             akita_types::NextWitnessBindingPolicy::TerminalInnerState,
         ) => {
-            akita_transcript::send_field_group(
-                grinding.state_mut(),
-                akita_types::FoldSite::NextWitnessInnerState { level }.id()?,
-                message.fields(),
-            )?;
+            grinding.state_mut().site(
+                akita_types::FoldSite::NextWitnessInnerState { level }
+                    .id()?
+                    .into(),
+            );
+            grinding.state_mut().send_all(message.fields());
             NextWitnessState::TerminalInnerState
         }
         _ => return Err(AkitaError::InvalidProof),
@@ -542,12 +543,12 @@ where
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(in crate::protocol::prove) fn prove_fold<F, E, B>(
+pub(in crate::protocol::prove) fn prove_fold<F, E, B, H: Sponge>(
     expanded: &akita_types::AkitaSetupDescriptor,
     prefix_slots: &SetupPrefixProverRegistry<F, B::CommitmentHandle>,
     backend: &B,
     session: &B::ProofSessionHandle,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, H>,
     level: usize,
     lp: &CommittedGroupParams,
     next_params: FoldSuccessorParams<'_>,
@@ -602,7 +603,7 @@ where
         witness_handle: mut next_witness,
         binding: next_commitment_binding,
         commitment_material_handle,
-    } = commit_next_witness::<F, E, B>(
+    } = commit_next_witness::<F, E, B, _>(
         backend,
         grinding,
         fold_level,
@@ -618,7 +619,7 @@ where
         backend.proof_context(session, fold_level)?,
     );
     let next_opening_source_len = committed_witness_len / next_opening_ring_dim;
-    let ring_switch = ring_switch_finalize::<F, E, B>(
+    let ring_switch = ring_switch_finalize::<F, E, B, _>(
         &consumer_ctx,
         &instance,
         grinding,
@@ -669,7 +670,7 @@ where
         point: stage1_point,
         range_image_evaluation,
         physical_l2,
-    } = prove_stage1::<F, E, _>(
+    } = prove_stage1::<F, E, _, _>(
         &consumer_ctx,
         grinding,
         fold_level,
@@ -677,8 +678,8 @@ where
         lp,
         &relation_range_image_plan,
     )?;
-    let physical_l2 = prepare_physical_l2_batch::<F, E>(grinding, level, physical_l2)?;
-    let compression = prepare_stage2_compression::<F, E, _>(grinding, level, &mut rs)?;
+    let physical_l2 = prepare_physical_l2_batch::<F, E, _>(grinding, level, physical_l2)?;
+    let compression = prepare_stage2_compression::<F, E, _, _>(grinding, level, &mut rs)?;
     let batching_coeff =
         grinding.grinded_ext_challenge::<F, E>(akita_types::GrindingSite::Stage2Batch {
             level: fold_level,
@@ -710,7 +711,7 @@ where
     let Stage2ProveOutput {
         challenges: sumcheck_challenges,
         witness_evaluation: w_eval,
-    } = prove_stage2::<F, E, _>(
+    } = prove_stage2::<F, E, _, _>(
         &consumer_ctx,
         level,
         grinding,
@@ -739,7 +740,7 @@ where
     .map_err(|err| AkitaError::InvalidInput(format!("stage-2 proving failed: {err:?}")))?;
     akita_types::stage2_w_eval::<F, E, _>(grinding, fold_level, w_eval)?;
     let stage3_sumcheck_proof = match next_params.recursive() {
-        Some(next_fold_params) => prove_stage3::<F, E, _>(
+        Some(next_fold_params) => prove_stage3::<F, E, _, _>(
             consumer,
             session,
             level,

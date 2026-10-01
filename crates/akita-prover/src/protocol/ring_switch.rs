@@ -6,6 +6,7 @@ use akita_types::{
 };
 use akita_types::{CommittedGroupParams, FpExtEncoding};
 use jolt_field::{CanonicalEncoding, Field, MulBaseUnreduced, Ring};
+use jolt_transcript::Sponge;
 
 pub(crate) enum NextWitnessState<F: Field> {
     OuterPayload(akita_types::RingVec<F>),
@@ -46,10 +47,10 @@ pub(crate) struct RingSwitchFinalization<'a, E: Field, RelationHandle> {
 /// Sample the relation challenges and prepare its opaque witness state.
 #[tracing::instrument(skip_all, name = "ring_switch_finalize")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn ring_switch_finalize<'a, F, E, B>(
+pub(crate) fn ring_switch_finalize<'a, F, E, B, H: Sponge>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
     instance: &RingRelationInstance<F>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, H>,
     level: u32,
     witness_handle: &B::WitnessHandle,
     lp: &CommittedGroupParams,

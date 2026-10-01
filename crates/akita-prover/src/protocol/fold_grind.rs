@@ -6,7 +6,7 @@ use crate::backend::{
     FoldProbeDiagnostics, FoldProbeGeometry, FoldProbeOutcome, ValidatedFoldAcceptancePlan,
     ValidatedFoldProbePlan, ValidatedTerminalFoldProbePlan,
 };
-use akita_challenges::{FoldDraw, PreviewFoldDraw, ProverFoldDraw};
+use akita_challenges::{FoldDraw, PreviewFoldDraw, TranscriptFoldDraw};
 use akita_error::AkitaError;
 use akita_types::GrindingReplay;
 use akita_types::GroupFoldChallenges;
@@ -19,6 +19,7 @@ use akita_types::{
 use akita_types::{OpeningFamily, OpeningMethod};
 use jolt_field::Unreduced;
 use jolt_field::{CanonicalEncoding, Field, Ring};
+use jolt_transcript::Sponge;
 
 #[cfg(feature = "response-model-diagnostics")]
 #[inline]
@@ -58,9 +59,9 @@ pub(crate) struct TerminalFoldGrindOutput {
 /// cap. The returned witness retains centered `z` coefficients only; terminal
 /// `e` and `t` are never gadget decomposed.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn sample_terminal_fold_response<F, E, H, B, const D: usize>(
+pub(crate) fn sample_terminal_fold_response<F, E, H, B, const D: usize, S: Sponge>(
     backend: &B,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, S>,
     level: u32,
     params: &TerminalFoldParams,
     sparse: &akita_challenges::SparseChallengeConfig,
@@ -145,7 +146,8 @@ where
             }
         })?;
     grinding.commit_fold_response(site, nonce)?;
-    let mut live = ProverFoldDraw::new(grinding.state_mut(), level, 0);
+    let fold_site = akita_types::FoldSite::FoldChallenge { level, group: 0 }.id()?;
+    let mut live = TranscriptFoldDraw::new(grinding.state_mut(), fold_site.into());
     let live_challenges = live.draw_folding_challenges_with_rejection(
         akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
         params.d_a(),
@@ -222,9 +224,9 @@ fn first_jointly_accepted_nonce<T>(
 /// Probe every group at its native A dimension as one transcript transaction
 /// for each candidate nonce.
 #[allow(clippy::too_many_arguments)]
-fn replay_multi_group_fold_decompose_witnesses<F, E, B>(
+fn replay_multi_group_fold_decompose_witnesses<F, E, B, H: Sponge>(
     opening_ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, H>,
     level: u32,
     root_lp: &CommittedGroupParams,
     groups: &[PreparedFoldGrindGroup<'_, B::PreparedOpeningHandle>],
@@ -320,7 +322,12 @@ where
             let challenges = {
                 let group_index = u32::try_from(group.group_index)
                     .map_err(|_| AkitaError::InvalidSetup("fold group index exceeds u32".into()))?;
-                let mut live = ProverFoldDraw::new(grinding.state_mut(), level, group_index);
+                let fold_site = akita_types::FoldSite::FoldChallenge {
+                    level,
+                    group: group_index,
+                }
+                .id()?;
+                let mut live = TranscriptFoldDraw::new(grinding.state_mut(), fold_site.into());
                 draw_group_fold_challenges::<F, E, _>(
                     &mut live,
                     &group.params,
@@ -404,9 +411,9 @@ where
 /// When `tail_t_vectors` is set, the terminal response must fit the exact cap
 /// and Golomb-Rice byte budget carried by its scheduled response shape.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, B>(
+pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, B, H: Sponge>(
     opening_ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, H>,
     level: u32,
     root_lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
@@ -467,7 +474,7 @@ where
             ),
         });
     }
-    replay_multi_group_fold_decompose_witnesses::<F, E, B>(
+    replay_multi_group_fold_decompose_witnesses::<F, E, B, _>(
         opening_ctx,
         grinding,
         level,
@@ -493,7 +500,7 @@ mod tests {
     impl FoldDraw for FixedDraw {
         fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> Result<[u8; 32], AkitaError> {
             self.draws += 1;
-            Ok([11; akita_transcript::FOLD_CHALLENGE_SEED_LEN])
+            Ok([11; akita_challenges::FOLD_CHALLENGE_SEED_LEN])
         }
     }
 

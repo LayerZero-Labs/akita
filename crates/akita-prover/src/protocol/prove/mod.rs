@@ -22,8 +22,9 @@ use akita_types::{
     BasisMode, Commitment, CommittedGroupParams, FoldParams, FoldSchedule, OpeningClaimsLayout,
     PolynomialGroupLayout, SetupContributionMode, TerminalFoldParams,
 };
+use jolt_field::{CanonicalDecode, Fold, Unreduced};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
-use jolt_field::{Fold, Unreduced};
+use jolt_transcript::{Channel, ProverTranscript, Sponge};
 
 pub(crate) struct ExtensionOpeningReduction<E: Field> {
     pub(crate) final_claims: Vec<E>,

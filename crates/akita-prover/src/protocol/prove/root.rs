@@ -4,16 +4,21 @@ use akita_config::TrustedScheduleCatalog;
 use jolt_field::AdditiveGroup;
 
 /// Prove an ordered statement using reusable commitments retained by one backend.
+///
+/// Akita runs on the caller's transcript: its first operation absorbs the
+/// instance descriptor as a public message, and every Akita message lands in
+/// the caller's argument string. The caller owns the transcript's protocol id,
+/// session binding, and `finish`.
 #[allow(clippy::too_many_arguments)]
-pub fn batched_prove<'a, Cfg, B>(
+pub fn batched_prove<'a, Cfg, B, H>(
     expanded: &akita_types::AkitaSetupDescriptor,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
     schedules: &TrustedScheduleCatalog<Cfg>,
     backend: &B,
     opening: SelectedProverOpeningData<'a, Cfg::ExtField, B::CommitmentHandle, Cfg::Field>,
-    transcript_session: &[u8],
+    transcript: &mut ProverTranscript<H>,
     basis: BasisMode,
-) -> Result<Vec<u8>, AkitaError>
+) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: CanonicalEncoding + AkitaSerialize + Unreduced + PseudoMersenne + Ring + 'static,
@@ -27,6 +32,7 @@ where
         + AkitaSerialize
         + 'static,
     B: ProverBackend<Cfg::Field, Cfg::ExtField>,
+    H: Sponge,
 {
     let (selection, claims) = opening.into_low_level_parts();
     let resolved = schedules.resolve_selection(selection)?;
@@ -52,9 +58,15 @@ where
         Cfg::Field,
         Cfg,
     >(expanded, layout, selection, schedule, basis)?;
-    let channel = akita_transcript::new_prover_channel(transcript_session, &descriptor_bytes)
-        .map_err(|_| AkitaError::InvalidSetup("native transcript initialization failed".into()))?;
-    let mut grinding = akita_types::ProverGrinding::new(channel, &grinding_plan);
+    transcript.site(
+        akita_types::ProtocolSiteId {
+            family: akita_types::transcript::SITE_FAMILY_ROOT_STATEMENT,
+            ..akita_types::ProtocolSiteId::default()
+        }
+        .into(),
+    );
+    transcript.public_bytes(&descriptor_bytes);
+    let mut grinding = akita_types::ProverGrinding::new(transcript, &grinding_plan);
     claims.append_to(&schedule.root.params, &mut grinding)?;
     let root_claims = claims.map_groups(OpeningSource::Commitment)?;
     let (next_params, next_binding) = schedule.recursive_folds.first().map_or(
@@ -69,7 +81,7 @@ where
             )
         },
     );
-    let prepared = prepare_fold::<Cfg::Field, Cfg::ExtField, B>(
+    let prepared = prepare_fold::<Cfg::Field, Cfg::ExtField, B, _>(
         backend,
         root_claims,
         material,
@@ -83,7 +95,7 @@ where
         next_params.inner_ring_dimension(),
         false,
     )?;
-    let root = prove_fold::<Cfg::Field, Cfg::ExtField, B>(
+    let root = prove_fold::<Cfg::Field, Cfg::ExtField, B, _>(
         expanded,
         prefix_slots,
         backend,
@@ -96,7 +108,7 @@ where
         next_binding,
         prepared,
     )?;
-    let suffix = suffix::prove_suffix::<Cfg, B>(
+    let suffix = suffix::prove_suffix::<Cfg, B, _>(
         expanded,
         prefix_slots,
         backend,
