@@ -96,7 +96,9 @@ impl OpeningClaimsLayout {
     /// Validate layout count consistency.
     pub fn check(&self) -> Result<(), AkitaError> {
         if self.groups.is_empty() || self.checked_num_total_polynomials()? == 0 {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "opening claim layout must be nonempty".into(),
+            ));
         }
         for group in &self.groups {
             group.validate()?;
@@ -150,13 +152,16 @@ impl OpeningClaimsLayout {
     }
 
     fn checked_num_total_polynomials(&self) -> Result<usize, AkitaError> {
-        checked::sum(self.groups.iter().map(|group| group.num_polynomials()))
-            .ok_or(AkitaError::InvalidProof)
+        checked::sum(self.groups.iter().map(|group| group.num_polynomials())).ok_or_else(|| {
+            AkitaError::InvalidInput("opening layout polynomial count overflows usize".into())
+        })
     }
 
     /// Borrow one group layout by index.
     pub fn group_layout(&self, g: usize) -> Result<&PolynomialGroupLayout, AkitaError> {
-        self.groups.get(g).ok_or(AkitaError::InvalidProof)
+        self.groups.get(g).ok_or_else(|| {
+            AkitaError::InvalidInput("opening layout group index is out of range".into())
+        })
     }
 
     /// Commitment-group index used as the final/new group for multi-group root schedules.
@@ -193,7 +198,9 @@ impl OpeningClaimsLayout {
     ) -> Result<std::ops::Range<usize>, AkitaError> {
         self.check()?;
         if group_index >= self.groups.len() {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "root claim range group index is out of range".into(),
+            ));
         }
         let start = checked::sum(
             self.groups[..group_index]
@@ -285,5 +292,49 @@ impl OpeningClaimsLayout {
             );
         }
         Ok(scaled)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_layout_arguments_name_the_bad_count_or_index() {
+        let empty = OpeningClaimsLayout { groups: vec![] };
+        assert!(matches!(
+            empty.check(),
+            Err(AkitaError::InvalidInput(message)) if message.contains("layout must be nonempty")
+        ));
+        assert!(matches!(
+            empty.root_final_group_index(),
+            Err(AkitaError::InvalidInput(message)) if message.contains("layout must be nonempty")
+        ));
+        let zero = OpeningClaimsLayout {
+            groups: vec![PolynomialGroupLayout::new(1, 0)],
+        };
+        assert!(matches!(
+            zero.check(),
+            Err(AkitaError::InvalidInput(message)) if message.contains("layout must be nonempty")
+        ));
+        let layout = OpeningClaimsLayout::new(1, 1).expect("valid layout");
+        assert!(matches!(
+            layout.group_layout(1),
+            Err(AkitaError::InvalidInput(message)) if message.contains("layout group index")
+        ));
+        assert!(matches!(
+            layout.root_group_claim_range(1),
+            Err(AkitaError::InvalidInput(message)) if message.contains("claim range group index")
+        ));
+        let overflow = OpeningClaimsLayout {
+            groups: vec![
+                PolynomialGroupLayout::new(1, usize::MAX),
+                PolynomialGroupLayout::new(1, 1),
+            ],
+        };
+        assert!(matches!(
+            overflow.checked_num_total_polynomials(),
+            Err(AkitaError::InvalidInput(message)) if message.contains("polynomial count overflows")
+        ));
     }
 }
