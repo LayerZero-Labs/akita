@@ -252,14 +252,14 @@ impl CpuWitnessHandle {
         F: Field + CanonicalEncoding,
     {
         if self.relation_plan.is_some() {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "recursive witness relation plan is already initialized".into(),
             ));
         }
         let opening_batch = relation.opening_batch();
         let witness_layout = relation.segment_layout(level, None)?;
         if witness_layout.live_coeff_len() != self.manifest.logical_len() {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "recursive witness manifest disagrees with its relation instance".into(),
             ));
         }
@@ -347,7 +347,7 @@ where
         plan: &crate::opaque::ValidatedRelationWitnessPlan,
     ) -> Result<crate::opaque::PreparedRelationWitness<Self::RelationWitness>, AkitaError> {
         prepared.ok_or_else(|| {
-            AkitaError::InvalidInput("relation witness preparation requires prepared setup".into())
+            AkitaError::Internal("relation witness preparation requires prepared setup".into())
         })?;
         if witness.logical.live_coeff_len() != plan.witness_len() {
             return Err(AkitaError::InvalidInput(

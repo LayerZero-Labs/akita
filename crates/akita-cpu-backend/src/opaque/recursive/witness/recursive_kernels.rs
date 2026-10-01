@@ -123,7 +123,7 @@ where
         >,
 {
     let prepared = prepared.ok_or_else(|| {
-        AkitaError::InvalidInput("recursive opening requires prepared backend state".into())
+        AkitaError::Internal("recursive opening requires prepared backend state".into())
     })?;
     let source = witness.committed.as_ref().unwrap_or(&witness.logical);
     if plan.ring_dimension() != D || plan.witness_len() != source.live_coeff_len() {
