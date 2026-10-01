@@ -21,9 +21,9 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRoundState<E> {
         &mut self,
         phase: &mut Phase<E>,
     ) -> RoundMessage<E> {
-        enum RoundComputation<E: Field> {
+        enum RoundComputation<'a, E: Field> {
             Message(RoundMessage<E>, UnivariatePoly<E>),
-            Terms(NormRoundTerms<E>, RoundMessage<E>),
+            Terms(NormRoundTerms<'a, E>, RoundMessage<E>),
         }
 
         let computation = match phase {
@@ -83,7 +83,7 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRoundState<E> {
                     witness,
                     None,
                     self.split_eq.remaining_eq_tables(),
-                    self.can_skip_norm_linear_coeff(),
+                    self.split_eq.prepare_linear_q_recovery(),
                 );
                 RoundComputation::Terms(norm, relation)
             }

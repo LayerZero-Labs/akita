@@ -10,23 +10,30 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> (NormRoundTerms<'_, E>, RoundMessage<E>) {
         debug_assert!(self.in_coefficient_round());
         debug_assert_eq!(
             compact_witness.len(),
             self.live_lane_count * weights.common_alpha_factor().len()
         );
 
-        if self.can_skip_norm_linear_coeff() {
-            self.compute_compact_partial_lane_coefficient_round_terms_skip_linear::<true, false>(
-                compact_witness,
-                weights,
+        if let Some(recovery) = self.split_eq.prepare_linear_q_recovery() {
+            let (norm, relation) = self
+                .compute_compact_partial_lane_coefficient_round_terms_skip_linear::<true, false>(
+                    compact_witness,
+                    weights,
+                );
+            (
+                NormRoundTerms::SkipLinear([norm[0], norm[2]], recovery),
+                relation,
             )
         } else {
-            self.compute_compact_partial_lane_coefficient_round_terms_skip_linear::<false, false>(
-                compact_witness,
-                weights,
-            )
+            let (norm, relation) = self
+                .compute_compact_partial_lane_coefficient_round_terms_skip_linear::<false, false>(
+                    compact_witness,
+                    weights,
+                );
+            (NormRoundTerms::Full(norm), relation)
         }
     }
 
@@ -34,17 +41,24 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         weights: &RelationWeightFactorization<E>,
-    ) -> NormRoundTerms<E> {
-        let terms = if self.can_skip_norm_linear_coeff() {
-            self.compute_compact_partial_lane_coefficient_round_terms_skip_linear::<true, true>(
-                compact_witness,
-                weights,
+    ) -> NormRoundTerms<'_, E> {
+        let terms = if let Some(recovery) = self.split_eq.prepare_linear_q_recovery() {
+            let (norm, relation) = self
+                .compute_compact_partial_lane_coefficient_round_terms_skip_linear::<true, true>(
+                    compact_witness,
+                    weights,
+                );
+            (
+                NormRoundTerms::SkipLinear([norm[0], norm[2]], recovery),
+                relation,
             )
         } else {
-            self.compute_compact_partial_lane_coefficient_round_terms_skip_linear::<false, true>(
-                compact_witness,
-                weights,
-            )
+            let (norm, relation) = self
+                .compute_compact_partial_lane_coefficient_round_terms_skip_linear::<false, true>(
+                    compact_witness,
+                    weights,
+                );
+            (NormRoundTerms::Full(norm), relation)
         };
         terms.0
     }
@@ -56,7 +70,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> ([E; 3], RoundMessage<E>) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
@@ -145,7 +159,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
             },
         );
 
-        (virt_coeffs.into_terms(), reduce_compact_rel(rel_accum))
+        (virt_coeffs.totals(), reduce_compact_rel(rel_accum))
     }
 
     #[tracing::instrument(
@@ -156,23 +170,30 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         &self,
         folded_witness: &[E],
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> (NormRoundTerms<'_, E>, RoundMessage<E>) {
         debug_assert!(self.in_coefficient_round());
         debug_assert_eq!(
             folded_witness.len(),
             self.live_lane_count * weights.common_alpha_factor().len()
         );
 
-        if self.can_skip_norm_linear_coeff() {
-            self.compute_folded_partial_lane_coefficient_round_terms_skip_linear::<true, false>(
-                folded_witness,
-                weights,
+        if let Some(recovery) = self.split_eq.prepare_linear_q_recovery() {
+            let (norm, relation) = self
+                .compute_folded_partial_lane_coefficient_round_terms_skip_linear::<true, false>(
+                    folded_witness,
+                    weights,
+                );
+            (
+                NormRoundTerms::SkipLinear([norm[0], norm[2]], recovery),
+                relation,
             )
         } else {
-            self.compute_folded_partial_lane_coefficient_round_terms_skip_linear::<false, false>(
-                folded_witness,
-                weights,
-            )
+            let (norm, relation) = self
+                .compute_folded_partial_lane_coefficient_round_terms_skip_linear::<false, false>(
+                    folded_witness,
+                    weights,
+                );
+            (NormRoundTerms::Full(norm), relation)
         }
     }
 
@@ -180,17 +201,24 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         &self,
         folded_witness: &[E],
         weights: &RelationWeightFactorization<E>,
-    ) -> NormRoundTerms<E> {
-        let terms = if self.can_skip_norm_linear_coeff() {
-            self.compute_folded_partial_lane_coefficient_round_terms_skip_linear::<true, true>(
-                folded_witness,
-                weights,
+    ) -> NormRoundTerms<'_, E> {
+        let terms = if let Some(recovery) = self.split_eq.prepare_linear_q_recovery() {
+            let (norm, relation) = self
+                .compute_folded_partial_lane_coefficient_round_terms_skip_linear::<true, true>(
+                    folded_witness,
+                    weights,
+                );
+            (
+                NormRoundTerms::SkipLinear([norm[0], norm[2]], recovery),
+                relation,
             )
         } else {
-            self.compute_folded_partial_lane_coefficient_round_terms_skip_linear::<false, true>(
-                folded_witness,
-                weights,
-            )
+            let (norm, relation) = self
+                .compute_folded_partial_lane_coefficient_round_terms_skip_linear::<false, true>(
+                    folded_witness,
+                    weights,
+                );
+            (NormRoundTerms::Full(norm), relation)
         };
         terms.0
     }
@@ -202,7 +230,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         &self,
         folded_witness: &[E],
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> ([E; 3], RoundMessage<E>) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
@@ -282,7 +310,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
                 (va, ra)
             },
         );
-        (virt_coeffs.into_terms(), rel_coeffs)
+        (virt_coeffs.totals(), rel_coeffs)
     }
 
     pub(super) fn fold_folded_coefficients(

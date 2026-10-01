@@ -85,7 +85,7 @@
 //! `dw` scan so the witness-side work is shared.
 
 use akita_algebra::poly::trim_trailing_zeros;
-use akita_algebra::split_eq::GruenSplitEq;
+use akita_algebra::split_eq::{GruenSplitEq, PreparedLinearQRecovery};
 use akita_error::AkitaError;
 use akita_sumcheck::{
     fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver,
@@ -131,21 +131,9 @@ enum Phase<E: Field> {
     },
 }
 
-#[derive(Clone, Copy)]
-enum NormRoundTerms<E: Field> {
+enum NormRoundTerms<'a, E: Field> {
     Full([E; 3]),
-    SkipLinear([E; 2]),
-}
-
-impl<E: Field> NormRoundTerms<E> {
-    #[inline(always)]
-    fn from_totals<const SKIP_LINEAR: bool>(totals: [E; 3]) -> Self {
-        if SKIP_LINEAR {
-            Self::SkipLinear([totals[0], totals[2]])
-        } else {
-            Self::Full(totals)
-        }
-    }
+    SkipLinear([E; 2], PreparedLinearQRecovery<'a, E>),
 }
 
 type CompactRelAccum<E> = [<E as Unreduced>::SmallProduct; 4];

@@ -42,11 +42,11 @@ const SCAN_CHUNK_LANES: usize = 256;
 const MIN_LOOKUP_TASK_PAIRS: usize = 1 << 12;
 
 /// Range-image message of one prefix round.
-pub(super) enum PrefixNormRound<E: Field> {
+pub(super) enum PrefixNormRound<'a, E: Field> {
     /// Complete message, already scaled by the split-equality scalar.
     Polynomial(UnivariatePoly<E>),
     /// Inner message that the split-equality factor still multiplies.
-    Terms(NormRoundTerms<E>),
+    Terms(NormRoundTerms<'a, E>),
 }
 
 /// Leading-round state built from one scan of the compact witness.
@@ -722,29 +722,29 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
     }
 
     /// Range-image message of a round that keeps the witness compact.
-    pub(super) fn norm_round(
+    pub(super) fn norm_round<'a>(
         &self,
         split_eq: &GruenSplitEq<E>,
-        skip_linear: bool,
-    ) -> PrefixNormRound<E> {
+        recovery: Option<PreparedLinearQRecovery<'a, E>>,
+    ) -> PrefixNormRound<'a, E> {
         match self.challenges.len() {
             0 => PrefixNormRound::Polynomial(self.norm_cache.round0_norm_poly()),
             1 => PrefixNormRound::Polynomial(self.norm_cache.round1_norm_poly(self.challenges[0])),
             2 => PrefixNormRound::Terms(self.round2_norm_terms()),
             round => {
-                PrefixNormRound::Terms(self.lookup_round_terms(round, split_eq, skip_linear, None))
+                PrefixNormRound::Terms(self.lookup_round_terms(round, split_eq, recovery, None))
             }
         }
     }
 
     /// Materialize the witness folded by every challenge so far and return it
     /// with the range-image message of the last prefix round.
-    pub(super) fn materialize(
+    pub(super) fn materialize<'a>(
         &self,
         witness: PackedSignedDigitView<'_>,
         split_eq: &GruenSplitEq<E>,
-        skip_linear: bool,
-    ) -> (Vec<E>, PrefixNormRound<E>) {
+        recovery: Option<PreparedLinearQRecovery<'a, E>>,
+    ) -> (Vec<E>, PrefixNormRound<'a, E>) {
         debug_assert_eq!(self.challenges.len(), self.last_round);
         match self.last_round {
             1 => {
@@ -764,8 +764,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             ),
             round => {
                 let mut folded = vec![E::zero(); self.classes.len() >> (round - 2)];
-                let terms =
-                    self.lookup_round_terms(round, split_eq, skip_linear, Some(&mut folded));
+                let terms = self.lookup_round_terms(round, split_eq, recovery, Some(&mut folded));
                 (folded, PrefixNormRound::Terms(terms))
             }
         }
@@ -776,7 +775,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
     /// The folded witness at a quad is linear in its digits, so the round-2
     /// slope of an even/odd quad pair is the quad fold of their digit
     /// difference.
-    fn round2_norm_terms(&self) -> NormRoundTerms<E> {
+    fn round2_norm_terms<'a>(&self) -> NormRoundTerms<'a, E> {
         let mut at_zero = E::zero();
         let mut at_one = E::zero();
         for ((&fold, &even), &odd) in self
@@ -821,7 +820,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
                 }
             }
         }
-        NormRoundTerms::from_totals::<false>([at_zero, at_one - at_zero - at_infinity, at_infinity])
+        NormRoundTerms::Full([at_zero, at_one - at_zero - at_infinity, at_infinity])
     }
 
     /// Equality weights of the quad corners `[00, 10, 01, 11]` at `(r0, r1)`.
@@ -831,14 +830,14 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         [s0 * s1, r0 * s1, s0 * r1, r0 * r1]
     }
 
-    fn lookup_round_terms(
+    fn lookup_round_terms<'a>(
         &self,
         round: usize,
         split_eq: &GruenSplitEq<E>,
-        skip_linear: bool,
+        recovery: Option<PreparedLinearQRecovery<'a, E>>,
         out: Option<&mut [E]>,
-    ) -> NormRoundTerms<E> {
-        let totals = match (round, skip_linear) {
+    ) -> NormRoundTerms<'a, E> {
+        let totals = match (round, recovery.is_some()) {
             (3, false) => self.lookup_round::<2, false>(split_eq, out),
             (3, true) => self.lookup_round::<2, true>(split_eq, out),
             (4, false) => self.lookup_round::<4, false>(split_eq, out),
@@ -849,10 +848,9 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             (6, true) => self.lookup_round::<16, true>(split_eq, out),
             _ => unreachable!("compact prefix rounds are capped by MAX_PREFIX_ROUNDS"),
         };
-        if skip_linear {
-            NormRoundTerms::from_totals::<true>(totals)
-        } else {
-            NormRoundTerms::from_totals::<false>(totals)
+        match recovery {
+            Some(recovery) => NormRoundTerms::SkipLinear([totals[0], totals[2]], recovery),
+            None => NormRoundTerms::Full(totals),
         }
     }
 
@@ -938,7 +936,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 }
 
 impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
-    pub(super) fn norm_poly_from_prefix(&self, norm: PrefixNormRound<E>) -> UnivariatePoly<E> {
+    pub(super) fn norm_poly_from_prefix(&self, norm: PrefixNormRound<'_, E>) -> UnivariatePoly<E> {
         match norm {
             PrefixNormRound::Polynomial(poly) => poly,
             PrefixNormRound::Terms(terms) => self.norm_poly_from_terms(terms),
@@ -951,7 +949,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         prefix: &CompactQuotientPrefix<E>,
         weights: &RelationWeightFactorization<E>,
     ) -> (RoundMessage<E>, UnivariatePoly<E>) {
-        let norm = prefix.norm_round(&self.split_eq, self.can_skip_norm_linear_coeff());
+        let norm = prefix.norm_round(&self.split_eq, self.split_eq.prepare_linear_q_recovery());
         let norm_poly = self.norm_poly_from_prefix(norm);
         let mut message =
             prefix.relation_message(weights.common_alpha_factor(), &self.linear_terms);

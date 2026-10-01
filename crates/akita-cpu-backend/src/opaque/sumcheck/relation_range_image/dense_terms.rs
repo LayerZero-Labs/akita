@@ -52,19 +52,25 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         compact_witness: PackedSignedDigitView<'_>,
         live_pairs: usize,
         relation_pair: impl Fn(usize) -> (E, E) + Sync,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
-        if self.can_skip_norm_linear_coeff() {
-            self.compute_round_compact_dense_terms_with_skip_linear::<true>(
+    ) -> (NormRoundTerms<'_, E>, RoundMessage<E>) {
+        if let Some(recovery) = self.split_eq.prepare_linear_q_recovery() {
+            let (norm, relation) = self.compute_round_compact_dense_terms_with_skip_linear::<true>(
                 compact_witness,
                 live_pairs,
                 relation_pair,
+            );
+            (
+                NormRoundTerms::SkipLinear([norm[0], norm[2]], recovery),
+                relation,
             )
         } else {
-            self.compute_round_compact_dense_terms_with_skip_linear::<false>(
-                compact_witness,
-                live_pairs,
-                relation_pair,
-            )
+            let (norm, relation) = self
+                .compute_round_compact_dense_terms_with_skip_linear::<false>(
+                    compact_witness,
+                    live_pairs,
+                    relation_pair,
+                );
+            (NormRoundTerms::Full(norm), relation)
         }
     }
 
@@ -73,7 +79,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         compact_witness: PackedSignedDigitView<'_>,
         live_pairs: usize,
         relation_pair: impl Fn(usize) -> (E, E) + Sync,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> ([E; 3], RoundMessage<E>) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let num_second = e_second.len();
@@ -134,7 +140,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
             },
         );
 
-        (virt_coeffs.into_terms(), reduce_compact_rel(rel_accum))
+        (virt_coeffs.totals(), reduce_compact_rel(rel_accum))
     }
 
     /// `(p(left), p(left + 1))` for the factored relation weight
@@ -159,7 +165,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> (NormRoundTerms<'_, E>, RoundMessage<E>) {
         let relation_pair = self.factored_relation_pair(weights);
         self.compute_round_compact_dense_terms_with(
             compact_witness,
@@ -172,7 +178,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         dense: &[E],
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> (NormRoundTerms<'_, E>, RoundMessage<E>) {
         self.compute_round_compact_dense_terms_with(
             compact_witness,
             compact_witness.len().div_ceil(2),
@@ -189,19 +195,24 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         folded_witness: &[E],
         live_pairs: usize,
         relation_pair: impl Fn(usize) -> (E, E) + Sync,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
-        if self.can_skip_norm_linear_coeff() {
-            self.compute_folded_dense_round_terms_with_skip_linear::<true>(
+    ) -> (NormRoundTerms<'_, E>, RoundMessage<E>) {
+        if let Some(recovery) = self.split_eq.prepare_linear_q_recovery() {
+            let (norm, relation) = self.compute_folded_dense_round_terms_with_skip_linear::<true>(
                 folded_witness,
                 live_pairs,
                 relation_pair,
+            );
+            (
+                NormRoundTerms::SkipLinear([norm[0], norm[2]], recovery),
+                relation,
             )
         } else {
-            self.compute_folded_dense_round_terms_with_skip_linear::<false>(
+            let (norm, relation) = self.compute_folded_dense_round_terms_with_skip_linear::<false>(
                 folded_witness,
                 live_pairs,
                 relation_pair,
-            )
+            );
+            (NormRoundTerms::Full(norm), relation)
         }
     }
 
@@ -210,7 +221,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         folded_witness: &[E],
         live_pairs: usize,
         relation_pair: impl Fn(usize) -> (E, E) + Sync,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> ([E; 3], RoundMessage<E>) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let num_second = e_second.len();
@@ -261,14 +272,14 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
                 (va, ra)
             },
         );
-        (virt_coeffs.into_terms(), rel_coeffs)
+        (virt_coeffs.totals(), rel_coeffs)
     }
 
     pub(super) fn compute_folded_dense_round_terms(
         &self,
         folded_witness: &[E],
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> (NormRoundTerms<'_, E>, RoundMessage<E>) {
         let relation_pair = self.factored_relation_pair(weights);
         self.compute_folded_dense_round_terms_with(
             folded_witness,
@@ -281,7 +292,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         &self,
         folded_witness: &[E],
         dense: &[E],
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> (NormRoundTerms<'_, E>, RoundMessage<E>) {
         self.compute_folded_dense_round_terms_with(
             folded_witness,
             folded_witness.len().div_ceil(2),

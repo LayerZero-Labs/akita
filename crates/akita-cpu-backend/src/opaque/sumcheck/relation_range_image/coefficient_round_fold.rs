@@ -81,21 +81,27 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         weights: &RelationWeightFactorization<E>,
         next_alpha_factor: &[E],
         challenge: E,
-    ) -> (Vec<E>, NormRoundTerms<E>, RoundMessage<E>) {
-        if self.can_skip_norm_linear_coeff() {
-            self.fuse_folded_coefficients_with::<true, false>(
+    ) -> (Vec<E>, NormRoundTerms<'_, E>, RoundMessage<E>) {
+        if let Some(recovery) = self.split_eq.prepare_linear_q_recovery() {
+            let (output, norm, relation) = self.fuse_folded_coefficients_with::<true, false>(
                 folded_witness,
                 weights,
                 next_alpha_factor,
                 challenge,
+            );
+            (
+                output,
+                NormRoundTerms::SkipLinear([norm[0], norm[2]], recovery),
+                relation,
             )
         } else {
-            self.fuse_folded_coefficients_with::<false, false>(
+            let (output, norm, relation) = self.fuse_folded_coefficients_with::<false, false>(
                 folded_witness,
                 weights,
                 next_alpha_factor,
                 challenge,
-            )
+            );
+            (output, NormRoundTerms::Full(norm), relation)
         }
     }
 
@@ -105,21 +111,27 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         weights: &RelationWeightFactorization<E>,
         next_alpha_factor: &[E],
         challenge: E,
-    ) -> (Vec<E>, NormRoundTerms<E>) {
-        let (output, norm, _) = if self.can_skip_norm_linear_coeff() {
-            self.fuse_folded_coefficients_with::<true, true>(
+    ) -> (Vec<E>, NormRoundTerms<'_, E>) {
+        let (output, norm, _) = if let Some(recovery) = self.split_eq.prepare_linear_q_recovery() {
+            let (output, norm, relation) = self.fuse_folded_coefficients_with::<true, true>(
                 folded_witness,
                 weights,
                 next_alpha_factor,
                 challenge,
+            );
+            (
+                output,
+                NormRoundTerms::SkipLinear([norm[0], norm[2]], recovery),
+                relation,
             )
         } else {
-            self.fuse_folded_coefficients_with::<false, true>(
+            let (output, norm, relation) = self.fuse_folded_coefficients_with::<false, true>(
                 folded_witness,
                 weights,
                 next_alpha_factor,
                 challenge,
-            )
+            );
+            (output, NormRoundTerms::Full(norm), relation)
         };
         (output, norm)
     }
@@ -130,7 +142,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         weights: &RelationWeightFactorization<E>,
         next_alpha_factor: &[E],
         challenge: E,
-    ) -> (Vec<E>, NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> (Vec<E>, [E; 3], RoundMessage<E>) {
         debug_assert!(self.in_coefficient_round());
         debug_assert!(self.current_coefficient_width() >= 2);
         let old_coeff_count = weights.common_alpha_factor().len();
@@ -183,10 +195,6 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
                 left
             },
         );
-        (
-            output,
-            NormRoundTerms::from_totals::<SKIP_LINEAR>(totals.0),
-            totals.1,
-        )
+        (output, totals.0, totals.1)
     }
 }

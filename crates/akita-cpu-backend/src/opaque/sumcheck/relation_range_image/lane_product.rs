@@ -205,13 +205,14 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
 
     /// Terms over `witness`, optionally folded by `challenge`, with equality tables
     /// for the round being accumulated. Terminal folding uses `final_fold` instead.
-    pub(super) fn round_terms(
+    pub(super) fn round_terms<'a>(
         &mut self,
         witness: &mut Vec<E>,
         challenge: Option<E>,
         (eq_low, eq_high): (&[E], &[E]),
-        skip_linear: bool,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+        recovery: Option<PreparedLinearQRecovery<'a, E>>,
+    ) -> (NormRoundTerms<'a, E>, RoundMessage<E>) {
+        let skip_linear = recovery.is_some();
         let fold = challenge.map(E::precompute);
         let live = if fold.is_some() {
             witness.len().div_ceil(2)
@@ -288,10 +289,9 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
             mem::swap(witness, &mut self.witness_scratch);
             mem::swap(&mut self.weights, &mut self.weight_scratch);
         }
-        let norm = if skip_linear {
-            NormRoundTerms::from_totals::<true>(norm)
-        } else {
-            NormRoundTerms::from_totals::<false>(norm)
+        let norm = match recovery {
+            Some(recovery) => NormRoundTerms::SkipLinear([norm[0], norm[2]], recovery),
+            None => NormRoundTerms::Full(norm),
         };
         (norm, relation)
     }
@@ -308,7 +308,11 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRoundState<E> {
     ) {
         self.split_eq.bind(r);
         let last = self.rounds_completed + 1 == self.num_vars;
-        let skip_linear = !last && self.can_skip_norm_linear_coeff();
+        let recovery = if last {
+            None
+        } else {
+            self.split_eq.prepare_linear_q_recovery()
+        };
         self.live_lane_count = self.live_lane_count.div_ceil(2);
         if last {
             lane.final_fold(witness, r);
@@ -317,7 +321,7 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRoundState<E> {
                 witness,
                 Some(r),
                 self.split_eq.remaining_eq_tables(),
-                skip_linear,
+                recovery,
             );
             let (message, norm_poly) = self.combine_terms(norm, relation);
             self.prev_norm_poly = Some(norm_poly);

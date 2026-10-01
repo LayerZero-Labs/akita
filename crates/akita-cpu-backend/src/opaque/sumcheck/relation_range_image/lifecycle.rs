@@ -335,7 +335,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
                 let (folded, norm) = engine.materialize(
                     witness.view(),
                     &self.split_eq,
-                    self.can_skip_norm_linear_coeff(),
+                    self.split_eq.prepare_linear_q_recovery(),
                 );
                 let mut relation =
                     engine.relation_message(weights.common_alpha_factor(), &self.linear_terms);
@@ -421,27 +421,24 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
     }
 
     #[inline]
-    pub(super) fn can_skip_norm_linear_coeff(&self) -> bool {
-        self.split_eq.can_recover_linear_q_term_from_claim()
-    }
-
-    #[inline]
-    pub(super) fn norm_poly_from_terms(&self, virt_terms: NormRoundTerms<E>) -> UnivariatePoly<E> {
+    pub(super) fn norm_poly_from_terms(
+        &self,
+        virt_terms: NormRoundTerms<'_, E>,
+    ) -> UnivariatePoly<E> {
         match virt_terms {
             NormRoundTerms::Full(virt_q_coeffs) => {
                 self.split_eq.gruen_mul(&coeffs_to_poly(virt_q_coeffs))
             }
-            NormRoundTerms::SkipLinear([q_constant, q_quadratic]) => self
-                .split_eq
-                .try_gruen_poly_deg_3(q_constant, q_quadratic, self.prev_norm_claim)
-                .expect("split-eq norm claim recovery should succeed"),
+            NormRoundTerms::SkipLinear([constant, quadratic], recovery) => {
+                recovery.gruen_poly_deg_3(constant, quadratic, self.prev_norm_claim)
+            }
         }
     }
 
     #[inline]
     pub(super) fn combine_terms(
         &self,
-        virt_terms: NormRoundTerms<E>,
+        virt_terms: NormRoundTerms<'_, E>,
         relation_message: RoundMessage<E>,
     ) -> (RoundMessage<E>, UnivariatePoly<E>) {
         let norm_poly = self.norm_poly_from_terms(virt_terms);
