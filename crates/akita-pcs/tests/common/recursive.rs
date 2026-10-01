@@ -55,11 +55,11 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
     let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
     let pre_frozen = base_scheme
         .schedules()
-        .resolve_key(&AkitaScheduleLookupKey::single(pre_key))
+        .resolve_key(&ScheduleLookupKey::single(pre_key))
         .expect("independent profile")
         .profiles()
         .final_group;
-    let schedule_key = AkitaScheduleLookupKey {
+    let schedule_key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
         precommitteds: vec![pre_frozen, pre_frozen],
     };

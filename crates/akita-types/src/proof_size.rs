@@ -2,17 +2,17 @@
 //! offline planner DP, the schedule selector, and profiling tooling.
 //!
 //! This is the single source of truth for direct-mode per-level proof grammar and
-//! byte accounting. [`native_nonterminal_level_layout`] describes the fixed atom
-//! counts and sumcheck shapes consumed by native replay. The compact-entry walker that sums a whole
+//! byte accounting. [`nonterminal_level_layout`] describes the fixed atom
+//! counts and sumcheck shapes consumed by replay. The compact-entry walker that sums a whole
 //! proof (`schedule_from_entry`) lives in `akita-planner`, next to the
 //! schedule-table representation it consumes.
-//! Native nonce messages are priced independently by the canonical grinding
+//! Nonce messages are priced independently by the canonical grinding
 //! plan and are not attributed to this fixed-width level layout.
 
 use crate::layout::digit_range::DigitRangeRouteShape;
 use crate::layout::digit_range::PhysicalL2NormProofWireShape;
 use crate::layout::field_bytes;
-use crate::{AkitaStage1StageShape, CommittedGroupParams, DigitRangePlan, RelationAddressGeometry};
+use crate::{CommittedGroupParams, DigitRangePlan, RelationAddressGeometry, Stage1StageShape};
 use akita_error::AkitaError;
 
 fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
@@ -41,19 +41,19 @@ fn stage1_proof_bytes(shape: DigitRangeRouteShape, elem_bytes: usize) -> Result<
     Ok(stages_bytes + elem_bytes + norm_bytes)
 }
 
-/// Immutable public grammar of one non-terminal native proof level.
+/// Immutable public grammar of one non-terminal proof level.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NativeNonterminalLevelLayout {
+pub struct NonterminalLevelLayout {
     base_field_bytes: usize,
     challenge_field_bytes: usize,
     opening_payload_coeffs: usize,
     stage1_shape: DigitRangeRouteShape,
-    stage2_sumcheck: akita_sumcheck::NativeSumcheckShape,
+    stage2_sumcheck: akita_sumcheck::SumcheckShape,
     next_outer_payload_coeffs: usize,
     next_witness_evaluations: usize,
 }
 
-impl NativeNonterminalLevelLayout {
+impl NonterminalLevelLayout {
     /// Fixed base-field atom count in the opening payload.
     #[must_use]
     pub const fn opening_payload_coeffs(&self) -> usize {
@@ -61,11 +61,11 @@ impl NativeNonterminalLevelLayout {
     }
 
     /// Stage-1 range-tree sumcheck and child-claim shapes in replay order.
-    pub fn stage1_stages(&self) -> impl Iterator<Item = AkitaStage1StageShape> + '_ {
+    pub fn stage1_stages(&self) -> impl Iterator<Item = Stage1StageShape> + '_ {
         self.stage1_shape.stages()
     }
 
-    /// Optional physical-L2 native message shape.
+    /// Optional physical-L2 message shape.
     #[must_use]
     pub fn stage1_norm(&self) -> Option<PhysicalL2NormProofWireShape> {
         self.stage1_shape
@@ -77,9 +77,9 @@ impl NativeNonterminalLevelLayout {
             })
     }
 
-    /// Fixed Stage-2 native sumcheck shape.
+    /// Fixed Stage-2 sumcheck shape.
     #[must_use]
-    pub const fn stage2_sumcheck(&self) -> akita_sumcheck::NativeSumcheckShape {
+    pub const fn stage2_sumcheck(&self) -> akita_sumcheck::SumcheckShape {
         self.stage2_sumcheck
     }
 
@@ -121,7 +121,7 @@ impl NativeNonterminalLevelLayout {
     }
 }
 
-/// Derive the fixed-width native message layout of one non-terminal fold level.
+/// Derive the fixed-width message layout of one non-terminal fold level.
 ///
 /// Compressed D and B images serialize as fixed-size base-field payloads.
 /// Sumcheck objects and scalar evaluations serialize over the challenge field,
@@ -147,21 +147,21 @@ impl NativeNonterminalLevelLayout {
 /// # Errors
 ///
 /// The layout is derived from the same commitment geometry, digit-range stage
-/// shapes, physical-L2 route, and public sumcheck degree used by native
+/// shapes, physical-L2 route, and public sumcheck degree used by
 /// emission and receipt. Variable-width nonce and terminal-response messages
-/// are deliberately owned by their separate native layouts.
+/// are deliberately owned by their separate layouts.
 ///
 /// # Errors
 ///
 /// Returns an error when a commitment payload or digit-range shape is invalid,
 /// overflows, or disagrees with the selected base-field profile.
-pub fn native_nonterminal_level_layout(
+pub fn nonterminal_level_layout(
     base_field_bits: u32,
     challenge_field_bits: u32,
     lp: &CommittedGroupParams,
     relation_geometry: RelationAddressGeometry,
     next_outer_payload: Option<&CommittedGroupParams>,
-) -> Result<NativeNonterminalLevelLayout, AkitaError> {
+) -> Result<NonterminalLevelLayout, AkitaError> {
     let base_field_bytes = field_bytes(base_field_bits);
     let challenge_field_bytes = field_bytes(challenge_field_bits);
     let rounds = relation_geometry.relation_point_variable_count();
@@ -183,12 +183,12 @@ pub fn native_nonterminal_level_layout(
         }
         None => 0,
     };
-    Ok(NativeNonterminalLevelLayout {
+    Ok(NonterminalLevelLayout {
         base_field_bytes,
         challenge_field_bytes,
         opening_payload_coeffs: lp.opening_payload_geometry()?.transmitted_coefficients(),
         stage1_shape,
-        stage2_sumcheck: akita_sumcheck::NativeSumcheckShape::new(rounds, 3)?,
+        stage2_sumcheck: akita_sumcheck::SumcheckShape::new(rounds, 3)?,
         next_outer_payload_coeffs,
         next_witness_evaluations: 1,
     })
@@ -198,7 +198,7 @@ pub fn native_nonterminal_level_layout(
 /// sumcheck payload (`SetupSumcheckProof`) for one non-terminal fold level.
 ///
 /// This is the proof-size overhead that `SetupContributionMode::Recursive`
-/// adds on top of the direct-mode payload priced by [`native_nonterminal_level_layout`]. It
+/// adds on top of the direct-mode payload priced by [`nonterminal_level_layout`]. It
 /// is added to the direct fold payload before the planner compares direct and
 /// offloaded successor edges.
 ///
@@ -225,8 +225,8 @@ pub fn stage3_setup_product_bytes(
 
 #[cfg(test)]
 mod tests {
-    //! Legacy structured-fixture cross-checks for the native fixed-message
-    //! layout. End-to-end native emission and parser-bound reconciliation live
+    //! Legacy structured-fixture cross-checks for the fixed-message
+    //! layout. End-to-end emission and parser-bound reconciliation live
     //! in the PCS transcript-hardening and protocol-soundness suites.
 
     use super::*;
@@ -291,14 +291,14 @@ mod tests {
             successor_ring_dimension,
             output_witness_len,
         )?;
-        native_nonterminal_level_layout(
+        nonterminal_level_layout(
             base_field_bits,
             challenge_field_bits,
             lp,
             relation_geometry,
             next_outer_payload,
         )
-        .and_then(NativeNonterminalLevelLayout::encoded_len)
+        .and_then(NonterminalLevelLayout::encoded_len)
     }
 
     fn terminal_response_fixture(
@@ -629,7 +629,7 @@ mod tests {
         assert!(successor_padded_terminal_eor > stale_terminal_eor);
 
         assert_eq!(
-            native_nonterminal_level_layout(
+            nonterminal_level_layout(
                 128,
                 128,
                 &current,
@@ -643,7 +643,7 @@ mod tests {
                     .unwrap(),
                 Some(&successor),
             )
-            .and_then(NativeNonterminalLevelLayout::encoded_len)
+            .and_then(NonterminalLevelLayout::encoded_len)
             .unwrap(),
             exact_level_proof_bytes::<F, F>(
                 &current,
@@ -936,7 +936,7 @@ mod tests {
     fn stage3_payload_is_additive_over_direct_level_bytes() {
         // The recursive stage-3 setup-product proof is pure overhead layered on
         // top of the direct-mode payload: a level proof carrying it must
-        // serialize to exactly the direct native level layout plus
+        // serialize to exactly the direct level layout plus
         // `stage3_setup_product_bytes`, with no other field affected.
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
@@ -1046,7 +1046,7 @@ mod tests {
             let serialized_without_witness =
                 terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
 
-            // Native nonce messages are accounted separately.
+            // Nonce messages are accounted separately.
             assert_eq!(
                 0, serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \

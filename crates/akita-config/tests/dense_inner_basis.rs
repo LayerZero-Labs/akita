@@ -2,7 +2,7 @@
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
-use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use akita_types::{PolynomialGroupLayout, ScheduleLookupKey};
 
 fn catalog<Cfg: CommitmentConfig>() -> akita_config::TrustedScheduleCatalog<Cfg> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -37,7 +37,7 @@ struct Snapshot {
 fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
     let catalog = catalog::<Cfg>();
     let schedule = catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(
+        .resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(26),
         ))
         .expect("generated dense nv=26 schedule");

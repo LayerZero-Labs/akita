@@ -168,7 +168,7 @@ let statement = GroupBatchStatement::new(selection, verifier_claims)?;
 verifier.batched_verify(&proof_bytes, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)?;
 ```
 
-Akita constructs fresh native prover and verifier states and binds the complete
+Akita constructs fresh prover and verifier states and binds the complete
 public statement before deriving proof
 challenges, so a change to the group order, point, value, commitment,
 configuration, or schedule causes verification to fail.

@@ -21,7 +21,7 @@ A host should define one versioned container with these fields:
 | Ordered commitments | Fixes every polynomial group |
 | Ordered opening points | States where each group is opened |
 | Ordered claimed values | States one value for each committed polynomial |
-| Native proof bytes | Carries the canonical Spongefish argument stream |
+| Proof bytes | Carries the canonical Spongefish argument stream |
 
 The host may store verifier setup separately and refer to it by an authenticated
 identifier. The remaining values still belong to one public verification
@@ -44,7 +44,7 @@ descriptor covers the configuration, setup identity, schedule, and public
 claim layout. Akita then absorbs commitments, points, claimed values, and proof
 messages in protocol order.
 
-Akita constructs fresh native prover and verifier states internally. Do not
+Akita constructs fresh prover and verifier states internally. Do not
 serialize a live state or reuse proof bytes under another session. Both sides
 use the same session bytes and independently bind the same public instance.
 

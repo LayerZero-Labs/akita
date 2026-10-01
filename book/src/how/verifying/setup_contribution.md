@@ -152,6 +152,6 @@ The main implementation owners are:
   the prover consumes;
 - `crates/akita-verifier/src/setup_contribution/` for the direct scan,
   structured group contraction, and `SetupIndexWeightMle`;
-- `crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs` for
+- `crates/akita-verifier/src/relation/evaluation.rs` for
   direct or deferred selection; and
 - `crates/akita-verifier/src/stages/stage3.rs` for the setup product check.

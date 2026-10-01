@@ -1342,7 +1342,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertEqual(summary["packed_nonce_estimate_bytes"], 7)
         self.assertEqual(summary["grinding_plan"]["packed_nonce_estimate_bytes"], 7)
 
-    def test_native_proof_summary_preserves_packed_and_wire_nonce_metrics(self) -> None:
+    def test_proof_summary_preserves_packed_and_wire_nonce_metrics(self) -> None:
         from scripts.profile_bench_report import (
             extract_summary,
             l2_grind_observations_for_run,
@@ -1646,7 +1646,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         table_lines = [line for line in report.splitlines() if line.startswith("|")]
         self.assertLessEqual(max(line.count("|") for line in table_lines), 8)
 
-    def test_native_matrix_omits_legacy_columns_and_labels_legacy_baseline(self) -> None:
+    def test_matrix_omits_legacy_columns_and_labels_legacy_baseline(self) -> None:
         from scripts.profile_bench_report import normalize_case_summary, render_matrix_summary
 
         current = normalize_case_summary(

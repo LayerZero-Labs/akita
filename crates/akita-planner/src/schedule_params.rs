@@ -388,31 +388,31 @@ impl CandidateFoldChain {
 pub(crate) struct ScheduleCandidate {
     pub(crate) first_direct_setup_field_len: Option<NonZeroUsize>,
     pub(crate) first_direct_output_witness_len: usize,
-    pub(crate) cost: NativeProofCost,
+    pub(crate) cost: ProofCost,
     pub(crate) setup_field_elements: usize,
     pub(crate) folds: CandidateFoldChain,
     pub(crate) terminal: Arc<CandidateTerminalResponse>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct NativeProofCost {
+pub(crate) struct ProofCost {
     payload_bytes: usize,
-    native_nonce_bytes: usize,
+    nonce_bytes: usize,
     nonce_bits: usize,
     expanded_query_count: u64,
     work_elements: u128,
 }
 
-impl NativeProofCost {
+impl ProofCost {
     pub(crate) fn new(
         payload_bytes: usize,
-        native_nonce_bytes: usize,
+        nonce_bytes: usize,
         expanded_query_count: u64,
         work_elements: u128,
     ) -> Result<Self, AkitaError> {
         let cost = Self {
             payload_bytes,
-            native_nonce_bytes,
+            nonce_bytes,
             nonce_bits: 0,
             expanded_query_count,
             work_elements,
@@ -434,7 +434,7 @@ impl NativeProofCost {
     pub(crate) fn checked_prepend(
         self,
         payload_bytes: usize,
-        native_nonce_bytes: usize,
+        nonce_bytes: usize,
         nonce_bits: usize,
         expanded_query_count: u64,
         work_elements: usize,
@@ -446,9 +446,9 @@ impl NativeProofCost {
         let nonce_bits = self.nonce_bits.checked_add(nonce_bits).ok_or_else(|| {
             AkitaError::InvalidSetup("candidate nonce bit length overflow".into())
         })?;
-        let native_nonce_bytes = self
-            .native_nonce_bytes
-            .checked_add(native_nonce_bytes)
+        let nonce_bytes = self
+            .nonce_bytes
+            .checked_add(nonce_bytes)
             .ok_or_else(|| AkitaError::InvalidSetup("native nonce byte length overflow".into()))?;
         let expanded_query_count = self
             .expanded_query_count
@@ -460,7 +460,7 @@ impl NativeProofCost {
             .ok_or_else(|| AkitaError::InvalidSetup("candidate work overflow".into()))?;
         let cost = Self {
             payload_bytes,
-            native_nonce_bytes,
+            nonce_bytes,
             nonce_bits,
             expanded_query_count,
             work_elements,
@@ -472,7 +472,7 @@ impl NativeProofCost {
     pub(crate) fn grinding_cost(self) -> TranscriptGrindingCost {
         TranscriptGrindingCost {
             total_nonce_bits: self.nonce_bits,
-            native_nonce_max_bytes: self.native_nonce_bytes,
+            nonce_max_bytes: self.nonce_bytes,
             expanded_query_count: self.expanded_query_count,
         }
     }
@@ -506,7 +506,7 @@ impl NativeProofCost {
     }
 
     fn checked_proof_bytes(self) -> Option<usize> {
-        self.payload_bytes.checked_add(self.native_nonce_bytes)
+        self.payload_bytes.checked_add(self.nonce_bytes)
     }
 }
 
@@ -529,7 +529,7 @@ impl SetupPrefixCapacity {
 pub(crate) struct CandidateMetrics {
     pub(crate) first_direct_setup_capacity: SetupPrefixCapacity,
     pub(crate) first_direct_output_witness_len: usize,
-    pub(crate) cost: NativeProofCost,
+    pub(crate) cost: ProofCost,
     pub(crate) setup_field_elements: usize,
 }
 

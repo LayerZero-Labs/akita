@@ -440,7 +440,7 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
 
         let profile = scheme
             .schedules()
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_types::ScheduleLookupKey::single(
                 akita_types::PolynomialGroupLayout::new(NV, 1),
             ))
             .expect("one-hot row")
@@ -625,7 +625,7 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
         // the regression this test exists to catch.
         let profile = bounded_scheme
             .schedules()
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_types::ScheduleLookupKey::single(
                 akita_types::PolynomialGroupLayout::new(NV, 1),
             ))
             .expect("bounded row")
@@ -681,7 +681,7 @@ fn final_group_admitted_under_another_producer_contract_is_refused() {
         let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let profile = dense_scheme
             .schedules()
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_types::ScheduleLookupKey::single(
                 akita_types::PolynomialGroupLayout::new(NV, 1),
             ))
             .expect("dense row")

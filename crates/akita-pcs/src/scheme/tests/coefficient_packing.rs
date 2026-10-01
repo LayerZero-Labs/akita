@@ -1,7 +1,7 @@
 use super::*;
 
 use akita_config::proof_optimized::fp32;
-use akita_types::{basis_weights, AkitaScheduleLookupKey, OpeningMethod, PolynomialGroupLayout};
+use akita_types::{basis_weights, OpeningMethod, PolynomialGroupLayout, ScheduleLookupKey};
 use jolt_field::ExtField;
 
 type PackingCfg = crate::test_support::RootCoefficientPackingConfig<fp32::Dense>;
@@ -15,7 +15,7 @@ type RecursiveEvaluationTraceCfg = crate::test_support::EarlyEvaluationTraceConf
 fn synthetic_packing_row_is_derived_from_one_checked_authority() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<PackingCfg>()
         .expect("workspace schedule catalog");
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(20),
         precommitteds: Vec::new(),
     };
@@ -99,7 +99,7 @@ fn fixed_root_packing_rejects_a_stale_successor_length() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<PackingCfg>()
         .expect("workspace schedule catalog");
     let opening_batch = OpeningClaimsLayout::new(20, 1).unwrap();
-    let key = AkitaScheduleLookupKey::single(opening_batch.root_final_group_layout().unwrap());
+    let key = ScheduleLookupKey::single(opening_batch.root_final_group_layout().unwrap());
     let row = PackingCfg::derive_catalog_row(&catalog, &key, 64).unwrap();
     let mut schedule = row.schedule().clone();
     schedule.terminal.input_witness_len += 1;
@@ -128,8 +128,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .expect("workspace schedule catalog");
             let num_vars = 20;
             let opening_batch = OpeningClaimsLayout::new(num_vars, 1).unwrap();
-            let key =
-                AkitaScheduleLookupKey::single(opening_batch.root_final_group_layout().unwrap());
+            let key = ScheduleLookupKey::single(opening_batch.root_final_group_layout().unwrap());
             let row = PackingCfg::derive_catalog_row(&catalog, &key, 64).unwrap();
             let schedules = akita_config::ValidatedScheduleCatalog::try_new(
                 PackingCfg::schedule_family_name(),

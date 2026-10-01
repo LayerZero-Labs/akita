@@ -5,8 +5,8 @@ use super::{
 };
 use crate::parallel::ProfileThreadPools;
 use crate::report::{
-    emit_native_proof_tail_report, emit_runtime_schedule_summary, print_native_proof_summary,
-    report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
+    emit_proof_tail_report, emit_runtime_schedule_summary, print_proof_summary, report_crt_profile,
+    report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use crate::workspace_schedules::load_workspace_scheme;
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
@@ -167,12 +167,12 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     let pre_key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
     let pre_descriptor = base_scheme
         .schedules()
-        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(pre_key))
+        .resolve_key(&akita_types::ScheduleLookupKey::single(pre_key))
         .expect("independent profile")
         .profiles()
         .final_group;
     let final_group = PolynomialGroupLayout::new(final_num_vars, final_num_polys);
-    let multi_group_key = akita_types::AkitaScheduleLookupKey {
+    let multi_group_key = akita_types::ScheduleLookupKey {
         final_group,
         precommitteds: vec![pre_descriptor; PRE_GROUPS],
     };
@@ -380,7 +380,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     assert_observed_proof_size(label, &proof);
     let grinding_plan = derive_transcript_grinding_plan::<ProofCfg>(&schedule, &opening_layout)
         .expect("profile grinding plan");
-    print_native_proof_summary(label, &proof, &schedule, &grinding_plan);
+    print_proof_summary(label, &proof, &schedule, &grinding_plan);
     report_proof_size_against_planner(
         label,
         &proof,
@@ -396,7 +396,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         Cfg::EXT_DEGREE,
     )
     .expect("runtime schedule report geometry");
-    emit_native_proof_tail_report(label, &schedule, Cfg::decomposition().field_bits());
+    emit_proof_tail_report(label, &schedule, Cfg::decomposition().field_bits());
     tracing::info!(
         label,
         ext_degree = Cfg::EXT_DEGREE,

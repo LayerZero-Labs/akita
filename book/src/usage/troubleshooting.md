@@ -122,6 +122,14 @@ transcript backend, transcript domain, ordered commitment groups, opening
 points, and claimed evaluations. Akita does not preserve proof bytes across
 revisions. Regenerate the proof and verifier setup after an upgrade.
 
+## Akita reports an internal error
+
+`AkitaError::Internal` means an invariant that Akita maintains itself failed
+after the inputs were accepted. The cause is a bug in Akita or in a custom
+backend. It is not a problem with the request, the setup, or a proof. The
+message names the failed invariant. Report it with the complete error text and
+the configuration that produced it.
+
 ## A Jolt recursion run fails
 
 The Jolt host performs strict native decoding and Akita verification before it
