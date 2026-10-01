@@ -645,7 +645,7 @@ impl WitnessLayout {
         };
         let tail = tail::materialize(
             lp,
-            relation_geometry,
+            relation_geometry.rhs_layout(),
             num_groups,
             successor_a_alignment,
             tail_start,
@@ -658,6 +658,52 @@ impl WitnessLayout {
             relation_quotients: tail.relation_quotients,
             tail_range: tail_start..tail.end,
         })
+    }
+
+    /// Validate the complete canonical tail against its relation layout and level.
+    /// Rejects changed offsets, row ownership, geometry, alignment, or quotient depth.
+    pub fn validate_tail(
+        &self,
+        params: &CommittedGroupParams,
+        relation_layout: &crate::RelationRhsLayout,
+        quotient_plan: RelationQuotientPlan,
+    ) -> Result<(), AkitaError> {
+        self.validate_internal_ranges()?;
+        for (relation_index, group) in relation_layout.groups.iter().enumerate() {
+            if relation_layout.compression.is_some()
+                && relation_layout.group_compression_plan(relation_index)?.0 != group.group_index
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+        let alignment = if relation_layout.groups.len() > 1 {
+            relation_layout
+                .groups
+                .iter()
+                .map(|group| group.role_dims.d_a())
+                .max()
+                .ok_or(AkitaError::InvalidProof)?
+        } else {
+            relation_layout.relation_coefficient_block_len()?
+        };
+        let expected = tail::materialize(
+            params,
+            relation_layout,
+            relation_layout.groups.len(),
+            alignment,
+            self.tail_range.start,
+            quotient_plan,
+        )?;
+        if self.compression_layers != expected.compression_layers
+            || self.compression_alignment_ranges != expected.compression_alignment_ranges
+            || self.relation_quotients != expected.relation_quotients
+            || self.tail_range.end != expected.end
+        {
+            return Err(AkitaError::InvalidInput(
+                "witness tail is not canonical for its relation layout".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn units(&self) -> &[WitnessUnitLayout] {

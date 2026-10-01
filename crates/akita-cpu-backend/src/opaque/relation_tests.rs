@@ -665,3 +665,6 @@ fn reduced_ring_switch_rejects_quotient_witness_without_running_quotients() {
         assert_eq!(quotient_decomposition_calls(), 0);
     });
 }
+
+#[path = "relation_tests/portable_compression.rs"]
+mod portable_compression;

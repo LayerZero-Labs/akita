@@ -78,6 +78,16 @@ impl<F: Field> CompressionSourceWitness<F> {
     }
 
     #[cfg(test)]
+    pub(crate) fn terminal_for_test(&self) -> &CompressionTerminalPayload<F> {
+        &self.terminal
+    }
+
+    #[cfg(test)]
+    pub(crate) fn material_for_test(&self) -> &PortableCompressionState<F> {
+        &self.material
+    }
+
+    #[cfg(test)]
     pub(crate) fn witness_for_test(&self) -> &CompressionChainWitness {
         self.witness()
     }
