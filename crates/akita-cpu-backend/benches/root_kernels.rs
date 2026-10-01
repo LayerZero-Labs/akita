@@ -4,7 +4,8 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::DensePoly;
-use akita_types::{balanced_signed_digit_abs_bound, prepare_ntt_cache, NttCacheMode};
+use akita_params::balanced_signed_digit_abs_bound;
+use akita_types::{prepare_ntt_cache, NttCacheMode};
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion};
