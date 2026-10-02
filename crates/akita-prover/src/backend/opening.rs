@@ -18,16 +18,21 @@ pub struct PreparedEor<E: Field, H> {
     pub proof_partials: Vec<E>,
     pub handle: H,
 }
+/// One group's native opening preparation at the current fold level.
+pub struct GroupOpeningRequest<'a, E: Field, C, W> {
+    pub context: ProofContext,
+    pub source: OpeningSource<'a, C, W>,
+    pub plan: super::ValidatedRecursiveGroupOpeningPlan<'a, E>,
+}
 pub trait OpaqueOpeningKernel<F: Field + CanonicalEncoding, E: Field>:
     ProverHandleFamily<F, E> + super::ProofScopeConsumer
 {
-    fn prepare_opening(
+    /// Prepare every group, returning results in request order regardless of execution order.
+    fn prepare_openings(
         &self,
         session: &Self::ProofSessionHandle,
-        context: &ProofContext,
-        source: OpeningSource<'_, Self::CommitmentHandle, Self::WitnessHandle>,
-        plan: &crate::backend::ValidatedRecursiveGroupOpeningPlan<'_, E>,
-    ) -> Result<PreparedGroupOpening<E, Self::PreparedOpeningHandle>, AkitaError>;
+        requests: &[GroupOpeningRequest<'_, E, Self::CommitmentHandle, Self::WitnessHandle>],
+    ) -> Result<Vec<PreparedGroupOpening<E, Self::PreparedOpeningHandle>>, AkitaError>;
     fn probe_opening_fold(
         &self,
         context: &ProofContext,

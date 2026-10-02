@@ -67,8 +67,11 @@ On every repeated request:
    findings previously marked fixed. Return exactly one `previous` entry per ID,
    with status `open`, `fixed`, or `uncertain` and specific source evidence.
    A resolved thread, changed line, author assertion, or green CI is not proof.
-2. Compare `delta` (previous reviewed head to current head), including rebases and
-   reversions. Verify fixes at their consumers and sibling paths. A partial fix
+2. Compare `delta` (previous reviewed head to current head, limited to files the
+   PR changes now or changed at the previous head), including rebases and
+   reversions. Base-branch changes merged into the PR since then are left out for
+   every other file, but still appear in these files, so a hunk in `delta` is not
+   necessarily the author's. Verify fixes at their consumers and sibling paths. A partial fix
    remains open; a regression of an old finding uses the old ID.
 3. Read all supplied trusted discussions and replies, including new comments on
    an unchanged head. Check proposed explanations against code. Semantically
