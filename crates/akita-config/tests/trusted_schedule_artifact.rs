@@ -624,7 +624,7 @@ fn recursive_prefix_slot_id_fixture() {
         onehot,
         (
             3,
-            "643eb959607f2fa91a51cb4e445ac706c291481c02edc47d3e6836d6185ea58d".to_string(),
+            "36b11f1c560cff0366be9eb49bde6efcdd15f4687d47277f848c988feb9bce14".to_string(),
         )
     );
     assert_eq!(
@@ -786,7 +786,8 @@ fn first_recursive_group(value: &mut serde_json::Value) -> &mut serde_json::Valu
                 .as_array_mut()
                 .and_then(|folds| folds.first_mut())
         })
-        .map(|fold| &mut fold["params"]["groups"]["entries"][0])
+        .and_then(|fold| fold["params"]["groups"]["entries"].as_array_mut())
+        .and_then(|groups| groups.last_mut())
         .expect("a row with a recursive fold group")
 }
 

@@ -55,23 +55,16 @@ struct OpeningWork {
     opening: crate::schedule_params::PlannerOpeningCandidate,
     /// One opening per interchangeable precommitted class, in class order.
     precommitted_class_openings: Vec<crate::schedule_params::PlannerOpeningCandidate>,
-    opening_reduction_bytes: usize,
     purpose: OpeningPurpose,
-}
-
-pub(super) struct RawTerminalCandidate {
-    pub(super) params: CommittedGroupParams,
-    pub(super) opening_reduction_bytes: usize,
 }
 
 pub(super) struct RawFoldCandidate {
     pub(super) params: CommittedGroupParams,
     pub(super) next_witness_len: usize,
-    pub(super) opening_reduction_bytes: usize,
 }
 
 pub(super) struct GeneratedCandidates {
-    pub(super) terminal: Vec<RawTerminalCandidate>,
+    pub(super) terminal: Vec<CommittedGroupParams>,
     pub(super) folds: Vec<RawFoldCandidate>,
 }
 
@@ -258,11 +251,13 @@ fn opening_work_domain(
                 .map(crate::schedule_params::PlannerOpeningCandidate::evaluation_trace),
         };
         if let Some(trace_opening) = trace_opening {
-            if let Some(opening_reduction_bytes) = try_extension_opening_reduction_level_bytes(
+            if try_extension_opening_reduction_level_bytes(
                 policy.challenge_field_bits()?,
                 policy.claim_ext_degree,
                 opening_shape,
-            )? {
+            )?
+            .is_some()
+            {
                 let precommitted_class_openings = if let Some(root_key) = root_level_key {
                     precommitted_group_equivalence_classes(
                         &root_key.precommitteds,
@@ -287,7 +282,6 @@ fn opening_work_domain(
                             dimensions,
                             opening: trace_opening,
                             precommitted_class_openings,
-                            opening_reduction_bytes,
                             purpose,
                         });
                     }
@@ -302,7 +296,6 @@ fn opening_work_domain(
                         dimensions,
                         opening,
                         precommitted_class_openings: precommitted_class_openings.clone(),
-                        opening_reduction_bytes: 0,
                         purpose: OpeningPurpose::FoldOnly,
                     });
                 }
@@ -312,7 +305,6 @@ fn opening_work_domain(
                 dimensions,
                 opening,
                 precommitted_class_openings: Vec::new(),
-                opening_reduction_bytes: 0,
                 purpose: OpeningPurpose::FoldOnly,
             }));
         }
@@ -631,6 +623,7 @@ impl<'a> CandidateDomain<'a> {
                         })
                     });
                     let request = RecursiveCandidateRequest {
+                        input_chunks: state.input_chunks,
                         policy,
                         payload_mode,
                         opening: work.opening,
@@ -659,10 +652,7 @@ impl<'a> CandidateDomain<'a> {
                                 || self.guide_terminal.is_some_and(|guide| {
                                     terminal_candidate_matches_guide(&params, guide)
                                 }))
-                            .then_some(RawTerminalCandidate {
-                                params,
-                                opening_reduction_bytes: work.opening_reduction_bytes,
-                            })
+                            .then_some(params)
                         }));
                         for (candidate, next_witness_len) in views.folds {
                             if !relation_domain.admits(candidate.ring_relation_mode) {
@@ -681,7 +671,6 @@ impl<'a> CandidateDomain<'a> {
                             folds.push(RawFoldCandidate {
                                 params: candidate,
                                 next_witness_len,
-                                opening_reduction_bytes: work.opening_reduction_bytes,
                             });
                         }
                         continue;
@@ -695,12 +684,7 @@ impl<'a> CandidateDomain<'a> {
                                         || self.guide_terminal.is_some_and(|guide| {
                                             terminal_candidate_matches_guide(&params, guide)
                                         }))
-                                    .then_some(
-                                        RawTerminalCandidate {
-                                            params,
-                                            opening_reduction_bytes: work.opening_reduction_bytes,
-                                        },
-                                    )
+                                    .then_some(params)
                                 }),
                         );
                     }
@@ -725,7 +709,6 @@ impl<'a> CandidateDomain<'a> {
                         folds.push(RawFoldCandidate {
                             params: candidate,
                             next_witness_len,
-                            opening_reduction_bytes: work.opening_reduction_bytes,
                         });
                     }
                 }
@@ -799,10 +782,7 @@ impl<'a> CandidateDomain<'a> {
                     if (!self.adaptation_guided || self.guide_terminal.is_some())
                         && work.purpose.allows_terminal()
                     {
-                        terminal.push(RawTerminalCandidate {
-                            params: params.clone(),
-                            opening_reduction_bytes: work.opening_reduction_bytes,
-                        });
+                        terminal.push(params.clone());
                     }
                     if (!self.adaptation_guided || self.guide_fold.is_some())
                         && work.purpose.allows_fold()
@@ -810,7 +790,6 @@ impl<'a> CandidateDomain<'a> {
                         folds.push(RawFoldCandidate {
                             params,
                             next_witness_len,
-                            opening_reduction_bytes: work.opening_reduction_bytes,
                         });
                     }
                 }

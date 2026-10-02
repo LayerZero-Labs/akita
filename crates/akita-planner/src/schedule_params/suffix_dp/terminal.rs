@@ -210,6 +210,7 @@ mod tests {
         let policy = policy_of::<Recursive>();
         let source_moment = crate::response_model::SourceMomentEstimate::new(1_000_000);
         let request = RecursiveCandidateRequest {
+            input_chunks: None,
             policy: &policy,
             payload_mode: akita_params::CommitmentPayloadMode::Compressed,
             opening: PlannerOpeningCandidate::evaluation_trace(

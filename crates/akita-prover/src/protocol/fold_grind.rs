@@ -11,8 +11,8 @@ use akita_error::AkitaError;
 #[cfg(test)]
 use akita_params::OpeningMethod;
 use akita_params::{
-    dyadic_block_ranges, CommittedGroupParams, InnerCommitSecurityRoute, OpeningClaimsLayout,
-    TerminalFoldParams, TerminalResponseShape, FOLD_RESPONSE_ATTEMPTS,
+    CommittedGroupParams, InnerCommitSecurityRoute, OpeningClaimsLayout, TerminalFoldParams,
+    TerminalResponseShape, FOLD_RESPONSE_ATTEMPTS,
 };
 use akita_types::draw_group_fold_challenges;
 use akita_types::GrindingReplay;
@@ -263,8 +263,8 @@ where
                     )?;
                     let ranges = (root_lp.witness_chunk.num_chunks > 1)
                         .then(|| {
-                            dyadic_block_ranges(
-                                group.params.num_live_blocks(),
+                            root_lp.witness_block_ranges(
+                                group.group_index,
                                 root_lp.witness_chunk.num_chunks,
                             )
                         })

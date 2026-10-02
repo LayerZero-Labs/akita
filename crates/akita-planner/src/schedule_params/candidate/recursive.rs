@@ -31,6 +31,7 @@ pub(crate) struct RecursiveCandidateRequest<'a> {
     pub(crate) opening: PlannerOpeningCandidate,
     pub(crate) dimensions: CommitmentRingDims,
     pub(crate) current_witness_len: usize,
+    pub(crate) input_chunks: Option<akita_params::WitnessChunkShape>,
     pub(crate) source: crate::InnerBasisSource,
     pub(crate) log_basis_inner: u32,
     pub(crate) log_basis_open: u32,
@@ -177,7 +178,6 @@ impl RecursiveCandidateContext<'_, '_> {
         let search = self.search;
         let log_basis_inner = request.log_basis_inner;
         let log_basis_open = request.log_basis_open;
-        let num_ring_elems = search.num_ring_elems;
         let reduced_vars = search.reduced_vars;
         if reduced_vars <= 2
             || reduced_vars >= 53
@@ -190,6 +190,14 @@ impl RecursiveCandidateContext<'_, '_> {
             checked::pow2(reduced_vars - block_index_bits).ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive candidate position count overflow".to_string())
             })?;
+        let block_len = checked::product([num_positions_per_block, dimensions.d_a()])
+            .ok_or_else(|| AkitaError::InvalidSetup("source block width overflow".into()))?;
+        let input_len = request
+            .input_chunks
+            .map(|chunks| chunks.align(block_len, num_chunks))
+            .transpose()?
+            .map_or(request.current_witness_len, |(len, _)| len);
+        let num_ring_elems = input_len.div_ceil(dimensions.d_a());
         let num_live_blocks = num_ring_elems.div_ceil(num_positions_per_block);
         let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, delta_commit)
         else {
@@ -202,10 +210,27 @@ impl RecursiveCandidateContext<'_, '_> {
             .checked_mul(d_a)
             .and_then(|count| count.checked_mul(num_chunks))
             .ok_or_else(|| AkitaError::InvalidSetup("fold response width overflow".into()))?;
+        let cap_blocks = request
+            .input_chunks
+            .map(|chunks| chunks.align(block_len, num_chunks))
+            .transpose()?
+            .map_or(num_live_blocks, |(_, ends)| {
+                let mut start = 0;
+                let max = ends
+                    .iter()
+                    .map(|&end| {
+                        let len = end - start;
+                        start = end;
+                        len
+                    })
+                    .max()
+                    .unwrap_or(0);
+                max.saturating_mul(num_chunks)
+            });
         let modeled_linf_cap = self.source_moment.and_then(|moment| {
             moment.response_linf_cap(
                 ring_challenge_cfg.challenge_l2_sq_max(),
-                num_live_blocks,
+                cap_blocks,
                 num_chunks,
                 num_fold_coeffs,
                 d_a,
@@ -322,7 +347,7 @@ impl RecursiveCandidateContext<'_, '_> {
             };
             for transition in relation_domain.transitions_in(self.request.relation_traversal_order)
             {
-                let params = CommittedGroupParams::try_new(
+                let mut params = CommittedGroupParams::try_new(
                     // A recursive candidate consumes no frozen groups, so its own
                     // new group is the whole list.
                     vec![akita_params::GroupOpenPhaseParams {
@@ -332,7 +357,13 @@ impl RecursiveCandidateContext<'_, '_> {
                             // its level.
                             group: akita_params::PolynomialGroupLayout::singleton(
                                 akita_params::padded_boolean_opening_vars(
-                                    request.current_witness_len,
+                                    checked::product([core.num_ring_elems, d_a]).ok_or_else(
+                                        || {
+                                            AkitaError::InvalidSetup(
+                                                "witness length overflow".into(),
+                                            )
+                                        },
+                                    )?,
                                 )?,
                             ),
                             blocks: akita_params::BlockGeometry::new(
@@ -371,6 +402,16 @@ impl RecursiveCandidateContext<'_, '_> {
                     source_encoding,
                     crate::policy::witness_chunk_at_level(request.policy, request.fold_level),
                 )?;
+                if let Some(chunks) = request.input_chunks {
+                    params.witness_chunk_ends = chunks
+                        .align(
+                            checked::product([core.num_positions_per_block, d_a]).ok_or_else(
+                                || AkitaError::InvalidSetup("source block width overflow".into()),
+                            )?,
+                            self.search.num_chunks,
+                        )?
+                        .1;
+                }
                 candidates.push(params);
             }
         }

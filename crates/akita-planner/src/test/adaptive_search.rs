@@ -844,7 +844,7 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
     assert_eq!(selected_root.role_dims(), d256_mixed);
     assert_eq!(
         selected.schedule.recursive_folds[0].params.role_dims(),
-        d128_mixed,
+        d64,
         "the additive work score prices the first packing successor's setup scan"
     );
     let opening_methods = std::iter::once(selected_root.opening_method()).chain(
@@ -1086,15 +1086,13 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
 
     let smaller_budget = exact_fields - 1;
     policy.setup_field_budget = Some(smaller_budget);
-    let tighter = find_schedule(
+    let error = find_schedule(
         onehot_group(16, 1),
         &policy,
         OneHot::committed_source_contract().unwrap(),
         &domain,
         OneHot::ring_challenge_config,
     )
-    .expect("a tighter feasible budget should select an admitted alternative");
-    let tighter_fields =
-        akita_params::setup_matrix_field_elements_for_schedule(&tighter.schedule).unwrap();
-    assert!(tighter_fields <= smaller_budget);
+    .expect_err("one field below the minimum setup budget must reject");
+    assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
 }

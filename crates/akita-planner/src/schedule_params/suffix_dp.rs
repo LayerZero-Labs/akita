@@ -83,7 +83,6 @@ struct ChildEdge<'a> {
     level: u32,
     candidate_params: Arc<CommittedGroupParams>,
     current_witness_len: usize,
-    next_witness_len: usize,
     natural_setup_field_len: usize,
     level_setup_field_elements: usize,
     offloaded: bool,
@@ -120,7 +119,6 @@ struct PendingQueryEdge {
     params: Arc<CommittedGroupParams>,
     opening_layout: Arc<OpeningClaimsLayout>,
     level: u32,
-    next_witness_len: usize,
 }
 
 impl PendingQueryEdge {
@@ -128,14 +126,12 @@ impl PendingQueryEdge {
         state: SuffixState,
         opening_layout: &OpeningClaimsLayout,
         params: &CommittedGroupParams,
-        next_witness_len: usize,
     ) -> Result<Self, AkitaError> {
         Ok(Self {
             params: Arc::new(params.clone()),
             opening_layout: Arc::new(opening_layout.clone()),
             level: u32::try_from(state.level)
                 .map_err(|_| AkitaError::InvalidSetup("grinding level exceeds u32".into()))?,
-            next_witness_len,
         })
     }
 
@@ -145,12 +141,19 @@ impl PendingQueryEdge {
         challenge_order: akita_params::ChallengeFieldOrder,
         successor: akita_params::FoldSuccessor<'_>,
     ) -> Result<akita_params::TranscriptGrindingCost, AkitaError> {
+        let mut producer = (*self.params).clone();
+        producer.successor_block_len = successor.source_block_len()?;
+        let output_len = producer.output_witness_len_for_field_bits(
+            policy.decomposition.field_bits(),
+            policy.claim_ext_degree,
+            &self.opening_layout,
+        )?;
         let payload = akita_schedules::planner_support::nonterminal_level_payload_bytes(
             policy,
-            &self.params,
+            &producer,
             &self.opening_layout,
             successor,
-            self.next_witness_len,
+            output_len,
         )?;
         akita_params::transcript_grinding_cost_for_planner_edge(
             &self.params,
@@ -260,17 +263,15 @@ impl QuerySearch {
         state: SuffixState,
         opening_layout: &OpeningClaimsLayout,
         params: &CommittedGroupParams,
-        next_witness_len: usize,
     ) -> Result<Option<Self>, AkitaError> {
         match self {
             Self::Unconstrained => Ok(Some(Self::Unconstrained)),
             Self::Root(finalized_query_count) => Ok(Some(Self::Restricted(QueryPrefix {
                 finalized_query_count: *finalized_query_count,
-                incoming: PendingQueryEdge::new(state, opening_layout, params, next_witness_len)?,
+                incoming: PendingQueryEdge::new(state, opening_layout, params)?,
             }))),
             Self::Restricted(prefix) => {
-                let incoming =
-                    PendingQueryEdge::new(state, opening_layout, params, next_witness_len)?;
+                let incoming = PendingQueryEdge::new(state, opening_layout, params)?;
                 prefix
                     .advance(ctx.policy, ctx.challenge_order, params, incoming)
                     .map(|next| next.map(Self::Restricted))
@@ -326,7 +327,6 @@ impl StateFrontiers {
 
 struct LevelCandidateEdge<'a> {
     params: &'a CommittedGroupParams,
-    next_witness_len: usize,
     natural_setup_field_len: usize,
     require_child_fold: bool,
 }
@@ -337,6 +337,7 @@ struct CandidateChildren<'a> {
 }
 
 struct PlannedFoldCandidate {
+    chunk_shape: akita_params::WitnessChunkShape,
     params: CommittedGroupParams,
     next_witness_len: usize,
     opening_reduction_bytes: usize,
@@ -454,7 +455,12 @@ fn child_edge_price(
         &edge.candidate_params,
         edge.opening_layout,
         successor,
-        edge.next_witness_len,
+        suffix
+            .folds
+            .first()
+            .map_or(suffix.terminal.input_witness_len, |fold| {
+                fold.input_witness_len
+            }),
     )?;
     let direct_payload_bytes = payload.direct;
     let stage3_payload_bytes = payload.stage3;
@@ -506,15 +512,30 @@ fn child_choice(
             })?,
         )
     };
+    let output_witness_len = suffix
+        .folds
+        .first()
+        .map_or(suffix.terminal.input_witness_len, |fold| {
+            fold.input_witness_len
+        });
     let first_direct_output_witness_len = if edge.offloaded {
         suffix.first_direct_output_witness_len
     } else {
-        edge.next_witness_len
+        output_witness_len
     };
+    let mut producer = (*edge.candidate_params).clone();
+    producer.successor_block_len = suffix
+        .folds
+        .first()
+        .map_or(
+            akita_params::FoldSuccessor::Terminal(&suffix.terminal.params),
+            |fold| akita_params::FoldSuccessor::Recursive(&fold.params),
+        )
+        .source_block_len()?;
     let first_fold = CandidateFoldStep {
-        params: Arc::clone(&edge.candidate_params),
+        params: Arc::new(producer),
         input_witness_len: edge.current_witness_len,
-        output_witness_len: edge.next_witness_len,
+        output_witness_len,
         estimated_direct_payload_bytes: edge_price.direct_payload_bytes,
         estimated_stage3_payload_bytes: edge_price.stage3_payload_bytes,
     };
@@ -528,8 +549,7 @@ fn child_choice(
                 .relation_coefficient_block_len(),
         )?
     };
-    let work_elements = edge
-        .next_witness_len
+    let work_elements = output_witness_len
         .checked_add(direct_scan_elements)
         .ok_or_else(|| AkitaError::InvalidSetup("edge work overflow".into()))?;
     let cost = suffix.cost.checked_prepend(
@@ -701,7 +721,6 @@ fn price_terminal_candidate(
     state: SuffixState,
     query_search: &QuerySearch,
     candidate_params: &CommittedGroupParams,
-    opening_reduction_bytes: usize,
     natural_len: usize,
     frontiers: &mut StateFrontiers,
 ) -> Result<(), AkitaError> {
@@ -719,10 +738,30 @@ fn price_terminal_candidate(
     {
         return Ok(());
     }
+    let opening_reduction_bytes = akita_params::extension_opening_reduction_level_bytes(
+        policy.challenge_field_bits()?,
+        policy.claim_ext_degree,
+        candidate_params.group(),
+    )?;
     let field_bits = policy.decomposition.field_bits();
     let Some((mut direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
         policy,
-        state.current_witness_len,
+        state
+            .input_chunks
+            .map(|chunks| {
+                chunks.align(
+                    akita_error::checked::product([
+                        candidate_params.d_a(),
+                        candidate_params.blocks().positions_per_block,
+                    ])
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("terminal block width overflow".into())
+                    })?,
+                    1,
+                )
+            })
+            .transpose()?
+            .map_or(state.current_witness_len, |(len, _)| len),
         candidate_params,
         field_bits,
         ctx.key,
@@ -797,7 +836,6 @@ fn price_level_candidate_with_children(
     let policy = ctx.policy;
     let LevelCandidateEdge {
         params: candidate_params,
-        next_witness_len,
         natural_setup_field_len: natural_len,
         require_child_fold,
     } = candidate;
@@ -822,8 +860,22 @@ fn price_level_candidate_with_children(
         level: u32::try_from(state.level)
             .map_err(|_| AkitaError::InvalidSetup("grinding level exceeds u32".into()))?,
         candidate_params: Arc::new(candidate_params.clone()),
-        current_witness_len: state.current_witness_len,
-        next_witness_len,
+        current_witness_len: state
+            .input_chunks
+            .map(|chunks| {
+                chunks.align(
+                    akita_error::checked::product([
+                        candidate_params.d_a(),
+                        candidate_params.blocks().positions_per_block,
+                    ])
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("source block width overflow".into())
+                    })?,
+                    candidate_params.witness_chunk.num_chunks,
+                )
+            })
+            .transpose()?
+            .map_or(state.current_witness_len, |(len, _)| len),
         natural_setup_field_len: natural_len,
         level_setup_field_elements,
         offloaded: false,

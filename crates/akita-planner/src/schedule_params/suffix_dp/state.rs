@@ -42,6 +42,7 @@ pub(crate) struct ParentObservableKey {
     outer_payload_bytes: usize,
     setup_prefix_payload_bytes: usize,
     grinding_successor: GrindingSuccessorKey,
+    source_block_len: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -74,6 +75,8 @@ impl ParentObservableKey {
                 AkitaError::InvalidSetup("parent key is missing its terminal successor".into())
             })?;
             return Ok(Self {
+                source_block_len: akita_params::FoldSuccessor::Terminal(terminal)
+                    .source_block_len()?,
                 outer_payload_bytes: 0,
                 setup_prefix_payload_bytes: 0,
                 grinding_successor: GrindingSuccessorKey::Terminal {
@@ -95,6 +98,7 @@ impl ParentObservableKey {
             ))
             .ok_or_else(|| AkitaError::InvalidSetup("outer payload byte count overflow".into()))?;
         Ok(Self {
+            source_block_len: akita_params::FoldSuccessor::Recursive(first).source_block_len()?,
             outer_payload_bytes,
             setup_prefix_payload_bytes:
                 akita_schedules::planner_support::stage3_payload_bytes_for_successor(
@@ -116,6 +120,7 @@ impl ParentObservableKey {
 pub(super) struct ScheduleMemoKey {
     pub(super) level: usize,
     pub(super) current_witness_len: usize,
+    pub(super) input_chunks: Option<akita_params::WitnessChunkShape>,
     pub(super) current_lb: u32,
     pub(super) source_moment: Option<crate::response_model::SourceMomentEstimate>,
     pub(super) d_a: usize,
@@ -292,6 +297,7 @@ pub(crate) struct SuffixCtx<'a> {
 pub(crate) struct SuffixState {
     pub(crate) level: usize,
     pub(crate) current_witness_len: usize,
+    pub(crate) input_chunks: Option<akita_params::WitnessChunkShape>,
     pub(crate) current_lb: u32,
     pub(crate) source_moment: Option<crate::response_model::SourceMomentEstimate>,
     pub(crate) dimension_ceiling: CommitmentRingDims,
@@ -399,6 +405,7 @@ impl SuffixState {
         ScheduleMemoKey {
             level: self.level,
             current_witness_len: self.current_witness_len,
+            input_chunks: self.input_chunks,
             current_lb: self.current_lb,
             source_moment: self.source_moment,
             d_a: memo_dimensions.d_a(),

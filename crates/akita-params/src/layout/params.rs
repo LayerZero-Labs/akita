@@ -115,6 +115,10 @@ pub struct CommittedGroupParams {
     pub source_encoding: crate::CommittedSourceEncoding,
     /// Multi-chunk witness layout this level commits under.
     pub witness_chunk: crate::witness::ChunkedWitnessCfg,
+    /// Coefficient width of the successor's source block.
+    pub successor_block_len: usize,
+    /// Endpoints of this fold's inherited own-group block partition.
+    pub witness_chunk_ends: Vec<usize>,
 }
 
 impl CommittedGroupParams {
@@ -134,6 +138,8 @@ impl CommittedGroupParams {
             ring_relation_mode,
             source_encoding,
             witness_chunk,
+            successor_block_len: 1,
+            witness_chunk_ends: Vec::new(),
         })
     }
 

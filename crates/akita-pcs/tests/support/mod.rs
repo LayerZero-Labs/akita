@@ -147,13 +147,14 @@ fn universal_fold_digit_depth(
 
 fn retarget_synthetic_terminal<Cfg: CommitmentConfig>(
     schedule: &mut akita_params::FoldSchedule,
+    opening_batch: &akita_params::OpeningClaimsLayout,
 ) -> Result<(), AkitaError> {
     let policy = policy_of::<Cfg>();
-    let predecessor_output = schedule
+    let predecessor = schedule
         .recursive_folds
-        .last()
-        .ok_or_else(|| AkitaError::InvalidSetup("synthetic terminal has no predecessor".into()))?
-        .output_witness_len;
+        .last_mut()
+        .ok_or_else(|| AkitaError::InvalidSetup("synthetic terminal has no predecessor".into()))?;
+    let predecessor_output = predecessor.output_witness_len;
     // After the three-type merge the terminal fold and its group are one value,
     // so the old `terminal` / `terminal` pair is a single borrow.
     let terminal = &mut schedule.terminal;
@@ -173,6 +174,17 @@ fn retarget_synthetic_terminal<Cfg: CommitmentConfig>(
         .map_err(|_| AkitaError::InvalidSetup("packing terminal dimension exceeds u32".into()))?;
     let mut selected = None;
     for positions_per_block in [256usize, 128, 64, 32, 16, 8, 4, 2, 1] {
+        predecessor.params.successor_block_len =
+            akita_error::checked::product([terminal_d, positions_per_block]).ok_or_else(|| {
+                AkitaError::InvalidSetup("synthetic terminal block overflow".into())
+            })?;
+        predecessor.output_witness_len = predecessor.params.output_witness_len_for_field_bits(
+            policy.decomposition.field_bits(),
+            Cfg::EXT_DEGREE,
+            opening_batch,
+        )?;
+        terminal.input_witness_len = predecessor.output_witness_len;
+        terminal.blocks.live_ring_elements_per_claim = terminal.input_witness_len / terminal_d;
         let num_live_blocks = terminal
             .blocks
             .live_ring_elements_per_claim
@@ -398,15 +410,7 @@ where
         rebuild_group_output_matrices(root, key.final_group.num_polynomials(), Self::EXT_DEGREE)?;
 
         let opening_batch = key.opening_layout()?;
-        let root_output_witness_len = root.output_witness_len_for_field_bits(
-            policy.decomposition.field_bits(),
-            Self::EXT_DEGREE,
-            &opening_batch,
-        )?;
-        schedule.root.output_witness_len = root_output_witness_len;
-
         let mut successor = successor_template;
-        successor.input_witness_len = root_output_witness_len;
         let successor_witness = &mut successor.params;
         if successor_witness.inner().digits.log_basis != root.open().digits.log_basis
             || successor_witness.inner().digits.num_digits != 1
@@ -434,13 +438,6 @@ where
                         "successor packing subring is not in the production ladder".into(),
                     )
                 })?;
-        successor_witness
-            .own_group_mut()
-            .profile
-            .blocks
-            .live_ring_elements_per_claim =
-            root_output_witness_len.div_ceil(successor_witness.d_a());
-
         let root_setup_natural_len = akita_params::active_setup_field_len(root, &opening_batch)?;
         let root_setup_prefix_len = akita_params::padded_setup_prefix_len(root_setup_natural_len);
         let prefix_ring_slots = root_setup_prefix_len
@@ -458,10 +455,46 @@ where
             .profile
             .blocks
             .positions_per_block = prefix_ring_slots.next_power_of_two();
+        root.successor_block_len =
+            akita_params::FoldSuccessor::Recursive(successor_witness).source_block_len()?;
+        let root_output_witness_len = root.output_witness_len_for_field_bits(
+            policy.decomposition.field_bits(),
+            Self::EXT_DEGREE,
+            &opening_batch,
+        )?;
+        schedule.root.output_witness_len = root_output_witness_len;
+        successor.input_witness_len = root_output_witness_len;
+        successor_witness
+            .own_group_mut()
+            .profile
+            .blocks
+            .live_ring_elements_per_claim =
+            root_output_witness_len.div_ceil(successor_witness.d_a());
         successor_witness.own_group_mut().profile.blocks.live_blocks = successor_witness
             .blocks()
             .live_ring_elements_per_claim
             .div_ceil(successor_witness.blocks().positions_per_block);
+        let geometry = akita_params::RelationWitnessGeometry::for_level(
+            root,
+            &opening_batch,
+            Self::EXT_DEGREE,
+        )?;
+        successor_witness.witness_chunk_ends = akita_params::WitnessLayout::new(
+            root,
+            &opening_batch,
+            &geometry,
+            root.witness_chunk.num_chunks,
+            akita_params::RelationQuotientPlan::for_field_bits(
+                root,
+                policy.decomposition.field_bits(),
+            )?,
+        )?
+        .chunk_shape()?
+        .align(
+            root.successor_block_len,
+            successor_witness.witness_chunk.num_chunks,
+        )?
+        .1;
         successor_witness.own_group_mut().opening.num_digits_fold = universal_fold_digit_depth(
             FoldDigitInputs::of_fold(successor_witness),
             policy.decomposition.field_bits(),
@@ -659,7 +692,7 @@ where
         schedule.recursive_folds.clear();
         schedule.recursive_folds.push(successor);
 
-        retarget_synthetic_terminal::<Self>(&mut schedule)?;
+        retarget_synthetic_terminal::<Self>(&mut schedule, &successor_opening_batch)?;
 
         schedule.validate_nonterminal_opening_execution(Self::EXT_DEGREE)?;
         let root = &schedule.root.params;

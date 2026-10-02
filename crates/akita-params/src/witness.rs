@@ -19,7 +19,7 @@ mod quotient_breakdown;
 mod scalar_len;
 mod tail;
 
-pub use chunk_partition::dyadic_block_ranges;
+pub use chunk_partition::{dyadic_block_ranges, WitnessChunkShape};
 pub use quotient_breakdown::QuotientCoefficientBreakdown;
 pub use tail::RelationQuotientPlan;
 
@@ -98,6 +98,8 @@ pub struct WitnessLayout {
     opening_batch: Option<OpeningClaimsLayout>,
     extension_degree: usize,
     num_chunks: usize,
+    compression_alignment: usize,
+    tail_suffix_alignment: usize,
     units: Vec<WitnessUnitLayout>,
     compression_layers: Vec<CompressionWitnessLayerLayout>,
     compression_alignment_ranges: Vec<Range<usize>>,
@@ -442,6 +444,8 @@ impl WitnessLayout {
             opening_batch: None,
             extension_degree: 0,
             num_chunks: 0,
+            compression_alignment: 1,
+            tail_suffix_alignment: 1,
             units,
             compression_layers: Vec::new(),
             compression_alignment_ranges: Vec::new(),
@@ -455,7 +459,14 @@ impl WitnessLayout {
     }
 
     pub fn validate_internal_ranges(&self) -> Result<(), AkitaError> {
-        let body_end = self.units.last().map_or(0, |unit| unit.t_range.end);
+        let body_end = self
+            .compression_alignment_ranges
+            .iter()
+            .filter(|range| range.start < self.tail_range.start)
+            .map(|range| range.end)
+            .chain(self.units.last().map(|unit| unit.t_range.end))
+            .max()
+            .unwrap_or(0);
         if self.tail_range.start != body_end || self.tail_range.start > self.tail_range.end {
             return Err(AkitaError::InvalidSetup(
                 "witness tail disagrees with its chunk-major body".into(),
@@ -551,6 +562,7 @@ impl WitnessLayout {
                 .ok_or_else(|| AkitaError::InvalidSetup("witness unit count overflow".into()))?,
         );
         let mut cursor = 0usize;
+        let mut alignment_ranges = Vec::new();
         let group_geometry = relation_group_order
             .iter()
             .map(|&group_index| {
@@ -585,7 +597,7 @@ impl WitnessLayout {
                         "witness group has malformed dimensions".into(),
                     ));
                 }
-                let chunk_block_ranges = dyadic_block_ranges(params.num_live_blocks(), num_chunks)?;
+                let chunk_block_ranges = lp.witness_block_ranges(group_index, num_chunks)?;
                 Ok((
                     group_index,
                     params,
@@ -637,6 +649,13 @@ impl WitnessLayout {
                     t_range,
                 });
             }
+            let aligned = checked::align_up(cursor, lp.successor_block_len).ok_or_else(|| {
+                AkitaError::InvalidSetup("witness chunk alignment overflow".into())
+            })?;
+            if aligned != cursor {
+                alignment_ranges.push(cursor..aligned);
+            }
+            cursor = aligned;
         }
         let tail_start = cursor;
         let successor_a_alignment = if num_groups > 1 {
@@ -650,7 +669,7 @@ impl WitnessLayout {
                 .rhs_layout()
                 .relation_coefficient_block_len()?
         };
-        let tail = tail::materialize(
+        let mut tail = tail::materialize(
             lp,
             relation_geometry.rhs_layout(),
             num_groups,
@@ -658,13 +677,18 @@ impl WitnessLayout {
             tail_start,
             quotient_plan,
         )?;
+        alignment_ranges.append(&mut tail.compression_alignment_ranges);
         Ok(Self {
             opening_batch: Some(opening_batch.clone()),
             extension_degree: relation_geometry.extension_degree(),
             num_chunks,
+            compression_alignment: relation_geometry
+                .rhs_layout()
+                .relation_coefficient_block_len()?,
+            tail_suffix_alignment: successor_a_alignment,
             units,
             compression_layers: tail.compression_layers,
-            compression_alignment_ranges: tail.compression_alignment_ranges,
+            compression_alignment_ranges: alignment_ranges,
             relation_quotients: tail.relation_quotients,
             tail_range: tail_start..tail.end,
         })
@@ -701,6 +725,72 @@ impl WitnessLayout {
         Ok(())
     }
 
+    pub fn chunk_shape(&self) -> Result<WitnessChunkShape, AkitaError> {
+        let mut shape = WitnessChunkShape {
+            body_lengths: [0; MAX_WITNESS_CHUNKS],
+            num_chunks: self.num_chunks,
+            tail_prefix_len: 0,
+            tail_alignment: 1,
+            tail_len: self.tail_range.len(),
+            tail_suffix_alignment: 1,
+        };
+        for unit in &self.units {
+            let len = unit
+                .t_range
+                .end
+                .checked_sub(unit.z_range.start)
+                .ok_or(AkitaError::InvalidProof)?;
+            let body = shape
+                .body_lengths
+                .get_mut(unit.chunk_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            *body = body
+                .checked_add(len)
+                .ok_or_else(|| AkitaError::InvalidSetup("witness body overflow".into()))?;
+        }
+        if let Some(layer) = self.compression_layers.first() {
+            let first_f = layer
+                .f_spans
+                .first()
+                .ok_or(AkitaError::InvalidProof)?
+                .1
+                .range
+                .start;
+            shape.tail_prefix_len = checked::sum(
+                self.r_rows()
+                    .iter()
+                    .filter(|row| row.range.end <= first_f)
+                    .map(|row| row.range.len()),
+            )
+            .ok_or_else(|| AkitaError::InvalidSetup("witness quotient width overflow".into()))?;
+            shape.tail_alignment = layer
+                .f_spans
+                .iter()
+                .map(|(_, span)| span.map.ring_dimension())
+                .chain([
+                    layer.h_span.map.ring_dimension(),
+                    self.compression_alignment,
+                ])
+                .max()
+                .unwrap_or(1);
+            shape.tail_suffix_alignment = self.tail_suffix_alignment;
+            shape.tail_len = self
+                .r_rows()
+                .iter()
+                .map(|row| row.range.end)
+                .chain(
+                    self.compression_layers
+                        .iter()
+                        .map(|layer| layer.h_span.range.end),
+                )
+                .max()
+                .ok_or(AkitaError::InvalidProof)?
+                .checked_sub(first_f)
+                .ok_or(AkitaError::InvalidProof)?;
+        }
+        Ok(shape)
+    }
+
     pub fn units(&self) -> &[WitnessUnitLayout] {
         &self.units
     }
@@ -735,7 +825,7 @@ impl WitnessLayout {
             .collect()
     }
 
-    /// Zero ranges used only to preserve the existing A/B/D coefficient block.
+    /// Public zero gaps aligning chunk bodies and compression spans.
     #[must_use]
     pub fn compression_alignment_ranges(&self) -> &[Range<usize>] {
         &self.compression_alignment_ranges

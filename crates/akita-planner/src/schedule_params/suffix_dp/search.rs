@@ -12,6 +12,7 @@ struct OpeningSearch<'a> {
 }
 
 struct ChildPlan<'a> {
+    chunk_shape: akita_params::WitnessChunkShape,
     params: &'a CommittedGroupParams,
     next_witness_len: usize,
     next_source_moment: Option<crate::response_model::SourceMomentEstimate>,
@@ -48,13 +49,10 @@ fn plan_candidate_children(
     plan: ChildPlan<'_>,
 ) -> Result<PlannedChildren, AkitaError> {
     let state = search.state;
-    let Some(child_query_search) = search.query_search.child(
-        ctx,
-        state,
-        search.opening_layout,
-        plan.params,
-        plan.next_witness_len,
-    )?
+    let Some(child_query_search) =
+        search
+            .query_search
+            .child(ctx, state, search.opening_layout, plan.params)?
     else {
         return Ok(PlannedChildren {
             direct: None,
@@ -79,6 +77,7 @@ fn plan_candidate_children(
             ctx,
             memo,
             SuffixState {
+                input_chunks: Some(plan.chunk_shape),
                 level: state.level + 1,
                 current_witness_len: plan.next_witness_len,
                 current_lb: search.open_log_basis,
@@ -119,6 +118,7 @@ fn plan_candidate_children(
             ctx,
             memo,
             SuffixState {
+                input_chunks: Some(plan.chunk_shape),
                 level: state.level + 1,
                 current_witness_len: plan.next_witness_len,
                 current_lb: search.open_log_basis,
@@ -147,6 +147,7 @@ fn price_planned_fold_candidate(
 ) -> Result<(), AkitaError> {
     let state = search.state;
     let PlannedFoldCandidate {
+        chunk_shape,
         params,
         next_witness_len,
         opening_reduction_bytes: _,
@@ -222,6 +223,7 @@ fn price_planned_fold_candidate(
         memo,
         search,
         ChildPlan {
+            chunk_shape,
             params: &params,
             next_witness_len,
             next_source_moment,
@@ -237,7 +239,6 @@ fn price_planned_fold_candidate(
         search.opening_layout,
         LevelCandidateEdge {
             params: &params,
-            next_witness_len,
             natural_setup_field_len: natural_len,
             require_child_fold: search.require_child_fold,
         },
@@ -288,19 +289,10 @@ pub(super) fn process_candidate_batch(
         .saturating_add(generated.folds.len());
     let terminal_candidate_count = generated.terminal.len();
     for candidate in generated.terminal {
-        let natural_len = active_setup_field_len(&candidate.params, opening_layout)?;
-        price_terminal_candidate(
-            ctx,
-            state,
-            query_search,
-            &candidate.params,
-            candidate.opening_reduction_bytes,
-            natural_len,
-            frontiers,
-        )?;
+        let natural_len = active_setup_field_len(&candidate, opening_layout)?;
+        price_terminal_candidate(ctx, state, query_search, &candidate, natural_len, frontiers)?;
     }
-    let candidates_with_source =
-        attach_source_moments(ctx, state, is_root_level, opening_layout, generated.folds)?;
+    let candidates_with_source = attach_source_moments(ctx, state, is_root_level, generated.folds)?;
     // Complete-root candidates are traversed in exact lower-bound order.
     // Recursive states do not have that global admission rule and retain
     // local Pareto pruning.
@@ -321,16 +313,19 @@ pub(super) fn process_candidate_batch(
     let incoming_setup_prefix = state.topology.incoming_setup_prefix();
     let guide_scope = GuideScope::for_state(ctx.policy, is_root_level, incoming_setup_prefix);
     let traversal = candidate_traversal(ctx.policy, guide_scope, opening_layout, candidates)?;
-    let search = OpeningSearch {
-        state,
-        depth,
-        open_log_basis,
-        opening_layout,
-        require_child_fold,
-        guide_scope,
-        query_search: query_search.clone(),
-    };
     for (guide, candidate) in traversal {
+        let opening_layout = candidate
+            .params
+            .opening_layout_for_final_group(candidate.params.group())?;
+        let search = OpeningSearch {
+            state,
+            depth,
+            open_log_basis,
+            opening_layout: &opening_layout,
+            require_child_fold,
+            guide_scope,
+            query_search: query_search.clone(),
+        };
         price_planned_fold_candidate(ctx, memo, &search, guide, candidate, frontiers)?;
     }
     Ok(())

@@ -122,6 +122,11 @@ impl CommittedGroupParams {
         push_usize(bytes, self.outer().digits.num_digits);
         push_usize(bytes, self.open().digits.num_digits);
         push_usize(bytes, self.num_digits_fold());
+        push_usize(bytes, self.successor_block_len);
+        push_usize(bytes, self.witness_chunk_ends.len());
+        for &end in &self.witness_chunk_ends {
+            push_usize(bytes, end);
+        }
         // Chunk binding is appended only when the level is chunked, so
         // single-chunk descriptors stay byte-for-byte identical to the historical
         // layout (the flag-off no-op invariant). When chunked, bind the chunk
