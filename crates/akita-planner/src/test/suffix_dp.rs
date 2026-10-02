@@ -27,14 +27,14 @@ fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
     let direct = memo_key(1, None);
     let prefixed = memo_key(2, Some(1));
     let mut memo = super::ScheduleMemo::new();
-    for key in [direct, prefixed] {
+    for key in [direct.clone(), prefixed.clone()] {
         memo.insert(key, super::empty_suffix_result(), None);
     }
     assert!(memo.contains(&direct));
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&prefixed));
 
-    memo.insert(direct, super::empty_suffix_result(), None);
+    memo.insert(direct.clone(), super::empty_suffix_result(), None);
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&direct));
     assert!(memo.contains(&prefixed));
@@ -65,7 +65,7 @@ fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
         .is_empty());
 
     let quotient_key = memo_key(2, None);
-    let mut reduced_key = quotient_key;
+    let mut reduced_key = quotient_key.clone();
     reduced_key.topology = super::SuffixTopology::Direct {
         payload_phase: akita_params::CommitmentPayloadPhase::CompressedPrefix,
         relation_phase: reduced,
@@ -79,21 +79,21 @@ fn suffix_cache_gives_referenced_entry_a_second_chance() {
     let cold = memo_key(2, None);
     let mut entries = std::collections::HashMap::from([
         (
-            hot,
+            hot.clone(),
             super::MemoEntry {
                 result: super::empty_suffix_result(),
                 referenced: true,
             },
         ),
         (
-            cold,
+            cold.clone(),
             super::MemoEntry {
                 result: super::empty_suffix_result(),
                 referenced: false,
             },
         ),
     ]);
-    let mut insertion_order = VecDeque::from([hot, cold]);
+    let mut insertion_order = VecDeque::from([hot.clone(), cold.clone()]);
 
     super::evict_suffix_entry(&mut entries, &mut insertion_order);
 

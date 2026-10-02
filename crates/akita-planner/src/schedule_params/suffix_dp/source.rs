@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) fn attach_source_moments(
     ctx: &SuffixCtx<'_>,
-    state: SuffixState,
+    state: SuffixState<'_>,
     is_root_level: bool,
     candidates: Vec<candidates::RawFoldCandidate>,
 ) -> Result<Vec<PlannedFoldCandidate>, AkitaError> {

@@ -2,7 +2,7 @@ use super::*;
 use crate::schedule_params::ReducedTransitionRejection;
 
 struct OpeningSearch<'a> {
-    state: SuffixState,
+    state: SuffixState<'a>,
     depth: usize,
     open_log_basis: u32,
     opening_layout: &'a OpeningClaimsLayout,
@@ -27,7 +27,7 @@ struct PlannedChildren {
     offloaded: Option<Arc<SuffixResult>>,
 }
 
-fn adaptation_guide_allows_state(ctx: &SuffixCtx<'_>, state: SuffixState) -> bool {
+fn adaptation_guide_allows_state(ctx: &SuffixCtx<'_>, state: SuffixState<'_>) -> bool {
     let Some(guide) = ctx.adaptation_guide else {
         return true;
     };
@@ -65,6 +65,7 @@ fn plan_candidate_children(
             .get(state.level)
             .is_some_and(|successor| successor.params.setup_prefix().is_some())
     });
+    let input_chunks = (plan.chunk_shape.num_chunks > 1).then(|| Arc::new(plan.chunk_shape));
     let direct_child = if guided_successor_is_offloaded == Some(true)
         || !plan.direct_edge_is_admissible
         || plan.prune_direct_edge
@@ -77,7 +78,7 @@ fn plan_candidate_children(
             ctx,
             memo,
             SuffixState {
-                input_chunks: (plan.chunk_shape.num_chunks > 1).then_some(plan.chunk_shape),
+                input_chunks: input_chunks.as_ref(),
                 level: state.level + 1,
                 current_witness_len: plan.next_witness_len,
                 current_lb: search.open_log_basis,
@@ -118,7 +119,7 @@ fn plan_candidate_children(
             ctx,
             memo,
             SuffixState {
-                input_chunks: (plan.chunk_shape.num_chunks > 1).then_some(plan.chunk_shape),
+                input_chunks: input_chunks.as_ref(),
                 level: state.level + 1,
                 current_witness_len: plan.next_witness_len,
                 current_lb: search.open_log_basis,
@@ -273,7 +274,7 @@ fn finish_state(retains_setup_projection: bool, frontiers: StateFrontiers) -> Su
 pub(super) fn process_candidate_batch(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
-    state: SuffixState,
+    state: SuffixState<'_>,
     depth: usize,
     open_log_basis: u32,
     opening_layout: &OpeningClaimsLayout,
@@ -299,7 +300,11 @@ pub(super) fn process_candidate_batch(
     let candidates = if is_root_level || matches!(query_search, QuerySearch::Restricted(_)) {
         candidates_with_source
     } else {
-        prune::level_candidates(opening_layout, candidates_with_source)?
+        prune::level_candidates(
+            opening_layout,
+            state.input_chunks.is_some(),
+            candidates_with_source,
+        )?
     };
     if let Some(diagnostics) = ctx.diagnostics {
         diagnostics.record_candidates(
@@ -336,7 +341,7 @@ pub(super) fn process_candidate_batch(
 pub(crate) fn derive_selected_suffix_schedule(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
-    state: SuffixState,
+    state: SuffixState<'_>,
     depth: usize,
     query_search: QuerySearch,
 ) -> Result<Arc<SuffixResult>, AkitaError> {

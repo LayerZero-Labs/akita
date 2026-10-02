@@ -169,7 +169,7 @@ pub(crate) fn packing_precommit_opening_products(
 /// deterministic tie behavior from the original search order.
 fn opening_work_domain(
     ctx: &SuffixCtx<'_>,
-    state: SuffixState,
+    state: SuffixState<'_>,
     root_level_key: Option<&ScheduleLookupKey>,
     root_main_constraint: Option<&CommittedGroupParams>,
     guide_fold: Option<&CommittedGroupParams>,
@@ -447,7 +447,7 @@ fn terminal_candidate_matches_guide(
 }
 
 impl<'a> CandidateDomain<'a> {
-    pub(super) fn prepare(ctx: &SuffixCtx<'a>, state: SuffixState) -> Result<Self, AkitaError> {
+    pub(super) fn prepare(ctx: &SuffixCtx<'a>, state: SuffixState<'_>) -> Result<Self, AkitaError> {
         let policy = ctx.policy;
         let root_level_key = ctx.root_lookup_key.filter(|_| state.level == 0);
         let root_main_constraint = ctx.root_main_constraint.filter(|_| state.level == 0);
@@ -590,7 +590,7 @@ impl<'a> CandidateDomain<'a> {
     pub(super) fn generate_recursive_for_opening_basis(
         &self,
         ctx: &SuffixCtx<'_>,
-        state: SuffixState,
+        state: SuffixState<'_>,
         open_lb: u32,
         setup_prefixes: &mut SetupPrefixSearchCache,
     ) -> Result<GeneratedCandidates, AkitaError> {
@@ -623,7 +623,7 @@ impl<'a> CandidateDomain<'a> {
                         })
                     });
                     let request = RecursiveCandidateRequest {
-                        input_chunks: state.input_chunks,
+                        input_chunks: state.input_chunks.map(|chunks| **chunks),
                         policy,
                         payload_mode,
                         opening: work.opening,
@@ -726,7 +726,7 @@ impl<'a> CandidateDomain<'a> {
     pub(super) fn visit_root_batches(
         &self,
         ctx: &SuffixCtx<'_>,
-        state: SuffixState,
+        state: SuffixState<'_>,
         open_lb: u32,
         mut visit: impl FnMut(GeneratedCandidates) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {

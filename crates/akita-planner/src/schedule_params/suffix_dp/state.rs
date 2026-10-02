@@ -121,11 +121,12 @@ impl ParentObservableKey {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct ScheduleMemoKey {
     pub(super) level: usize,
     pub(super) current_witness_len: usize,
-    pub(super) input_chunks: Option<akita_params::WitnessChunkShape>,
+    /// Immutable producer geometry, shared with child states and eviction keys.
+    pub(super) input_chunks: Option<Arc<akita_params::WitnessChunkShape>>,
     pub(super) current_lb: u32,
     pub(super) source_moment: Option<crate::response_model::SourceMomentEstimate>,
     pub(super) d_a: usize,
@@ -135,7 +136,7 @@ pub(super) struct ScheduleMemoKey {
 }
 
 impl ScheduleMemoKey {
-    const fn is_direct(self) -> bool {
+    const fn is_direct(&self) -> bool {
         self.topology.incoming_setup_prefix().is_none()
     }
 }
@@ -152,8 +153,8 @@ pub(super) struct MemoEntry {
     pub(super) referenced: bool,
 }
 
-// Completed frontier entries omit construction-only descriptors. The larger
-// quota stayed within the former peak for the measured high pressure row.
+// Completed frontier entries omit construction-only descriptors and share
+// incoming ownership shapes between the map, eviction queue, and child states.
 const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 524_288;
 // Prefix layouts create a much wider stream of one-off states than ordinary
 // suffixes. Separate quotas keep that stream from evicting direct states while
@@ -218,7 +219,7 @@ impl ScheduleMemo {
         result: Arc<SuffixResult>,
         diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
     ) {
-        if let Entry::Occupied(mut existing) = self.entries.entry(key) {
+        if let Entry::Occupied(mut existing) = self.entries.entry(key.clone()) {
             existing.insert(MemoEntry {
                 result,
                 referenced: true,
@@ -239,7 +240,7 @@ impl ScheduleMemo {
         if insertion_order.len() >= capacity {
             evict_suffix_entry(&mut self.entries, insertion_order);
         }
-        insertion_order.push_back(key);
+        insertion_order.push_back(key.clone());
         self.entries.insert(
             key,
             MemoEntry {
@@ -299,10 +300,10 @@ pub(crate) struct SuffixCtx<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct SuffixState {
+pub(crate) struct SuffixState<'a> {
     pub(crate) level: usize,
     pub(crate) current_witness_len: usize,
-    pub(crate) input_chunks: Option<akita_params::WitnessChunkShape>,
+    pub(crate) input_chunks: Option<&'a Arc<akita_params::WitnessChunkShape>>,
     pub(crate) current_lb: u32,
     pub(crate) source_moment: Option<crate::response_model::SourceMomentEstimate>,
     pub(crate) dimension_ceiling: CommitmentRingDims,
@@ -391,7 +392,7 @@ impl SuffixTopology {
     }
 }
 
-impl SuffixState {
+impl SuffixState<'_> {
     pub(super) fn memo_key(self, policy: &PlannerPolicy) -> ScheduleMemoKey {
         let memo_dimensions = match policy.ring_dimension_schedule_mode {
             crate::RingDimensionScheduleMode::AdaptiveDimension {
@@ -410,7 +411,7 @@ impl SuffixState {
         ScheduleMemoKey {
             level: self.level,
             current_witness_len: self.current_witness_len,
-            input_chunks: self.input_chunks,
+            input_chunks: self.input_chunks.cloned(),
             current_lb: self.current_lb,
             source_moment: self.source_moment,
             d_a: memo_dimensions.d_a(),

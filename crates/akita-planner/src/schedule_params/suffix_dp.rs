@@ -123,7 +123,7 @@ struct PendingQueryEdge {
 
 impl PendingQueryEdge {
     fn new(
-        state: SuffixState,
+        state: SuffixState<'_>,
         opening_layout: &OpeningClaimsLayout,
         params: &CommittedGroupParams,
     ) -> Result<Self, AkitaError> {
@@ -261,7 +261,7 @@ impl QuerySearch {
     fn child(
         &self,
         ctx: &SuffixCtx<'_>,
-        state: SuffixState,
+        state: SuffixState<'_>,
         opening_layout: &OpeningClaimsLayout,
         params: &CommittedGroupParams,
     ) -> Result<Option<Self>, AkitaError> {
@@ -721,7 +721,7 @@ fn candidate_traversal(
 
 fn price_terminal_candidate(
     ctx: &SuffixCtx<'_>,
-    state: SuffixState,
+    state: SuffixState<'_>,
     query_search: &QuerySearch,
     candidate_params: &CommittedGroupParams,
     natural_len: usize,
@@ -830,7 +830,7 @@ fn price_terminal_candidate(
 
 fn price_level_candidate_with_children(
     ctx: &SuffixCtx<'_>,
-    state: SuffixState,
+    state: SuffixState<'_>,
     opening_layout: &OpeningClaimsLayout,
     candidate: LevelCandidateEdge<'_>,
     children: CandidateChildren<'_>,
@@ -963,3 +963,7 @@ fn price_level_candidate_with_children(
 #[cfg(test)]
 #[path = "../test/suffix_dp.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../test/chunk_ownership.rs"]
+mod chunk_ownership_tests;
