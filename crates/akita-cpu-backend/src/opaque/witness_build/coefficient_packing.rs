@@ -36,12 +36,12 @@ pub(crate) fn fold_coefficient_packing_group<F: Field + jolt_field::Ring>(
     let expected_challenges = partials_by_claim
         .len()
         .checked_mul(challenges.num_live_blocks_per_claim())
-        .ok_or_else(|| AkitaError::InvalidInput("packing challenge count overflow".into()))?;
+        .ok_or_else(|| AkitaError::Internal("packing challenge count overflow".into()))?;
     if challenges.len() != expected_challenges {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_challenges,
-            actual: challenges.len(),
-        });
+        return Err(AkitaError::Internal(format!(
+            "packing challenge count mismatch: expected {expected_challenges}, actual {}",
+            challenges.len(),
+        )));
     }
     let expected_coordinates = expected_challenges
         .checked_mul(geometry.partial_base_field_width())
@@ -62,10 +62,11 @@ pub(crate) fn concatenate_group_d_inputs(
     group_inputs: &[&DigitBlocks],
 ) -> Result<DigitBlocks, AkitaError> {
     if group_inputs.len() != opening_batch.num_groups() {
-        return Err(AkitaError::InvalidSize {
-            expected: opening_batch.num_groups(),
-            actual: group_inputs.len(),
-        });
+        return Err(AkitaError::Internal(format!(
+            "retained D input group count mismatch: expected {}, actual {}",
+            opening_batch.num_groups(),
+            group_inputs.len(),
+        )));
     }
     let mut order = opening_batch.root_group_order()?.into_iter();
     let first_index = order.next().ok_or_else(|| {
@@ -82,7 +83,7 @@ pub(crate) fn concatenate_group_d_inputs(
             AkitaError::Internal("canonical coefficient packing group input is missing".into())
         })?;
         if group.digit_stride() != stride {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "opening groups have mixed D dimensions".into(),
             ));
         }
@@ -115,7 +116,7 @@ pub(crate) fn materialize_coefficient_packing_d_input<
             challenge_subring_dimension,
         } => challenge_subring_dimension,
         OpeningMethod::EvaluationTrace => {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "coefficient-packing D input requires the coefficient-packing method".into(),
             ));
         }
@@ -133,7 +134,7 @@ pub(crate) fn materialize_coefficient_packing_d_input<
         || D_D == 0
         || D_D != level_params.role_dims().d_d()
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "coefficient-packing D input disagrees with scheduled claims, digits, or D dimension"
                 .into(),
         ));
@@ -144,7 +145,7 @@ pub(crate) fn materialize_coefficient_packing_d_input<
     if relation_geometry.group_opening_method(group_index)? != expected_method
         || relation_geometry.extension_degree() != packing_geometry.extension_degree()
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "coefficient-packing D input disagrees with relation method".into(),
         ));
     }
@@ -158,7 +159,7 @@ pub(crate) fn materialize_coefficient_packing_d_input<
             .partial_base_field_width()
             .is_multiple_of(D_D)
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "coefficient-packing D input has incompatible physical geometry".into(),
         ));
     }
@@ -167,21 +168,19 @@ pub(crate) fn materialize_coefficient_packing_d_input<
     if partials_by_claim.iter().any(|partials| {
         partials.geometry() != packing_geometry || partials.num_live_blocks() != num_live_blocks
     }) {
-        return Err(AkitaError::InvalidInput(
+        return Err(AkitaError::Internal(
             "coefficient-packing claims have inconsistent partial geometry".into(),
         ));
     }
     let semantic_blocks = partials_by_claim
         .len()
         .checked_mul(num_live_blocks)
-        .ok_or_else(|| {
-            AkitaError::InvalidInput("coefficient-packing block count overflow".into())
-        })?;
+        .ok_or_else(|| AkitaError::Internal("coefficient-packing block count overflow".into()))?;
     let role_subcolumns = packing_geometry.partial_base_field_width() / D_D;
     let planes_per_block = role_subcolumns
         .checked_mul(num_digits_open)
         .ok_or_else(|| {
-            AkitaError::InvalidInput("coefficient-packing digit plane count overflow".into())
+            AkitaError::Internal("coefficient-packing digit plane count overflow".into())
         })?;
     let mut digits = DigitBlocks::zeroed(vec![planes_per_block; semantic_blocks], D_D)?;
     let params = BalancedDecomposePow2Params::new(num_digits_open, log_basis_open);
