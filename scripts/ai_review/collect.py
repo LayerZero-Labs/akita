@@ -18,7 +18,7 @@ MAX_DIFF_CHARS = 300_000
 
 def is_akita_artifact(path):
     """Akita-specific policy; never load exclusions from PR configuration."""
-    return path.startswith("artifacts/")
+    return path == "artifacts" or path.startswith("artifacts/")
 
 
 def git(*args):

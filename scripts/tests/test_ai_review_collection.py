@@ -127,6 +127,33 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(set(value["changed"]), set(paths))
         self.assertEqual(set(value["excluded_artifacts"]), set(excluded))
 
+    def test_directory_replacements_keep_artifact_contents_out_of_all_review_inputs(self):
+        for replacement in ("file", "symlink"):
+            with self.subTest(replacement=replacement):
+                base = self.commit("directory", {"artifacts/table.aks": "excluded-directory-payload\n",
+                                                 "source.rs": f"before {replacement}\n"})
+                self.git("rm", "-r", "artifacts")
+                if replacement == "file":
+                    Path("artifacts").write_text("excluded-root-payload\n")
+                else:
+                    Path("artifacts").symlink_to("source.rs")
+                middle = self.commit("replace directory", {"source.rs": f"during {replacement}\n"})
+                self.git("rm", "artifacts")
+                restored = self.commit("restore directory", {"artifacts/table.aks": "excluded-restored-payload\n",
+                                                            "source.rs": f"after {replacement}\n"})
+                for before, after in ((base, middle), (middle, restored)):
+                    with self.subTest(before=before, after=after):
+                        value = self.collect(before, after)
+                        self.assertNotIn("excluded-", value["diff"])
+                        self.assertEqual(value["changed"], ["source.rs"])
+                        self.assertEqual(set(value["anchors"]), {"source.rs"})
+                        self.assertIn("artifacts", value["excluded_artifacts"])
+                        for revision in ("head", "base"):
+                            self.assertEqual(set(value["trees"][revision]["files"]), {"source.rs"})
+                        delta = collector.since_previous(base, before, after, ["source.rs", "artifacts"])
+                        self.assertNotIn("excluded-", delta)
+                        self.assertNotIn("diff --git a/artifacts", delta)
+
     def test_combined_budget_accepts_boundary_and_rejects_excess_without_truncation(self):
         base = self.commit("base", {"source.rs": "old\n"})
         head = self.commit("change", {"source.rs": "new\n"})
