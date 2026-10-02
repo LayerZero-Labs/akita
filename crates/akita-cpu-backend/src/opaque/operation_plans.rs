@@ -377,7 +377,7 @@ impl<'a, F: Field> ValidatedFoldRelationPlan<'a, F> {
     ) -> Result<Self, AkitaError> {
         let expects_trace = matches!(opening_method, akita_params::OpeningMethod::EvaluationTrace);
         if n_a == 0 || expects_trace != evaluation_trace.is_some() {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "fold relation plan disagrees with its opening family".into(),
             ));
         }
@@ -385,7 +385,7 @@ impl<'a, F: Field> ValidatedFoldRelationPlan<'a, F> {
             .map(
                 |(multiplier_point, num_positions_per_block, depth_commit, log_basis_inner)| {
                     if num_positions_per_block == 0 || depth_commit == 0 {
-                        return Err(AkitaError::InvalidInput(
+                        return Err(AkitaError::Internal(
                             "fold relation plan has empty evaluation-trace geometry".into(),
                         ));
                     }

@@ -33,7 +33,7 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
     let digit_bound = balanced_digit_abs_bound(log_basis);
     let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
         .ok_or_else(|| {
-            AkitaError::Internal("i8 matvec CRT capacity cannot fit a single term".into())
+            AkitaError::InvalidSetup("i8 matvec CRT capacity cannot fit a single term".into())
         })?;
     if n_a <= DENSE_I8_BLOCK_PARALLEL_MAX_ROWS
         && num_live_blocks >= DENSE_I8_BLOCK_PARALLEL_MIN_BLOCKS

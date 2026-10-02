@@ -41,7 +41,7 @@ impl<F: Field> CompressionWitnessMaterialization<F> {
         self.sources
             .iter()
             .find(|source| source.id == id)
-            .ok_or_else(|| AkitaError::InvalidSetup("compression source is missing".into()))
+            .ok_or_else(|| AkitaError::Internal("compression source is missing".into()))
     }
 
     #[cfg(test)]
@@ -169,7 +169,7 @@ where
             .collect::<Result<Vec<_>, _>>()?,
     );
     if outer_sources.len() != layout.groups.len() + 1 {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "compression executor omitted a relation source".into(),
         ));
     }
