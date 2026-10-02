@@ -28,7 +28,14 @@ where
     let coordinates = coefficient_packing_partials_from_position_source::<F, E, _, D>(
         fused_weights,
         view.num_vars(),
-        |position| view.ring_elem(position).ok_or(AkitaError::InvalidProof),
+        |position| {
+            view.ring_elem(position).ok_or_else(|| {
+                AkitaError::Internal(
+                    "coefficient packing witness position is missing from the validated view"
+                        .into(),
+                )
+            })
+        },
         |position, coefficient_index, source| {
             let flat_index = position * D + coefficient_index;
             if flat_index < view.live_coeff_len {

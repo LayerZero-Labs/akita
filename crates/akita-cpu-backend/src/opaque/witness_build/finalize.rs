@@ -71,7 +71,7 @@ impl<F: Field + CanonicalEncoding> RingRelationGroupWitness<F> {
     fn ensure_role_dim<const D: usize>(&self, role: RingRole) -> Result<(), AkitaError> {
         let expected = self.role_dims.dim_for(role);
         if D != expected {
-            return Err(AkitaError::InvalidInput(format!(
+            return Err(AkitaError::Internal(format!(
                 "ring relation witness role {role:?} expects d={expected}, requested D={D}"
             )));
         }
@@ -81,18 +81,18 @@ impl<F: Field + CanonicalEncoding> RingRelationGroupWitness<F> {
                 if let akita_types::OpeningFamily::EvaluationTrace(e_folded) = &self.folded_opening
                 {
                     if !e_folded.can_decode_vec(D) {
-                        return Err(AkitaError::InvalidSize {
-                            expected: D,
-                            actual: e_folded.coeff_len(),
-                        });
+                        return Err(AkitaError::Internal(format!(
+                            "folded E row width mismatch: expected {D}, actual {}",
+                            e_folded.coeff_len(),
+                        )));
                     }
                 }
             }
             RingRole::Opening if self.e_hat.digit_stride() != D => {
-                return Err(AkitaError::InvalidSize {
-                    expected: D,
-                    actual: self.e_hat.digit_stride(),
-                });
+                return Err(AkitaError::Internal(format!(
+                    "E digit stride mismatch: expected {D}, actual {}",
+                    self.e_hat.digit_stride(),
+                )));
             }
             RingRole::Opening | RingRole::Outer => {}
         }
@@ -176,7 +176,7 @@ impl<'a> CpuRecursiveWitnessUnitPlan<'a> {
             || expected_chunks == 0
             || unit.chunk_index() >= expected_chunks
         {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "recursive witness unit has malformed Z geometry".into(),
             ));
         }
@@ -230,7 +230,9 @@ fn emit_packed_negative_binary(
     packed: &PackedNegativeBinary,
 ) -> Result<(), AkitaError> {
     if packed.map() != span.map() || span.range().len() != packed.map().padded_digit_count() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "packed compression witness map or extent differs from its span".into(),
+        ));
     }
     let range = span.range();
     const CHUNK: usize = 4096;
@@ -416,7 +418,7 @@ fn build_witness_unit<F: Field + CanonicalEncoding>(
                     expected_chunks,
                 )?;
                 if plan.expected_chunks() != group.fold.manifest_num_chunks() {
-                    return Err(AkitaError::InvalidInput(
+                    return Err(AkitaError::Internal(
                         "recursive witness unit disagrees with the accepted manifest".into(),
                     ));
                 }
@@ -522,9 +524,9 @@ where
         let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_dims = lp.group_role_dims(opening_batch, group_index)?;
         if group.role_dims() != group_dims {
-            return Err(AkitaError::InvalidInput(format!(
-                        "ring-switch witness group {group_index} role dimensions disagree with level params"
-                    )));
+            return Err(AkitaError::Internal(format!(
+                "ring-switch witness group {group_index} role dimensions differ from the level"
+            )));
         }
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -547,10 +549,11 @@ where
         } = group;
         let polynomial_count = opening_batch.group_layout(group_index)?.num_polynomials();
         if inner_relation.ring_dimension() != group_dims.d_a() {
-            return Err(AkitaError::InvalidSize {
-                expected: group_dims.d_a(),
-                actual: inner_relation.ring_dimension(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "inner-relation ring dimension mismatch: expected {}, actual {}",
+                group_dims.d_a(),
+                inner_relation.ring_dimension(),
+            )));
         }
         let inner_rows_by_polynomial = inner_relation.rows();
         if inner_rows_by_polynomial.len() != polynomial_count {
@@ -562,7 +565,7 @@ where
         let expected_rings_per_polynomial = group_lp
             .num_live_blocks()
             .checked_mul(group_lp.a_rows_len())
-            .ok_or_else(|| AkitaError::InvalidSetup("commitment hint row count overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("commitment hint row count overflow".into()))?;
         let t_hat = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
@@ -576,12 +579,17 @@ where
                         let mut blocks =
                             Vec::with_capacity(polynomial_count * group_lp.num_live_blocks());
                         for rows in inner_rows_by_polynomial {
-                            let typed_rows = rows.as_ring_slice::<D_G>()?;
+                            let typed_rows = rows.as_ring_slice::<D_G>().map_err(|_| {
+                                AkitaError::Internal(
+                                    "commitment hint row ring storage is invalid".into(),
+                                )
+                            })?;
                             if typed_rows.len() != expected_rings_per_polynomial {
-                                return Err(AkitaError::InvalidSize {
-                                    expected: expected_rings_per_polynomial,
-                                    actual: typed_rows.len(),
-                                });
+                                return Err(AkitaError::Internal(format!(
+                                    "commitment hint row count mismatch: expected \
+                                     {expected_rings_per_polynomial}, actual {}",
+                                    typed_rows.len(),
+                                )));
                             }
                             blocks.extend(typed_rows.chunks_exact(group_lp.a_rows_len()));
                         }
@@ -598,12 +606,16 @@ where
             .checked_mul(expected_rings_per_polynomial)
             .and_then(|count| count.checked_mul(group_dims.d_a()))
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("commitment hint coefficient count overflow".into())
+                AkitaError::Internal("commitment hint coefficient count overflow".into())
             })?;
         let mut inner_rows = inner_rows_by_polynomial.iter();
         let mut inner_coefficients = inner_rows
             .next()
-            .ok_or(AkitaError::InvalidProof)?
+            .ok_or_else(|| {
+                AkitaError::Internal(
+                    "prepared ring-switch group has no inner coefficient row".into(),
+                )
+            })?
             .coeffs()
             .to_vec();
         inner_coefficients.reserve(expected_coefficients - inner_coefficients.len());
@@ -625,10 +637,9 @@ where
     validate_chunked_witness_cfg(lp)?;
     for group_index in 0..opening_batch.num_groups() {
         let group_dims = lp.group_role_dims(opening_batch, group_index)?;
-        let opening = instance
-            .group_openings()
-            .get(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let opening = instance.group_openings().get(group_index).ok_or_else(|| {
+            AkitaError::Internal("validated ring-switch instance opening group is missing".into())
+        })?;
         if let Ok(ring_multiplier_point) = opening.evaluation_trace_multiplier_point() {
             dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -647,28 +658,27 @@ where
         (
             akita_params::RingRelationMode::QuotientLift,
             RelationDQuotientWitness::QuotientLift(d_quotients),
-        ) => PreparedWitnessTail::QuotientLift(
-            compute_multi_group_relation_quotient::<F, O, B>(
-                opening_ctx,
-                ring_switch_ctx,
-                lp,
-                opening_batch,
-                &owned,
-                instance.group_openings(),
-                instance.extension_degree(),
-                &d_quotients,
-                instance.rhs(),
-                compression.as_ref(),
-            )
-            .map_err(|err| {
-                AkitaError::InvalidInput(format!("relation quotient preparation failed: {err:?}"))
-            })?,
-        ),
+        ) => PreparedWitnessTail::QuotientLift(compute_multi_group_relation_quotient::<F, O, B>(
+            opening_ctx,
+            ring_switch_ctx,
+            lp,
+            opening_batch,
+            &owned,
+            instance.group_openings(),
+            instance.extension_degree(),
+            &d_quotients,
+            instance.rhs(),
+            compression.as_ref(),
+        )?),
         (
             akita_params::RingRelationMode::ReducedEvaluation,
             RelationDQuotientWitness::ReducedEvaluation,
         ) => PreparedWitnessTail::ReducedEvaluation,
-        _ => return Err(AkitaError::InvalidProof),
+        _ => {
+            return Err(AkitaError::Internal(
+                "prepared witness tail family differs from the ring relation mode".into(),
+            ))
+        }
     };
 
     // Every segment of the generated witness is balanced, but grouped roots
@@ -687,7 +697,7 @@ where
         })
         .fold(lp.open().digits.log_basis, u32::max);
     let packed_width = u8::try_from(known_balanced_log_basis).map_err(|_| {
-        AkitaError::InvalidSetup("recursive witness basis does not fit i8 storage".into())
+        AkitaError::Internal("recursive witness basis does not fit i8 storage".into())
     })?;
     let mut out = {
         let _span = tracing::info_span!("ring_switch_allocate_output").entered();
@@ -728,10 +738,10 @@ where
     }
     let expected = witness_layout.live_coeff_len();
     if out.position() > expected {
-        return Err(AkitaError::InvalidSize {
-            expected,
-            actual: out.position(),
-        });
+        return Err(AkitaError::Internal(format!(
+            "recursive witness writer exceeded its extent: expected {expected}, actual {}",
+            out.position(),
+        )));
     }
     let out = out.finish()?;
     #[cfg(feature = "response-model-diagnostics")]
@@ -780,7 +790,9 @@ fn emit_witness_tail<F: Field + CanonicalEncoding>(
     compression: Option<&CompressionWitnessMaterialization<F>>,
 ) -> Result<(), AkitaError> {
     if layout.r_rows().len() != r.rows().len() || layout.quotient_depth() != Some(levels) {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "quotient witness row count or depth differs from its layout".into(),
+        ));
     }
     let decompose_params = BalancedDecomposePow2Params::new(levels, log_basis);
     let mut events = layout
@@ -816,29 +828,33 @@ fn emit_witness_tail<F: Field + CanonicalEncoding>(
             WitnessTailEvent::Quotient { row_index } => {
                 #[cfg(test)]
                 QUOTIENT_DECOMPOSITION_CALLS.with(|calls| calls.set(calls.get() + 1));
-                let row = r.rows().get(row_index).ok_or(AkitaError::InvalidProof)?;
-                let row_layout = layout
-                    .r_rows()
-                    .get(row_index)
-                    .ok_or(AkitaError::InvalidProof)?;
+                let row = r.rows().get(row_index).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "quotient witness tail event refers to a missing row".into(),
+                    )
+                })?;
+                let row_layout = layout.r_rows().get(row_index).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "quotient witness tail event refers to a missing row layout".into(),
+                    )
+                })?;
                 let geometry = row_layout.geometry();
                 if geometry != row.geometry() {
-                    return Err(AkitaError::InvalidSize {
-                        expected: geometry.physical_coefficient_width(),
-                        actual: row.coeffs().len(),
-                    });
+                    return Err(AkitaError::Internal(format!(
+                        "quotient tail row geometry mismatch: expected {}, actual {}",
+                        geometry.physical_coefficient_width(),
+                        row.coeffs().len(),
+                    )));
                 }
                 let expected_len = levels
                     .checked_mul(geometry.physical_coefficient_width())
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("R witness row length overflow".into())
-                    })?;
+                    .ok_or_else(|| AkitaError::Internal("R witness row length overflow".into()))?;
                 let range = row_layout.range();
                 if range.len() != expected_len {
-                    return Err(AkitaError::InvalidSize {
-                        expected: expected_len,
-                        actual: range.len(),
-                    });
+                    return Err(AkitaError::Internal(format!(
+                        "quotient tail row extent mismatch: expected {expected_len}, actual {}",
+                        range.len(),
+                    )));
                 }
                 let mut digits = vec![0i8; expected_len];
                 balanced_decompose_coefficients_pow2_i8_into(
@@ -852,7 +868,11 @@ fn emit_witness_tail<F: Field + CanonicalEncoding>(
                 emit_compression_witness_event(
                     out,
                     layout,
-                    compression.ok_or(AkitaError::InvalidProof)?,
+                    compression.ok_or_else(|| {
+                        AkitaError::Internal(
+                            "quotient witness tail compression material is missing".into(),
+                        )
+                    })?,
                     source,
                     map_index,
                 )?;
@@ -869,16 +889,19 @@ fn emit_compression_witness_event<F: Field + CanonicalEncoding>(
     source: CompressionSourceId,
     map_index: usize,
 ) -> Result<(), AkitaError> {
-    let layer = layout
-        .compression_layers()
-        .get(map_index)
-        .ok_or(AkitaError::InvalidProof)?;
+    let layer = layout.compression_layers().get(map_index).ok_or_else(|| {
+        AkitaError::Internal("compression witness event refers to a missing layout layer".into())
+    })?;
     let span = match source {
         CompressionSourceId::Outer { group_index } => layer
             .f_spans()
             .iter()
             .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
-            .ok_or(AkitaError::InvalidProof)?,
+            .ok_or_else(|| {
+                AkitaError::Internal(
+                    "outer compression witness event refers to a missing group span".into(),
+                )
+            })?,
         CompressionSourceId::Opening => layer.h_span(),
     };
     let packed = compression
@@ -886,7 +909,11 @@ fn emit_compression_witness_event<F: Field + CanonicalEncoding>(
         .witness()
         .stages()
         .get(map_index)
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::Internal(
+                "compression witness event refers to a missing packed stage".into(),
+            )
+        })?;
     emit_packed_negative_binary(out, span, packed)
 }
 
@@ -896,10 +923,14 @@ fn emit_reduced_witness_tail<F: Field + CanonicalEncoding>(
     compression: Option<&CompressionWitnessMaterialization<F>>,
 ) -> Result<(), AkitaError> {
     if !layout.r_rows().is_empty() || layout.quotient_depth().is_some() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "reduced witness tail unexpectedly contains quotient rows or depth".into(),
+        ));
     }
     for layer in layout.compression_layers() {
-        let compression = compression.ok_or(AkitaError::InvalidProof)?;
+        let compression = compression.ok_or_else(|| {
+            AkitaError::Internal("reduced witness tail compression material is missing".into())
+        })?;
         for (group_index, _) in layer.f_spans() {
             emit_compression_witness_event(
                 out,

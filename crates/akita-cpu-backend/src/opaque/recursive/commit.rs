@@ -200,7 +200,10 @@ where
             }
         };
         if execution.inner().ring_dimension != plan.ring_dimension() {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "witness commitment execution ring dimension differs from the successor plan"
+                    .into(),
+            ));
         }
         witness = witness.align_for_commitment_ring_dim(plan.ring_dimension())?;
         let terminal = matches!(
@@ -272,7 +275,12 @@ where
                     )?,
                 )
             }
-            _ => return Err(AkitaError::InvalidProof),
+            _ => {
+                return Err(AkitaError::Internal(
+                    "witness commitment payload differs from the next witness binding policy"
+                        .into(),
+                ))
+            }
         };
         // One lineage identifies the next committed witness and its material.
         witness.set_operation_binding(parent.for_operation(successor.operation_id()));
@@ -284,10 +292,9 @@ where
     fn advance_witness_level(&self, witness: &mut Self::WitnessHandle) -> Result<(), AkitaError> {
         let parent = witness.operation_binding();
         self.validate_binding(&parent)?;
-        let next = parent
-            .fold_level()
-            .checked_add(1)
-            .ok_or(AkitaError::InvalidProof)?;
+        let next = parent.fold_level().checked_add(1).ok_or_else(|| {
+            AkitaError::Internal("admitted witness successor fold level overflow".into())
+        })?;
         if witness.pending_successor != Some(next) {
             return Err(AkitaError::InvalidInput(
                 "witness level transition requires its successor commitment".into(),

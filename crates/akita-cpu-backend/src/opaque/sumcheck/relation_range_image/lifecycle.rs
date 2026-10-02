@@ -348,9 +348,12 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     pub(crate) fn expected_final_claim(&self) -> Result<E, AkitaError> {
+        let phase = self.phase.as_ref().ok_or_else(|| {
+            AkitaError::Internal("final claim prover phase is not installed".into())
+        })?;
         let witness = self.final_w_eval();
         let virtual_claim = self.split_eq.current_scalar() * witness * (witness + E::one());
-        let relation_weight = match self.phase.as_ref().expect("prover phase is installed") {
+        let relation_weight = match phase {
             Phase::CompactPrefix { weights, .. }
             | Phase::Coefficient {
                 relation: CoefficientRelation::Factored(weights),
