@@ -57,6 +57,8 @@ def validate(snapshot, proposal):
     bounded_text(usefulness["assessment"], 3000)
     if type(result["complete"]) is not bool or not isinstance(result["limitations"], str):
         raise ReviewError("Invalid completion status")
+    if result["complete"] and not snapshot["changed"] and snapshot.get("excluded_artifacts"):
+        raise ReviewError("Artifact-only changes require manual validation; review cannot be complete")
     if (not isinstance(result["coverage"], list)
             or any(not isinstance(x, str) for x in result["coverage"])
             or set(result["coverage"]) != set(snapshot["changed"])):
@@ -117,6 +119,9 @@ def approval_recommended(state):
 def review_body(state):
     encoded = base64.b64encode(json.dumps(state).encode()).decode()
     body = f"{MARKER}{encoded} -->"
+    if state.get("excluded_artifact_count"):
+        body += (f"\n\nAkita artifacts excluded: {state['excluded_artifact_count']} changed files under `artifacts/`. "
+                 "Their contents were not reviewed; validate them separately with the artifact checks and CI.")
     if "usefulness" in state:
         usefulness = state["usefulness"]
         verdict = {"beneficial": "benefit supported", "unclear": "benefit unclear",
@@ -178,6 +183,7 @@ def prepare_review(snapshot, proposal):
              "scope_digest": digest(approval_scope(snapshot["revision"], snapshot["title"], snapshot["description"])),
              "complete": result["complete"], "limitations": result["limitations"],
              "usefulness": result["usefulness"],
+             "excluded_artifact_count": len(snapshot.get("excluded_artifacts", [])),
              "discussion_blockers": result["discussion_blockers"]}
     comments = []
     previous = {f["id"] for f in (snapshot["prior"] or {}).get("findings", [])}
