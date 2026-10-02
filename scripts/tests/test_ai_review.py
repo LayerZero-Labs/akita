@@ -234,7 +234,7 @@ class SourceToolTests(unittest.TestCase):
                 return git("rev-parse", "HEAD")
 
             git("init", "-b", "main")
-            commit("root", {"own.py": "one\n", "reverted.py": "kept\n", "upstream.py": "old\n"})
+            root = commit("root", {"own.py": "one\n", "reverted.py": "kept\n", "upstream.py": "old\n"})
             git("switch", "-c", "pr")
             previous = commit("reviewed", {"own.py": "two\n", "reverted.py": "changed\n"})
             git("switch", "main")
@@ -246,7 +246,8 @@ class SourceToolTests(unittest.TestCase):
             try:
                 os.chdir(directory)
                 delta = since_previous(base, previous, head, ["own.py"])
-                self.assertEqual(since_previous(base, previous, previous, []), "")
+                # No PR paths at either head: the guard must return nothing, not the whole upstream diff.
+                self.assertEqual(since_previous(base, root, base, []), "")
             finally:
                 os.chdir(before)
             self.assertIn("+three", delta)
