@@ -37,6 +37,56 @@ fn with_test_cache_dir<T>(test_name: &str, f: impl FnOnce() -> T) -> T {
 }
 
 #[test]
+fn panicking_cache_writer_removes_temporary_file() {
+    with_test_cache_dir("panicking-writer", || {
+        let path = cache_directory().unwrap().join("panic.matrix");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"existing cache").unwrap();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = atomic_write_cache(&path, |writer| {
+                writer.write_all(b"partial cache")?;
+                panic!("cache serialization panic");
+            });
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"existing cache");
+        for entry in fs::read_dir(path.parent().unwrap()).unwrap() {
+            let name = entry.unwrap().file_name();
+            assert!(!name.to_string_lossy().contains(".tmp-"));
+        }
+        fs::remove_file(path).unwrap();
+    });
+}
+
+#[test]
+fn save_succeeds_after_a_writer_panicked_under_the_matrix_lock() {
+    with_test_cache_dir("poisoned-writer-lock", || {
+        const MAX_VARS: usize = 14;
+
+        cleanup_setup_file_shape(MAX_VARS, 1);
+        let setup = new_prover_setup::<TestF>(&requirements_at(MAX_VARS, 1)).unwrap();
+
+        let result = std::panic::catch_unwind(|| {
+            let _guard = PUBLIC_MATRIX_CACHE_WRITE_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            panic!("public matrix writer panic");
+        });
+        assert!(result.is_err());
+        assert!(PUBLIC_MATRIX_CACHE_WRITE_LOCK.is_poisoned());
+
+        let saved = save_prover_setup::<TestF>(&setup, &requirements_at(MAX_VARS, 1));
+        // Other tests in this process share the lock; do not leave it poisoned.
+        PUBLIC_MATRIX_CACHE_WRITE_LOCK.clear_poison();
+        saved.unwrap();
+
+        cleanup_setup_file_shape(MAX_VARS, 1);
+    });
+}
+
+#[test]
 fn save_and_load_roundtrips() {
     with_test_cache_dir("roundtrip", || {
         const MAX_VARS: usize = 14;

@@ -10,7 +10,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params<
     blocks: &[&[[i8; D]]],
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, true>(ntt_mat, blocks, log_basis, params)
 }
 
@@ -24,7 +24,7 @@ pub(super) fn mat_vec_mul_dense_digits_i8_with_params<
     blocks: &[&[[i8; D]]],
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, false>(ntt_mat, blocks, log_basis, params)
 }
 
@@ -39,17 +39,20 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
     blocks: &[&[[i8; D]]],
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     let num_live_blocks = blocks.len();
     if num_live_blocks == 0 {
-        return vec![];
+        return Ok(vec![]);
     }
     let n_a = ntt_mat.len();
     let mat_width = ntt_mat.first().map_or(0, |row| row.len());
     let max_data_width = blocks.iter().map(|b| b.len()).max().unwrap_or(0);
     let inner_width = mat_width.min(max_data_width);
     if inner_width == 0 || n_a == 0 {
-        return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_live_blocks];
+        return Ok(vec![
+            vec![CyclotomicRing::<F, D>::zero(); n_a];
+            num_live_blocks
+        ]);
     }
 
     let digit_bound = balanced_digit_abs_bound(log_basis);
@@ -64,32 +67,42 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
         "predecomposed digit block contains digits outside its log_basis range"
     );
     let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
-        .expect("single i8 CRT term must fit supported parameters");
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("digit matvec CRT capacity cannot fit a single term".into())
+        })?;
     if n_a <= DENSE_I8_BLOCK_PARALLEL_MAX_ROWS
         && num_live_blocks >= DENSE_I8_BLOCK_PARALLEL_MIN_BLOCKS
         && inner_width == max_data_width
     {
         if inner_width <= safe_width {
-            return mat_vec_mul_digits_i8_block_parallel::<F, W, K, D, CHECK_ZERO>(
-                ntt_mat,
-                blocks,
-                digit_bound,
-                params,
+            return Ok(
+                mat_vec_mul_digits_i8_block_parallel::<F, W, K, D, CHECK_ZERO>(
+                    ntt_mat,
+                    blocks,
+                    digit_bound,
+                    params,
+                ),
             );
         }
-        return mat_vec_mul_digits_i8_block_parallel_chunked::<F, W, K, D, CHECK_ZERO>(
+        return Ok(mat_vec_mul_digits_i8_block_parallel_chunked::<
+            F,
+            W,
+            K,
+            D,
+            CHECK_ZERO,
+        >(
             ntt_mat,
             blocks,
             inner_width,
             safe_width,
             digit_bound,
             params,
-        );
+        ));
     }
 
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     let pointwise_dot_batch_size = params.pointwise_dot_batch_size();
-    drive_block_chunked_matvec(
+    Ok(drive_block_chunked_matvec(
         num_live_blocks,
         n_a,
         inner_width,
@@ -200,7 +213,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
                 }
             }
         },
-    )
+    ))
 }
 
 enum PackedI8Lift<W: PrimeWidth, const K: usize> {
@@ -278,7 +291,7 @@ where
                             &[block.as_slice()],
                             *log_basis,
                             params,
-                        );
+                        )?;
                         rows.pop().ok_or(AkitaError::InvalidProof)
                     }
                     PackedI8Lift::Raw { .. } => {

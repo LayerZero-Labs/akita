@@ -2,6 +2,21 @@
 //!
 //! Arithmetic implementations own their source storage and mutable proof state.
 //! This crate exchanges opaque handles and scheduled public messages with them.
+//!
+//! Protocol sequencing reports every failure as an `AkitaError`. Outside tests
+//! the crate has no explicit panic, and the lints below keep it that way.
+
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::todo,
+        clippy::unimplemented
+    )
+)]
 
 pub mod backend;
 mod opening;

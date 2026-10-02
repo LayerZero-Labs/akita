@@ -103,9 +103,9 @@ where
             OpaquePreparedGroupOpeningKind::EvaluationTrace {
                 folded_by_claim, ..
             } => Ok(folded_by_claim),
-            OpaquePreparedGroupOpeningKind::CoefficientPacking { .. } => {
-                Err(AkitaError::InvalidProof)
-            }
+            OpaquePreparedGroupOpeningKind::CoefficientPacking { .. } => Err(AkitaError::Internal(
+                "terminal-native opening unexpectedly uses coefficient packing".into(),
+            )),
         }
     }
 
@@ -252,14 +252,14 @@ impl CpuWitnessHandle {
         F: Field + CanonicalEncoding,
     {
         if self.relation_plan.is_some() {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "recursive witness relation plan is already initialized".into(),
             ));
         }
         let opening_batch = relation.opening_batch();
         let witness_layout = relation.segment_layout(level, None)?;
         if witness_layout.live_coeff_len() != self.manifest.logical_len() {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "recursive witness manifest disagrees with its relation instance".into(),
             ));
         }
@@ -270,8 +270,9 @@ impl CpuWitnessHandle {
             witness_layout.live_coeff_len(),
         )?;
         let digit_range = akita_params::DigitRangePlan::new(
-            akita_error::checked::pow2(level.open().digits.log_basis as usize)
-                .ok_or(AkitaError::InvalidProof)?,
+            akita_error::checked::pow2(level.open().digits.log_basis as usize).ok_or_else(
+                || AkitaError::Internal("validated relation digit range basis overflow".into()),
+            )?,
         )?;
         self.relation_plan = Some(Arc::new(akita_types::RelationRangeImagePlan::new(
             akita_params::RelationWitnessGeometry::for_level(
@@ -346,7 +347,7 @@ where
         plan: &crate::opaque::ValidatedRelationWitnessPlan,
     ) -> Result<crate::opaque::PreparedRelationWitness<Self::RelationWitness>, AkitaError> {
         prepared.ok_or_else(|| {
-            AkitaError::InvalidInput("relation witness preparation requires prepared setup".into())
+            AkitaError::Internal("relation witness preparation requires prepared setup".into())
         })?;
         if witness.logical.live_coeff_len() != plan.witness_len() {
             return Err(AkitaError::InvalidInput(

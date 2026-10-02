@@ -22,7 +22,9 @@ fn assert_onehot_decompose_fold_matches_dense<const D: usize>(
         })
         .collect::<Vec<_>>();
 
-    let expected = dense.decompose_fold::<D>(&challenges, POSITIONS_PER_BLOCK, 3, 3);
+    let expected = dense
+        .decompose_fold::<D>(&challenges, POSITIONS_PER_BLOCK, 3, 3)
+        .unwrap();
     let got = poly
         .decompose_fold::<D>(&challenges, POSITIONS_PER_BLOCK, 3, 3)
         .unwrap();
@@ -89,12 +91,9 @@ fn batched_direct_indices_match_dense_aggregation() {
             .iter()
             .zip(challenges.chunks_exact(4))
             .map(|(poly, challenges)| {
-                materialize_onehot_as_dense::<F, D, _>(poly).decompose_fold::<D>(
-                    challenges,
-                    POSITIONS_PER_BLOCK,
-                    2,
-                    3,
-                )
+                materialize_onehot_as_dense::<F, D, _>(poly)
+                    .decompose_fold::<D>(challenges, POSITIONS_PER_BLOCK, 2, 3)
+                    .unwrap()
             })
             .collect::<Vec<_>>(),
     );
