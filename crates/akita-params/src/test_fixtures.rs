@@ -143,7 +143,7 @@ pub fn sample_layout_lp() -> CommittedGroupParams {
     sample_params_only().with_decomp(16, 64, 2, 2, 2).unwrap()
 }
 
-pub fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
+fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
     const OUTER_BOUND: u128 = 3;
     let inner_bound = crate::sis::rounded_up_role_a_inf_norm(
         lp.inner().matrix.security_policy(),
@@ -228,7 +228,7 @@ pub fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsL
     (grouped, batch)
 }
 
-pub fn configure_test_role_dims(lp: &mut CommittedGroupParams, d_b: usize, d_d: usize) {
+fn configure_test_role_dims(lp: &mut CommittedGroupParams, d_b: usize, d_d: usize) {
     let d_a = lp.d_a();
     assert!(d_a.is_multiple_of(d_b));
     assert!(d_a.is_multiple_of(d_d));
@@ -254,7 +254,7 @@ pub fn configure_test_role_dims(lp: &mut CommittedGroupParams, d_b: usize, d_d: 
     );
 }
 
-pub fn address_oracle_group_params(
+pub(crate) fn address_oracle_group_params(
     d_a: usize,
     d_b: usize,
     d_d: usize,
@@ -275,7 +275,7 @@ pub fn address_oracle_group_params(
     lp
 }
 
-pub fn address_oracle_precommit(
+pub(crate) fn address_oracle_precommit(
     d_a: usize,
     d_b: usize,
     d_d: usize,
