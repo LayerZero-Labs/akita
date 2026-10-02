@@ -28,7 +28,7 @@ impl std::hash::Hash for WitnessChunkShape {
 }
 
 impl WitnessChunkShape {
-    /// Pad each body to the consumer's block width; merge adjacent owners when
+    /// Pad multi-chunk bodies to the consumer's block width; merge owners when
     /// chunking contracts, retaining the complete shared tail in the last owner.
     pub fn align(
         self,
@@ -48,10 +48,11 @@ impl WitnessChunkShape {
                 "invalid inherited witness chunks".into(),
             ));
         }
+        let body_alignment = if self.num_chunks > 1 { block_len } else { 1 };
         let mut cursor = 0usize;
         let mut ends = Vec::with_capacity(num_chunks);
         for (index, &len) in self.body_lengths[..self.num_chunks].iter().enumerate() {
-            let padded = checked::align_up(len, block_len)
+            let padded = checked::align_up(len, body_alignment)
                 .and_then(|len| cursor.checked_add(len))
                 .ok_or_else(|| AkitaError::InvalidSetup("witness chunk padding overflow".into()))?;
             cursor = padded;
@@ -67,6 +68,9 @@ impl WitnessChunkShape {
             .ok_or_else(|| AkitaError::InvalidSetup("witness tail overflow".into()))?;
         if let Some(last) = ends.last_mut() {
             *last = len.div_ceil(block_len);
+        }
+        if num_chunks == 1 {
+            ends.clear();
         }
         Ok((len, ends))
     }

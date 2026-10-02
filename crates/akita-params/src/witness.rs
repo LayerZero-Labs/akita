@@ -649,9 +649,15 @@ impl WitnessLayout {
                     t_range,
                 });
             }
-            let aligned = checked::align_up(cursor, lp.successor_block_len).ok_or_else(|| {
-                AkitaError::InvalidSetup("witness chunk alignment overflow".into())
-            })?;
+            let aligned = checked::align_up(
+                cursor,
+                if num_chunks > 1 {
+                    lp.successor_block_len.unwrap_or(1)
+                } else {
+                    1
+                },
+            )
+            .ok_or_else(|| AkitaError::InvalidSetup("witness chunk alignment overflow".into()))?;
             if aligned != cursor {
                 alignment_ranges.push(cursor..aligned);
             }

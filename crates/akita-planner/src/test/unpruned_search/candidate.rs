@@ -247,14 +247,16 @@ pub(super) fn prepend_fold(
             fold.input_witness_len
         });
     let mut aligned_params = params.clone();
-    aligned_params.successor_block_len = child
-        .folds
-        .first()
-        .map_or(
-            akita_params::FoldSuccessor::Terminal(&child.terminal.params),
-            |fold| akita_params::FoldSuccessor::Recursive(&fold.params),
-        )
-        .source_block_len()?;
+    aligned_params.successor_block_len = (aligned_params.witness_chunk.num_chunks > 1).then_some(
+        child
+            .folds
+            .first()
+            .map_or(
+                akita_params::FoldSuccessor::Terminal(&child.terminal.params),
+                |fold| akita_params::FoldSuccessor::Recursive(&fold.params),
+            )
+            .source_block_len()?,
+    );
     let params = &aligned_params;
     let opening_layout = suffix_opening_layout(input_witness_len, None)?;
     let opening_reduction_bytes = if matches!(
@@ -349,14 +351,16 @@ pub(super) fn prepend_root(
             fold.input_witness_len
         });
     let mut aligned_root = root_params.clone();
-    aligned_root.successor_block_len = suffix
-        .folds
-        .first()
-        .map_or(
-            akita_params::FoldSuccessor::Terminal(&suffix.terminal.params),
-            |fold| akita_params::FoldSuccessor::Recursive(&fold.params),
-        )
-        .source_block_len()?;
+    aligned_root.successor_block_len = (aligned_root.witness_chunk.num_chunks > 1).then_some(
+        suffix
+            .folds
+            .first()
+            .map_or(
+                akita_params::FoldSuccessor::Terminal(&suffix.terminal.params),
+                |fold| akita_params::FoldSuccessor::Recursive(&fold.params),
+            )
+            .source_block_len()?,
+    );
     let root_params = &aligned_root;
     let opening_layout = schedule_key.opening_layout()?;
     let first_direct_setup_field_len =

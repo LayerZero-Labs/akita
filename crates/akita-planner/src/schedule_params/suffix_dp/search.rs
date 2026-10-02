@@ -77,7 +77,7 @@ fn plan_candidate_children(
             ctx,
             memo,
             SuffixState {
-                input_chunks: Some(plan.chunk_shape),
+                input_chunks: (plan.chunk_shape.num_chunks > 1).then_some(plan.chunk_shape),
                 level: state.level + 1,
                 current_witness_len: plan.next_witness_len,
                 current_lb: search.open_log_basis,
@@ -118,7 +118,7 @@ fn plan_candidate_children(
             ctx,
             memo,
             SuffixState {
-                input_chunks: Some(plan.chunk_shape),
+                input_chunks: (plan.chunk_shape.num_chunks > 1).then_some(plan.chunk_shape),
                 level: state.level + 1,
                 current_witness_len: plan.next_witness_len,
                 current_lb: search.open_log_basis,

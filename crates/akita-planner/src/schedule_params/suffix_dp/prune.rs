@@ -55,9 +55,10 @@ pub(super) fn level_candidates(
                     ) == std::mem::discriminant(
                         &candidate_entry.params.inner().matrix.security_route(),
                     )
-                    && best_candidate.params.blocks().positions_per_block
-                        == candidate_entry.params.blocks().positions_per_block
-                    && best_candidate.chunk_shape == candidate_entry.chunk_shape
+                    && (best_candidate.params.witness_chunk.num_chunks == 1
+                        || (best_candidate.params.blocks().positions_per_block
+                            == candidate_entry.params.blocks().positions_per_block
+                            && best_candidate.chunk_shape == candidate_entry.chunk_shape))
                     && best_candidate.next_witness_len == candidate_entry.next_witness_len
                     && best_candidate.next_source_moment == candidate_entry.next_source_moment
                     && {

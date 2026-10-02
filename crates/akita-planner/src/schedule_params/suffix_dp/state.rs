@@ -42,7 +42,9 @@ pub(crate) struct ParentObservableKey {
     outer_payload_bytes: usize,
     setup_prefix_payload_bytes: usize,
     grinding_successor: GrindingSuccessorKey,
-    source_block_len: usize,
+    /// Successor source-block coefficient width used to pad a multi-chunk
+    /// level-0 producer. Absent when that producer does not pad chunk bodies.
+    source_block_len: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -75,8 +77,9 @@ impl ParentObservableKey {
                 AkitaError::InvalidSetup("parent key is missing its terminal successor".into())
             })?;
             return Ok(Self {
-                source_block_len: akita_params::FoldSuccessor::Terminal(terminal)
-                    .source_block_len()?,
+                source_block_len: (policy.chunks_at_level(0) > 1)
+                    .then(|| akita_params::FoldSuccessor::Terminal(terminal).source_block_len())
+                    .transpose()?,
                 outer_payload_bytes: 0,
                 setup_prefix_payload_bytes: 0,
                 grinding_successor: GrindingSuccessorKey::Terminal {
@@ -98,7 +101,9 @@ impl ParentObservableKey {
             ))
             .ok_or_else(|| AkitaError::InvalidSetup("outer payload byte count overflow".into()))?;
         Ok(Self {
-            source_block_len: akita_params::FoldSuccessor::Recursive(first).source_block_len()?,
+            source_block_len: (policy.chunks_at_level(0) > 1)
+                .then(|| akita_params::FoldSuccessor::Recursive(first).source_block_len())
+                .transpose()?,
             outer_payload_bytes,
             setup_prefix_payload_bytes:
                 akita_schedules::planner_support::stage3_payload_bytes_for_successor(

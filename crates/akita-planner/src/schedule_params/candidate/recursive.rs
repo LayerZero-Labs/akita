@@ -215,6 +215,9 @@ impl RecursiveCandidateContext<'_, '_> {
             .map(|chunks| chunks.align(block_len, num_chunks))
             .transpose()?
             .map_or(num_live_blocks, |(_, ends)| {
+                if ends.is_empty() {
+                    return num_live_blocks;
+                }
                 let mut start = 0;
                 let max = ends
                     .iter()

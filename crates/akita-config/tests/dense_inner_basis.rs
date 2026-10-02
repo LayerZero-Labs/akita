@@ -87,7 +87,7 @@ fn dense_nv26_selected_schedules_keep_inner_basis_independent() {
             b_output_raw: 256,
             d_input_raw: 720_896,
             d_output_raw: 256,
-            next_witness: 12_975_680,
+            next_witness: 12_910_144,
         }
     );
 
@@ -110,7 +110,7 @@ fn dense_nv26_selected_schedules_keep_inner_basis_independent() {
             b_output_raw: 128,
             d_input_raw: 1_441_792,
             d_output_raw: 128,
-            next_witness: 18_439_552,
+            next_witness: 18_308_480,
         }
     );
 
@@ -133,7 +133,7 @@ fn dense_nv26_selected_schedules_keep_inner_basis_independent() {
             b_output_raw: 64,
             d_input_raw: 704_512,
             d_output_raw: 64,
-            next_witness: 31_084_480,
+            next_witness: 31_002_560,
         }
     );
 }

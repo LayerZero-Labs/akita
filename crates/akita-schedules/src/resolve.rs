@@ -92,7 +92,10 @@ pub(crate) fn validate_canonical_transition_lengths(
             akita_params::FoldSuccessor::Terminal(&schedule.terminal),
             |fold| akita_params::FoldSuccessor::Recursive(&fold.params),
         );
-        if producer.params.successor_block_len != successor.source_block_len()? {
+        if producer.params.successor_block_len
+            != (producer.params.witness_chunk.num_chunks > 1)
+                .then_some(successor.source_block_len()?)
+        {
             return Err(AkitaError::InvalidSetup(
                 "witness padding disagrees with successor block".into(),
             ));

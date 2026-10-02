@@ -142,7 +142,8 @@ impl PendingQueryEdge {
         successor: akita_params::FoldSuccessor<'_>,
     ) -> Result<akita_params::TranscriptGrindingCost, AkitaError> {
         let mut producer = (*self.params).clone();
-        producer.successor_block_len = successor.source_block_len()?;
+        producer.successor_block_len =
+            (producer.witness_chunk.num_chunks > 1).then_some(successor.source_block_len()?);
         let output_len = producer.output_witness_len_for_field_bits(
             policy.decomposition.field_bits(),
             policy.claim_ext_degree,
@@ -524,14 +525,16 @@ fn child_choice(
         output_witness_len
     };
     let mut producer = (*edge.candidate_params).clone();
-    producer.successor_block_len = suffix
-        .folds
-        .first()
-        .map_or(
-            akita_params::FoldSuccessor::Terminal(&suffix.terminal.params),
-            |fold| akita_params::FoldSuccessor::Recursive(&fold.params),
-        )
-        .source_block_len()?;
+    producer.successor_block_len = (producer.witness_chunk.num_chunks > 1).then_some(
+        suffix
+            .folds
+            .first()
+            .map_or(
+                akita_params::FoldSuccessor::Terminal(&suffix.terminal.params),
+                |fold| akita_params::FoldSuccessor::Recursive(&fold.params),
+            )
+            .source_block_len()?,
+    );
     let first_fold = CandidateFoldStep {
         params: Arc::new(producer),
         input_witness_len: edge.current_witness_len,

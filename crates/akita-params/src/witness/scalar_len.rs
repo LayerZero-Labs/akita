@@ -76,7 +76,16 @@ impl WitnessLayout {
                 .checked_add(z_len)
                 .and_then(|n| n.checked_add(e_len))
                 .and_then(|n| n.checked_add(t_len))
-                .and_then(|len| akita_error::checked::align_up(len, lp.successor_block_len))
+                .and_then(|len| {
+                    akita_error::checked::align_up(
+                        len,
+                        if num_chunks > 1 {
+                            lp.successor_block_len.unwrap_or(1)
+                        } else {
+                            1
+                        },
+                    )
+                })
                 .ok_or_else(|| AkitaError::InvalidSetup("witness unit range overflow".into()))?;
         }
 

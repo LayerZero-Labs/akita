@@ -368,7 +368,7 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn restricted_search_preserves_query_tradeoff_across_chunk_shapes() {
+fn restricted_search_recovers_pruned_query_tradeoff() {
     use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
 
     let mut policy = policy_of::<OneHot>();
@@ -450,7 +450,7 @@ fn restricted_search_preserves_query_tradeoff_across_chunk_shapes() {
     let high_query = find([65_536, 65_536, 32, 256, 256, 0]);
     let low_query = find([524_288, 327_680, 32, 256, 256, 0]);
     let child_state = super::SuffixState {
-        input_chunks: Some(high_query.chunk_shape),
+        input_chunks: None,
         level: 2,
         current_witness_len: high_query.next_witness_len,
         current_lb: 6,
@@ -462,7 +462,7 @@ fn restricted_search_preserves_query_tradeoff_across_chunk_shapes() {
         ),
     };
     let low_child_state = super::SuffixState {
-        input_chunks: Some(low_query.chunk_shape),
+        input_chunks: None,
         level: 2,
         current_witness_len: low_query.next_witness_len,
         current_lb: 6,
@@ -473,14 +473,14 @@ fn restricted_search_preserves_query_tradeoff_across_chunk_shapes() {
             low_query.params.ring_relation_mode,
         ),
     };
-    assert_ne!(
+    assert_eq!(
         child_state.memo_key(&policy),
         low_child_state.memo_key(&policy)
     );
     let child = super::derive_selected_suffix_schedule(
         &ctx,
         &mut memo,
-        low_child_state,
+        child_state,
         2,
         super::QuerySearch::Unconstrained,
     )
@@ -543,26 +543,17 @@ fn restricted_search_preserves_query_tradeoff_across_chunk_shapes() {
         &super::QuerySearch::Restricted(prefix.clone()),
     )
     .unwrap();
-    let mut expected = low_query.params.clone();
-    expected.successor_block_len = child_candidate
-        .folds
-        .first()
-        .map_or_else(
-            || akita_params::FoldSuccessor::Terminal(&child_candidate.terminal.params),
-            |fold| akita_params::FoldSuccessor::Recursive(&fold.params),
-        )
-        .source_block_len()
-        .unwrap();
     assert!(frontiers
         .projected
         .by_parent_cost
         .values()
         .flat_map(super::frontier::ProjectedObjectiveChoices::payload_candidates)
         .any(|candidate| candidate.folds.first().is_some_and(|fold| {
-            fold.params.canonical_descriptor_bytes() == expected.canonical_descriptor_bytes()
+            fold.params.canonical_descriptor_bytes()
+                == low_query.params.canonical_descriptor_bytes()
         })));
     assert!(std::sync::Arc::ptr_eq(
-        memo.get(&low_child_state.memo_key(&policy)).unwrap(),
+        memo.get(&child_state.memo_key(&policy)).unwrap(),
         &child,
     ));
 }

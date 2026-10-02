@@ -128,12 +128,13 @@ the full replicated Z segment and the honest prover fills that segment with
 zero. All supported chunk counts are powers of two. Therefore, every finer
 chunk partition refines every coarser partition.
 
-A recursive witness instead inherits its producer's chunk-major Z/E/T bodies.
-Each body ends at a multiple of this fold's source-block coefficient width;
+After a multi-chunk producer, a recursive witness inherits its chunk-major
+Z/E/T bodies. Each body ends at a multiple of this fold's source-block coefficient width;
 the T range itself excludes the inserted zeros. Adjacent owners merge when
 chunking contracts, and the last owner receives the complete shared tail and
 final power-of-two padding. These inherited ranges can differ by more than one
-block.
+block. Single-chunk producers keep the original contiguous Z/E/T layout without
+body alignment padding.
 
 Each commitment group owns a fold challenge with `F` independent sparse
 coefficients, one for every live block.

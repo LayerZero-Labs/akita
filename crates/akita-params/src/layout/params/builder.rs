@@ -29,7 +29,7 @@ impl CommittedGroupParams {
             ring_relation_mode: crate::RingRelationMode::QuotientLift,
             source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
-            successor_block_len: 1,
+            successor_block_len: None,
             witness_chunk_ends: Vec::new(),
             // A zeroed shell whose only group is its own; callers fill the
             // geometry through `with_decomp`, as they always did.

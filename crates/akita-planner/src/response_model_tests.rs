@@ -281,7 +281,7 @@ fn chunk_alignment_adds_no_source_energy() {
         let mut params = response_geometry_params(akita_params::OpeningMethod::EvaluationTrace);
         params.witness_chunk.num_chunks = chunks;
         let compact = next_source_moment(&params, &opening, &[source], 128, 2).unwrap();
-        params.successor_block_len = 1 << 16;
+        params.successor_block_len = (chunks > 1).then_some(1 << 16);
         let padded = next_source_moment(&params, &opening, &[source], 128, 2).unwrap();
         assert_eq!(compact, padded);
         assert_eq!(

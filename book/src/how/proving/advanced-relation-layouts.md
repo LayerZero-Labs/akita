@@ -270,7 +270,7 @@ $$
 
 Root source chunks use the [canonical proportional
 partition](./opening-points-layout.md#chunks-and-fold-challenges), including
-unequal and empty ranges. Each emitted chunk-major Z/E/T body is then zero padded
+unequal and empty ranges. When the producer has multiple chunks, each emitted Z/E/T body is zero padded
 to a multiple of the next fold's source-block coefficient width. The next fold
 inherits those bodies instead of repartitioning the witness equally; if its
 chunk count contracts, it merges adjacent owners. The last owner also receives
@@ -481,7 +481,7 @@ $$
 
 Thus $\mathbf w$ is the complete chunk-major logical witness for those four
 families, not one separately proved witness per chunk. The physical witness
-aligns each chunk body with zeros, then appends quotient digits and compression
+aligns multi-chunk bodies with zeros, then appends quotient digits and compression
 data as required by the selected relation and payload modes. The
 [complete witness layouts](./ring-relation-checking.md#what-enters-the-next-witness)
 describe both choices.
