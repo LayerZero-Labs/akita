@@ -45,11 +45,19 @@ pub(crate) fn quotient_digits<F: Field + CanonicalEncoding>(
 ) -> Result<Vec<i8>, AkitaError> {
     let expected_len =
         checked::product([params.levels(), row.geometry().physical_coefficient_width()])
-            .ok_or_else(|| AkitaError::InvalidSetup("R witness row length overflow".into()))?;
-    if row.range().len() != expected_len
-        || coefficients.len() != row.geometry().physical_coefficient_width()
-    {
-        return Err(AkitaError::InvalidProof);
+            .ok_or_else(|| AkitaError::Internal("R witness row length overflow".into()))?;
+    if row.range().len() != expected_len {
+        return Err(AkitaError::Internal(format!(
+            "quotient tail row extent mismatch: expected {expected_len}, actual {}",
+            row.range().len(),
+        )));
+    }
+    if coefficients.len() != row.geometry().physical_coefficient_width() {
+        return Err(AkitaError::Internal(format!(
+            "quotient tail row width mismatch: expected {}, actual {}",
+            row.geometry().physical_coefficient_width(),
+            coefficients.len(),
+        )));
     }
     let mut digits = vec![0i8; expected_len];
     balanced_decompose_coefficients_pow2_i8_into(coefficients, &mut digits, params);

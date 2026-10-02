@@ -125,13 +125,13 @@ impl RecursiveWitnessFlat {
     ) -> Result<Self, AkitaError> {
         let expected = layout.live_coeff_len();
         if digits.len() != expected {
-            return Err(AkitaError::InvalidSize {
-                expected,
-                actual: digits.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "generated recursive witness length mismatch: expected {expected}, actual {}",
+                digits.len(),
+            )));
         }
         if !digits.bounds().fits_balanced_log_basis(log_basis) {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "recursive witness contains digits outside its declared balanced basis".into(),
             ));
         }
@@ -208,7 +208,7 @@ impl RecursiveWitnessFlat {
                 .max(1)
                 .checked_next_power_of_two()
                 .ok_or_else(|| {
-                    AkitaError::InvalidInput(
+                    AkitaError::Internal(
                         "recursive witness commitment extent overflows usize".into(),
                     )
                 }),

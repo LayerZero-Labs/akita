@@ -139,7 +139,7 @@ where
         let payload =
             akita_params::golomb_rice_encode_vec(&values, self.rice_low_bits, self.zigzag_width)?;
         if payload.len() > self.payload_bytes {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "terminal response exceeds its scheduled payload budget".into(),
             ));
         }
@@ -180,15 +180,14 @@ impl<F: Field> CpuAcceptedFold<F> {
             .flatten()
             .any(|chunk| !chunk.len().is_multiple_of(D))
         {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: self
-                    .chunks
+            return Err(AkitaError::Internal(format!(
+                "retained fold chunk width mismatch: expected {D}, actual {}",
+                self.chunks
                     .iter()
                     .flatten()
                     .find(|chunk| !chunk.len().is_multiple_of(D))
                     .map_or(0, Vec::len),
-            });
+            )));
         }
         Ok(())
     }
@@ -202,37 +201,41 @@ impl<F: Field> CpuAcceptedFold<F> {
         self.ensure_ring_dim::<D>()?;
         let actual_chunks = self.chunks.as_ref().map_or(1, Vec::len);
         if actual_chunks != plan.expected_chunks() {
-            return Err(AkitaError::InvalidSize {
-                expected: plan.expected_chunks(),
-                actual: actual_chunks,
-            });
+            return Err(AkitaError::Internal(format!(
+                "retained fold chunk count mismatch: expected {}, actual {actual_chunks}",
+                plan.expected_chunks(),
+            )));
         }
         let centered = match &self.chunks {
             None if plan.chunk_index() == 0 => self.global.centered_coeffs_flat(),
             None => {
-                return Err(AkitaError::InvalidSize {
-                    expected: 1,
-                    actual: plan.chunk_index() + 1,
-                })
+                return Err(AkitaError::Internal(format!(
+                    "unchunked fold Z chunk index mismatch: expected 1, actual {}",
+                    plan.chunk_index() + 1,
+                )))
             }
-            Some(chunks) => chunks.get(plan.chunk_index()).map(Vec::as_slice).ok_or(
-                AkitaError::InvalidSize {
-                    expected: chunks.len(),
-                    actual: plan.chunk_index() + 1,
-                },
-            )?,
+            Some(chunks) => chunks
+                .get(plan.chunk_index())
+                .map(Vec::as_slice)
+                .ok_or_else(|| {
+                    AkitaError::Internal(format!(
+                        "retained fold Z chunk index mismatch: expected {}, actual {}",
+                        chunks.len(),
+                        plan.chunk_index() + 1,
+                    ))
+                })?,
         };
         let (rows, remainder) = centered.as_chunks::<D>();
         if !remainder.is_empty() {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: centered.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "fold Z row width mismatch: expected {D}, actual {}",
+                centered.len(),
+            )));
         }
         let plane_count = rows
             .len()
             .checked_mul(plan.num_digits_fold())
-            .ok_or_else(|| AkitaError::InvalidSetup("Z plane count overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("Z plane count overflow".into()))?;
         let mut planes = vec![[0i8; D]; plane_count];
         // Each row owns a disjoint `num_digits_fold`-wide plane window, so the
         // decomposition is embarrassingly parallel and byte-identical either
@@ -248,13 +251,14 @@ impl<F: Field> CpuAcceptedFold<F> {
             .num_positions_per_block()
             .checked_mul(plan.num_digits_inner())
             .and_then(|count| count.checked_mul(plan.num_digits_fold()))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness Z plane count overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("witness Z plane count overflow".into()))?;
         let range = plan.range();
         if planes.len() != expected_planes || planes.as_flattened().len() != range.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: range.len(),
-                actual: planes.as_flattened().len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "fold Z plane extent mismatch: expected {}, actual {}",
+                range.len(),
+                planes.as_flattened().len(),
+            )));
         }
         builder.write_at(range.start, planes.as_flattened())
     }
@@ -273,10 +277,10 @@ impl<F: Field> CpuAcceptedFold<F> {
         self.ensure_ring_dim::<D>()?;
         let (z, remainder) = self.global.centered_coeffs_flat().as_chunks::<D>();
         if !remainder.is_empty() {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: self.global.centered_coeffs_flat().len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "fold A row width mismatch: expected {D}, actual {}",
+                self.global.centered_coeffs_flat().len(),
+            )));
         }
         let rows = crate::arithmetic::ring_switch::relation_b_a_rows(
             backend,
@@ -314,9 +318,9 @@ impl<F: Field> CpuAcceptedFold<F> {
         let (z, remainder) = self.global.centered_coeffs_flat().as_chunks::<D>();
         let inner_width = num_positions_per_block
             .checked_mul(depth_commit)
-            .ok_or_else(|| AkitaError::InvalidSetup("z inner width overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("z inner width overflow".into()))?;
         if !remainder.is_empty() || inner_width == 0 || z.len() != inner_width {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "ring-multiplier z layout mismatch".into(),
             ));
         }
@@ -361,9 +365,8 @@ where
         fold: &CpuAcceptedFold<F>,
         plan: &ValidatedFoldRelationPlan<'_, F>,
     ) -> Result<FoldRelationOutput<F>, AkitaError> {
-        let prepared = prepared.ok_or_else(|| {
-            AkitaError::InvalidInput("fold relation requires prepared setup".into())
-        })?;
+        let prepared = prepared
+            .ok_or_else(|| AkitaError::Internal("fold relation requires prepared setup".into()))?;
         let a_quotients = fold
             .a_relation_quotients::<D>(
                 self,
@@ -577,7 +580,7 @@ where
             .num_positions_per_block()
             .checked_mul(plan.num_digits())
             .and_then(|rows| rows.checked_mul(D))
-            .ok_or_else(|| AkitaError::InvalidInput("fold response size overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("fold response size overflow".into()))?;
         Ok(Self {
             global,
             chunks,
@@ -733,7 +736,7 @@ where
         },
     )?;
     if responses.chunks.is_some() {
-        return Err(AkitaError::InvalidInput(
+        return Err(AkitaError::Internal(
             "terminal fold backend returned chunk responses".into(),
         ));
     }
