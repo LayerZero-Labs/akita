@@ -111,7 +111,7 @@ where
             }
             (None, None) => None,
             _ => {
-                return Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::Internal(
                     "commitment plan has inconsistent compression metadata".into(),
                 ));
             }

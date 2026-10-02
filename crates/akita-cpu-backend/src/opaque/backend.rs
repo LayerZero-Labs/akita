@@ -111,7 +111,7 @@ impl<T: Send + Sync> SetupPrefixCache<T> {
 
             if derive_here {
                 let derive = derive.take().ok_or_else(|| {
-                    AkitaError::InvalidSetup(
+                    AkitaError::Internal(
                         "setup prefix cache derivation was already consumed".into(),
                     )
                 })?;
@@ -285,7 +285,7 @@ impl<F: Field, E> CpuBackend<F, E> {
     pub(crate) fn prepared(&self) -> Result<&CpuPreparedSetup<F>, AkitaError> {
         self.prepared
             .as_ref()
-            .ok_or_else(|| AkitaError::InvalidSetup("test backend has no owned setup".into()))
+            .ok_or_else(|| AkitaError::Internal("cpu backend has no owned setup".into()))
     }
 
     pub(crate) fn owner(&self) -> &Arc<BackendIdentity> {
@@ -353,7 +353,7 @@ impl<F: Field, E> CpuBackend<F, E> {
         let level = parent
             .fold_level()
             .checked_add(1)
-            .ok_or_else(|| AkitaError::InvalidInput("fold level overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("fold level overflow".into()))?;
         let next = parent
             .for_level_operation(level, self.identity.next_operation_id()?)
             .with_group(None);
