@@ -1,6 +1,7 @@
 mod assembly;
 mod coefficient_packing;
 mod commitment_material;
+pub(crate) mod compression_emission;
 mod compression_witness;
 mod d_rows;
 mod finalize;
