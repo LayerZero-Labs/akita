@@ -413,7 +413,7 @@ where
             }
         } else {
             #[cfg(not(test))]
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "relation handle has no admitted Stage 1 policy".into(),
             ));
         }
@@ -550,7 +550,7 @@ where
             }
         } else {
             #[cfg(not(test))]
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "relation handle has no admitted Stage 2 policy".into(),
             ));
         }

@@ -61,13 +61,14 @@ where
         || commitment_material.len() != opening_batch.num_groups()
         || opening_bindings.len() != opening_batch.num_groups()
     {
-        return Err(AkitaError::InvalidSize {
-            expected: opening_batch.num_groups(),
-            actual: prepared_group_openings
+        return Err(AkitaError::Internal(format!(
+            "retained witness build group count mismatch: expected {}, actual {}",
+            opening_batch.num_groups(),
+            prepared_group_openings
                 .len()
                 .min(commitment_material.len())
                 .min(opening_bindings.len()),
-        });
+        )));
     }
     let geometry =
         akita_params::RelationWitnessGeometry::for_level(level, opening_batch, E::DEGREE)?;
@@ -207,7 +208,7 @@ where
         if inner_relation.ring_dimension() != group_dims.d_a()
             || inner_relation.source_count() != source_count
         {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "inner-relation state shape does not match its commitment group".into(),
             ));
         }
@@ -257,10 +258,11 @@ where
     if commitments.len() != opening_batch.num_groups()
         || materials.len() != opening_batch.num_groups()
     {
-        return Err(AkitaError::InvalidSize {
-            expected: opening_batch.num_groups(),
-            actual: commitments.len().min(materials.len()),
-        });
+        return Err(AkitaError::Internal(format!(
+            "retained relation payload group count mismatch: expected {}, actual {}",
+            opening_batch.num_groups(),
+            commitments.len().min(materials.len()),
+        )));
     }
     let mut inner = Vec::with_capacity(materials.len());
     let mut outer = Vec::with_capacity(materials.len());

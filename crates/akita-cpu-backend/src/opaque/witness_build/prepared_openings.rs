@@ -32,13 +32,13 @@ fn decompose_opening_rows<F: Field + CanonicalEncoding, const D: usize>(
     let params = BalancedDecomposePow2Params::new(depth_open, log_basis);
     let total_rows: usize = pre_folded_e.iter().map(|rows| rows.len()).sum();
     if role_subcolumns == 0 || !total_rows.is_multiple_of(role_subcolumns) {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "E rows do not form complete native-role subcolumn groups".into(),
         ));
     }
     let planes_per_semantic = role_subcolumns
         .checked_mul(depth_open)
-        .ok_or_else(|| AkitaError::InvalidSetup("E digit block width overflow".into()))?;
+        .ok_or_else(|| AkitaError::Internal("E digit block width overflow".into()))?;
     let mut e_hat =
         DigitBlocks::zeroed(vec![planes_per_semantic; total_rows / role_subcolumns], D)?;
     let mut offset = 0usize;
@@ -63,7 +63,11 @@ impl<F: Field + CanonicalEncoding> PreparedOpeningWitness<F> {
     ) -> Result<Self, AkitaError> {
         let typed = folded_by_claim
             .iter()
-            .map(RingVec::as_ring_slice::<D>)
+            .map(|rows| {
+                rows.as_ring_slice::<D>().map_err(|_| {
+                    AkitaError::Internal("prepared opening row ring storage is invalid".into())
+                })
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let e_hat = decompose_opening_rows::<F, D>(&typed, role_subcolumns, depth_open, log_basis)?;
         let e_folded = RingVec::from_coeffs(

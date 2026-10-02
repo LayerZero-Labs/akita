@@ -71,9 +71,9 @@ impl<E: Field> CpuStage2SessionHandle<E> {
     }
 
     pub(crate) fn scope_lease(&self) -> Result<&crate::opaque::ScopeLease, AkitaError> {
-        self.lease.as_ref().ok_or_else(|| {
-            AkitaError::InvalidInput("Stage 2 session has no proof-scope lease".into())
-        })
+        self.lease
+            .as_ref()
+            .ok_or_else(|| AkitaError::Internal("Stage 2 session has no proof-scope lease".into()))
     }
 }
 
@@ -212,7 +212,7 @@ where
         if polynomial.degree() > akita_params::EXTENSION_OPENING_REDUCTION_DEGREE
             || polynomial.evaluate(E::zero()) + polynomial.evaluate(E::one()) != previous_claim
         {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "extension-opening session returned an invalid round polynomial".into(),
             ));
         }
@@ -247,7 +247,7 @@ where
         }
         akita_sumcheck::SumcheckInstanceProver::finalize(&mut self.prover);
         self.prover.final_terms().ok_or_else(|| {
-            AkitaError::InvalidInput("extension-opening session has no final claims".into())
+            AkitaError::Internal("extension-opening session has no final claims".into())
         })
     }
 }
@@ -284,7 +284,7 @@ where
             previous_claim,
         );
         if polynomial.degree() > 3 {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "relation session returned an invalid round polynomial".into(),
             ));
         }
