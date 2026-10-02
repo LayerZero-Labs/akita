@@ -176,7 +176,7 @@ impl<F: Field> RelationQuotientOutput<F> {
         let mut rows = Vec::with_capacity(slots.len());
         for (index, row) in slots.into_iter().enumerate() {
             rows.push(row.ok_or_else(|| {
-                AkitaError::InvalidInput(format!("relation quotient row {index} was not built"))
+                AkitaError::Internal(format!("relation quotient row {index} was not built"))
             })?);
         }
         Ok(Self { rows })
@@ -246,17 +246,20 @@ where
         + crate::opaque::FoldRelationKernel<crate::opaque::CpuAcceptedFold<F>, F, D>,
 {
     if group.role_dims.d_a() != D {
-        return Err(AkitaError::InvalidSize {
-            expected: group.role_dims.d_a(),
-            actual: D,
-        });
+        return Err(AkitaError::Internal(format!(
+            "A quotient role dimension mismatch: expected {}, actual {D}",
+            group.role_dims.d_a(),
+        )));
     }
     let n_a = group.params.a_rows_len();
     let inner_width = group.params.a_col_len();
     let log_basis_outer = group.params.log_basis_outer();
     let log_basis_open = group.params.log_basis_open();
     let challenges = group_opening.ambient_a_challenges();
-    let recomposed_inner_rows = group.recomposed_inner_rows.as_ring_slice::<D>()?;
+    let recomposed_inner_rows = group
+        .recomposed_inner_rows
+        .as_ring_slice::<D>()
+        .map_err(|_| AkitaError::Internal("recomposed inner row ring storage is invalid".into()))?;
     if group.fold.response_coefficient_len() != inner_width * D {
         return Err(AkitaError::Internal(
             "A-relation fold response extent differs from the inner width".into(),
@@ -273,7 +276,9 @@ where
                     group.params.num_digits_inner(),
                     group.params.log_basis_inner(),
                 )),
-                Some(e_folded.as_ring_slice::<D>()?),
+                Some(e_folded.as_ring_slice::<D>().map_err(|_| {
+                    AkitaError::Internal("folded E row ring storage is invalid".into())
+                })?),
                 None,
             )
         }
@@ -283,7 +288,7 @@ where
             (None, None, Some(product))
         }
         _ => {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "relation quotient opening method and witness disagree".into(),
             ))
         }
@@ -520,7 +525,7 @@ where
             .checked_div(group_dims.d_d())
             .filter(|ratio| *ratio != 0 && ratio.is_power_of_two())
             .ok_or_else(|| {
-                AkitaError::InvalidSetup(
+                AkitaError::Internal(
                     "current A-width relation witness cannot carry the opening role".into(),
                 )
             })?;
@@ -554,19 +559,24 @@ where
             }
             _ => false,
         };
-        if challenges.len() != expected_blocks
-            || !folded_opening_is_valid
+        if challenges.len() != expected_blocks {
+            return Err(AkitaError::InvalidInput(format!(
+                "relation quotient challenge count mismatch: expected {expected_blocks}, actual {}",
+                challenges.len(),
+            )));
+        }
+        if !folded_opening_is_valid
             || group.e_hat.total_planes() != expected_e_planes
             || group.e_hat.digit_stride() != group_dims.d_d()
         {
-            return Err(AkitaError::InvalidInput(format!(
-                "relation quotient group shape mismatch: challenges={} recomposed={} e_planes={} e_stride={} expected_blocks={} expected_e_planes={} expected_d_d={}",
-                challenges.len(),
+            return Err(AkitaError::Internal(format!(
+                "relation quotient group shape mismatch: \
+                 folded_opening_is_valid={folded_opening_is_valid} recomposed={} \
+                 e_planes={} expected_e_planes={expected_e_planes} \
+                 e_stride={} expected_d_d={}",
                 group.recomposed_inner_rows.coeff_len() / expected_recomposed_coeffs,
                 group.e_hat.total_planes(),
                 group.e_hat.digit_stride(),
-                expected_blocks,
-                expected_e_planes,
                 group_dims.d_d(),
             )));
         }
@@ -590,7 +600,7 @@ where
             .checked_div(group_dims.d_b())
             .filter(|ratio| *ratio != 0 && ratio.is_power_of_two())
             .ok_or_else(|| {
-                AkitaError::InvalidSetup(
+                AkitaError::Internal(
                     "B-role ring dimension must divide the A-role ring dimension".into(),
                 )
             })?;
@@ -785,7 +795,9 @@ where
             F,
             rhs_layout.d_ring_dimension,
             |D_D| {
-                let d_rows = d_quotients.as_ring_slice::<D_D>()?;
+                let d_rows = d_quotients.as_ring_slice::<D_D>().map_err(|_| {
+                    AkitaError::Internal("relation D quotient ring storage is invalid".into())
+                })?;
                 if d_rows.len() != n_d_active {
                     return Err(AkitaError::Internal(
                         "relation quotient D row count differs from the opening rank".into(),
@@ -820,7 +832,7 @@ where
             _ => continue,
         };
         if geometry.coordinate_plane_count() != 1 {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "compression quotient requires one native coordinate plane".into(),
             ));
         }
@@ -830,10 +842,10 @@ where
         })?;
         let quotient = compression.source(source)?.quotient(map_index)?;
         if quotient.ring_dim() != ring_dim || quotient.coeff_len() != ring_dim {
-            return Err(AkitaError::InvalidSize {
-                expected: ring_dim,
-                actual: quotient.coeff_len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "compression quotient width mismatch: expected {ring_dim}, actual {}",
+                quotient.coeff_len(),
+            )));
         }
         result[row_index] = Some(RelationQuotientRow::new(
             geometry,

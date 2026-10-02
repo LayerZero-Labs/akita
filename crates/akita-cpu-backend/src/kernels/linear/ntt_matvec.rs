@@ -129,14 +129,14 @@ pub fn mat_vec_mul_ntt_digits_i8<F: Field + CanonicalEncoding, const D: usize>(
             "for predecomposed digit mat-vec",
         )?;
     }
-    Ok(dispatch_slot!(
+    dispatch_slot!(
         slot,
         num_rows,
         num_cols,
         mat_vec_mul_digits_i8_with_params,
         blocks,
         log_basis
-    ))
+    )
 }
 
 /// Predecomposed mat-vec over a source that decodes one commitment block at a
@@ -186,14 +186,14 @@ pub(crate) fn mat_vec_mul_ntt_dense_digits_i8<F: Field + CanonicalEncoding, cons
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     validate_i8_log_basis(log_basis)?;
-    Ok(dispatch_slot!(
+    dispatch_slot!(
         slot,
         num_rows,
         num_cols,
         mat_vec_mul_dense_digits_i8_with_params,
         blocks,
         log_basis
-    ))
+    )
 }
 
 /// Fold-major (block) direct-signed-i8 variant for recursive witnesses.
