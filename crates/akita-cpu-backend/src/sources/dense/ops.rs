@@ -7,7 +7,8 @@ use super::poly::DensePoly;
 use crate::opaque::DecomposeFoldWitness;
 use crate::sources::poly_helpers::{
     balanced_ring_decompose_fold_chunked, balanced_ring_decompose_fold_partitioned,
-    cached_digit_decompose_fold_partitioned, sparse_mul_acc, ValidatedSparseChallenges,
+    cached_digit_decompose_fold_partitioned, sparse_mul_acc, SignedDigitBasis,
+    ValidatedSparseChallenges,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
@@ -16,6 +17,18 @@ use akita_error::AkitaError;
 use akita_types::SubfieldMultiplierOpeningPoint;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
+
+/// Reject a digit shape the dense fold kernels cannot run, before any cache
+/// build or decomposition setup can panic on it.
+fn validate_digit_shape(num_digits: usize, log_basis: u32) -> Result<(), AkitaError> {
+    SignedDigitBasis::new(log_basis)?;
+    if num_digits == 0 {
+        return Err(AkitaError::InvalidInput(
+            "dense fold digit count must be nonzero".into(),
+        ));
+    }
+    Ok(())
+}
 
 impl<F> DensePoly<F>
 where
@@ -29,6 +42,7 @@ where
         num_digits: usize,
         log_basis: u32,
     ) -> Result<Vec<DecomposeFoldWitness>, AkitaError> {
+        validate_digit_shape(num_digits, log_basis)?;
         let coeffs = self.ring_coeffs::<D>()?;
         let Some((planes, basis)) = self.digit_planes_for::<D>(num_digits, log_basis) else {
             return balanced_ring_decompose_fold_chunked(
@@ -135,6 +149,7 @@ where
         num_digits: usize,
         log_basis: u32,
     ) -> Result<DecomposeFoldWitness, AkitaError> {
+        validate_digit_shape(num_digits, log_basis)?;
         let coeffs = self.ring_coeffs::<D>()?;
         let n = coeffs.len();
 

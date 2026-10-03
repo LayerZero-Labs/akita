@@ -283,6 +283,66 @@ fn scalar_fold_rejects_short_and_excess_challenges() {
     }
 }
 
+// An unsupported basis or a zero digit count must be rejected before the
+// digit cache build or the decomposition setup, with a cold or a populated cache.
+#[test]
+fn fold_rejects_unsupported_digit_shapes_with_cold_and_populated_caches() {
+    use crate::opaque::{CpuBackend, DecomposeFoldPlan, OpeningFoldKernel, RootOpeningSource};
+    use akita_challenges::SparseChallenge;
+
+    const D: usize = 8;
+    let challenges = vec![
+        SparseChallenge {
+            positions: vec![0].into(),
+            coeffs: vec![1].into(),
+        };
+        2
+    ];
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
+    let run = |poly: &DensePoly<F>, num_digits: usize, log_basis: u32| {
+        OpeningFoldKernel::decompose_fold(
+            &backend,
+            None,
+            <DensePoly<F> as RootOpeningSource<F, D>>::opening_view(poly).unwrap(),
+            DecomposeFoldPlan {
+                challenges: &challenges,
+                num_positions_per_block: 1,
+                num_digits,
+                log_basis,
+            },
+        )
+    };
+
+    for populate in [false, true] {
+        for (num_digits, log_basis) in [(1, 0), (0, 4), (1, 17)] {
+            let poly = DensePoly::from_ring_coeffs(vec![ring::<D>(0), ring::<D>(10)]).unwrap();
+            if populate {
+                run(&poly, 2, 4).unwrap();
+            }
+            assert!(
+                matches!(
+                    run(&poly, num_digits, log_basis),
+                    Err(AkitaError::InvalidInput(_))
+                ),
+                "({num_digits}, {log_basis}) with populated cache = {populate}"
+            );
+            assert!(
+                matches!(
+                    poly.decompose_fold_chunked::<D>(
+                        &challenges,
+                        &[0..1, 1..2],
+                        1,
+                        num_digits,
+                        log_basis
+                    ),
+                    Err(AkitaError::InvalidInput(_))
+                ),
+                "chunked ({num_digits}, {log_basis}) with populated cache = {populate}"
+            );
+        }
+    }
+}
+
 // A +1 monomial challenge must leave every single balanced digit unchanged.
 // The expectation is the input integer itself, independent of decomposition.
 #[test]
