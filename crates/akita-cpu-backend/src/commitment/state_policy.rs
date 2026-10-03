@@ -5,17 +5,18 @@ use super::{
 use crate::commitment::PortableCommitmentHandle;
 use crate::opaque::CommitInnerPlan;
 use akita_error::AkitaError;
-use akita_types::{CompressionChainPlan, CompressionChainWitness, RingRelationMode, RingVec};
+use akita_params::{CompressionChainPlan, CompressionChainWitness, RingRelationMode};
+use akita_types::RingVec;
 use jolt_field::Field;
 use std::sync::{Arc, Mutex};
 
 /// Canonical shared host material exported from one retained compression state.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PortableCompressionState<F: Field> {
     material: Arc<PortableCompressionMaterial<F>>,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum PortableCompressionMaterial<F: Field> {
     /// Packed witness and one quotient image per compression map.
     QuotientLift {
@@ -412,7 +413,7 @@ impl<F: Field> ResidentCommitmentState<F> {
     #[cfg(test)]
     pub(crate) fn retained_bytes(&self) -> Result<usize, AkitaError> {
         let inner = self.inner.lock().map_err(|_| {
-            AkitaError::InvalidInput("resident inner-relation material lock is poisoned".into())
+            AkitaError::Internal("resident inner-relation material lock is poisoned".into())
         })?;
         let inner_bytes = match &*inner {
             ResidentInnerState::Image(image) => image.retained_bytes(),
@@ -426,9 +427,7 @@ impl<F: Field> ResidentCommitmentState<F> {
         let compression_bytes = match self.compression.as_ref() {
             Some(compression) => {
                 let compression = compression.lock().map_err(|_| {
-                    AkitaError::InvalidInput(
-                        "resident compression material lock is poisoned".into(),
-                    )
+                    AkitaError::Internal("resident compression material lock is poisoned".into())
                 })?;
                 match &*compression {
                     ResidentCompressionState::Image(image) => image.retained_bytes(),
@@ -449,7 +448,7 @@ impl<F: Field> ResidentCommitmentState<F> {
 
     fn frozen_inner_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
         let mut inner = self.inner.lock().map_err(|_| {
-            AkitaError::InvalidInput("resident inner-relation material lock is poisoned".into())
+            AkitaError::Internal("resident inner-relation material lock is poisoned".into())
         })?;
         let image = match std::mem::replace(&mut *inner, ResidentInnerState::Failed) {
             ResidentInnerState::Image(image) => image,
@@ -486,7 +485,7 @@ impl<F: Field> ResidentCommitmentState<F> {
             return Ok(None);
         };
         let mut compression = compression.lock().map_err(|_| {
-            AkitaError::InvalidInput("resident compression material lock is poisoned".into())
+            AkitaError::Internal("resident compression material lock is poisoned".into())
         })?;
         let image = match std::mem::replace(&mut *compression, ResidentCompressionState::Failed) {
             ResidentCompressionState::Image(image) => image,

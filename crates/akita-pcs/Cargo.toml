@@ -38,6 +38,7 @@ transcript-blake2b = [
   "akita-setup/transcript-blake2b",
   "akita-transcript/transcript-blake2b",
   "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
   "akita-verifier/transcript-blake2b",
 ]
 transcript-keccak = [
@@ -49,6 +50,7 @@ transcript-keccak = [
   "akita-setup/transcript-keccak",
   "akita-transcript/transcript-keccak",
   "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
   "akita-verifier/transcript-keccak",
 ]
 parallel = [
@@ -107,6 +109,7 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
 akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }
 akita-setup = { version = "0.1.0", path = "../akita-setup", default-features = false }

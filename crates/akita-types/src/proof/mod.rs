@@ -40,8 +40,7 @@ mod witness_emission;
 pub const MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS: usize = 1 << 26;
 
 pub use crate::opening_claims::{
-    sample_row_coefficients_native, verify_row_coefficients_native, GroupBatchStatement,
-    OpeningClaims, PolynomialGroupClaims,
+    row_coefficients, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
 pub use batch::{
     prepare_opening_point, ring_subfield_packed_extension_opening_point, PreparedOpeningPoint,
@@ -104,9 +103,9 @@ pub use tail_segments::{
 };
 pub use witness_emission::{emit_witness_e_planes, emit_witness_t_planes, WitnessCoefficientSink};
 
-use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
+use akita_params::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};

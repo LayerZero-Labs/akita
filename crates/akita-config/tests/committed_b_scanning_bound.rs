@@ -5,13 +5,13 @@ use akita_config::{
     proof_optimized::{fp128, fp32},
     CommitmentConfig, TrustedScheduleCatalog, ValidatedScheduleCatalog,
 };
-use akita_schedules::{planner_support::planned_next_witness_len, ResolvedScheduleRow};
-use akita_types::{
-    sis::num_digits_open, AkitaScheduleLookupKey, BlockGeometry, CommittedGroupBatchProfile,
-    DecompositionParams, FoldSchedule, GadgetDigits, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, PolynomialGroupLayout, ScheduleSisBound, ScheduleSisRole,
+use akita_params::{
+    sis::num_digits_open, BlockGeometry, CommittedGroupBatchProfile, DecompositionParams,
+    FoldSchedule, GadgetDigits, OpenCommitMatrixParams, OuterCommitMatrixParams,
+    PolynomialGroupLayout, ScheduleLookupKey, ScheduleSisBound, ScheduleSisRole,
     TerminalResponseShape,
 };
+use akita_schedules::{planner_support::planned_next_witness_len, ResolvedScheduleRow};
 
 fn differing_basis_schedule<Cfg: CommitmentConfig>(
     num_vars: usize,
@@ -23,7 +23,7 @@ fn differing_basis_schedule<Cfg: CommitmentConfig>(
     let bytes = std::fs::read(path).expect("checked-in schedule artifact");
     let catalog = TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(&bytes).unwrap();
     let row = catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(
+        .resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(14),
         ))
         .unwrap();
@@ -56,7 +56,7 @@ fn differing_basis_schedule<Cfg: CommitmentConfig>(
     key.coeff_linf_bound = b_bound;
     own.profile.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(key, width).unwrap();
 
-    let d_width = akita_types::opening_d_segment_width(
+    let d_width = akita_params::opening_d_segment_width(
         root.opening_method(),
         policy.claim_ext_degree,
         root.d_a(),
@@ -69,7 +69,7 @@ fn differing_basis_schedule<Cfg: CommitmentConfig>(
     root.open_matrix =
         OpenCommitMatrixParams::try_new_with_min_rank(root.open_matrix.sis_table_key(), d_width)
             .unwrap();
-    schedule.root.input_witness_len = akita_types::root_input_witness_len(root);
+    schedule.root.input_witness_len = akita_params::root_input_witness_len(root);
     schedule.root.output_witness_len = planned_next_witness_len(
         policy.decomposition.field_bits(),
         policy.claim_ext_degree,

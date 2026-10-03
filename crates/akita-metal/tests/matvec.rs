@@ -11,8 +11,9 @@ use akita_cpu_backend::benchmark_support::mat_vec_mul_ntt_digits_i8;
 use akita_metal::decompose::decompose;
 use akita_metal::matvec::DeviceNttMatrix;
 use akita_metal::{AkitaMetal, AkitaMetalError, DeviceDigitPlanes};
+use akita_params::FlatMatrix;
 use akita_types::{
-    prepare_joined_exact_ntt_cache, prepare_ntt_cache, FlatMatrix, NttCacheMode, PreparedNttCache,
+    prepare_joined_exact_ntt_cache, prepare_ntt_cache, NttCacheMode, PreparedNttCache,
 };
 use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
 use jolt_metal::runtime::DeviceBuffer;

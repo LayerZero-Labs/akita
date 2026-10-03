@@ -4,7 +4,7 @@ use super::recursive::{
 };
 use super::*;
 use akita_challenges::SparseChallengeConfig;
-use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
+use akita_params::{PolynomialGroupLayout, SisModulusProfileId};
 
 fn synthetic_profile(
     group: PolynomialGroupLayout,
@@ -16,15 +16,15 @@ fn synthetic_profile(
         blocks: params.blocks(),
 
         outer_slice_count: params.outer_slice_count(),
-        inner: akita_types::RoleParams::new(
-            akita_types::GadgetDigits::new(
+        inner: akita_params::RoleParams::new(
+            akita_params::GadgetDigits::new(
                 params.inner().digits.log_basis,
                 params.inner().digits.num_digits,
             ),
             params.inner().matrix,
         ),
-        outer: akita_types::RoleParams::new(
-            akita_types::GadgetDigits::new(
+        outer: akita_params::RoleParams::new(
+            akita_params::GadgetDigits::new(
                 params.outer().digits.log_basis,
                 params.outer().digits.num_digits,
             ),
@@ -61,7 +61,7 @@ fn grouped_level_params() -> CommittedGroupParams {
         .set_precommitted_groups(vec![GroupOpenPhaseParams {
             setup_natural_len: None,
             profile: synthetic_profile(PolynomialGroupLayout::new(6, 1), &precommitted),
-            opening: akita_types::GroupOpeningPlan::evaluation_trace(
+            opening: akita_params::GroupOpeningPlan::evaluation_trace(
                 precommitted.fold_challenge_config(),
                 precommitted.open().digits.log_basis,
                 precommitted.open().digits.num_digits,
@@ -74,15 +74,15 @@ fn grouped_level_params() -> CommittedGroupParams {
 
 #[cfg(feature = "catalog-gen")]
 fn audited_grouped_level_params() -> CommittedGroupParams {
-    use akita_types::{
+    use akita_params::{
         InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole,
     };
 
     let params = grouped_level_params();
     let key = |role| {
-        akita_types::sis::sis_table_key_for_linf_bound(
-            akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-            akita_types::SisTableDigest::CURRENT,
+        akita_params::sis::sis_table_key_for_linf_bound(
+            akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
+            akita_params::SisTableDigest::CURRENT,
             SisModulusProfileId::Q128OffsetA7F7,
             role,
             64,
@@ -103,7 +103,7 @@ fn audited_grouped_level_params() -> CommittedGroupParams {
                 group.profile.inner.matrix.input_width(),
             )
             .expect("audited synthetic A matrix");
-            let outer_width = akita_types::CommitmentSliceGeometry::try_new(
+            let outer_width = akita_params::CommitmentSliceGeometry::try_new(
                 group.profile.outer_slice_count,
                 group.profile.blocks.live_blocks,
                 1,
@@ -226,14 +226,14 @@ fn recursive_split_policy_controls_the_shared_search_domain() {
 #[test]
 fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
-    use akita_types::InnerCommitSecurityRoute;
+    use akita_params::InnerCommitSecurityRoute;
 
     let policy = policy_of::<OneHot>();
     let challenge = OneHot::ring_challenge_config(64).expect("D64 challenge");
     let candidates = derive_fold_candidates(
         RecursiveCandidateRequest {
             policy: &policy,
-            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+            payload_mode: akita_params::CommitmentPayloadMode::Compressed,
             opening: PlannerOpeningCandidate::evaluation_trace(challenge),
             dimensions: CommitmentRingDims::uniform(64),
             current_witness_len: 948_672,
@@ -288,7 +288,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
 #[test]
 fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
     use akita_config::{policy_of, proof_optimized::fp64::Dense};
-    use akita_types::{InnerCommitSecurityRoute, OpeningMethod};
+    use akita_params::{InnerCommitSecurityRoute, OpeningMethod};
 
     let policy = policy_of::<Dense>();
     let dimensions = CommitmentRingDims {
@@ -302,7 +302,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
             .expect("packing geometry");
     let request = RecursiveCandidateRequest {
         policy: &policy,
-        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+        payload_mode: akita_params::CommitmentPayloadMode::Compressed,
         opening,
         dimensions,
         current_witness_len: 948_672,
@@ -331,7 +331,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
         );
         assert_eq!(
             params.source_encoding,
-            akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
+            akita_params::CommittedSourceEncoding::CanonicalCoefficientTable
         );
         assert!(matches!(
             params.inner().matrix.security_route(),
@@ -339,7 +339,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
         ));
         assert_eq!(
             params.open().matrix.input_width(),
-            akita_types::opening_d_segment_width(
+            akita_params::opening_d_segment_width(
                 params.opening_method(),
                 policy.claim_ext_degree,
                 dimensions.d_a(),
@@ -376,16 +376,16 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
         let prefix = params.setup_prefix().expect("attached setup prefix");
         assert_eq!(
             prefix.opening.opening_method,
-            akita_types::OpeningMethod::SubringCoefficientPacking {
+            akita_params::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: 64
             }
         );
         assert_eq!(
-            akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
-            akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
+            akita_params::CommittedSourceEncoding::CanonicalCoefficientTable,
+            akita_params::CommittedSourceEncoding::CanonicalCoefficientTable
         );
         let d_d = params.role_dims().d_d();
-        let witness_width = akita_types::opening_d_segment_width(
+        let witness_width = akita_params::opening_d_segment_width(
             params.opening_method(),
             policy.claim_ext_degree,
             params.d_a(),
@@ -466,7 +466,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
         let derive = |without_bounds| {
             let request = RecursiveCandidateRequest {
                 policy: &policy,
-                payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+                payload_mode: akita_params::CommitmentPayloadMode::Compressed,
                 opening,
                 dimensions,
                 current_witness_len: 948_672,
@@ -511,7 +511,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
 #[test]
 fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
-    use akita_types::{AkitaScheduleLookupKey, InnerCommitSecurityRoute, OpeningMethod};
+    use akita_params::{InnerCommitSecurityRoute, OpeningMethod, ScheduleLookupKey};
 
     let policy = policy_of::<Dense>();
     let dimensions = CommitmentRingDims {
@@ -523,7 +523,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 64)
             .unwrap()
             .unwrap();
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(16, 2));
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::new(16, 2));
     let candidates = crate::planner::root_level_candidates_with_fresh_preparation(
         &key,
         Dense::committed_source_contract().unwrap(),
@@ -540,19 +540,19 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     assert!(!candidates.is_empty());
     let (first_params, first_next_witness_len) = &candidates[0];
     let opening_layout = key.opening_layout().expect("root opening layout");
-    let terminal = akita_types::TerminalFoldParams::from_expanded_group(first_params.clone());
+    let terminal = akita_params::TerminalFoldParams::from_expanded_group(first_params.clone());
     let packing_payload = akita_schedules::planner_support::nonterminal_level_payload_bytes(
         &policy,
         first_params,
         &opening_layout,
-        akita_types::FoldSuccessor::Terminal(&terminal),
+        akita_params::FoldSuccessor::Terminal(&terminal),
         *first_next_witness_len,
     )
     .expect("packing level payload");
     let packing_direct_bytes = packing_payload.direct;
     assert_eq!(
         packing_direct_bytes,
-        akita_types::native_nonterminal_level_layout(
+        akita_params::nonterminal_level_layout(
             policy.decomposition.field_bits(),
             policy.challenge_field_bits().unwrap(),
             first_params,
@@ -566,11 +566,11 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
                 .unwrap(),
             None,
         )
-        .and_then(akita_types::NativeNonterminalLevelLayout::encoded_len)
+        .and_then(akita_params::NonterminalLevelLayout::encoded_len)
         .expect("packing direct payload without EOR"),
     );
     assert!(
-        akita_types::extension_opening_reduction_level_bytes(
+        akita_params::extension_opening_reduction_level_bytes(
             policy.challenge_field_bits().unwrap(),
             policy.claim_ext_degree,
             PolynomialGroupLayout::new(16, key.final_group.num_polynomials()),
@@ -592,7 +592,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         ));
         assert_eq!(
             params.open().matrix.input_width(),
-            akita_types::opening_d_segment_width(
+            akita_params::opening_d_segment_width(
                 params.opening_method(),
                 policy.claim_ext_degree,
                 dimensions.d_a(),
@@ -616,7 +616,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         );
     }
     let frozen_group = synthetic_profile(key.final_group, &candidates[0].0);
-    let grouped_key = AkitaScheduleLookupKey {
+    let grouped_key = ScheduleLookupKey {
         final_group: key.final_group,
         precommitteds: vec![frozen_group],
     };
@@ -679,7 +679,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             }
         );
         let d_d = params.role_dims().d_d();
-        let final_width = akita_types::opening_d_segment_width(
+        let final_width = akita_params::opening_d_segment_width(
             params.opening_method(),
             policy.claim_ext_degree,
             params.d_a(),
@@ -717,27 +717,6 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         .is_empty()
     );
 
-    let product_key = AkitaScheduleLookupKey {
-        final_group: grouped_key.final_group,
-        precommitteds: vec![frozen_group, frozen_group],
-    };
-    let opening_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
-        &policy,
-        dimensions,
-        &product_key,
-        &[Dense::committed_source_contract().unwrap(); 2],
-        None,
-    )
-    .expect("root precommit opening products");
-    assert_eq!(opening_products.len(), 3);
-    assert!(opening_products
-        .iter()
-        .all(|assignment| assignment.len() == 2));
-    assert!(opening_products.iter().flatten().all(|opening| matches!(
-        opening.method(),
-        OpeningMethod::SubringCoefficientPacking { .. }
-    )));
-
     let precommit_domain = PlannerOpeningCandidate::coefficient_packing_domain(
         0,
         policy.claim_ext_degree,
@@ -748,64 +727,182 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         },
     )
     .expect("precommit opening domain");
-    let exhaustive_products = precommit_domain
-        .iter()
-        .flat_map(|&left| precommit_domain.iter().map(move |&right| vec![left, right]))
-        .collect::<Vec<_>>();
-    let materialized_root_domain = |products: &[Vec<PlannerOpeningCandidate>]| {
-        products
-            .iter()
-            .flat_map(|product| {
-                crate::planner::root_level_candidates_with_fresh_preparation(
-                    &product_key,
-                    Dense::committed_source_contract().unwrap(),
-                    &[Dense::committed_source_contract().unwrap(); 2],
-                    &policy,
-                    dimensions,
-                    opening,
-                    product,
-                    Dense::inner_basis_range().0,
-                    Dense::opening_basis_range().0,
-                    None,
-                )
-                .expect("materialized root candidate domain")
-            })
-            .map(|(params, output_witness_len)| {
-                (params.canonical_descriptor_bytes(), output_witness_len)
-            })
-            .collect::<std::collections::BTreeSet<_>>()
-    };
-    assert_eq!(
-        materialized_root_domain(&opening_products),
-        materialized_root_domain(&exhaustive_products),
-        "one canonical representative per multiset must preserve the exhaustive root domain"
+    assert!(
+        precommit_domain.len() >= 2,
+        "the fixture needs a choice of precommit openings"
     );
 
-    let repeated_key = AkitaScheduleLookupKey {
+    let product_key = ScheduleLookupKey {
         final_group: grouped_key.final_group,
-        precommitteds: vec![frozen_group; 16],
+        precommitteds: vec![frozen_group, frozen_group],
+    };
+    let opening_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+        &policy,
+        dimensions,
+        &product_key,
+        &[Dense::committed_source_contract().unwrap(); 2],
+    )
+    .expect("root precommit opening products");
+    assert_eq!(
+        opening_products,
+        precommit_domain
+            .iter()
+            .map(|&opening| vec![opening])
+            .collect::<Vec<_>>(),
+        "interchangeable groups share one opening per class",
+    );
+    for product in &opening_products {
+        let candidates = crate::planner::root_level_candidates_with_fresh_preparation(
+            &product_key,
+            Dense::committed_source_contract().unwrap(),
+            &[Dense::committed_source_contract().unwrap(); 2],
+            &policy,
+            dimensions,
+            opening,
+            product,
+            Dense::inner_basis_range().0,
+            Dense::opening_basis_range().0,
+            None,
+        )
+        .expect("materialized root candidate domain");
+        for (params, _) in candidates {
+            let groups = params.precommitted_groups();
+            assert_eq!(groups.len(), 2);
+            assert_eq!(groups[0], groups[1], "one class materializes one group");
+        }
+    }
+
+    let repeated_key = ScheduleLookupKey {
+        final_group: grouped_key.final_group,
+        precommitteds: vec![frozen_group; 256],
     };
     let repeated_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
         &policy,
         dimensions,
         &repeated_key,
-        &vec![Dense::committed_source_contract().unwrap(); 16],
-        None,
+        &vec![Dense::committed_source_contract().unwrap(); 256],
     )
     .expect("symmetric root precommit opening products");
-    assert_eq!(repeated_products.len(), 17);
-    assert!(repeated_products
-        .iter()
-        .all(|assignment| assignment.len() == 16));
-    let capped_error = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+    assert_eq!(
+        repeated_products, opening_products,
+        "the opening domain does not grow with the class multiplicity",
+    );
+
+    let one_hot_contract =
+        akita_config::proof_optimized::fp64::OneHot::committed_source_contract().unwrap();
+    let mixed_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
         &policy,
         dimensions,
-        &repeated_key,
-        &vec![Dense::committed_source_contract().unwrap(); 16],
-        Some(16),
+        &ScheduleLookupKey {
+            final_group: grouped_key.final_group,
+            precommitteds: vec![frozen_group; 3],
+        },
+        &[
+            Dense::committed_source_contract().unwrap(),
+            one_hot_contract,
+            Dense::committed_source_contract().unwrap(),
+        ],
     )
-    .expect_err("the cap must reject before materializing 17 assignments");
-    assert!(matches!(capped_error, AkitaError::UnsupportedSchedule(_)));
+    .expect("two-class root precommit opening products");
+    assert_eq!(
+        mixed_products.len(),
+        precommit_domain.len() * precommit_domain.len(),
+        "distinct source contracts form distinct classes",
+    );
+    assert!(mixed_products.iter().all(|product| product.len() == 2));
+
+    let packing_method = |opening: PlannerOpeningCandidate| match opening {
+        PlannerOpeningCandidate::SubringCoefficientPacking { geometry } => {
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: geometry.challenge_subring_dimension(),
+            }
+        }
+        PlannerOpeningCandidate::EvaluationTrace { .. } => {
+            unreachable!("the packing domain holds packing openings")
+        }
+    };
+    let other_class = candidates
+        .iter()
+        .map(|(params, _)| synthetic_profile(key.final_group, params))
+        .find(|profile| *profile != frozen_group)
+        .expect("a second root profile");
+    let split_key = ScheduleLookupKey {
+        final_group: grouped_key.final_group,
+        precommitteds: vec![frozen_group, other_class, frozen_group],
+    };
+    let split_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+        &policy,
+        dimensions,
+        &split_key,
+        &[Dense::committed_source_contract().unwrap(); 3],
+    )
+    .expect("split root precommit opening products");
+    let split_product = split_products
+        .iter()
+        .find(|product| product[0] != product[1])
+        .expect("two classes can open differently");
+    let split_candidates = crate::planner::root_level_candidates_with_fresh_preparation(
+        &split_key,
+        Dense::committed_source_contract().unwrap(),
+        &[Dense::committed_source_contract().unwrap(); 3],
+        &policy,
+        dimensions,
+        opening,
+        split_product,
+        Dense::inner_basis_range().0,
+        Dense::opening_basis_range().0,
+        None,
+    )
+    .expect("materialized split root candidate domain");
+    assert!(!split_candidates.is_empty());
+    for (params, _) in split_candidates {
+        let groups = params.precommitted_groups();
+        assert_eq!(groups[0], groups[2], "non-adjacent class members match");
+        assert_eq!(
+            groups[0].opening.opening_method,
+            packing_method(split_product[0])
+        );
+        assert_eq!(
+            groups[1].opening.opening_method,
+            packing_method(split_product[1])
+        );
+    }
+
+    // Distinct group layouts form distinct classes that share one domain.
+    // These profiles only feed enumeration, which reads ring dimensions; they
+    // are not valid commit-phase profiles and must not be materialized.
+    let distinct_classes = |count: usize| ScheduleLookupKey {
+        final_group: grouped_key.final_group,
+        precommitteds: (0..count)
+            .map(|index| GroupCommitPhaseParams {
+                group: PolynomialGroupLayout::singleton(10 + index),
+                ..frozen_group
+            })
+            .collect(),
+    };
+    let mut fitting_classes = 1;
+    while precommit_domain.len().pow(fitting_classes + 1)
+        <= crate::schedule_params::MAX_PRECOMMIT_OPENING_PRODUCTS
+    {
+        fitting_classes += 1;
+    }
+    let bounded_products = |classes: usize| {
+        crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+            &policy,
+            dimensions,
+            &distinct_classes(classes),
+            &vec![Dense::committed_source_contract().unwrap(); classes],
+        )
+        .expect("bounded root precommit opening products")
+    };
+    assert_eq!(
+        bounded_products(fitting_classes as usize).len(),
+        precommit_domain.len().pow(fitting_classes),
+    );
+    assert!(
+        bounded_products(fitting_classes as usize + 1).is_empty(),
+        "an oversized product removes coefficient-packing root openings",
+    );
 
     let incompatible_products =
         crate::schedule_params::suffix_dp::packing_precommit_opening_products(
@@ -817,7 +914,6 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             },
             &product_key,
             &[Dense::committed_source_contract().unwrap(); 2],
-            None,
         )
         .expect("incompatible shared opening dimension is an empty candidate domain");
     assert!(incompatible_products.is_empty());
@@ -827,7 +923,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
 #[test]
 fn guided_root_slice_survives_grouped_local_pruning() {
     use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
-    use akita_types::AkitaScheduleLookupKey;
+    use akita_params::ScheduleLookupKey;
 
     let mut policy = policy_of::<Dense>();
     policy.selection_policy =
@@ -841,7 +937,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
         PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 64)
             .expect("valid final packing opening")
             .expect("final packing geometry");
-    let scalar_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(24, 2));
+    let scalar_key = ScheduleLookupKey::single(PolynomialGroupLayout::new(24, 2));
     let scalar = crate::planner::root_level_candidates_with_fresh_preparation(
         &scalar_key,
         Dense::committed_source_contract().unwrap(),
@@ -859,7 +955,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
         scalar_key.final_group,
         &scalar.first().expect("scalar root candidate").0,
     );
-    let grouped_key = AkitaScheduleLookupKey {
+    let grouped_key = ScheduleLookupKey {
         final_group: scalar_key.final_group,
         precommitteds: vec![frozen],
     };
@@ -895,7 +991,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
         grouped_key.final_group.num_vars() - dimensions.d_a().trailing_zeros() as usize;
 
     for position_index_bits in 1..reduced_vars {
-        for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+        for outer_slice_count in akita_params::CommitmentSliceCount::ALL {
             let guide = CandidateLayoutGuide {
                 position_index_bits,
                 outer_slice_count,
@@ -924,7 +1020,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
 #[test]
 fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
     use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
-    use akita_types::AkitaScheduleLookupKey;
+    use akita_params::ScheduleLookupKey;
 
     let mut policy = policy_of::<Dense>();
     let dimensions = CommitmentRingDims::uniform(256);
@@ -936,7 +1032,7 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
         policy.ring_dimension_schedule_mode,
     );
     let pre_group = PolynomialGroupLayout::new(14, 1);
-    let pre_key = AkitaScheduleLookupKey::single(pre_group);
+    let pre_key = ScheduleLookupKey::single(pre_group);
     let pre_candidates = crate::planner::root_level_candidates_with_fresh_preparation(
         &pre_key,
         Dense::committed_source_contract().unwrap(),
@@ -956,7 +1052,7 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
         .0
         .clone();
     tensor_params.source_encoding =
-        akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
+        akita_params::CommittedSourceEncoding::TensorSubfieldProjection {
             extension_degree: 2,
         };
     let error = GroupCommitPhaseParams::try_from_params(pre_group, &tensor_params)
@@ -1008,23 +1104,23 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
         .iter()
         .all(|group| group.profile.blocks.live_blocks != 8));
     assert!(trace_groups.iter().all(|group| {
-        group.opening.opening_method == akita_types::OpeningMethod::EvaluationTrace
+        group.opening.opening_method == akita_params::OpeningMethod::EvaluationTrace
     }));
     assert!(exact_groups.iter().all(|group| {
         group.opening.opening_method
-            == akita_types::OpeningMethod::SubringCoefficientPacking {
+            == akita_params::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: 128,
             }
     }));
     assert!(reduced_groups.iter().all(|group| {
         group.opening.opening_method
-            == akita_types::OpeningMethod::SubringCoefficientPacking {
+            == akita_params::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: 64,
             }
     }));
 
     let natural_len = (1 << 14) - 513;
-    let n_prefix = akita_types::padded_setup_prefix_len(natural_len);
+    let n_prefix = akita_params::padded_setup_prefix_len(natural_len);
     let full_prefix_groups = derive_setup_prefix_groups(
         &mut cache,
         SetupPrefixSearchRequest {
@@ -1044,7 +1140,7 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
             group.profile.blocks.live_blocks * group.profile.blocks.positions_per_block,
             group.profile.blocks.live_ring_elements_per_claim
         );
-        akita_types::scheduled_setup_prefix(natural_len, group)
+        akita_params::scheduled_setup_prefix(natural_len, group)
             .validate()
             .expect("full setup prefix covers its complete power-of-two domain");
     }
@@ -1087,7 +1183,7 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
     .next()
     .expect("synthetic prefix params");
     params
-        .set_setup_prefix(Some(akita_types::scheduled_setup_prefix(
+        .set_setup_prefix(Some(akita_params::scheduled_setup_prefix(
             1 << 6,
             prefix_params,
         )))
@@ -1101,13 +1197,13 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
     let opening_shape = opening_layout
         .aggregate_polynomial_group_layout()
         .expect("aggregate EOR shape");
-    let expected_eor = akita_types::extension_opening_reduction_level_bytes(
+    let expected_eor = akita_params::extension_opening_reduction_level_bytes(
         policy.challenge_field_bits().unwrap(),
         policy.claim_ext_degree,
         opening_shape,
     )
     .expect("aggregate EOR bytes");
-    let base = akita_types::native_nonterminal_level_layout(
+    let base = akita_params::nonterminal_level_layout(
         policy.decomposition.field_bits(),
         policy.challenge_field_bits().unwrap(),
         &params,
@@ -1121,14 +1217,14 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
             .unwrap(),
         None,
     )
-    .and_then(akita_types::NativeNonterminalLevelLayout::encoded_len)
+    .and_then(akita_params::NonterminalLevelLayout::encoded_len)
     .expect("base level payload");
-    let terminal = akita_types::TerminalFoldParams::from_expanded_group(params.clone());
+    let terminal = akita_params::TerminalFoldParams::from_expanded_group(params.clone());
     let runtime = akita_schedules::planner_support::nonterminal_level_payload_bytes(
         &policy,
         &params,
         &opening_layout,
-        akita_types::FoldSuccessor::Terminal(&terminal),
+        akita_params::FoldSuccessor::Terminal(&terminal),
         output_witness_len,
     )
     .expect("runtime level payload");
@@ -1163,8 +1259,8 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
         )
         .expect("setup-prefix frontier");
         for params in groups {
-            akita_types::setup_prefix_slot_field_elements(
-                &akita_types::scheduled_setup_prefix(1usize << log_prefix, params)
+            akita_params::setup_prefix_slot_field_elements(
+                &akita_params::scheduled_setup_prefix(1usize << log_prefix, params)
                     .slot_id()
                     .expect("setup prefix group"),
             )

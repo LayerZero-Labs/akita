@@ -31,19 +31,19 @@ pub(crate) fn direct_setup_scan_work_elements(
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::sis::{
+use akita_params::sis::{
     decomposed_s_block_ring_count, num_digits_for_linf_cap, num_digits_inner_for_bound,
     num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
     BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldSizingQuery,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
 };
-use akita_types::{
+use akita_params::{
     active_setup_field_len, padded_setup_prefix_len, CommitmentRingDims, CommittedGroupParams,
     DecompositionParams, GroupCommitPhaseParams, GroupOpenPhaseParams, OpeningClaimsLayout,
     PolynomialGroupLayout, TranscriptGrindingCost,
 };
 #[cfg(all(test, feature = "catalog-gen"))]
-use akita_types::{try_extension_opening_reduction_level_bytes, PlannedFoldSchedule};
+use akita_params::{try_extension_opening_reduction_level_bytes, PlannedFoldSchedule};
 
 use crate::{InnerBasisSource, PlannerPolicy};
 
@@ -56,11 +56,11 @@ mod suffix_dp;
 #[cfg(all(test, feature = "catalog-gen"))]
 #[path = "test/unpruned_search.rs"]
 mod unpruned_search;
+pub use akita_params::suffix_opening_layout;
 pub(crate) use akita_schedules::planner_support::{
     materialize_candidate_schedule, CandidateFoldStep, CandidateMaterializationCost,
     CandidateTerminalResponse,
 };
-pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
     derive_ab_commitment_candidate, derive_fold_candidates, derive_recursive_candidate_views,
     derive_terminal_candidates, recursive_split_search_domain, AbCommitmentCandidateRequest,
@@ -81,15 +81,15 @@ pub(crate) use relation_transition::{
 pub(crate) use setup_score::{level_setup_field_elements, terminal_setup_field_elements};
 pub(crate) use suffix_dp::{
     derive_selected_suffix_schedule, QuerySearch, ScheduleMemo, SuffixCtx, SuffixState,
-    SuffixTopology,
+    SuffixTopology, MAX_PRECOMMIT_OPENING_PRODUCTS,
 };
 
 pub(crate) fn root_inner_basis_source(
-    source: akita_types::sis::CommittedSourceContract,
+    source: akita_params::sis::CommittedSourceContract,
 ) -> InnerBasisSource {
     match source.class() {
-        akita_types::sis::CommittedSourceClass::UnitOneHot { .. } => InnerBasisSource::UnitOneHot,
-        akita_types::sis::CommittedSourceClass::BalancedSignedDigit => {
+        akita_params::sis::CommittedSourceClass::UnitOneHot { .. } => InnerBasisSource::UnitOneHot,
+        akita_params::sis::CommittedSourceClass::BalancedSignedDigit => {
             InnerBasisSource::RawCoefficients {
                 log_bound: source.decomposition().log_commit_bound,
             }
@@ -388,31 +388,31 @@ impl CandidateFoldChain {
 pub(crate) struct ScheduleCandidate {
     pub(crate) first_direct_setup_field_len: Option<NonZeroUsize>,
     pub(crate) first_direct_output_witness_len: usize,
-    pub(crate) cost: NativeProofCost,
+    pub(crate) cost: ProofCost,
     pub(crate) setup_field_elements: usize,
     pub(crate) folds: CandidateFoldChain,
     pub(crate) terminal: Arc<CandidateTerminalResponse>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct NativeProofCost {
+pub(crate) struct ProofCost {
     payload_bytes: usize,
-    native_nonce_bytes: usize,
+    nonce_bytes: usize,
     nonce_bits: usize,
     expanded_query_count: u64,
     work_elements: u128,
 }
 
-impl NativeProofCost {
+impl ProofCost {
     pub(crate) fn new(
         payload_bytes: usize,
-        native_nonce_bytes: usize,
+        nonce_bytes: usize,
         expanded_query_count: u64,
         work_elements: u128,
     ) -> Result<Self, AkitaError> {
         let cost = Self {
             payload_bytes,
-            native_nonce_bytes,
+            nonce_bytes,
             nonce_bits: 0,
             expanded_query_count,
             work_elements,
@@ -434,7 +434,7 @@ impl NativeProofCost {
     pub(crate) fn checked_prepend(
         self,
         payload_bytes: usize,
-        native_nonce_bytes: usize,
+        nonce_bytes: usize,
         nonce_bits: usize,
         expanded_query_count: u64,
         work_elements: usize,
@@ -446,9 +446,9 @@ impl NativeProofCost {
         let nonce_bits = self.nonce_bits.checked_add(nonce_bits).ok_or_else(|| {
             AkitaError::InvalidSetup("candidate nonce bit length overflow".into())
         })?;
-        let native_nonce_bytes = self
-            .native_nonce_bytes
-            .checked_add(native_nonce_bytes)
+        let nonce_bytes = self
+            .nonce_bytes
+            .checked_add(nonce_bytes)
             .ok_or_else(|| AkitaError::InvalidSetup("native nonce byte length overflow".into()))?;
         let expanded_query_count = self
             .expanded_query_count
@@ -460,7 +460,7 @@ impl NativeProofCost {
             .ok_or_else(|| AkitaError::InvalidSetup("candidate work overflow".into()))?;
         let cost = Self {
             payload_bytes,
-            native_nonce_bytes,
+            nonce_bytes,
             nonce_bits,
             expanded_query_count,
             work_elements,
@@ -472,7 +472,7 @@ impl NativeProofCost {
     pub(crate) fn grinding_cost(self) -> TranscriptGrindingCost {
         TranscriptGrindingCost {
             total_nonce_bits: self.nonce_bits,
-            native_nonce_max_bytes: self.native_nonce_bytes,
+            nonce_max_bytes: self.nonce_bytes,
             expanded_query_count: self.expanded_query_count,
         }
     }
@@ -482,7 +482,7 @@ impl NativeProofCost {
     }
 
     pub(crate) const fn fits_query_limit(self) -> bool {
-        self.expanded_query_count < akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT
+        self.expanded_query_count < akita_params::TRANSCRIPT_GRINDING_QUERY_LIMIT
     }
 
     pub(crate) fn never_worse(self, other: Self) -> bool {
@@ -506,7 +506,7 @@ impl NativeProofCost {
     }
 
     fn checked_proof_bytes(self) -> Option<usize> {
-        self.payload_bytes.checked_add(self.native_nonce_bytes)
+        self.payload_bytes.checked_add(self.nonce_bytes)
     }
 }
 
@@ -529,7 +529,7 @@ impl SetupPrefixCapacity {
 pub(crate) struct CandidateMetrics {
     pub(crate) first_direct_setup_capacity: SetupPrefixCapacity,
     pub(crate) first_direct_output_witness_len: usize,
-    pub(crate) cost: NativeProofCost,
+    pub(crate) cost: ProofCost,
     pub(crate) setup_field_elements: usize,
 }
 
@@ -561,7 +561,7 @@ impl ScheduleCandidate {
 pub(crate) fn candidate_schedule_descriptor_bytes(
     first_fold: Option<&CandidateFoldStep>,
     suffix_folds: &CandidateFoldChain,
-    terminal: &akita_types::TerminalFoldParams,
+    terminal: &akita_params::TerminalFoldParams,
     diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
 ) -> Result<Vec<u8>, AkitaError> {
     let started = diagnostics.map(|_| std::time::Instant::now());
@@ -582,17 +582,17 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
         let descriptor_steps =
             folds()
                 .enumerate()
-                .map(|(index, fold)| akita_types::FoldScheduleDescriptorStep {
+                .map(|(index, fold)| akita_params::FoldScheduleDescriptorStep {
                     params: &fold.params,
                     payload_mode: if index < carrier_prefix_len {
-                        akita_types::CommitmentPayloadMode::Compressed
+                        akita_params::CommitmentPayloadMode::Compressed
                     } else {
                         fold.params.payload_mode
                     },
                     input_witness_len: fold.input_witness_len,
                     output_witness_len: fold.output_witness_len,
                 });
-        akita_types::FoldSchedule::append_descriptor_bytes_from_steps(
+        akita_params::FoldSchedule::append_descriptor_bytes_from_steps(
             &mut bytes,
             descriptor_steps,
             terminal,
@@ -659,7 +659,7 @@ pub(crate) fn layout_candidate_score(
 ) -> Result<LayoutCandidateScore, AkitaError> {
     if num_live_blocks == 0
         || num_chunks == 0
-        || num_chunks > akita_types::MAX_WITNESS_CHUNKS
+        || num_chunks > akita_params::MAX_WITNESS_CHUNKS
         || !num_chunks.is_power_of_two()
     {
         return Err(AkitaError::InvalidSetup(
@@ -691,4 +691,4 @@ mod adaptive_dimension_tests;
 #[path = "test/adaptive_search.rs"]
 mod adaptive_search_tests;
 
-pub(crate) use akita_types::{RelationCandidateTopology, RingRelationPhase};
+pub(crate) use akita_params::{RelationCandidateTopology, RingRelationPhase};

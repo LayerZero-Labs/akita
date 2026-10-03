@@ -1,7 +1,8 @@
 use akita_error::AkitaError;
-use akita_types::{
-    try_extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, CommitmentRingDims,
-    CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout, TerminalFoldParams,
+use akita_params::ScheduleLookupKey;
+use akita_params::{
+    try_extension_opening_reduction_level_bytes, CommitmentRingDims, CommittedGroupParams,
+    OpeningClaimsLayout, PolynomialGroupLayout, TerminalFoldParams,
 };
 
 use crate::{
@@ -52,7 +53,8 @@ const fn trace_opening_purpose(
 struct OpeningWork {
     dimensions: CommitmentRingDims,
     opening: crate::schedule_params::PlannerOpeningCandidate,
-    precommitted_openings: Vec<crate::schedule_params::PlannerOpeningCandidate>,
+    /// One opening per interchangeable precommitted class, in class order.
+    precommitted_class_openings: Vec<crate::schedule_params::PlannerOpeningCandidate>,
     opening_reduction_bytes: usize,
     purpose: OpeningPurpose,
 }
@@ -74,7 +76,7 @@ pub(super) struct GeneratedCandidates {
 }
 
 pub(super) struct CandidateDomain<'a> {
-    pub(super) root_level_key: Option<&'a AkitaScheduleLookupKey>,
+    pub(super) root_level_key: Option<&'a ScheduleLookupKey>,
     root_main_constraint: Option<&'a CommittedGroupParams>,
     guide_fold: Option<&'a CommittedGroupParams>,
     guide_terminal: Option<&'a TerminalFoldParams>,
@@ -95,153 +97,77 @@ pub(crate) const fn state_allows_terminal_seed(
     !is_root_level && !has_incoming_setup_prefix
 }
 
+/// Maximum number of root precommit opening assignments per opening dimension.
+///
+/// The bound applies to the Cartesian product over distinct interchangeable
+/// classes. Class multiplicity does not count toward it, so any number of
+/// identical producers fits; three to eight distinct classes do, depending on
+/// the per-class domain sizes. A larger product removes coefficient-packing
+/// root openings for that dimension, as an unsupported dimension does. The root
+/// only folds by coefficient packing, so that dimension then offers no root
+/// candidate; other dimensions are unaffected.
+pub(crate) const MAX_PRECOMMIT_OPENING_PRODUCTS: usize = 256;
+
+/// Enumerate the root precommit openings for one shared opening dimension.
+///
+/// Each returned assignment holds one opening per interchangeable precommitted
+/// class, in [`precommitted_group_equivalence_classes`] order; every group of a
+/// class opens with its class's opening. The domain is the Cartesian product of
+/// the per-class coefficient-packing domains, so its size depends on the
+/// number of distinct classes and not on how many groups each class holds.
+/// A product beyond [`MAX_PRECOMMIT_OPENING_PRODUCTS`] yields an empty domain
+/// before any assignment is allocated.
 pub(crate) fn packing_precommit_opening_products(
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,
-    key: &AkitaScheduleLookupKey,
-    precommitted_source_contracts: &[akita_types::sis::CommittedSourceContract],
-    max_products: Option<usize>,
+    key: &ScheduleLookupKey,
+    precommitted_source_contracts: &[akita_params::sis::CommittedSourceContract],
 ) -> Result<Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>>, AkitaError> {
-    if key.precommitteds.len() != precommitted_source_contracts.len() {
-        return Err(AkitaError::InvalidSetup(
-            "root precommit opening products require one source contract per profile".into(),
-        ));
-    }
     if !crate::schedule_params::precommitted_groups_support_opening_dimension(
         key.precommitteds.iter(),
         dimensions.d_d(),
     ) {
         return Ok(Vec::new());
     }
-    let equivalence_classes =
-        precommitted_group_equivalence_classes(&key.precommitteds, precommitted_source_contracts)?;
+    let class_domains =
+        precommitted_group_equivalence_classes(&key.precommitteds, precommitted_source_contracts)?
+            .into_iter()
+            .map(|indices| {
+                let profile = &key.precommitteds[indices[0]];
+                crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
+                    0,
+                    policy.claim_ext_degree,
+                    CommitmentRingDims {
+                        inner: profile.inner.matrix.ring_dimension(),
+                        outer: profile.outer.matrix.ring_dimension(),
+                        opening: dimensions.d_d(),
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+    let Some(product_count) = class_domains.iter().try_fold(1usize, |count, domain| {
+        count
+            .checked_mul(domain.len())
+            .filter(|&count| count <= MAX_PRECOMMIT_OPENING_PRODUCTS)
+    }) else {
+        return Ok(Vec::new());
+    };
 
-    let mut products = vec![vec![None; key.precommitteds.len()]];
-    for indices in equivalence_classes {
-        let representative = indices[0];
-        let profile = &key.precommitteds[representative];
-        let domain = crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
-            0,
-            policy.claim_ext_degree,
-            CommitmentRingDims {
-                inner: profile.inner.matrix.ring_dimension(),
-                outer: profile.outer.matrix.ring_dimension(),
-                opening: dimensions.d_d(),
-            },
-        )?;
-        if domain.is_empty() {
-            return Ok(Vec::new());
-        }
-        if let Some(max_products) = max_products {
-            let remaining_products = max_products / products.len();
-            if !multiset_assignment_count_fits(domain.len(), indices.len(), remaining_products) {
-                return Err(AkitaError::UnsupportedSchedule(format!(
-                    "adapted precommit opening domain exceeds the maximum of {max_products} assignments"
-                )));
-            }
-        }
-        let assignments = nondecreasing_opening_assignments(&domain, indices.len());
-        let next_len = products
-            .len()
-            .checked_mul(assignments.len())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("root precommit opening search domain overflow".into())
-            })?;
-        let mut next = Vec::new();
-        next.try_reserve_exact(next_len).map_err(|_| {
-            AkitaError::InvalidSetup("root precommit opening search domain is too large".into())
-        })?;
-        for product in products {
-            for assignment in &assignments {
-                let mut extended = product.clone();
-                for (&index, &opening) in indices.iter().zip(assignment) {
-                    extended[index] = Some(opening);
-                }
-                next.push(extended);
-            }
-        }
-        products = next;
-    }
-    products
-        .into_iter()
-        .map(|product| {
-            product
-                .into_iter()
-                .map(|opening| {
-                    opening.ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "root precommit opening product is incomplete".into(),
-                        )
-                    })
+    let mut products = vec![Vec::with_capacity(class_domains.len())];
+    for domain in &class_domains {
+        products = products
+            .iter()
+            .flat_map(|product| {
+                domain.iter().map(move |&opening| {
+                    let mut extended = product.clone();
+                    extended.push(opening);
+                    extended
                 })
-                .collect()
-        })
-        .collect()
-}
-
-/// Return whether the number of multisets of `width` values drawn from a
-/// `domain_len`-element domain fits within `limit`.
-fn multiset_assignment_count_fits(domain_len: usize, width: usize, limit: usize) -> bool {
-    if domain_len == 0 {
-        return width == 0;
+            })
+            .collect();
     }
-    if domain_len == 1 {
-        return limit >= 1;
-    }
-    let mut count = 1_u128;
-    let limit = limit as u128;
-    for index in 1..=width {
-        let Some(numerator) = domain_len
-            .checked_add(index)
-            .and_then(|sum| sum.checked_sub(1))
-        else {
-            return false;
-        };
-        count = count.saturating_mul(numerator as u128) / index as u128;
-        if count > limit {
-            return false;
-        }
-    }
-    true
-}
-
-/// Canonical assignments for interchangeable precommitted groups.
-///
-/// Every multiset of opening candidates is retained, while permutations among
-/// groups with the same profile and honest-fold policy are removed. The chosen
-/// representative is canonicalized from fully materialized group descriptors
-/// before root candidate construction.
-fn nondecreasing_opening_assignments(
-    domain: &[crate::schedule_params::PlannerOpeningCandidate],
-    width: usize,
-) -> Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>> {
-    fn extend(
-        domain: &[crate::schedule_params::PlannerOpeningCandidate],
-        width: usize,
-        minimum: usize,
-        prefix: &mut Vec<crate::schedule_params::PlannerOpeningCandidate>,
-        output: &mut Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>>,
-    ) {
-        if prefix.len() == width {
-            output.push(prefix.clone());
-            return;
-        }
-        for index in minimum..domain.len() {
-            prefix.push(domain[index]);
-            extend(domain, width, index, prefix, output);
-            prefix.pop();
-        }
-    }
-
-    let mut output = Vec::new();
-    extend(
-        domain,
-        width,
-        0,
-        &mut Vec::with_capacity(width),
-        &mut output,
-    );
-    output
+    debug_assert_eq!(products.len(), product_count);
+    Ok(products)
 }
 
 /// Enumerate the method/dimension work for one suffix state.
@@ -251,7 +177,7 @@ fn nondecreasing_opening_assignments(
 fn opening_work_domain(
     ctx: &SuffixCtx<'_>,
     state: SuffixState,
-    root_level_key: Option<&AkitaScheduleLookupKey>,
+    root_level_key: Option<&ScheduleLookupKey>,
     root_main_constraint: Option<&CommittedGroupParams>,
     guide_fold: Option<&CommittedGroupParams>,
     guide_terminal: Option<&TerminalFoldParams>,
@@ -316,7 +242,6 @@ fn opening_work_domain(
                         dimensions,
                         root_key,
                         ctx.precommitted_source_contracts,
-                        root_main_constraint.map(|_| crate::planner::MAX_ADAPTED_PRECOMMIT_WIDTH),
                     )?;
                     Ok(products)
                 })
@@ -338,34 +263,30 @@ fn opening_work_domain(
                 policy.claim_ext_degree,
                 opening_shape,
             )? {
-                let precommitted_openings = if let Some(root_key) = root_level_key {
-                    let mut openings = Vec::with_capacity(root_key.precommitteds.len());
-                    let mut valid = true;
-                    for profile in &root_key.precommitteds {
-                        let Ok(config) =
-                            (ctx.ring_challenge_config)(profile.inner.matrix.ring_dimension())
-                        else {
-                            valid = false;
-                            break;
-                        };
-                        openings.push(
-                            crate::schedule_params::PlannerOpeningCandidate::evaluation_trace(
-                                config,
-                            ),
-                        );
-                    }
-                    valid.then_some(openings)
+                let precommitted_class_openings = if let Some(root_key) = root_level_key {
+                    precommitted_group_equivalence_classes(
+                        &root_key.precommitteds,
+                        ctx.precommitted_source_contracts,
+                    )?
+                    .iter()
+                    .map(|indices| {
+                        let profile = &root_key.precommitteds[indices[0]];
+                        (ctx.ring_challenge_config)(profile.inner.matrix.ring_dimension())
+                            .ok()
+                            .map(crate::schedule_params::PlannerOpeningCandidate::evaluation_trace)
+                    })
+                    .collect::<Option<Vec<_>>>()
                 } else {
                     Some(Vec::new())
                 };
-                if let Some(precommitted_openings) = precommitted_openings {
+                if let Some(precommitted_class_openings) = precommitted_class_openings {
                     if let Some(purpose) =
                         trace_opening_purpose(early_packing_level, terminal_seed_is_relevant)
                     {
                         trace_work.push(OpeningWork {
                             dimensions,
                             opening: trace_opening,
-                            precommitted_openings,
+                            precommitted_class_openings,
                             opening_reduction_bytes,
                             purpose,
                         });
@@ -376,11 +297,11 @@ fn opening_work_domain(
 
         if let Some(precommit_products) = root_precommit_products.as_ref() {
             for opening in packing_domain {
-                for precommitted_openings in precommit_products {
+                for precommitted_class_openings in precommit_products {
                     packing_work.push(OpeningWork {
                         dimensions,
                         opening,
-                        precommitted_openings: precommitted_openings.clone(),
+                        precommitted_class_openings: precommitted_class_openings.clone(),
                         opening_reduction_bytes: 0,
                         purpose: OpeningPurpose::FoldOnly,
                     });
@@ -390,7 +311,7 @@ fn opening_work_domain(
             packing_work.extend(packing_domain.into_iter().map(|opening| OpeningWork {
                 dimensions,
                 opening,
-                precommitted_openings: Vec::new(),
+                precommitted_class_openings: Vec::new(),
                 opening_reduction_bytes: 0,
                 purpose: OpeningPurpose::FoldOnly,
             }));
@@ -407,12 +328,12 @@ fn guided_opening(
     constraint: &CommittedGroupParams,
 ) -> Result<crate::schedule_params::PlannerOpeningCandidate, AkitaError> {
     let opening = match constraint.opening_method() {
-        akita_types::OpeningMethod::EvaluationTrace => {
+        akita_params::OpeningMethod::EvaluationTrace => {
             crate::schedule_params::PlannerOpeningCandidate::evaluation_trace(
                 constraint.fold_challenge_config(),
             )
         }
-        akita_types::OpeningMethod::SubringCoefficientPacking {
+        akita_params::OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension,
         } => crate::schedule_params::PlannerOpeningCandidate::coefficient_packing(
             absolute_level,
@@ -451,8 +372,8 @@ fn root_candidate_matches_constraint(
 }
 
 fn inner_route_kind_matches(
-    candidate: akita_types::InnerCommitSecurityRoute,
-    guide: akita_types::InnerCommitSecurityRoute,
+    candidate: akita_params::InnerCommitSecurityRoute,
+    guide: akita_params::InnerCommitSecurityRoute,
 ) -> bool {
     CandidateInnerRoute::of(candidate) == CandidateInnerRoute::of(guide)
 }
@@ -471,8 +392,8 @@ fn candidate_layout_guide(guide: &CommittedGroupParams) -> CandidateLayoutGuide 
 }
 
 fn setup_prefix_structure_matches(
-    candidate: Option<&akita_types::GroupOpenPhaseParams>,
-    guide: Option<&akita_types::GroupOpenPhaseParams>,
+    candidate: Option<&akita_params::GroupOpenPhaseParams>,
+    guide: Option<&akita_params::GroupOpenPhaseParams>,
 ) -> bool {
     match (candidate, guide) {
         (None, None) => true,
@@ -525,10 +446,10 @@ fn terminal_candidate_matches_guide(
         && candidate.blocks().positions_per_block == guide.blocks.positions_per_block
         && candidate.inner().digits.log_basis == guide.inner.digits.log_basis
         && candidate.open().digits.log_basis == guide.fold.log_basis
-        && candidate.opening_method() == akita_types::OpeningMethod::EvaluationTrace
+        && candidate.opening_method() == akita_params::OpeningMethod::EvaluationTrace
         && matches!(
             candidate.inner().matrix.security_route(),
-            akita_types::InnerCommitSecurityRoute::Linf(_)
+            akita_params::InnerCommitSecurityRoute::Linf(_)
         )
         && candidate.setup_prefix().is_none()
 }
@@ -702,7 +623,7 @@ impl<'a> CandidateDomain<'a> {
                     let guide = self.guide_fold.map(candidate_layout_guide).or_else(|| {
                         self.guide_terminal.map(|guide| CandidateLayoutGuide {
                             position_index_bits: guide.blocks.position_index_bits(),
-                            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
+                            outer_slice_count: akita_params::CommitmentSliceCount::ONE,
                             inner_route: CandidateInnerRoute::of(
                                 guide.inner.matrix.security_route(),
                             ),
@@ -839,7 +760,7 @@ impl<'a> CandidateDomain<'a> {
                 ctx.policy,
                 work.dimensions,
                 work.opening,
-                &work.precommitted_openings,
+                &work.precommitted_class_openings,
                 open_lb,
             )?
             else {

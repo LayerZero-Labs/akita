@@ -11,16 +11,16 @@ pub(super) enum OracleRelationState {
 
 #[derive(Clone, Copy)]
 pub(super) struct OracleRelationTransition {
-    pub(super) mode: akita_types::RingRelationMode,
+    pub(super) mode: akita_params::RingRelationMode,
     pub(super) next_state: OracleRelationState,
 }
 
 const QUOTIENT: OracleRelationTransition = OracleRelationTransition {
-    mode: akita_types::RingRelationMode::QuotientLift,
+    mode: akita_params::RingRelationMode::QuotientLift,
     next_state: OracleRelationState::QuotientPrefix,
 };
 const REDUCED: OracleRelationTransition = OracleRelationTransition {
-    mode: akita_types::RingRelationMode::ReducedEvaluation,
+    mode: akita_params::RingRelationMode::ReducedEvaluation,
     next_state: OracleRelationState::ReducedSuffix,
 };
 const QUOTIENT_ONLY: &[OracleRelationTransition] = &[QUOTIENT];

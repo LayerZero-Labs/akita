@@ -9,9 +9,11 @@
 
 use crate::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_error::AkitaError;
+use akita_params::{
+    BasisMode, FoldSchedule, GrindingPlan, OpeningClaimsLayout, OpeningScheduleSelection,
+};
 use akita_types::{
-    AkitaInstanceDescriptor, AkitaSetupDescriptor, AlgebraSection, BasisMode, CallSection,
-    FoldSchedule, FpExtEncoding, GrindingPlan, OpeningClaimsLayout, OpeningScheduleSelection,
+    AkitaInstanceDescriptor, AkitaSetupDescriptor, AlgebraSection, CallSection, FpExtEncoding,
     PlanSection, SetupSection, TranscriptGrindingBinding,
 };
 use jolt_field::{CanonicalEncoding, Field};
@@ -45,10 +47,10 @@ where
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ExtField: FpExtEncoding<F>,
 {
-    if !akita_transcript::native_field_sampling_is_certified(
+    if !akita_transcript::field_sampling_is_certified(
         F::NUM_BYTES,
         F::MODULUS_BITS,
-        akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT,
+        akita_params::TRANSCRIPT_GRINDING_QUERY_LIMIT,
     ) {
         return Err(AkitaError::InvalidSetup(
             "native field-challenge sampling budget is not certified".into(),

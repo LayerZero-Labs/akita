@@ -1,0 +1,173 @@
+use super::{verify_fold, FoldVerifyOutput, NextWitnessPlan, PreparedFoldReplay};
+use crate::stages::opening_claims::{finalize_claims, verify_coefficient_packing_root_prefix};
+use akita_error::AkitaError;
+use akita_params::{
+    BasisMode, CommittedGroupParams, FoldParams, OpeningClaimsLayout, RelationWitnessGeometry,
+    SetupContributionMode, TerminalFoldParams,
+};
+use akita_serialization::AkitaSerialize;
+use akita_types::Commitment;
+use akita_types::GrindingReplay;
+use akita_types::{AkitaVerifierSetup, FpExtEncoding, OpeningClaims, RingVec};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn verify_root<F, E>(
+    setup: &AkitaVerifierSetup<F>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    claims: &OpeningClaims<'_, E, &Commitment<F>>,
+    opening_batch: &OpeningClaimsLayout,
+    basis: BasisMode,
+    root_lp: &CommittedGroupParams,
+    next_fold_params: Option<&FoldParams>,
+    terminal: &TerminalFoldParams,
+) -> Result<FoldVerifyOutput<F, E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+{
+    root_lp.validate_opening_batch(opening_batch)?;
+    for group_index in 0..opening_batch.num_groups() {
+        if !matches!(
+            root_lp
+                .group_params_geometry(opening_batch, group_index)?
+                .opening_method(),
+            akita_params::OpeningMethod::SubringCoefficientPacking { .. }
+        ) {
+            return Err(AkitaError::InvalidProof);
+        }
+    }
+    let relation_geometry = RelationWitnessGeometry::for_level(root_lp, opening_batch, E::DEGREE)?;
+    let relation_layout = relation_geometry.rhs_layout();
+    for group_index in 0..opening_batch.num_groups() {
+        let commitment = claims.group_commitment(group_index)?;
+        let plan = relation_layout.compression_plan_for_group(group_index)?;
+        if commitment.rows().coeff_len() != plan.terminal_coefficients() {
+            return Err(AkitaError::InvalidProof);
+        }
+        let ring_dim = plan
+            .maps()
+            .last()
+            .ok_or(AkitaError::InvalidProof)?
+            .ring_dimension();
+        akita_transcript::public_fields_verifier(
+            grinding.state_mut(),
+            akita_types::FoldSite::RootCommitment {
+                group: group_index,
+                ring_dimension: ring_dim,
+            }
+            .id()?,
+            commitment.rows().coeffs(),
+        )?;
+    }
+    for (group_index, group) in claims.groups().iter().enumerate() {
+        akita_transcript::public_extensions::<F, E, _>(
+            grinding.state_mut(),
+            akita_types::FoldSite::RootPoint { group: group_index }.id()?,
+            group.point(),
+        )?;
+    }
+    let openings = claims.flat_evaluations();
+    let material = verify_coefficient_packing_root_prefix::<F, E>(
+        claims,
+        &openings,
+        opening_batch,
+        basis,
+        root_lp,
+    )?;
+    akita_transcript::public_extensions::<F, E, _>(
+        grinding.state_mut(),
+        akita_types::FoldSite::Openings { level: 0 }.id()?,
+        &openings,
+    )?;
+    let payload_geometry = relation_layout.opening_payload_geometry()?;
+    let opening_payload = akita_transcript::receive_field_group::<F>(
+        grinding.state_mut(),
+        akita_types::FoldSite::OpeningPayload {
+            level: 0,
+            ring_dimension: payload_geometry.transcript_ring_dimension(),
+        }
+        .id()?,
+        payload_geometry.transmitted_coefficients(),
+    )
+    .map(RingVec::from_coeffs)?;
+    let prefix = finalize_claims::<F, E>(opening_batch, material, grinding, 0)?;
+    let order = opening_batch.root_group_order()?;
+    let commitment_payloads = order
+        .into_iter()
+        .map(|group_index| Ok(claims.group_commitment(group_index)?.rows().clone()))
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    let witness_len = root_lp.output_witness_len::<F>(opening_batch, E::DEGREE)?;
+    let (next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
+        if let Some(next) = next_fold_params {
+            let ring_dim = next.params.d_a();
+            let coefficient_count = next
+                .params
+                .outer_payload_geometry()?
+                .transmitted_coefficients();
+            let committed_len = akita_params::witness_commitment_domain_len(witness_len, ring_dim)?;
+            (
+                NextWitnessPlan::OuterPayload { coefficient_count },
+                ring_dim,
+                committed_len / ring_dim,
+                matches!(
+                    next.predecessor_setup_contribution_mode(),
+                    SetupContributionMode::Recursive
+                )
+                .then_some(&next.params),
+            )
+        } else {
+            let ring_dim = terminal.d_a();
+            let coefficient_count = terminal
+                .response_shape
+                .layout
+                .groups
+                .first()
+                .ok_or(AkitaError::InvalidProof)?
+                .t_field_elems;
+            let committed_len = akita_params::witness_commitment_domain_len(witness_len, ring_dim)?;
+            (
+                NextWitnessPlan::TerminalT { coefficient_count },
+                ring_dim,
+                committed_len / ring_dim,
+                None,
+            )
+        };
+    let challenge_field_bits = F::MODULUS_BITS
+        .checked_mul(
+            u32::try_from(E::DEGREE)
+                .map_err(|_| AkitaError::InvalidSetup("extension degree overflow".into()))?,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("challenge field width overflow".into()))?;
+    let level_layout = akita_params::nonterminal_level_layout(
+        F::MODULUS_BITS,
+        challenge_field_bits,
+        root_lp,
+        root_lp.relation_address_geometry(
+            opening_batch,
+            E::DEGREE,
+            next_witness_ring_dim,
+            witness_len,
+        )?,
+        next_fold_params.map(|next| &next.params),
+    )?;
+    verify_fold(
+        setup,
+        grinding,
+        PreparedFoldReplay {
+            lp: root_lp,
+            level: 0,
+            opening_payload,
+            opening_shape: opening_batch.clone(),
+            commitment_payloads,
+            prefix,
+            w_len: witness_len,
+            level_layout,
+            next_witness,
+            next_witness_ring_dim,
+            next_opening_source_len,
+            stage3,
+            evaluation_trace_basis: basis,
+        },
+    )
+}

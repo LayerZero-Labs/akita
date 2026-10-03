@@ -2,9 +2,10 @@ use crate::opaque::CpuBackend as GenericCpuBackend;
 use crate::opaque::RecursiveWitnessFlat;
 use akita_config::proof_optimized::fp128::OneHot;
 use akita_error::AkitaError;
+use akita_params::*;
 use akita_prover::backend::*;
 use akita_sumcheck::SumcheckKernel;
-use akita_transcript::{new_native_prover, new_native_verifier};
+use akita_transcript::{new_prover_channel, new_verifier_channel};
 use akita_types::*;
 use jolt_field::{Ext2, ExtField, Field, One, Prime128OffsetA7F7, Ring, Zero};
 use jolt_poly::UnivariatePoly;
@@ -106,16 +107,16 @@ fn prove_eor(
         super::CommitmentHandle<F, E>,
         crate::opaque::CpuWitnessHandle,
     >],
-    grinding: &mut NativeProverGrinding<'_>,
+    grinding: &mut ProverGrinding<'_>,
 ) -> Result<ProvedReduction, AkitaError> {
     let prepared = <CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(
         backend, session, context, layout, groups,
     )?;
-    let prefix = native_eor_prover_prefix::<F, E>(
+    let prefix = eor_prefix::<F, E, _>(
         grinding,
         layout,
         &prepared.openings,
-        &prepared.proof_partials,
+        prepared.proof_partials.clone(),
         1,
     )?;
     let (claim, mut session) = <CpuBackend as OpaqueEorKernel<F, E>>::begin_eor(
@@ -130,22 +131,22 @@ fn prove_eor(
         claim,
         rounds: layout.max_num_vars() - 1,
     };
-    let mut channel = NativeGrindingSumcheckProver::<F, E>::new(
+    let mut channel = GrindingSumcheckProver::<F, E>::new(
         grinding,
         SumcheckProtocol::ExtensionOpeningReduction,
         1,
         0,
     );
-    let (rho, final_claim) = akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
+    let (rho, final_claim) = akita_sumcheck::prove_sumcheck::<F, E, _, _>(
         &mut driver,
         &mut channel,
-        akita_sumcheck::NativeSumcheckShape::new(
+        akita_sumcheck::SumcheckShape::new(
             layout.max_num_vars() - 1,
             EXTENSION_OPENING_REDUCTION_DEGREE,
         )?,
-        NATIVE_EOR_SUMCHECK_INVOCATION,
+        EOR_SUMCHECK_INVOCATION,
     )?;
-    let final_claims = <CpuBackend as OpaqueEorKernel<F, E>>::finish_eor(backend, session)?;
+    let mut final_claims = <CpuBackend as OpaqueEorKernel<F, E>>::finish_eor(backend, session)?;
     if final_claims
         .iter()
         .zip(&prefix.claim_coefficients)
@@ -154,25 +155,25 @@ fn prove_eor(
     {
         return Err(AkitaError::InvalidProof);
     }
-    native_eor_prover_final_claims::<F, E>(grinding, layout, &final_claims, 1)?;
+    eor_final_claims::<F, E, _>(grinding, layout, &mut final_claims, 1)?;
     Ok(ProvedReduction {
         partials: prepared.proof_partials,
         final_claims,
         rho,
     })
 }
-fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPlan {
-    let challenge_order = akita_types::ChallengeFieldOrder::from_full_capacity(128).unwrap();
-    let mut runs = vec![akita_types::GrindingRun::proof_of_work(
-        akita_types::GrindingSite::ExtensionOpeningPoint { level: 1 },
+fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_params::GrindingPlan {
+    let challenge_order = akita_params::ChallengeFieldOrder::from_full_capacity(128).unwrap();
+    let mut runs = vec![akita_params::GrindingRun::proof_of_work(
+        akita_params::GrindingSite::ExtensionOpeningPoint { level: 1 },
         1,
         challenge_order,
     )
     .unwrap()];
     if batches_claims {
         runs.push(
-            akita_types::GrindingRun::proof_of_work(
-                akita_types::GrindingSite::ExtensionOpeningClaimBatch { level: 1 },
+            akita_params::GrindingRun::proof_of_work(
+                akita_params::GrindingSite::ExtensionOpeningClaimBatch { level: 1 },
                 1,
                 challenge_order,
             )
@@ -181,9 +182,9 @@ fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPl
     }
     for round in 0..rounds {
         runs.push(
-            akita_types::GrindingRun::proof_of_work(
-                akita_types::GrindingSite::SumcheckRound {
-                    protocol: akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+            akita_params::GrindingRun::proof_of_work(
+                akita_params::GrindingSite::SumcheckRound {
+                    protocol: akita_params::SumcheckProtocol::ExtensionOpeningReduction,
                     level: 1,
                     stage: 0,
                     round: u32::try_from(round).unwrap(),
@@ -194,7 +195,7 @@ fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPl
             .unwrap(),
         );
     }
-    akita_types::GrindingPlan::new(runs, challenge_order).unwrap()
+    akita_params::GrindingPlan::new(runs, challenge_order).unwrap()
 }
 
 fn direct_eq_at_boolean<E: Field>(point: &[E], index: usize) -> E {
@@ -296,9 +297,9 @@ fn recursive_extension_opening_reduction_pads_and_shares_challenges() {
             ring_dimension: 64,
         },
     ];
-    let native = new_native_prover(b"test/aggregate-padding", b"test").unwrap();
+    let channel = new_prover_channel(b"test/aggregate-padding", b"test").unwrap();
     let plan = eor_test_plan(7, true);
-    let mut grinding = NativeProverGrinding::new(native, &plan);
+    let mut grinding = ProverGrinding::new(channel, &plan);
     let proved = prove_eor(
         &backend,
         &proof.session,
@@ -334,7 +335,7 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
             .unwrap();
             let inner = &params.inner().matrix;
             let inner_bound =
-                *akita_types::sis::inner_coeff_linf_bounds(inner.sis_modulus_profile(), D as u32)
+                *akita_params::sis::inner_coeff_linf_bounds(inner.sis_modulus_profile(), D as u32)
                     .first()
                     .expect("audited setup-prefix A bound");
             params.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
@@ -444,9 +445,9 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                     ring_dimension: D,
                 },
             ];
-            let native = new_native_prover(b"test/mixed-eor-dense-oracle", b"test").unwrap();
+            let channel = new_prover_channel(b"test/mixed-eor-dense-oracle", b"test").unwrap();
             let plan = eor_test_plan(8, true);
-            let mut grinding = NativeProverGrinding::new(native, &plan);
+            let mut grinding = ProverGrinding::new(channel, &plan);
             let proved = prove_eor(
                 &backend,
                 &proof.session,
@@ -471,11 +472,18 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                 .flat_map(|(evals, point)| direct_column_partials::<F, E>(evals, point))
                 .collect::<Vec<_>>();
             assert_eq!(proved.partials, partials);
-            let native =
-                new_native_verifier(b"test/mixed-eor-dense-oracle", b"test", &proof_bytes).unwrap();
-            let mut replay = NativeVerifierGrinding::new(native, &plan);
-            let eor_prefix =
-                native_eor_verifier_prefix::<F, E>(&mut replay, &layout, &openings, 1).unwrap();
+            let channel =
+                new_verifier_channel(b"test/mixed-eor-dense-oracle", b"test", &proof_bytes)
+                    .unwrap();
+            let mut replay = VerifierGrinding::new(channel, &plan);
+            let eor_prefix = eor_prefix::<F, E, _>(
+                &mut replay,
+                &layout,
+                &openings,
+                vec![E::zero(); partials.len()],
+                1,
+            )
+            .unwrap();
             assert_eq!(eor_prefix.partials, partials);
             let eta = eor_prefix.eta[0];
             let coefficients = eor_prefix.claim_coefficients;
@@ -493,24 +501,23 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                             .fold(E::zero(), |sum, (w, f)| sum + *w * *f)
                 },
             );
-            let mut channel = NativeGrindingSumcheckVerifier::<F, E>::new(
+            let mut channel = GrindingSumcheckVerifier::<F, E>::new(
                 &mut replay,
                 SumcheckProtocol::ExtensionOpeningReduction,
                 1,
                 0,
             );
-            let rounds = akita_sumcheck::verify_sumcheck_rounds_native::<F, E, _>(
+            let rounds = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
                 &mut channel,
-                NATIVE_EOR_SUMCHECK_INVOCATION,
+                EOR_SUMCHECK_INVOCATION,
                 input,
-                akita_sumcheck::NativeSumcheckShape::new(8, EXTENSION_OPENING_REDUCTION_DEGREE)
-                    .unwrap(),
+                akita_sumcheck::SumcheckShape::new(8, EXTENSION_OPENING_REDUCTION_DEGREE).unwrap(),
             )
             .unwrap();
             let claim = rounds.output_claim;
             let rho = rounds.challenges;
-            let final_claims =
-                native_eor_verifier_final_claims::<F, E>(&mut replay, &layout, 1).unwrap();
+            let mut final_claims = vec![E::zero(); layout.num_total_polynomials()];
+            eor_final_claims::<F, E, _>(&mut replay, &layout, &mut final_claims, 1).unwrap();
             replay.finish().unwrap();
             assert_eq!(rho, proved.rho);
             let expected = terms
@@ -546,9 +553,10 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                     point: &long_point,
                     ring_dimension: D,
                 }];
-                let native = new_native_prover(b"test/shared-commitment-scopes", b"test").unwrap();
+                let channel =
+                    new_prover_channel(b"test/shared-commitment-scopes", b"test").unwrap();
                 let plan = eor_test_plan(8, false);
-                let mut grinding = NativeProverGrinding::new(native, &plan);
+                let mut grinding = ProverGrinding::new(channel, &plan);
                 let proved = prove_eor(
                     &backend,
                     guard.session(),
@@ -589,14 +597,14 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     .expect("multi-group shape");
     assert_eq!(batch.num_groups(), 3);
     let precommitted = catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+        .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
             16, 1,
         )))
         .expect("independent row")
         .profiles()
         .final_group;
     let schedule = catalog
-        .resolve_key(&AkitaScheduleLookupKey {
+        .resolve_key(&ScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![precommitted, precommitted],
         })
@@ -695,13 +703,10 @@ fn aggregate_eor_rejects_wrong_owner_and_invalid_round_progression() {
         &[E::one()],
     )
     .unwrap();
-    assert!(<CpuBackend as OpaqueEorKernel<F, E>>::bind_eor_round(
-        &backend,
-        &mut session,
-        0,
-        E::one()
-    )
-    .is_err());
+    assert!(matches!(
+        <CpuBackend as OpaqueEorKernel<F, E>>::bind_eor_round(&backend, &mut session, 0, E::one()),
+        Err(AkitaError::InvalidInput(_))
+    ));
     assert!(
         <CpuBackend as OpaqueEorKernel<F, E>>::eor_round(&backend, &mut session, 1, claim).is_err()
     );

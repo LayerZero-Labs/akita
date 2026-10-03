@@ -58,11 +58,12 @@ pub(crate) use fused_quotients::{
 };
 use i8_matvec::*;
 pub(crate) use ntt_matvec::mat_vec_mul_ntt_dense_digits_i8;
+pub use ntt_matvec::mat_vec_mul_ntt_digits_i8;
 pub(crate) use ntt_matvec::mat_vec_mul_ntt_i8;
 #[cfg(test)]
 pub(crate) use ntt_matvec::mat_vec_mul_ntt_raw_digits_i8;
-pub use ntt_matvec::{
-    mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
+pub(crate) use ntt_matvec::{
+    mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
+    mat_vec_mul_ntt_packed_digits_i8, mat_vec_mul_ntt_packed_raw_i8,
 };
-pub(crate) use ntt_matvec::{mat_vec_mul_ntt_packed_digits_i8, mat_vec_mul_ntt_packed_raw_i8};
 pub(crate) use single_cyclic::{mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic};

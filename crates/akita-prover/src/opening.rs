@@ -2,10 +2,11 @@
 use crate::backend::CommitmentHandleMetadata;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
-use akita_types::{
-    Commitment, CommittedGroup, CommittedGroupBatchProfile, CommittedGroupParams, OpeningClaims,
-    OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupClaims,
+use akita_params::{
+    CommittedGroupBatchProfile, CommittedGroupParams, OpeningClaimsLayout, OpeningScheduleSelection,
 };
+use akita_types::GrindingReplay;
+use akita_types::{Commitment, CommittedGroup, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 pub struct SelectedProverOpeningData<'a, E: Clone, H, F: Field> {
@@ -19,7 +20,9 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
         schedules: &TrustedScheduleCatalog<Cfg>,
     ) -> Result<Self, AkitaError> {
         if claims.num_groups() != handles.len() {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "claim group count differs from commitment handle count".into(),
+            ));
         }
         let profile = CommittedGroupBatchProfile::from_profiles(
             claims
@@ -37,7 +40,9 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
             .zip(claims.groups())
         {
             if claim.point().len() != layout.num_vars() {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "validated claim point length differs from committed layout".into(),
+                ));
             }
             let meta = handle.metadata();
             if meta.num_vars() != layout.num_vars()
@@ -51,7 +56,9 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
         // The proving catalog plans its final group under `Cfg`'s contract.
         // Precommitted producers are not recorded in the row, so planning
         // code compares those handles against its own producer declarations.
-        let final_handle = handles.last().ok_or(AkitaError::InvalidProof)?;
+        let final_handle = handles.last().ok_or_else(|| {
+            AkitaError::Internal("validated opening has no final commitment handle".into())
+        })?;
         if final_handle.producer_contract() != Cfg::committed_source_contract()? {
             return Err(AkitaError::InvalidInput(
                 "final group was committed under a different producer contract".into(),
@@ -104,13 +111,17 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
         if opening_claims.num_groups() != groups.len()
             || groups.len() != opening_layout.num_groups()
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "assembled opening claims, handles, and layout have different group counts".into(),
+            ));
         }
         for (claims, layout) in opening_claims.groups().iter().zip(opening_layout.groups()) {
             if claims.point().len() > layout.num_vars()
                 || claims.evaluations().len() != layout.num_polynomials()
             {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "assembled opening claim shape differs from group layout".into(),
+                ));
             }
         }
         Ok(Self {
@@ -126,7 +137,9 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
         &self.opening_layout
     }
     pub(crate) fn group(&self, index: usize) -> Result<&G, AkitaError> {
-        self.groups.get(index).ok_or(AkitaError::InvalidProof)
+        self.groups.get(index).ok_or_else(|| {
+            AkitaError::Internal("assembled opening has no handle for the requested group".into())
+        })
     }
     pub fn commitments(&self) -> Vec<&Commitment<CommitF>> {
         self.opening_claims
@@ -145,16 +158,16 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
             self.groups.iter().map(&mut map).collect(),
         )
     }
-    pub(crate) fn append_to_native(
+    pub(crate) fn append_to(
         &self,
         root_params: &CommittedGroupParams,
-        grinding: &mut akita_types::NativeProverGrinding<'_>,
+        grinding: &mut akita_types::ProverGrinding<'_>,
     ) -> Result<(), AkitaError>
     where
         CommitF: CanonicalEncoding,
         PointF: ExtField<CommitF>,
     {
-        let relation_geometry = akita_types::RelationWitnessGeometry::for_level(
+        let relation_geometry = akita_params::RelationWitnessGeometry::for_level(
             root_params,
             self.opening_layout(),
             PointF::DEGREE,
@@ -170,38 +183,26 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
             let ring_dim = compression
                 .maps()
                 .last()
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::Internal("root commitment compression plan has no final map".into())
+                })?
                 .ring_dimension();
-            let group = u32::try_from(group_index)
-                .map_err(|_| AkitaError::InvalidSetup("group index exceeds u32".into()))?;
-            akita_transcript::public_native_fields_prover(
+            akita_transcript::public_fields_prover(
                 grinding.state_mut(),
-                akita_transcript::ProtocolSiteId {
-                    family: akita_transcript::SITE_FAMILY_ROOT_STATEMENT,
-                    stage: 1,
-                    group,
-                    detail: u32::try_from(ring_dim).map_err(|_| {
-                        AkitaError::InvalidSetup("ring dimension exceeds u32".into())
-                    })?,
-                    ..akita_transcript::ProtocolSiteId::default()
-                },
+                akita_types::FoldSite::RootCommitment {
+                    group: group_index,
+                    ring_dimension: ring_dim,
+                }
+                .id()?,
                 commitment.rows().coeffs(),
-            )
-            .map_err(|_| AkitaError::InvalidProof)?;
+            )?;
         }
         for (group_index, group_claims) in self.opening_claims.groups().iter().enumerate() {
-            akita_transcript::public_native_extensions_prover::<CommitF, PointF>(
+            akita_transcript::public_extensions::<CommitF, PointF, _>(
                 grinding.state_mut(),
-                akita_transcript::ProtocolSiteId {
-                    family: akita_transcript::SITE_FAMILY_ROOT_STATEMENT,
-                    stage: 2,
-                    group: u32::try_from(group_index)
-                        .map_err(|_| AkitaError::InvalidSetup("group index exceeds u32".into()))?,
-                    ..akita_transcript::ProtocolSiteId::default()
-                },
+                akita_types::FoldSite::RootPoint { group: group_index }.id()?,
                 group_claims.point(),
-            )
-            .map_err(|_| AkitaError::InvalidProof)?;
+            )?;
         }
         Ok(())
     }

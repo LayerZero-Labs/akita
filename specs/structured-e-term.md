@@ -336,14 +336,14 @@ including 253 blocks over 64 chunks and 61 blocks over 64 chunks.
 
 ## Implementation Owners
 
-- [`akita_types::dyadic_block_ranges`](../crates/akita-types/src/witness/chunk_partition.rs)
+- [`akita_params::dyadic_block_ranges`](../crates/akita-params/src/witness/chunk_partition.rs)
   owns chunk boundaries.
-- [`WitnessLayout`](../crates/akita-types/src/witness.rs) owns physical unit
+- [`WitnessLayout`](../crates/akita-params/src/witness.rs) owns physical unit
   ranges and `Z || E || T` placement.
 - [`setup_index_weight.rs`](../crates/akita-types/src/setup_contribution/plan/setup_index_weight.rs)
   builds the per-group relation-column tensors and the prover's dense
   setup-index weights, and the verifier's
   [`setup_index_weight.rs`](../crates/akita-verifier/src/setup_contribution/setup_index_weight.rs)
   conditionally combines them into `SetupIndexWeightMle`.
-- [`evaluation_trace.rs`](../crates/akita-verifier/src/protocol/evaluation_trace.rs)
+- [`evaluation_trace.rs`](../crates/akita-verifier/src/relation/evaluation_trace.rs)
   contracts evaluation trace units and handles irregular dyadic chunks.

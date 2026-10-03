@@ -1,8 +1,9 @@
 #![allow(dead_code)]
 
 #[cfg(feature = "logging-transcript")]
-pub(crate) mod native_mutations;
+pub(crate) mod mutations;
 mod opening_oracles;
+pub(crate) mod proof_size;
 #[path = "../../examples/support/workspace_schedules.rs"]
 mod workspace_schedules;
 
@@ -18,16 +19,17 @@ pub(super) use akita_cpu_backend::OneHotPoly;
 use akita_cpu_backend::SetupPrefixProverRegistry;
 use akita_cpu_backend::{evaluate_root_polynomial, RootPolyShape};
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
+pub(super) use akita_params::{BasisMode, PrecommittedGroupProfiles};
+use akita_params::{
+    CommittedGroupBatchProfile, FlatMatrix, PolynomialGroupLayout, ScheduleLookupKey,
+    SetupPrefixSlotId,
+};
+pub(super) use akita_params::{CommittedGroupParams, FoldSchedule};
 pub(super) use akita_prover::SelectedProverOpeningData;
 use akita_types::{
-    AkitaExpandedSetup, AkitaScheduleLookupKey, AkitaVerifierSetup, CommittedGroupBatchProfile,
-    FlatMatrix, GroupBatchStatement, PolynomialGroupLayout, SetupPrefixSlotId,
-    SetupPrefixVerifierRegistry,
+    AkitaExpandedSetup, AkitaVerifierSetup, GroupBatchStatement, SetupPrefixVerifierRegistry,
 };
-pub(super) use akita_types::{
-    BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims, PrecommittedGroupProfiles,
-};
-pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
+pub(super) use akita_types::{CommittedGroup, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::One;
 pub(super) use jolt_field::{CanonicalBytes, CanonicalEncoding, Field};
 pub(super) use rand::rngs::StdRng;
@@ -77,7 +79,7 @@ where
     FF: Field + CanonicalEncoding + CanonicalBytes + 'static,
 {
     let mut transcript =
-        akita_transcript::new_native_prover(b"akita/protocol-epoch/digest", payload).unwrap();
+        akita_transcript::new_prover_channel(b"akita/protocol-epoch/digest", payload).unwrap();
     akita_transcript::prover_context(
         &mut transcript,
         akita_transcript::ProtocolContextRecord::new(
@@ -90,10 +92,10 @@ where
             akita_transcript::ProtocolMessageKind::Challenge as u32,
             0,
             0,
-            akita_transcript::native_field_challenge_bytes::<FF>(),
+            akita_transcript::field_challenge_bytes::<FF>(),
         ),
     );
-    akita_transcript::native_prover_field_challenge::<FF>(&mut transcript)
+    akita_transcript::prover_field_challenge::<FF>(&mut transcript)
         .expect("supported protocol field")
         .to_bytes_le_vec()
         .iter()
@@ -198,7 +200,7 @@ where
 pub(super) fn opening_from_poly_for_layout<P>(
     poly: &P,
     point: &[F],
-    layout: &akita_types::GroupOpenPhaseParams,
+    layout: &akita_params::GroupOpenPhaseParams,
     basis_mode: BasisMode,
 ) -> F
 where
@@ -220,7 +222,7 @@ where
 pub(super) fn opening_from_poly_with_basis<const D: usize, P>(
     poly: &P,
     point: &[F],
-    layout: &akita_types::GroupOpenPhaseParams,
+    layout: &akita_params::GroupOpenPhaseParams,
     basis_mode: BasisMode,
 ) -> F
 where

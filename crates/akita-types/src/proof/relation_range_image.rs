@@ -6,7 +6,7 @@ use akita_algebra::offset_eq::{EqPairTensorAxis, EqPairTensorFamily};
 use akita_error::AkitaError;
 use jolt_field::{Field, Ring};
 
-use crate::{
+use akita_params::{
     CommittedGroupParams, DigitRangePlan, FlatBooleanDomain, InnerCommitSecurityRoute,
     OpeningClaimsLayout, PhysicalL2NormProofShape, RelationAddressGeometry, RelationRowFamily,
     RelationWitnessGeometry, WitnessLayout,
@@ -199,10 +199,19 @@ impl PhysicalResponsePlan {
                     .ok_or_else(|| AkitaError::InvalidSetup("L2 physical row overflow".into()))?;
                 match self.shape {
                     PhysicalL2NormProofShape::Direct { .. } => {
-                        let table = tables.first_mut().ok_or(AkitaError::InvalidProof)?;
+                        let table = tables.first_mut().ok_or_else(|| {
+                            AkitaError::Internal(
+                                "direct L2 response has no virtual integer table".into(),
+                            )
+                        })?;
                         let output = table
                             .get_mut(physical_row..physical_row + self.ring_dimension)
-                            .ok_or(AkitaError::InvalidProof)?;
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "direct L2 physical row exceeds its virtual integer table"
+                                        .into(),
+                                )
+                            })?;
                         let mut basis_power = 1i128;
                         for limb in 0..self.fold_digit_count {
                             let index = witness_row + limb * self.ring_dimension;
@@ -237,7 +246,9 @@ impl PhysicalResponsePlan {
                             decode_digits(index, &mut digits)?;
                             let output = table
                                 .get_mut(physical_row..physical_row + self.ring_dimension)
-                                .ok_or(AkitaError::InvalidProof)?;
+                                .ok_or_else(|| {
+                                    AkitaError::Internal("L2 limb row exceeds integer table".into())
+                                })?;
                             for (value, &digit) in output.iter_mut().zip(&digits) {
                                 *value = i128::from(digit);
                             }
@@ -534,7 +545,7 @@ impl RelationRangeImagePlan {
         }
         let row_geometries = relation_witness_geometry.rhs_layout().row_geometries()?;
         match witness_layout.relation_quotient_layout() {
-            crate::RelationQuotientLayout::QuotientLift { rows, .. } => {
+            akita_params::RelationQuotientLayout::QuotientLift { rows, .. } => {
                 if rows.len() != row_geometries.len()
                     || rows
                         .iter()
@@ -546,7 +557,7 @@ impl RelationRangeImagePlan {
                     ));
                 }
             }
-            crate::RelationQuotientLayout::ReducedEvaluation => {}
+            akita_params::RelationQuotientLayout::ReducedEvaluation => {}
         }
 
         Ok(Self {
@@ -637,7 +648,7 @@ impl RelationRangeImagePlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
+    use akita_params::{
         dyadic_block_ranges, CommitmentRingDims, CommitmentSliceCount, PolynomialGroupLayout,
         RelationGroupRows, RelationRhsLayout, RelationRowGeometry, WitnessQuotientRowLayout,
         WitnessUnitLayout,
@@ -691,13 +702,13 @@ mod tests {
                 group_index,
                 role_dims,
                 opening_geometry,
-                opening_method: crate::OpeningMethod::EvaluationTrace,
+                opening_method: akita_params::OpeningMethod::EvaluationTrace,
                 n_a: 1,
                 physical_b_rows: 1,
                 outer_slice_count: CommitmentSliceCount::ONE,
             })
             .collect();
-        RelationWitnessGeometry::from_parts(
+        RelationWitnessGeometry::from_parts_for_test(
             1,
             RelationRhsLayout::new_for_test(role_dims.d_d(), 1, groups),
         )

@@ -47,7 +47,7 @@ impl SignedDigitBounds {
     /// Whether every observed digit lies in the balanced base-`2^log_basis`
     /// interval `[-2^(log_basis - 1), 2^(log_basis - 1) - 1]`.
     pub(crate) fn fits_balanced_log_basis(self, log_basis: u32) -> bool {
-        let Some(abs_bound) = akita_types::balanced_signed_digit_abs_bound(log_basis) else {
+        let Some(abs_bound) = akita_params::balanced_signed_digit_abs_bound(log_basis) else {
             return false;
         };
         u64::from(self.negative_abs_max) <= abs_bound && u64::from(self.positive_max) < abs_bound
@@ -208,7 +208,9 @@ impl PackedSignedDigitWriter {
         // costs far more than one serial fill.
         let mut storage = Arc::<[u8]>::new_uninit_slice(storage_len);
         Arc::get_mut(&mut storage)
-            .expect("fresh packed storage is uniquely owned")
+            .ok_or_else(|| {
+                AkitaError::Internal("fresh packed storage is not uniquely owned".into())
+            })?
             .fill(MaybeUninit::new(0));
         // SAFETY: every slot was initialized immediately above.
         let storage = unsafe { storage.assume_init() };
@@ -265,8 +267,9 @@ impl PackedSignedDigitWriter {
         if whole != 0 {
             let encoded_start = encoded_byte_len(self.position, self.bit_width)?;
             let encoded_end = encoded_start + encoded_byte_len(whole, self.bit_width)?;
-            let storage = Arc::get_mut(&mut self.storage)
-                .expect("streaming packed storage remains uniquely owned");
+            let storage = Arc::get_mut(&mut self.storage).ok_or_else(|| {
+                AkitaError::Internal("packed write storage is not uniquely owned".into())
+            })?;
             let bounds = encode_digits(
                 &digits[..whole],
                 self.bit_width,
@@ -303,8 +306,9 @@ impl PackedSignedDigitWriter {
         let block_len = (self.len - block_start).min(DIGITS_PER_BLOCK);
         let encoded_start = encoded_byte_len(block_start, self.bit_width)?;
         let encoded_end = encoded_start + encoded_byte_len(block_len, self.bit_width)?;
-        let storage = Arc::get_mut(&mut self.storage)
-            .expect("streaming packed storage remains uniquely owned");
+        let storage = Arc::get_mut(&mut self.storage).ok_or_else(|| {
+            AkitaError::Internal("packed flush storage is not uniquely owned".into())
+        })?;
         let bounds = encode_digits(
             &self.pending[..block_len],
             self.bit_width,
@@ -540,7 +544,9 @@ impl<'a> PackedSignedDigitView<'a> {
                 self.bit_width,
                 self.vector_safe,
                 block_start / DIGITS_PER_BLOCK + offset,
-                block.try_into().expect("exact packed decode block"),
+                block.try_into().map_err(|_| {
+                    AkitaError::Internal("packed decode chunk has wrong length".into())
+                })?,
             );
         }
         let decoded = scalar_prefix + full_blocks * DIGITS_PER_BLOCK;

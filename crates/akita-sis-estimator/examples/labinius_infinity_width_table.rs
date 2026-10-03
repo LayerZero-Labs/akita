@@ -4,16 +4,16 @@
 //! runtime schedule table because the binary root protocol is not implemented.
 
 use akita_challenges::{BinaryChallengeFamily, BinaryChallengeProfile, BinaryScalarRing};
+use akita_params::sis::{
+    labinius::{LabiniusCoefficientPrime, SourceOccurrenceBound},
+    source_comparison_inf_norm,
+};
 use akita_sis_estimator::{
     width_table::{
         generate_infinity_width_rows, validate_infinity_width_rows, InfinityWidthOrigin,
         InfinityWidthRow, InfinityWidthTableConfig, INFINITY_WIDTH_EVALUATOR_ID,
     },
     AkitaModulusProfileId,
-};
-use akita_types::sis::{
-    labinius::{LabiniusCoefficientPrime, SourceOccurrenceBound},
-    source_comparison_inf_norm,
 };
 use std::{env, fs, path::PathBuf, process, time::Instant};
 

@@ -19,7 +19,7 @@ impl<E: Field> CompiledStage2Weights<E> {
     /// Reduced evaluations can absorb the addend in place. Quotient-factored
     /// weights retain the sparse additional-term representation used by their
     /// sumcheck path.
-    fn absorb_response_norm_weights(&mut self, weights: Vec<E>) -> Result<(), AkitaError> {
+    fn add_response_norm_weights(&mut self, weights: Vec<E>) -> Result<(), AkitaError> {
         match &mut self.ordinary {
             RelationWeightDescription::ReducedEvaluations { evaluations, .. } => {
                 let destination = evaluations
@@ -182,7 +182,7 @@ where
     let parameters = request.parameters;
     let instance = request.relation;
     if parameters.payload_mode.is_compressed()
-        && parameters.ring_relation_mode == akita_types::RingRelationMode::QuotientLift
+        && parameters.ring_relation_mode == akita_params::RingRelationMode::QuotientLift
         && akita_error::checked::product([
             request.opening_source_len,
             request.opening_ring_dimension,
@@ -219,7 +219,7 @@ where
         return Err(AkitaError::InvalidProof);
     };
     let ordinary = match parameters.ring_relation_mode {
-        akita_types::RingRelationMode::QuotientLift => {
+        akita_params::RingRelationMode::QuotientLift => {
             let weights = build_relation_lane_weights(RelationLaneWeightInputs {
                 setup: RelationSetupSource::Matrix(setup),
                 instance,
@@ -240,7 +240,7 @@ where
             })?;
             RelationWeightDescription::QuotientFactored(weights.into_factorization()?)
         }
-        akita_types::RingRelationMode::ReducedEvaluation => {
+        akita_params::RingRelationMode::ReducedEvaluation => {
             if !points.is_empty() {
                 return Err(AkitaError::InvalidProof);
             }
@@ -257,7 +257,7 @@ where
         }
     };
     let linear = if parameters.payload_mode.is_compressed()
-        && parameters.ring_relation_mode == akita_types::RingRelationMode::QuotientLift
+        && parameters.ring_relation_mode == akita_params::RingRelationMode::QuotientLift
     {
         let weights = akita_types::build_compression_relation_weights(
             setup,
@@ -313,7 +313,7 @@ where
             let equality = OffsetEqWindow::new(norm.point)?;
             let response_norm =
                 materialize_eq_tensor_left(&equality, &families, plan.witness_len())?;
-            compiled.absorb_response_norm_weights(response_norm)?;
+            compiled.add_response_norm_weights(response_norm)?;
         }
     }
     Ok(compiled)
@@ -463,7 +463,7 @@ mod tests {
             binary_intervals: Vec::new(),
         };
         compiled
-            .absorb_response_norm_weights(response_norm)
+            .add_response_norm_weights(response_norm)
             .expect("response-norm table fits reduced relation table");
 
         let RelationWeightDescription::ReducedEvaluations { evaluations, .. } = compiled.ordinary
@@ -500,7 +500,7 @@ mod tests {
             binary_intervals: Vec::new(),
         };
         compiled
-            .absorb_response_norm_weights(response_norm)
+            .add_response_norm_weights(response_norm)
             .expect("sparse route remains valid");
         assert_eq!(compiled.linear, expected);
     }
@@ -517,7 +517,7 @@ mod tests {
             binary_intervals: Vec::new(),
         };
         assert!(matches!(
-            compiled.absorb_response_norm_weights(vec![extension(2); 3]),
+            compiled.add_response_norm_weights(vec![extension(2); 3]),
             Err(AkitaError::InvalidProof)
         ));
     }

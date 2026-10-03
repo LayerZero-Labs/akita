@@ -21,11 +21,9 @@ use crate::sources::packed_digits::PackedSignedDigitView;
 use crate::validation::signed_digit_kernel_for_setup;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
+use akita_params::{balanced_signed_digit_abs_bound, field_modulus, SignedDigitKernel};
 use akita_types::RingVec;
-use akita_types::{
-    balanced_signed_digit_abs_bound, dense_i8_commit_prefers_exact_ifma52, field_modulus,
-    NttCacheKey, NttTransformDomain, SignedDigitKernel,
-};
+use akita_types::{dense_i8_commit_prefers_exact_ifma52, NttCacheKey, NttTransformDomain};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::array::from_fn;
@@ -100,13 +98,12 @@ impl<F: Field, E> CpuBackend<F, E> {
                             "compiled dense group contains another representation".into(),
                         ));
                     };
-                    self.dense_coefficient_commit_rows::<D>(
+                    crate::typed_inner_rows(self.dense_coefficient_commit_rows::<D>(
                         prepared,
                         *dense,
                         source.descriptor(),
                         plan,
-                    )
-                    .map(crate::typed_inner_rows)
+                    )?)
                 })
                 .collect(),
             Some(PolynomialType::Dense(DenseType::PredecomposedDigits)) => sources
@@ -120,8 +117,9 @@ impl<F: Field, E> CpuBackend<F, E> {
                             "compiled dense-digit group contains another representation".into(),
                         ));
                     };
-                    self.predecomposed_dense_commit_rows::<D>(prepared, planes, plan)
-                        .map(crate::typed_inner_rows)
+                    crate::typed_inner_rows(
+                        self.predecomposed_dense_commit_rows::<D>(prepared, planes, plan)?,
+                    )
                 })
                 .collect(),
             Some(PolynomialType::ShortNorm(_)) => sources
@@ -134,7 +132,7 @@ impl<F: Field, E> CpuBackend<F, E> {
                         ));
                     };
                     let digits = short.packed_view();
-                    self.recursive_packed_witness_commit_rows::<D>(
+                    crate::typed_inner_rows(self.recursive_packed_witness_commit_rows::<D>(
                         prepared,
                         digits,
                         plan.n_a,
@@ -142,8 +140,7 @@ impl<F: Field, E> CpuBackend<F, E> {
                         plan.num_live_blocks,
                         plan.num_digits_inner,
                         plan.log_basis_inner,
-                    )
-                    .map(crate::typed_inner_rows)
+                    )?)
                 })
                 .collect(),
             Some(PolynomialType::OneHot(kind)) => match kind.index_width() {

@@ -17,7 +17,7 @@ pub(super) fn derive_fold_candidate_frontier(
     };
     let mut candidates = Vec::new();
     let mut best_modeled_with_score = std::collections::BTreeMap::<
-        akita_types::RingRelationMode,
+        akita_params::RingRelationMode,
         (LayoutCandidateScore, usize, CommittedGroupParams, usize),
     >::new();
     let mut all_modeled = Vec::<BestLinfCandidate>::new();

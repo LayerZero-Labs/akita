@@ -1264,7 +1264,7 @@ It does not add a semantic preference for smaller `s` or larger `d_A`.
 
 Adaptive direct catalogs use `MinFirstDirectSetupThenExactProofAndWorkV5`:
 first-direct padded setup capacity, exact additive proof-and-work score,
-native proof bytes, exact total setup field elements, root output-witness
+proof bytes, exact total setup field elements, root output-witness
 length, and the canonical descriptor.
 
 The additive work term includes each fold's outgoing witness and, for a direct
@@ -1273,7 +1273,7 @@ Offloaded edges have no direct-scan charge. Recursive catalogs use
 `MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6`, which first compares
 the next-power-of-two capacity covering the total setup envelope.
 Exact setup differences within one recursive capacity bucket are tolerated
-before comparing first-direct capacity, the proof-and-work score, native proof bytes, and first-direct
+before comparing first-direct capacity, the proof-and-work score, proof bytes, and first-direct
 output-witness length. A numeric tie then goes
 directly to the canonical descriptor. No direct objective component for `s`,
 `d_A`, rank, fold count, or measured wall-clock time is added.
@@ -1340,7 +1340,7 @@ rows had first-direct padded capacities of 131,072 and 262,144 fields. Their
 six-level schedules used 458,752 and 524,288 total setup fields and modeled
 62,447 and 63,254 proof bytes. Those historical results are recorded in the
 [catalog evidence note](evidence/subring-coefficient-packing/README.md#current-fp32-nv20-adaptive-objective).
-The current catalog is regenerated under the proof-only native policy above.
+The current catalog is regenerated under the proof-only policy above.
 
 ### B slicing interaction
 
@@ -1633,13 +1633,13 @@ open review blockers are resolved.
   current production sparse families and role dimensions.
 - [EOR streamed prover](archive/2026-Q3/eor-streamed-prover.md), historical EOR prover path and
   performance context.
-- [`crates/akita-types/src/layout/proof_size.rs`](../crates/akita-types/src/layout/proof_size.rs),
+- [`crates/akita-params/src/layout/proof_size.rs`](../crates/akita-params/src/layout/proof_size.rs),
   canonical current EOR byte formula.
 - [`crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`](../crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs),
   current high-half, consistency, and A quotient construction.
 - [`crates/akita-prover/src/protocol/ring_switch/relation_weights.rs`](../crates/akita-prover/src/protocol/ring_switch/relation_weights.rs),
   current structured relation weights and challenge reuse.
-- [`crates/akita-verifier/src/protocol/ring_switch.rs`](../crates/akita-verifier/src/protocol/ring_switch.rs),
+- [`crates/akita-verifier/src/relation/mod.rs`](../crates/akita-verifier/src/relation/mod.rs),
   current `c_alphas` preparation.
-- [`crates/akita-verifier/src/protocol/evaluation_trace.rs`](../crates/akita-verifier/src/protocol/evaluation_trace.rs),
+- [`crates/akita-verifier/src/relation/evaluation_trace.rs`](../crates/akita-verifier/src/relation/evaluation_trace.rs),
   current trace-based scalar-opening contraction.

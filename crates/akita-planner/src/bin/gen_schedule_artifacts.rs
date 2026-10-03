@@ -7,6 +7,10 @@ mod generation_output_path;
 use catalog_policy_report::catalog_policy_signature;
 use generation_output_path::validate_explicit_output_isolation;
 
+use akita_params::{
+    schedule_row_digest, CommittedGroupBatchProfile, FoldSchedule, GroupCommitPhaseParams,
+    PolynomialGroupLayout, ScheduleLookupKey,
+};
 use akita_planner::emit::{
     bounded_parallel_filter_map, offline_planning_worker_count, GroupedGenerationRequest,
     MaterializationDiagnostics, PrecommittedProducer,
@@ -17,10 +21,6 @@ use akita_planner::generated_families::{
 };
 use akita_planner::{
     publish_artifact_outputs, render_schedule_artifact_outputs_with_validation, EmitSpec,
-};
-use akita_types::{
-    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule,
-    GroupCommitPhaseParams, PolynomialGroupLayout,
 };
 use std::env;
 use std::fs;
@@ -334,7 +334,7 @@ struct CatalogRowMetrics {
 
 const CATALOG_DRIFT_REPORT_HEADER: &str = "family\tstatus\tdetail\n";
 
-fn row_digest_hex(key: &AkitaScheduleLookupKey, schedule: &FoldSchedule) -> Result<String, String> {
+fn row_digest_hex(key: &ScheduleLookupKey, schedule: &FoldSchedule) -> Result<String, String> {
     let final_group =
         GroupCommitPhaseParams::try_from_params(key.final_group, &schedule.root.params)
             .map_err(|error| format!("derive final committed profile: {error}"))?;
@@ -353,13 +353,13 @@ fn row_digest_hex(key: &AkitaScheduleLookupKey, schedule: &FoldSchedule) -> Resu
 
 fn catalog_row_metrics(
     spec: &EmitSpec,
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
     schedule: &FoldSchedule,
 ) -> Result<CatalogRowMetrics, String> {
     let proof_bytes =
-        akita_schedules::expanded_schedule_native_proof_estimate_bytes(key, schedule, &spec.policy)
+        akita_schedules::expanded_schedule_proof_estimate_bytes(key, schedule, &spec.policy)
             .map_err(|error| format!("estimate proof payload: {error}"))?;
-    let setup_fields = akita_types::setup_matrix_capacity_for_schedule(schedule)
+    let setup_fields = akita_params::setup_matrix_capacity_for_schedule(schedule)
         .map_err(|error| format!("estimate setup capacity: {error}"))?
         .num_field_elements;
     let first_direct_setup_capacity = (matches!(
@@ -385,7 +385,7 @@ fn catalog_row_metrics(
     })
 }
 
-fn catalog_logical_key(key: &AkitaScheduleLookupKey) -> String {
+fn catalog_logical_key(key: &ScheduleLookupKey) -> String {
     use std::fmt::Write as _;
 
     let mut logical = format!(
@@ -408,8 +408,8 @@ fn catalog_logical_key(key: &AkitaScheduleLookupKey) -> String {
     logical
 }
 
-fn catalog_lookup_key_digest(key: &AkitaScheduleLookupKey) -> String {
-    akita_types::digest_descriptor_bytes(&key.canonical_descriptor_bytes())
+fn catalog_lookup_key_digest(key: &ScheduleLookupKey) -> String {
+    akita_params::digest_descriptor_bytes(&key.canonical_descriptor_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
@@ -417,7 +417,7 @@ fn catalog_lookup_key_digest(key: &AkitaScheduleLookupKey) -> String {
 
 fn catalog_snapshot_row(
     spec: &EmitSpec,
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
     schedule: &FoldSchedule,
     logical_key: String,
 ) -> Result<catalog_snapshot::CatalogSnapshotRow, String> {
@@ -469,14 +469,14 @@ fn materialized_snapshot_rows(
                     }
                     let contract = producer.source_contract();
                     match contract.class() {
-                        akita_types::sis::CommittedSourceClass::UnitOneHot {
+                        akita_params::sis::CommittedSourceClass::UnitOneHot {
                             source_chunk_size,
                         } => write!(
                             logical_key,
                             "onehot(chunk={source_chunk_size},bound={})",
                             contract.decomposition().log_commit_bound,
                         ),
-                        akita_types::sis::CommittedSourceClass::BalancedSignedDigit => write!(
+                        akita_params::sis::CommittedSourceClass::BalancedSignedDigit => write!(
                             logical_key,
                             "balanced(bound={})",
                             contract.decomposition().log_commit_bound,

@@ -1,17 +1,17 @@
 //! Canonical security audit for one fully expanded schedule row.
 
 use akita_error::AkitaError;
-use akita_types::sis::{
+use akita_params::sis::{
     num_digits_inner, num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
     InnerCommitMatrixParams, InnerCommitSecurityRoute, OpenCommitMatrixParams,
     OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
 };
 #[cfg(test)]
-use akita_types::TerminalResponseShape;
-use akita_types::{
+use akita_params::TerminalResponseShape;
+use akita_params::{
     shared_d_digit_log_basis, validate_role_dims, CommitmentSliceGeometry,
     CommittedGroupBatchProfile, CommittedGroupParams, DecompositionParams, FoldSchedule,
-    GroupOpenPhaseParams, TerminalFoldParams,
+    GadgetDigits, GroupOpenPhaseParams, TerminalFoldParams,
 };
 
 use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
@@ -23,17 +23,49 @@ fn invalid(label: &str, detail: &str) -> AkitaError {
     AkitaError::InvalidSetup(format!("{label}: {detail}"))
 }
 
-/// Reject an artifact-supplied base the digit-count formulas cannot take
-/// (they assert `0 < log_basis < 128`), so a malformed artifact is an error
-/// rather than a panic. Other invalid bases keep their canonical-depth errors.
-fn ensure_digit_log_basis(label: &str, role: &str, log_basis: u32) -> Result<(), AkitaError> {
-    if log_basis == 0 || log_basis >= 128 {
-        return Err(invalid(
-            label,
-            &format!("{role} log_basis {log_basis} is out of range"),
-        ));
-    }
-    Ok(())
+/// Range-check every artifact-supplied `(log_basis, num_digits)` pair before any
+/// digit formula reads it.
+///
+/// The digit-count helpers assert on the basis and the balanced-digit series
+/// iterate over the depth, so an out-of-range pair must be an error here rather
+/// than a panic or an unbounded loop later. The bound is
+/// [`GadgetDigits::validate`]: a signed-digit kernel exists for the basis and
+/// the depth lies within the field decomposition. Exact canonical depths are
+/// audited per group afterwards.
+fn audit_digit_ranges(schedule: &FoldSchedule, field_bits: u32) -> Result<(), AkitaError> {
+    visit_schedule_groups(schedule, |group| {
+        let label = group.position().to_string();
+        let check = |role: &str, digits: GadgetDigits| {
+            digits.validate(field_bits).map_err(|_| {
+                invalid(
+                    &label,
+                    &format!(
+                        "{role} log_basis {} with digit depth {} is outside the field decomposition",
+                        digits.log_basis, digits.num_digits
+                    ),
+                )
+            })
+        };
+        let params = match group {
+            ScheduleGroup::Frozen { params, .. } => params,
+            ScheduleGroup::Final { params, .. } => params.own_group(),
+            ScheduleGroup::Terminal { params, .. } => {
+                check("A", params.inner.digits)?;
+                return check("fold", params.fold);
+            }
+        };
+        let opening = &params.opening;
+        check("A", params.profile.inner.digits)?;
+        check("B", params.profile.outer.digits)?;
+        check(
+            "opening",
+            GadgetDigits::new(opening.log_basis_open, opening.num_digits_open),
+        )?;
+        check(
+            "fold",
+            GadgetDigits::new(opening.log_basis_open, opening.num_digits_fold),
+        )
+    })
 }
 
 fn audit_sis_key(
@@ -119,7 +151,6 @@ fn audit_frozen_group(
     audit_inner_matrix(label, &params.profile.inner.matrix, policy)?;
     audit_outer_matrix(label, &params.profile.outer.matrix, policy)?;
 
-    ensure_digit_log_basis(label, "opening", params.opening.log_basis_open)?;
     let expected_open_digits = num_digits_open(DecompositionParams {
         log_basis: params.opening.log_basis_open,
         ..policy.decomposition
@@ -171,7 +202,7 @@ fn expected_d_width(
     extension_degree: usize,
 ) -> Result<usize, AkitaError> {
     let dims = params.role_dims();
-    let mut width = akita_types::opening_d_segment_width(
+    let mut width = akita_params::opening_d_segment_width(
         params.opening_method(),
         extension_degree,
         dims.d_a(),
@@ -215,9 +246,6 @@ fn audit_committed_params(
     audit_inner_matrix(label, &params.inner().matrix, policy)?;
     audit_outer_matrix(label, &params.outer().matrix, policy)?;
     audit_open_matrix(label, &params.open().matrix, policy)?;
-    ensure_digit_log_basis(label, "A", params.inner().digits.log_basis)?;
-    ensure_digit_log_basis(label, "B", params.outer().digits.log_basis)?;
-    ensure_digit_log_basis(label, "D", params.open().digits.log_basis)?;
 
     let expected_outer_digits = num_digits_open(DecompositionParams {
         log_basis: params.outer().digits.log_basis,
@@ -242,7 +270,6 @@ fn audit_committed_params(
         fold_level == 0,
     );
     if params.inner().digits.num_digits != expected_inner_digits
-        || params.num_digits_fold() == 0
         || params.outer().digits.num_digits != expected_outer_digits
         || params.open().digits.num_digits != expected_open_digits
     {
@@ -369,9 +396,7 @@ fn audit_terminal(
     sparse
         .validate_for_ring_dim(params.d_a())
         .map_err(|message| invalid(label, message))?;
-    if params.fold.log_basis == 0
-        || params.fold.num_digits == 0
-        || params.blocks.live_ring_elements_per_claim == 0
+    if params.blocks.live_ring_elements_per_claim == 0
         || params.blocks.positions_per_block == 0
         || !params.blocks.positions_per_block.is_power_of_two()
         || params.blocks.live_blocks
@@ -382,7 +407,6 @@ fn audit_terminal(
     {
         return Err(invalid(label, "invalid terminal fold or block geometry"));
     }
-    ensure_digit_log_basis(label, "A", params.inner.digits.log_basis)?;
 
     let expected_digits = num_digits_inner(
         DecompositionParams {
@@ -432,7 +456,7 @@ fn audit_terminal(
         .ok_or_else(|| invalid(label, "terminal response coordinates overflow"))?;
     if matches!(
         params.inner.matrix.security_route(),
-        akita_types::InnerCommitSecurityRoute::L2 { .. }
+        akita_params::InnerCommitSecurityRoute::L2 { .. }
     ) {
         if akita_challenges::selective_l2_operator_norm_rejection(d, sparse).is_none() {
             return Err(invalid(label, "terminal L2 challenge is not certified"));
@@ -452,7 +476,7 @@ fn audit_terminal(
                 fold_digit_count: params.fold.num_digits,
                 fold_challenge_config: sparse,
                 response_l2_sq_cap: params.response_l2_sq_cap(),
-                norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
+                norm_proof_shape: Some(akita_params::PhysicalL2NormProofShape::Direct {
                     physical_response_len: expected_z_coords,
                 }),
             },
@@ -503,6 +527,7 @@ pub(crate) fn audit_resolved_schedule(
     validate_policy(policy)?;
     profiles.validate(policy.decomposition.field_bits())?;
     schedule.validate_structure()?;
+    audit_digit_ranges(schedule, policy.decomposition.field_bits())?;
 
     let final_params = &schedule.root.params;
     // Four of the five comparisons that used to live here compared a field with
@@ -569,8 +594,8 @@ pub(crate) fn audit_resolved_schedule(
 mod tests {
     use super::*;
     use crate::{PlannerCostModelId, RingDimensionScheduleMode, SelectionPolicyId};
-    use akita_types::{
-        ChunkedWitnessCfg, GadgetDigits, InnerRoleParams, SisL2TableDigest, SisModulusProfileId,
+    use akita_params::{
+        ChunkedWitnessCfg, InnerRoleParams, SisL2TableDigest, SisModulusProfileId,
         SisSecurityPolicyId, SisTableDigest, TailSegmentLayout,
     };
 
@@ -579,7 +604,7 @@ mod tests {
 
     fn policy() -> PlannerPolicy {
         PlannerPolicy {
-            cost_model: PlannerCostModelId::NativeNoncePayloadAndSetupEnvelopeV2,
+            cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
             selection_policy: SelectionPolicyId::MinEstimatedExactProofAndWorkV5,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
@@ -624,7 +649,7 @@ mod tests {
                 fold_digit_count: 3,
                 fold_challenge_config: &sparse,
                 response_l2_sq_cap: Some(RESPONSE_CAP),
-                norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
+                norm_proof_shape: Some(akita_params::PhysicalL2NormProofShape::Direct {
                     physical_response_len: INNER_WIDTH * 64,
                 }),
             },
@@ -632,7 +657,7 @@ mod tests {
         .expect("candidate construction")
         .expect("exact terminal calibration");
         let mut terminal = TerminalFoldParams {
-            blocks: akita_types::BlockGeometry::new(16, 16, 1),
+            blocks: akita_params::BlockGeometry::new(16, 16, 1),
             inner: InnerRoleParams::new(GadgetDigits::new(4, 1), expected),
             fold: GadgetDigits::new(4, 3),
             fold_challenge_config: sparse,
