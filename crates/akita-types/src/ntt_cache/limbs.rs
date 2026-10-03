@@ -492,19 +492,31 @@ mod tests {
         assert!(cache.uses_limb_split());
         let rhs = alternating_rhs::<D>(width, (1 << 10) - 1);
         assert!(cache.mat_vec_i16::<Prime128Offset275>(11, 1, &rhs).is_ok());
-        assert!(cache.mat_vec_i16::<Prime128Offset275>(11, 2, &rhs).is_err());
-        assert!(cache
-            .mat_vec_i16::<Prime128Offset275>(11, 1, &rhs[1..])
-            .is_err());
+        assert!(matches!(
+            cache.mat_vec_i16::<Prime128Offset275>(11, 2, &rhs),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        assert!(matches!(
+            cache.mat_vec_i16::<Prime128Offset275>(11, 1, &rhs[1..]),
+            Err(AkitaError::InvalidSetup(_))
+        ));
         // Two 65-bit IFMA limbs still hold a full i16 bound at this width.
-        assert_eq!(
-            cache.mat_vec_i16::<Prime128Offset275>(16, 1, &rhs).is_err(),
-            !cache.uses_ifma52()
-        );
-        assert!(cache.mat_vec_i16::<Prime64Offset59>(11, 1, &rhs).is_err());
+        if cache.uses_ifma52() {
+            assert!(cache.mat_vec_i16::<Prime128Offset275>(16, 1, &rhs).is_ok());
+        } else {
+            assert!(matches!(
+                cache.mat_vec_i16::<Prime128Offset275>(16, 1, &rhs),
+                Err(AkitaError::InvalidSetup(_))
+            ));
+        }
+        assert!(matches!(
+            cache.mat_vec_i16::<Prime64Offset59>(11, 1, &rhs),
+            Err(AkitaError::InvalidSetup(_))
+        ));
         let wide = alternating_rhs::<D>(width, 1 << 11);
-        assert!(cache
-            .mat_vec_i16::<Prime128Offset275>(11, 1, &wide)
-            .is_err());
+        assert!(matches!(
+            cache.mat_vec_i16::<Prime128Offset275>(11, 1, &wide),
+            Err(AkitaError::InvalidInput(_))
+        ));
     }
 }

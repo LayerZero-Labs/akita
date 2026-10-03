@@ -487,7 +487,11 @@ impl<F: Field, E> CpuBackend<F, E> {
                                 num_digits_inner,
                                 log_basis_inner,
                             )?;
-                            rows.pop().ok_or(AkitaError::InvalidProof)
+                            rows.pop().ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "single-block commitment matvec returned no batch".into(),
+                                )
+                            })
                         })
                         .collect()
                 },

@@ -32,6 +32,30 @@ fn scalar_group_layout(
 }
 
 #[test]
+fn terminal_response_from_payload_rejects_empty_schedule_groups() {
+    let params = akita_params::TerminalFoldParams::from_expanded_group(test_lp());
+    let scheduled_shape = TerminalResponseShape {
+        layout: TailSegmentLayout {
+            ring_dimension: params.d_a(),
+            groups: Vec::new(),
+            logical_num_elems: 0,
+        },
+    };
+    let e_folded = RingVec::<F>::from_coeffs(Vec::new());
+    let t_fields = RingVec::<F>::from_coeffs(Vec::new());
+    assert!(matches!(
+        build_terminal_response_from_payload(
+            &params,
+            &scheduled_shape,
+            &e_folded,
+            t_fields,
+            Vec::new(),
+        ),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
+#[test]
 fn recompose_and_split_digits_round_trip() {
     let digits = vec![-2i8, 1, 0];
     let value = test_support::recompose_balanced_i8_digits(&digits, 3);

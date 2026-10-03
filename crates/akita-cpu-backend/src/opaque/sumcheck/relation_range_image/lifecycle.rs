@@ -364,7 +364,11 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     weights.relation_lane_weights(),
                 ) {
                     ([alpha], [lane]) => *alpha * *lane + self.linear_terms.final_value()?,
-                    _ => return Err(AkitaError::InvalidProof),
+                    _ => {
+                        return Err(AkitaError::Internal(
+                            "terminal factored relation weights are not singletons".into(),
+                        ))
+                    }
                 }
             }
             Phase::Coefficient {
