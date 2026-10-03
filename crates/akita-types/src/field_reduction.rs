@@ -404,7 +404,9 @@ pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
                     }
                     let mut coordinates = [0i8; $k];
                     for coordinate in coordinates.iter_mut().take(width) {
-                        *coordinate = digits.next().ok_or(AkitaError::InvalidProof)?;
+                        *coordinate = digits.next().ok_or_else(|| {
+                            AkitaError::Internal("tensor digit iterator ended early".into())
+                        })?;
                     }
                     if idx < half {
                         let shift = idx;

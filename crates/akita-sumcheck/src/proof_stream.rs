@@ -4,7 +4,7 @@ use crate::{advance_eq_factored_claim, SumcheckInstanceVerifier, SumcheckKernel}
 #[cfg(test)]
 use crate::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_error::{checked, AkitaError};
+use akita_error::{checked, narrowing::usize_to_u64, AkitaError};
 use akita_transcript::{
     prover_context, receive_extension, send_extension, verifier_context, FieldAtom,
     ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, ProverChannel, VerifierChannel,
@@ -123,14 +123,16 @@ fn context(
     Ok(ProtocolContextRecord::new(
         site.to_bytes(),
         kind as u32,
-        u64::try_from(atom_count).map_err(|_| AkitaError::InvalidProof)?,
-        u64::try_from(encoded_bytes).map_err(|_| AkitaError::InvalidProof)?,
-        u64::try_from(challenge_bytes).map_err(|_| AkitaError::InvalidProof)?,
+        usize_to_u64(atom_count, "sumcheck atom count")?,
+        usize_to_u64(encoded_bytes, "sumcheck encoded byte count")?,
+        usize_to_u64(challenge_bytes, "sumcheck challenge byte count")?,
     ))
 }
 
 fn field_bytes<F: CanonicalEncoding>(count: usize) -> Result<usize, AkitaError> {
-    checked::product([count, F::NUM_BYTES]).ok_or(AkitaError::InvalidProof)
+    checked::product([count, F::NUM_BYTES]).ok_or_else(|| {
+        AkitaError::InvalidInput("sumcheck encoded byte count overflows usize".into())
+    })
 }
 
 fn extension_atom_count<E, F>(count: usize) -> Result<usize, AkitaError>
@@ -138,7 +140,9 @@ where
     F: Field,
     E: ExtField<F>,
 {
-    checked::product([count, E::DEGREE]).ok_or(AkitaError::InvalidProof)
+    checked::product([count, E::DEGREE]).ok_or_else(|| {
+        AkitaError::InvalidInput("sumcheck extension atom count overflows usize".into())
+    })
 }
 
 fn public_claim_prover<F, E>(
@@ -218,7 +222,8 @@ where
 
     let mut challenges = Vec::with_capacity(num_rounds);
     for round in 0..num_rounds {
-        let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
+        let round_id = u32::try_from(round)
+            .map_err(|_| AkitaError::Internal("sumcheck round index does not fit u32".into()))?;
         let poly = prover.round_polynomial(round, claim)?;
         if poly.evaluate(E::zero()) + poly.evaluate(E::one()) != claim {
             return Err(AkitaError::InvalidInput(
@@ -227,8 +232,15 @@ where
         }
         let mut coefficients = poly.compress().coeffs_except_linear_term().to_vec();
         let coefficient_count = coefficients.len();
-        if coefficient_count == 0 || coefficient_count > degree_bound {
-            return Err(AkitaError::InvalidProof);
+        if coefficient_count == 0 {
+            return Err(AkitaError::Internal(
+                "sumcheck compressed coefficient count is zero".into(),
+            ));
+        }
+        if coefficient_count > degree_bound {
+            return Err(AkitaError::Internal(
+                "sumcheck compressed coefficient count exceeds degree bound".into(),
+            ));
         }
         coefficients.resize(degree_bound, E::zero());
         let compressed = CompressedPoly::new(coefficients);
@@ -354,11 +366,15 @@ where
     let mut challenges = Vec::with_capacity(num_rounds);
 
     for round in 0..num_rounds {
-        let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
+        let round_id = u32::try_from(round).map_err(|_| {
+            AkitaError::Internal("equality-factored sumcheck round index does not fit u32".into())
+        })?;
         let mut coefficients = prover.round_polynomial(round, claim)?.into_coefficients();
         let coefficient_count = coefficients.len();
         if coefficient_count > degree_bound {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "equality-factored sumcheck coefficient count exceeds the degree bound".into(),
+            ));
         }
         coefficients.resize(degree_bound, E::zero());
         let poly = OmittedConstantPoly::new(coefficients);
@@ -478,6 +494,18 @@ mod tests {
     };
     use jolt_field::{CanonicalBytes, One, Prime128Offset275 as F, Ring, Zero};
     use jolt_poly::UnivariatePoly;
+
+    #[test]
+    fn sumcheck_count_products_reject_argument_overflow() {
+        assert!(matches!(
+            field_bytes::<F>(usize::MAX),
+            Err(AkitaError::InvalidInput(message)) if message.contains("encoded byte count")
+        ));
+        assert!(matches!(
+            extension_atom_count::<jolt_field::FpExt4<F>, F>(usize::MAX),
+            Err(AkitaError::InvalidInput(message)) if message.contains("extension atom count")
+        ));
+    }
 
     struct DenseInstance {
         evaluations: Vec<F>,
