@@ -7,7 +7,8 @@ use super::poly::DensePoly;
 use crate::opaque::DecomposeFoldWitness;
 use crate::sources::poly_helpers::{
     balanced_ring_decompose_fold_chunked, balanced_ring_decompose_fold_partitioned,
-    cached_digit_decompose_fold_partitioned, sparse_mul_acc,
+    cached_digit_decompose_fold_partitioned, sparse_mul_acc, SignedDigitBasis,
+    ValidatedSparseChallenges,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
@@ -16,6 +17,18 @@ use akita_error::AkitaError;
 use akita_types::SubfieldMultiplierOpeningPoint;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
+
+/// Reject a digit shape the dense fold kernels cannot run, before any cache
+/// build or decomposition setup can panic on it.
+fn validate_digit_shape(num_digits: usize, log_basis: u32) -> Result<(), AkitaError> {
+    SignedDigitBasis::new(log_basis)?;
+    if num_digits == 0 {
+        return Err(AkitaError::InvalidInput(
+            "dense fold digit count must be nonzero".into(),
+        ));
+    }
+    Ok(())
+}
 
 impl<F> DensePoly<F>
 where
@@ -29,17 +42,18 @@ where
         num_digits: usize,
         log_basis: u32,
     ) -> Result<Vec<DecomposeFoldWitness>, AkitaError> {
+        validate_digit_shape(num_digits, log_basis)?;
         let coeffs = self.ring_coeffs::<D>()?;
-        let Some(planes) = self.digit_planes_for::<D>(num_digits, log_basis) else {
-            return Ok(balanced_ring_decompose_fold_chunked(
+        let Some((planes, basis)) = self.digit_planes_for::<D>(num_digits, log_basis) else {
+            return balanced_ring_decompose_fold_chunked(
                 coeffs,
                 challenges,
                 chunk_ranges,
                 num_positions_per_block,
                 &BalancedDecomposePow2Params::new(num_digits, log_basis),
-            ));
+            );
         };
-        Ok(chunk_ranges
+        chunk_ranges
             .iter()
             .map(|range| {
                 let ring_start = range.start * num_positions_per_block;
@@ -49,11 +63,11 @@ where
                     &challenges[range.clone()],
                     num_positions_per_block,
                     num_digits,
-                    log_basis,
-                );
-                DecomposeFoldWitness::from_centered_rows(coefficients)
+                    basis,
+                )?;
+                Ok(DecomposeFoldWitness::from_centered_rows(coefficients))
             })
-            .collect())
+            .collect::<Result<Vec<_>, AkitaError>>()
     }
 
     pub(crate) fn fold_blocks<const D: usize>(
@@ -135,10 +149,11 @@ where
         num_digits: usize,
         log_basis: u32,
     ) -> Result<DecomposeFoldWitness, AkitaError> {
+        validate_digit_shape(num_digits, log_basis)?;
         let coeffs = self.ring_coeffs::<D>()?;
         let n = coeffs.len();
 
-        if let Some(digit_planes) = self.digit_planes_for::<D>(num_digits, log_basis) {
+        if let Some((digit_planes, basis)) = self.digit_planes_for::<D>(num_digits, log_basis) {
             let coeff_accum = {
                 let _span = tracing::info_span!("dense_cached_digit_accumulate").entered();
                 cached_digit_decompose_fold_partitioned::<D>(
@@ -146,8 +161,8 @@ where
                     challenges,
                     num_positions_per_block,
                     num_digits,
-                    log_basis,
-                )
+                    basis,
+                )?
             };
             return Ok(DecomposeFoldWitness::from_centered_rows(coeff_accum));
         }
@@ -156,6 +171,8 @@ where
 
         // The single-digit scratch is i8; wider bases need the checked i16 kernel below.
         if num_digits == 1 && log_basis <= akita_params::MAX_I8_LOG_BASIS {
+            let challenges =
+                ValidatedSparseChallenges::<D>::new(challenges, n, num_positions_per_block)?;
             if let Some(small_coeffs) = self.small_i8_ring_coeffs::<D>() {
                 let coeff_accum: Vec<[i32; D]> = {
                     let _span =
@@ -215,7 +232,7 @@ where
                 challenges,
                 num_positions_per_block,
                 &params,
-            )
+            )?
         };
 
         Ok(DecomposeFoldWitness::from_centered_rows(centered_coeffs))

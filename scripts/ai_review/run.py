@@ -33,7 +33,12 @@ def main():
             save_json(snapshot_path, snapshot)
             with open(os.environ["GITHUB_OUTPUT"], "a") as handle:
                 handle.write("ready=true\n")
-        print("Collection complete" if snapshot else "Request already reviewed")
+        if snapshot:
+            print(f"Collection complete: {len(snapshot['changed'])} changed files, "
+                  f"{len(snapshot['excluded_artifacts'])} Akita artifacts excluded, "
+                  f"full={len(snapshot['diff'])}, delta={len(snapshot['delta'])} characters")
+        else:
+            print("Request already reviewed")
     elif args.stage == "review":
         proposal = review(load_json(snapshot_path), os.environ["OPENAI_API_KEY"],
                           os.environ.get("AI_REVIEW_MODEL", "gpt-6-astra"))

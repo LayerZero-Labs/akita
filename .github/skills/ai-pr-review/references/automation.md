@@ -128,3 +128,26 @@ It does not edit the PR description, approve, request changes, resolve threads,
 run commands from the model, or write to model-selected destinations. It refuses
 stale snapshots and ambiguous write retries. A rerun of the same event is a no-op
 after successful publication. A new `/ai-review` comment is a new review request.
+
+## Akita-specific: artifact exclusion
+
+This is repository-specific policy for `LayerZero-Labs/akita`, not a generic
+review rule to copy to other repositories unchanged. The entire root `artifacts/`
+directory is outside the automated review scope. The trusted collector removes
+its contents from the full diff, repeat-review delta, anchors, and source maps
+for every revision. `excluded_artifacts` lists the excluded paths changed by the
+PR; `changed` and `coverage` contain only the remaining reviewable paths.
+
+Review the source, generators, consumers, tests and validation logic outside that
+directory. Do not request excluded artifact contents, infer that they are correct,
+or invent findings anchored to them. The publisher always adds a visible exclusion
+notice when `excluded_artifacts` is nonempty, including the number of changed
+files not reviewed. That deliberate exclusion alone does not make a mixed
+source/artifact review incomplete; any approval recommendation covers only the
+reviewed scope. Artifact correctness needs separate artifact checks and CI;
+do not claim those checks ran or passed.
+
+If every changed file is excluded, return `complete=false` and explain that the
+artifact-only change needs separate validation. If an earlier finding refers to
+an excluded artifact and cannot be verified from available evidence, retain it
+as `uncertain`; exclusion is not proof of a fix.
