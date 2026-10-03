@@ -131,6 +131,25 @@ def tree(commit, blobs):
     return {"files": files, "excluded": excluded}
 
 
+def since_previous(base, previous, head, changed):
+    """Diff the previous reviewed head against the current one, in the PR's own files.
+
+    A diff of the two commits alone would also carry every base-branch change the
+    PR merged or was rebased onto since the previous review. That is not the PR's
+    change and can exceed the review budget by itself. The PR's own files are the
+    ones it changes now and the ones it changed at the previous head, so a
+    reverted file still appears.
+    """
+    previous_base = git("merge-base", base, previous).decode().strip()
+    before = git("diff", "--no-renames", "--name-only", "-z", previous_base, previous).decode().split("\0")[:-1]
+    paths = sorted(set(changed) | set(before))
+    if len(paths) > 300:
+        raise ReviewError("Diff exceeds automated review budget; use a manual review")
+    if not paths:
+        return ""
+    return git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", previous, head, "--", *paths).decode()
+
+
 def collect(github, event):
     pr = authorize(github, event)
     number = pr["number"]
@@ -147,8 +166,7 @@ def collect(github, event):
     merge_base = git("merge-base", revisions["base"], revisions["head"]).decode().strip()
     changed = git("diff", "--no-renames", "--name-only", "-z", merge_base, revisions["head"]).decode().split("\0")[:-1]
     diff = git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", merge_base, revisions["head"]).decode()
-    delta = (git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", prior["head"], revisions["head"]).decode()
-             if prior else "")
+    delta = since_previous(revisions["base"], prior["head"], revisions["head"], changed) if prior else ""
     if len(diff) + len(delta) > 300_000 or len(changed) > 150:
         raise ReviewError("Diff exceeds automated review budget; use a manual review")
     anchors = {path: diff_lines(git("diff", "--no-ext-diff", "--no-textconv", "--no-renames",
