@@ -5,7 +5,7 @@
 //! Both roles name a site through [`FoldSite`] and convert it with
 //! [`FoldSite::id`].
 
-use akita_error::AkitaError;
+use akita_error::{narrowing::usize_to_u32, AkitaError};
 use akita_transcript::{
     ProtocolSiteId, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_NEXT_WITNESS,
     SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_TERMINAL,
@@ -35,10 +35,18 @@ pub enum FoldSite {
     OpeningPayload { level: u32, ring_dimension: usize },
     /// Outer commitment payload for the next fold's witness.
     NextWitnessPayload { level: u32 },
-    /// Inner `t` state handed to the suffix-terminal fold.
+    /// Inner `t` state handed to the suffix-terminal fold. Under
+    /// `dev-protocol` it stops before the last block.
     NextWitnessInnerState { level: u32 },
-    /// Terminal `e` fields.
+    /// Digest of the last inner `t` block, which the terminal recomputes under
+    /// `dev-protocol`.
+    NextWitnessInnerStateDigest { level: u32 },
+    /// Terminal `e` fields. Under `dev-protocol` they stop before the
+    /// last block.
     TerminalEFields { level: u32 },
+    /// Digest of the last terminal `e` block, which the terminal recomputes
+    /// under `dev-protocol`.
+    TerminalEDigest { level: u32 },
     /// Terminal public `t` fields.
     TerminalTFields { level: u32 },
     /// Terminal `z` response payload.
@@ -50,10 +58,9 @@ impl FoldSite {
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidProof`] when a group index or ring
+    /// Returns [`AkitaError::InvalidInput`] when a group index or ring
     /// dimension does not fit a `u32` site field.
     pub fn id(self) -> Result<ProtocolSiteId, AkitaError> {
-        let narrow = |value: usize| u32::try_from(value).map_err(|_| AkitaError::InvalidProof);
         let site = |family, level, stage| ProtocolSiteId {
             family,
             level,
@@ -65,16 +72,16 @@ impl FoldSite {
                 group,
                 ring_dimension,
             } => ProtocolSiteId {
-                group: narrow(group)?,
-                detail: narrow(ring_dimension)?,
+                group: usize_to_u32(group, "fold site group index")?,
+                detail: usize_to_u32(ring_dimension, "fold site ring dimension")?,
                 ..site(SITE_FAMILY_ROOT_STATEMENT, 0, 1)
             },
             Self::RootPoint { group } => ProtocolSiteId {
-                group: narrow(group)?,
+                group: usize_to_u32(group, "fold site group index")?,
                 ..site(SITE_FAMILY_ROOT_STATEMENT, 0, 2)
             },
             Self::GroupPoint { level, group } => ProtocolSiteId {
-                group: narrow(group)?,
+                group: usize_to_u32(group, "fold site group index")?,
                 ..site(SITE_FAMILY_FOLD_BINDING, level, 1)
             },
             Self::Openings { level } => site(SITE_FAMILY_FOLD_BINDING, level, 2),
@@ -82,7 +89,7 @@ impl FoldSite {
                 level,
                 ring_dimension,
             } => ProtocolSiteId {
-                detail: narrow(ring_dimension)?,
+                detail: usize_to_u32(ring_dimension, "fold site ring dimension")?,
                 ..site(SITE_FAMILY_FOLD_BINDING, level, 3)
             },
             Self::TerminalOpening { level } => site(SITE_FAMILY_FOLD_BINDING, level, 4),
@@ -91,17 +98,66 @@ impl FoldSite {
                 level,
                 ring_dimension,
             } => ProtocolSiteId {
-                detail: narrow(ring_dimension)?,
+                detail: usize_to_u32(ring_dimension, "fold site ring dimension")?,
                 ..site(SITE_FAMILY_OPENING_PAYLOAD, level, 0)
             },
             Self::NextWitnessPayload { level } => site(SITE_FAMILY_NEXT_WITNESS, level, 1),
             Self::NextWitnessInnerState { level } => site(SITE_FAMILY_NEXT_WITNESS, level, 2),
+            Self::NextWitnessInnerStateDigest { level } => site(SITE_FAMILY_NEXT_WITNESS, level, 3),
             Self::TerminalEFields { level } => site(SITE_FAMILY_TERMINAL, level, 1),
             Self::TerminalTFields { level } => site(SITE_FAMILY_TERMINAL, level, 2),
+            Self::TerminalEDigest { level } => site(SITE_FAMILY_TERMINAL, level, 3),
             Self::TerminalZPayload { level } => ProtocolSiteId {
                 round: 3,
                 ..site(SITE_FAMILY_TERMINAL, level, 0)
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fold_site_narrowings_name_the_bad_argument() {
+        let Some(too_large) = (u32::MAX as usize).checked_add(1) else {
+            return;
+        };
+        for site in [
+            FoldSite::RootCommitment {
+                group: too_large,
+                ring_dimension: 1,
+            },
+            FoldSite::RootPoint { group: too_large },
+            FoldSite::GroupPoint {
+                level: 1,
+                group: too_large,
+            },
+        ] {
+            assert!(matches!(
+                site.id(),
+                Err(AkitaError::InvalidInput(message)) if message.contains("group index")
+            ));
+        }
+        for site in [
+            FoldSite::RootCommitment {
+                group: 0,
+                ring_dimension: too_large,
+            },
+            FoldSite::WitnessCommitment {
+                level: 1,
+                ring_dimension: too_large,
+            },
+            FoldSite::OpeningPayload {
+                level: 1,
+                ring_dimension: too_large,
+            },
+        ] {
+            assert!(matches!(
+                site.id(),
+                Err(AkitaError::InvalidInput(message)) if message.contains("ring dimension")
+            ));
+        }
     }
 }

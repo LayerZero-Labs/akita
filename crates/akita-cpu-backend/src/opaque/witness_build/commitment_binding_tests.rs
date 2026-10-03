@@ -16,6 +16,7 @@ fn retained_material_rejects_substituted_public_rows() {
     let inner =
         crate::commitment::InnerRelationStateMaterial::new(&plan, 1, vec![rows.clone()]).unwrap();
     let mut material = CpuCommitmentMaterialHandle {
+        metadata: crate::opaque::CommitmentMaterialMetadata::try_new(4, 1, false).unwrap(),
         binding: crate::opaque::OperationBinding::unbound(),
         inner,
         compression: None,

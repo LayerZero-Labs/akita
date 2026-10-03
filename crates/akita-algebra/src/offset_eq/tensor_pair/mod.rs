@@ -187,7 +187,11 @@ impl<F: Field> EqPairTensorFamily<F> {
 
             if axis.len == 1 {
                 if !matches!(axis.weights, EqPairTensorWeights::Unit) {
-                    let weight = axis.coordinate_weight(0).ok_or(AkitaError::InvalidProof)?;
+                    let weight = axis.coordinate_weight(0).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "validated singleton tensor axis has no coordinate weight".into(),
+                        )
+                    })?;
                     if weight.is_zero() {
                         return Ok(Self {
                             left_offset,
@@ -216,7 +220,9 @@ impl<F: Field> EqPairTensorFamily<F> {
                         .is_some_and(|stride| stride == axis.right_stride)
             });
             if merged {
-                let inner = normalized.last_mut().ok_or(AkitaError::InvalidProof)?;
+                let inner = normalized.last_mut().ok_or_else(|| {
+                    AkitaError::Internal("paired tensor merge selected no normalized axis".into())
+                })?;
                 inner.len = inner.len.checked_mul(axis.len).ok_or_else(|| {
                     AkitaError::InvalidInput("paired tensor merged length overflow".into())
                 })?;

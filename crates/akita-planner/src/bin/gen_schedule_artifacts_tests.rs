@@ -116,7 +116,8 @@ fn strict_catalog_baseline_requires_a_baseline_path() {
 fn every_grouped_artifact_precommit_has_a_shipped_scalar_producer() {
     let artifact_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .join("artifacts/schedules");
+        .join("artifacts")
+        .join(akita_params::SCHEDULE_ARTIFACT_SET);
     let catalogs = ALL_GENERATED_FAMILIES
         .iter()
         .map(|family| {

@@ -255,6 +255,52 @@ jobs:
         run: |
           cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- --exact heterogeneous::combined_family_setup_matches_per_family_proofs
 
+  # The dev protocol has its own schedule set, so its drift check and
+  # end-to-end coverage run apart from the default-feature jobs.
+  test-dev-protocol:
+    name: Dev protocol (schedules-dev)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: false
+          components: clippy
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-test-dev-protocol
+          add-job-id-key: false
+          cache-on-failure: true
+      - name: Trusted dev artifact guard
+        run: |
+          cargo test --release -p akita-config --features dev-protocol --test trusted_schedule_artifact
+      - name: Regenerate dev schedule artifacts in temporary storage
+        env:
+          AKITA_SCHEDULE_GEN_JOBS: 2
+        run: |
+          artifact_dir="$RUNNER_TEMP/akita-schedule-artifacts-dev"
+          mkdir -p "$artifact_dir"
+          cargo run --release -p akita-planner --features catalog-gen,dev-protocol \
+            --bin gen_schedule_artifacts -- "$artifact_dir" --row-progress \
+            --catalog-baseline artifacts/schedule-catalog-dev.tsv \
+            --require-catalog-baseline-match \
+            --catalog-report "$RUNNER_TEMP/akita-schedule-dev-baseline-comparison.tsv"
+          diff -ru artifacts/schedules-dev "$artifact_dir"
+      - name: Direct modeled SIS cost for every dev schedule
+        run: |
+          cargo run --release -p akita-planner \
+            --features catalog-security,dev-protocol \
+            --example catalog_security -- --check
+      - name: Terminal layout, prover, and verifier
+        run: |
+          cargo test --release -p akita-params -p akita-schedules -p akita-verifier --features akita-params/dev-protocol
+      - name: PCS e2e, soundness, and transcript hardening
+        run: |
+          cargo test --release -p akita-pcs --no-default-features --features parallel,transcript-blake2b,dev-protocol --test akita_fp128_e2e --test protocol_soundness --test transcript_hardening --test proof_stream_smoke
+      - name: Clippy with the dev protocol enabled
+        run: cargo clippy -p akita-params -p akita-schedules -p akita-prover -p akita-verifier -p akita-pcs --all-targets --features akita-params/dev-protocol -- -D warnings
+
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
     runs-on: ubuntu-latest

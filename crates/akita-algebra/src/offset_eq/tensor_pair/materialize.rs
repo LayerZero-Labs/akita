@@ -120,7 +120,9 @@ fn materialize_disjoint_unit_intervals<F: Field>(
             }
             let previous_len = previous_left_end
                 .checked_sub(*previous_left_start)
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal("merged tensor interval has reversed endpoints".into())
+                })?;
             let previous_right_end =
                 previous_right_start
                     .checked_add(previous_len)
@@ -139,9 +141,9 @@ fn materialize_disjoint_unit_intervals<F: Field>(
 
     let mut output = vec![F::zero(); output_len];
     for (left_start, left_end, right_start) in intervals {
-        let destination = output
-            .get_mut(left_start..left_end)
-            .ok_or(AkitaError::InvalidProof)?;
+        let destination = output.get_mut(left_start..left_end).ok_or_else(|| {
+            AkitaError::Internal("merged tensor interval exceeds the output".into())
+        })?;
         equality.fill_interval(right_start, destination)?;
     }
     Ok(Some(output))
@@ -163,10 +165,9 @@ fn materialize_dense_left_overlap<F: Field>(
     let Some(first_destination_axis) = dense_left_destination_axis(first) else {
         return Ok(None);
     };
-    let first_axis = first
-        .axes
-        .get(first_destination_axis)
-        .ok_or(AkitaError::InvalidProof)?;
+    let first_axis = first.axes.get(first_destination_axis).ok_or_else(|| {
+        AkitaError::Internal("selected first tensor destination axis is absent".into())
+    })?;
     let destination_start = first.left_offset;
     let destination_end = destination_start
         .checked_add(first_axis.len)
@@ -183,10 +184,9 @@ fn materialize_dense_left_overlap<F: Field>(
         let Some(destination_axis) = dense_left_destination_axis(family) else {
             return Ok(None);
         };
-        let axis = family
-            .axes
-            .get(destination_axis)
-            .ok_or(AkitaError::InvalidProof)?;
+        let axis = family.axes.get(destination_axis).ok_or_else(|| {
+            AkitaError::Internal("selected tensor destination axis is absent".into())
+        })?;
         if family.left_offset != destination_start || axis.len != first_axis.len {
             return Ok(None);
         }
@@ -223,11 +223,9 @@ fn materialize_dense_left_overlap<F: Field>(
 
     let evaluate_coordinate = |(coordinate, destination): (usize, &mut F)| {
         for view in &views {
-            let axis = view
-                .family
-                .axes
-                .get(view.destination_axis)
-                .ok_or(AkitaError::InvalidProof)?;
+            let axis = view.family.axes.get(view.destination_axis).ok_or_else(|| {
+                AkitaError::Internal("tensor view destination axis is absent".into())
+            })?;
             let right_offset = checked_axis_offset(
                 view.family.right_offset,
                 axis.right_stride,
@@ -248,7 +246,9 @@ fn materialize_dense_left_overlap<F: Field>(
     let mut output = vec![F::zero(); output_len];
     let destination = output
         .get_mut(destination_start..destination_end)
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::Internal("validated tensor destination span exceeds the output".into())
+        })?;
     // Tuned with `benches/offset_eq_window.rs::bench_materialize_disjoint_intervals`
     // on an Apple M4 Max (16 cores, 64 GiB).
     const PARALLEL_THRESHOLD: usize = 1 << 14;
@@ -311,12 +311,12 @@ fn contract_residual_tensor_axes<F: Field>(
     let axis = family
         .axes
         .get(axis_index)
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| AkitaError::Internal("residual tensor recursion axis is absent".into()))?;
     let mut acc = F::zero();
     for coordinate in 0..axis.len {
-        let axis_weight = axis
-            .coordinate_weight(coordinate)
-            .ok_or(AkitaError::InvalidProof)?;
+        let axis_weight = axis.coordinate_weight(coordinate).ok_or_else(|| {
+            AkitaError::InvalidInput("residual tensor axis coordinate weight is absent".into())
+        })?;
         if axis_weight.is_zero() {
             continue;
         }
@@ -357,11 +357,11 @@ fn visit_tensor_coordinates<F: Field>(
     let axis = family
         .axes
         .get(axis_index)
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| AkitaError::Internal("tensor coordinate recursion axis is absent".into()))?;
     for coordinate in 0..axis.len {
-        let axis_weight = axis
-            .coordinate_weight(coordinate)
-            .ok_or(AkitaError::InvalidProof)?;
+        let axis_weight = axis.coordinate_weight(coordinate).ok_or_else(|| {
+            AkitaError::InvalidInput("visited tensor axis coordinate weight is absent".into())
+        })?;
         if axis_weight.is_zero() {
             continue;
         }

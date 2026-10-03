@@ -26,6 +26,106 @@ use jolt_field::{CanonicalEncoding, Field};
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 use crate::kernels::avx_decompose_fold as decompose_fold_avx;
 
+/// Final basis facts shared by live decomposition and cached digit folds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SignedDigitBasis {
+    pub(super) kernel: akita_params::SignedDigitKernel,
+    pub(super) abs_bound: u64,
+}
+
+impl SignedDigitBasis {
+    pub(crate) fn new(log_basis: u32) -> Result<Self, AkitaError> {
+        let abs_bound =
+            akita_params::balanced_signed_digit_abs_bound(log_basis).ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "signed-digit log basis is outside the supported range".into(),
+                )
+            })?;
+        let kernel =
+            akita_params::SignedDigitKernel::for_log_basis(log_basis).ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "signed-digit log basis is outside the supported range".into(),
+                )
+            })?;
+        Ok(Self { kernel, abs_bound })
+    }
+
+    pub(crate) fn kernel(self) -> akita_params::SignedDigitKernel {
+        self.kernel
+    }
+}
+
+/// Borrowed sparse challenge whose support is safe for a degree-`D` kernel.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ValidatedSparseChallenge<'a, const D: usize> {
+    challenge: &'a SparseChallenge,
+}
+
+impl<'a, const D: usize> ValidatedSparseChallenge<'a, D> {
+    pub(crate) fn new(challenge: &'a SparseChallenge) -> Result<Self, AkitaError> {
+        if challenge.positions.len() != challenge.coeffs.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: challenge.positions.len(),
+                actual: challenge.coeffs.len(),
+            });
+        }
+        if challenge
+            .positions
+            .iter()
+            .any(|&position| position as usize >= D)
+        {
+            return Err(AkitaError::InvalidInput(
+                "sparse fold challenge position exceeds the ring dimension".into(),
+            ));
+        }
+        Ok(Self { challenge })
+    }
+
+    pub(super) fn challenge(self) -> &'a SparseChallenge {
+        self.challenge
+    }
+}
+
+/// Validate the borrowed batch once; iteration never rechecks or copies its data.
+pub(crate) struct ValidatedSparseChallenges<'a, const D: usize> {
+    challenges: &'a [SparseChallenge],
+}
+
+impl<'a, const D: usize> ValidatedSparseChallenges<'a, D> {
+    pub(crate) fn new(
+        challenges: &'a [SparseChallenge],
+        num_rings: usize,
+        num_positions_per_block: usize,
+    ) -> Result<Self, AkitaError> {
+        let mut active = 0;
+        if num_positions_per_block != 0 {
+            for (block_idx, challenge) in challenges.iter().enumerate() {
+                if block_idx * num_positions_per_block >= num_rings {
+                    break;
+                }
+                ValidatedSparseChallenge::<D>::new(challenge)?;
+                active += 1;
+            }
+        }
+        // `active` counts elements visited in this exact slice, so it cannot
+        // exceed its length. Challenges beyond the witness remain unused.
+        let (challenges, _) = challenges.split_at(active);
+        Ok(Self { challenges })
+    }
+
+    pub(super) fn get(&self, index: usize) -> ValidatedSparseChallenge<'a, D> {
+        ValidatedSparseChallenge {
+            challenge: &self.challenges[index],
+        }
+    }
+
+    pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = ValidatedSparseChallenge<'a, D>> {
+        self.challenges
+            .iter()
+            .map(|challenge| ValidatedSparseChallenge { challenge })
+    }
+}
+
 /// Whether the SIMD `decompose-fold` dispatch is enabled.
 ///
 /// On aarch64 this delegates to [`akita_algebra::ntt::neon::use_neon_ntt`]
@@ -56,7 +156,7 @@ pub(crate) fn balanced_ring_decompose_fold_chunked<F, const D: usize>(
     chunk_ranges: &[std::ops::Range<usize>],
     num_positions_per_block: usize,
     params: &BalancedDecomposePow2Params<F>,
-) -> Vec<DecomposeFoldWitness>
+) -> Result<Vec<DecomposeFoldWitness>, AkitaError>
 where
     F: Field + CanonicalEncoding,
 {
@@ -70,10 +170,10 @@ where
                 &challenges[range.clone()],
                 num_positions_per_block,
                 params,
-            );
-            DecomposeFoldWitness::from_centered_rows(coefficients)
+            )?;
+            Ok(DecomposeFoldWitness::from_centered_rows(coefficients))
         })
-        .collect()
+        .collect::<Result<Vec<_>, AkitaError>>()
 }
 
 pub(crate) fn try_small_i8_cache_from_ring_coeffs<F: Field + CanonicalEncoding, const D: usize>(
@@ -185,14 +285,10 @@ pub(crate) fn sparse_mul_acc_i16_scalar<const D: usize>(
 #[inline(always)]
 pub(crate) fn sparse_mul_acc<const D: usize>(
     digit_plane: &[i8; D],
-    challenge: &SparseChallenge,
+    challenge: ValidatedSparseChallenge<'_, D>,
     acc: &mut [i32; D],
 ) {
-    assert_eq!(challenge.positions.len(), challenge.coeffs.len());
-    assert!(challenge
-        .positions
-        .iter()
-        .all(|&position| position < D as u32));
+    let challenge = challenge.challenge;
     #[cfg(any(
         target_arch = "aarch64",
         all(target_arch = "x86_64", target_feature = "avx2")
@@ -279,14 +375,10 @@ pub(crate) fn sparse_mul_acc_pm1<const D: usize>(
 #[inline(always)]
 pub(crate) fn sparse_mul_acc_i16<const D: usize>(
     digit_plane: &[i16; D],
-    challenge: &SparseChallenge,
+    challenge: ValidatedSparseChallenge<'_, D>,
     acc: &mut [i32; D],
 ) {
-    assert_eq!(challenge.positions.len(), challenge.coeffs.len());
-    assert!(challenge
-        .positions
-        .iter()
-        .all(|&position| position < D as u32));
+    let challenge = challenge.challenge;
     #[cfg(any(
         target_arch = "aarch64",
         all(target_arch = "x86_64", target_feature = "avx2")

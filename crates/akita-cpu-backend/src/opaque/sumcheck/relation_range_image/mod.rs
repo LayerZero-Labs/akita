@@ -85,7 +85,7 @@
 //! `dw` scan so the witness-side work is shared.
 
 use akita_algebra::poly::trim_trailing_zeros;
-use akita_algebra::split_eq::GruenSplitEq;
+use akita_algebra::split_eq::{GruenSplitEq, PreparedLinearQRecovery};
 use akita_error::AkitaError;
 use akita_sumcheck::{
     fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver,
@@ -131,19 +131,17 @@ enum Phase<E: Field> {
     },
 }
 
-#[derive(Clone, Copy)]
-enum NormRoundTerms<E: Field> {
+enum NormRoundTerms<'a, E: Field> {
     Full([E; 3]),
-    SkipLinear([E; 2]),
+    SkipLinear([E; 2], PreparedLinearQRecovery<'a, E>),
 }
 
-impl<E: Field> NormRoundTerms<E> {
-    #[inline(always)]
-    fn from_totals<const SKIP_LINEAR: bool>(totals: [E; 3]) -> Self {
-        if SKIP_LINEAR {
-            Self::SkipLinear([totals[0], totals[2]])
-        } else {
-            Self::Full(totals)
+impl<'a, E: Field> NormRoundTerms<'a, E> {
+    #[inline]
+    fn from_totals(totals: [E; 3], recovery: Option<PreparedLinearQRecovery<'a, E>>) -> Self {
+        match recovery {
+            Some(recovery) => Self::SkipLinear([totals[0], totals[2]], recovery),
+            None => Self::Full(totals),
         }
     }
 }
@@ -348,7 +346,12 @@ pub(crate) fn accumulate_relation_eval_coeffs_signed<E: Field + Unreduced>(
 /// the round polynomial is:
 /// `batching_coeff * virtual_round(t) + relation_round(t)`.
 pub(crate) struct RelationRangeImageProver<E: Field> {
-    phase: Option<Phase<E>>,
+    phase: Phase<E>,
+    state: RelationRoundState<E>,
+}
+
+/// Round kernels borrow this state independently of the installed phase.
+struct RelationRoundState<E: Field> {
     input_claim: E,
     split_eq: GruenSplitEq<E>,
 
@@ -398,7 +401,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[cfg(test)]
     #[inline]
     fn quotient_weights(&self) -> Option<&RelationWeightFactorization<E>> {
-        match self.phase.as_ref()? {
+        match &self.phase {
             Phase::CompactPrefix { weights, .. } => Some(weights),
             Phase::Coefficient {
                 relation: CoefficientRelation::Factored(weights),
@@ -411,14 +414,16 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             | Phase::Lane { .. } => None,
         }
     }
+}
 
+impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
     // Fused relation (`alpha * m`) + structured-linear addend for one witness
     // corner. `witness_idx0` is the first flat index of an adjacent pair in
     // the Boolean `w` table (`lane * coeff_count + coefficient`).
 
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn accumulate_fused_relation_linear_signed(
+    fn accumulate_fused_relation_linear_signed(
         &self,
         rel: &mut [E::SmallProduct; 4],
         w0: i64,

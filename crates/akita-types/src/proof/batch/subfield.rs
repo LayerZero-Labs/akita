@@ -127,7 +127,9 @@ impl<F: Field> SubfieldMultiplierOpeningPoint<F> {
         E: ExtField<F>,
     {
         if E::DEGREE != self.extension_degree {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "fold multiplier extension degree does not match the requested field".into(),
+            ));
         }
         Ok(E::from_base_slice(self.fold_coordinates(idx)?))
     }
@@ -224,9 +226,15 @@ impl<F: Field> SubfieldMultiplierOpeningPoint<F> {
 }
 
 fn coordinate_chunk<F>(coordinates: &[F], degree: usize, idx: usize) -> Result<&[F], AkitaError> {
-    let start = idx.checked_mul(degree).ok_or(AkitaError::InvalidProof)?;
-    let end = start.checked_add(degree).ok_or(AkitaError::InvalidProof)?;
-    coordinates.get(start..end).ok_or(AkitaError::InvalidProof)
+    let start = idx
+        .checked_mul(degree)
+        .ok_or_else(|| AkitaError::InvalidInput("subfield coordinate start overflow".into()))?;
+    let end = start
+        .checked_add(degree)
+        .ok_or_else(|| AkitaError::InvalidInput("subfield coordinate end overflow".into()))?;
+    coordinates.get(start..end).ok_or_else(|| {
+        AkitaError::InvalidInput("subfield multiplier coordinate index out of range".into())
+    })
 }
 
 fn subfield_constant<F: Field>(coordinates: &[F]) -> Option<F> {
@@ -323,19 +331,29 @@ where
     E: ExtField<F>,
 {
     let extension_degree = coordinates.len();
-    if extension_degree != E::DEGREE || alpha_pows.len() != ring_dim {
-        return Err(AkitaError::InvalidProof);
+    if extension_degree != E::DEGREE {
+        return Err(AkitaError::InvalidInput(
+            "position multiplier extension degree does not match the requested field".into(),
+        ));
     }
-    let (&constant, nonconstant) = coordinates.split_first().ok_or(AkitaError::InvalidProof)?;
+    if alpha_pows.len() != ring_dim {
+        return Err(AkitaError::InvalidSize {
+            expected: ring_dim,
+            actual: alpha_pows.len(),
+        });
+    }
+    let (&constant, nonconstant) = coordinates.split_first().ok_or_else(|| {
+        AkitaError::Internal("validated subfield evaluation coordinates are empty".into())
+    })?;
     let basis_pairs = subfield_basis_pairs(ring_dim, extension_degree)?;
     let mut value = E::lift_base(constant);
     for (&coordinate, &(basis_index, inverse_index)) in nonconstant.iter().zip(&basis_pairs) {
-        let positive = alpha_pows
-            .get(basis_index)
-            .ok_or(AkitaError::InvalidProof)?;
-        let negative = alpha_pows
-            .get(inverse_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let positive = alpha_pows.get(basis_index).ok_or_else(|| {
+            AkitaError::Internal("positive subfield basis exceeds the power table".into())
+        })?;
+        let negative = alpha_pows.get(inverse_index).ok_or_else(|| {
+            AkitaError::Internal("inverse subfield basis exceeds the power table".into())
+        })?;
         value += (*positive - *negative).mul_base(coordinate);
     }
     Ok(value)
@@ -349,20 +367,29 @@ pub(super) fn subfield_basis_pairs(
     let denominator = 2usize
         .checked_mul(extension_degree)
         .filter(|&value| value != 0 && ring_dim.is_multiple_of(value))
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::Internal(
+                "validated subfield basis denominator is incompatible with the ring dimension"
+                    .into(),
+            )
+        })?;
     let stride = ring_dim
         .checked_div(denominator)
         .filter(|&value| value != 0)
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| AkitaError::Internal("validated subfield basis stride is zero".into()))?;
     (1..extension_degree)
         .map(|coordinate| {
             let basis_index = coordinate
                 .checked_mul(stride)
                 .filter(|&index| index < ring_dim)
-                .ok_or(AkitaError::InvalidProof)?;
-            let inverse_index = ring_dim
-                .checked_sub(basis_index)
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "validated positive subfield basis index out of range".into(),
+                    )
+                })?;
+            let inverse_index = ring_dim.checked_sub(basis_index).ok_or_else(|| {
+                AkitaError::Internal("validated inverse subfield basis index underflow".into())
+            })?;
             Ok((basis_index, inverse_index))
         })
         .collect()
@@ -379,9 +406,13 @@ fn add_subfield_product<F: Field, const D: usize>(
         if coordinate.is_zero() {
             continue;
         }
-        let shift = index.checked_mul(stride).ok_or(AkitaError::InvalidProof)?;
+        let shift = index.checked_mul(stride).ok_or_else(|| {
+            AkitaError::Internal("validated subfield product shift overflow".into())
+        })?;
         if shift >= D {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "validated subfield product shift exceeds ring dimension".into(),
+            ));
         }
         rhs.shift_scale_accumulate_into(output, shift, coordinate);
         if shift != 0 {

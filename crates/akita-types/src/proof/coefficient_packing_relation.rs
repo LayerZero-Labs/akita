@@ -348,12 +348,16 @@ where
         .groups()
         .iter()
         .find(|group| group.group_index() == inputs.group_index)
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::Internal("validated packing relation plan is missing its group".into())
+        })?;
     let group_claim_range = group_plan.claim_range();
     let group_claim_coefficients = inputs
         .claim_coefficients
         .get(group_claim_range.clone())
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("packing claim range exceeds the coefficient table".into())
+        })?;
     let group_layout = inputs.opening_batch.group_layout(inputs.group_index)?;
     let group_params = inputs
         .level_params
@@ -433,7 +437,11 @@ where
                 .rhs()
                 .coeffs()
                 .get(rhs_offset..end)
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "packing consistency row exceeds the validated RHS length".into(),
+                    )
+                })?
                 .iter()
                 .any(|coefficient| !coefficient.is_zero())
         {
@@ -497,12 +505,11 @@ where
             "packing quotient depth disagrees with witness layout".into(),
         ));
     }
-    let denominator = alpha_powers
-        .last()
-        .copied()
-        .ok_or(AkitaError::InvalidProof)?
-        * inputs.alpha
-        + E::one();
+    let denominator =
+        alpha_powers.last().copied().ok_or_else(|| {
+            AkitaError::Internal("packing modulus alpha power table is empty".into())
+        })? * inputs.alpha
+            + E::one();
     let witness_gadget = gadget_row_scalars::<F>(
         group_params.num_digits_inner(),
         group_params.log_basis_inner(),
@@ -793,9 +800,11 @@ where
     }
     let mut points = vec![None; inputs.opening_batch.num_groups()];
     for &(group_index, point) in inputs.prepared_points {
-        let slot = points
-            .get_mut(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let slot = points.get_mut(group_index).ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "coefficient-packing prepared point group index is out of range".into(),
+            )
+        })?;
         if slot.replace(point).is_some() {
             return Err(AkitaError::InvalidInput(
                 "coefficient-packing prepared point appears more than once".into(),
@@ -805,7 +814,9 @@ where
     let mut groups = Vec::new();
     for group_plan in inputs.relation_plan.groups() {
         let group_index = group_plan.group_index();
-        let point = points.get(group_index).ok_or(AkitaError::InvalidProof)?;
+        let point = points.get(group_index).ok_or_else(|| {
+            AkitaError::Internal("packing relation group exceeds the prepared point table".into())
+        })?;
         match authority
             .relation_geometry
             .group_opening_method(group_index)?

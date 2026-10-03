@@ -213,6 +213,9 @@ $\{\mathbf t_b^{(i+1)}\}_b$ are the outgoing binding. The predecessor
 absorbs their canonical bytes before its ring-switch and sumcheck challenges.
 The terminal response carries those same images, the ring opening partials,
 and the folded response $\mathbf z$.
+The dev protocol on `dev` sends the last block of the
+images and of the partials as a digest instead; see
+[terminal verification](./verifying/terminal.md#variant-recompute-the-last-block).
 
 The terminal checks the response bounds, opening consistency, A relation,
 and scalar opening directly. It creates no new witness commitment and has

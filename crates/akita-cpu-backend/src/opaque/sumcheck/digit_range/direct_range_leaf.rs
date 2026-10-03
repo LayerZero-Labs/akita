@@ -40,7 +40,7 @@
 //!
 //! degree 4, so round polynomials have degree 5.
 
-use self::prefix_cache::{build_stage1_prefix_cache, Stage1PrefixCache};
+use self::prefix_cache::{build_stage1_prefix_cache, RangePrefixBasis, Stage1PrefixCache};
 use super::range_poly::{
     LinearSum, OctetClassTerms, RangePoly, TaylorSums, MAX_DIRECT_RANGE_COEFFICIENTS,
 };
@@ -105,8 +105,8 @@ enum LowBasisRangeImageStorage<E: Field> {
 
 struct OctetPrefix<E: Field> {
     digits: PackedSignedDigits,
-    tau: Vec<E>,
-    state: Option<DirectRangePrefixState<E>>,
+    width: octet_prefix::DigitWidth,
+    state: DirectRangePrefixState<E>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,21 +124,36 @@ fn range_image_from_digit(w: i8) -> i16 {
     range_image as i16
 }
 
-/// Compact-table state for rounds 0 through 3, which bind the three digit
-/// positions inside an octet and then pair adjacent octets.
-struct DirectRangePrefixState<E: Field> {
-    cache: Stage1PrefixCache<E>,
-    /// Sum of the round-2 equality weight `eq(tau0[3..], octet)` over the live
-    /// octets of each octet class.
+/// Equality histograms retained until their prefix rounds finish.
+struct PrefixWeights<E: Field> {
+    /// Round-2 weight `eq(tau0[3..], octet)` summed over live octets of each class.
     octet_class_weights: Vec<E>,
-    /// Sum of the round-3 equality weight `eq(tau0[4..], pair)` over the live
-    /// octet pairs whose even (`[0]`) or odd (`[1]`) octet has each class.
+    /// Round-3 weight `eq(tau0[4..], pair)` summed into the even and odd classes.
     octet_pair_class_weights: Vec<[E; 2]>,
-    first_challenge: Option<E>,
-    /// The folded value of each quad class after round 1.
-    quad_values: Vec<E>,
-    /// The round-3 terms of each octet class after round 2.
-    octet_terms: Vec<OctetClassTerms<E>>,
+}
+
+/// Each prefix round owns precisely the challenges and tables it needs.
+/// Transitions consume the old state; there is no placeholder variant.
+enum DirectRangePrefixState<E: Field> {
+    Round0 {
+        cache: Stage1PrefixCache<E>,
+        weights: PrefixWeights<E>,
+    },
+    Round1 {
+        cache: Stage1PrefixCache<E>,
+        weights: PrefixWeights<E>,
+        first_challenge: E,
+    },
+    Round2 {
+        /// Folded value of each quad class after round 1.
+        quad_values: Vec<E>,
+        weights: PrefixWeights<E>,
+    },
+    Round3 {
+        /// Taylor terms of each octet class after round 2.
+        octet_terms: Vec<OctetClassTerms<E>>,
+        octet_pair_class_weights: Vec<[E; 2]>,
+    },
 }
 
 /// Direct leaf state over `range_image(x) = w(x)(w(x)+1)`.

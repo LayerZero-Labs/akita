@@ -9,6 +9,7 @@
 
 use crate::opaque::sumcheck::digit_range::range_poly::RangePoly;
 use crate::opaque::sumcheck::prefix_lookup::*;
+use akita_error::AkitaError;
 use akita_sumcheck::reduce_signed_accum;
 use jolt_field::{Field, Ring, Unreduced, Zero};
 use jolt_poly::OmittedConstantPoly;
@@ -33,15 +34,47 @@ fn stage1_is_boolean_corner(x_idx: usize, y_idx: usize) -> bool {
     x_idx < 2 && y_idx < 2
 }
 
+/// Inverses needed by quartic prefix interpolation, checked once per prover.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct QuarticInterpolation<E: Field> {
+    two_inv: E,
+    three_inv: E,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum RangePrefixBasis<E: Field> {
+    Quadratic,
+    Quartic(QuarticInterpolation<E>),
+}
+
+impl<E: Field + Ring> RangePrefixBasis<E> {
+    pub(super) fn new(poly: RangePoly) -> Result<Self, AkitaError> {
+        match poly {
+            RangePoly::Quadratic => Ok(Self::Quadratic),
+            RangePoly::Quartic => {
+                let two_inv = E::from_u64(2).inverse().ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "stage1 prefix interpolation requires invertible 2".into(),
+                    )
+                })?;
+                let three_inv = E::from_u64(3).inverse().ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "stage1 prefix interpolation requires invertible 3".into(),
+                    )
+                })?;
+                Ok(Self::Quartic(QuarticInterpolation { two_inv, three_inv }))
+            }
+        }
+    }
+}
+
 #[inline]
-fn stage1_quartic_coeffs_from_prefix_values<E: Field + Ring>(values: [E; 5]) -> [E; 5] {
+fn stage1_quartic_coeffs_from_prefix_values<E: Field + Ring>(
+    values: [E; 5],
+    interpolation: QuarticInterpolation<E>,
+) -> [E; 5] {
     let [at_0, at_1, at_neg_1, at_2, at_inf] = values;
-    let two_inv = E::from_u64(2)
-        .inverse()
-        .expect("stage1 prefix interpolation requires 2 to be invertible");
-    let three_inv = E::from_u64(3)
-        .inverse()
-        .expect("stage1 prefix interpolation requires 3 to be invertible");
+    let QuarticInterpolation { two_inv, three_inv } = interpolation;
 
     let a0 = at_0;
     let a4 = at_inf;
@@ -57,13 +90,22 @@ fn stage1_quartic_coeffs_from_prefix_values<E: Field + Ring>(values: [E; 5]) -> 
 }
 
 #[inline]
-fn stage1_eval_quartic_from_prefix_values<E: Field + Ring>(values: [E; 5], x: E) -> E {
-    let [a0, a1, a2, a3, a4] = stage1_quartic_coeffs_from_prefix_values(values);
+fn stage1_eval_quartic_from_prefix_values<E: Field + Ring>(
+    values: [E; 5],
+    x: E,
+    interpolation: QuarticInterpolation<E>,
+) -> E {
+    let [a0, a1, a2, a3, a4] = stage1_quartic_coeffs_from_prefix_values(values, interpolation);
     a0 + x * (a1 + x * (a2 + x * (a3 + x * a4)))
 }
 
 #[inline]
-fn eval_stage1_biquartic_from_full_grid<E: Field + Ring>(full_grid: [E; 25], x: E, y: E) -> E {
+fn eval_stage1_biquartic_from_full_grid<E: Field + Ring>(
+    full_grid: [E; 25],
+    x: E,
+    y: E,
+    interpolation: QuarticInterpolation<E>,
+) -> E {
     let x_rows = std::array::from_fn(|x_idx| {
         stage1_eval_quartic_from_prefix_values(
             [
@@ -74,9 +116,10 @@ fn eval_stage1_biquartic_from_full_grid<E: Field + Ring>(full_grid: [E; 25], x: 
                 full_grid[stage1_full_grid_index(x_idx, 4)],
             ],
             y,
+            interpolation,
         )
     });
-    stage1_eval_quartic_from_prefix_values(x_rows, x)
+    stage1_eval_quartic_from_prefix_values(x_rows, x, interpolation)
 }
 
 /// Build the cache for the first two stage-1 rounds.
@@ -89,19 +132,26 @@ fn eval_stage1_biquartic_from_full_grid<E: Field + Ring>(full_grid: [E; 25], x: 
 pub(super) fn build_stage1_prefix_cache<E: Field + Ring + Unreduced>(
     quad_class_weights: &[E],
     tau0: &[E],
-    b: usize,
+    basis: RangePrefixBasis<E>,
 ) -> Option<Stage1PrefixCache<E>> {
-    Stage1PrefixCache::new(&build_stage1_prefix_grid(quad_class_weights, b), tau0, b)
+    Stage1PrefixCache::new(
+        &build_stage1_prefix_grid(quad_class_weights, basis),
+        tau0,
+        basis,
+    )
 }
 
 fn build_stage1_prefix_grid<E: Field + Ring + Unreduced>(
     quad_class_weights: &[E],
-    b: usize,
+    basis: RangePrefixBasis<E>,
 ) -> Stage1PrefixGrid<E> {
-    let evals_except_boolean_core = match b {
-        4 => accumulate_prefix_lookup_rows(quad_class_weights, &STAGE1_B4_PREFIX_LOOKUP_TABLE),
-        8 => accumulate_prefix_lookup_rows(quad_class_weights, &STAGE1_B8_PREFIX_LOOKUP_TABLE),
-        _ => unreachable!("unsupported stage-1 two-round prefix basis"),
+    let evals_except_boolean_core = match basis {
+        RangePrefixBasis::Quadratic => {
+            accumulate_prefix_lookup_rows(quad_class_weights, &STAGE1_B4_PREFIX_LOOKUP_TABLE)
+        }
+        RangePrefixBasis::Quartic(_) => {
+            accumulate_prefix_lookup_rows(quad_class_weights, &STAGE1_B8_PREFIX_LOOKUP_TABLE)
+        }
     };
     Stage1PrefixGrid {
         evals_except_boolean_core,
@@ -137,6 +187,7 @@ pub(super) struct Stage1B4PrefixCache<E: Field> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Stage1B8PrefixCache<E: Field> {
     full_grid: [E; 25],
+    interpolation: QuarticInterpolation<E>,
     tau0: E,
     tau1: E,
 }
@@ -148,13 +199,13 @@ pub(super) enum Stage1PrefixCache<E: Field> {
 }
 
 impl<E: Field + Ring> Stage1PrefixCache<E> {
-    fn new(proof: &Stage1PrefixGrid<E>, tau0: &[E], b: usize) -> Option<Self> {
+    fn new(proof: &Stage1PrefixGrid<E>, tau0: &[E], basis: RangePrefixBasis<E>) -> Option<Self> {
         if tau0.len() < 2 {
             return None;
         }
 
-        match b {
-            4 => {
+        match basis {
+            RangePrefixBasis::Quadratic => {
                 if proof.evals_except_boolean_core.len() != STAGE1_B4_PREFIX_EVAL_COUNT {
                     return None;
                 }
@@ -176,7 +227,7 @@ impl<E: Field + Ring> Stage1PrefixCache<E> {
                     tau1: tau0[1],
                 }))
             }
-            8 => {
+            RangePrefixBasis::Quartic(interpolation) => {
                 if proof.evals_except_boolean_core.len() != STAGE1_PREFIX_EVAL_COUNT {
                     return None;
                 }
@@ -196,11 +247,11 @@ impl<E: Field + Ring> Stage1PrefixCache<E> {
 
                 Some(Self::B8(Stage1B8PrefixCache {
                     full_grid,
+                    interpolation,
                     tau0: tau0[0],
                     tau1: tau0[1],
                 }))
             }
-            _ => None,
         }
     }
 
@@ -259,8 +310,18 @@ impl<E: Field + Ring> Stage1B8PrefixCache<E> {
         let evals: Vec<E> = (0..=4u64)
             .map(|x_raw| {
                 let x = E::from_u64(x_raw);
-                let q_x0 = eval_stage1_biquartic_from_full_grid(self.full_grid, x, E::zero());
-                let q_x1 = eval_stage1_biquartic_from_full_grid(self.full_grid, x, E::one());
+                let q_x0 = eval_stage1_biquartic_from_full_grid(
+                    self.full_grid,
+                    x,
+                    E::zero(),
+                    self.interpolation,
+                );
+                let q_x1 = eval_stage1_biquartic_from_full_grid(
+                    self.full_grid,
+                    x,
+                    E::one(),
+                    self.interpolation,
+                );
                 l1_at_0 * q_x0 + l1_at_1 * q_x1
             })
             .collect();
@@ -271,7 +332,7 @@ impl<E: Field + Ring> Stage1B8PrefixCache<E> {
         let evals: Vec<E> = (0..=4u64)
             .map(|y_raw| {
                 let y = E::from_u64(y_raw);
-                eval_stage1_biquartic_from_full_grid(self.full_grid, r0, y)
+                eval_stage1_biquartic_from_full_grid(self.full_grid, r0, y, self.interpolation)
             })
             .collect();
         interpolate_eq_factored_q_poly(&evals, STAGE1_B8_Q_POLY_DEGREE)
@@ -313,7 +374,7 @@ const fn stage1_b4_local_norm_raw_eval_i64(s_quad: [i64; 4], x: i64, y: i64) -> 
     let x_is_inf = x == LOOKUP_PREFIX_INF;
     let y_is_inf = y == LOOKUP_PREFIX_INF;
     if !x_is_inf && !y_is_inf {
-        RangePoly::new(4).eval_i64(lookup_bilinear_eval_on_prefix_points(s_quad, x, y))
+        RangePoly::Quadratic.eval_i64(lookup_bilinear_eval_on_prefix_points(s_quad, x, y))
     } else if x_is_inf && !y_is_inf {
         let linear = bx + y * dxy;
         linear * linear
@@ -330,13 +391,13 @@ const fn stage1_b8_local_norm_raw_eval_i64(s_quad: [i64; 4], x: i64, y: i64) -> 
     let x_is_inf = x == LOOKUP_PREFIX_INF;
     let y_is_inf = y == LOOKUP_PREFIX_INF;
     if !x_is_inf && !y_is_inf {
-        RangePoly::new(8).eval_i64(lookup_bilinear_eval_on_prefix_points(s_quad, x, y))
+        RangePoly::Quartic.eval_i64(lookup_bilinear_eval_on_prefix_points(s_quad, x, y))
     } else if x_is_inf && !y_is_inf {
-        pow_i64(bx + y * dxy, RangePoly::new(8).num_coefficients())
+        pow_i64(bx + y * dxy, RangePoly::Quartic.num_coefficients())
     } else if !x_is_inf && y_is_inf {
-        pow_i64(cy + x * dxy, RangePoly::new(8).num_coefficients())
+        pow_i64(cy + x * dxy, RangePoly::Quartic.num_coefficients())
     } else {
-        pow_i64(dxy, RangePoly::new(8).num_coefficients())
+        pow_i64(dxy, RangePoly::Quartic.num_coefficients())
     }
 }
 

@@ -559,9 +559,11 @@ impl WitnessLayout {
                 let (params, role_dims) = if group_index == final_group_index {
                     (lp.final_group(), lp.role_dims())
                 } else {
-                    let params = *lp
-                        .preceding_group_params(group_index)
-                        .ok_or(AkitaError::InvalidProof)?;
+                    let params = *lp.preceding_group_params(group_index).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "validated witness layout is missing a preceding group".into(),
+                        )
+                    })?;
                     (params, params.role_dims(lp.open().matrix.ring_dimension()))
                 };
                 role_dims.validate_role_projection()?;

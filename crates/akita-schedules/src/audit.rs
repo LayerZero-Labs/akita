@@ -439,14 +439,12 @@ fn audit_terminal(
         .inner_width()
         .checked_mul(d)
         .ok_or_else(|| invalid(label, "terminal z coordinates overflow"))?;
-    let expected_e_field_elems = params
-        .blocks
-        .live_blocks
+    let sent_blocks = akita_params::terminal_sent_blocks(params.blocks.live_blocks)
+        .ok_or_else(|| invalid(label, "terminal response has no live block"))?;
+    let expected_e_field_elems = sent_blocks
         .checked_mul(d)
         .ok_or_else(|| invalid(label, "terminal e coordinates overflow"))?;
-    let expected_t_field_elems = params
-        .blocks
-        .live_blocks
+    let expected_t_field_elems = sent_blocks
         .checked_mul(params.inner.matrix.output_rank())
         .and_then(|value| value.checked_mul(d))
         .ok_or_else(|| invalid(label, "terminal t coordinates overflow"))?;

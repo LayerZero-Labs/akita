@@ -292,7 +292,11 @@ where
                             *log_basis,
                             params,
                         )?;
-                        rows.pop().ok_or(AkitaError::InvalidProof)
+                        rows.pop().ok_or_else(|| {
+                            AkitaError::Internal(
+                                "single-block scaled digit matvec returned no batch".into(),
+                            )
+                        })
                     }
                     PackedI8Lift::Raw { .. } => {
                         let mut rows = mat_vec_mul_raw_digits_i8_with_params(
@@ -300,7 +304,11 @@ where
                             &[block.as_slice()],
                             params,
                         )?;
-                        rows.pop().ok_or(AkitaError::InvalidProof)
+                        rows.pop().ok_or_else(|| {
+                            AkitaError::Internal(
+                                "single-block raw digit matvec returned no batch".into(),
+                            )
+                        })
                     }
                 }
             })

@@ -2,7 +2,7 @@
 
 use super::class_indexed_state::ClassIndexedTableState;
 use super::compact_digit_source::CompactDigitSource;
-use super::exact_prefix::ExactPrefixTable;
+use super::exact_prefix::ExactPrefixLayout;
 use super::range_class_tables::{
     FoldedRangeImagePairTable, OrderedRangePairCoefficients, SecondRoundRangeQuartetCoefficients,
 };
@@ -10,12 +10,12 @@ use super::round_accumulation::{
     accumulate_equality_weighted_pair_terms, accumulate_equality_weighted_values,
 };
 use super::{
-    compose_small_poly_with_affine, MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE,
+    compose_small_poly_with_affine, SmallPoly, MAX_QUARTET_TABLE_CLASS_COUNT,
+    MAX_TREE_STAGE_Q_DEGREE,
 };
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_sumcheck::EqFactoredSumcheckInstanceProver;
-use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring};
 use jolt_field::{Fold, Unreduced};
 use jolt_poly::OmittedConstantPoly;
@@ -40,7 +40,7 @@ fn accumulate_round<E: Field + Unreduced>(
     explicit_pair_count: usize,
     padding_range_image: E,
     pair_at: impl Fn(usize) -> (E, E) + Sync,
-    polynomial_coefficients: &[E],
+    polynomial_coefficients: &SmallPoly<E>,
 ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
     let padding_coefficients =
         compose_small_poly_with_affine(polynomial_coefficients, padding_range_image, E::zero());
@@ -140,9 +140,11 @@ impl<E: Field + Ring> DepressedQuartic<E> {
 /// Final equality-factored quartic over the virtual range-image table.
 pub(crate) struct ClassIndexedRangeLeafProver<E: Field> {
     range_image: RangeImageTableState<E>,
+    pair_layout: ExactPrefixLayout,
+    quartet_layout: ExactPrefixLayout,
     split_eq: GruenSplitEq<E>,
     input_claim: E,
-    polynomial_coefficients: Vec<E>,
+    polynomial_coefficients: SmallPoly<E>,
     depressed_quartic: Option<DepressedQuartic<E>>,
     num_rounds: usize,
     rounds_completed: usize,
@@ -155,40 +157,45 @@ impl<E: Field + Ring> ClassIndexedRangeLeafProver<E> {
         input_claim: E,
         polynomial_coefficients: Vec<E>,
     ) -> Result<Self, AkitaError> {
-        if polynomial_coefficients.len() > MAX_TREE_STAGE_Q_DEGREE + 1 {
-            return Err(AkitaError::InvalidSize {
-                expected: MAX_TREE_STAGE_Q_DEGREE + 1,
-                actual: polynomial_coefficients.len(),
-            });
-        }
+        let polynomial_coefficients = SmallPoly::new(&polynomial_coefficients)?;
+        let depressed_quartic = DepressedQuartic::new(polynomial_coefficients.coefficients());
         let pair_coefficients = {
             let _span = tracing::info_span!(
                 "digit_range_build_pair_coefficients",
-                arity = polynomial_coefficients.len().saturating_sub(1),
+                arity = polynomial_coefficients
+                    .coefficients()
+                    .len()
+                    .saturating_sub(1),
                 lane_count = 1,
                 class_count = source.class_count(),
             )
             .entered();
-            OrderedRangePairCoefficients::new(source.class_count(), &polynomial_coefficients)
+            OrderedRangePairCoefficients::new(source.classes(), &polynomial_coefficients)
         };
+        let pair_layout =
+            ExactPrefixLayout::new(source.domain_len().div_ceil(2), source.pair_count())?;
+        let quartet_layout =
+            ExactPrefixLayout::new(source.domain_len().div_ceil(4), source.quartet_count())?;
         Ok(Self {
+            pair_layout,
+            quartet_layout,
             range_image: RangeImageTableState::Compact(CompactRangeLeafState {
                 source,
                 pair_coefficients,
             }),
             split_eq: GruenSplitEq::new(equality_point)?,
             input_claim,
-            depressed_quartic: DepressedQuartic::new(&polynomial_coefficients),
+            depressed_quartic,
             polynomial_coefficients,
             num_rounds: equality_point.len(),
             rounds_completed: 0,
         })
     }
 
-    pub(crate) fn final_range_image_eval(&self) -> E {
+    pub(crate) fn final_range_image_eval(&self) -> Result<E, AkitaError> {
         self.range_image
             .final_value()
-            .expect("range-image leaf was not fully folded")
+            .ok_or_else(|| AkitaError::Internal("range-image leaf was not fully folded".into()))
     }
 }
 
@@ -275,6 +282,7 @@ impl<E: Field + Ring + Fold + Unreduced> ClassIndexedRangeLeafProver<E> {
                         {
                             let evaluate = |point: E| {
                                 self.polynomial_coefficients
+                                    .coefficients()
                                     .iter()
                                     .rev()
                                     .fold(E::zero(), |value, &coefficient| {
@@ -309,16 +317,17 @@ impl<E: Field + Ring + Fold + Unreduced> ClassIndexedRangeLeafProver<E> {
         }
     }
 
-    pub(crate) fn final_range_claim(&self) -> E {
-        let range_image = self.final_range_image_eval();
+    pub(crate) fn final_range_claim(&self) -> Result<E, AkitaError> {
+        let range_image = self.final_range_image_eval()?;
         let leaf = self
             .polynomial_coefficients
+            .coefficients()
             .iter()
             .rev()
             .fold(E::zero(), |acc, &coefficient| {
                 acc * range_image + coefficient
             });
-        self.split_eq.current_scalar() * leaf
+        Ok(self.split_eq.current_scalar() * leaf)
     }
 
     /// Scalar-bearing equality-factor evaluations for the fused ordinary
@@ -336,7 +345,10 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
     }
 
     fn degree_bound(&self) -> usize {
-        self.polynomial_coefficients.len().saturating_sub(1)
+        self.polynomial_coefficients
+            .coefficients()
+            .len()
+            .saturating_sub(1)
     }
 
     fn input_claim(&self) -> E {
@@ -367,8 +379,7 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
                         kernel_strategy = "quartet-coefficient-table",
                     )
                     .entered();
-                    let folded_pairs =
-                        FoldedRangeImagePairTable::new(source.class_count(), challenge);
+                    let folded_pairs = FoldedRangeImagePairTable::new(source.classes(), challenge);
                     let (equality_prefix_weights, equality_suffix_weights) =
                         self.split_eq.remaining_eq_tables();
                     let _span = tracing::info_span!(
@@ -429,21 +440,18 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
                     )
                     .entered();
                     let fold_context = E::precompute(challenge);
-                    let explicit = cfg_into_iter!(0..source.quartet_count())
-                        .map(|quartet_index| {
+                    let padding_pair = folded_pairs.value_by_pair_index(0);
+                    let padding = E::fold_one(&fold_context, padding_pair, padding_pair);
+                    Some(self.quartet_layout.materialize(
+                        |quartet_index| {
                             let (left_pair, right_pair) =
                                 source.ordered_pair_indices_for_quartet(quartet_index);
                             let left = folded_pairs.value_by_pair_index(left_pair);
                             let right = folded_pairs.value_by_pair_index(right_pair);
                             E::fold_one(&fold_context, left, right)
-                        })
-                        .collect();
-                    let padding_pair = folded_pairs.value_by_pair_index(0);
-                    let padding = E::fold_one(&fold_context, padding_pair, padding_pair);
-                    Some(
-                        ExactPrefixTable::new(source.domain_len() / 4, explicit, padding)
-                            .expect("compact source and Boolean domain were validated"),
-                    )
+                        },
+                        padding,
+                    ))
                 }
                 RangeImageTableState::Compact(_) | RangeImageTableState::Materialized(_) => None,
             };
@@ -471,21 +479,14 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
                         lane_count = 1,
                     )
                     .entered();
-                    FoldedRangeImagePairTable::new(source.class_count(), challenge)
+                    FoldedRangeImagePairTable::new(source.classes(), challenge)
                 };
-                let explicit = cfg_into_iter!(0..source.pair_count())
-                    .map(|pair_index| {
+                Some(self.pair_layout.materialize(
+                    |pair_index| {
                         folded_pairs.value_by_pair_index(source.ordered_pair_index(pair_index))
-                    })
-                    .collect();
-                Some(
-                    ExactPrefixTable::new(
-                        source.domain_len() / 2,
-                        explicit,
-                        folded_pairs.value_by_pair_index(0),
-                    )
-                    .expect("compact source and Boolean domain were validated"),
-                )
+                    },
+                    folded_pairs.value_by_pair_index(0),
+                ))
             }
             RangeImageTableState::FirstChallengeFolded(_)
             | RangeImageTableState::Materialized(_) => None,
@@ -519,6 +520,35 @@ mod tests {
     type F = Ext2<Prime64Offset59>;
 
     #[test]
+    fn final_leaf_claims_reject_every_unfinished_storage_phase() {
+        let plan = DigitRangePlan::new(16).unwrap();
+        let source = CompactDigitSource::new(
+            PackedSignedDigits::from_i8_digits_auto(vec![1; 16]),
+            FlatBooleanDomain::new(16, 4).unwrap(),
+            plan,
+        )
+        .unwrap();
+        let mut prover = ClassIndexedRangeLeafProver::<F>::new(
+            source,
+            &[F::from_u64(7); 4],
+            F::zero(),
+            plan.leaf_coeffs::<F>()[0].clone(),
+        )
+        .unwrap();
+        for round in 0..4 {
+            for claim in [prover.final_range_image_eval(), prover.final_range_claim()] {
+                assert!(matches!(
+                    claim, Err(AkitaError::Internal(message))
+                        if message == "range-image leaf was not fully folded"
+                ));
+            }
+            prover.ingest_challenge(round, F::from_u64(11));
+        }
+        assert_eq!(prover.final_range_image_eval().unwrap(), F::from_u64(2));
+        assert_eq!(prover.final_range_claim().unwrap(), F::zero());
+    }
+
+    #[test]
     fn depressed_quartic_matches_affine_composition() {
         let value = |seed: u64| F::from_u64(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 3);
         for polynomial in [
@@ -537,7 +567,11 @@ mod tests {
             for (left, right, weight) in [(29, 31, 37), (41, 41, 43), (0, 47, 1)] {
                 let (left, right, weight) = (value(left), value(right), value(weight));
                 let (factors, weighted) = quartic.pair_terms(left, right, weight);
-                let expected = compose_small_poly_with_affine(&polynomial, left, right - left);
+                let expected = compose_small_poly_with_affine(
+                    &SmallPoly::new(&polynomial).unwrap(),
+                    left,
+                    right - left,
+                );
                 for index in 0..MAX_TREE_STAGE_Q_DEGREE {
                     assert_eq!(
                         quartic.scales[index] * factors[index] * weighted[index],
@@ -586,7 +620,7 @@ mod tests {
                 dense.len() / 2,
                 F::zero(),
                 |pair_index| (dense[2 * pair_index], dense[2 * pair_index + 1]),
-                &polynomial,
+                &SmallPoly::new(&polynomial).unwrap(),
             )
         };
         let first_round = dense_round(&dense, &reference_eq);
