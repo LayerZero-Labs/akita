@@ -1,6 +1,6 @@
 //! Arithmetic over owned homogeneous sources, private to the CPU backend.
 use crate::opaque::*;
-use crate::opaque::{OpeningFoldKernel, OpeningFoldOutput};
+use crate::opaque::{OpeningBatchKernel, OpeningFoldOutput};
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_params::*;
@@ -13,40 +13,6 @@ pub(super) struct PreparedExtensionOpeningGroup<E: Field> {
     pub(super) row_partials_by_claim: Vec<Vec<E>>,
     pub(super) openings: Vec<E>,
 }
-fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
-    backend: &B,
-    prepared: Option<&B::PreparedSetup>,
-    poly: &Q,
-    point: &RingMultiplierOpeningPoint<F>,
-    num_positions_per_block: usize,
-) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    Q: RootOpeningSource<F, D>,
-    B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
-{
-    if let Some(base_point) = point.as_base() {
-        let plan = OpeningFoldPlan::Base {
-            live_block_weights: &base_point.live_block_weights,
-            position_weights: &base_point.position_weights,
-            num_positions_per_block,
-        };
-        let OpeningFoldOutput { eval, folded } =
-            OpeningFoldKernel::evaluate_and_fold(backend, prepared, poly.opening_view()?, plan)?;
-        return Ok((eval, folded));
-    }
-    let multipliers = point.as_subfield().ok_or_else(|| {
-        AkitaError::Internal("source opening multiplier point is neither base nor subfield".into())
-    })?;
-    let plan = OpeningFoldPlan::Subfield {
-        multipliers,
-        num_positions_per_block,
-    };
-    let OpeningFoldOutput { eval, folded } =
-        OpeningFoldKernel::evaluate_and_fold(backend, prepared, poly.opening_view()?, plan)?;
-    Ok((eval, folded))
-}
-
 fn evaluate_claims_at_prepared_point<F, E, Q, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
@@ -58,7 +24,7 @@ where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: Field,
     Q: RootOpeningSource<F, D>,
-    B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
+    B: ComputeBackendSetup<F> + for<'a> OpeningBatchKernel<Q::OpeningBatchView<'a>, F, D>,
 {
     let _span = tracing::info_span!(
         "fold_evaluate_claims",
@@ -70,19 +36,42 @@ where
         compact_subfield = prepared_point.ring_multiplier_point.as_base().is_none(),
     )
     .entered();
-    let mut folded_rings = Vec::with_capacity(polys.len());
-    let mut folded_blocks = Vec::with_capacity(polys.len());
-    for poly in polys {
-        let (folded_ring, folded_block) = evaluate_poly_at_multiplier_point(
-            backend,
-            prepared,
-            *poly,
-            &prepared_point.ring_multiplier_point,
+    let point = &prepared_point.ring_multiplier_point;
+    let plan = if let Some(base_point) = point.as_base() {
+        OpeningFoldPlan::Base {
+            live_block_weights: &base_point.live_block_weights,
+            position_weights: &base_point.position_weights,
             num_positions_per_block,
-        )?;
-        folded_rings.push(folded_ring);
-        folded_blocks.push(folded_block);
+        }
+    } else {
+        OpeningFoldPlan::Subfield {
+            multipliers: point.as_subfield().ok_or_else(|| {
+                AkitaError::Internal(
+                    "source opening multiplier point is neither base nor subfield".into(),
+                )
+            })?,
+            num_positions_per_block,
+        }
+    };
+    let outputs = backend.evaluate_and_fold_batch(prepared, Q::opening_batch(polys)?, plan)?;
+    if outputs.len() != polys.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: polys.len(),
+            actual: outputs.len(),
+        });
     }
+    for output in &outputs {
+        if output.folded.len() != point.fold_len() {
+            return Err(AkitaError::InvalidSize {
+                expected: point.fold_len(),
+                actual: output.folded.len(),
+            });
+        }
+    }
+    let (folded_rings, folded_blocks) = outputs
+        .into_iter()
+        .map(|OpeningFoldOutput { eval, folded }| (eval, folded))
+        .unzip();
     Ok((folded_rings, folded_blocks))
 }
 
@@ -105,7 +94,7 @@ where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F>,
     Q: RootOpeningSource<F, D>,
-    B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
+    B: ComputeBackendSetup<F> + for<'a> OpeningBatchKernel<Q::OpeningBatchView<'a>, F, D>,
 {
     let prepared_point = prepare_opening_point::<F, E, D>(
         protocol_point,

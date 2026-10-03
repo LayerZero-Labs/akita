@@ -546,7 +546,8 @@ macro_rules! block_parallel_matches_column_tiled_wide_rows_test {
                                 &digit_block_slices,
                                 log_basis,
                                 &params,
-                            );
+                            )
+                            .unwrap();
                         let block_parallel = super::mat_vec_mul_digits_i8_block_parallel::<
                             F,
                             $width,
