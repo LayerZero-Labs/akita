@@ -68,9 +68,11 @@ pub(super) fn build_physical_b_weight_segments<E: Field>(
                     }
                     let logical_row =
                         geometry.logical_row_index(slice_index, physical_row, physical_rows)?;
-                    let row_weight = *logical_row_weights
-                        .get(logical_row)
-                        .ok_or(AkitaError::InvalidProof)?;
+                    let row_weight = *logical_row_weights.get(logical_row).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "physical B logical row exceeds the validated row weight table".into(),
+                        )
+                    })?;
                     let logical_start = polynomial
                         .checked_mul(geometry.num_live_blocks())
                         .and_then(|base| base.checked_add(block_range.start))
@@ -124,7 +126,9 @@ impl<E: Field> PhysicalBSetupPlan<E> {
                 .ok_or_else(|| AkitaError::InvalidSetup("physical B segment overflow".into()))?;
             let target = physical
                 .get_mut(segment.physical_start..end)
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal("physical B weight segment exceeds its footprint".into())
+                })?;
             for (offset, target) in target.iter_mut().enumerate() {
                 for term in segment.terms.iter() {
                     let logical = term
@@ -132,7 +136,12 @@ impl<E: Field> PhysicalBSetupPlan<E> {
                         .checked_add(offset)
                         .and_then(|index| logical_column_weights.get(index))
                         .copied()
-                        .ok_or(AkitaError::InvalidProof)?;
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "physical B weight term exceeds the logical column weight table"
+                                    .into(),
+                            )
+                        })?;
                     *target += term.row_weight * logical;
                 }
             }

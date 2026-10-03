@@ -1,4 +1,5 @@
 use super::*;
+use akita_error::AkitaError;
 use akita_params::schedule::GroupCommitPhaseParams;
 use akita_params::test_fixtures::address_oracle_fixture;
 use akita_params::{dyadic_block_ranges, WitnessLayout};
@@ -64,6 +65,32 @@ fn multi_group_row_offsets_match_a_before_b_layout() {
         lp.consistency_row_index(&batch, 0).unwrap(),
         1 + n_a_final + n_b_final
     );
+}
+
+#[test]
+fn group_accessors_reject_absent_caller_indices() {
+    let (lp, batch) = sample_multi_group_root_params();
+    let absent = batch.num_groups();
+    assert!(matches!(
+        lp.group_role_dims(&batch, absent),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        lp.group_role_dims_geometry(&batch, absent),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        lp.group_params(&batch, absent),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        lp.group_params_geometry(&batch, absent),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        lp.consistency_row_index(&batch, absent),
+        Err(AkitaError::InvalidInput(_))
+    ));
 }
 
 #[test]

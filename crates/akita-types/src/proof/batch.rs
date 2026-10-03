@@ -414,6 +414,17 @@ mod tests {
                 .expect("compact shifted monomial");
             assert_eq!(actual, expected_ring.negacyclic_shift(shift).scale(&scale));
         }
+
+        // The shift is the caller's argument, so `shift == D` is an input error.
+        let mut untouched = CyclotomicRing::<F, D>::zero();
+        assert!(matches!(
+            point
+                .as_subfield()
+                .expect("proper extension multipliers")
+                .accumulate_position_monomial(0, D, scale, &mut untouched),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert_eq!(untouched, CyclotomicRing::zero());
     }
 
     #[test]

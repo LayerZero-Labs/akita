@@ -8,6 +8,35 @@ use jolt_field::{Prime128Offset275, Prime128OffsetA7F7, Zero};
 type F = Prime128OffsetA7F7;
 
 #[test]
+fn witness_emission_slice_sink_rejects_span_without_writing() {
+    let mut destination = [0i8; 3];
+    assert!(matches!(
+        destination.as_mut_slice().write_coefficients(2, &[1, 1]),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert_eq!(destination, [0; 3]);
+    destination
+        .as_mut_slice()
+        .write_coefficients(1, &[1, -1])
+        .expect("span fits exactly");
+    assert_eq!(destination, [0, 1, -1]);
+}
+
+#[test]
+fn witness_emission_vec_sink_rejects_span_without_writing() {
+    let mut destination = vec![0i8; 3];
+    assert!(matches!(
+        destination.write_coefficients(2, &[1, 1]),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert_eq!(destination, vec![0; 3]);
+    destination
+        .write_coefficients(1, &[1, -1])
+        .expect("span fits exactly");
+    assert_eq!(destination, vec![0, 1, -1]);
+}
+
+#[test]
 fn ring_vec_checked_views_reject_invalid_storage() {
     let empty = RingVec::<F>::from_coeffs(Vec::new());
     assert!(empty.as_single_ring::<64>().is_err());

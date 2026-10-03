@@ -1,24 +1,24 @@
 #![allow(missing_docs)]
 
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_cpu_backend::benchmark_support::{
-    decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense,
-    mat_vec_mul_ntt_i8_dense_single_row,
-};
 use akita_cpu_backend::DensePoly;
+use akita_params::balanced_signed_digit_abs_bound;
 use akita_types::{prepare_ntt_cache, NttCacheMode};
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion};
+use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Ring};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 type F = fp128::Field;
 type Cfg = fp128::Dense;
-const D: usize = 256;
 const NV: usize = 24;
+// Root ring dimension of the `fp128_dense` schedule at `NV`.
+const D: usize = 512;
 
 fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(0xdead_beef);
@@ -36,7 +36,7 @@ fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
     }
 }
 
-fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
+fn bench_dense_root_matvec(c: &mut Criterion) {
     let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
         .expect("workspace schedule artifact");
     let evals = make_dense_evals::<Cfg>(NV);
@@ -50,19 +50,30 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
         .root
         .params
         .clone();
+    assert_eq!(
+        layout.d_a(),
+        D,
+        "the nv{NV} root ring dimension changed; update `D`"
+    );
     let capacity = akita_config::SetupRequirements::from_catalog::<Cfg>(&schedules, NV, 1)
         .unwrap()
         .matrix_capacity();
     let setup =
         akita_cpu_backend::AkitaProverSetup::<F>::generate_with_capacity(NV, 1, capacity).unwrap();
-    let total = setup.expanded.shared_matrix().num_field_elements() / D;
+    let n_a = layout.inner().matrix.output_rank();
+    let inner_width = layout.inner_width();
+    let num_digits = layout.inner().digits.num_digits;
+    let log_basis = layout.inner().digits.log_basis;
     let ntt_shared = prepare_ntt_cache(
         setup
             .expanded
             .shared_matrix()
-            .ring_view::<D>(1, total)
+            .ring_view::<D>(1, n_a * inner_width)
             .unwrap(),
-        NttCacheMode::BothTransforms,
+        NttCacheMode::ExactNegacyclic {
+            width: inner_width,
+            rhs_abs_bound: balanced_signed_digit_abs_bound(log_basis).expect("signed digit basis"),
+        },
     )
     .unwrap();
     let rings = poly.ring_coeffs::<D>().expect("dense ring view");
@@ -77,67 +88,27 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
             }
         })
         .collect();
-
-    let n_a = layout.inner().matrix.output_rank();
-    let inner_width = layout.inner_width();
+    let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis);
 
     let mut group = c.benchmark_group("root_kernels");
-    group.bench_function("dense_root_matvec_full_nv24_d256", |b| {
+    // Per-block work of the backend's exact signed-i16 dense commit, which the
+    // root takes when its digits are wider than 8 bits.
+    group.bench_function(format!("dense_root_matvec_full_nv{NV}_d{D}"), |b| {
         b.iter(|| {
-            black_box(mat_vec_mul_ntt_i8_dense(
-                &ntt_shared,
-                n_a,
-                inner_width,
-                black_box(&block_slices),
-                layout.inner().digits.num_digits,
-                layout.inner().digits.log_basis,
-            ))
-            .unwrap()
-        })
-    });
-    group.bench_function(
-        "dense_root_matvec_full_nv24_d256_single_row_subkernel",
-        |b| {
-            b.iter(|| {
-                black_box(mat_vec_mul_ntt_i8_dense_single_row(
-                    &ntt_shared,
-                    inner_width,
-                    black_box(&block_slices),
-                    layout.inner().digits.num_digits,
-                    layout.inner().digits.log_basis,
-                ))
+            cfg_iter!(black_box(&block_slices))
+                .map(|block| {
+                    let mut rhs = vec![[0i16; D]; inner_width];
+                    for (ring, digits) in block.iter().zip(rhs.chunks_exact_mut(num_digits)) {
+                        ring.balanced_decompose_pow2_i16_into(digits, &decompose_params);
+                    }
+                    ntt_shared.mat_vec_i16::<F>(log_basis, n_a, &rhs)
+                })
+                .collect::<Result<Vec<_>, _>>()
                 .unwrap()
-            })
-        },
-    );
-    let mut digit_blocks: Vec<Vec<[i8; D]>> = block_slices
-        .iter()
-        .map(|block| vec![[0i8; D]; block.len() * layout.inner().digits.num_digits])
-        .collect();
-    group.bench_function("dense_root_predecomp_digit_matvec_full_nv24_d256", |b| {
-        b.iter(|| {
-            for (block, digit_block) in block_slices.iter().zip(digit_blocks.iter_mut()) {
-                decompose_rows_i8_into(
-                    block,
-                    digit_block,
-                    layout.inner().digits.num_digits,
-                    layout.inner().digits.log_basis,
-                );
-            }
-            let digit_block_slices: Vec<&[[i8; D]]> =
-                digit_blocks.iter().map(Vec::as_slice).collect();
-            black_box(mat_vec_mul_ntt_digits_i8::<F, D>(
-                &ntt_shared,
-                n_a,
-                inner_width,
-                black_box(&digit_block_slices),
-                layout.inner().digits.log_basis,
-            ))
-            .unwrap()
         })
     });
     group.finish();
 }
 
-criterion_group!(root_kernels, bench_dense_root_matvec_full_nv24_d256);
+criterion_group!(root_kernels, bench_dense_root_matvec);
 criterion_main!(root_kernels);
