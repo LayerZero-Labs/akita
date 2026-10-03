@@ -98,13 +98,12 @@ impl<F: Field, E> CpuBackend<F, E> {
                             "compiled dense group contains another representation".into(),
                         ));
                     };
-                    self.dense_coefficient_commit_rows::<D>(
+                    crate::typed_inner_rows(self.dense_coefficient_commit_rows::<D>(
                         prepared,
                         *dense,
                         source.descriptor(),
                         plan,
-                    )
-                    .map(crate::typed_inner_rows)
+                    )?)
                 })
                 .collect(),
             Some(PolynomialType::Dense(DenseType::PredecomposedDigits)) => sources
@@ -118,8 +117,9 @@ impl<F: Field, E> CpuBackend<F, E> {
                             "compiled dense-digit group contains another representation".into(),
                         ));
                     };
-                    self.predecomposed_dense_commit_rows::<D>(prepared, planes, plan)
-                        .map(crate::typed_inner_rows)
+                    crate::typed_inner_rows(
+                        self.predecomposed_dense_commit_rows::<D>(prepared, planes, plan)?,
+                    )
                 })
                 .collect(),
             Some(PolynomialType::ShortNorm(_)) => sources
@@ -132,7 +132,7 @@ impl<F: Field, E> CpuBackend<F, E> {
                         ));
                     };
                     let digits = short.packed_view();
-                    self.recursive_packed_witness_commit_rows::<D>(
+                    crate::typed_inner_rows(self.recursive_packed_witness_commit_rows::<D>(
                         prepared,
                         digits,
                         plan.n_a,
@@ -140,8 +140,7 @@ impl<F: Field, E> CpuBackend<F, E> {
                         plan.num_live_blocks,
                         plan.num_digits_inner,
                         plan.log_basis_inner,
-                    )
-                    .map(crate::typed_inner_rows)
+                    )?)
                 })
                 .collect(),
             Some(PolynomialType::OneHot(kind)) => match kind.index_width() {

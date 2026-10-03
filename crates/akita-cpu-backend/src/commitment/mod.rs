@@ -14,6 +14,7 @@ mod outer_slices;
 mod plan;
 mod prepared;
 mod registration;
+mod relation_compression;
 mod resources;
 mod source;
 mod stages;
@@ -24,6 +25,7 @@ pub(crate) use api::commit;
 pub use api::GroupContext;
 pub(crate) use api::{resolve_commit_params, resolve_polynomial_group_layout};
 pub(crate) use outer_slices::for_each_outer_slice_input;
+pub use relation_compression::PortableCompressionOutput;
 pub use state_policy::PortableCompressionState;
 
 pub(crate) use builder::CommitmentExecutorBuilder;

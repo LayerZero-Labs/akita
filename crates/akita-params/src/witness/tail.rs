@@ -7,8 +7,8 @@ use super::{
     CompressionWitnessSpan, RelationQuotientLayout, WitnessQuotientRowLayout,
 };
 use crate::{
-    CommittedGroupParams, CompressionMapPlan, RelationRowFamily, RelationRowGeometry,
-    RelationWitnessGeometry, RingRelationMode, COMPRESSION_MAP_COUNT,
+    CommittedGroupParams, CompressionMapPlan, RelationRhsLayout, RelationRowFamily,
+    RelationRowGeometry, RelationWitnessGeometry, RingRelationMode, COMPRESSION_MAP_COUNT,
 };
 
 /// Quotient witness state required to construct one canonical witness layout.
@@ -317,7 +317,7 @@ impl TailSink for MeasuringTailSink {
 
 pub(super) fn materialize(
     params: &CommittedGroupParams,
-    relation_geometry: &RelationWitnessGeometry,
+    relation_layout: &RelationRhsLayout,
     num_groups: usize,
     successor_a_alignment: usize,
     start: usize,
@@ -325,7 +325,7 @@ pub(super) fn materialize(
 ) -> Result<MaterializedWitnessTail, AkitaError> {
     resolve(
         params,
-        relation_geometry,
+        relation_layout,
         num_groups,
         successor_a_alignment,
         start,
@@ -344,7 +344,7 @@ pub(super) fn measure(
 ) -> Result<usize, AkitaError> {
     resolve(
         params,
-        relation_geometry,
+        relation_geometry.rhs_layout(),
         num_groups,
         successor_a_alignment,
         start,
@@ -356,7 +356,7 @@ pub(super) fn measure(
 #[allow(clippy::too_many_arguments)]
 fn resolve<S: TailSink>(
     params: &CommittedGroupParams,
-    relation_geometry: &RelationWitnessGeometry,
+    relation_layout: &RelationRhsLayout,
     num_groups: usize,
     successor_a_alignment: usize,
     start: usize,
@@ -364,7 +364,7 @@ fn resolve<S: TailSink>(
     mut sink: S,
 ) -> Result<S::Output, AkitaError> {
     plan.validate_mode(params.ring_relation_mode)?;
-    let relation_layout = relation_geometry.rhs_layout();
+    relation_layout.validate()?;
     let row_families = if plan.quotient_depth().is_some() {
         relation_layout.row_families()?
     } else {
@@ -395,9 +395,7 @@ fn resolve<S: TailSink>(
         return sink.finish(start, plan);
     }
 
-    let relation_coefficient_block = relation_geometry
-        .rhs_layout()
-        .relation_coefficient_block_len()?;
+    let relation_coefficient_block = relation_layout.relation_coefficient_block_len()?;
     sink.align(
         relation_coefficient_block,
         "compression witness alignment overflow",

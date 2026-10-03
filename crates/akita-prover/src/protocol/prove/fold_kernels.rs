@@ -23,7 +23,9 @@ fn resolve_evaluation_trace_claim<E: Field>(
         reduction.final_claims.len() != opening_batch.num_total_polynomials()
             || reduction.final_factors.len() != opening_batch.num_groups()
     }) {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "evaluation-trace reduction claim or factor count differs from opening layout".into(),
+        ));
     }
     let claim_coefficients = reduction.map_or_else(
         || Ok(row_coefficients.to_vec()),
@@ -32,19 +34,17 @@ fn resolve_evaluation_trace_claim<E: Field>(
                 .scale_row_coefficients_by_group(row_coefficients, &reduction.final_factors)
         },
     )?;
-    let expected = opening_batch
-        .batched_eval_target(&claim_coefficients, openings)
-        .map_err(|err| {
-            AkitaError::InvalidInput(format!("batched trace evaluation failed: {err:?}"))
-        })?;
+    let expected = opening_batch.batched_eval_target(&claim_coefficients, openings)?;
     let claimed = match reduction {
-        Some(reduction) => opening_batch
-            .batched_eval_target(row_coefficients, &reduction.final_claims)
-            .map_err(|_| AkitaError::InvalidProof)?,
+        Some(reduction) => {
+            opening_batch.batched_eval_target(row_coefficients, &reduction.final_claims)?
+        }
         None => expected,
     };
     if claimed != expected {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "evaluation-trace reduction differs from scalar openings".into(),
+        ));
     }
     Ok(PreparedEvaluationTraceClaim {
         claimed_evaluation: claimed,
@@ -65,8 +65,8 @@ where
         .map(|coefficient| {
             embed_ring_subfield_scalar::<F, E, D>(
                 coefficient,
-                AkitaError::InvalidInput(
-                    "public-row coefficient does not encode in the ring-subfield basis".to_string(),
+                AkitaError::Internal(
+                    "public-row coefficient does not encode in the ring-subfield basis".into(),
                 ),
             )
         })
@@ -85,10 +85,11 @@ where
     E: FpExtEncoding<F> + ExtField<F>,
 {
     if openings.len() != opening_batch.num_total_polynomials() {
-        return Err(AkitaError::InvalidSize {
-            expected: opening_batch.num_total_polynomials(),
-            actual: openings.len(),
-        });
+        return Err(AkitaError::Internal(format!(
+            "evaluation-trace scalar opening count mismatch: expected {}, actual {}",
+            opening_batch.num_total_polynomials(),
+            openings.len(),
+        )));
     }
     let row_coefficients = akita_types::row_coefficients::<F, E, _>(
         opening_batch,
@@ -180,7 +181,7 @@ mod tests {
                     &layout,
                     &row_coefficients,
                 ),
-                Err(AkitaError::InvalidProof)
+                Err(AkitaError::Internal(_))
             ));
         }
     }
@@ -202,7 +203,7 @@ mod tests {
                 &layout,
                 &row_coefficients,
             ),
-            Err(AkitaError::InvalidProof)
+            Err(AkitaError::Internal(_))
         ));
     }
 }

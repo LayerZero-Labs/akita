@@ -37,12 +37,22 @@ impl<F: Field, E> CpuBackend<F, E> {
             &schedule
                 .recursive_folds
                 .get(binding.fold_level() as usize - 1)
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "group operation requires a nonterminal fold level".into(),
+                    )
+                })?
                 .params
         };
-        let index = binding.group_index().ok_or(AkitaError::InvalidProof)?;
+        let index = binding.group_index().ok_or_else(|| {
+            AkitaError::InvalidInput("group operation requires an ordered group context".into())
+        })?;
         Ok((
-            *level.groups().get(index).ok_or(AkitaError::InvalidProof)?,
+            *level.groups().get(index).ok_or_else(|| {
+                AkitaError::Internal(
+                    "admitted group index is missing from the validated fold".into(),
+                )
+            })?,
             level.witness_chunk.num_chunks,
         ))
     }
