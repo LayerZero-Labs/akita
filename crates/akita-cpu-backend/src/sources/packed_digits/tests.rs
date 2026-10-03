@@ -358,3 +358,21 @@ fn auto_storage_matches_explicit_width_for_every_tail_and_signed_extreme() {
         }
     }
 }
+
+#[test]
+fn scalar_bit_position_does_not_overflow_at_the_index_boundary() {
+    for bit_width in 1..=8u8 {
+        let width = usize::from(bit_width);
+        // Small indices agree with the direct bit-offset formula.
+        for index in 0..256usize {
+            let bits = index * width;
+            assert_eq!(scalar::bit_position(index, bit_width), (bits / 8, bits % 8));
+        }
+        // `index * bit_width` overflows `usize` for every index here.
+        for index in [usize::MAX / 8 + 1, usize::MAX - 7, usize::MAX] {
+            let bits = index as u128 * u128::from(bit_width);
+            let expected = ((bits / 8) as usize, (bits % 8) as usize);
+            assert_eq!(scalar::bit_position(index, bit_width), expected);
+        }
+    }
+}
