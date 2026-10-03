@@ -210,7 +210,9 @@ issues/URLs, or prove other stacked PRs contain a fix. Excluded content and thes
 limits must be reported when relevant. A clean automated review is not an approval.
 
 Current budgets: 150 changed files, 300,000 characters of combined full/delta
-diff, 300,000 characters of eligible discussion, 250,000 bytes per source blob,
+diff (the delta covers only files the PR changes now or changed at the previously
+reviewed head, so base-branch changes merged in since count only where they touch
+those same files), 300,000 characters of eligible discussion, 250,000 bytes per source blob,
 32 MiB per artifact, 32 model turns, 24 reads/searches per turn, 900,000 characters
 of accumulated context, 20 new findings and 100 retained findings. Exceeding a
 budget stops the run; it never silently turns into a clean review. Artifacts

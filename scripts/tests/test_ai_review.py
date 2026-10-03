@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from ai_review_support import (AUTHOR, EVENT, FakeGitHub, proposal, seal, snapshot)
-from collect import discussions, previous_state, tree
+from collect import discussions, previous_state, since_previous, tree
 from common import GitHub, MARKER, NoRedirect, ReviewError, authorize, request
 from model import review, source_tool
 from publish import publish, validate
@@ -217,6 +217,42 @@ class SourceToolTests(unittest.TestCase):
                 os.chdir(before)
             self.assertEqual(result["excluded"], ["key"])
             self.assertIn("payload.py", result["files"])
+
+    def test_delta_since_previous_review_excludes_merged_base_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            def git(*args):
+                return subprocess.check_output(["git", "-c", "commit.gpgsign=false", "-c", "user.name=Test",
+                                                "-c", "user.email=test@example.com",
+                                                "-c", "core.hooksPath=/dev/null", *args],
+                                               cwd=directory, stderr=subprocess.DEVNULL).decode().strip()
+
+            def commit(message, files):
+                for name, text in files.items():
+                    Path(directory, name).write_text(text)
+                git("add", ".")
+                git("commit", "-m", message)
+                return git("rev-parse", "HEAD")
+
+            git("init", "-b", "main")
+            root = commit("root", {"own.py": "one\n", "reverted.py": "kept\n", "upstream.py": "old\n"})
+            git("switch", "-c", "pr")
+            previous = commit("reviewed", {"own.py": "two\n", "reverted.py": "changed\n"})
+            git("switch", "main")
+            base = commit("upstream", {"upstream.py": "new\n" * 1000})
+            git("switch", "pr")
+            git("merge", "--no-edit", "main")
+            head = commit("fix", {"own.py": "three\n", "reverted.py": "kept\n"})
+            before = os.getcwd()
+            try:
+                os.chdir(directory)
+                delta = since_previous(base, previous, head, ["own.py"])
+                # No PR paths at either head: the guard must return nothing, not the whole upstream diff.
+                self.assertEqual(since_previous(base, root, base, []), "")
+            finally:
+                os.chdir(before)
+            self.assertIn("+three", delta)
+            self.assertIn("reverted.py", delta)
+            self.assertNotIn("upstream.py", delta)
 
 
 class ModelTests(unittest.TestCase):

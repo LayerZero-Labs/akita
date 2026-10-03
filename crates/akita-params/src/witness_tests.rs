@@ -352,3 +352,85 @@ fn units_for_group_filters_by_group_in_any_order() {
     assert_eq!(groups(1), vec![1]);
     assert!(layout.units_for_group(2).is_err());
 }
+
+#[test]
+fn canonical_tail_validation_rejects_stale_body_geometry() {
+    for num_chunks in [1, 2] {
+        for mode in [
+            RingRelationMode::QuotientLift,
+            RingRelationMode::ReducedEvaluation,
+        ] {
+            let (mut params, batch, _) = test_layout(num_chunks);
+            params.ring_relation_mode = mode;
+            let geometry = RelationWitnessGeometry::for_level(&params, &batch, 1).unwrap();
+            let plan = match mode {
+                RingRelationMode::QuotientLift => RelationQuotientPlan::quotient_lift(2).unwrap(),
+                RingRelationMode::ReducedEvaluation => RelationQuotientPlan::ReducedEvaluation,
+            };
+            let layout = WitnessLayout::new(&params, &batch, &geometry, num_chunks, plan).unwrap();
+            params.own_group_mut().opening.num_digits_fold += 1;
+            let updated_geometry = RelationWitnessGeometry::for_level(&params, &batch, 1).unwrap();
+            assert_eq!(geometry, updated_geometry);
+            let updated =
+                WitnessLayout::new(&params, &batch, &updated_geometry, num_chunks, plan).unwrap();
+            assert!(updated.tail_range().start > layout.tail_range().start);
+            assert!(layout
+                .validate_tail(&params, geometry.rhs_layout(), plan)
+                .is_err());
+            updated
+                .validate_tail(&params, geometry.rhs_layout(), plan)
+                .unwrap();
+        }
+    }
+}
+
+#[test]
+fn canonical_tail_validation_rejects_changed_ownership_and_ranges() {
+    let (params, batch, layout) = test_layout(2);
+    let geometry = RelationWitnessGeometry::for_level(&params, &batch, 1).unwrap();
+    let rhs = geometry.rhs_layout();
+    let plan = RelationQuotientPlan::quotient_lift(2).unwrap();
+    layout.validate_tail(&params, rhs, plan).unwrap();
+    let mut mutations = Vec::new();
+    let mut altered = layout.clone();
+    altered.compression_layers.remove(0);
+    mutations.push(altered);
+    let mut altered = layout.clone();
+    altered.compression_layers[0].map_index = 1;
+    mutations.push(altered);
+    let mut altered = layout.clone();
+    altered.compression_layers[0].f_spans[0].0 = 1;
+    mutations.push(altered);
+    let mut altered = layout.clone();
+    altered.compression_layers[0].f_spans.clear();
+    mutations.push(altered);
+    let mut altered = layout.clone();
+    altered.compression_layers[0].h_span.range.start -= 1;
+    mutations.push(altered);
+    let mut altered = layout.clone();
+    altered.compression_layers[0].h_quotient_row = Some(0);
+    mutations.push(altered);
+    let mut altered = layout.clone();
+    altered.compression_layers[0]
+        .f_quotient_rows
+        .as_mut()
+        .unwrap()[0]
+        .1 = 0;
+    mutations.push(altered);
+    let mut altered = layout.clone();
+    altered.tail_range.end += 1;
+    mutations.push(altered);
+    for altered in mutations {
+        assert!(altered.validate_tail(&params, rhs, plan).is_err());
+    }
+    assert!(layout
+        .validate_tail(
+            &params,
+            rhs,
+            RelationQuotientPlan::quotient_lift(3).unwrap()
+        )
+        .is_err());
+    let mut wrong_rhs = rhs.clone();
+    wrong_rhs.groups[0].group_index = 1;
+    assert!(layout.validate_tail(&params, &wrong_rhs, plan).is_err());
+}
