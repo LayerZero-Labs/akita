@@ -8,9 +8,11 @@ pub(crate) mod arithmetic;
 pub(crate) mod commitment;
 pub(crate) mod kernels;
 pub(crate) mod opaque;
+mod portable_witness;
 pub(crate) mod setup;
 pub(crate) mod sources;
 mod validation;
+pub use portable_witness::{CompressionWitnessFragment, PortableWitnessPatch};
 
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
@@ -19,7 +21,8 @@ use jolt_field::Field;
 
 pub(crate) use akita_prover::protocol;
 pub use commitment::{
-    GroupContext, PortableCompressionState, SetupPrefixProverRegistry, SetupPrefixSlot,
+    GroupContext, PortableCompressionOutput, PortableCompressionState, SetupPrefixProverRegistry,
+    SetupPrefixSlot,
 };
 pub use opaque::standalone;
 pub use opaque::{
