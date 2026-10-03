@@ -314,7 +314,9 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
         self.group_openings
             .get(group)
             .map(RingRelationGroupOpening::ambient_a_challenges)
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("ambient A challenges group index is out of range".into())
+            })
     }
 
     pub fn group_ring_multiplier_point(
@@ -383,8 +385,15 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
         let mut gamma = Vec::with_capacity(row_coefficients.len());
         let mut row_coefficient_rings = Vec::with_capacity(row_coefficients.len());
         for &coefficient in row_coefficients {
-            let ring =
-                embed_ring_subfield_scalar::<F, E, D>(coefficient, AkitaError::InvalidProof)?;
+            // The helper takes its error by value; a String variant would allocate per coefficient.
+            // This unit variant is translated only on failure and never escapes.
+            let ring = embed_ring_subfield_scalar::<F, E, D>(coefficient, AkitaError::InvalidProof)
+                .map_err(|error| match error {
+                    AkitaError::InvalidProof => AkitaError::InvalidSetup(
+                        "relation row coefficient is incompatible with the ring subfield".into(),
+                    ),
+                    error => error,
+                })?;
             gamma.push(ring.coefficients()[0]);
             row_coefficient_rings.push(ring);
         }

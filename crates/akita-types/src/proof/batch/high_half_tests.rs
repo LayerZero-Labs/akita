@@ -46,12 +46,14 @@ fn check_base_multiplier_high_half<const D: usize>() {
             .expect("base multiplier high half");
         assert_eq!(actual, initial);
     }
-    assert!(point
-        .accumulate_position_product_high_half(2, &rhs, &mut vec![F::zero(); D])
-        .is_err());
-    assert!(point
-        .accumulate_position_product_high_half(0, &rhs, &mut vec![F::zero(); D - 1])
-        .is_err());
+    assert!(matches!(
+        point.accumulate_position_product_high_half(2, &rhs, &mut vec![F::zero(); D]),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        point.accumulate_position_product_high_half(0, &rhs, &mut vec![F::zero(); D - 1]),
+        Err(AkitaError::InvalidSize { expected, actual }) if expected == D && actual == D - 1
+    ));
 }
 
 fn check_subfield_multiplier_high_half<L, const D: usize>()
