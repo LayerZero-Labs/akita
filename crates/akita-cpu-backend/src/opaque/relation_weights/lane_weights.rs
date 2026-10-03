@@ -76,6 +76,13 @@ impl<E: Field> RelationWeightFactorization<E> {
         std::mem::take(&mut self.relation_lane_weights)
     }
 
+    pub(crate) fn take(&mut self) -> Self {
+        Self {
+            common_alpha_factor: std::mem::take(&mut self.common_alpha_factor),
+            relation_lane_weights: self.take_lane_weights(),
+        }
+    }
+
     /// Expand this factorization over its complete padded flat domain.
     #[cfg(test)]
     pub(crate) fn materialize_dense(&self) -> Result<Vec<E>, AkitaError> {

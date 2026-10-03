@@ -32,8 +32,8 @@ impl<E: Field> DenseRelationWeights<E> {
         &self.evaluations
     }
 
-    pub(crate) fn into_evaluations(self) -> Vec<E> {
-        self.evaluations
+    pub(crate) fn take_evaluations(&mut self) -> Vec<E> {
+        std::mem::take(&mut self.evaluations)
     }
 
     pub(crate) const fn live_len(&self) -> usize {
