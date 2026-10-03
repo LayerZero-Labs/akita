@@ -232,6 +232,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
     let challenge = OneHot::ring_challenge_config(64).expect("D64 challenge");
     let candidates = derive_fold_candidates(
         RecursiveCandidateRequest {
+            input_chunks: None,
             policy: &policy,
             payload_mode: akita_params::CommitmentPayloadMode::Compressed,
             opening: PlannerOpeningCandidate::evaluation_trace(challenge),
@@ -301,6 +302,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
             .expect("valid packing request")
             .expect("packing geometry");
     let request = RecursiveCandidateRequest {
+        input_chunks: None,
         policy: &policy,
         payload_mode: akita_params::CommitmentPayloadMode::Compressed,
         opening,
@@ -465,6 +467,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
         .expect("production packing geometry");
         let derive = |without_bounds| {
             let request = RecursiveCandidateRequest {
+                input_chunks: None,
                 policy: &policy,
                 payload_mode: akita_params::CommitmentPayloadMode::Compressed,
                 opening,

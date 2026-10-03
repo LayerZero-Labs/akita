@@ -306,6 +306,16 @@ impl FoldSuccessor<'_> {
         }
     }
 
+    /// Coefficient width of one source block consumed by this fold.
+    pub fn source_block_len(self) -> Result<usize, AkitaError> {
+        let positions = match self {
+            Self::Recursive(params) => params.blocks().positions_per_block,
+            Self::Terminal(params) => params.blocks.positions_per_block,
+        };
+        akita_error::checked::product([self.ring_dimension(), positions])
+            .ok_or_else(|| AkitaError::InvalidSetup("source block width overflow".into()))
+    }
+
     pub fn recursive_opening_num_vars(self) -> Result<usize, AkitaError> {
         match self {
             Self::Recursive(params) => params.recursive_opening_num_vars(),

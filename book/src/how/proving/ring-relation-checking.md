@@ -446,7 +446,9 @@ It keeps the compression digits and their restricted $\{-1,0\}$ check when
 the payload is compressed. `WitnessLayout` derives the live ranges and any
 required alignment for the selected mode. Missing quotients have no placeholder
 coordinates. They contribute no range-check work or successor commitment
-input. Raw mode has no compression-alignment ranges.
+input. On multi-chunk folds, both payload modes zero pad each chunk's Z/E/T
+body to the successor's source-block boundary. The semantic T range ends before
+those zeros. Single-chunk folds keep the contiguous, unpadded Z/E/T body.
 
 For coefficient packing, the shared ordinary quotient segment includes the
 consistency-row slot for the digit-decomposed coordinate planes of

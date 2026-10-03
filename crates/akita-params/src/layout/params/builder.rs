@@ -29,6 +29,8 @@ impl CommittedGroupParams {
             ring_relation_mode: crate::RingRelationMode::QuotientLift,
             source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
+            successor_block_len: None,
+            witness_chunk_ends: Vec::new(),
             // A zeroed shell whose only group is its own; callers fill the
             // geometry through `with_decomp`, as they always did.
             groups: FoldGroups::singleton(GroupOpenPhaseParams {
@@ -125,6 +127,8 @@ impl CommittedGroupParams {
             ring_relation_mode: self.ring_relation_mode,
             source_encoding: self.source_encoding,
             witness_chunk: self.witness_chunk,
+            successor_block_len: self.successor_block_len,
+            witness_chunk_ends: self.witness_chunk_ends.clone(),
             open_matrix: OpenCommitMatrixParams::new_unchecked(
                 self.open_matrix.security_policy(),
                 self.open_matrix.sis_table_key().table_digest,
@@ -188,6 +192,8 @@ impl CommittedGroupParams {
             // The chunk layout is a property of the committed witness, sized with
             // the ranks, so it stays with `self` like the SIS buckets.
             witness_chunk: self.witness_chunk,
+            successor_block_len: self.successor_block_len,
+            witness_chunk_ends: self.witness_chunk_ends.clone(),
             open_matrix: OpenCommitMatrixParams::new_unchecked(
                 self.open_matrix.security_policy(),
                 self.open_matrix.sis_table_key().table_digest,

@@ -869,6 +869,7 @@ pub(crate) fn find_schedule_in_relation_order(
     };
     let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(active_policy)?;
     let initial_state = SuffixState {
+        input_chunks: None,
         level: 0,
         current_witness_len: root_input_witness_len,
         current_lb: 0,
