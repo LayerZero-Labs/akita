@@ -88,7 +88,6 @@ fn contracting_chunk_search_matches_unpruned_complete_objective() {
         );
         policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
         policy.inner_basis_range.1 = policy.inner_basis_range.0;
-        policy.opening_basis_range.1 = policy.opening_basis_range.0;
         let key = PolynomialGroupLayout::singleton(20);
         let lookup_key = ScheduleLookupKey::single(key);
         let selected = crate::planner::find_schedule(
@@ -147,6 +146,7 @@ fn contracting_chunk_pruning_preserves_consumer_widths_in_both_orders() {
             policy.ring_dimension_schedule_mode,
         );
         policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
+        policy.inner_basis_range.1 = policy.inner_basis_range.0;
         let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(20));
         let planned = crate::planner::find_schedule(
             &key,
@@ -251,6 +251,11 @@ fn contracting_chunk_pruning_preserves_consumer_widths_in_both_orders() {
             .iter()
             .map(|&width| shape.align(width, 1).unwrap().0)
             .collect::<std::collections::BTreeSet<_>>();
+        let domains = aligned_lengths
+            .iter()
+            .map(|len| len.next_power_of_two())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(domains.len() > 1, "fixture must cross a power-of-two boundary: chunks={num_chunks}, widths={expected_widths:?}, lengths={aligned_lengths:?}");
         assert!(
             aligned_lengths.len() > 1,
             "producer padding must depend on consumer width"

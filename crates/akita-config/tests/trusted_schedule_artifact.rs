@@ -880,3 +880,57 @@ fn out_of_range_digit_depths_are_rejected_before_digit_formulas() {
         assert_digit_range_rejection::<Cfg>(&bytes, "recursive fold 0 final group", role, &edited);
     }
 }
+
+#[test]
+fn canonical_chunk_ownership_rejects_coverage_preserving_mutations() {
+    let catalog = checked_in_catalog::<fp128::OneHotMultiChunk>();
+    let key =
+        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::singleton(16));
+    let row = catalog.resolve_key(&key).unwrap();
+    let policy = policy_of::<fp128::OneHotMultiChunk>();
+    let admit = |schedule| {
+        akita_config::ResolvedScheduleRow::try_new(row.profiles().clone(), schedule, &policy)
+    };
+    admit(row.schedule().clone()).unwrap();
+    let mut mutations = Vec::new();
+    let mut changed = row.schedule().clone();
+    let consumer = &mut changed.recursive_folds[0].params;
+    let old_end = consumer.witness_chunk_ends[0];
+    assert!(old_end + 1 < consumer.witness_chunk_ends[1]);
+    consumer.witness_chunk_ends[0] += 1;
+    let ranges = consumer
+        .witness_block_ranges(0, consumer.witness_chunk.num_chunks)
+        .unwrap();
+    assert!(ranges.windows(2).all(|pair| pair[0].end == pair[1].start));
+    assert_eq!(ranges.first().unwrap().start, 0);
+    assert_eq!(ranges.last().unwrap().end, consumer.blocks().live_blocks);
+    mutations.push(changed);
+    let mut changed = row.schedule().clone();
+    changed.root.params.successor_block_len = changed
+        .root
+        .params
+        .successor_block_len
+        .map(|width| width * 2);
+    mutations.push(changed);
+    let mut changed = row.schedule().clone();
+    changed.recursive_folds[0].params.witness_chunk_ends.pop();
+    mutations.push(changed);
+    let mut changed = row.schedule().clone();
+    changed.root.output_witness_len += 64;
+    changed.recursive_folds[0].input_witness_len += 64;
+    mutations.push(changed);
+    // The pre-cutover geometry used proportional recursive ownership and no
+    // successor padding. Each half of that old/new combination must reject.
+    let mut changed = row.schedule().clone();
+    changed.recursive_folds[0].params.witness_chunk_ends.clear();
+    mutations.push(changed);
+    let mut changed = row.schedule().clone();
+    changed.root.params.successor_block_len = None;
+    mutations.push(changed);
+    for changed in mutations {
+        assert!(matches!(
+            admit(changed),
+            Err(akita_error::AkitaError::InvalidSetup(_))
+        ));
+    }
+}

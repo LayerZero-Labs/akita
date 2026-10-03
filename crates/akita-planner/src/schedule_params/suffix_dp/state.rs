@@ -164,6 +164,66 @@ const MAX_PREFIXED_SUFFIX_CACHE_ENTRIES: usize =
     MAX_SUFFIX_SEARCH_CACHE_ENTRIES - MAX_DIRECT_SUFFIX_CACHE_ENTRIES;
 const MAX_SECOND_CHANCE_PROBES: usize = 16;
 
+#[cfg(test)]
+#[test]
+#[ignore = "manual peak-RSS measurement with both cache quotas saturated"]
+fn memo_cache_pressure() {
+    let multi = std::env::var_os("AKITA_MEMO_MULTI_CHUNK").is_some();
+    let mut memo = ScheduleMemo::new();
+    let result = empty_suffix_result();
+    for (topology, capacity) in [
+        (
+            SuffixTopology::Direct {
+                payload_phase: akita_params::CommitmentPayloadPhase::CompressedPrefix,
+                relation_phase: RingRelationPhase::QuotientPrefix,
+            },
+            MAX_DIRECT_SUFFIX_CACHE_ENTRIES,
+        ),
+        (
+            SuffixTopology::SetupPrefixed { natural_len: 64 },
+            MAX_PREFIXED_SUFFIX_CACHE_ENTRIES,
+        ),
+    ] {
+        for index in 0..capacity + 1 {
+            // Give every multi-chunk state its own allocation: even without
+            // sharing between sibling states, map/deque copies share the shape.
+            let input_chunks = multi.then(|| {
+                let mut body_lengths = [64; akita_params::MAX_WITNESS_CHUNKS];
+                body_lengths[0] += index;
+                Arc::new(akita_params::WitnessChunkShape {
+                    body_lengths,
+                    num_chunks: 8,
+                    tail_prefix_len: 0,
+                    tail_alignment: 1,
+                    tail_len: 5,
+                    tail_suffix_alignment: 1,
+                })
+            });
+            memo.insert(
+                ScheduleMemoKey {
+                    level: 1,
+                    current_witness_len: 1024 + index,
+                    input_chunks,
+                    current_lb: 3,
+                    source_moment: None,
+                    d_a: 64,
+                    d_b: 64,
+                    d_d: 64,
+                    topology,
+                },
+                Arc::clone(&result),
+                None,
+            );
+        }
+    }
+    assert_eq!(memo.len(), MAX_SUFFIX_SEARCH_CACHE_ENTRIES);
+    eprintln!(
+        "multi={multi}, memo_entries={}, key_bytes={}",
+        memo.len(),
+        std::mem::size_of::<ScheduleMemoKey>()
+    );
+}
+
 pub(super) fn evict_suffix_entry(
     entries: &mut HashMap<ScheduleMemoKey, MemoEntry>,
     insertion_order: &mut VecDeque<ScheduleMemoKey>,
