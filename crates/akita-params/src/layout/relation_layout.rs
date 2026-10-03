@@ -124,7 +124,7 @@ pub struct RelationRhsLayout {
     pub d_ring_dimension: usize,
     pub n_d: usize,
     pub groups: Vec<RelationGroupRows>,
-    pub compression: Option<RelationCompressionLayout>,
+    pub(crate) compression: Option<RelationCompressionLayout>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -255,10 +255,10 @@ impl RelationRowFamily {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RelationCompressionLayout {
+pub(crate) struct RelationCompressionLayout {
     pub(crate) group_indices: Vec<usize>,
-    pub group_plans: Vec<CompressionChainPlan>,
-    pub opening_plan: CompressionChainPlan,
+    pub(crate) group_plans: Vec<CompressionChainPlan>,
+    pub(crate) opening_plan: CompressionChainPlan,
 }
 
 #[cfg(test)]

@@ -30,7 +30,9 @@ pub use metadata::{
     Stage1PublicTransition, Stage1RoundPolynomial, Stage1Step, Stage1Transition,
     TerminalCommitmentMaterialKernel,
 };
-pub use opening::{EorGroupRequest, OpaqueEorKernel, OpaqueOpeningKernel, PreparedEor};
+pub use opening::{
+    EorGroupRequest, GroupOpeningRequest, OpaqueEorKernel, OpaqueOpeningKernel, PreparedEor,
+};
 pub use plans::{
     EvaluationTraceDescription, FoldProbeGeometry, PhysicalL2WeightRequest, RelationWeightRequest,
     Stage2OpeningDescription, ValidatedFoldAcceptancePlan, ValidatedFoldProbePlan,

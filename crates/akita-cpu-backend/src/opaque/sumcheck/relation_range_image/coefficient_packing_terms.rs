@@ -105,9 +105,11 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
         for (low_index, &packing_weight) in prepared_point.packing_weights().iter().enumerate() {
             for (subring_index, &alpha_power) in semantics.alpha_powers().iter().enumerate() {
                 let physical = geometry.a_ring_coefficient_index(low_index, subring_index)?;
-                *packing_z_source
-                    .get_mut(physical)
-                    .ok_or(AkitaError::InvalidProof)? = packing_weight * alpha_power;
+                *packing_z_source.get_mut(physical).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "packing Z source coordinate is outside its geometry".into(),
+                    )
+                })? = packing_weight * alpha_power;
             }
         }
 
@@ -155,10 +157,14 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
                 let first_segment = segments.len();
                 let block_terms = cfg_into_iter!(unit.global_block_range())
                     .map(|global_block| {
-                        let block_weight = *prepared_point
+                        let block_weight = *(prepared_point
                             .live_block_weights()
                             .get(global_block)
-                            .ok_or(AkitaError::InvalidProof)?;
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "packing opening block has no prepared weight".into(),
+                                )
+                            })?);
                         let block_segment_start = (global_block - unit.global_block_start())
                             .checked_mul(opening_gadget.len())
                             .and_then(|term| term.checked_mul(segments_per_direct_term))
