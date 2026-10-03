@@ -17,10 +17,10 @@ impl<E: Field> DenseRelationWeights<E> {
             || live_len == 0
             || live_len > evaluations.len()
         {
-            return Err(AkitaError::InvalidSize {
-                expected: evaluations.len(),
-                actual: live_len,
-            });
+            return Err(AkitaError::Internal(format!(
+                "dense relation table shape or live length: expected {}, actual {live_len}",
+                evaluations.len(),
+            )));
         }
         Ok(Self {
             evaluations,

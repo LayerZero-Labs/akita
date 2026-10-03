@@ -389,14 +389,11 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
         let expected_lanes = arity
             .degree()
             .checked_mul(parent_weights.len())
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("range-product lane count overflow".to_string())
-            })?;
+            .ok_or_else(|| AkitaError::Internal("range-product lane count overflow".to_string()))?;
         if LANES != expected_lanes {
-            return Err(AkitaError::InvalidSize {
-                expected: expected_lanes,
-                actual: LANES,
-            });
+            return Err(AkitaError::Internal(format!(
+                "range-product implementation lane count: expected {expected_lanes}, actual {LANES}"
+            )));
         }
         let nodes = {
             let _span = tracing::info_span!(

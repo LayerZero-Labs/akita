@@ -156,10 +156,11 @@ impl<E: Field + Ring> ClassIndexedRangeLeafProver<E> {
         polynomial_coefficients: Vec<E>,
     ) -> Result<Self, AkitaError> {
         if polynomial_coefficients.len() > MAX_TREE_STAGE_Q_DEGREE + 1 {
-            return Err(AkitaError::InvalidSize {
-                expected: MAX_TREE_STAGE_Q_DEGREE + 1,
-                actual: polynomial_coefficients.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "range-leaf polynomial coefficient count: expected {}, actual {}",
+                MAX_TREE_STAGE_Q_DEGREE + 1,
+                polynomial_coefficients.len(),
+            )));
         }
         let pair_coefficients = {
             let _span = tracing::info_span!(

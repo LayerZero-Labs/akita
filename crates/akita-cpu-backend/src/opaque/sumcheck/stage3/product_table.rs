@@ -81,19 +81,19 @@ where
             || !coefficient_factor.len().is_power_of_two()
             || required_rows > index_factor.len()
         {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "rectangular setup-product dimensions are invalid".into(),
             ));
         }
         let source_len = index_factor
             .len()
             .checked_mul(coefficient_factor.len())
-            .ok_or_else(|| AkitaError::InvalidSetup("setup source length overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("setup source length overflow".into()))?;
         if setup.len() < source_len {
-            return Err(AkitaError::InvalidSize {
-                expected: source_len,
-                actual: setup.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "rectangular setup-product source length: expected {source_len}, actual {}",
+                setup.len(),
+            )));
         }
 
         let coefficient_len = coefficient_factor.len();
@@ -241,10 +241,10 @@ where
             AkitaError::Internal("fully folded setup product has no index table".into())
         })?;
         if table.len() != 1 {
-            return Err(AkitaError::InvalidSize {
-                expected: 1,
-                actual: table.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "folded setup-product table length: expected 1, actual {}",
+                table.len(),
+            )));
         }
         Ok(table[0])
     }

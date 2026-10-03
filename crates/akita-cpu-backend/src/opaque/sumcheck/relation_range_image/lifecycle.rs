@@ -7,10 +7,9 @@ fn stage2_geometry(
     coefficient_bits: usize,
 ) -> Result<(usize, usize), AkitaError> {
     let lane_capacity = checked::pow2(lane_bits)
-        .ok_or_else(|| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
-    let coeff_count = checked::pow2(coefficient_bits).ok_or_else(|| {
-        AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
-    })?;
+        .ok_or_else(|| AkitaError::Internal("stage-2 lane width overflow".to_string()))?;
+    let coeff_count = checked::pow2(coefficient_bits)
+        .ok_or_else(|| AkitaError::Internal("stage-2 coefficient width overflow".to_string()))?;
     Ok((lane_capacity, coeff_count))
 }
 
@@ -68,66 +67,65 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     where
         E: 'static,
     {
-        let num_vars = lane_bits.checked_add(coefficient_bits).ok_or_else(|| {
-            AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
-        })?;
+        let num_vars = lane_bits
+            .checked_add(coefficient_bits)
+            .ok_or_else(|| AkitaError::Internal("stage-2 challenge width overflow".to_string()))?;
         if live_lane_count == 0 {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "live_lane_count must be at least 1".to_string(),
             ));
         }
         let (lane_capacity, coeff_count) = stage2_geometry(lane_bits, coefficient_bits)?;
         if live_lane_count > lane_capacity {
-            return Err(AkitaError::InvalidSize {
-                expected: lane_capacity,
-                actual: live_lane_count,
-            });
+            return Err(AkitaError::Internal(format!(
+                "stage-2 live lane count: expected {lane_capacity}, actual {live_lane_count}"
+            )));
         }
         let witness_len = live_lane_count
             .checked_mul(coeff_count)
-            .ok_or_else(|| AkitaError::InvalidInput("stage-2 witness size overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::Internal("stage-2 witness size overflow".to_string()))?;
         if w_evals_compact.len() != witness_len {
-            return Err(AkitaError::InvalidSize {
-                expected: witness_len,
-                actual: w_evals_compact.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "stage-2 compact witness length: expected {witness_len}, actual {}",
+                w_evals_compact.len(),
+            )));
         }
         if stage1_point.len() != num_vars {
-            return Err(AkitaError::InvalidSize {
-                expected: num_vars,
-                actual: stage1_point.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "stage-2 replay point length: expected {num_vars}, actual {}",
+                stage1_point.len(),
+            )));
         }
         match &relation_weights {
             RelationWeightOracle::QuotientFactored(factorization) => {
                 if factorization.common_alpha_factor().len() != coeff_count {
-                    return Err(AkitaError::InvalidSize {
-                        expected: coeff_count,
-                        actual: factorization.common_alpha_factor().len(),
-                    });
+                    return Err(AkitaError::Internal(format!(
+                        "stage-2 common alpha factor length: expected {coeff_count}, actual {}",
+                        factorization.common_alpha_factor().len(),
+                    )));
                 }
                 if factorization.relation_lane_weights().len() != lane_capacity {
-                    return Err(AkitaError::InvalidSize {
-                        expected: lane_capacity,
-                        actual: factorization.relation_lane_weights().len(),
-                    });
+                    return Err(AkitaError::Internal(format!(
+                        "stage-2 relation lane weight count: expected {lane_capacity}, actual {}",
+                        factorization.relation_lane_weights().len(),
+                    )));
                 }
             }
             RelationWeightOracle::ReducedDense(dense) => {
                 let domain_len = lane_capacity.checked_mul(coeff_count).ok_or_else(|| {
-                    AkitaError::InvalidInput("stage-2 relation domain overflow".into())
+                    AkitaError::Internal("stage-2 relation domain overflow".into())
                 })?;
                 if dense.evaluations().len() != domain_len {
-                    return Err(AkitaError::InvalidSize {
-                        expected: domain_len,
-                        actual: dense.evaluations().len(),
-                    });
+                    return Err(AkitaError::Internal(format!(
+                        "stage-2 dense relation domain length: expected {domain_len}, actual {}",
+                        dense.evaluations().len(),
+                    )));
                 }
                 if dense.live_len() != witness_len {
-                    return Err(AkitaError::InvalidSize {
-                        expected: witness_len,
-                        actual: dense.live_len(),
-                    });
+                    return Err(AkitaError::Internal(format!(
+                        "stage-2 dense relation live length: expected {witness_len}, actual {}",
+                        dense.live_len(),
+                    )));
                 }
             }
         }
@@ -168,7 +166,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             if ordinary_relation_sum + structured_relation_sum + additional_claim
                 != relation_linear_claim
             {
-                return Err(AkitaError::InvalidInput(
+                return Err(AkitaError::Internal(
                     "materialized relation weights do not match the combined relation claim".into(),
                 ));
             }

@@ -131,9 +131,9 @@ fn reduced_dense_oracle_rejects_a_live_domain_that_disagrees_with_the_witness() 
     );
     assert!(matches!(
         result,
-        Err(AkitaError::InvalidSize {
-            expected,
-            actual
-        }) if expected == witness_len && actual == witness_len - 1
+        Err(AkitaError::Internal(message)) if message == format!(
+            "stage-2 dense relation live length: expected {witness_len}, actual {}",
+            witness_len - 1,
+        )
     ));
 }

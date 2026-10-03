@@ -43,7 +43,7 @@ where
             .iter()
             .any(|(_, weights)| weights.len() != batch_count)
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "setup column weight batches are malformed".into(),
         ));
     }
@@ -51,19 +51,20 @@ where
     let output_len = column_count
         .checked_mul(batch_count)
         .and_then(|len| len.checked_mul(value_width))
-        .ok_or_else(|| AkitaError::InvalidSetup("setup column batch size overflow".into()))?;
+        .ok_or_else(|| {
+            AkitaError::Internal("contracted setup column batch size overflow".into())
+        })?;
     let mut values = vec![E::zero(); output_len];
     cfg_chunks_mut!(&mut values, batch_count * value_width)
         .enumerate()
         .try_for_each(|(column_offset, output)| -> Result<(), AkitaError> {
-            let column = columns
-                .start
-                .checked_add(column_offset)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup column offset overflow".into()))?;
+            let column = columns.start.checked_add(column_offset).ok_or_else(|| {
+                AkitaError::Internal("contracted setup column offset overflow".into())
+            })?;
             for (row, weights) in row_weights {
                 let contracted = contract(family.ring_slice(*row, column)?)?;
                 if contracted.len() != value_width {
-                    return Err(AkitaError::InvalidSetup(
+                    return Err(AkitaError::Internal(
                         "setup column contraction width mismatch".into(),
                     ));
                 }
@@ -199,25 +200,24 @@ where
             .iter()
             .any(|(_, weights)| weights.len() != batch_count)
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "setup residue-column weight batches are malformed".into(),
         ));
     }
     let column_count = columns.len();
     let column_width = batch_count
         .checked_mul(family.ring_d)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup column batch size overflow".into()))?;
+        .ok_or_else(|| AkitaError::Internal("setup residue-column width overflow".into()))?;
     let output_len = column_count
         .checked_mul(column_width)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup column batch size overflow".into()))?;
+        .ok_or_else(|| AkitaError::Internal("setup residue-column batch size overflow".into()))?;
     let mut values = vec![E::zero(); output_len];
     cfg_chunks_mut!(&mut values, column_width)
         .enumerate()
         .try_for_each(|(column_offset, output)| -> Result<(), AkitaError> {
-            let column = columns
-                .start
-                .checked_add(column_offset)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup column offset overflow".into()))?;
+            let column = columns.start.checked_add(column_offset).ok_or_else(|| {
+                AkitaError::Internal("setup residue-column offset overflow".into())
+            })?;
             let mut coefficient_sums = (0..column_width).map(|_| A::zero()).collect::<Vec<_>>();
             for (row, weights) in row_weights {
                 let coefficients = family.ring_slice(*row, column)?;

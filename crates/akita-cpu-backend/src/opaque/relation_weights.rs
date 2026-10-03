@@ -89,14 +89,14 @@ fn relation_d_group_width(
         .checked_div(group_dims.d_d())
         .filter(|count| *count > 0 && opening_width.is_multiple_of(group_dims.d_d()))
         .ok_or_else(|| {
-            AkitaError::InvalidSetup("opening width does not factor the D role".into())
+            AkitaError::Internal("setup D group opening width does not factor the D role".into())
         })?;
     let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
     num_claims
         .checked_mul(group_lp.num_live_blocks())
         .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
         .and_then(|n| n.checked_mul(d_subcolumns))
-        .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))
+        .ok_or_else(|| AkitaError::Internal("setup D group width overflow".to_string()))
 }
 
 fn relation_d_column_ranges(
@@ -110,21 +110,21 @@ fn relation_d_column_ranges(
     for group_id in opening_batch.root_group_order()? {
         let slot = seen
             .get_mut(group_id)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D group id out of range".into()))?;
+            .ok_or_else(|| AkitaError::Internal("setup D group id out of range".into()))?;
         if std::mem::replace(slot, true) {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "setup D group id appears more than once".into(),
             ));
         }
         let width = relation_d_group_width(lp, opening_batch, relation_geometry, group_id)?;
         let end = cursor
             .checked_add(width)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("setup D cumulative width overflow".into()))?;
         ranges[group_id] = cursor..end;
         cursor = end;
     }
     if seen.iter().any(|present| !present) {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "setup D group ids are not contiguous".into(),
         ));
     }
@@ -145,7 +145,7 @@ fn matching_row_range(
     let mut end = start + 1;
     for row in matched {
         if row != end {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "relation row family is not contiguous".into(),
             ));
         }
@@ -201,7 +201,7 @@ fn pack_relation_events<E: Field>(
             if group.physical_field_len() != live_coeff_len
                 || group.relation_coefficient_block_len() != relation_coefficient_block_len
             {
-                return Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::Internal(
                     "packing semantics disagree with the current ring switch".into(),
                 ));
             }
@@ -213,7 +213,7 @@ fn pack_relation_events<E: Field>(
                     )
                 })?;
             if slot.replace(group.geometry().a_ring_dimension()).is_some() {
-                return Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::Internal(
                     "packing relation group appears more than once".into(),
                 ));
             }
@@ -253,7 +253,7 @@ where
         OpeningMethod::SubringCoefficientPacking { .. }
     );
     if packing_required != matches!(opening_points, OpeningFamily::SubringCoefficientPacking(_)) {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "relation opening family disagrees with prepared points".into(),
         ));
     }
@@ -327,7 +327,7 @@ where
             (OpeningMethod::SubringCoefficientPacking { .. }, Some(a_ring_dim))
                 if a_ring_dim == group_d_a => {}
             _ => {
-                return Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::Internal(
                     "packing semantic groups do not match scheduled opening methods".into(),
                 ));
             }

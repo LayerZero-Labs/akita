@@ -55,7 +55,7 @@ impl<F: Field> UncompressedCommitmentOutput<F> {
             || u.ring_dim() != plan.outer().ring_dimension()
             || u.coeff_len() != plan.outer().output_coefficient_len()?
         {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "uncompressed commitment output disagrees with its checked plan".into(),
             ));
         }
@@ -98,7 +98,7 @@ impl<F: Field> FullCommitmentOutput<F> {
         compression: CompressionStageOutput<F>,
     ) -> Result<Self, AkitaError> {
         if image.binding() != compression.state().binding() {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "complete commitment stage outputs belong to different requests".into(),
             ));
         }
@@ -120,14 +120,15 @@ impl<F: Field> CompressionStageOutput<F> {
         plan: &CompressionChainPlan,
         relation_mode: RingRelationMode,
     ) -> Result<Self, AkitaError> {
-        let terminal_map = plan.maps().last().ok_or_else(|| {
-            AkitaError::InvalidSetup("compression chain has no terminal map".into())
-        })?;
+        let terminal_map = plan
+            .maps()
+            .last()
+            .ok_or_else(|| AkitaError::Internal("compression chain has no terminal map".into()))?;
         if state.binding().relation_mode() != Some(relation_mode)
             || terminal_payload.ring_dim() != terminal_map.ring_dimension()
             || terminal_payload.coeff_len() != plan.terminal_coefficients()
         {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "compression stage output disagrees with its checked plan or state binding".into(),
             ));
         }

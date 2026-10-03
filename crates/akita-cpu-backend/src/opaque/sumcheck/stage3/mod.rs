@@ -318,7 +318,7 @@ where
     if order.iter().any(|&group_index| {
         chunk_layout.num_chunks_for_group(group_index) != lp.witness_chunk.num_chunks
     }) {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "multi-group witness layout does not match root group order".to_string(),
         ));
     }
@@ -333,7 +333,7 @@ where
         let a_range = lp.a_row_range(opening_batch, group_index)?;
         let b_range = lp.commitment_row_range(opening_batch, group_index)?;
         if a_range.len() != n_a || b_range.len() != n_b {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "multi-group row ranges do not match group matrix heights".to_string(),
             ));
         }

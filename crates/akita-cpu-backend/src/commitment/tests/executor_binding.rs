@@ -261,7 +261,7 @@ fn executor_rejects_same_shape_rebinding_and_foreign_state_owners() {
     assert!(
         matches!(
             &error,
-            AkitaError::InvalidInput(message) if message.contains("different commitment request")
+            AkitaError::Internal(message) if message.contains("different commitment request")
         ),
         "unexpected error: {error:?}"
     );
@@ -302,6 +302,6 @@ fn executor_rejects_same_shape_rebinding_and_foreign_state_owners() {
     };
     assert!(matches!(
         error,
-        AkitaError::InvalidInput(message) if message.contains("different prepared implementation")
+        AkitaError::Internal(message) if message.contains("different prepared implementation")
     ));
 }

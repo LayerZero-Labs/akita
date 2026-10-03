@@ -520,7 +520,7 @@ fn duplicate_packing_group_support_is_rejected() {
     let materialized = combined.materialize_dense();
     assert!(matches!(
         combined.merge(duplicate),
-        Err(AkitaError::InvalidSetup(_))
+        Err(AkitaError::Internal(_))
     ));
     assert_eq!(combined.source_count(), source_count);
     assert_eq!(combined.materialize_dense(), materialized);

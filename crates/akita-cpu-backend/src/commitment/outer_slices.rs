@@ -14,18 +14,18 @@ pub(crate) fn for_each_outer_slice_input<'a, const D_B: usize>(
         .block_ranges()
         .last()
         .map(|range| range.end)
-        .ok_or_else(|| AkitaError::InvalidSetup("B commitment has no slices".into()))?;
+        .ok_or_else(|| AkitaError::Internal("B commitment has no slices".into()))?;
     let expected_planes = num_live_blocks
         .checked_mul(per_block)
-        .ok_or_else(|| AkitaError::InvalidSetup("B slice plane count overflow".into()))?;
+        .ok_or_else(|| AkitaError::Internal("B slice plane count overflow".into()))?;
     let polynomial_planes = polynomial_planes.into_iter().collect::<Vec<_>>();
     if polynomial_planes.is_empty()
         || polynomial_planes
             .iter()
             .any(|planes| planes.len() != expected_planes)
     {
-        return Err(AkitaError::InvalidSetup(
-            "B slice input does not match the frozen block geometry".into(),
+        return Err(AkitaError::Internal(
+            "B slice digit planes disagree with frozen block geometry".into(),
         ));
     }
 
@@ -37,34 +37,32 @@ pub(crate) fn for_each_outer_slice_input<'a, const D_B: usize>(
         let plane_start = range
             .start
             .checked_mul(per_block)
-            .ok_or_else(|| AkitaError::InvalidSetup("B slice input offset overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("B slice input start offset overflow".into()))?;
         let plane_end = range
             .end
             .checked_mul(per_block)
-            .ok_or_else(|| AkitaError::InvalidSetup("B slice input offset overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("B slice input end offset overflow".into()))?;
         for planes in &polynomial_planes {
             input.extend_from_slice(planes.get(plane_start..plane_end).ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "B slice input does not match the frozen block geometry".into(),
-                )
+                AkitaError::Internal("B slice plane range exceeds frozen digit storage".into())
             })?);
             let padding = (max_blocks - range.len())
                 .checked_mul(per_block)
-                .ok_or_else(|| AkitaError::InvalidSetup("B slice padding overflow".into()))?;
+                .ok_or_else(|| AkitaError::Internal("B slice padding overflow".into()))?;
             let padded_len = input
                 .len()
                 .checked_add(padding)
                 .filter(|len| *len <= expected_width)
                 .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "B slice input width does not match the physical matrix".into(),
+                    AkitaError::Internal(
+                        "padded B slice input exceeds physical matrix width".into(),
                     )
                 })?;
             input.resize(padded_len, [0i8; D_B]);
         }
         if input.len() != expected_width {
-            return Err(AkitaError::InvalidSetup(
-                "B slice input width does not match the physical matrix".into(),
+            return Err(AkitaError::Internal(
+                "assembled B slice input width differs from physical matrix width".into(),
             ));
         }
         consume(&input)?;

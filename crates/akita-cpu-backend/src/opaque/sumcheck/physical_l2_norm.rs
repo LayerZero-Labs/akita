@@ -293,7 +293,14 @@ pub(super) fn exact_claims<E: Field + Ring>(
                 }
             }
             let response_l2_sq =
-                reconstruct_l2_sq_from_gram(plan.shape(), plan.fold_basis(), &integer_claims)?;
+                reconstruct_l2_sq_from_gram(plan.shape(), plan.fold_basis(), &integer_claims)
+                    .map_err(|error| match error {
+                        AkitaError::InvalidProof => AkitaError::Internal(
+                            "response norm reconstruction from the prover's Gram claims failed"
+                                .into(),
+                        ),
+                        other => other,
+                    })?;
             Ok((
                 response_l2_sq,
                 integer_claims.into_iter().map(E::from_i128).collect(),
@@ -336,10 +343,11 @@ pub(super) fn prepare_norm_term<E: Field + Ring>(
                 AkitaError::Internal("gram physical norm term shape has no limb layout".into())
             })?;
             if subclaim_weights.len() != layout.subclaim_count() {
-                return Err(AkitaError::InvalidSize {
-                    expected: layout.subclaim_count(),
-                    actual: subclaim_weights.len(),
-                });
+                return Err(AkitaError::Internal(format!(
+                    "gram physical norm subclaim weight count: expected {}, actual {}",
+                    layout.subclaim_count(),
+                    subclaim_weights.len(),
+                )));
             }
             let mut selectors = Vec::with_capacity(layout.pair_count());
             for (left, right) in layout.limb_pairs() {
