@@ -332,7 +332,10 @@ fn common_coordinate_factorization_matches_flattened_rounds() {
         flattened.ingest_challenge(round, challenge);
     }
     assert_eq!(factorized_claim, flattened_claim);
-    assert_eq!(factorized.final_w_eval(), flattened.final_w_eval());
+    assert_eq!(
+        factorized.final_w_eval().unwrap(),
+        flattened.final_w_eval().unwrap()
+    );
 }
 
 fn relation_round_reference(
@@ -532,7 +535,10 @@ fn stage2_prefix_aware_rounds_match_explicit_relation_lane_table() {
                 padded_prover.ingest_challenge(round, challenge);
             }
 
-            assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+            assert_eq!(
+                prefix_prover.final_w_eval().unwrap(),
+                padded_prover.final_w_eval().unwrap()
+            );
             assert_eq!(prefix_claim, padded_claim);
         }
     }
@@ -646,7 +652,10 @@ fn stage2_large_odd_sparse_boolean_deferred_compact_prefix_matches_direct_path()
     }
 
     assert_eq!(prover_claim, direct_claim);
-    assert_eq!(prover.final_w_eval(), direct.final_w_eval());
+    assert_eq!(
+        prover.final_w_eval().unwrap(),
+        direct.final_w_eval().unwrap()
+    );
 }
 
 #[test]
@@ -716,7 +725,10 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
     }
 
     assert_eq!(prefix_claim, padded_claim);
-    assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+    assert_eq!(
+        prefix_prover.final_w_eval().unwrap(),
+        padded_prover.final_w_eval().unwrap()
+    );
 }
 
 #[test]
@@ -792,7 +804,10 @@ fn stage2_large_odd_dense_deferred_compact_prefix_matches_direct_path() {
     }
 
     assert_eq!(prover_claim, direct_claim);
-    assert_eq!(prover.final_w_eval(), direct.final_w_eval());
+    assert_eq!(
+        prover.final_w_eval().unwrap(),
+        direct.final_w_eval().unwrap()
+    );
 }
 
 #[test]
@@ -863,5 +878,8 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
     }
 
     assert_eq!(prefix_claim, padded_claim);
-    assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+    assert_eq!(
+        prefix_prover.final_w_eval().unwrap(),
+        padded_prover.final_w_eval().unwrap()
+    );
 }

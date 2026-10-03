@@ -283,6 +283,66 @@ fn scalar_fold_rejects_short_and_excess_challenges() {
     }
 }
 
+// An unsupported basis or a zero digit count must be rejected before the
+// digit cache build or the decomposition setup, with a cold or a populated cache.
+#[test]
+fn fold_rejects_unsupported_digit_shapes_with_cold_and_populated_caches() {
+    use crate::opaque::{CpuBackend, DecomposeFoldPlan, OpeningFoldKernel, RootOpeningSource};
+    use akita_challenges::SparseChallenge;
+
+    const D: usize = 8;
+    let challenges = vec![
+        SparseChallenge {
+            positions: vec![0].into(),
+            coeffs: vec![1].into(),
+        };
+        2
+    ];
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
+    let run = |poly: &DensePoly<F>, num_digits: usize, log_basis: u32| {
+        OpeningFoldKernel::decompose_fold(
+            &backend,
+            None,
+            <DensePoly<F> as RootOpeningSource<F, D>>::opening_view(poly).unwrap(),
+            DecomposeFoldPlan {
+                challenges: &challenges,
+                num_positions_per_block: 1,
+                num_digits,
+                log_basis,
+            },
+        )
+    };
+
+    for populate in [false, true] {
+        for (num_digits, log_basis) in [(1, 0), (0, 4), (1, 17)] {
+            let poly = DensePoly::from_ring_coeffs(vec![ring::<D>(0), ring::<D>(10)]).unwrap();
+            if populate {
+                run(&poly, 2, 4).unwrap();
+            }
+            assert!(
+                matches!(
+                    run(&poly, num_digits, log_basis),
+                    Err(AkitaError::InvalidInput(_))
+                ),
+                "({num_digits}, {log_basis}) with populated cache = {populate}"
+            );
+            assert!(
+                matches!(
+                    poly.decompose_fold_chunked::<D>(
+                        &challenges,
+                        &[0..1, 1..2],
+                        1,
+                        num_digits,
+                        log_basis
+                    ),
+                    Err(AkitaError::InvalidInput(_))
+                ),
+                "chunked ({num_digits}, {log_basis}) with populated cache = {populate}"
+            );
+        }
+    }
+}
+
 // A +1 monomial challenge must leave every single balanced digit unchanged.
 // The expectation is the input integer itself, independent of decomposition.
 #[test]
@@ -339,6 +399,61 @@ fn fold_operations_reject_invalid_ring_views() {
         poly.decompose_fold_chunked::<0>(&[], &[], 1, 1, 1),
         Err(AkitaError::InvalidInput(_))
     ));
+}
+
+#[test]
+fn single_digit_fold_validates_challenges_before_both_dense_row_loops() {
+    use akita_challenges::SparseChallenge;
+
+    for value in [1, 256] {
+        let poly = DensePoly::<F>::from_field_evals(6, vec![F::from_u64(value); 64]).unwrap();
+        // Fix the digit cache at another dimension, exercising the two
+        // single-digit fallback loops (small-i8 mirror and live field rows).
+        assert!(poly.digit_planes_for::<64>(1, 4).is_some());
+        assert_eq!(poly.small_i8_coeffs.is_some(), value == 1);
+        let challenges = [SparseChallenge {
+            positions: vec![128].into(),
+            coeffs: vec![1].into(),
+        }];
+        assert_eq!(
+            poly.decompose_fold::<128>(&challenges, 1, 1, 4)
+                .unwrap_err(),
+            AkitaError::InvalidInput(
+                "sparse fold challenge position exceeds the ring dimension".into()
+            ),
+        );
+    }
+}
+
+#[test]
+fn dense_single_digit_fold_preserves_unused_challenges_and_empty_positions() {
+    use akita_challenges::SparseChallenge;
+
+    let poly = DensePoly::<F>::from_field_evals(6, vec![F::from_u64(1); 64]).unwrap();
+    assert!(poly.digit_planes_for::<64>(1, 4).is_some());
+    let valid = SparseChallenge {
+        positions: vec![0].into(),
+        coeffs: vec![1].into(),
+    };
+    let invalid = SparseChallenge {
+        positions: vec![128].into(),
+        coeffs: vec![1].into(),
+    };
+    let expected = poly
+        .decompose_fold::<128>(std::slice::from_ref(&valid), 1, 1, 4)
+        .unwrap();
+    let actual = poly
+        .decompose_fold::<128>(&[valid, invalid.clone()], 1, 1, 4)
+        .unwrap();
+    assert_eq!(
+        actual.centered_coeffs_flat(),
+        expected.centered_coeffs_flat()
+    );
+    assert!(poly
+        .decompose_fold::<128>(&[invalid], 0, 1, 4)
+        .unwrap()
+        .centered_coeffs_flat()
+        .is_empty());
 }
 
 mod batch_only {

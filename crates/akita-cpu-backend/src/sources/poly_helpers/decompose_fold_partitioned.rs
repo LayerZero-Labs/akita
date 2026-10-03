@@ -8,11 +8,12 @@ use super::narrow_accum::{
 use super::rotated_accum::{accumulate_rotated_digit_plane, should_use_rotated_challenge};
 use super::{
     fill_rotated_challenge, sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_pm1,
-    sparse_mul_acc_pm1,
+    sparse_mul_acc_pm1, SignedDigitBasis, ValidatedSparseChallenge, ValidatedSparseChallenges,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
+use akita_error::{checked, AkitaError};
 use akita_params::SignedDigitKernel;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
@@ -25,12 +26,22 @@ struct PreparedPm1Challenge {
     negative: Vec<u32>,
 }
 
-enum ChallengePlan<const D: usize> {
+enum WidePlan<const D: usize> {
     Rotated(Box<[[i16; D]; D]>),
+    Pm1(PreparedPm1Challenge),
+    Generic,
+}
+
+enum ChallengePlan<const D: usize> {
+    Wide(WidePlan<D>),
     NarrowFull(u64),
     NarrowChunked(Vec<Range<usize>>),
-    WidePm1(PreparedPm1Challenge),
-    WideGeneric,
+}
+
+struct PreparedChallenge<'a, const D: usize> {
+    challenge: ValidatedSparseChallenge<'a, D>,
+    plan: ChallengePlan<D>,
+    block_start: usize,
 }
 
 fn prepare_wide_plan<const D: usize>(challenge: &SparseChallenge) -> ChallengePlan<D> {
@@ -40,28 +51,20 @@ fn prepare_wide_plan<const D: usize>(challenge: &SparseChallenge) -> ChallengePl
         match coefficient {
             1 => positive.push(position),
             -1 => negative.push(position),
-            _ => return ChallengePlan::WideGeneric,
+            _ => return ChallengePlan::Wide(WidePlan::Generic),
         }
     }
-    ChallengePlan::WidePm1(PreparedPm1Challenge { positive, negative })
+    ChallengePlan::Wide(WidePlan::Pm1(PreparedPm1Challenge { positive, negative }))
 }
 
 fn prepare_challenge<const D: usize>(
     digit_abs_bound: u64,
     challenge: &SparseChallenge,
 ) -> ChallengePlan<D> {
-    let has_valid_shape = challenge.positions.len() == challenge.coeffs.len()
-        && challenge
-            .positions
-            .iter()
-            .all(|&position| position < D as u32);
-    if !has_valid_shape {
-        return ChallengePlan::WideGeneric;
-    }
     if should_use_rotated_challenge::<D>(challenge) {
         let mut rotated = Box::new([[0i16; D]; D]);
         fill_rotated_challenge::<D>(rotated.as_mut(), challenge);
-        return ChallengePlan::Rotated(rotated);
+        return ChallengePlan::Wide(WidePlan::Rotated(rotated));
     }
     if digit_abs_bound == 0 {
         return ChallengePlan::NarrowFull(0);
@@ -182,6 +185,7 @@ impl<const D: usize> FoldSource<D> for CachedDigits<'_, D> {
 struct LiveRings<'a, F: Field + CanonicalEncoding, const D: usize> {
     coeffs: &'a [CyclotomicRing<F, D>],
     params: &'a BalancedDecomposePow2Params<F>,
+    basis: SignedDigitBasis,
 }
 
 enum LiveDigitScratch<const D: usize> {
@@ -201,14 +205,11 @@ impl<F: Field + CanonicalEncoding, const D: usize> FoldSource<D> for LiveRings<'
     }
 
     fn digit_abs_bound(&self) -> u64 {
-        akita_params::balanced_signed_digit_abs_bound(self.params.log_basis())
-            .expect("decompose-fold parameters must use a validated signed-digit basis")
+        self.basis.abs_bound
     }
 
     fn scratch(&self, num_digits: usize) -> Self::Scratch {
-        match SignedDigitKernel::for_log_basis(self.params.log_basis())
-            .expect("decompose-fold parameters must use a validated signed-digit basis")
-        {
+        match self.basis.kernel {
             SignedDigitKernel::I8 => LiveDigitScratch::I8(vec![[0i8; D]; num_digits]),
             SignedDigitKernel::I16 => LiveDigitScratch::I16(vec![[0i16; D]; num_digits]),
         }
@@ -285,8 +286,8 @@ trait DigitPlaneSet<const D: usize> {
     fn accumulate_wide(
         self,
         acc: &mut [[i32; D]],
-        challenge: &SparseChallenge,
-        plan: &ChallengePlan<D>,
+        challenge: ValidatedSparseChallenge<'_, D>,
+        plan: &WidePlan<D>,
     );
     fn accumulate_narrow(self, acc: &mut [[i16; D]], challenge: &SparseChallenge);
     fn accumulate_chunked_narrow(
@@ -303,18 +304,17 @@ impl<const D: usize> DigitPlaneSet<D> for &[i8; D] {
     fn accumulate_wide(
         self,
         acc: &mut [[i32; D]],
-        challenge: &SparseChallenge,
-        plan: &ChallengePlan<D>,
+        challenge: ValidatedSparseChallenge<'_, D>,
+        plan: &WidePlan<D>,
     ) {
         match plan {
-            ChallengePlan::Rotated(rotated) => {
+            WidePlan::Rotated(rotated) => {
                 accumulate_rotated_digit_plane(self, rotated.as_ref(), &mut acc[0])
             }
-            ChallengePlan::WidePm1(pm1) => {
+            WidePlan::Pm1(pm1) => {
                 sparse_mul_acc_pm1(self, &pm1.positive, &pm1.negative, &mut acc[0])
             }
-            ChallengePlan::WideGeneric => sparse_mul_acc(self, challenge, &mut acc[0]),
-            _ => unreachable!("wide accumulation requires a wide plan"),
+            WidePlan::Generic => sparse_mul_acc(self, challenge, &mut acc[0]),
         }
     }
 
@@ -347,35 +347,33 @@ impl<const D: usize> DigitPlaneSet<D> for DigitPlanes<'_, D> {
     fn accumulate_wide(
         self,
         acc: &mut [[i32; D]],
-        challenge: &SparseChallenge,
-        plan: &ChallengePlan<D>,
+        challenge: ValidatedSparseChallenge<'_, D>,
+        plan: &WidePlan<D>,
     ) {
         match self {
             Self::I8(planes) => {
                 for (plane, dst) in planes.iter().zip(acc) {
                     match plan {
-                        ChallengePlan::Rotated(rotated) => {
+                        WidePlan::Rotated(rotated) => {
                             accumulate_rotated_digit_plane(plane, rotated.as_ref(), dst)
                         }
-                        ChallengePlan::WidePm1(pm1) => {
+                        WidePlan::Pm1(pm1) => {
                             sparse_mul_acc_pm1(plane, &pm1.positive, &pm1.negative, dst)
                         }
-                        ChallengePlan::WideGeneric => sparse_mul_acc(plane, challenge, dst),
-                        _ => unreachable!("wide accumulation requires a wide plan"),
+                        WidePlan::Generic => sparse_mul_acc(plane, challenge, dst),
                     }
                 }
             }
             Self::I16(planes) => {
                 for (plane, dst) in planes.iter().zip(acc) {
                     match plan {
-                        ChallengePlan::Rotated(rotated) => {
+                        WidePlan::Rotated(rotated) => {
                             accumulate_rotated_digit_plane(plane, rotated.as_ref(), dst)
                         }
-                        ChallengePlan::WidePm1(pm1) => {
+                        WidePlan::Pm1(pm1) => {
                             sparse_mul_acc_i16_pm1(plane, &pm1.positive, &pm1.negative, dst)
                         }
-                        ChallengePlan::WideGeneric => sparse_mul_acc_i16(plane, challenge, dst),
-                        _ => unreachable!("wide accumulation requires a wide plan"),
+                        WidePlan::Generic => sparse_mul_acc_i16(plane, challenge, dst),
                     }
                 }
             }
@@ -436,27 +434,149 @@ fn flush_narrow_accumulator<const D: usize>(narrow: &mut [[i16; D]], wide: &mut 
     }
 }
 
+/// Wide accumulation is total for every challenge; narrow accumulation owns
+/// its scratch and flush bound together. Narrow plans are optimization hints,
+/// so a wide accumulator can also execute them through the generic wide kernel.
+enum FoldAccumulator<'a, const D: usize> {
+    Wide(&'a mut [[i32; D]]),
+    Narrow {
+        wide: &'a mut [[i32; D]],
+        narrow: Vec<[i16; D]>,
+        bound: u64,
+    },
+}
+
+impl<const D: usize> FoldAccumulator<'_, D> {
+    fn accumulate<S: FoldSource<D>>(
+        &mut self,
+        source: &S,
+        scratch: &mut S::Scratch,
+        ring_range: Range<usize>,
+        num_digits: usize,
+        prepared: &PreparedChallenge<'_, D>,
+    ) {
+        let challenge = prepared.challenge.challenge();
+        match (&mut *self, &prepared.plan) {
+            (
+                Self::Narrow {
+                    wide,
+                    narrow,
+                    bound,
+                },
+                ChallengePlan::NarrowFull(contribution),
+            ) => {
+                if *bound + contribution > i16::MAX as u64 {
+                    flush_narrow_accumulator(narrow, wide);
+                    *bound = 0;
+                }
+                for (local, ring) in ring_range.enumerate() {
+                    let planes = source.digit_planes(ring, num_digits, scratch);
+                    let base = local * num_digits;
+                    planes.accumulate_narrow(&mut narrow[base..base + num_digits], challenge);
+                }
+                *bound += contribution;
+            }
+            (
+                Self::Narrow {
+                    wide,
+                    narrow,
+                    bound,
+                },
+                ChallengePlan::NarrowChunked(ranges),
+            ) => {
+                if *bound != 0 {
+                    flush_narrow_accumulator(narrow, wide);
+                    *bound = 0;
+                }
+                for (local, ring) in ring_range.enumerate() {
+                    let planes = source.digit_planes(ring, num_digits, scratch);
+                    let base = local * num_digits;
+                    planes.accumulate_chunked_narrow(
+                        &mut narrow[base..base + num_digits],
+                        &mut wide[base..base + num_digits],
+                        challenge,
+                        ranges,
+                    );
+                }
+            }
+            (accumulator, plan) => {
+                let wide = match accumulator {
+                    Self::Wide(wide) => wide,
+                    Self::Narrow {
+                        wide,
+                        narrow,
+                        bound,
+                    } => {
+                        if *bound != 0 {
+                            flush_narrow_accumulator(narrow, wide);
+                            *bound = 0;
+                        }
+                        wide
+                    }
+                };
+                let plan = match plan {
+                    ChallengePlan::Wide(plan) => plan,
+                    ChallengePlan::NarrowFull(_) | ChallengePlan::NarrowChunked(_) => {
+                        &WidePlan::Generic
+                    }
+                };
+                for (local, ring) in ring_range.enumerate() {
+                    let planes = source.digit_planes(ring, num_digits, scratch);
+                    let base = local * num_digits;
+                    planes.accumulate_wide(
+                        &mut wide[base..base + num_digits],
+                        prepared.challenge,
+                        plan,
+                    );
+                }
+            }
+        }
+    }
+
+    fn finish(self) {
+        if let Self::Narrow {
+            wide,
+            mut narrow,
+            bound,
+        } = self
+        {
+            if bound != 0 {
+                flush_narrow_accumulator(&mut narrow, wide);
+            }
+        }
+    }
+}
+
 fn element_partitioned_decompose_fold<S: FoldSource<D>, const D: usize>(
     source: S,
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
     num_digits: usize,
-) -> Vec<[i32; D]> {
-    let inner_width = num_positions_per_block
-        .checked_mul(num_digits)
-        .expect("element-partitioned fold inner width overflow");
+) -> Result<Vec<[i32; D]>, AkitaError> {
+    let inner_width = checked::product([num_positions_per_block, num_digits])
+        .ok_or_else(|| AkitaError::InvalidInput("partitioned fold inner width overflow".into()))?;
     if inner_width == 0 || num_digits == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let digit_abs_bound = source.digit_abs_bound();
+    let challenges = ValidatedSparseChallenges::<D>::new(
+        challenges,
+        source.num_rings(),
+        num_positions_per_block,
+    )?;
     let plans = challenges
         .iter()
-        .map(|challenge| prepare_challenge::<D>(digit_abs_bound, challenge))
+        .enumerate()
+        .map(|(block_idx, challenge)| PreparedChallenge {
+            challenge,
+            plan: prepare_challenge::<D>(digit_abs_bound, challenge.challenge()),
+            block_start: block_idx * num_positions_per_block,
+        })
         .collect::<Vec<_>>();
-    let uses_narrow_accumulation = plans.iter().any(|plan| {
+    let uses_narrow_accumulation = plans.iter().any(|prepared| {
         matches!(
-            plan,
+            prepared.plan,
             ChallengePlan::NarrowFull(_) | ChallengePlan::NarrowChunked(_)
         )
     });
@@ -473,103 +593,36 @@ fn element_partitioned_decompose_fold<S: FoldSource<D>, const D: usize>(
             let elems_in_chunk = acc.len() / num_digits;
             let elem_end = elem_start + elems_in_chunk;
             let mut digit_scratch = source.scratch(num_digits);
-            let mut narrow_acc = uses_narrow_accumulation.then(|| vec![[0i16; D]; acc.len()]);
-            let mut narrow_bound = 0u64;
-
-            for (block_idx, (challenge, plan)) in challenges.iter().zip(&plans).enumerate() {
-                let block_start = block_idx * num_positions_per_block;
-                if block_start >= source.num_rings() {
-                    break;
+            let mut accumulator = if uses_narrow_accumulation {
+                let narrow = vec![[0i16; D]; acc.len()];
+                FoldAccumulator::Narrow {
+                    wide: acc,
+                    narrow,
+                    bound: 0,
                 }
+            } else {
+                FoldAccumulator::Wide(acc)
+            };
+
+            for prepared in &plans {
+                let block_start = prepared.block_start;
                 let ring_start = block_start + elem_start;
                 if ring_start >= source.num_rings() {
                     continue;
                 }
                 let ring_end = (block_start + elem_end).min(source.num_rings());
-
-                if let ChallengePlan::NarrowFull(contribution_bound) = plan {
-                    let contribution_bound = *contribution_bound;
-                    if narrow_bound + contribution_bound > i16::MAX as u64 {
-                        flush_narrow_accumulator(
-                            narrow_acc
-                                .as_mut()
-                                .expect("narrow fold path requires an accumulator"),
-                            acc,
-                        );
-                        narrow_bound = 0;
-                    }
-                    let narrow = narrow_acc
-                        .as_mut()
-                        .expect("narrow fold path requires an accumulator");
-                    for local_elem_idx in 0..(ring_end - ring_start) {
-                        let planes = source.digit_planes(
-                            ring_start + local_elem_idx,
-                            num_digits,
-                            &mut digit_scratch,
-                        );
-                        let base = local_elem_idx * num_digits;
-                        planes.accumulate_narrow(&mut narrow[base..base + num_digits], challenge);
-                    }
-                    narrow_bound += contribution_bound;
-                } else if let ChallengePlan::NarrowChunked(term_ranges) = plan {
-                    if narrow_bound != 0 {
-                        flush_narrow_accumulator(
-                            narrow_acc
-                                .as_mut()
-                                .expect("narrow fold path requires an accumulator"),
-                            acc,
-                        );
-                        narrow_bound = 0;
-                    }
-                    let narrow = narrow_acc
-                        .as_mut()
-                        .expect("narrow fold path requires an accumulator");
-                    for local_elem_idx in 0..(ring_end - ring_start) {
-                        let planes = source.digit_planes(
-                            ring_start + local_elem_idx,
-                            num_digits,
-                            &mut digit_scratch,
-                        );
-                        let base = local_elem_idx * num_digits;
-                        planes.accumulate_chunked_narrow(
-                            &mut narrow[base..base + num_digits],
-                            &mut acc[base..base + num_digits],
-                            challenge,
-                            term_ranges,
-                        );
-                    }
-                } else {
-                    if narrow_bound != 0 {
-                        flush_narrow_accumulator(
-                            narrow_acc
-                                .as_mut()
-                                .expect("narrow fold path requires an accumulator"),
-                            acc,
-                        );
-                        narrow_bound = 0;
-                    }
-                    for local_elem_idx in 0..(ring_end - ring_start) {
-                        let planes = source.digit_planes(
-                            ring_start + local_elem_idx,
-                            num_digits,
-                            &mut digit_scratch,
-                        );
-                        let base = local_elem_idx * num_digits;
-                        planes.accumulate_wide(&mut acc[base..base + num_digits], challenge, plan);
-                    }
-                }
-            }
-            if narrow_bound != 0 {
-                flush_narrow_accumulator(
-                    narrow_acc
-                        .as_mut()
-                        .expect("narrow fold path requires an accumulator"),
-                    acc,
+                accumulator.accumulate(
+                    &source,
+                    &mut digit_scratch,
+                    ring_start..ring_end,
+                    num_digits,
+                    prepared,
                 );
             }
+            accumulator.finish();
         });
 
-    out
+    Ok(out)
 }
 
 /// Element-partitioned accumulation for predecomposed dense digit caches.
@@ -578,12 +631,12 @@ pub(crate) fn cached_digit_decompose_fold_partitioned<const D: usize>(
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
     num_digits: usize,
-    log_basis: u32,
-) -> Vec<[i32; D]> {
-    let num_rings = digit_planes.len() / num_digits;
-    let digit_abs_bound = akita_params::balanced_signed_digit_abs_bound(log_basis)
-        .expect("cached decompose-fold basis must be validated")
-        .min(u64::from(i8::MIN.unsigned_abs()));
+    basis: SignedDigitBasis,
+) -> Result<Vec<[i32; D]>, AkitaError> {
+    let num_rings = digit_planes.len().checked_div(num_digits).ok_or_else(|| {
+        AkitaError::InvalidInput("cached fold digit count must be nonzero".into())
+    })?;
+    let digit_abs_bound = basis.abs_bound.min(u64::from(i8::MIN.unsigned_abs()));
     element_partitioned_decompose_fold(
         CachedDigits {
             digit_planes,
@@ -602,9 +655,14 @@ pub fn balanced_ring_decompose_fold_partitioned<F: Field + CanonicalEncoding, co
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
     params: &BalancedDecomposePow2Params<F>,
-) -> Vec<[i32; D]> {
+) -> Result<Vec<[i32; D]>, AkitaError> {
+    let basis = SignedDigitBasis::new(params.log_basis())?;
     element_partitioned_decompose_fold(
-        LiveRings { coeffs, params },
+        LiveRings {
+            coeffs,
+            params,
+            basis,
+        },
         challenges,
         num_positions_per_block,
         params.levels(),
@@ -617,7 +675,7 @@ pub(crate) fn packed_tight_digit_fold_partitioned<const D: usize>(
     num_rings: usize,
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
-) -> Vec<[i32; D]> {
+) -> Result<Vec<[i32; D]>, AkitaError> {
     let digit_abs_bound = u64::from(
         digits
             .bounds()

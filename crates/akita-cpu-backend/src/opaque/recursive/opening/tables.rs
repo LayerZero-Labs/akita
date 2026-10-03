@@ -129,27 +129,32 @@ impl<E: Field + Unreduced + Fold> ExtensionOpeningReductionGroup<E> {
         }
         if self.factor.len() > 1 {
             let previous_len = self.factor.len();
-            if previous_len >= 4 {
-                let (first, remaining) = self
-                    .terms
-                    .split_first_mut()
-                    .expect("validated EOR groups are nonempty");
-                let (constant, quadratic) = fused_fold_group_head_and_accumulate(
-                    &mut first.witness,
-                    &mut self.factor,
-                    r_round,
-                );
-                first.cached_accumulate = Some((first.coeff * constant, first.coeff * quadratic));
-                for term in remaining {
-                    let (constant, quadratic) =
-                        fused_fold_witness_and_accumulate(&mut term.witness, &self.factor, r_round);
-                    term.cached_accumulate = Some((term.coeff * constant, term.coeff * quadratic));
+            match self.terms.split_first_mut() {
+                Some((first, remaining)) if previous_len >= 4 => {
+                    let (constant, quadratic) = fused_fold_group_head_and_accumulate(
+                        &mut first.witness,
+                        &mut self.factor,
+                        r_round,
+                    );
+                    first.cached_accumulate =
+                        Some((first.coeff * constant, first.coeff * quadratic));
+                    for term in remaining {
+                        let (constant, quadratic) = fused_fold_witness_and_accumulate(
+                            &mut term.witness,
+                            &self.factor,
+                            r_round,
+                        );
+                        term.cached_accumulate =
+                            Some((term.coeff * constant, term.coeff * quadratic));
+                    }
                 }
-            } else {
-                fold_evals_in_place(&mut self.factor, r_round);
-                for term in &mut self.terms {
-                    fold_evals_in_place(&mut term.witness, r_round);
-                    term.cached_accumulate = None;
+                _ => {
+                    // With no members, plain folding still binds the shared factor correctly.
+                    fold_evals_in_place(&mut self.factor, r_round);
+                    for term in &mut self.terms {
+                        fold_evals_in_place(&mut term.witness, r_round);
+                        term.cached_accumulate = None;
+                    }
                 }
             }
             return;
@@ -159,5 +164,50 @@ impl<E: Field + Unreduced + Fold> ExtensionOpeningReductionGroup<E> {
             self.extra_factor_eval *= (E::one() - point) * (E::one() - r_round) + point * r_round;
             self.extra_round += 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jolt_field::{One, Prime128Offset275 as E, Ring};
+
+    #[test]
+    fn group_rejects_empty_members() {
+        let result = ExtensionOpeningReductionGroup::<E>::new(Vec::new(), vec![E::one(); 4]);
+        assert!(matches!(result, Err(AkitaError::InvalidInput(message))
+            if message == "extension-opening reduction group requires at least one term"));
+    }
+
+    #[test]
+    fn empty_members_use_plain_fold_for_short_and_long_tables() {
+        for len in [2, 4, 8] {
+            let factor = (1..=len).map(|value| E::from_u64(value as u64)).collect();
+            let term = ExtensionOpeningReductionTerm::new(vec![E::one(); len], E::one());
+            let mut group = ExtensionOpeningReductionGroup::new(vec![term], factor).unwrap();
+            group.terms.clear();
+            group.ingest_challenge(E::from_u64(3));
+            let expected = (0..len / 2)
+                .map(|pair| E::from_u64((2 * pair + 4) as u64))
+                .collect::<Vec<_>>();
+            assert_eq!(group.factor, expected);
+            assert_eq!(group.num_terms(), 0);
+        }
+    }
+
+    #[test]
+    fn member_order_is_preserved_through_folding_and_cloning() {
+        let members = (1..=3)
+            .map(|value| ExtensionOpeningReductionTerm::new(vec![E::from_u64(value); 4], E::one()))
+            .collect();
+        let mut group = ExtensionOpeningReductionGroup::new(members, vec![E::one(); 4]).unwrap();
+        assert_eq!(group.num_terms(), 3);
+        group.ingest_challenge(E::from_u64(7));
+        group.ingest_challenge(E::from_u64(11));
+        let expected = (1..=3)
+            .map(|value| (E::one(), E::from_u64(value), E::one()))
+            .collect::<Vec<_>>();
+        assert_eq!(group.final_terms().unwrap(), expected);
+        assert_eq!(group.clone().final_terms().unwrap(), expected);
     }
 }

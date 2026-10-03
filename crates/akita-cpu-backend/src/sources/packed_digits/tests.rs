@@ -337,3 +337,74 @@ fn decode_microbenchmark() {
         );
     }
 }
+
+#[test]
+fn auto_storage_matches_explicit_width_for_every_tail_and_signed_extreme() {
+    let mut rng = StdRng::seed_from_u64(0x6175_746f);
+    assert_eq!(
+        PackedSignedDigits::default(),
+        PackedSignedDigits::from_i8_digits_auto(vec![])
+    );
+    for width in 1..=8 {
+        for len in [0, 1, 7, 8, 63, 64, 65, 127, 128, 129] {
+            let mut digits = random_digits(&mut rng, len, width);
+            if let Some(first) = digits.first_mut() {
+                *first = -(1i16 << (width - 1)) as i8;
+            }
+            let automatic = PackedSignedDigits::from_i8_digits_auto(digits.clone());
+            let explicit =
+                PackedSignedDigits::from_i8_digits(digits, automatic.bit_width()).unwrap();
+            assert_eq!(automatic, explicit);
+        }
+    }
+}
+
+#[test]
+fn scalar_bit_position_does_not_overflow_at_the_index_boundary() {
+    for bit_width in 1..=8u8 {
+        let width = usize::from(bit_width);
+        // Small indices agree with the direct bit-offset formula.
+        for index in 0..256usize {
+            let bits = index * width;
+            assert_eq!(scalar::bit_position(index, bit_width), (bits / 8, bits % 8));
+        }
+        // `index * bit_width` overflows `usize` for every index here.
+        for index in [usize::MAX / 8 + 1, usize::MAX - 7, usize::MAX] {
+            let bits = index as u128 * u128::from(bit_width);
+            let expected = ((bits / 8) as usize, (bits % 8) as usize);
+            assert_eq!(scalar::bit_position(index, bit_width), expected);
+        }
+    }
+}
+
+#[test]
+fn writer_stays_in_the_final_partial_block_at_the_index_boundary() {
+    // A length this large cannot be allocated on a 64-bit host, so build the
+    // writer state directly: a split final block whose end is not a `usize`.
+    let mut pending = [0; DIGITS_PER_BLOCK];
+    pending[(usize::MAX - 3) % DIGITS_PER_BLOCK] = -1;
+    let mut writer = PackedSignedDigitWriter {
+        storage: Arc::from([0u8; VECTOR_LOAD_PADDING]),
+        encoded_len: 0,
+        len: usize::MAX,
+        bit_width: 2,
+        position: usize::MAX - 2,
+        pending,
+        bounds: SignedDigitBounds::ZERO,
+    };
+    writer.write_at(usize::MAX - 1, &[1]).unwrap();
+    assert_eq!(writer.position(), usize::MAX);
+    assert_eq!(writer.pending[DIGITS_PER_BLOCK - 4..], [-1, 0, 1, 0]);
+}
+
+#[test]
+fn writer_rejects_lengths_past_the_allocation_layout_limit_without_allocating() {
+    for len in [isize::MAX as usize, usize::MAX] {
+        assert!(matches!(
+            PackedSignedDigitWriter::new(len, 8),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+    let padded = isize::MAX as usize - VECTOR_LOAD_PADDING;
+    assert!(PackedSignedDigitWriter::new(padded, 8).is_err());
+}
