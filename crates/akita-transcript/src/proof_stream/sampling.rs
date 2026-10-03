@@ -40,7 +40,9 @@ pub const fn field_challenge_bytes<F: CanonicalEncoding>() -> u64 {
 
 fn sample_field<F: CanonicalEncoding>(sponge: &mut TranscriptSponge) -> Result<F, AkitaError> {
     if !field_sampling_is_certified(F::NUM_BYTES, F::MODULUS_BITS, FIELD_SAMPLING_QUERY_LIMIT) {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidSetup(
+            "field metadata is not certified for exact challenge sampling".into(),
+        ));
     }
     let mut candidate = [0u8; FIELD_CHALLENGE_BYTES as usize];
     let width = F::NUM_BYTES;
@@ -72,8 +74,8 @@ fn sample_field<F: CanonicalEncoding>(sponge: &mut TranscriptSponge) -> Result<F
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidProof`] when `F` is not certified for exact
-/// sampling.
+/// Returns [`AkitaError::InvalidSetup`] when `F` is not certified for exact
+/// sampling, or [`AkitaError::InvalidProof`] when the retry counter is exhausted.
 pub fn prover_field_challenge<F: CanonicalEncoding>(
     state: &mut ProverChannel,
 ) -> Result<F, AkitaError> {
@@ -84,8 +86,9 @@ pub fn prover_field_challenge<F: CanonicalEncoding>(
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidProof`] when `F` is not certified for exact
-/// sampling or the verifier state is already invalid.
+/// Returns [`AkitaError::InvalidSetup`] when `F` is not certified for exact
+/// sampling, or [`AkitaError::InvalidProof`] when the retry counter is exhausted
+/// or the verifier state is already invalid.
 pub fn verifier_field_challenge<F: CanonicalEncoding>(
     state: &mut VerifierChannel<'_>,
 ) -> Result<F, AkitaError> {
