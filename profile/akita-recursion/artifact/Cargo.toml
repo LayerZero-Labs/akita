@@ -43,6 +43,7 @@ parallel = [
   "jolt-field/parallel",
   "akita-cpu-backend/parallel",
 ]
+recompute-last-block = ["akita-params/recompute-last-block"]
 
 [lints.rust]
 missing_docs = "warn"

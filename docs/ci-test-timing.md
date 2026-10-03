@@ -8,7 +8,8 @@ Every PR gets an upserted timing comment (marker `<!-- akita-ci-test-timing -->`
 
 - **`test`** runs the workspace nextest merge gate (`--profile ci --cargo-profile ci-test`, features `parallel,disk-persistence`), sharded across matrix jobs (`slice:index/total`).
 - **Generic CI and Jolt smoke jobs** load tracked external schedule artifacts at runtime.
-- **`test-schedule-artifact-drift`** is the only CI job that regenerates schedules. It writes every family artifact to a temporary directory and rejects any byte difference from `artifacts/schedules/`.
+- **`test-schedule-artifact-drift`** regenerates the schedules that default builds load. It writes every family artifact to a temporary directory and rejects any byte difference from `artifacts/schedules/`.
+- **`test-recompute-last-block`** does the same for `artifacts/schedules-dev/`, the set for the `recompute-last-block` wire-format variant, and runs that variant's end-to-end suites.
 - **`test-timing`** merges shard JUnit into `summary.json` (schema v2, single pass `ci`) and uploads artifact `ci-test-timing-data`.
 
 ## Local repro

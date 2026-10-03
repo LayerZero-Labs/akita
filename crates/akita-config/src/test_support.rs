@@ -14,7 +14,8 @@ use crate::CommitmentConfig;
 pub fn workspace_schedule_artifact_path<Cfg: CommitmentConfig>() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .join("artifacts/schedules")
+        .join("artifacts")
+        .join(akita_params::SCHEDULE_ARTIFACT_SET)
         .join(format!("{}.aks", Cfg::schedule_family_name()))
 }
 

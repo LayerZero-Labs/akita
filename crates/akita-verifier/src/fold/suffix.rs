@@ -21,6 +21,9 @@ pub(super) struct SuffixVerifierState<F: Field, E: Field> {
     pub opening_point: Vec<E>,
     pub opening: E,
     pub witness: RingVec<F>,
+    /// Digest of the last `t` block when `witness` is the terminal `t` state
+    /// under `recompute-last-block`.
+    pub witness_last_block_digest: Option<[u8; akita_transcript::FIELD_DIGEST_BYTES]>,
     pub basis: BasisMode,
     pub witness_len: usize,
     pub setup_prefix_opening: Option<SetupPrefixOpening<E>>,
@@ -309,6 +312,7 @@ where
             opening_point: output.challenges,
             opening: output.opening,
             witness: output.next_witness,
+            witness_last_block_digest: output.next_witness_last_block_digest,
             basis: BasisMode::Lagrange,
             witness_len: step.output_witness_len,
             setup_prefix_opening: output.setup_prefix_opening,

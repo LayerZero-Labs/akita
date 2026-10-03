@@ -52,7 +52,7 @@ pub use layout::{
     setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
     setup_prefix_precommitted_params, setup_prefix_slot_field_elements, shared_d_digit_log_basis,
     suffix_opening_layout, sumcheck_rounds, terminal_response_bytes, terminal_response_max_bytes,
-    terminal_response_planner_bytes, terminal_response_upper_bound_bytes,
+    terminal_response_planner_bytes, terminal_response_upper_bound_bytes, terminal_sent_blocks,
     try_extension_opening_reduction_level_bytes, validate_role_dims, validate_schedule_ring_dims,
     validate_setup_prefix_domain, verifier_setup_matrix_capacity_for_schedule,
     witness_commitment_domain_len, BasisMode, BlockGeometry, CommitmentRingDims,
@@ -65,8 +65,9 @@ pub use layout::{
     RoleParams, SetupMatrixCapacity, SetupPrefixSlotId, SetupProjectionGeometry, Stage1StageShape,
     SubringCoefficientPackingGeometry, TailSegmentGroupLayout, TailSegmentLayout,
     TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE, MAX_FOLD_LEVELS,
-    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
-    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
+    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, RECOMPUTE_LAST_BLOCK, SCHEDULE_ARTIFACT_SET,
+    SCHEDULE_CATALOG_SNAPSHOT, SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
+    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS, TERMINAL_BLOCK_DIGEST_BYTES,
 };
 pub use proof_size::{nonterminal_level_layout, NonterminalLevelLayout};
 pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};

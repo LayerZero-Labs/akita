@@ -122,7 +122,10 @@ pub(crate) struct FoldLevelProof<F: Field, E: Field> {
 /// Ships the terminal response in cleartext. Its raw `e` segment is bound before the
 /// terminal sparse challenge. The predecessor first binds canonical `t` as its
 /// outgoing state; terminal replay rebinds the same `t` as current state before
-/// absorbing `e`, sampling challenges, and absorbing the `z` response.
+/// absorbing `e`, sampling challenges, and absorbing the `z` response. Under
+/// the dev-only `recompute-last-block` feature both segments omit their last
+/// live block, which is bound by a digest in its place and recomputed by the
+/// verifier.
 ///
 /// Drops the redundant proof components at the terminal: `stage1`
 /// (the terminal response codec enforces its range), the stage-2 outgoing binding

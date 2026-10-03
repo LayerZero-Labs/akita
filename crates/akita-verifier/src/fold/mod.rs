@@ -26,6 +26,7 @@ use crate::stages::stage3::verify_stage3;
 use akita_error::AkitaError;
 use akita_params::{BasisMode, CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
+use akita_transcript::FIELD_DIGEST_BYTES;
 use akita_types::GrindingReplay;
 use akita_types::{AkitaVerifierSetup, FpExtEncoding, RingVec};
 use challenges::derive_multi_group_stage1_challenges;
@@ -60,6 +61,9 @@ pub(crate) struct FoldVerifyOutput<F: Field, E: Field> {
     pub(crate) challenges: Vec<E>,
     pub(crate) setup_prefix_opening: Option<SetupPrefixOpening<E>>,
     pub(crate) next_witness: RingVec<F>,
+    /// Digest of the last `t` block, sent under `recompute-last-block` when
+    /// the successor is the terminal.
+    pub(crate) next_witness_last_block_digest: Option<[u8; FIELD_DIGEST_BYTES]>,
     pub(crate) opening: E,
 }
 
@@ -89,7 +93,7 @@ where
     )?;
     let relation_instance =
         assemble_relation_instance(&prepared, &relation_geometry, group_challenges)?;
-    let next_witness = receive_next_witness(grinding, &prepared)?;
+    let (next_witness, next_witness_last_block_digest) = receive_next_witness(grinding, &prepared)?;
     let rs = ring_switch_verifier::<F, E>(
         &RingSwitchReplay {
             setup: setup.expanded(),
@@ -168,15 +172,19 @@ where
         challenges: stage2.point,
         setup_prefix_opening: stage3.map(|replay| (replay.challenges, replay.setup_prefix_eval)),
         next_witness,
+        next_witness_last_block_digest,
         opening: stage2.witness_eval,
     })
 }
 
 /// Receive the successor witness payload for the next fold or the terminal.
+///
+/// Under `recompute-last-block` the terminal recomputes the last block of its
+/// `t` state, so that block arrives as a digest.
 fn receive_next_witness<F, E>(
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     prepared: &PreparedFoldReplay<'_, F, E>,
-) -> Result<RingVec<F>, AkitaError>
+) -> Result<(RingVec<F>, Option<[u8; FIELD_DIGEST_BYTES]>), AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: Field,
@@ -215,5 +223,17 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    Ok(next_witness)
+    let last_block_digest = match prepared.next_witness {
+        NextWitnessPlan::TerminalT { .. } if akita_params::RECOMPUTE_LAST_BLOCK => {
+            Some(akita_transcript::receive_field_digest(
+                grinding.state_mut(),
+                akita_types::FoldSite::NextWitnessInnerStateDigest {
+                    level: prepared.level,
+                }
+                .id()?,
+            )?)
+        }
+        NextWitnessPlan::TerminalT { .. } | NextWitnessPlan::OuterPayload { .. } => None,
+    };
+    Ok((next_witness, last_block_digest))
 }

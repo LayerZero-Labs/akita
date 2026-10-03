@@ -11,6 +11,49 @@ use crate::tail_golomb_rice_low_bits::{
 use crate::wire_limits::{checked_shape_len, checked_shape_sequence_len};
 use crate::{CommittedGroupParams, TerminalFoldParams};
 
+/// Whether the terminal response omits the last live block of `e` and of `t`.
+///
+/// With the dev-only `recompute-last-block` feature the prover sends a digest
+/// of each omitted block and the verifier recomputes the block from the
+/// relation it completes. Without the feature every live block is sent. The
+/// two wire formats are incompatible, so each has its own schedule set.
+pub const RECOMPUTE_LAST_BLOCK: bool = cfg!(feature = "recompute-last-block");
+
+/// Directory under the workspace `artifacts/` whose schedules are priced for
+/// this build's terminal wire format.
+pub const SCHEDULE_ARTIFACT_SET: &str = if RECOMPUTE_LAST_BLOCK {
+    "schedules-dev"
+} else {
+    "schedules"
+};
+
+/// Snapshot under the workspace `artifacts/` that records
+/// [`SCHEDULE_ARTIFACT_SET`].
+pub const SCHEDULE_CATALOG_SNAPSHOT: &str = if RECOMPUTE_LAST_BLOCK {
+    "schedule-catalog-dev.tsv"
+} else {
+    "schedule-catalog.tsv"
+};
+
+/// Digest bytes each terminal group sends in place of omitted blocks.
+pub const TERMINAL_BLOCK_DIGEST_BYTES: usize = if RECOMPUTE_LAST_BLOCK {
+    2 * akita_transcript::FIELD_DIGEST_BYTES
+} else {
+    0
+};
+
+/// Live terminal blocks whose `e` and `t` rings travel on the wire.
+///
+/// Returns `None` when the terminal has no live block to recompute.
+#[must_use]
+pub const fn terminal_sent_blocks(live_blocks: usize) -> Option<usize> {
+    if RECOMPUTE_LAST_BLOCK {
+        live_blocks.checked_sub(1)
+    } else {
+        Some(live_blocks)
+    }
+}
+
 /// Public segment geometry for a transparent terminal witness.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TailSegmentLayout {
@@ -26,7 +69,10 @@ pub struct TailSegmentLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TailSegmentGroupLayout {
     pub z_coords: usize,
+    /// Field elements of `e` on the wire, covering
+    /// [`terminal_sent_blocks`] blocks.
     pub e_field_elems: usize,
+    /// Field elements of `t` on the wire, covering the same blocks as `e`.
     pub t_field_elems: usize,
     /// Verifier-enforced coefficient cap for a terminal Linf route.
     ///
@@ -168,13 +214,13 @@ impl TerminalResponseShape {
             .inner_width()
             .checked_mul(d)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal z coordinates overflow".into()))?;
-        let e_field_elems =
-            params.blocks.live_blocks.checked_mul(d).ok_or_else(|| {
-                AkitaError::InvalidSetup("terminal e coordinates overflow".into())
-            })?;
-        let t_field_elems = params
-            .blocks
-            .live_blocks
+        let sent_blocks = terminal_sent_blocks(params.blocks.live_blocks).ok_or_else(|| {
+            AkitaError::InvalidSetup("terminal response has no live block".into())
+        })?;
+        let e_field_elems = sent_blocks
+            .checked_mul(d)
+            .ok_or_else(|| AkitaError::InvalidSetup("terminal e coordinates overflow".into()))?;
+        let t_field_elems = sent_blocks
             .checked_mul(params.inner.matrix.output_rank())
             .and_then(|value| value.checked_mul(d))
             .ok_or_else(|| AkitaError::InvalidSetup("terminal t coordinates overflow".into()))?;

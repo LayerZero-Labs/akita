@@ -287,6 +287,10 @@ To regenerate schedule artifacts:
 scripts/generate-schedule-artifacts.sh
 ```
 
+Pass `--dev` as the first argument to regenerate `artifacts/schedules-dev/`
+instead. That set is priced for the `recompute-last-block` wire-format variant
+described in [`docs/branches.md`](../../docs/branches.md#wire-format-variants).
+
 During planner development, pass one or more family names to
 plan and publish only those families. The generator validates the names against
 the canonical family registry and reports the elapsed time and key counts for

@@ -47,7 +47,8 @@ where
 {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
-        .join("artifacts/schedules")
+        .join("artifacts")
+        .join(akita_params::SCHEDULE_ARTIFACT_SET)
         .join(format!("{}.aks", Cfg::schedule_family_name()));
     let bytes = fs::read(&path).map_err(|error| {
         akita_error::AkitaError::InvalidSetup(format!(

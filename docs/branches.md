@@ -75,6 +75,9 @@ The rules below apply to every existing configuration and every input that
    unifies features across a build, so a feature that one dependent enables is
    enabled for every crate in that build.
 3. Enabling a Cargo feature MUST NOT select an extension.
+
+   Rules 2 and 3 do not apply to the Cargo feature of a
+   [wire-format variant](#wire-format-variants).
 4. Given the same setup, statement, and serialized proof bytes, `dev` MUST
    decode, validate, and verify them with the same outcome as `main`: `dev`
    accepts exactly when `main` accepts.
@@ -105,6 +108,32 @@ tamper and soundness suites in `crates/akita-pcs/tests/`
 the author of a `dev` pull request that changes files from `main` MUST compare
 proof bytes against `main` for the affected configurations and record the
 result in the pull request.
+
+### Wire-format variants
+
+A *wire-format variant* is an extension that replaces part of the current
+proof grammar instead of adding a configuration beside it. It is a candidate
+change to the current protocol that `dev` carries until maintainers review it
+for `main`. Selecting it per schedule would thread a mode through the code it
+replaces, and that plumbing would have to be removed again when the variant
+reaches `main`. A variant is therefore selected at compile time by its Cargo
+feature, under these conditions:
+
+- The feature MUST be off by default. No other feature and no crate's default
+  features may enable it.
+- With the feature off, rules 1, 4, and 6 hold.
+- The variant MUST have its own schedule set and catalog snapshot. It MUST NOT
+  read or modify `artifacts/schedules/`.
+- A dedicated CI job MUST regenerate the variant's schedule set and run the
+  end-to-end, soundness, and transcript suites with the feature on.
+- The variant MUST be listed in the table below.
+
+A build with the feature on produces and accepts only the variant's proofs. Do
+not enable it in a build that must also verify proofs from `main`.
+
+| Feature | Change | Schedule set | CI job |
+| --- | --- | --- | --- |
+| `recompute-last-block` | The terminal response omits the last live block of `e` and of `t`. The verifier recomputes it and checks it against a digest. | `artifacts/schedules-dev/`, `artifacts/schedule-catalog-dev.tsv` | `test-recompute-last-block` |
 
 ## Keep `dev` close to `main`
 

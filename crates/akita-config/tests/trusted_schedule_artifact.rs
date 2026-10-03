@@ -66,7 +66,8 @@ impl CommitmentConfig for CountingDense {
 fn checked_in_catalog<Cfg: CommitmentConfig>() -> TrustedScheduleCatalog<Cfg> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .join("artifacts/schedules")
+        .join("artifacts")
+        .join(akita_params::SCHEDULE_ARTIFACT_SET)
         .join(format!("{}.aks", Cfg::schedule_family_name()));
     let bytes = std::fs::read(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
@@ -76,7 +77,8 @@ fn checked_in_catalog<Cfg: CommitmentConfig>() -> TrustedScheduleCatalog<Cfg> {
 fn checked_in_artifact_bytes<Cfg: CommitmentConfig>() -> Vec<u8> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .join("artifacts/schedules")
+        .join("artifacts")
+        .join(akita_params::SCHEDULE_ARTIFACT_SET)
         .join(format!("{}.aks", Cfg::schedule_family_name()));
     std::fs::read(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))

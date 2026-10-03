@@ -110,6 +110,22 @@ where
         group.e_field_elems,
     )
     .map(RingVec::from_coeffs)?;
+    // Under `recompute-last-block` both segments omit their last block. The
+    // predecessor fold bound the `t` digest next to the carried state, and the
+    // `e` digest arrives here, before the fold challenges.
+    let last_block_digests = if akita_params::RECOMPUTE_LAST_BLOCK {
+        Some(crate::terminal::direct::LastBlockDigests {
+            t: current_state
+                .witness_last_block_digest
+                .ok_or(AkitaError::InvalidProof)?,
+            e: akita_transcript::receive_field_digest(
+                grinding.state_mut(),
+                akita_types::FoldSite::TerminalEDigest { level }.id()?,
+            )?,
+        })
+    } else {
+        None
+    };
     grinding.read_fold_response(akita_params::GrindingSite::FoldResponse { level })?;
     let operator_rejection = if scheduled.response_l2_sq_cap().is_some() {
         Some(
@@ -147,12 +163,13 @@ where
         e_fields,
         t_fields: current_state.witness.clone(),
     };
-    crate::terminal::direct::verify_terminal_ring_relations(
+    let e_fields = crate::terminal::direct::verify_terminal_ring_relations(
         terminal_ntt,
         &challenges,
         &prepared_point.ring_multiplier_point,
         scheduled,
         &terminal_response,
+        last_block_digests.as_ref(),
     )?;
     let (target, scale) = match final_relation {
         Some((claims, factors)) => (
@@ -164,7 +181,7 @@ where
     crate::terminal::direct::verify_terminal_trace(
         &prepared_point.ring_multiplier_point,
         scheduled,
-        &terminal_response,
+        &e_fields,
         &prepared_point,
         &[E::one()],
         None,

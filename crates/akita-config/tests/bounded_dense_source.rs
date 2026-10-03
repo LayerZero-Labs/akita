@@ -18,7 +18,8 @@ use akita_params::ScheduleLookupKey;
 fn catalog<Cfg: CommitmentConfig>() -> akita_config::TrustedScheduleCatalog<Cfg> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .join("artifacts/schedules")
+        .join("artifacts")
+        .join(akita_params::SCHEDULE_ARTIFACT_SET)
         .join(format!("{}.aks", Cfg::schedule_family_name()));
     let bytes = std::fs::read(path).expect("checked-in schedule artifact");
     akita_config::TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(&bytes)

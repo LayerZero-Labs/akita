@@ -4,9 +4,10 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_error::AkitaError;
 use akita_params::{dispatch_for_field, TerminalFoldParams};
+use akita_transcript::{field_digest, FIELD_DIGEST_BYTES};
 use akita_types::{
     decode_terminal_z_golomb_payload, recover_ring_subfield_inner_product, FpExtEncoding,
-    PreparedOpeningPoint, RingMultiplierOpeningPoint, TerminalResponse,
+    PreparedOpeningPoint, RingMultiplierOpeningPoint, RingVec, TerminalResponse,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
@@ -46,20 +47,67 @@ where
 }
 
 fn sparse_challenge_dot<F, const D: usize>(
-    row: &Challenges,
+    row: &[SparseChallenge],
     input: &[CyclotomicRing<F, D>],
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
     F: Field + Ring,
 {
-    if row.as_slice().len() != input.len() {
+    if row.len() != input.len() {
         return Err(AkitaError::InvalidProof);
     }
     let mut sum = CyclotomicRing::zero();
-    for (challenge, value) in row.as_slice().iter().zip(input) {
+    for (challenge, value) in row.iter().zip(input) {
         sparse_challenge_mul_accumulate(challenge, value, &mut sum)?;
     }
     Ok(sum)
+}
+
+/// Digests of the last live `e` and `t` block, which the prover sends in
+/// place of the blocks under `recompute-last-block`.
+pub(crate) struct LastBlockDigests {
+    pub(crate) e: [u8; FIELD_DIGEST_BYTES],
+    pub(crate) t: [u8; FIELD_DIGEST_BYTES],
+}
+
+/// Recovers the last live block of `e` or `t`, which the prover omits, from
+/// the fold relation that the block completes.
+struct LastBlockRecovery<'a, F: Field, const D: usize> {
+    challenge: &'a SparseChallenge,
+    inverse: CyclotomicRing<F, D>,
+}
+
+impl<'a, F, const D: usize> LastBlockRecovery<'a, F, D>
+where
+    F: Field + Ring,
+{
+    /// Invert the last block's fold challenge, rejecting a challenge that is
+    /// not a unit.
+    fn new(challenge: &'a SparseChallenge) -> Result<Self, AkitaError> {
+        let mut dense = CyclotomicRing::zero();
+        sparse_challenge_mul_accumulate(challenge, &CyclotomicRing::one(), &mut dense)?;
+        let inverse = dense.inverse().ok_or(AkitaError::InvalidProof)?;
+        Ok(Self { challenge, inverse })
+    }
+
+    /// Solve `partial + challenge * block == target` for `block`.
+    ///
+    /// The quotient by the inverse is only a candidate. The sparse product
+    /// checks it against the relation, so acceptance never relies on the
+    /// inversion or on the dense product.
+    fn solve(
+        &self,
+        partial: CyclotomicRing<F, D>,
+        target: &CyclotomicRing<F, D>,
+    ) -> Result<CyclotomicRing<F, D>, AkitaError> {
+        let block = self.inverse * (*target - partial);
+        let mut folded = partial;
+        sparse_challenge_mul_accumulate(self.challenge, &block, &mut folded)?;
+        if folded != *target {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(block)
+    }
 }
 
 #[inline]
@@ -72,21 +120,23 @@ where
     }))
 }
 
+/// Both sides of the A rows `sum_b c_b * t_b == A * z`, with the left side
+/// folded over the transmitted `t` blocks only.
 #[tracing::instrument(skip_all, name = "terminal_direct_a_rows")]
-fn check_a_rows<F, const D: usize>(
+#[allow(clippy::type_complexity)]
+fn a_row_sides<F, const D: usize>(
     terminal_ntt: &TerminalNttCache,
     t: &[CyclotomicRing<F, D>],
     z: &[[i16; D]],
-    challenges: &Challenges,
+    challenges: &[SparseChallenge],
     n_a: usize,
     n_a_cols: usize,
-) -> Result<(), AkitaError>
+) -> Result<(Vec<CyclotomicRing<F, D>>, Vec<CyclotomicRing<F, D>>), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
 {
     if t.len()
         != challenges
-            .as_slice()
             .len()
             .checked_mul(n_a)
             .ok_or(AkitaError::InvalidProof)?
@@ -98,35 +148,38 @@ where
         let _span = tracing::info_span!(
             "terminal_direct_a_lhs",
             rows = n_a,
-            challenges = challenges.as_slice().len()
+            challenges = challenges.len()
         )
         .entered();
         (0..n_a)
             .map(|row_index| {
-                challenges
-                    .as_slice()
-                    .iter()
-                    .zip(t.chunks_exact(n_a))
-                    .try_fold(CyclotomicRing::zero(), |mut sum, (challenge, rows)| {
+                challenges.iter().zip(t.chunks_exact(n_a)).try_fold(
+                    CyclotomicRing::zero(),
+                    |mut sum, (challenge, rows)| {
                         let row = rows.get(row_index).ok_or(AkitaError::InvalidProof)?;
                         sparse_challenge_mul_accumulate(challenge, row, &mut sum)?;
                         Ok::<_, AkitaError>(sum)
-                    })
+                    },
+                )
             })
             .collect::<Result<Vec<_>, AkitaError>>()
     });
     let rhs = rhs?;
     let lhs = lhs?;
-    let _span = tracing::info_span!("terminal_direct_a_compare", rows = n_a).entered();
-    for (actual, expected) in lhs.iter().zip(&rhs) {
-        if actual != expected {
-            return Err(AkitaError::InvalidProof);
-        }
+    if lhs.len() != rhs.len() {
+        return Err(AkitaError::InvalidProof);
     }
-    Ok(())
+    Ok((lhs, rhs))
 }
 
 /// Check reduced consistency and A rows for a quotient-free terminal witness.
+///
+/// Without `last_block_digests` the response carries every live block and
+/// both relations are compared as sent. With them, the response omits the
+/// last live block of `e` and of `t`. Each relation is linear in its omitted
+/// block with an invertible fold challenge, so the block is recovered from
+/// the relation and compared with the digest the prover sent before that
+/// challenge was drawn. Returns the complete `e`.
 #[tracing::instrument(skip_all, name = "terminal_direct_ring_relations")]
 pub(crate) fn verify_terminal_ring_relations<F>(
     terminal_ntt: &TerminalNttCache,
@@ -134,7 +187,8 @@ pub(crate) fn verify_terminal_ring_relations<F>(
     multiplier: &RingMultiplierOpeningPoint<F>,
     params: &TerminalFoldParams,
     terminal_response: &TerminalResponse<F>,
-) -> Result<(), AkitaError>
+    last_block_digests: Option<&LastBlockDigests>,
+) -> Result<RingVec<F>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
 {
@@ -208,12 +262,22 @@ where
                     challenge.validate::<D_A>()?;
                 }
             }
-            let expected_t_len = params
-                .blocks
-                .live_blocks
+            let (sent_challenges, recovery) = match last_block_digests {
+                Some(digests) => {
+                    let (last_challenge, sent_challenges) = challenges
+                        .as_slice()
+                        .split_last()
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let last_block = LastBlockRecovery::<F, D_A>::new(last_challenge)?;
+                    (sent_challenges, Some((last_block, digests)))
+                }
+                None => (challenges.as_slice(), None),
+            };
+            let expected_t_len = sent_challenges
+                .len()
                 .checked_mul(params.inner.matrix.output_rank())
                 .ok_or(AkitaError::InvalidProof)?;
-            if e.len() != params.blocks.live_blocks || t.len() != expected_t_len {
+            if e.len() != sent_challenges.len() || t.len() != expected_t_len {
                 return Err(AkitaError::InvalidProof);
             }
             let n_a = params.inner.matrix.output_rank();
@@ -233,10 +297,10 @@ where
                     let folded = {
                         let _span = tracing::info_span!(
                             "terminal_direct_consistency_fold_e",
-                            blocks = challenges.as_slice().len()
+                            blocks = sent_challenges.len()
                         )
                         .entered();
-                        sparse_challenge_dot(challenges, e)?
+                        sparse_challenge_dot(sent_challenges, e)?
                     };
                     let reduced = {
                         let _span = tracing::info_span!(
@@ -274,27 +338,52 @@ where
                     Ok::<_, AkitaError>((folded, reduced))
                 },
                 || {
-                    check_a_rows::<F, D_A>(terminal_ntt, t, z_centered, challenges, n_a, n_a_cols)
+                    a_row_sides::<F, D_A>(
+                        terminal_ntt,
+                        t,
+                        z_centered,
+                        sent_challenges,
+                        n_a,
+                        n_a_cols,
+                    )
                 }
             );
             let (folded, reduced) = consistency?;
-            a_rows?;
-            if folded != reduced {
+            let (t_folded, a_z) = a_rows?;
+            let Some((last_block, digests)) = recovery else {
+                let _span = tracing::info_span!("terminal_direct_a_compare", rows = n_a).entered();
+                if folded != reduced || t_folded != a_z {
+                    return Err(AkitaError::InvalidProof);
+                }
+                return Ok(witness.e_fields.clone());
+            };
+            let _span = tracing::info_span!("terminal_direct_a_recover", rows = n_a).entered();
+            let e_last = last_block.solve(folded, &reduced)?;
+            let t_last = t_folded
+                .into_iter()
+                .zip(&a_z)
+                .map(|(partial, target)| last_block.solve(partial, target))
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            let t_last = RingVec::from_ring_elems(&t_last);
+            if field_digest(e_last.coefficients()) != digests.e
+                || field_digest(t_last.coeffs()) != digests.t
+            {
                 return Err(AkitaError::InvalidProof);
             }
-            Ok::<(), AkitaError>(())
+            let mut e_fields = witness.e_fields.coeffs().to_vec();
+            e_fields.extend_from_slice(e_last.coefficients());
+            Ok::<_, AkitaError>(RingVec::from_coeffs(e_fields))
         }
-    )?;
-    Ok(())
+    )
 }
 
-/// Check the public opening directly against the revealed folded `e` segment.
+/// Check the public opening directly against the complete folded `e` segment.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "terminal_direct_trace")]
 pub(crate) fn verify_terminal_trace<F, E>(
     multiplier: &RingMultiplierOpeningPoint<F>,
     params: &TerminalFoldParams,
-    terminal_response: &TerminalResponse<F>,
+    e_fields: &RingVec<F>,
     prepared_point: &PreparedOpeningPoint<F, E>,
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
@@ -305,7 +394,6 @@ where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: ExtField<F> + FpExtEncoding<F>,
 {
-    let witness = terminal_response;
     if row_coefficients.len() != 1 || claim_scales.is_some_and(|scales| scales.len() != 1) {
         return Err(AkitaError::InvalidProof);
     }
@@ -315,7 +403,7 @@ where
         F,
         params.d_a(),
         |D| {
-            let e_rings = witness.e_fields.as_ring_slice::<D>()?;
+            let e_rings = e_fields.as_ring_slice::<D>()?;
             let e = e_rings;
             let packed_inner = prepared_point.packed_inner_trusted::<D>()?;
             let claim_e = e;
@@ -528,5 +616,52 @@ mod tests {
     fn sparse_challenge_product_matches_schoolbook() {
         assert_sparse_challenge_product::<64>();
         assert_sparse_challenge_product::<128>();
+    }
+
+    fn assert_last_block_recovery<const D: usize>() {
+        let challenge = SparseChallenge {
+            positions: vec![1, 5, (D - 2) as u32].into(),
+            coeffs: vec![1, -2, 1].into(),
+        };
+        let ramp = |step: i64| {
+            CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|index| {
+                F::from_i64(index as i64 * step - 7)
+            }))
+        };
+        let (block, partial) = (ramp(3), ramp(-5));
+        let mut target = partial;
+        sparse_challenge_mul_accumulate(&challenge, &block, &mut target)
+            .expect("valid sparse challenge");
+
+        let recovery = LastBlockRecovery::<F, D>::new(&challenge).expect("challenge is a unit");
+        assert_eq!(recovery.solve(partial, &target), Ok(block));
+
+        // The relation, not the inversion, decides acceptance.
+        let wrong_inverse = LastBlockRecovery {
+            challenge: &challenge,
+            inverse: recovery.inverse + CyclotomicRing::one(),
+        };
+        assert_eq!(
+            wrong_inverse.solve(partial, &target),
+            Err(AkitaError::InvalidProof)
+        );
+    }
+
+    #[test]
+    fn last_block_recovery_solves_the_fold_relation() {
+        assert_last_block_recovery::<64>();
+        assert_last_block_recovery::<128>();
+    }
+
+    #[test]
+    fn last_block_recovery_rejects_a_non_unit_challenge() {
+        let zero = SparseChallenge {
+            positions: Vec::new().into(),
+            coeffs: Vec::new().into(),
+        };
+        assert!(matches!(
+            LastBlockRecovery::<F, 64>::new(&zero),
+            Err(AkitaError::InvalidProof)
+        ));
     }
 }

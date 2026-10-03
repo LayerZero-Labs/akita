@@ -35,10 +35,18 @@ pub enum FoldSite {
     OpeningPayload { level: u32, ring_dimension: usize },
     /// Outer commitment payload for the next fold's witness.
     NextWitnessPayload { level: u32 },
-    /// Inner `t` state handed to the suffix-terminal fold.
+    /// Inner `t` state handed to the suffix-terminal fold. Under
+    /// `recompute-last-block` it stops before the last block.
     NextWitnessInnerState { level: u32 },
-    /// Terminal `e` fields.
+    /// Digest of the last inner `t` block, which the terminal recomputes under
+    /// `recompute-last-block`.
+    NextWitnessInnerStateDigest { level: u32 },
+    /// Terminal `e` fields. Under `recompute-last-block` they stop before the
+    /// last block.
     TerminalEFields { level: u32 },
+    /// Digest of the last terminal `e` block, which the terminal recomputes
+    /// under `recompute-last-block`.
+    TerminalEDigest { level: u32 },
     /// Terminal public `t` fields.
     TerminalTFields { level: u32 },
     /// Terminal `z` response payload.
@@ -95,8 +103,10 @@ impl FoldSite {
             },
             Self::NextWitnessPayload { level } => site(SITE_FAMILY_NEXT_WITNESS, level, 1),
             Self::NextWitnessInnerState { level } => site(SITE_FAMILY_NEXT_WITNESS, level, 2),
+            Self::NextWitnessInnerStateDigest { level } => site(SITE_FAMILY_NEXT_WITNESS, level, 3),
             Self::TerminalEFields { level } => site(SITE_FAMILY_TERMINAL, level, 1),
             Self::TerminalTFields { level } => site(SITE_FAMILY_TERMINAL, level, 2),
+            Self::TerminalEDigest { level } => site(SITE_FAMILY_TERMINAL, level, 3),
             Self::TerminalZPayload { level } => ProtocolSiteId {
                 round: 3,
                 ..site(SITE_FAMILY_TERMINAL, level, 0)

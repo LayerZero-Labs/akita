@@ -24,6 +24,8 @@ pub use sampling::{
 };
 mod verifier;
 pub use verifier::VerifierChannel;
+mod digest;
+pub use digest::{field_digest, receive_field_digest, send_field_digest, FIELD_DIGEST_BYTES};
 mod site;
 
 /// Proof channel and proof-stream format version.

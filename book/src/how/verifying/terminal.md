@@ -220,6 +220,123 @@ whose bound exceeds every supported exact profile is invalid.
 Prepared matrix views are derived from the coefficient setup and are never
 serialized. These execution choices compute the same relation (5).
 
+## Variant: recompute the last block
+
+The `dev` branch carries a variant of this response behind the Cargo feature
+`recompute-last-block`, which is off by default. A build with the feature
+speaks only the variant, with schedules from `artifacts/schedules-dev/`. The
+rest of this page describes a build without it.
+
+Checks (4) and (5) are linear in the last block, and its coefficient is the
+last fold challenge $c_{m-1}$. That challenge is a short nonzero ring
+element, so it is invertible for Akita's fields, as
+[rings and fields](../../foundations/rings-and-fields.md) explains. Each
+relation therefore has exactly one solution for the last block:
+
+$$
+E_{m-1}
+=c_{m-1}^{-1}\Bigl(
+\sum_{p,a}Q_pG_a^{\mathrm{in}}z_{p,a}-\sum_{b<m-1}c_bE_b
+\Bigr),
+\qquad
+\mathbf t_{m-1}
+=c_{m-1}^{-1}\Bigl(
+\mathbf A\mathbf z-\sum_{b<m-1}c_b\mathbf t_b
+\Bigr).
+\tag{10}
+$$
+
+Once (4) and (5) hold, the last block carries no further information, so the
+variant omits it. For $m$ live blocks the response carries $m-1$ opening
+rings and $(m-1)n_A$ inner-image rings. This removes $(1+n_A)D$ field
+elements from the proof at the cost of two 32-byte digests.
+
+The omitted values still have to be fixed before the challenges that test
+them. An honest prover knows $\mathbf t_{m-1}$ before the predecessor's
+challenges and $E_{m-1}$ before the $c_b$. The digests enforce this order:
+
+- The predecessor sends the coefficients of every $\mathbf t_b$ but the
+  last, followed by a digest of the last block's coefficients.
+- The terminal prover sends every $E_b$ but the last, followed by a digest
+  of the last, before the $c_b$ are sampled.
+
+The verifier computes the last block from (10), hashes its canonical
+coefficients, and compares the result with the digest it received earlier.
+The scalar opening check (7) or (8) then runs over all $E_b$, including the
+recovered one.
+
+### Why the variant is sound
+
+Computing (10) alone proves nothing, because it makes (4) and (5) true by
+construction. The digest comparison carries the argument. It reduces the
+variant's soundness to that of the protocol above, in the classical
+random-oracle model.
+
+Model the digest as a random oracle $H$ with 256-bit output. The encoding of
+a block is injective, since the field encoding is canonical and the schedule
+fixes the block length. Take a prover for the variant that makes at most
+$Q$ digest queries, counting the verifier's. When it sends a digest $d$,
+one of two cases holds.
+
+- It has already queried some block $x$ with $H(x)=d$. A reduction sends
+  $x$ as the full message of the protocol above, at the same position. If
+  the verifier later recovers $x'$ and accepts, then $H(x')=d=H(x)$, so
+  $x'=x$ unless $H$ collides. The recovered block satisfies (4), (5), and
+  the opening check, so the block sent earlier does too.
+- It has queried no preimage of $d$. To be accepted, a later query must
+  hit $d$, and each fresh query does so with probability $2^{-256}$. This
+  case covers a prover that sends a digest without knowing any opening.
+
+There are two digests. A union bound over collisions and over hits on an
+unopened digest gives
+
+$$
+\epsilon_{\text{variant}}
+\le
+\epsilon+\frac{\binom{Q}{2}+2Q}{2^{256}},
+\tag{11}
+$$
+
+where $\epsilon$ is the soundness error of the protocol above with the same
+parameters. Outside the bad event the reduction supplies the same blocks at
+the same positions and sees the same challenge distribution.
+
+Three points keep the argument exact:
+
+- Each digest is absorbed where the full block was. The $\mathbf t$ digest
+  precedes the predecessor's ring-switch and sumcheck challenges. The $E$
+  digest precedes the terminal fold-response nonce and the $c_b$. The
+  terminal does not absorb $\mathbf t_{m-1}$ again after recovering it,
+  because the earlier digest already binds it in the same transcript.
+- Statement (11) compares the two interactive protocols. A digest absorbs
+  different bytes than a block does, so the Fiat-Shamir challenges of a
+  variant proof differ from those of the proof above. Expanding a variant
+  proof does not yield a proof that a build without the feature accepts.
+- The argument records the prover's oracle queries, so it is a classical
+  one. This page makes no claim for a prover with quantum access to $H$.
+
+The last fold challenge is always a unit, so an honest proof is never
+rejected for a missing inverse. For Akita's fields $X^D+1$ splits into
+$k\in\{2,4\}$ irreducible factors $X^{D/k}-\omega$. A nonzero challenge
+with coefficients bounded by $B$ that vanished modulo one factor would give
+a nonzero integer resultant with $T^k+1$ that $q$ divides and whose size is
+at most $(kB^2)^{k/2}$. Hence every such challenge is a unit once
+$q>(kB^2)^{k/2}$. For $B=2$ this needs only $q>256$.
+
+The verifier does not trust its own division either. It inverts $c_{m-1}$
+by multiplying with the conjugate $c_{m-1}(-X)$, whose product with
+$c_{m-1}$ lies in a ring of half the degree, and repeats until one field
+inversion remains. It then multiplies each candidate from (10) back by the
+sparse challenge and checks (4) and (5) as written. A wrong inverse can
+therefore only cause a rejection. A challenge with no inverse is rejected.
+The $1+n_A$ multiplications by $c_{m-1}^{-1}$ are the variant's only dense
+ring products.
+
+In the code, `RECOMPUTE_LAST_BLOCK` in
+`crates/akita-params/src/layout/tail_segments.rs` selects the layout,
+`crates/akita-verifier/src/terminal/direct.rs` recovers the block, and
+`crates/akita-algebra/src/ring/cyclotomic/inverse.rs` inverts the challenge.
+
 ## No-panic boundary and code map
 
 The verifier validates payload lengths, ring dimensions, coordinate counts,
