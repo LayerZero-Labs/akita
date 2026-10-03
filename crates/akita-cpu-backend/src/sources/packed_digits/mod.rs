@@ -221,6 +221,10 @@ pub(crate) struct PackedSignedDigitWriter {
     bounds: SignedDigitBounds,
 }
 
+/// Largest byte length an `Arc<[u8]>` layout can hold: `isize::MAX` less the
+/// two reference counts and the rounding to their alignment.
+const MAX_STORAGE_LEN: usize = isize::MAX as usize - 3 * size_of::<usize>();
+
 impl PackedSignedDigitWriter {
     // The Arc is fresh and has no weak references, so make_mut never copies.
     fn allocate_zeroed_storage(storage_len: usize) -> Arc<[u8]> {
@@ -237,9 +241,13 @@ impl PackedSignedDigitWriter {
     pub(crate) fn new(len: usize, bit_width: u8) -> Result<Self, AkitaError> {
         validate_bit_width(bit_width)?;
         let encoded_len = encoded_byte_len(len, bit_width);
-        let storage_len = checked::sum([encoded_len, VECTOR_LOAD_PADDING]).ok_or_else(|| {
-            AkitaError::InvalidInput("packed signed-digit storage length overflow".into())
-        })?;
+        // An allocation layout is capped at isize::MAX bytes including the
+        // Arc header; past that the allocator panics instead of failing.
+        let storage_len = checked::sum([encoded_len, VECTOR_LOAD_PADDING])
+            .filter(|&storage_len| storage_len <= MAX_STORAGE_LEN)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("packed signed-digit storage length overflow".into())
+            })?;
         Ok(Self {
             storage: Self::allocate_zeroed_storage(storage_len),
             encoded_len,

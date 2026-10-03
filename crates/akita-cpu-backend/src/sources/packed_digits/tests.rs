@@ -396,3 +396,15 @@ fn writer_stays_in_the_final_partial_block_at_the_index_boundary() {
     assert_eq!(writer.position(), usize::MAX);
     assert_eq!(writer.pending[DIGITS_PER_BLOCK - 4..], [-1, 0, 1, 0]);
 }
+
+#[test]
+fn writer_rejects_lengths_past_the_allocation_layout_limit_without_allocating() {
+    for len in [isize::MAX as usize, usize::MAX] {
+        assert!(matches!(
+            PackedSignedDigitWriter::new(len, 8),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+    let padded = isize::MAX as usize - VECTOR_LOAD_PADDING;
+    assert!(PackedSignedDigitWriter::new(padded, 8).is_err());
+}
