@@ -215,7 +215,7 @@ accepts `--profiles`, `--dims`, `--source-profiles`, `--max-rank`, and
 **Implementation map**
 
 - Source identities and no-wrap accounting:
-  `crates/akita-types/src/sis/labinius.rs` and `norm_bound.rs`.
+  `crates/akita-params/src/sis/labinius.rs` and `norm_bound.rs`.
 - Offline generation and artifact lookup:
   `crates/akita-sis-estimator/examples/labinius_infinity_width_table.rs` and
   `src/labinius_width_table.rs`.
