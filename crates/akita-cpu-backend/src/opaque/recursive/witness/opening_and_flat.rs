@@ -504,7 +504,7 @@ where
             self.live_ring_elems,
             challenges,
             num_positions_per_block,
-        );
+        )?;
         Ok(DecomposeFoldWitness::from_centered_rows(coeff_accum))
     }
 
@@ -554,7 +554,7 @@ where
                         )
                     })?,
                     num_positions_per_block,
-                );
+                )?;
                 Ok(DecomposeFoldWitness::from_centered_rows(coefficients))
             })
             .collect()

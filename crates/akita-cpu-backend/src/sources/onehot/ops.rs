@@ -492,13 +492,13 @@ where
         num_positions_per_block: usize,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         let (num_rings, num_live_blocks) = self.view_layout(D, num_positions_per_block)?;
-        Ok(cfg_into_iter!(0..num_live_blocks)
+        cfg_into_iter!(0..num_live_blocks)
             .map(|block_idx| {
                 let ring_start = block_idx * num_positions_per_block;
                 let ring_end = (ring_start + num_positions_per_block).min(num_rings);
                 fold_onehot_block::<F, I, D>(self, ring_start..ring_end, scalars)
             })
-            .collect())
+            .collect::<Result<Vec<_>, AkitaError>>()
     }
 
     #[cfg(test)]
