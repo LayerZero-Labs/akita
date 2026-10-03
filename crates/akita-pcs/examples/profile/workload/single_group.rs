@@ -6,19 +6,20 @@ use super::{
 };
 use crate::parallel::ProfileThreadPools;
 use crate::report::{
-    emit_native_proof_tail_report, emit_runtime_schedule_summary, print_native_proof_summary,
-    report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
+    emit_proof_tail_report, emit_runtime_schedule_summary, print_proof_summary, report_crt_profile,
+    report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_cpu_backend::DensePoly;
 use akita_cpu_backend::RootPolyShape;
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend, SourceHandle};
+use akita_params::{
+    BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, OpeningClaimsLayout,
+    PolynomialGroupLayout,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_types::{
-    BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
-    OpeningClaimsLayout, PolynomialGroupLayout,
-};
+use akita_types::FpExtEncoding;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{
     AdditiveGroup, CanonicalBytes, CanonicalEncoding, ExtField, Field, MulBaseUnreduced,
@@ -132,7 +133,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         Some(
             scheme
                 .schedules()
-                .resolve_key(&akita_types::AkitaScheduleLookupKey::single(group_layout))
+                .resolve_key(&akita_params::ScheduleLookupKey::single(group_layout))
                 .expect("runtime schedule")
                 .schedule()
                 .clone(),
@@ -147,7 +148,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     });
     let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
         .expect("profile grinding plan");
-    print_native_proof_summary(label, &proof, effective_schedule, &grinding_plan);
+    print_proof_summary(label, &proof, effective_schedule, &grinding_plan);
     tracing::info!(
         label,
         ext_degree = Cfg::EXT_DEGREE,
@@ -172,7 +173,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
-        emit_native_proof_tail_report(label, plan, Cfg::decomposition().field_bits());
+        emit_proof_tail_report(label, plan, Cfg::decomposition().field_bits());
     } else {
         let schedule = effective_schedule;
         if validate_against_planner {
@@ -192,7 +193,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
-        emit_native_proof_tail_report(label, schedule, Cfg::decomposition().field_bits());
+        emit_proof_tail_report(label, schedule, Cfg::decomposition().field_bits());
     }
 
     let t_verifier_setup = Instant::now();

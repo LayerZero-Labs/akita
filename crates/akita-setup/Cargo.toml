@@ -14,11 +14,13 @@ transcript-blake2b = [
   "akita-config/transcript-blake2b",
   "akita-cpu-backend/transcript-blake2b",
   "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
 ]
 transcript-keccak = [
   "akita-config/transcript-keccak",
   "akita-cpu-backend/transcript-keccak",
   "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
 ]
 parallel = ["jolt-field/parallel", "akita-cpu-backend/parallel"]
 disk-persistence = ["akita-cpu-backend/disk-persistence"]
@@ -33,6 +35,7 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 ] }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 tracing = "0.1"
 
 [dev-dependencies]

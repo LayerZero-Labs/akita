@@ -403,7 +403,7 @@ fn write_rust_split(
     output: Option<&Path>,
 ) -> io::Result<()> {
     let default_out_dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../akita-types/src/sis/generated_sis_table");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../akita-params/src/sis/generated_sis_table");
     let out_dir = output.unwrap_or(default_out_dir.as_path());
     fs::create_dir_all(out_dir)?;
     let runtime_rows = runtime_width_rows(rows, config.max_rank).map_err(io::Error::other)?;
@@ -539,7 +539,7 @@ structured_attack_review=The scalarized estimate does not model ring/module stru
         cap_hits,
     );
     source.push_str("role_coverage_columns=role,modulus_profile,d,coeff_linf_bound,max_module_rank,required_max_width\n");
-    for cell in akita_types::sis::sis_role_cells() {
+    for cell in akita_params::sis::sis_role_cells() {
         source.push_str(&format!(
             "role_coverage={},{},{},{},{},{}\n",
             cell.role.name(),

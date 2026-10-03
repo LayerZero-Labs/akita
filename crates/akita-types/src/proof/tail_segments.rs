@@ -9,15 +9,15 @@ use akita_serialization::{
 };
 use jolt_field::{CanonicalEncoding, Field};
 
-use crate::golomb_rice::{
+use crate::proof::RingVec;
+use akita_params::golomb_rice::{
     golomb_rice_decode_vec, golomb_rice_max_quotient_for_cap, golomb_rice_zigzag_width,
 };
-use crate::layout::field_bytes;
-use crate::layout::tail_segments::{
+use akita_params::layout::field_bytes;
+use akita_params::layout::tail_segments::{
     TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
 };
-use crate::proof::RingVec;
-use crate::TerminalFoldParams;
+use akita_params::TerminalFoldParams;
 
 /// Clear terminal response carried on the wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -230,11 +230,9 @@ pub fn build_terminal_response_from_payload<F>(
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
 {
-    let group = scheduled_shape
-        .layout
-        .groups
-        .first()
-        .ok_or(AkitaError::InvalidProof)?;
+    let group = scheduled_shape.layout.groups.first().ok_or_else(|| {
+        AkitaError::InvalidInput("terminal response schedule has no group".into())
+    })?;
     if scheduled_shape.layout.groups.len() != 1
         || e_folded.coeff_len() != group.e_field_elems
         || t_fields.coeff_len() != group.t_field_elems

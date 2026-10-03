@@ -70,13 +70,9 @@ impl<F: Field> EqPairTensorAxis<F> {
         bit_factors: impl Into<Arc<[[F; 2]]>>,
     ) -> Result<Self, AkitaError> {
         let bit_factors = bit_factors.into();
-        let len = 1usize
-            .checked_shl(u32::try_from(bit_factors.len()).map_err(|_| {
-                AkitaError::InvalidInput("paired tensor bit-product arity overflow".into())
-            })?)
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("paired tensor bit-product length overflow".into())
-            })?;
+        let len = checked::pow2(bit_factors.len()).ok_or_else(|| {
+            AkitaError::InvalidInput("paired tensor bit-product length overflow".into())
+        })?;
         Ok(Self {
             len,
             left_stride,
@@ -174,8 +170,7 @@ impl<F: Field> EqPairTensorFamily<F> {
                     ));
                 }
                 EqPairTensorWeights::BitProduct(factors)
-                    if 1usize.checked_shl(u32::try_from(factors.len()).unwrap_or(u32::MAX))
-                        == Some(axis.len) => {}
+                    if checked::pow2(factors.len()) == Some(axis.len) => {}
                 EqPairTensorWeights::BitProduct(_) => {
                     return Err(AkitaError::InvalidInput(
                         "paired tensor bit-product length mismatch".into(),

@@ -229,10 +229,8 @@ fn uniform_biguint_below(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{NativeProverFoldDraw, NativeVerifierFoldDraw};
-    use akita_transcript::{
-        new_native_prover, new_native_verifier, receive_native_bytes, send_native_bytes,
-    };
+    use crate::{ProverFoldDraw, VerifierFoldDraw};
+    use akita_transcript::{new_prover_channel, new_verifier_channel, receive_bytes, send_bytes};
     use shake::digest::{ExtendableOutput, Update, XofReader};
     use shake::Shake256;
 
@@ -325,11 +323,11 @@ mod tests {
         .unwrap();
         let proof_message = [9u8, 8, 7];
         let mut prover =
-            new_native_prover(b"binary-fold/session", b"binary-fold/instance").unwrap();
-        send_native_bytes(&mut prover, &proof_message);
+            new_prover_channel(b"binary-fold/session", b"binary-fold/instance").unwrap();
+        send_bytes(&mut prover, &proof_message);
         let expected = BinaryChallengeSampler::new(profile.clone())
             .sample_challenges(
-                &mut NativeProverFoldDraw::new(&mut prover, 2, 3),
+                &mut ProverFoldDraw::new(&mut prover, 2, 3),
                 b"binary-fold",
                 8,
             )
@@ -337,14 +335,14 @@ mod tests {
         let proof = prover.narg_string().to_vec();
 
         let mut verifier =
-            new_native_verifier(b"binary-fold/session", b"binary-fold/instance", &proof).unwrap();
+            new_verifier_channel(b"binary-fold/session", b"binary-fold/instance", &proof).unwrap();
         assert_eq!(
-            receive_native_bytes(&mut verifier, proof_message.len()).unwrap(),
+            receive_bytes(&mut verifier, proof_message.len()).unwrap(),
             proof_message
         );
         let actual = BinaryChallengeSampler::new(profile.clone())
             .sample_challenges(
-                &mut NativeVerifierFoldDraw::new(&mut verifier, 2, 3),
+                &mut VerifierFoldDraw::new(&mut verifier, 2, 3),
                 b"binary-fold",
                 8,
             )
@@ -353,11 +351,11 @@ mod tests {
         verifier.check_eof().unwrap();
 
         let mut wrong_label =
-            new_native_verifier(b"binary-fold/session", b"binary-fold/instance", &proof).unwrap();
-        receive_native_bytes(&mut wrong_label, proof_message.len()).unwrap();
+            new_verifier_channel(b"binary-fold/session", b"binary-fold/instance", &proof).unwrap();
+        receive_bytes(&mut wrong_label, proof_message.len()).unwrap();
         let changed = BinaryChallengeSampler::new(profile)
             .sample_challenges(
-                &mut NativeVerifierFoldDraw::new(&mut wrong_label, 2, 3),
+                &mut VerifierFoldDraw::new(&mut wrong_label, 2, 3),
                 b"other-fold",
                 8,
             )

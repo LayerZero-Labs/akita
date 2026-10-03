@@ -18,7 +18,7 @@ pub(crate) fn prove_extension_opening_reduction<F, E, B>(
         B::CommitmentHandle,
         B::WitnessHandle,
     >],
-    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     expected_openings: &[E],
 ) -> Result<ProvedExtensionOpeningReduction<E>, AkitaError>
@@ -32,23 +32,37 @@ where
     let max_tail_vars = opening_batch
         .max_num_vars()
         .checked_sub(split_bits)
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::Internal(
+                "eor maximum opening width is smaller than tensor split width".into(),
+            )
+        })?;
     let prepared = backend.prepare_eor(session, context, opening_batch, group_inputs)?;
     let num_claims = opening_batch.num_total_polynomials();
-    if prepared.openings != expected_openings
-        || prepared.openings.len() != num_claims
-        || prepared.proof_partials.len()
-            != width
-                .checked_mul(num_claims)
-                .ok_or(AkitaError::InvalidProof)?
-    {
-        return Err(AkitaError::InvalidProof);
+    if prepared.openings.len() != num_claims {
+        return Err(AkitaError::Internal(
+            "eor backend opening count differs from opening layout".into(),
+        ));
     }
-    let prefix = akita_types::native_eor_prover_prefix::<F, E>(
+    if prepared.proof_partials.len()
+        != width
+            .checked_mul(num_claims)
+            .ok_or_else(|| AkitaError::Internal("eor proof partial count overflow".into()))?
+    {
+        return Err(AkitaError::Internal(
+            "eor backend proof partial count differs from tensor claim width".into(),
+        ));
+    }
+    if prepared.openings != expected_openings {
+        return Err(AkitaError::Internal(
+            "eor backend openings differ from generated suffix claims".into(),
+        ));
+    }
+    let prefix = akita_types::eor_prefix::<F, E, _>(
         grinding,
         opening_batch,
         &prepared.openings,
-        &prepared.proof_partials,
+        prepared.proof_partials.clone(),
         level,
     )?;
     let eta = prefix.eta;
@@ -67,7 +81,9 @@ where
             )
         })?;
     if input_claim != expected {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "eor backend input claim differs from weighted public partials".into(),
+        ));
     }
     let mut kernel = EorSumcheck::<F, E, B> {
         backend,
@@ -76,23 +92,23 @@ where
         rounds: max_tail_vars,
         field: std::marker::PhantomData,
     };
-    let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+    let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
         grinding,
-        akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+        akita_params::SumcheckProtocol::ExtensionOpeningReduction,
         level,
         0,
     );
-    let shape = akita_sumcheck::NativeSumcheckShape::new(
+    let shape = akita_sumcheck::SumcheckShape::new(
         max_tail_vars,
-        akita_types::EXTENSION_OPENING_REDUCTION_DEGREE,
+        akita_params::EXTENSION_OPENING_REDUCTION_DEGREE,
     )?;
-    let (rho, claim) = akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
+    let (rho, claim) = akita_sumcheck::prove_sumcheck::<F, E, _, _>(
         &mut kernel,
         &mut channel,
         shape,
-        akita_types::NATIVE_EOR_SUMCHECK_INVOCATION,
+        akita_types::EOR_SUMCHECK_INVOCATION,
     )?;
-    let final_claims = backend.finish_eor(session)?;
+    let mut final_claims = backend.finish_eor(session)?;
     if final_claims.len() != num_claims
         || final_claims
             .iter()
@@ -100,7 +116,9 @@ where
             .fold(E::zero(), |sum, (value, weight)| sum + *value * *weight)
             != claim
     {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "eor backend final claims differ from sumcheck output".into(),
+        ));
     }
     let mut final_factors = Vec::with_capacity(group_inputs.len());
     let mut protocol_points = Vec::with_capacity(group_inputs.len());
@@ -108,10 +126,14 @@ where
         let tail = input
             .point
             .get(split_bits..)
-            .ok_or(AkitaError::InvalidProof)?;
-        let local = rho.get(..tail.len()).ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| AkitaError::Internal("eor group point has no tensor tail".into()))?;
+        let local = rho.get(..tail.len()).ok_or_else(|| {
+            AkitaError::Internal("eor challenge point is shorter than group tensor tail".into())
+        })?;
         let mut factor = tensor_equality_factor_eval_at_point::<F, E>(tail, &eta, local)?;
-        for extra in rho.get(tail.len()..).ok_or(AkitaError::InvalidProof)? {
+        for extra in rho.get(tail.len()..).ok_or_else(|| {
+            AkitaError::Internal("eor challenge point has no extra-coordinate range".into())
+        })? {
             factor *= E::one() - *extra;
         }
         let point = dispatch_for_field!(
@@ -123,12 +145,7 @@ where
         final_factors.push(factor);
         protocol_points.push(point);
     }
-    akita_types::native_eor_prover_final_claims::<F, E>(
-        grinding,
-        opening_batch,
-        &final_claims,
-        level,
-    )?;
+    akita_types::eor_final_claims::<F, E, _>(grinding, opening_batch, &mut final_claims, level)?;
     Ok(ProvedExtensionOpeningReduction {
         reduction: ExtensionOpeningReduction {
             final_claims,
@@ -157,7 +174,7 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueEorKernel<
         self.rounds
     }
     fn degree_bound(&self) -> usize {
-        akita_types::EXTENSION_OPENING_REDUCTION_DEGREE
+        akita_params::EXTENSION_OPENING_REDUCTION_DEGREE
     }
     fn input_claim(&self) -> E {
         self.claim

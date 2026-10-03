@@ -202,7 +202,7 @@ impl<E: Field> ZWeightSink<E> for LiftedZSink<'_, '_, E> {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn scatter_et<E: Field>(
     group_plan: &compiler::RelationWeightGroupPlan<E>,
-    witness_layout: &akita_types::WitnessLayout,
+    witness_layout: &akita_params::WitnessLayout,
     lanes: &mut [E],
     relation_coefficient_block_len: usize,
     challenge_lanes: &[E],
@@ -244,7 +244,7 @@ pub(super) fn scatter_et<E: Field>(
 
 pub(super) fn scatter_z<E: Field>(
     group_plan: &compiler::RelationWeightGroupPlan<E>,
-    witness_layout: &akita_types::WitnessLayout,
+    witness_layout: &akita_params::WitnessLayout,
     lanes: &mut [E],
     relation_coefficient_block_len: usize,
     opening_evaluations: &[E],

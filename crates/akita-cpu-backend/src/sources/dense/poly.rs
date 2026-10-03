@@ -6,7 +6,8 @@ use crate::validation::is_i8_log_basis;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
-use akita_types::{RingVec, SUPPORTED_COMMITMENT_RING_DIMS};
+use akita_params::SUPPORTED_COMMITMENT_RING_DIMS;
+use akita_types::RingVec;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
 use std::borrow::Cow;
@@ -193,7 +194,7 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
         // old per-ring check over the zero-padded last ring.
         let q = (-F::one())
             .to_u128_checked()
-            .expect("Akita field element must fit in u128")
+            .ok_or_else(|| AkitaError::InvalidInput("field modulus does not fit u128".into()))?
             + 1;
         let half_q = q / 2;
         let mut small_i8_coeffs = Vec::with_capacity(physical_len);

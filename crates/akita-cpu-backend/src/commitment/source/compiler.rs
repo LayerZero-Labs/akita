@@ -249,10 +249,7 @@ pub(crate) fn compile_commitment_request<'a, F: Field>(
 }
 
 pub(super) fn checked_logical_len(num_vars: usize) -> Result<usize, AkitaError> {
-    let shift = u32::try_from(num_vars).map_err(|_| {
-        AkitaError::InvalidInput(format!("commit source arity {num_vars} exceeds u32"))
-    })?;
-    1usize.checked_shl(shift).ok_or_else(|| {
+    checked::pow2(num_vars).ok_or_else(|| {
         AkitaError::InvalidInput(format!("commit source arity 2^{num_vars} overflows usize"))
     })
 }

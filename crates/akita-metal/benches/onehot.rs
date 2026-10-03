@@ -25,7 +25,7 @@ mod bench {
         DeviceFlatMatrix, DeviceOneHotSources, OneHotCommitShape, OneHotSchedule, OneHotWorkspace,
     };
     use akita_metal::AkitaMetal;
-    use akita_types::FlatMatrix;
+    use akita_params::FlatMatrix;
     use criterion::{BenchmarkId, Criterion, Throughput};
     use jolt_field::{
         AdditiveGroup, CanonicalEncoding, Prime128OffsetA7F7, Prime64Offset59,

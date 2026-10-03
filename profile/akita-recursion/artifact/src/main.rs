@@ -21,11 +21,9 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::{
-    lagrange_weights, AkitaScheduleLookupKey, BasisMode, CommittedGroup, FpExtEncoding,
-    GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
-    PolynomialGroupLayout, PrecommittedGroupProfiles,
-};
+use akita_types::{CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_params::ScheduleLookupKey;
+use akita_params::{lagrange_weights, BasisMode, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupProfiles};
 use akita_verifier::AkitaVerifier;
 use clap::Parser;
 use jolt_field::{
@@ -174,7 +172,7 @@ where
 fn materialize_schedule_setup_prefix_slots<F, E>(
     setup: &mut AkitaProverSetup<F>,
     backend: &CpuBackend<F, E>,
-    schedule: &akita_types::FoldSchedule,
+    schedule: &akita_params::FoldSchedule,
 ) -> Result<(), akita_error::AkitaError>
 where
     F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
@@ -200,7 +198,7 @@ where
 }
 
 fn build_statement<'a>(
-    selection: akita_types::OpeningScheduleSelection,
+    selection: akita_params::OpeningScheduleSelection,
     pre_points: &'a [Vec<F>],
     pre_openings: &'a [Vec<F>],
     pre_commitments: &'a [CommittedGroup<F>],
@@ -338,7 +336,7 @@ macro_rules! generate_scalar_case {
             .map_err(|err| format!("{} trusted schedule catalog: {err}", case))?;
         let opening_layout = OpeningClaimsLayout::new(num_vars, 1)
             .map_err(|err| format!("{} opening layout: {err}", case))?;
-        let schedule_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(num_vars, 1));
+        let schedule_key = ScheduleLookupKey::single(PolynomialGroupLayout::new(num_vars, 1));
         let schedule = scheme
             .schedules()
             .resolve_key(&schedule_key)
@@ -593,11 +591,11 @@ fn run() -> Result<(), String> {
     let pre_group = PolynomialGroupLayout::new(PRE_NUM_VARS, 1);
     let pre_descriptor = base_scheme
         .schedules()
-        .resolve_key(&AkitaScheduleLookupKey::single(pre_group))
+        .resolve_key(&ScheduleLookupKey::single(pre_group))
         .map(|row| row.profiles().final_group)
         .map_err(|err| format!("precommit profile: {err}"))?;
     let final_group = PolynomialGroupLayout::new(nv, FINAL_POLYS);
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group,
         precommitteds: vec![pre_descriptor; PRE_GROUPS],
     };

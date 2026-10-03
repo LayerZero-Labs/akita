@@ -3,7 +3,7 @@
 use akita_error::AkitaError;
 
 use crate::proof::DigitBlocks;
-use crate::WitnessUnitLayout;
+use akita_params::WitnessUnitLayout;
 
 /// Destination for canonical witness coefficient emission.
 pub trait WitnessCoefficientSink {
@@ -18,7 +18,9 @@ impl WitnessCoefficientSink for [i8] {
             .checked_add(coefficients.len())
             .ok_or_else(|| AkitaError::InvalidSetup("witness coefficient end overflow".into()))?;
         self.get_mut(start..end)
-            .ok_or(AkitaError::InvalidProof)?
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("witness coefficient span exceeds its destination".into())
+            })?
             .copy_from_slice(coefficients);
         Ok(())
     }

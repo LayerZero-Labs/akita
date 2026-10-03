@@ -14,11 +14,11 @@ use super::{
     relation_row_weight, RelationWeightContribution, RelationWeightEvent,
     RingRelationGroupOpeningView, RingRelationInstance,
 };
-use crate::{
+use crate::{FpExtEncoding, PreparedSubringCoefficientPackingPoint, RelationRangeImagePlan};
+use akita_params::{
     gadget_row_scalars, r_decomp_levels, validate_role_dims_for_field, CommittedGroupParams,
-    FpExtEncoding, OpeningClaimsLayout, OpeningMethod, PreparedSubringCoefficientPackingPoint,
-    RelationRangeImagePlan, RelationRowFamily, RelationWitnessGeometry, SignedDigitKernel,
-    SubringCoefficientPackingGeometry, WitnessLayout, WitnessUnitLayout,
+    OpeningClaimsLayout, OpeningMethod, RelationRowFamily, RelationWitnessGeometry,
+    SignedDigitKernel, SubringCoefficientPackingGeometry, WitnessLayout, WitnessUnitLayout,
 };
 
 mod expanded;
@@ -607,7 +607,11 @@ where
                     let challenge_alpha = *validated
                         .challenge_alpha_values
                         .get(challenge_index)
-                        .ok_or(AkitaError::InvalidProof)?;
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "packing challenge index exceeds alpha table".into(),
+                            )
+                        })?;
                     let mut events = Vec::with_capacity(block_event_capacity);
                     for (digit, &gadget) in validated.opening_gadget.iter().enumerate() {
                         for (plane, &basis_element) in validated.basis.iter().enumerate() {

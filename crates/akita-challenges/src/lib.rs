@@ -10,8 +10,8 @@
 //! - `BinaryChallengeProfile` / `BinaryChallengeSampler` — exact
 //!   parity-injective fixed- and bounded-weight support families for the
 //!   degree-162 and degree-486 LaBinius scalar rings (with `labinius-challenges`).
-//! - [`FoldDraw`] and its native Spongefish adapters — fold-challenge drawing
-//!   over live or preview native state.
+//! - [`FoldDraw`] and its Spongefish adapters — fold-challenge drawing
+//!   over live or preview state.
 //! - [`Challenges`] — sampled folding challenges in claim-major block order.
 //!
 //! Sampling uses the signed-sparse path in a private `sampler` submodule. The
@@ -42,6 +42,6 @@ pub use config::{
     MIN_FOLD_CHALLENGE_ENTROPY_BITS, PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
 pub use fold_draw::{
-    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, NativePreviewFoldDraw,
-    NativeProverFoldDraw, NativeVerifierFoldDraw,
+    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, PreviewFoldDraw,
+    ProverFoldDraw, VerifierFoldDraw,
 };

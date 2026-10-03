@@ -52,7 +52,7 @@ fn euclidean_width_goldens_match_current_l2_table_replay() {
 
 #[test]
 fn euclidean_width_goldens_match_checked_in_l2_table() {
-    use akita_types::sis::{
+    use akita_params::sis::{
         min_secure_l2_rank, sis_l2_table_key_for_collision_sq, SisL2TableDigest,
         SisModulusProfileId, DEFAULT_SIS_SECURITY_POLICY,
     };

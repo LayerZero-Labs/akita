@@ -2,10 +2,8 @@
 
 use crate::AkitaJoltCase;
 use akita_error::AkitaError;
-use akita_types::{
-    AkitaVerifierSetup, CommittedGroup, GroupBatchStatement, OpeningClaims,
-    OpeningScheduleSelection, PolynomialGroupClaims,
-};
+use akita_types::{AkitaVerifierSetup, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_params::{OpeningScheduleSelection};
 use jolt_field::Field;
 
 /// One ordered commitment group carried in a multi-group verifier statement.
@@ -44,7 +42,7 @@ pub struct AkitaJoltInputs<F: Field, const D: usize, E: Field = F> {
     pub commitment: CommittedGroup<F>,
     /// Expanded verifier setup (matrix prefix usable by the verifier kernel).
     pub verifier_setup: AkitaVerifierSetup<F>,
-    /// Canonical native Spongefish argument bytes.
+    /// Canonical Spongefish argument bytes.
     pub proof: Vec<u8>,
 }
 

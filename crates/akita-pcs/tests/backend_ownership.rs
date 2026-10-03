@@ -5,13 +5,13 @@ mod common;
 
 use akita_config::proof_optimized::fp128;
 use akita_cpu_backend::{CommitmentHandle, CpuBackend, DensePoly, GroupContext};
+use akita_params::{BasisMode, PolynomialGroupLayout};
 use akita_prover::{
     ProofAdmission, ProofContext, ProofScope, ProofScopeConsumer, SelectedProverOpeningData,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_types::{
-    BasisMode, Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims, PolynomialGroupLayout, RingVec,
+    Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, RingVec,
 };
 use jolt_field::{One, Ring};
 use std::sync::Arc;
@@ -38,6 +38,64 @@ fn claims(
         schedules,
     )
     .unwrap()
+}
+
+#[test]
+fn false_root_evaluation_claim_returns_invalid_input() {
+    common::run_on_large_stack(|| {
+        let scheme = common::load_workspace_scheme::<Cfg>().unwrap();
+        let setup = scheme.setup_prover(NV, 1).unwrap();
+        let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
+        let source = backend
+            .import_source(vec![DensePoly::from_field_evals(
+                NV,
+                vec![F::from_u64(2); 1 << NV],
+            )
+            .unwrap()])
+            .unwrap();
+        let output = backend
+            .commit(
+                scheme.schedules(),
+                &source,
+                GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .unwrap();
+        let opening = claims(
+            &output.committed_group,
+            output.private_handle,
+            scheme.schedules(),
+        );
+        assert!(matches!(
+            scheme.batched_prove(&setup, opening, &backend, DOMAIN, BasisMode::Lagrange),
+            Err(akita_pcs::AkitaError::InvalidInput(_))
+        ));
+    });
+}
+
+#[test]
+fn claim_handle_count_mismatch_returns_invalid_input() {
+    let scheme = common::load_workspace_scheme::<Cfg>().unwrap();
+    let key = akita_params::ScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
+    let row = scheme.schedules().resolve_key(&key).unwrap();
+    let commitment = CommittedGroup::new(
+        row.profiles().final_group,
+        Commitment::new(RingVec::from_coeffs(Vec::new())),
+    );
+    let opening_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+        vec![F::from_u64(2); NV],
+        vec![F::one()],
+        commitment,
+    )
+    .unwrap()])
+    .unwrap();
+    assert!(matches!(
+        SelectedProverOpeningData::from_committed_claims::<Cfg>(
+            opening_claims,
+            Vec::<CommitmentHandle<F, F>>::new(),
+            scheme.schedules(),
+        ),
+        Err(akita_pcs::AkitaError::InvalidInput(_))
+    ));
 }
 
 #[test]
@@ -187,7 +245,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
                 GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
-        let key = akita_types::AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
+        let key = akita_params::ScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
         let schedule = scheme.schedules().resolve_key(&key).unwrap().schedule();
         let layout = key.opening_layout().unwrap();
         let mut absent_schedule = schedule.clone();
@@ -319,7 +377,7 @@ fn admission_uses_the_extension_field_owned_by_the_configuration() {
         let scheme = common::load_workspace_scheme::<SmallCfg>().unwrap();
         let setup = scheme.setup_prover(NV, 1).unwrap();
         let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
-        let key = akita_types::AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
+        let key = akita_params::ScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
         let row = scheme.schedules().resolve_key(&key).unwrap();
         let session = <CpuBackend<SmallF, SmallE> as ProofAdmission<SmallF, SmallE>>::begin_proof(
             &backend,

@@ -93,9 +93,9 @@ mod matrix_drivers;
 
 use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_cpu_backend::CpuBackend;
-use akita_types::{
-    BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
-};
+use akita_params::{BasisMode, OpeningClaimsLayout};
+use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use common::proof_size::prove_matching_byte_model;
 use common::*;
 use matrix_drivers::*;
 
@@ -210,8 +210,8 @@ fn fp128_dense_mc() {
             akita_config::test_support::workspace_schedule_catalog::<fp128::DenseMultiChunk>()
                 .expect("dense multi-chunk catalog");
         let schedule = catalog
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
-                akita_types::PolynomialGroupLayout::singleton(16),
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::singleton(16),
             ))
             .expect("dense multi-chunk schedule")
             .schedule()
@@ -292,7 +292,7 @@ fn fp128_onehot_mc_catalog_resolves() {
             .expect("one-hot multi-chunk catalog");
     let opening_batch = OpeningClaimsLayout::new(32, 1).expect("opening batch");
     catalog
-        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
             opening_batch
                 .root_final_group_layout()
                 .expect("root group layout"),
@@ -355,15 +355,11 @@ fn fp128_onehot_batched() {
             .expect("commit");
 
         let session = b"completeness/fp128_onehot_batched";
-        let proof = scheme
-            .batched_prove(
-                &setup,
-                prove_input::<OneHotCfg>(&pt[..], &openings, &commitment, hint, scheme.schedules()),
-                &stack,
-                session,
-                BasisMode::Lagrange,
-            )
-            .expect("prove");
+        let prover_data =
+            prove_input::<OneHotCfg>(&pt[..], &openings, &commitment, hint, scheme.schedules());
+        let proof = prove_matching_byte_model(scheme.schedules(), prover_data.selection(), || {
+            scheme.batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
+        });
 
         scheme
             .verifier(verifier_setup.clone())
@@ -420,15 +416,11 @@ fn fp128_dense_batched() {
             .expect("commit");
 
         let session = b"completeness/fp128_dense_batched";
-        let proof = scheme
-            .batched_prove(
-                &setup,
-                prove_input::<DenseCfg>(&pt[..], &openings, &commitment, hint, scheme.schedules()),
-                &stack,
-                session,
-                BasisMode::Lagrange,
-            )
-            .expect("prove");
+        let prover_data =
+            prove_input::<DenseCfg>(&pt[..], &openings, &commitment, hint, scheme.schedules());
+        let proof = prove_matching_byte_model(scheme.schedules(), prover_data.selection(), || {
+            scheme.batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
+        });
 
         scheme
             .verifier(verifier_setup.clone())
@@ -464,7 +456,7 @@ fn fp128_onehot_oversized_setup() {
         let opening_batch = OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
         let layout = scheme
             .schedules()
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
                 opening_batch
                     .root_final_group_layout()
                     .expect("singleton group layout"),

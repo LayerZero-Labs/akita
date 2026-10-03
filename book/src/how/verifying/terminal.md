@@ -227,15 +227,15 @@ sparse support, NTT capability, and matrix ranges before the hot kernels index
 prepared state. Malformed terminal bytes return `AkitaError` or
 `SerializationError`.
 
-- `crates/akita-verifier/src/protocol/core/suffix.rs` checks the predecessor
+- `crates/akita-verifier/src/fold/terminal.rs` checks the predecessor
   binding and replays the terminal transcript.
-- `crates/akita-verifier/src/protocol/core/terminal_direct.rs` checks the
+- `crates/akita-verifier/src/terminal/direct.rs` checks the
   decoded response norm, ring relations, and opening trace.
-- `crates/akita-verifier/src/protocol/core/terminal_ntt.rs` evaluates the
+- `crates/akita-verifier/src/terminal/ntt.rs` evaluates the
   exact A product.
-- `crates/akita-types/src/golomb_rice.rs` implements the codec and its
+- `crates/akita-params/src/golomb_rice.rs` implements the codec and its
   canonical-decoding tests.
-- `crates/akita-types/src/layout/tail_segments.rs` defines the response
+- `crates/akita-params/src/layout/tail_segments.rs` defines the response
   layout and transcript segments, and
   `crates/akita-types/src/proof/tail_segments.rs` defines the wire response.
 - `crates/akita-types/src/field_reduction.rs` implements subfield recovery.

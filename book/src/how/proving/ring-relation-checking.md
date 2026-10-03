@@ -505,7 +505,7 @@ outer commitment payload.
 
 ## Code reference
 
-- [`ring_relation_mode.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/ring_relation_mode.rs)
+- [`ring_relation_mode.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-params/src/ring_relation_mode.rs)
   defines both modes and the allowed transition. `FoldSchedule::validate_structure`
   enforces the complete schedule restrictions.
 - [`witness_build/finalize.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/witness_build/finalize.rs)
@@ -519,7 +519,7 @@ outer commitment payload.
 - [`ring/residue.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-algebra/src/ring/residue.rs)
   implements the recurrence. Its tests compare the result with explicit signed
   multiplication and ring products, including points where $\alpha^D+1=0$.
-- [`ring_switch/relation_evaluation.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs)
+- [`relation/evaluation.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/relation/evaluation.rs)
   selects the verifier calculation from the authenticated mode. Reduced mode
   uses the complete coefficient functional and rejects deferred setup.
 

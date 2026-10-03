@@ -1,0 +1,905 @@
+//! Schedule-owned grinding-plan derivation from public geometry.
+
+use crate::transcript_grinding::{GrindingPlanAccumulator, GrindingPlanSink, SumcheckRoundBatch};
+use crate::{
+    independent_batch_loss_factor, multilinear_point_loss_factor, polynomial_identity_loss_factor,
+    powers_batch_loss_factor, ring_switch_alpha_loss_factor, ChallengeFieldOrder,
+    CommittedGroupParams, DigitRangePlan, FoldSchedule, FoldSuccessor, GrindingPlan, GrindingRun,
+    GrindingSite, OpeningClaimsLayout, PolynomialGroupLayout, SumcheckProtocol,
+    TranscriptGrindingCost,
+};
+use akita_error::{
+    narrowing::{usize_to_u32, usize_to_u64},
+    AkitaError,
+};
+
+fn validate_claim_extension_degree(extension_degree: usize) -> Result<(), AkitaError> {
+    if extension_degree == 0 || !extension_degree.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "grinding claim extension degree must be a nonzero power of two".into(),
+        ));
+    }
+    u32::try_from(extension_degree)
+        .map(|_| ())
+        .map_err(|_| AkitaError::InvalidSetup("grinding extension degree exceeds u32".into()))
+}
+
+/// Price one planner edge using the canonical query builders.
+#[allow(clippy::too_many_arguments)]
+pub fn transcript_grinding_cost_for_planner_edge(
+    params: &CommittedGroupParams,
+    relation_geometry: crate::RelationAddressGeometry,
+    layout: &OpeningClaimsLayout,
+    successor: FoldSuccessor<'_>,
+    challenge_order: ChallengeFieldOrder,
+    claim_extension_degree: usize,
+    level: u32,
+) -> Result<TranscriptGrindingCost, AkitaError> {
+    layout.check()?;
+    validate_claim_extension_degree(claim_extension_degree)?;
+    let mut accumulator = GrindingPlanAccumulator::new(challenge_order);
+    let rounds = append_nonterminal(
+        &mut accumulator,
+        challenge_order,
+        claim_extension_degree,
+        level,
+        params,
+        relation_geometry.relation_point_variable_count(),
+        layout,
+        successor,
+    )?;
+    if let FoldSuccessor::Terminal(terminal) = successor {
+        append_terminal(
+            &mut accumulator,
+            challenge_order,
+            claim_extension_degree,
+            level.checked_add(1).ok_or_else(|| {
+                AkitaError::InvalidSetup("terminal grinding level overflow".into())
+            })?,
+            rounds,
+            terminal,
+        )?;
+    }
+    Ok(accumulator.cost())
+}
+
+/// Derive the only accepted grinding plan from field metadata and public protocol shape.
+pub fn derive_transcript_grinding_plan_from_public_shape(
+    schedule: &FoldSchedule,
+    root_layout: &OpeningClaimsLayout,
+    challenge_order: ChallengeFieldOrder,
+    claim_extension_degree: usize,
+) -> Result<GrindingPlan, AkitaError> {
+    schedule.validate_structure()?;
+    schedule.validate_nonterminal_opening_execution(claim_extension_degree)?;
+    root_layout.check()?;
+    validate_claim_extension_degree(claim_extension_degree)?;
+    let mut runs = Vec::new();
+    let mut sink = |run| {
+        runs.push(run);
+        Ok(())
+    };
+
+    let root_successor = schedule
+        .recursive_folds
+        .first()
+        .map_or(FoldSuccessor::Terminal(&schedule.terminal), |step| {
+            FoldSuccessor::Recursive(&step.params)
+        });
+    let root_rounds = schedule
+        .root
+        .params
+        .relation_address_geometry(
+            root_layout,
+            claim_extension_degree,
+            root_successor.ring_dimension(),
+            schedule.root.output_witness_len,
+        )?
+        .relation_point_variable_count();
+    let mut predecessor_rounds = append_nonterminal(
+        &mut sink,
+        challenge_order,
+        claim_extension_degree,
+        0,
+        &schedule.root.params,
+        root_rounds,
+        root_layout,
+        root_successor,
+    )?;
+
+    for (index, fold) in schedule.recursive_folds.iter().enumerate() {
+        let layout = fold
+            .params
+            .opening_layout_for_final_group(PolynomialGroupLayout::singleton(predecessor_rounds))?;
+        let successor = schedule
+            .recursive_folds
+            .get(index + 1)
+            .map_or(FoldSuccessor::Terminal(&schedule.terminal), |step| {
+                FoldSuccessor::Recursive(&step.params)
+            });
+        let relation_rounds = fold
+            .params
+            .relation_address_geometry(
+                &layout,
+                claim_extension_degree,
+                successor.ring_dimension(),
+                fold.output_witness_len,
+            )?
+            .relation_point_variable_count();
+        predecessor_rounds = append_nonterminal(
+            &mut sink,
+            challenge_order,
+            claim_extension_degree,
+            usize_to_u32(index + 1, "grinding level")?,
+            &fold.params,
+            relation_rounds,
+            &layout,
+            successor,
+        )?;
+    }
+
+    append_terminal(
+        &mut sink,
+        challenge_order,
+        claim_extension_degree,
+        usize_to_u32(
+            schedule.recursive_folds.len() + 1,
+            "terminal grinding level",
+        )?,
+        predecessor_rounds,
+        &schedule.terminal,
+    )?;
+    GrindingPlan::new(runs, challenge_order)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_nonterminal(
+    sink: &mut impl GrindingPlanSink,
+    challenge_order: ChallengeFieldOrder,
+    extension_degree: usize,
+    level: u32,
+    params: &CommittedGroupParams,
+    relation_rounds: usize,
+    layout: &OpeningClaimsLayout,
+    successor: FoldSuccessor<'_>,
+) -> Result<usize, AkitaError> {
+    let opening_method = params.uniform_opening_method(layout)?;
+    if opening_method.requires_extension_opening_reduction(extension_degree) {
+        append_eor(sink, challenge_order, extension_degree, level, layout)?;
+    }
+
+    append_claim_batch(
+        sink,
+        challenge_order,
+        GrindingSite::EvaluationBatch { level },
+        layout,
+    )?;
+
+    sink.push(GrindingRun::fold_response(level))?;
+    append_fold_queries(sink, level, params, layout)?;
+
+    let alpha_loss = params
+        .validated_groups(layout)?
+        .iter()
+        .try_fold(1u64, |largest, group| {
+            Ok::<_, AkitaError>(largest.max(ring_switch_alpha_loss_factor(
+                group.opening_method(),
+                group.inner_commit_matrix_params().ring_dimension(),
+            )?))
+        })?;
+    sink.push(GrindingRun::proof_of_work(
+        GrindingSite::RingSwitchAlpha { level },
+        alpha_loss,
+        challenge_order,
+    )?)?;
+
+    let successor_opening_vars = successor.recursive_opening_num_vars()?;
+    let tau0_width = relation_rounds;
+    if tau0_width > successor_opening_vars {
+        return Err(AkitaError::InvalidSetup(
+            "grinding Stage 2 point exceeds successor opening width".into(),
+        ));
+    }
+    sink.push(GrindingRun::proof_of_work(
+        GrindingSite::Tau0Point { level },
+        multilinear_point_loss_factor(tau0_width)?,
+        challenge_order,
+    )?)?;
+    sink.push(GrindingRun::proof_of_work(
+        GrindingSite::Tau1Point { level },
+        multilinear_point_loss_factor(params.relation_row_index_num_vars(layout)?)?,
+        challenge_order,
+    )?)?;
+
+    let rounds = tau0_width;
+    let basis = 1usize
+        .checked_shl(params.open().digits.log_basis)
+        .ok_or_else(|| AkitaError::InvalidSetup("digit-range basis exceeds usize".into()))?;
+    let range = DigitRangePlan::new(basis)?;
+    let shape = range.route_shape(rounds, params.inner().matrix.security_route())?;
+    for (stage_index, stage_shape) in shape.stages().enumerate() {
+        let stage = usize_to_u32(stage_index, "Stage 1 grinding stage")?;
+        let full_round_degree =
+            stage_shape.sumcheck_proof.1.checked_add(1).ok_or_else(|| {
+                AkitaError::InvalidSetup("Stage 1 full round degree overflow".into())
+            })?;
+        sink.sumcheck_rounds(SumcheckRoundBatch {
+            challenge_order,
+            protocol: SumcheckProtocol::Stage1,
+            level,
+            stage,
+            rounds: stage_shape.sumcheck_proof.0,
+            degree: full_round_degree,
+        })?;
+        if stage_shape.child_claims > 0 {
+            sink.push(GrindingRun::proof_of_work(
+                GrindingSite::Stage1InterstageBatch { level, stage },
+                powers_batch_loss_factor(stage_shape.child_claims)?,
+                challenge_order,
+            )?)?;
+        }
+    }
+    if let Some(norm) = shape.norm {
+        if norm.subclaims > 0 {
+            sink.push(GrindingRun::proof_of_work(
+                GrindingSite::L2SubclaimBatch { level },
+                powers_batch_loss_factor(norm.subclaims)?,
+                challenge_order,
+            )?)?;
+        }
+        sink.push(GrindingRun::proof_of_work(
+            GrindingSite::L2NormMerge { level },
+            1,
+            challenge_order,
+        )?)?;
+        sink.sumcheck_rounds(SumcheckRoundBatch {
+            challenge_order,
+            protocol: SumcheckProtocol::PhysicalL2,
+            level,
+            stage: 0,
+            rounds: norm.rounds,
+            degree: norm.degree,
+        })?;
+        sink.push(GrindingRun::proof_of_work(
+            GrindingSite::L2VirtualBatch { level },
+            polynomial_identity_loss_factor(norm.virtual_evaluations)?,
+            challenge_order,
+        )?)?;
+    }
+    if params.payload_mode.is_compressed() {
+        sink.push(GrindingRun::proof_of_work(
+            GrindingSite::CompressionBinary { level },
+            1,
+            challenge_order,
+        )?)?;
+    }
+    sink.push(GrindingRun::proof_of_work(
+        GrindingSite::Stage2Batch { level },
+        1,
+        challenge_order,
+    )?)?;
+    sink.sumcheck_rounds(SumcheckRoundBatch {
+        challenge_order,
+        protocol: SumcheckProtocol::Stage2,
+        level,
+        stage: 0,
+        rounds,
+        degree: 3,
+    })?;
+    if let FoldSuccessor::Recursive(successor) = successor {
+        if let Some(prefix) = successor.setup_prefix() {
+            sink.sumcheck_rounds(SumcheckRoundBatch {
+                challenge_order,
+                protocol: SumcheckProtocol::Stage3,
+                level,
+                stage: 0,
+                rounds: prefix.profile.group.num_vars(),
+                degree: 2,
+            })?;
+        }
+    }
+    Ok(rounds)
+}
+
+fn append_terminal(
+    sink: &mut impl GrindingPlanSink,
+    challenge_order: ChallengeFieldOrder,
+    extension_degree: usize,
+    level: u32,
+    predecessor_rounds: usize,
+    terminal: &crate::TerminalFoldParams,
+) -> Result<(), AkitaError> {
+    let layout = OpeningClaimsLayout::new(predecessor_rounds, 1)?;
+    if extension_degree > 1 {
+        append_eor(sink, challenge_order, extension_degree, level, &layout)?;
+    }
+    sink.push(GrindingRun::fold_response(level))?;
+    sink.push(GrindingRun::fold_challenge_group(
+        level,
+        0,
+        usize_to_u64(terminal.blocks.live_blocks, "terminal fold coordinates")?,
+    )?)?;
+    Ok(())
+}
+
+fn append_fold_queries(
+    sink: &mut impl GrindingPlanSink,
+    level: u32,
+    params: &CommittedGroupParams,
+    layout: &OpeningClaimsLayout,
+) -> Result<(), AkitaError> {
+    let groups = params.validated_groups(layout)?;
+    for (group_index, (group_layout, group_params)) in
+        layout.groups().iter().zip(groups).enumerate()
+    {
+        let group = usize_to_u32(group_index, "fold challenge group")?;
+        let multiplicity = group_layout
+            .num_polynomials()
+            .checked_mul(group_params.num_live_blocks())
+            .ok_or_else(|| AkitaError::InvalidSetup("fold coordinate count overflow".into()))?;
+        sink.push(GrindingRun::fold_challenge_group(
+            level,
+            group,
+            usize_to_u64(multiplicity, "fold coordinate count")?,
+        )?)?;
+    }
+    Ok(())
+}
+
+fn append_eor(
+    sink: &mut impl GrindingPlanSink,
+    challenge_order: ChallengeFieldOrder,
+    extension_degree: usize,
+    level: u32,
+    layout: &OpeningClaimsLayout,
+) -> Result<(), AkitaError> {
+    let split_bits = extension_degree.trailing_zeros() as usize;
+    if split_bits > layout.max_num_vars() {
+        return Err(AkitaError::InvalidSetup(
+            "extension-opening split exceeds opening arity".into(),
+        ));
+    }
+    sink.push(GrindingRun::proof_of_work(
+        GrindingSite::ExtensionOpeningPoint { level },
+        multilinear_point_loss_factor(split_bits)?,
+        challenge_order,
+    )?)?;
+    append_claim_batch(
+        sink,
+        challenge_order,
+        GrindingSite::ExtensionOpeningClaimBatch { level },
+        layout,
+    )?;
+    sink.sumcheck_rounds(SumcheckRoundBatch {
+        challenge_order,
+        protocol: SumcheckProtocol::ExtensionOpeningReduction,
+        level,
+        stage: 0,
+        rounds: layout.max_num_vars() - split_bits,
+        degree: 2,
+    })?;
+    Ok(())
+}
+
+/// Price a claim batch that draws one independent coefficient per opened
+/// polynomial. A single claim draws nothing and has no plan entry.
+fn append_claim_batch(
+    sink: &mut impl GrindingPlanSink,
+    challenge_order: ChallengeFieldOrder,
+    site: GrindingSite,
+    layout: &OpeningClaimsLayout,
+) -> Result<(), AkitaError> {
+    if layout.requires_row_batch_challenge() {
+        sink.push(GrindingRun::proof_of_work(
+            site,
+            independent_batch_loss_factor(layout.num_total_polynomials())?,
+            challenge_order,
+        )?)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SisModulusProfileId;
+    use akita_challenges::SparseChallengeConfig;
+
+    // Pre-PR 56 per-round construction retained as an independent parity oracle.
+    fn append_sumcheck(
+        sink: &mut impl GrindingPlanSink,
+        challenge_order: ChallengeFieldOrder,
+        protocol: SumcheckProtocol,
+        level: u32,
+        stage: u32,
+        round: usize,
+        degree: usize,
+    ) -> Result<(), AkitaError> {
+        sink.push(GrindingRun::proof_of_work(
+            GrindingSite::SumcheckRound {
+                protocol,
+                level,
+                stage,
+                round: usize_to_u32(round, "sumcheck grinding round")?,
+            },
+            polynomial_identity_loss_factor(degree)?,
+            challenge_order,
+        )?)?;
+        Ok(())
+    }
+
+    fn params(ring_dimension: usize) -> CommittedGroupParams {
+        CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            ring_dimension,
+            3,
+            2,
+            2,
+            2,
+            SparseChallengeConfig::pm1_only(3),
+        )
+        .with_decomp(1, 1, 2, 2, 2)
+        .expect("test fold params")
+    }
+
+    #[test]
+    fn stage_rounds_follow_successor_padded_relation_domain() {
+        let current = params(64);
+        let successor = params(128);
+        let layout = OpeningClaimsLayout::new(6, 1).expect("opening layout");
+        let output_witness_len = 64;
+        let expected_rounds = current
+            .relation_address_geometry(&layout, 1, successor.d_a(), output_witness_len)
+            .expect("relation geometry")
+            .relation_point_variable_count();
+        assert_eq!(expected_rounds, 7);
+        assert_ne!(
+            expected_rounds,
+            crate::sumcheck_rounds(current.d_a(), output_witness_len),
+            "the fixture must distinguish successor padding from the old shortcut"
+        );
+
+        let mut runs = Vec::new();
+        let mut push = |run| {
+            runs.push(run);
+            Ok(())
+        };
+        let rounds = append_nonterminal(
+            &mut push,
+            ChallengeFieldOrder::from_full_capacity(128).unwrap(),
+            1,
+            0,
+            &current,
+            expected_rounds,
+            &layout,
+            FoldSuccessor::Recursive(&successor),
+        )
+        .expect("nonterminal grinding runs");
+        assert_eq!(rounds, expected_rounds);
+        assert_eq!(
+            runs.iter()
+                .filter(|run| {
+                    matches!(
+                        run.site(),
+                        GrindingSite::SumcheckRound {
+                            protocol: SumcheckProtocol::Stage2,
+                            ..
+                        }
+                    )
+                })
+                .count(),
+            expected_rounds
+        );
+
+        let recursive = successor
+            .opening_layout_for_final_group(PolynomialGroupLayout::singleton(rounds))
+            .expect("recursive layout");
+        assert_eq!(
+            recursive
+                .group_layout(recursive.root_final_group_index().expect("final group"))
+                .expect("final layout")
+                .num_vars(),
+            expected_rounds
+        );
+
+        let terminal = crate::TerminalFoldParams::from_expanded_group(successor);
+        let mut terminal_runs = Vec::new();
+        append_terminal(
+            &mut |run| {
+                terminal_runs.push(run);
+                Ok(())
+            },
+            ChallengeFieldOrder::from_full_capacity(128).unwrap(),
+            4,
+            1,
+            rounds,
+            &terminal,
+        )
+        .expect("terminal grinding runs");
+        assert_eq!(
+            terminal_runs
+                .iter()
+                .filter(|run| {
+                    matches!(
+                        run.site(),
+                        GrindingSite::SumcheckRound {
+                            protocol: SumcheckProtocol::ExtensionOpeningReduction,
+                            ..
+                        }
+                    )
+                })
+                .count(),
+            expected_rounds - 2
+        );
+    }
+
+    #[test]
+    fn compact_stage1_grinding_matches_materialized_wire_shapes() {
+        use crate::{InnerCommitMatrixParams, PhysicalL2NormProofShape, SisL2TableDigest};
+        let key = crate::sis::sis_l2_table_key_for_collision_sq(
+            crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+            SisL2TableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            64,
+            1u128 << 50,
+        )
+        .unwrap();
+        let successor = params(128);
+        let layout = OpeningClaimsLayout::new(6, 1).unwrap();
+        // Base-field and quadratic-extension challenge capacities; 64 bits
+        // cannot meet this fixture's security target within the grinding cap.
+        for capacity in [128, 256] {
+            let challenge_order = ChallengeFieldOrder::from_full_capacity(capacity).unwrap();
+            for basis in [4usize, 8, 16, 32, 64] {
+                for rounds in [0, 1, 7] {
+                    for norm_shape in [
+                        None,
+                        Some(PhysicalL2NormProofShape::Direct {
+                            physical_response_len: 512,
+                        }),
+                        Some(PhysicalL2NormProofShape::LimbGram {
+                            physical_response_len: 512,
+                            block_len: 32,
+                            limb_count: 3,
+                        }),
+                    ] {
+                        let mut current = params(64);
+                        current.own_group_mut().opening.log_basis_open = basis.trailing_zeros();
+                        current.own_group_mut().profile.outer.digits.log_basis =
+                            basis.trailing_zeros();
+                        if let Some(norm_shape) = norm_shape {
+                            current.own_group_mut().profile.inner.matrix =
+                                InnerCommitMatrixParams::try_new_l2_with_min_rank(
+                                    key,
+                                    8,
+                                    1u128 << 30,
+                                    norm_shape,
+                                )
+                                .unwrap();
+                        }
+                        let mut actual = Vec::new();
+                        append_nonterminal(
+                            &mut |run| {
+                                actual.push(run);
+                                Ok(())
+                            },
+                            challenge_order,
+                            1,
+                            2,
+                            &current,
+                            rounds,
+                            &layout,
+                            FoldSuccessor::Recursive(&successor),
+                        )
+                        .unwrap();
+                        let mut priced = GrindingPlanAccumulator::new(challenge_order);
+                        append_nonterminal(
+                            &mut priced,
+                            challenge_order,
+                            1,
+                            2,
+                            &current,
+                            rounds,
+                            &layout,
+                            FoldSuccessor::Recursive(&successor),
+                        )
+                        .unwrap();
+                        let materialized =
+                            GrindingPlan::new(actual.clone(), challenge_order).unwrap();
+                        assert_eq!(
+                            priced.cost().total_nonce_bits,
+                            materialized.total_nonce_bits()
+                        );
+                        assert_eq!(
+                            priced.cost().expanded_query_count,
+                            materialized.expanded_query_count()
+                        );
+                        actual.retain(|run| {
+                            matches!(
+                                run.site(),
+                                GrindingSite::SumcheckRound {
+                                    protocol: SumcheckProtocol::Stage1
+                                        | SumcheckProtocol::PhysicalL2,
+                                    ..
+                                } | GrindingSite::Stage1InterstageBatch { .. }
+                                    | GrindingSite::L2SubclaimBatch { .. }
+                                    | GrindingSite::L2NormMerge { .. }
+                                    | GrindingSite::L2VirtualBatch { .. }
+                            )
+                        });
+                        let (stages, norm) = DigitRangePlan::new(basis)
+                            .unwrap()
+                            .proof_shapes_for_route(rounds, current.inner().matrix.security_route())
+                            .unwrap();
+                        let mut expected = Vec::new();
+                        let mut push = |run| {
+                            expected.push(run);
+                            Ok(())
+                        };
+                        for (stage, shape) in stages.into_iter().enumerate() {
+                            for round in 0..shape.sumcheck_proof.0 {
+                                append_sumcheck(
+                                    &mut push,
+                                    challenge_order,
+                                    SumcheckProtocol::Stage1,
+                                    2,
+                                    stage as u32,
+                                    round,
+                                    shape.sumcheck_proof.1 + 1,
+                                )
+                                .unwrap();
+                            }
+                            if shape.child_claims > 0 {
+                                push.push(
+                                    GrindingRun::proof_of_work(
+                                        GrindingSite::Stage1InterstageBatch {
+                                            level: 2,
+                                            stage: stage as u32,
+                                        },
+                                        powers_batch_loss_factor(shape.child_claims).unwrap(),
+                                        challenge_order,
+                                    )
+                                    .unwrap(),
+                                )
+                                .unwrap();
+                            }
+                        }
+                        if let Some(norm) = norm {
+                            if norm.subclaims > 0 {
+                                push.push(
+                                    GrindingRun::proof_of_work(
+                                        GrindingSite::L2SubclaimBatch { level: 2 },
+                                        powers_batch_loss_factor(norm.subclaims).unwrap(),
+                                        challenge_order,
+                                    )
+                                    .unwrap(),
+                                )
+                                .unwrap();
+                            }
+                            push.push(
+                                GrindingRun::proof_of_work(
+                                    GrindingSite::L2NormMerge { level: 2 },
+                                    1,
+                                    challenge_order,
+                                )
+                                .unwrap(),
+                            )
+                            .unwrap();
+                            for (round, degree) in norm.sumcheck.into_iter().enumerate() {
+                                append_sumcheck(
+                                    &mut push,
+                                    challenge_order,
+                                    SumcheckProtocol::PhysicalL2,
+                                    2,
+                                    0,
+                                    round,
+                                    degree,
+                                )
+                                .unwrap();
+                            }
+                            push.push(
+                                GrindingRun::proof_of_work(
+                                    GrindingSite::L2VirtualBatch { level: 2 },
+                                    polynomial_identity_loss_factor(norm.virtual_evaluations)
+                                        .unwrap(),
+                                    challenge_order,
+                                )
+                                .unwrap(),
+                            )
+                            .unwrap();
+                        }
+                        assert_eq!(
+                            actual, expected,
+                            "basis={basis} rounds={rounds} norm={norm_shape:?}"
+                        );
+                        let cost = |runs: &[GrindingRun]| {
+                            let mut accumulator = GrindingPlanAccumulator::new(challenge_order);
+                            for &run in runs {
+                                accumulator.push(run).unwrap();
+                            }
+                            accumulator.cost()
+                        };
+                        assert_eq!(cost(&actual), cost(&expected));
+                    }
+                }
+            }
+        }
+    }
+
+    fn claim_batch_runs(runs: &[GrindingRun]) -> Vec<GrindingRun> {
+        runs.iter()
+            .copied()
+            .filter(|run| {
+                matches!(
+                    run.site(),
+                    GrindingSite::EvaluationBatch { .. }
+                        | GrindingSite::ExtensionOpeningClaimBatch { .. }
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn claim_batches_price_independent_coefficients_at_tree_charge() {
+        // Quadratic extension of the 64-bit field: |E| = (2^64 - 59)^2 < 2^128.
+        let challenge_order =
+            ChallengeFieldOrder::from_field(64, 2, SisModulusProfileId::Q64Offset59.modulus())
+                .unwrap();
+        // Nine polynomials in groups of 1, 1, 4, and 3: loss 9 lies in (8, 16].
+        let layout = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(10, 1),
+            PolynomialGroupLayout::new(10, 1),
+            PolynomialGroupLayout::new(10, 4),
+            PolynomialGroupLayout::new(10, 3),
+        ])
+        .unwrap();
+        assert_eq!(layout.num_total_polynomials(), 9);
+        let singleton = OpeningClaimsLayout::new(10, 1).unwrap();
+
+        for site in [
+            GrindingSite::EvaluationBatch { level: 0 },
+            GrindingSite::ExtensionOpeningClaimBatch { level: 0 },
+        ] {
+            let mut runs = Vec::new();
+            append_claim_batch(
+                &mut |run| {
+                    runs.push(run);
+                    Ok(())
+                },
+                challenge_order,
+                site,
+                &layout,
+            )
+            .unwrap();
+            assert_eq!(runs.len(), 1);
+            assert_eq!(runs[0].site(), site);
+            assert_eq!(runs[0].loss_factor(), 9);
+            assert_eq!(runs[0].grind_bits(), 4);
+
+            let mut singleton_runs = Vec::new();
+            append_claim_batch(
+                &mut |run| {
+                    singleton_runs.push(run);
+                    Ok(())
+                },
+                challenge_order,
+                site,
+                &singleton,
+            )
+            .unwrap();
+            assert!(singleton_runs.is_empty(), "one claim draws no coefficient");
+        }
+
+        let mut eor_runs = Vec::new();
+        append_eor(
+            &mut |run| {
+                eor_runs.push(run);
+                Ok(())
+            },
+            challenge_order,
+            2,
+            0,
+            &layout,
+        )
+        .unwrap();
+        let eor_batches = claim_batch_runs(&eor_runs);
+        assert_eq!(eor_batches.len(), 1);
+        assert_eq!(
+            eor_batches[0].site(),
+            GrindingSite::ExtensionOpeningClaimBatch { level: 0 }
+        );
+        assert_eq!(eor_batches[0].grind_bits(), 4);
+    }
+
+    #[test]
+    fn nonterminal_evaluation_batch_charges_every_independent_coefficient() {
+        let challenge_order =
+            ChallengeFieldOrder::from_field(64, 2, SisModulusProfileId::Q64Offset59.modulus())
+                .unwrap();
+        let current = params(64);
+        let successor = params(128);
+        for (polynomials, expected) in [(1usize, None), (2, Some((2, 2))), (9, Some((9, 4)))] {
+            let layout = OpeningClaimsLayout::new(6, polynomials).unwrap();
+            let mut runs = Vec::new();
+            append_nonterminal(
+                &mut |run| {
+                    runs.push(run);
+                    Ok(())
+                },
+                challenge_order,
+                1,
+                0,
+                &current,
+                7,
+                &layout,
+                FoldSuccessor::Recursive(&successor),
+            )
+            .unwrap();
+            let batches = claim_batch_runs(&runs)
+                .into_iter()
+                .map(|run| {
+                    assert_eq!(run.site(), GrindingSite::EvaluationBatch { level: 0 });
+                    (run.loss_factor(), run.grind_bits())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                batches,
+                expected.into_iter().collect::<Vec<_>>(),
+                "polynomials={polynomials}"
+            );
+        }
+    }
+
+    #[test]
+    fn batched_cost_matches_materialized_extension_and_terminal_queries() {
+        let terminal = crate::TerminalFoldParams::from_expanded_group(params(64));
+        let layout = OpeningClaimsLayout::new(12, 3).unwrap();
+        for extension_degree in [1, 2, 4] {
+            let challenge_order = ChallengeFieldOrder::from_field(
+                128,
+                extension_degree,
+                SisModulusProfileId::Q128OffsetA7F7.modulus(),
+            )
+            .unwrap();
+            let mut runs = Vec::new();
+            let mut materialize = |run| {
+                runs.push(run);
+                Ok(())
+            };
+            let mut cost = GrindingPlanAccumulator::new(challenge_order);
+            append_eor(
+                &mut materialize,
+                challenge_order,
+                extension_degree,
+                0,
+                &layout,
+            )
+            .unwrap();
+            append_eor(&mut cost, challenge_order, extension_degree, 0, &layout).unwrap();
+            append_terminal(
+                &mut materialize,
+                challenge_order,
+                extension_degree,
+                1,
+                7,
+                &terminal,
+            )
+            .unwrap();
+            append_terminal(
+                &mut cost,
+                challenge_order,
+                extension_degree,
+                1,
+                7,
+                &terminal,
+            )
+            .unwrap();
+            let plan = GrindingPlan::new(runs, challenge_order).unwrap();
+            assert_eq!(cost.cost().total_nonce_bits, plan.total_nonce_bits());
+            assert_eq!(
+                cost.cost().expanded_query_count,
+                plan.expanded_query_count()
+            );
+        }
+    }
+}

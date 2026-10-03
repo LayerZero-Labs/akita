@@ -1,7 +1,7 @@
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
 use akita_error::AkitaError;
+use akita_params::SetupPrefixSlotId;
 use akita_serialization::Valid;
-use akita_types::SetupPrefixSlotId;
 use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::collections::BTreeSet;
 

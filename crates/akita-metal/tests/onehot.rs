@@ -13,7 +13,7 @@ use akita_metal::onehot::{
     DeviceFlatMatrix, DeviceOneHotSources, OneHotCommitShape, OneHotSchedule, OneHotWorkspace,
 };
 use akita_metal::{AkitaMetal, ErrorClass};
-use akita_types::FlatMatrix;
+use akita_params::FlatMatrix;
 use jolt_field::{Field, One, Prime128OffsetA7F7, Prime64Offset59, Zero};
 use jolt_metal::MetalField;
 use rand::rngs::StdRng;

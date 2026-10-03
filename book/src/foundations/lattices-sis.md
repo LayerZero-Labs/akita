@@ -234,13 +234,13 @@ to price it. The approved table lookup happens before the proof is accepted.
 
 | Question | Primary source |
 | --- | --- |
-| Which security policy and modulus profiles exist? | `crates/akita-types/src/sis/ajtai_key.rs` |
+| Which security policy and modulus profiles exist? | `crates/akita-params/src/sis/ajtai_key.rs` |
 | How is the minimum infinity norm rank selected? | `min_secure_rank` in `ajtai_key.rs` |
-| How is the minimum Euclidean rank selected? | `crates/akita-types/src/sis/l2_table.rs` |
-| Where do generated infinity norm widths live? | `crates/akita-types/src/sis/generated_sis_table/` |
-| Where do generated Euclidean widths live? | `crates/akita-types/src/sis/generated_l2_sis_table/` |
-| Where are fold collision bounds computed? | `crates/akita-types/src/sis/norm_bound.rs` |
-| Where are physical Euclidean proof shapes defined? | `crates/akita-types/src/sis/physical_l2.rs` |
+| How is the minimum Euclidean rank selected? | `crates/akita-params/src/sis/l2_table.rs` |
+| Where do generated infinity norm widths live? | `crates/akita-params/src/sis/generated_sis_table/` |
+| Where do generated Euclidean widths live? | `crates/akita-params/src/sis/generated_l2_sis_table/` |
+| Where are fold collision bounds computed? | `crates/akita-params/src/sis/norm_bound.rs` |
+| Where are physical Euclidean proof shapes defined? | `crates/akita-params/src/sis/physical_l2.rs` |
 | Where is the offline estimator implemented? | `crates/akita-sis-estimator/` |
 
 A security review should follow one generated schedule row from its matrix

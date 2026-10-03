@@ -3,12 +3,11 @@
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::{AkitaProverSetup, CommitmentHandle, CpuBackend};
 use akita_error::AkitaError;
+use akita_params::{BasisMode, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity};
 use akita_prover::{ProverBackend, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::AkitaVerifierSetup;
-use akita_types::{
-    BasisMode, FoldSchedule, FpExtEncoding, OpeningClaimsLayout, SetupMatrixCapacity,
-};
+use akita_types::FpExtEncoding;
 use akita_verifier::AkitaVerifier;
 use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
@@ -109,7 +108,7 @@ where
         root_layout: &OpeningClaimsLayout,
     ) -> Result<AkitaVerifierSetup<Cfg::Field>, AkitaError> {
         let capacity =
-            akita_types::verifier_setup_matrix_capacity_for_schedule(schedule, root_layout)?;
+            akita_params::verifier_setup_matrix_capacity_for_schedule(schedule, root_layout)?;
         setup.to_verifier_setup(capacity)
     }
 

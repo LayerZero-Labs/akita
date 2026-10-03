@@ -115,10 +115,12 @@ address split.
 
 - Stage 2 verifier: `crates/akita-verifier/src/stages/stage2.rs`.
 - Stage 1 verifier: `crates/akita-verifier/src/stages/stage1.rs`.
-- Relation preparation: `crates/akita-verifier/src/protocol/ring_switch.rs`.
+- Relation preparation: `crates/akita-verifier/src/relation/mod.rs`, with the relation claim in
+  `crates/akita-verifier/src/stages/relation_claim.rs`.
 - Coefficient-packing compact factors:
   `crates/akita-verifier/src/coefficient_packing_relation/`.
-- Evaluation trace: `crates/akita-verifier/src/protocol/evaluation_trace.rs`.
+- Opening semantics: `crates/akita-verifier/src/stages/opening_semantics.rs`.
+- Evaluation trace: `crates/akita-verifier/src/relation/evaluation_trace.rs`.
 - Prover stage: `crates/akita-cpu-backend/src/opaque/sumcheck/relation_range_image/`.
 
 The next chapter derives the evaluation trace path and explains its compact

@@ -4,23 +4,22 @@
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
-use akita_types::{
-    validate_schedule_ring_dims, AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout,
-};
+use akita_params::ScheduleLookupKey;
+use akita_params::{validate_schedule_ring_dims, FoldSchedule, PolynomialGroupLayout};
 
 fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
         .expect("workspace schedule catalog");
     let group = match akita_config::honest_fold_policy_of::<Cfg>() {
-        akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
+        akita_params::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
             PolynomialGroupLayout::singleton(num_vars)
         }
-        akita_types::sis::HonestFoldPolicySpec::UnitOneHot(_) => {
+        akita_params::sis::HonestFoldPolicySpec::UnitOneHot(_) => {
             PolynomialGroupLayout::new(num_vars, 1)
         }
     };
     catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .resolve_key(&ScheduleLookupKey::single(group))
         .expect("runtime schedule")
         .schedule()
         .clone()
