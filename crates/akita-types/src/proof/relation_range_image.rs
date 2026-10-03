@@ -199,10 +199,19 @@ impl PhysicalResponsePlan {
                     .ok_or_else(|| AkitaError::InvalidSetup("L2 physical row overflow".into()))?;
                 match self.shape {
                     PhysicalL2NormProofShape::Direct { .. } => {
-                        let table = tables.first_mut().ok_or(AkitaError::InvalidProof)?;
+                        let table = tables.first_mut().ok_or_else(|| {
+                            AkitaError::Internal(
+                                "direct L2 response has no virtual integer table".into(),
+                            )
+                        })?;
                         let output = table
                             .get_mut(physical_row..physical_row + self.ring_dimension)
-                            .ok_or(AkitaError::InvalidProof)?;
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "direct L2 physical row exceeds its virtual integer table"
+                                        .into(),
+                                )
+                            })?;
                         let mut basis_power = 1i128;
                         for limb in 0..self.fold_digit_count {
                             let index = witness_row + limb * self.ring_dimension;
@@ -237,7 +246,9 @@ impl PhysicalResponsePlan {
                             decode_digits(index, &mut digits)?;
                             let output = table
                                 .get_mut(physical_row..physical_row + self.ring_dimension)
-                                .ok_or(AkitaError::InvalidProof)?;
+                                .ok_or_else(|| {
+                                    AkitaError::Internal("L2 limb row exceeds integer table".into())
+                                })?;
                             for (value, &digit) in output.iter_mut().zip(&digits) {
                                 *value = i128::from(digit);
                             }

@@ -197,10 +197,18 @@ impl<E: Field> CompressionRelationWeights<E> {
                     event.alpha_exponent_start
                         ..event.alpha_exponent_start + event.coefficient_count,
                 )
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "compression event alpha span exceeds the power table".into(),
+                    )
+                })?;
             let target = weights
                 .get_mut(event.physical_start..event.physical_start + event.coefficient_count)
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "compression event physical span exceeds the dense weight table".into(),
+                    )
+                })?;
             for (weight, &power) in target.iter_mut().zip(alpha) {
                 *weight += event.scalar * power;
             }
@@ -265,7 +273,12 @@ impl<E: Field> CompressionRelationWeights<E> {
                         let powers = alpha_powers
                             .get(event.alpha_exponent_start..)
                             .and_then(|powers| powers.get(..event.coefficient_count))
-                            .ok_or(AkitaError::InvalidProof)?;
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "sparse compression event alpha span exceeds the power table"
+                                        .into(),
+                                )
+                            })?;
                         let offset = event.physical_start - cluster_start;
                         for (weight, &power) in dense[offset..].iter_mut().zip(powers) {
                             *weight += event.scalar * power;

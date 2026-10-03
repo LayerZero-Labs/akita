@@ -301,7 +301,11 @@ impl<E: Field> ReducedCompressionRelationWeights<E> {
                 let kernel = point.kernel(coefficients)?;
                 for (weight, kernel) in destination
                     .get_mut(physical)
-                    .ok_or(AkitaError::InvalidProof)?
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "reduced compression column span exceeds the dense weight table".into(),
+                        )
+                    })?
                     .iter_mut()
                     .zip(kernel)
                 {

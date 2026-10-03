@@ -124,7 +124,9 @@ impl<E: Field> PhysicalBSetupPlan<E> {
                 .ok_or_else(|| AkitaError::InvalidSetup("physical B segment overflow".into()))?;
             let target = physical
                 .get_mut(segment.physical_start..end)
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal("physical B weight segment exceeds its footprint".into())
+                })?;
             for (offset, target) in target.iter_mut().enumerate() {
                 for term in segment.terms.iter() {
                     let logical = term
@@ -132,7 +134,12 @@ impl<E: Field> PhysicalBSetupPlan<E> {
                         .checked_add(offset)
                         .and_then(|index| logical_column_weights.get(index))
                         .copied()
-                        .ok_or(AkitaError::InvalidProof)?;
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "physical B weight term exceeds the logical column weight table"
+                                    .into(),
+                            )
+                        })?;
                     *target += term.row_weight * logical;
                 }
             }

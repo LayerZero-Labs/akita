@@ -247,11 +247,11 @@ impl<F: Field> RingMultiplierOpeningPoint<F> {
             });
         }
         match self {
-            Self::Base(point) => point
-                .position_weights
-                .get(idx)
-                .map(|_| ())
-                .ok_or(AkitaError::InvalidProof),
+            Self::Base(point) => point.position_weights.get(idx).map(|_| ()).ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "base multiplier high-half product index out of range".into(),
+                )
+            }),
             Self::Subfield(point) => point.accumulate_position_product_high_half(idx, rhs, output),
         }
     }

@@ -291,7 +291,12 @@ fn materialize_subfield_rings<F: Field, const D: usize>(
             coordinates
                 .chunks_exact($k)
                 .map(|value| {
-                    let value: &[F; $k] = value.try_into().map_err(|_| AkitaError::InvalidProof)?;
+                    let value: &[F; $k] = value.try_into().map_err(|_| {
+                        AkitaError::Internal(
+                            "subfield materialization chunk does not match the extension degree"
+                                .into(),
+                        )
+                    })?;
                     Ok(embed_subfield(params, value))
                 })
                 .collect()
@@ -302,7 +307,9 @@ fn materialize_subfield_rings<F: Field, const D: usize>(
         2 => arm!(2),
         4 => arm!(4),
         8 => arm!(8),
-        _ => Err(AkitaError::InvalidProof),
+        _ => Err(AkitaError::Internal(
+            "subfield materialization extension degree is unsupported".into(),
+        )),
     }
 }
 
@@ -391,8 +398,15 @@ fn add_shifted_subfield_monomial<F: Field, const D: usize>(
     scale: F,
     output: &mut CyclotomicRing<F, D>,
 ) -> Result<(), AkitaError> {
-    if coordinates.len() != extension_degree || shift >= D {
-        return Err(AkitaError::InvalidProof);
+    if coordinates.len() != extension_degree {
+        return Err(AkitaError::Internal(
+            "subfield monomial coordinate count differs from extension degree".into(),
+        ));
+    }
+    if shift >= D {
+        return Err(AkitaError::InvalidInput(
+            "subfield monomial shift exceeds ring dimension".into(),
+        ));
     }
     if scale.is_zero() {
         return Ok(());
@@ -433,9 +447,13 @@ fn add_subfield_product_high_half<F: Field, const D: usize>(
         if coordinate.is_zero() {
             continue;
         }
-        let shift = index.checked_mul(stride).ok_or(AkitaError::InvalidProof)?;
+        let shift = index.checked_mul(stride).ok_or_else(|| {
+            AkitaError::Internal("subfield high-half product coordinate shift overflow".into())
+        })?;
         if shift == 0 || shift >= D {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "subfield high-half product coordinate shift is outside 1..ring dimension".into(),
+            ));
         }
         for rhs_index in (D - shift)..D {
             output[shift + rhs_index - D] += coordinate * rhs[rhs_index];
