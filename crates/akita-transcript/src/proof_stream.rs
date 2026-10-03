@@ -1109,7 +1109,24 @@ mod tests {
         ));
 
         let mut prover = new_prover_channel(b"unsupported-field", b"fixture").unwrap();
-        assert!(prover_field_challenge::<Prime48Offset59>(&mut prover).is_err());
+        assert!(matches!(
+            prover_field_challenge::<Prime48Offset59>(&mut prover),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+
+        let mut verifier = new_verifier_channel(b"unsupported-field", b"fixture", &[]).unwrap();
+        assert!(matches!(
+            verifier_field_challenge::<Prime48Offset59>(&mut verifier),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        assert!(matches!(
+            verifier_field_challenge::<F>(&mut verifier),
+            Err(AkitaError::InvalidProof)
+        ));
+        assert!(matches!(
+            verifier.check_eof(),
+            Err(AkitaError::InvalidProof)
+        ));
     }
 
     #[test]
