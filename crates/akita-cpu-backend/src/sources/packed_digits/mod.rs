@@ -144,10 +144,6 @@ impl PackedSignedDigits {
         &self.storage[..self.encoded_len]
     }
 
-    pub(crate) fn get(&self, index: usize) -> Option<i8> {
-        (index < self.len).then(|| scalar::decode_at(&self.storage, index, self.bit_width))
-    }
-
     pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = i8> + '_ {
         self.view().iter()
     }

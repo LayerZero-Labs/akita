@@ -64,6 +64,36 @@ fn stage1_new_rejects_malformed_shapes_without_panicking() {
     .is_err());
 }
 
+#[test]
+fn final_direct_claim_rejects_unfinished_materialized_and_octet_tables() {
+    let materialized = LowBasisRangeCheckProver::<F>::new(
+        packed(&[1, 1]),
+        &[F::from_u64(7)],
+        DigitRangePlan::new(4).unwrap(),
+        1,
+        0,
+        1,
+    )
+    .unwrap();
+    assert!(matches!(
+        materialized.final_range_image_eval(), Err(AkitaError::Internal(message))
+            if message == "range-image final table length: expected 1, actual 2"
+    ));
+    let octet = LowBasisRangeCheckProver::<F>::new(
+        packed(&vec![1; 2048]),
+        &[F::from_u64(7); 11],
+        DigitRangePlan::new(4).unwrap(),
+        1,
+        0,
+        11,
+    )
+    .unwrap();
+    assert!(matches!(
+        octet.final_range_image_eval(), Err(AkitaError::Internal(message))
+            if message == "range image stayed in the octet prefix after the final fold"
+    ));
+}
+
 fn fold_compact_range_image_prefix_x_reference(
     compact_range_image: &[i16],
     live_x_cols: usize,
@@ -239,8 +269,8 @@ fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
             }
 
             assert_eq!(
-                prefix_prover.final_range_image_eval(),
-                padded_prover.final_range_image_eval()
+                prefix_prover.final_range_image_eval().unwrap(),
+                padded_prover.final_range_image_eval().unwrap()
             );
             assert_eq!(prefix_claim, padded_claim);
             let padded_range_image: Vec<F> = build_compact_range_image(&padded_digit_witness)
@@ -248,7 +278,7 @@ fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
                 .map(|s| F::from_i64(i64::from(s)))
                 .collect();
             assert_eq!(
-                prefix_prover.final_range_image_eval(),
+                prefix_prover.final_range_image_eval().unwrap(),
                 multilinear_eval(&padded_range_image, &challenges).unwrap(),
                 "final s-claim mismatch live_x_cols={live_x_cols} basis={basis}"
             );
@@ -330,8 +360,8 @@ fn stage1_prefix_x_rounds_allow_ring_bits_at_least_col_bits() {
         }
 
         assert_eq!(
-            prefix_prover.final_range_image_eval(),
-            padded_prover.final_range_image_eval()
+            prefix_prover.final_range_image_eval().unwrap(),
+            padded_prover.final_range_image_eval().unwrap()
         );
         assert_eq!(prefix_claim, padded_claim);
         let padded_range_image: Vec<F> = build_compact_range_image(&padded_digit_witness)
@@ -339,7 +369,7 @@ fn stage1_prefix_x_rounds_allow_ring_bits_at_least_col_bits() {
             .map(|s| F::from_i64(i64::from(s)))
             .collect();
         assert_eq!(
-            prefix_prover.final_range_image_eval(),
+            prefix_prover.final_range_image_eval().unwrap(),
             multilinear_eval(&padded_range_image, &challenges).unwrap(),
             "final s-claim mismatch live_x_cols={live_x_cols} basis={basis}"
         );
@@ -382,7 +412,7 @@ fn assert_rounds_match_dense_reference(
         .collect();
     reference.resize(1usize << num_vars, F::zero());
     let mut reference_eq = GruenSplitEq::new(&tau0).unwrap();
-    let precomputation = RangePoly::new(basis);
+    let precomputation = RangePoly::new(basis).unwrap();
     let shape = format!(
         "basis={basis} width={bit_width} col_bits={col_bits} ring_bits={ring_bits} live={live_x_cols}"
     );
@@ -419,7 +449,11 @@ fn assert_rounds_match_dense_reference(
         );
     }
     assert_eq!(reference.len(), 1);
-    assert_eq!(prover.final_range_image_eval(), reference[0], "{shape}");
+    assert_eq!(
+        prover.final_range_image_eval().unwrap(),
+        reference[0],
+        "{shape}"
+    );
 }
 
 #[test]

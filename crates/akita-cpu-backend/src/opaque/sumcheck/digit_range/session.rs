@@ -437,9 +437,9 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
                         "stage 1 product public transition has no active stage".into(),
                     )
                 })? {
-                    ActiveStage::Product2(p) => p.final_child_claims(),
-                    ActiveStage::Product4(p) => p.final_child_claims(),
-                    ActiveStage::Product8(p) => p.final_child_claims(),
+                    ActiveStage::Product2(p) => p.final_child_claims()?,
+                    ActiveStage::Product4(p) => p.final_child_claims()?,
+                    ActiveStage::Product8(p) => p.final_child_claims()?,
                     _ => {
                         return Err(AkitaError::Internal(
                             "stage 1 product public transition contains a non-product stage".into(),
@@ -482,18 +482,18 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
                     )
                 })?;
                 let (range_image_evaluation, virtual_evaluations) = match active {
-                    ActiveStage::Low(p) => (p.final_range_image_eval(), Vec::new()),
-                    ActiveStage::Leaf(p) => (p.final_range_image_eval(), Vec::new()),
+                    ActiveStage::Low(p) => (p.final_range_image_eval()?, Vec::new()),
+                    ActiveStage::Leaf(p) => (p.final_range_image_eval()?, Vec::new()),
                     ActiveStage::Fused(p) => {
                         let expected =
-                            p.range.final_range_claim() + p.norm_merge * p.norm.final_claim()?;
+                            p.range.final_range_claim()? + p.norm_merge * p.norm.final_claim()?;
                         if self.claim != expected {
                             return Err(AkitaError::Internal(
                                 "fused Stage 1 final claim mismatch".into(),
                             ));
                         }
                         (
-                            p.range.final_range_image_eval(),
+                            p.range.final_range_image_eval()?,
                             p.norm.virtual_evaluations()?,
                         )
                     }

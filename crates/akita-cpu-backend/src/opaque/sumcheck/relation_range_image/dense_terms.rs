@@ -13,6 +13,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         };
         let witness_at = |index| match witness {
             WitnessState::CompactPrefix(witness) => witness
+                .view()
                 .get(index)
                 .map_or_else(E::zero, |w| E::from_i64(i64::from(w))),
             WitnessState::FoldedSuffix(witness) => {

@@ -145,6 +145,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     let lane = index / coeff_count;
                     let coefficient = index % coeff_count;
                     let w = w_evals_compact
+                        .view()
                         .get(index)
                         .expect("debug relation witness index is in bounds");
                     let witness = E::from_i64(i64::from(w));

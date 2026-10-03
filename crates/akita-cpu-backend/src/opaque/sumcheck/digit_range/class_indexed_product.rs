@@ -39,13 +39,13 @@ type ProductTableState<E, const LANES: usize> = ClassIndexedTableState<
 >;
 
 #[derive(Clone, Copy)]
-enum ProductArity {
+pub(super) enum ProductArity {
     Two,
     Four,
 }
 
 impl ProductArity {
-    fn new(arity: usize) -> Option<Self> {
+    pub(super) fn new(arity: usize) -> Option<Self> {
         match arity {
             2 => Some(Self::Two),
             4 => Some(Self::Four),
@@ -53,7 +53,7 @@ impl ProductArity {
         }
     }
 
-    fn degree(self) -> usize {
+    pub(super) fn degree(self) -> usize {
         match self {
             Self::Two => 2,
             Self::Four => 4,
@@ -414,12 +414,7 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
                 class_count = plan.basis() / 2,
             )
             .entered();
-            OrderedProductPairCoefficients::new(
-                &nodes,
-                plan.basis() / 2,
-                arity.degree(),
-                &parent_weights,
-            )
+            OrderedProductPairCoefficients::new(&nodes, arity, &parent_weights)
         };
         Ok(Self {
             product_table: ProductTableState::Compact(CompactProductState {
@@ -441,11 +436,11 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
         })
     }
 
-    pub(super) fn final_child_claims(&self) -> Vec<E> {
+    pub(super) fn final_child_claims(&self) -> Result<Vec<E>, AkitaError> {
         self.product_table
             .final_value()
-            .expect("product stage was not fully folded")
-            .to_vec()
+            .map(|claims| claims.to_vec())
+            .ok_or_else(|| AkitaError::Internal("product stage was not fully folded".into()))
     }
 }
 
@@ -595,7 +590,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                         .entered();
                         let quartets = SecondRoundProductQuartetCoefficients::new(
                             &folded_pairs,
-                            self.arity.degree(),
+                            self.arity,
                             &self.parent_weights,
                         );
                         let (equality_prefix_weights, equality_suffix_weights) =
@@ -741,6 +736,40 @@ mod tests {
     use super::*;
     use jolt_field::{Ext2, Prime128Offset275, Prime64Offset59};
 
+    #[test]
+    fn final_child_claims_reject_every_unfinished_storage_phase() {
+        use crate::sources::packed_digits::PackedSignedDigits;
+        use akita_params::FlatBooleanDomain;
+        use jolt_field::Zero;
+        type F = Prime128Offset275;
+        let plan = DigitRangePlan::new(16).unwrap();
+        let source = CompactDigitSource::new(
+            PackedSignedDigits::from_i8_digits_auto(vec![1; 16]),
+            FlatBooleanDomain::new(16, 4).unwrap(),
+            plan,
+        )
+        .unwrap();
+        let mut prover = ClassIndexedProductSubcheckProver::<F, 2>::new(
+            source,
+            plan,
+            &plan.leaf_coeffs::<F>(),
+            0,
+            vec![F::from_u64(1)],
+            &[F::from_u64(7); 4],
+            F::zero(),
+        )
+        .unwrap();
+        for round in 0..4 {
+            assert!(matches!(
+                prover.final_child_claims(), Err(AkitaError::Internal(message))
+                    if message == "product stage was not fully folded"
+            ));
+            prover.ingest_challenge(round, F::from_u64(11));
+        }
+        assert_eq!(prover.final_child_claims().unwrap().len(), 2);
+        assert!(ProductArity::new(3).is_none());
+    }
+
     fn check_interpolated_rounds<E: Field + Ring + Unreduced, const LANES: usize>(
         arity: ProductArity,
         parent_weights: &[E],
@@ -777,9 +806,9 @@ mod tests {
                 explicit_pair_count,
                 |pair_index| {
                     let (left, right) = pairs[pair_index];
-                    product_coefficients(left, right, arity.degree(), parent_weights)
+                    product_coefficients(left, right, arity, parent_weights)
                 },
-                product_coefficients(padding, padding, arity.degree(), parent_weights),
+                product_coefficients(padding, padding, arity, parent_weights),
             );
             assert_eq!(round(E::zero(), E::one()), expected);
             let claim = expected[0] + tau * expected[1..].iter().copied().sum::<E>();

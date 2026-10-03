@@ -209,9 +209,9 @@ fn random_access_matches_the_source() {
         let digits = random_digits(&mut rng, 257, bit_width);
         let packed = PackedSignedDigits::from_i8_digits(digits.clone(), bit_width).unwrap();
         for (index, &digit) in digits.iter().enumerate() {
-            assert_eq!(packed.get(index), Some(digit));
+            assert_eq!(packed.view().get(index), Some(digit));
         }
-        assert_eq!(packed.get(digits.len()), None);
+        assert_eq!(packed.view().get(digits.len()), None);
     }
 }
 

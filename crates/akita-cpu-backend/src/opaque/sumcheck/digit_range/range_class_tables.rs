@@ -1,5 +1,6 @@
+use super::class_indexed_product::ProductArity;
 use super::compact_digit_source::RangeImageClass;
-use super::{compose_small_poly_with_affine, MAX_TREE_STAGE_Q_DEGREE};
+use super::{compose_small_poly_with_affine, SmallPoly, MAX_TREE_STAGE_Q_DEGREE};
 use akita_error::AkitaError;
 use akita_params::DigitRangePlan;
 use jolt_field::Fold;
@@ -8,7 +9,6 @@ use jolt_field::{Field, Ring};
 /// Plan-derived child-node values for every range-image class.
 pub(super) struct ProductNodeTable<E: Field, const LANES: usize> {
     rows: Vec<[E; LANES]>,
-    class_count: usize,
 }
 
 impl<E: Field + Ring, const LANES: usize> ProductNodeTable<E, LANES> {
@@ -33,13 +33,11 @@ impl<E: Field + Ring, const LANES: usize> ProductNodeTable<E, LANES> {
             )));
         }
         let leaves_per_lane = leaf_polynomials.len() / LANES;
-        let class_count = plan.basis() / 2;
+        // DigitRangePlan admits log bases 2..=6, so the class count is 2..=32.
+        let class_count = 1u8 << (plan.log_basis() - 1);
         let rows = (0..class_count)
             .map(|class_index| {
-                let class = RangeImageClass::from_balanced_digit(
-                    i8::try_from(class_index).expect("supported range class fits i8"),
-                    plan.basis() / 2,
-                );
+                let class = RangeImageClass(class_index);
                 let range_image = class.range_image::<E>();
                 std::array::from_fn(|lane| {
                     let first_leaf = lane * leaves_per_lane;
@@ -51,10 +49,11 @@ impl<E: Field + Ring, const LANES: usize> ProductNodeTable<E, LANES> {
                 })
             })
             .collect();
-        Ok(Self { rows, class_count })
+        Ok(Self { rows })
     }
 
     #[inline(always)]
+    #[cfg(test)]
     pub(super) fn row(&self, class: RangeImageClass) -> [E; LANES] {
         self.rows[class.index()]
     }
@@ -75,7 +74,7 @@ pub(super) struct SecondRoundProductQuartetCoefficients<E: Field> {
 impl<E: Field + Ring + Fold> SecondRoundProductQuartetCoefficients<E> {
     pub(super) fn new<const LANES: usize>(
         folded_pairs: &FoldedProductPairTable<E, LANES>,
-        arity: usize,
+        arity: ProductArity,
         parent_weights: &[E],
     ) -> Self {
         let ordered_pair_count = folded_pairs.ordered_pair_count;
@@ -107,15 +106,14 @@ impl<E: Field + Ring + Fold> SecondRoundProductQuartetCoefficients<E> {
 
 impl<E: Field + Ring + Fold, const LANES: usize> FoldedProductPairTable<E, LANES> {
     pub(super) fn new(nodes: &ProductNodeTable<E, LANES>, challenge: E) -> Self {
-        let class_count = nodes.class_count;
+        let class_count = nodes.rows.len();
         let fold_context = E::precompute(challenge);
-        let rows = (0..class_count * class_count)
-            .map(|pair_index| {
-                let left = nodes.row(class_from_index(pair_index / class_count, class_count));
-                let right = nodes.row(class_from_index(pair_index % class_count, class_count));
+        let mut rows = Vec::with_capacity(class_count * class_count);
+        rows.extend(nodes.rows.iter().flat_map(|left| {
+            nodes.rows.iter().map(move |right| {
                 std::array::from_fn(|lane| E::fold_one(&fold_context, left[lane], right[lane]))
             })
-            .collect();
+        }));
         Self {
             rows,
             ordered_pair_count: class_count * class_count,
@@ -143,7 +141,7 @@ pub(super) struct SecondRoundRangeQuartetCoefficients<E: Field> {
 impl<E: Field + Ring + Fold> SecondRoundRangeQuartetCoefficients<E> {
     pub(super) fn new(
         folded_pairs: &FoldedRangeImagePairTable<E>,
-        polynomial_coefficients: &[E],
+        polynomial_coefficients: &SmallPoly<E>,
     ) -> Self {
         let ordered_pair_count = folded_pairs.ordered_pair_count;
         let rows = (0..ordered_pair_count * ordered_pair_count)
@@ -170,15 +168,16 @@ impl<E: Field + Ring + Fold> SecondRoundRangeQuartetCoefficients<E> {
 }
 
 impl<E: Field + Ring + Fold> FoldedRangeImagePairTable<E> {
-    pub(super) fn new(class_count: usize, challenge: E) -> Self {
+    pub(super) fn new(classes: std::ops::Range<u8>, challenge: E) -> Self {
+        let class_count = classes.len();
         let fold_context = E::precompute(challenge);
-        let values = (0..class_count * class_count)
-            .map(|pair_index| {
-                let left = class_from_index(pair_index / class_count, class_count).range_image();
-                let right = class_from_index(pair_index % class_count, class_count).range_image();
-                E::fold_one(&fold_context, left, right)
+        let mut values = Vec::with_capacity(class_count * class_count);
+        values.extend(classes.clone().flat_map(|left| {
+            let left = RangeImageClass(left).range_image();
+            classes.clone().map(move |right| {
+                E::fold_one(&fold_context, left, RangeImageClass(right).range_image())
             })
-            .collect();
+        }));
         Self {
             values,
             ordered_pair_count: class_count * class_count,
@@ -191,13 +190,6 @@ impl<E: Field + Ring + Fold> FoldedRangeImagePairTable<E> {
     }
 }
 
-fn class_from_index(index: usize, class_count: usize) -> RangeImageClass {
-    RangeImageClass::from_balanced_digit(
-        i8::try_from(index).expect("supported range class fits i8"),
-        class_count,
-    )
-}
-
 /// Batched round coefficients `sum_p w_p prod_c (left_c + X (right_c - left_c))`
 /// over the `arity` child lanes of each parent `p`.
 ///
@@ -208,14 +200,13 @@ fn class_from_index(index: usize, class_count: usize) -> RangeImageClass {
 pub(super) fn product_coefficients<E: Field, const LANES: usize>(
     left: [E; LANES],
     right: [E; LANES],
-    arity: usize,
+    arity: ProductArity,
     parent_weights: &[E],
 ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
-    debug_assert_eq!(LANES, arity * parent_weights.len());
-    debug_assert!(matches!(arity, 2 | 4));
+    debug_assert_eq!(LANES, arity.degree() * parent_weights.len());
     let mut batched = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
     for (parent_index, &weight) in parent_weights.iter().enumerate() {
-        let first_lane = parent_index * arity;
+        let first_lane = parent_index * arity.degree();
         let mut head = quadratic_affine_product(
             [left[first_lane], left[first_lane + 1]],
             [right[first_lane], right[first_lane + 1]],
@@ -224,12 +215,12 @@ pub(super) fn product_coefficients<E: Field, const LANES: usize>(
             head = head.map(|coefficient| weight * coefficient);
         }
         match arity {
-            2 => {
+            ProductArity::Two => {
                 for (destination, source) in batched.iter_mut().zip(head) {
                     *destination += source;
                 }
             }
-            4 => {
+            ProductArity::Four => {
                 let tail = quadratic_affine_product(
                     [left[first_lane + 2], left[first_lane + 3]],
                     [right[first_lane + 2], right[first_lane + 3]],
@@ -238,7 +229,6 @@ pub(super) fn product_coefficients<E: Field, const LANES: usize>(
                     *destination += source;
                 }
             }
-            _ => unreachable!("validated range-product arity"),
         }
     }
     batched
@@ -278,22 +268,17 @@ pub(super) struct OrderedProductPairCoefficients<E: Field> {
 impl<E: Field + Ring> OrderedProductPairCoefficients<E> {
     pub(super) fn new<const LANES: usize>(
         nodes: &ProductNodeTable<E, LANES>,
-        class_count: usize,
-        arity: usize,
+        arity: ProductArity,
         parent_weights: &[E],
     ) -> Self {
-        let rows = (0..class_count * class_count)
-            .map(|pair_index| {
-                let left_class = class_from_index(pair_index / class_count, class_count);
-                let right_class = class_from_index(pair_index % class_count, class_count);
-                product_coefficients(
-                    nodes.row(left_class),
-                    nodes.row(right_class),
-                    arity,
-                    parent_weights,
-                )
-            })
-            .collect();
+        let class_count = nodes.rows.len();
+        let mut rows = Vec::with_capacity(class_count * class_count);
+        rows.extend(nodes.rows.iter().flat_map(|&left| {
+            nodes
+                .rows
+                .iter()
+                .map(move |&right| product_coefficients(left, right, arity, parent_weights))
+        }));
         Self { rows }
     }
 
@@ -312,16 +297,19 @@ pub(super) struct OrderedRangePairCoefficients<E: Field> {
 }
 
 impl<E: Field + Ring> OrderedRangePairCoefficients<E> {
-    pub(super) fn new(class_count: usize, polynomial_coefficients: &[E]) -> Self {
-        let rows = (0..class_count * class_count)
-            .map(|pair_index| {
-                let left =
-                    class_from_index(pair_index / class_count, class_count).range_image::<E>();
-                let right =
-                    class_from_index(pair_index % class_count, class_count).range_image::<E>();
+    pub(super) fn new(
+        classes: std::ops::Range<u8>,
+        polynomial_coefficients: &SmallPoly<E>,
+    ) -> Self {
+        let class_count = classes.len();
+        let mut rows = Vec::with_capacity(class_count * class_count);
+        rows.extend(classes.clone().flat_map(|left| {
+            let left = RangeImageClass(left).range_image::<E>();
+            classes.clone().map(move |right| {
+                let right = RangeImageClass(right).range_image::<E>();
                 compose_small_poly_with_affine(polynomial_coefficients, left, right - left)
             })
-            .collect();
+        }));
         Self { rows }
     }
 
@@ -405,8 +393,11 @@ mod tests {
                             stage_index,
                         )
                         .unwrap();
-                        let pairs =
-                            OrderedProductPairCoefficients::new(&nodes, basis / 2, arity, &weights);
+                        let pairs = OrderedProductPairCoefficients::new(
+                            &nodes,
+                            ProductArity::new(arity).unwrap(),
+                            &weights,
+                        );
                         let folded_pairs = FoldedProductPairTable::new(&nodes, challenge);
                         for left_index in 0..basis / 2 {
                             for right_index in 0..basis / 2 {
@@ -464,8 +455,9 @@ mod tests {
                     &plan.leaf_coeffs::<F>(),
                 )
                 .unwrap();
-            let pairs = OrderedRangePairCoefficients::new(basis / 2, &coefficients);
-            let folded_pairs = FoldedRangeImagePairTable::<F>::new(basis / 2, challenge);
+            let polynomial = SmallPoly::new(&coefficients).unwrap();
+            let pairs = OrderedRangePairCoefficients::new(0..(basis / 2) as u8, &polynomial);
+            let folded_pairs = FoldedRangeImagePairTable::<F>::new(0..(basis / 2) as u8, challenge);
             for left_index in 0..basis / 2 {
                 for right_index in 0..basis / 2 {
                     let left = RangeImageClass::from_balanced_digit(
@@ -506,8 +498,11 @@ mod tests {
         let parent_weights = vec![F::one()];
         let nodes = ProductNodeTable::<F, 2>::new(plan, &leaf_polynomials, 0).unwrap();
         let folded_products = FoldedProductPairTable::new(&nodes, challenge);
-        let product_quartets =
-            SecondRoundProductQuartetCoefficients::new(&folded_products, 2, &parent_weights);
+        let product_quartets = SecondRoundProductQuartetCoefficients::new(
+            &folded_products,
+            ProductArity::Two,
+            &parent_weights,
+        );
 
         let range_coefficients = plan
             .batch_leaf_polynomials(
@@ -515,9 +510,11 @@ mod tests {
                 &leaf_polynomials,
             )
             .unwrap();
-        let folded_ranges = FoldedRangeImagePairTable::<F>::new(class_count, challenge);
-        let range_quartets =
-            SecondRoundRangeQuartetCoefficients::new(&folded_ranges, &range_coefficients);
+        let folded_ranges = FoldedRangeImagePairTable::<F>::new(0..class_count as u8, challenge);
+        let range_quartets = SecondRoundRangeQuartetCoefficients::new(
+            &folded_ranges,
+            &SmallPoly::new(&range_coefficients).unwrap(),
+        );
 
         for left_pair in 0..ordered_pair_count {
             for right_pair in 0..ordered_pair_count {
