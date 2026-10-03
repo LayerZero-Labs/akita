@@ -37,114 +37,125 @@ where
         + AkitaSerialize
         + 'static,
 {
-    fn prepare_opening(
+    fn prepare_openings(
         &self,
         session: &Self::ProofSessionHandle,
-        context: &ProofContext,
-        source: OpeningSource<'_, Self::CommitmentHandle, Self::WitnessHandle>,
-        plan: &ValidatedRecursiveGroupOpeningPlan<'_, E>,
-    ) -> Result<PreparedGroupOpening<E, Self::PreparedOpeningHandle>, AkitaError> {
-        let binding = self.binding(session, context)?;
-        let (parameters, _) = self.admitted_group(&binding)?;
-        if plan.ring_dimension() != parameters.inner_commit_matrix_params().ring_dimension()
-            || plan.positions_per_block() != parameters.num_positions_per_block()
-            || plan.live_blocks() != parameters.num_live_blocks()
-            || plan.opening_method() != parameters.opening_method()
-        {
-            return Err(AkitaError::InvalidInput(
-                "opening does not match the admitted group".into(),
-            ));
-        }
-        let opening = match source {
-            OpeningSource::Commitment(handle) => {
-                if handle.owner != self.owner().backend_id() {
-                    return Err(AkitaError::InvalidInput(
-                        "commitment belongs to another backend".into(),
-                    ));
-                }
-                binding
-                    .scope_lease()
-                    .validate_commitment(context, handle.committed.commitment_id)?;
-                if handle.committed.parameters != parameters.profile {
-                    return Err(AkitaError::InvalidInput(
-                        "commitment profile differs from the admitted group profile".into(),
-                    ));
-                }
-                if handle.committed.metadata.num_vars() < plan.point().len()
-                    || handle.committed.parameters.inner.matrix.ring_dimension()
-                        != plan.ring_dimension()
+        requests: &[GroupOpeningRequest<'_, E, Self::CommitmentHandle, Self::WitnessHandle>],
+    ) -> Result<Vec<PreparedGroupOpening<E, Self::PreparedOpeningHandle>>, AkitaError> {
+        requests
+            .iter()
+            .map(|request| {
+                let context = &request.context;
+                let source = request.source;
+                let plan = &request.plan;
+                let binding = self.binding(session, context)?;
+                let (parameters, _) = self.admitted_group(&binding)?;
+                if plan.ring_dimension() != parameters.inner_commit_matrix_params().ring_dimension()
+                    || plan.positions_per_block() != parameters.num_positions_per_block()
+                    || plan.live_blocks() != parameters.num_live_blocks()
+                    || plan.opening_method() != parameters.opening_method()
                 {
                     return Err(AkitaError::InvalidInput(
-                        "commitment and opening geometry disagree".into(),
+                        "opening does not match the admitted group".into(),
                     ));
                 }
-                handle.committed.source.opening(
-                    self,
-                    &binding,
-                    plan,
-                    PreparedOpeningSource::Retained(RetainedOpeningSource::Commitment(
-                        handle.committed.clone(),
-                    )),
-                )?
-            }
-            OpeningSource::Witness(witness) => {
-                self.validate_binding(&witness.operation_binding())?;
-                binding.validate_lineage(&witness.operation_binding())?;
-                let (schedule, _) = binding.scope_lease().proof_plan()?;
-                let parameters = if context.fold_level() == 0 {
-                    &schedule.root.params
-                } else {
-                    &schedule
-                        .recursive_folds
-                        .get(context.fold_level() as usize - 1)
-                        .ok_or_else(|| {
-                            AkitaError::Internal(
-                                "admitted witness opening recursive fold is missing".into(),
-                            )
-                        })?
-                        .params
-                };
-                witness.operation_binding().validate_group(
-                    context.group_index().ok_or_else(|| {
-                        AkitaError::Internal(
-                            "admitted witness opening lost its ordered group context".into(),
-                        )
-                    })?,
-                    parameters.groups().len(),
-                )?;
-                dispatch_for_field!(
-                    ProtocolDispatchSlot::Role(RingRole::Inner),
-                    F,
-                    plan.ring_dimension(),
-                    |D| {
-                        crate::opaque::prepare_recursive_witness_opening::<F, E, D>(
+                let opening = match source {
+                    OpeningSource::Commitment(handle) => {
+                        if handle.owner != self.owner().backend_id() {
+                            return Err(AkitaError::InvalidInput(
+                                "commitment belongs to another backend".into(),
+                            ));
+                        }
+                        binding
+                            .scope_lease()
+                            .validate_commitment(context, handle.committed.commitment_id)?;
+                        if handle.committed.parameters != parameters.profile {
+                            return Err(AkitaError::InvalidInput(
+                                "commitment profile differs from the admitted group profile".into(),
+                            ));
+                        }
+                        if handle.committed.metadata.num_vars() < plan.point().len()
+                            || handle.committed.parameters.inner.matrix.ring_dimension()
+                                != plan.ring_dimension()
+                        {
+                            return Err(AkitaError::InvalidInput(
+                                "commitment and opening geometry disagree".into(),
+                            ));
+                        }
+                        handle.committed.source.opening(
                             self,
-                            Some(self.prepared()?),
-                            binding,
-                            PreparedOpeningSource::Retained(RetainedOpeningSource::Witness(
-                                Box::new(witness.snapshot()),
-                            )),
-                            witness,
+                            &binding,
                             plan,
-                        )
+                            PreparedOpeningSource::Retained(RetainedOpeningSource::Commitment(
+                                handle.committed.clone(),
+                            )),
+                        )?
                     }
-                )?
-            }
-        };
-        let (messages, opening) = opening.into_parts();
-        #[cfg(feature = "response-model-diagnostics")]
-        let opening = {
-            let mut opening = opening;
-            if crate::opaque::fold::response_model_diagnostics_enabled() {
-                let source_l2_sq = match opening.source()? {
-                    RetainedOpeningSource::Commitment(source) => source.source.source_l2_sq(),
-                    RetainedOpeningSource::Witness(witness) => witness.source_l2_sq::<F>(),
+                    OpeningSource::Witness(witness) => {
+                        self.validate_binding(&witness.operation_binding())?;
+                        binding.validate_lineage(&witness.operation_binding())?;
+                        let (schedule, _) = binding.scope_lease().proof_plan()?;
+                        let parameters = if context.fold_level() == 0 {
+                            &schedule.root.params
+                        } else {
+                            &schedule
+                                .recursive_folds
+                                .get(context.fold_level() as usize - 1)
+                                .ok_or_else(|| {
+                                    AkitaError::Internal(
+                                        "admitted witness opening recursive fold is missing".into(),
+                                    )
+                                })?
+                                .params
+                        };
+                        witness.operation_binding().validate_group(
+                            context.group_index().ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "admitted witness opening lost its ordered group context"
+                                        .into(),
+                                )
+                            })?,
+                            parameters.groups().len(),
+                        )?;
+                        dispatch_for_field!(
+                            ProtocolDispatchSlot::Role(RingRole::Inner),
+                            F,
+                            plan.ring_dimension(),
+                            |D| {
+                                crate::opaque::prepare_recursive_witness_opening::<F, E, D>(
+                                    self,
+                                    Some(self.prepared()?),
+                                    binding,
+                                    PreparedOpeningSource::Retained(
+                                        RetainedOpeningSource::Witness(Box::new(
+                                            witness.snapshot(),
+                                        )),
+                                    ),
+                                    witness,
+                                    plan,
+                                )
+                            }
+                        )?
+                    }
                 };
-                opening.set_source_l2_sq(source_l2_sq);
-            }
-            opening
-        };
-        Ok(PreparedGroupOpening::new(messages, opening))
+                let (messages, opening) = opening.into_parts();
+                #[cfg(feature = "response-model-diagnostics")]
+                let opening = {
+                    let mut opening = opening;
+                    if crate::opaque::fold::response_model_diagnostics_enabled() {
+                        let source_l2_sq = match opening.source()? {
+                            RetainedOpeningSource::Commitment(source) => {
+                                source.source.source_l2_sq()
+                            }
+                            RetainedOpeningSource::Witness(witness) => witness.source_l2_sq::<F>(),
+                        };
+                        opening.set_source_l2_sq(source_l2_sq);
+                    }
+                    opening
+                };
+                Ok(PreparedGroupOpening::new(messages, opening))
+            })
+            .collect()
     }
     fn probe_opening_fold(
         &self,
