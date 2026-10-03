@@ -36,16 +36,16 @@ pub enum FoldSite {
     /// Outer commitment payload for the next fold's witness.
     NextWitnessPayload { level: u32 },
     /// Inner `t` state handed to the suffix-terminal fold. Under
-    /// `recompute-last-block` it stops before the last block.
+    /// `dev-protocol` it stops before the last block.
     NextWitnessInnerState { level: u32 },
     /// Digest of the last inner `t` block, which the terminal recomputes under
-    /// `recompute-last-block`.
+    /// `dev-protocol`.
     NextWitnessInnerStateDigest { level: u32 },
-    /// Terminal `e` fields. Under `recompute-last-block` they stop before the
+    /// Terminal `e` fields. Under `dev-protocol` they stop before the
     /// last block.
     TerminalEFields { level: u32 },
     /// Digest of the last terminal `e` block, which the terminal recomputes
-    /// under `recompute-last-block`.
+    /// under `dev-protocol`.
     TerminalEDigest { level: u32 },
     /// Terminal public `t` fields.
     TerminalTFields { level: u32 },

@@ -76,8 +76,8 @@ The rules below apply to every existing configuration and every input that
    enabled for every crate in that build.
 3. Enabling a Cargo feature MUST NOT select an extension.
 
-   Rules 2 and 3 do not apply to the Cargo feature of a
-   [wire-format variant](#wire-format-variants).
+   Rules 2 and 3 do not apply to the `dev-protocol` feature, which selects
+   [the dev protocol](#the-dev-protocol).
 4. Given the same setup, statement, and serialized proof bytes, `dev` MUST
    decode, validate, and verify them with the same outcome as `main`: `dev`
    accepts exactly when `main` accepts.
@@ -109,31 +109,44 @@ the author of a `dev` pull request that changes files from `main` MUST compare
 proof bytes against `main` for the affected configurations and record the
 result in the pull request.
 
-### Wire-format variants
+### The dev protocol
 
-A *wire-format variant* is an extension that replaces part of the current
-proof grammar instead of adding a configuration beside it. It is a candidate
-change to the current protocol that `dev` carries until maintainers review it
-for `main`. Selecting it per schedule would thread a mode through the code it
-replaces, and that plumbing would have to be removed again when the variant
-reaches `main`. A variant is therefore selected at compile time by its Cargo
-feature, under these conditions:
+Some extensions replace part of the current proof grammar instead of adding a
+configuration beside it. Each is a candidate change to the current protocol
+that `dev` carries until maintainers review it for `main`. Selecting such a
+change per schedule would thread a mode through the code it replaces, and that
+plumbing would have to be removed again when the change reaches `main`.
+
+`dev` therefore carries all of these changes behind one Cargo feature,
+`dev-protocol`. With the feature on, a build speaks the *dev protocol*: every
+change in the table below at once. With it off, a build speaks the current
+protocol. Rules 2 and 3 do not apply to this feature. These rules do:
 
 - The feature MUST be off by default. No other feature and no crate's default
   features may enable it.
 - With the feature off, rules 1, 4, and 6 hold.
-- The variant MUST have its own schedule set and catalog snapshot. It MUST NOT
-  read or modify `artifacts/schedules/`.
-- A dedicated CI job MUST regenerate the variant's schedule set and run the
+- `akita-params` owns the feature. It defines `DEV_PROTOCOL` and one constant
+  per change, each set from `DEV_PROTOCOL`. Other crates read the constant for
+  the change they depend on. They MUST NOT test the feature themselves.
+- The dev protocol has its own schedule set, `artifacts/schedules-dev/`, and
+  catalog snapshot, `artifacts/schedule-catalog-dev.tsv`. A dev-protocol build
+  MUST NOT read or modify `artifacts/schedules/`. A pull request that changes
+  the dev protocol's proof size MUST regenerate the dev set with
+  `scripts/generate-schedule-artifacts.sh --dev`.
+- The CI job `test-dev-protocol` regenerates the dev schedule set and runs the
   end-to-end, soundness, and transcript suites with the feature on.
-- The variant MUST be listed in the table below.
+- Every change MUST be listed in the table below.
 
-A build with the feature on produces and accepts only the variant's proofs. Do
+A build with the feature on produces and accepts only dev-protocol proofs. Do
 not enable it in a build that must also verify proofs from `main`.
 
-| Feature | Change | Schedule set | CI job |
-| --- | --- | --- | --- |
-| `recompute-last-block` | The terminal response omits the last live block of `e` and of `t`. The verifier recomputes it and checks it against a digest. | `artifacts/schedules-dev/`, `artifacts/schedule-catalog-dev.tsv` | `test-recompute-last-block` |
+Profile benchmarks on a pull request into `dev` run the dev protocol. The
+current protocol is benchmarked on pull requests into `main`, and the two
+branches share its code.
+
+| Change | Constant | Description |
+| --- | --- | --- |
+| Recompute the last block | `RECOMPUTE_LAST_BLOCK` | The terminal response omits the last live block of `e` and of `t`. The verifier recomputes it and checks it against a digest. |
 
 ## Keep `dev` close to `main`
 

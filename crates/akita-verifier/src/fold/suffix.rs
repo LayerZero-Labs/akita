@@ -22,7 +22,7 @@ pub(super) struct SuffixVerifierState<F: Field, E: Field> {
     pub opening: E,
     pub witness: RingVec<F>,
     /// Digest of the last `t` block when `witness` is the terminal `t` state
-    /// under `recompute-last-block`.
+    /// under `dev-protocol`.
     pub witness_last_block_digest: Option<[u8; akita_transcript::FIELD_DIGEST_BYTES]>,
     pub basis: BasisMode,
     pub witness_len: usize,

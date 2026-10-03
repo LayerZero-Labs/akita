@@ -219,7 +219,7 @@ draws the sparse challenges. It then absorbs the remaining response and
 performs the direct checks. There is no outgoing commitment or replay of
 Stages 1 through 3.
 
-Under the `recompute-last-block` variant on `dev`, the last block of the
+Under the dev protocol on `dev`, the last block of the
 inner images and of the opening partials travels as a 32-byte digest instead
 of field atoms. Each digest sits directly after the fields it completes, so it
 is bound before the same challenges. The verifier recomputes the block and

@@ -110,7 +110,7 @@ where
         group.e_field_elems,
     )
     .map(RingVec::from_coeffs)?;
-    // Under `recompute-last-block` both segments omit their last block. The
+    // Under `dev-protocol` both segments omit their last block. The
     // predecessor fold bound the `t` digest next to the carried state, and the
     // `e` digest arrives here, before the fold challenges.
     let last_block_digests = if akita_params::RECOMPUTE_LAST_BLOCK {

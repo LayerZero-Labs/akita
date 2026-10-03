@@ -64,7 +64,7 @@ pub use layout::{
     RelationRowGeometry, RelationWitnessGeometry, RingMatrixView, RingOpeningPoint, RingRole,
     RoleParams, SetupMatrixCapacity, SetupPrefixSlotId, SetupProjectionGeometry, Stage1StageShape,
     SubringCoefficientPackingGeometry, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE, MAX_FOLD_LEVELS,
+    TerminalResponseShape, DEV_PROTOCOL, EXTENSION_OPENING_REDUCTION_DEGREE, MAX_FOLD_LEVELS,
     MIN_A_ROLE_FOLD_CHALLENGE_RING_D, RECOMPUTE_LAST_BLOCK, SCHEDULE_ARTIFACT_SET,
     SCHEDULE_CATALOG_SNAPSHOT, SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
     SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS, TERMINAL_BLOCK_DIGEST_BYTES,

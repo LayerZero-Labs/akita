@@ -64,7 +64,7 @@ where
 }
 
 /// Digests of the last live `e` and `t` block, which the prover sends in
-/// place of the blocks under `recompute-last-block`.
+/// place of the blocks under `dev-protocol`.
 pub(crate) struct LastBlockDigests {
     pub(crate) e: [u8; FIELD_DIGEST_BYTES],
     pub(crate) t: [u8; FIELD_DIGEST_BYTES],

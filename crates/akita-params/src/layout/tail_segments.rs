@@ -11,17 +11,24 @@ use crate::tail_golomb_rice_low_bits::{
 use crate::wire_limits::{checked_shape_len, checked_shape_sequence_len};
 use crate::{CommittedGroupParams, TerminalFoldParams};
 
+/// Whether this build speaks the dev protocol instead of the current one.
+///
+/// The `dev-protocol` feature turns on every wire-format change that `dev`
+/// carries and `main` does not. Each change has its own constant below, set
+/// from this one, so code names the change it depends on. The two protocols
+/// are incompatible, so each has its own schedule set.
+pub const DEV_PROTOCOL: bool = cfg!(feature = "dev-protocol");
+
 /// Whether the terminal response omits the last live block of `e` and of `t`.
 ///
-/// With the dev-only `recompute-last-block` feature the prover sends a digest
-/// of each omitted block and the verifier recomputes the block from the
-/// relation it completes. Without the feature every live block is sent. The
-/// two wire formats are incompatible, so each has its own schedule set.
-pub const RECOMPUTE_LAST_BLOCK: bool = cfg!(feature = "recompute-last-block");
+/// When set, the prover sends a digest of each omitted block and the verifier
+/// recomputes the block from the relation it completes. Otherwise every live
+/// block is sent.
+pub const RECOMPUTE_LAST_BLOCK: bool = DEV_PROTOCOL;
 
 /// Directory under the workspace `artifacts/` whose schedules are priced for
-/// this build's terminal wire format.
-pub const SCHEDULE_ARTIFACT_SET: &str = if RECOMPUTE_LAST_BLOCK {
+/// this build's protocol.
+pub const SCHEDULE_ARTIFACT_SET: &str = if DEV_PROTOCOL {
     "schedules-dev"
 } else {
     "schedules"
@@ -29,7 +36,7 @@ pub const SCHEDULE_ARTIFACT_SET: &str = if RECOMPUTE_LAST_BLOCK {
 
 /// Snapshot under the workspace `artifacts/` that records
 /// [`SCHEDULE_ARTIFACT_SET`].
-pub const SCHEDULE_CATALOG_SNAPSHOT: &str = if RECOMPUTE_LAST_BLOCK {
+pub const SCHEDULE_CATALOG_SNAPSHOT: &str = if DEV_PROTOCOL {
     "schedule-catalog-dev.tsv"
 } else {
     "schedule-catalog.tsv"

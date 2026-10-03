@@ -3464,6 +3464,12 @@ def render_report(args: argparse.Namespace) -> int:
     run_ref = workflow_run_ref()
     if run_ref:
         print(f"- Workflow run: {run_ref}")
+    protocol_feature = os.environ.get("AKITA_BENCH_PROTOCOL_FEATURE")
+    if protocol_feature:
+        print(
+            f"- Protocol: dev (built with {code_text(protocol_feature)}). "
+            "A merge base without that feature ran the current protocol."
+        )
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     if not args.compact:
         print(f"- Report generated: `{generated_at}`.")

@@ -61,7 +61,7 @@ pub(crate) struct FoldVerifyOutput<F: Field, E: Field> {
     pub(crate) challenges: Vec<E>,
     pub(crate) setup_prefix_opening: Option<SetupPrefixOpening<E>>,
     pub(crate) next_witness: RingVec<F>,
-    /// Digest of the last `t` block, sent under `recompute-last-block` when
+    /// Digest of the last `t` block, sent under `dev-protocol` when
     /// the successor is the terminal.
     pub(crate) next_witness_last_block_digest: Option<[u8; FIELD_DIGEST_BYTES]>,
     pub(crate) opening: E,
@@ -179,7 +179,7 @@ where
 
 /// Receive the successor witness payload for the next fold or the terminal.
 ///
-/// Under `recompute-last-block` the terminal recomputes the last block of its
+/// Under `dev-protocol` the terminal recomputes the last block of its
 /// `t` state, so that block arrives as a digest.
 fn receive_next_witness<F, E>(
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,

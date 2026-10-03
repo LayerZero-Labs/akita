@@ -176,7 +176,7 @@ where
     let fold_level =
         u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
     // Only the `t` blocks the predecessor fold sent as fields are public here.
-    // Under `recompute-last-block` that excludes the last block, which the
+    // Under `dev-protocol` that excludes the last block, which the
     // predecessor bound with a digest.
     akita_transcript::public_fields_prover(
         grinding.state_mut(),

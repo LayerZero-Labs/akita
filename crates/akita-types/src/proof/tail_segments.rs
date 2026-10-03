@@ -21,7 +21,7 @@ use akita_params::TerminalFoldParams;
 
 /// Clear terminal response carried on the wire.
 ///
-/// Under the dev-only `recompute-last-block` feature the `e` and `t` segments
+/// Under the dev-only `dev-protocol` feature the `e` and `t` segments
 /// omit their last live block. The proof binds that block with a digest and
 /// the verifier recomputes it.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -3,7 +3,7 @@
 # Regenerate the checked-in schedule artifacts.
 #
 # With `--dev` as the first argument, regenerate the dev-only set in
-# `artifacts/schedules-dev`, priced for the `recompute-last-block` wire
+# `artifacts/schedules-dev`, priced for the `dev-protocol` wire
 # format. Otherwise regenerate `artifacts/schedules`.
 
 set -euo pipefail
@@ -20,7 +20,7 @@ planner_features="catalog-gen"
 artifact_dir="artifacts/schedules"
 if [ "${1:-}" = "--dev" ]; then
     shift
-    planner_features="catalog-gen,recompute-last-block"
+    planner_features="catalog-gen,dev-protocol"
     artifact_dir="artifacts/schedules-dev"
 fi
 for arg in "$@"; do

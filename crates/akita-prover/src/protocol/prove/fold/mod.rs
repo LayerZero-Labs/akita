@@ -548,7 +548,7 @@ where
                     "terminal inner state bound for a recursive successor".into(),
                 ));
             };
-            // Under `recompute-last-block` the scheduled prefix stops before
+            // Under `dev-protocol` the scheduled prefix stops before
             // the last block, which travels as a digest. Otherwise the prefix
             // is the whole state.
             let (sent, last_block) = message

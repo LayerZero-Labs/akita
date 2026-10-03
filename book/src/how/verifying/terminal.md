@@ -222,10 +222,11 @@ serialized. These execution choices compute the same relation (5).
 
 ## Variant: recompute the last block
 
-The `dev` branch carries a variant of this response behind the Cargo feature
-`recompute-last-block`, which is off by default. A build with the feature
-speaks only the variant, with schedules from `artifacts/schedules-dev/`. The
-rest of this page describes a build without it.
+The `dev` branch carries a variant of this response as part of its dev
+protocol, which the Cargo feature `dev-protocol` selects. The feature is off
+by default. A build with it speaks only the dev protocol, with schedules from
+`artifacts/schedules-dev/`. The rest of this page describes a build without
+it.
 
 Checks (4) and (5) are linear in the last block, and its coefficient is the
 last fold challenge $c_{m-1}$. That challenge is a short nonzero ring

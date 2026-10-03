@@ -123,7 +123,7 @@ pub(crate) struct FoldLevelProof<F: Field, E: Field> {
 /// terminal sparse challenge. The predecessor first binds canonical `t` as its
 /// outgoing state; terminal replay rebinds the same `t` as current state before
 /// absorbing `e`, sampling challenges, and absorbing the `z` response. Under
-/// the dev-only `recompute-last-block` feature both segments omit their last
+/// the dev-only `dev-protocol` feature both segments omit their last
 /// live block, which is bound by a digest in its place and recomputed by the
 /// verifier.
 ///

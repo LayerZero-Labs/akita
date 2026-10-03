@@ -26,7 +26,7 @@ transcript-keccak = [
   "akita-params/transcript-keccak",
 ]
 test-support = []
-recompute-last-block = ["akita-params/recompute-last-block"]
+dev-protocol = ["akita-params/dev-protocol"]
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
