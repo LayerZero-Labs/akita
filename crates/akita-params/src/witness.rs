@@ -94,6 +94,10 @@ pub struct WitnessUnitLayout {
 /// Canonical physical witness descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WitnessLayout {
+    // Retain construction geometry so validation can recompute the body extent.
+    opening_batch: Option<OpeningClaimsLayout>,
+    extension_degree: usize,
+    num_chunks: usize,
     units: Vec<WitnessUnitLayout>,
     compression_layers: Vec<CompressionWitnessLayerLayout>,
     compression_alignment_ranges: Vec<Range<usize>>,
@@ -435,6 +439,9 @@ impl WitnessLayout {
         );
         let r_end = r_rows.last().map_or(r_start, |row| row.range.end);
         Self {
+            opening_batch: None,
+            extension_degree: 0,
+            num_chunks: 0,
             units,
             compression_layers: Vec::new(),
             compression_alignment_ranges: Vec::new(),
@@ -645,19 +652,53 @@ impl WitnessLayout {
         };
         let tail = tail::materialize(
             lp,
-            relation_geometry,
+            relation_geometry.rhs_layout(),
             num_groups,
             successor_a_alignment,
             tail_start,
             quotient_plan,
         )?;
         Ok(Self {
+            opening_batch: Some(opening_batch.clone()),
+            extension_degree: relation_geometry.extension_degree(),
+            num_chunks,
             units,
             compression_layers: tail.compression_layers,
             compression_alignment_ranges: tail.compression_alignment_ranges,
             relation_quotients: tail.relation_quotients,
             tail_range: tail_start..tail.end,
         })
+    }
+
+    /// Validate the canonical body and tail against the relation layout and level.
+    /// Rejects stale body geometry, offsets, ownership, alignment, or quotient depth.
+    pub fn validate_tail(
+        &self,
+        params: &CommittedGroupParams,
+        relation_layout: &crate::RelationRhsLayout,
+        quotient_plan: RelationQuotientPlan,
+    ) -> Result<(), AkitaError> {
+        self.validate_internal_ranges()?;
+        let opening_batch = self.opening_batch.as_ref().ok_or_else(|| {
+            AkitaError::InvalidInput("witness layout has no construction geometry".into())
+        })?;
+        let geometry =
+            RelationWitnessGeometry::for_level(params, opening_batch, self.extension_degree)?;
+        if geometry.rhs_layout() != relation_layout
+            || *self
+                != Self::new(
+                    params,
+                    opening_batch,
+                    &geometry,
+                    self.num_chunks,
+                    quotient_plan,
+                )?
+        {
+            return Err(AkitaError::InvalidInput(
+                "witness layout is not canonical for its level and opening geometry".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn units(&self) -> &[WitnessUnitLayout] {

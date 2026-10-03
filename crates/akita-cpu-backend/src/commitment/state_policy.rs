@@ -11,12 +11,12 @@ use jolt_field::Field;
 use std::sync::{Arc, Mutex};
 
 /// Canonical shared host material exported from one retained compression state.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PortableCompressionState<F: Field> {
     material: Arc<PortableCompressionMaterial<F>>,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum PortableCompressionMaterial<F: Field> {
     /// Packed witness and one quotient image per compression map.
     QuotientLift {
