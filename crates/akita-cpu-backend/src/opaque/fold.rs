@@ -547,6 +547,7 @@ impl CpuFoldResponses {
 
 #[derive(Clone, Copy)]
 struct AcceptedFoldManifest {
+    metadata: AcceptedFoldMetadata,
     ring_dimension: usize,
     response_coefficients: usize,
     opening_method: akita_params::OpeningMethod,
@@ -581,11 +582,14 @@ where
             .checked_mul(plan.num_digits())
             .and_then(|rows| rows.checked_mul(D))
             .ok_or_else(|| AkitaError::Internal("fold response size overflow".into()))?;
+        let num_chunks = plan.geometry().chunk_ranges().map_or(1, <[_]>::len);
+        let metadata = AcceptedFoldMetadata::try_new(D, response_coefficients, num_chunks)?;
         Ok(Self {
             global,
             chunks,
             challenges: plan.challenges().clone(),
             manifest: AcceptedFoldManifest {
+                metadata,
                 ring_dimension: D,
                 response_coefficients,
                 opening_method: plan.opening_method(),
@@ -594,7 +598,7 @@ where
                 positions_per_block: plan.num_positions_per_block(),
                 num_digits: plan.num_digits(),
                 log_basis: plan.log_basis(),
-                num_chunks: plan.geometry().chunk_ranges().map_or(1, <[_]>::len),
+                num_chunks,
             },
             binding: crate::opaque::OperationBinding::unbound(),
             _field: PhantomData,
@@ -619,6 +623,8 @@ where
             challenges: akita_challenges::Challenges::from_sparse(Vec::new(), 0, 0)
                 .expect("test challenges"),
             manifest: AcceptedFoldManifest {
+                metadata: AcceptedFoldMetadata::try_new(D, response_coefficients, num_chunks)
+                    .expect("test fold metadata"),
                 ring_dimension: D,
                 response_coefficients,
                 opening_method: params.opening_method(),
@@ -862,11 +868,6 @@ where
 
 impl From<AcceptedFoldManifest> for AcceptedFoldMetadata {
     fn from(manifest: AcceptedFoldManifest) -> Self {
-        Self::try_new(
-            manifest.ring_dimension,
-            manifest.response_coefficients,
-            manifest.num_chunks,
-        )
-        .expect("accepted CPU fold has validated public geometry")
+        manifest.metadata
     }
 }

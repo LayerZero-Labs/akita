@@ -1,8 +1,7 @@
 //! Dense polynomial storage and constructors.
 
 use crate::kernels::linear::try_centered_i8;
-use crate::sources::poly_helpers::try_small_i8_cache_from_ring_coeffs;
-use crate::validation::is_i8_log_basis;
+use crate::sources::poly_helpers::{try_small_i8_cache_from_ring_coeffs, SignedDigitBasis};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
@@ -35,6 +34,7 @@ pub(super) struct DenseDigitCache {
     ring_d: usize,
     num_digits: usize,
     log_basis: u32,
+    basis: SignedDigitBasis,
     planes: Vec<i8>,
 }
 
@@ -273,10 +273,7 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
         &self,
         num_digits: usize,
         log_basis: u32,
-    ) -> Option<&[[i8; D]]> {
-        if !is_i8_log_basis(log_basis) {
-            return None;
-        }
+    ) -> Option<(&[[i8; D]], SignedDigitBasis)> {
         if let Some(cache) = self.digit_cache.get() {
             // A cache built at another dimension is not reused: returning
             // `None` falls back to the uncached path, exactly like a
@@ -287,10 +284,14 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
                 .then(|| {
                     let (chunks, remainder) = cache.planes.as_chunks::<D>();
                     debug_assert!(remainder.is_empty());
-                    chunks
+                    (chunks, cache.basis)
                 });
         }
 
+        let basis = SignedDigitBasis::new(log_basis).ok()?;
+        if basis.kernel() != akita_params::SignedDigitKernel::I8 {
+            return None;
+        }
         let num_rings = self.num_ring_elems_at(D);
         let cache_bytes = num_rings
             .checked_mul(num_digits)?
@@ -321,6 +322,7 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
             ring_d: D,
             num_digits,
             log_basis,
+            basis,
             planes,
         });
         let cache = self.digit_cache.get()?;
@@ -328,7 +330,7 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
             || {
                 let (chunks, remainder) = cache.planes.as_chunks::<D>();
                 debug_assert!(remainder.is_empty());
-                chunks
+                (chunks, cache.basis)
             },
         )
     }

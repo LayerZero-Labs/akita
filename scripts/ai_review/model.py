@@ -98,8 +98,9 @@ def review(snapshot, api_key, model, api=request):
     }
     corrections = 0
     for _ in range(32):
-        if len(json.dumps(history)) > 900_000:
-            raise ReviewError("Review context budget exhausted")
+        history_chars = len(json.dumps(history))
+        if history_chars > 900_000:
+            raise ReviewError(f"Local review context budget exhausted: {history_chars} > 900000 characters")
         result = api("https://api.openai.com", "/v1/responses", api_key, {
             "model": model, "store": False, "instructions": instructions, "input": history,
             "include": ["reasoning.encrypted_content"],

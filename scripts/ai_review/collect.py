@@ -12,6 +12,14 @@ from common import MARKER, REPOSITORY, ReviewError, authorize, digest, reopen_ep
 # Keep this allowlist in trusted workflow code, never in PR-controlled config.
 REVIEW_BOTS = {"cursor[bot]": (206951365, 1210556, "cursor")}
 
+# Local input budget, not an API context limit.
+MAX_DIFF_CHARS = 300_000
+
+
+def is_akita_artifact(path):
+    """Akita-specific policy; never load exclusions from PR configuration."""
+    return path == "artifacts" or path.startswith("artifacts/")
+
 
 def git(*args):
     # No credential, hook, pager, textconv, external diff, or PR-owned config.
@@ -112,7 +120,7 @@ def tree(commit, blobs):
         info, raw_path = entry.split(b"\t", 1)
         mode, kind, oid, size = info.split()
         path = raw_path.decode("utf-8", errors="strict")
-        if (mode not in (b"100644", b"100755") or kind != b"blob"
+        if (is_akita_artifact(path) or mode not in (b"100644", b"100755") or kind != b"blob"
                 or int(size) > 250_000):
             excluded.append(path)
             continue
@@ -142,9 +150,9 @@ def since_previous(base, previous, head, changed):
     """
     previous_base = git("merge-base", base, previous).decode().strip()
     before = git("diff", "--no-renames", "--name-only", "-z", previous_base, previous).decode().split("\0")[:-1]
-    paths = sorted(set(changed) | set(before))
+    paths = sorted(path for path in set(changed) | set(before) if not is_akita_artifact(path))
     if len(paths) > 300:
-        raise ReviewError("Diff exceeds automated review budget; use a manual review")
+        raise ReviewError(f"Repeat-review path count exceeds budget: {len(paths)} > 300")
     if not paths:
         return ""
     return git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", previous, head, "--", *paths).decode()
@@ -164,11 +172,18 @@ def collect(github, event):
         git("fetch", "--no-tags", "--no-recurse-submodules",
             f"https://github.com/{REPOSITORY}.git", sha(commit))
     merge_base = git("merge-base", revisions["base"], revisions["head"]).decode().strip()
-    changed = git("diff", "--no-renames", "--name-only", "-z", merge_base, revisions["head"]).decode().split("\0")[:-1]
-    diff = git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", merge_base, revisions["head"]).decode()
+    all_changed = git("diff", "--no-renames", "--name-only", "-z", merge_base, revisions["head"]).decode().split("\0")[:-1]
+    excluded_artifacts = [path for path in all_changed if is_akita_artifact(path)]
+    changed = [path for path in all_changed if not is_akita_artifact(path)]
+    # An empty path list would make git diff return the entire excluded diff.
+    diff = (git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", merge_base,
+                revisions["head"], "--", *changed).decode() if changed else "")
     delta = since_previous(revisions["base"], prior["head"], revisions["head"], changed) if prior else ""
-    if len(diff) + len(delta) > 300_000 or len(changed) > 150:
-        raise ReviewError("Diff exceeds automated review budget; use a manual review")
+    if len(changed) > 150:
+        raise ReviewError(f"Changed-file count exceeds review budget: {len(changed)} > 150")
+    if len(diff) + len(delta) > MAX_DIFF_CHARS:
+        raise ReviewError(f"Diff exceeds local review budget: full={len(diff)}, delta={len(delta)}, "
+                          f"combined={len(diff) + len(delta)} > {MAX_DIFF_CHARS} characters; use a manual review")
     anchors = {path: diff_lines(git("diff", "--no-ext-diff", "--no-textconv", "--no-renames",
                                     "--unified=3", merge_base, revisions["head"], "--", path).decode())
                for path in changed}
@@ -181,6 +196,7 @@ def collect(github, event):
                 "revision": revisions, "merge_base": merge_base, "title": pr["title"],
                 "description": pr.get("body") or "", "comments": comments, "prior": prior,
                 "diff": diff, "delta": delta, "changed": changed, "anchors": anchors,
+                "excluded_artifacts": excluded_artifacts,
                 "trees": trees, "blobs": blobs}
     fresh = authorize(github, event)
     if (revision(fresh) != revisions or discussions(github, number) != comments

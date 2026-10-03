@@ -196,7 +196,11 @@ fn check_configuration(coefficient_bits: usize, live_lanes: usize, mode: WeightM
         prover.ingest_challenge(round, challenge);
         assert_eq!(reference.claim(), claim, "fold at round {round}: {label}");
     }
-    assert_eq!(prover.final_w_eval(), reference.witness[0], "w: {label}");
+    assert_eq!(
+        prover.final_w_eval().unwrap(),
+        reference.witness[0],
+        "w: {label}"
+    );
     assert_eq!(
         prover.expected_final_claim().unwrap(),
         reference.claim(),
@@ -385,6 +389,6 @@ fn check_response_norm_source(basis: usize, with_trace: bool, wide_digits: bool)
         prover.ingest_challenge(round, challenge);
         assert_eq!(reference.claim(), claim, "fold {round}");
     }
-    assert_eq!(prover.final_w_eval(), reference.witness[0]);
+    assert_eq!(prover.final_w_eval().unwrap(), reference.witness[0]);
     assert_eq!(prover.expected_final_claim().unwrap(), reference.claim());
 }
