@@ -1,10 +1,7 @@
 //! Completion of root commitments whose outer image was computed elsewhere.
 
-use super::{
-    api::validate_commitment_geometry, CommitmentExecutionPlan, CommitmentStateBinding,
-    CompressionOperation, PortableCompressionState,
-};
-use crate::opaque::{CpuBackend, CpuCompressionOperation};
+use super::{api::validate_commitment_geometry, CommitmentExecutionPlan, PortableCompressionState};
+use crate::opaque::CpuBackend;
 use akita_error::AkitaError;
 use akita_params::{field_modulus, GroupCommitPhaseParams};
 use akita_types::{Commitment, CommittedGroup, RingVec};
@@ -75,19 +72,9 @@ impl<F: Field, E> CpuBackend<F, E> {
             ));
         }
 
-        let binding = CommitmentStateBinding::new(
-            expanded.descriptor.clone(),
-            *execution.inner(),
-            profile.group.num_polynomials(),
-            Some(relation_mode),
-            Some(compression_plan.clone()),
-        )?;
-        let operation = CpuCompressionOperation::new(self, prepared, expanded)?;
-        let exporter = operation.portable_exporter();
-        let output = operation.compress(&binding, &compression_plan, relation_mode, outer_image)?;
-        let (terminal_payload, state) = output.into_parts();
-        let compression_state = exporter.consume_compression_state(state)?;
-        compression_state.validate(&compression_plan, relation_mode)?;
+        let (terminal_payload, compression_state) = self
+            .compress_relation_image(&compression_plan, relation_mode, outer_image)?
+            .into_parts();
 
         Ok((
             CommittedGroup::new(profile, Commitment::new(terminal_payload)),

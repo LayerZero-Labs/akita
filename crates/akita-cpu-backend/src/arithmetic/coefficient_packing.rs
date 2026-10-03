@@ -114,7 +114,11 @@ where
             let live_in_block = point
                 .num_live_positions()
                 .checked_sub(first_position)
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "coefficient-packing block starts beyond the live positions".into(),
+                    )
+                })?
                 .min(point.num_positions_per_block());
             let packed = if E::SUM_IS_EXACT {
                 let mut products = zero_vec::<<E as Unreduced>::Product>(s)?;
@@ -128,9 +132,14 @@ where
                         .take(live_in_block)
                         .enumerate()
                     {
-                        let position = first_position
-                            .checked_add(position_in_block)
-                            .ok_or(AkitaError::InvalidProof)?;
+                        let position =
+                            first_position
+                                .checked_add(position_in_block)
+                                .ok_or_else(|| {
+                                    AkitaError::Internal(
+                                        "exact coefficient-packing position overflow".into(),
+                                    )
+                                })?;
                         let source_position = position_at(position)?;
                         for (packing_index, &weight) in weights.iter().enumerate() {
                             for (subring_index, accumulator) in products.iter_mut().enumerate() {
@@ -147,9 +156,14 @@ where
                         .take(live_in_block)
                         .enumerate()
                     {
-                        let position = first_position
-                            .checked_add(position_in_block)
-                            .ok_or(AkitaError::InvalidProof)?;
+                        let position =
+                            first_position
+                                .checked_add(position_in_block)
+                                .ok_or_else(|| {
+                                    AkitaError::Internal(
+                                        "chunked coefficient-packing position overflow".into(),
+                                    )
+                                })?;
                         let source_position = position_at(position)?;
                         let mut coefficient_index = 0;
                         for accumulator in &mut products {
@@ -188,9 +202,14 @@ where
                     .take(live_in_block)
                     .enumerate()
                 {
-                    let position = first_position
-                        .checked_add(position_in_block)
-                        .ok_or(AkitaError::InvalidProof)?;
+                    let position =
+                        first_position
+                            .checked_add(position_in_block)
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "reduced coefficient-packing position overflow".into(),
+                                )
+                            })?;
                     let source_position = position_at(position)?;
                     let mut coefficient_index = 0;
                     for accumulator in &mut reduced {
@@ -216,9 +235,11 @@ where
                 for (extension_coordinate, &coordinate) in coordinates.iter().enumerate() {
                     let local_index = geometry
                         .partial_base_field_coordinate_index(extension_coordinate, subring_index)?;
-                    *output_coordinates
-                        .get_mut(local_index)
-                        .ok_or(AkitaError::InvalidProof)? = coordinate;
+                    *output_coordinates.get_mut(local_index).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "coefficient-packing output coordinate is outside its geometry".into(),
+                        )
+                    })? = coordinate;
                 }
             }
             Ok(output_coordinates)

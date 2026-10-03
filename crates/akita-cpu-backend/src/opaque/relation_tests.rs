@@ -125,7 +125,7 @@ fn witness_relation_plan_is_initialized_once_from_canonical_relation() {
         .expect("relation plan initialization");
     assert!(matches!(
         witness.initialize_relation_plan(&relation, &params),
-        Err(akita_error::AkitaError::InvalidInput(message))
+        Err(akita_error::AkitaError::Internal(message))
             if message.contains("already initialized")
     ));
 }
@@ -665,3 +665,6 @@ fn reduced_ring_switch_rejects_quotient_witness_without_running_quotients() {
         assert_eq!(quotient_decomposition_calls(), 0);
     });
 }
+
+#[path = "relation_tests/portable_compression.rs"]
+mod portable_compression;

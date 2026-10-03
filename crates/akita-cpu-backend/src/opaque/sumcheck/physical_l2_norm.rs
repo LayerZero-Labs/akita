@@ -113,10 +113,18 @@ impl<E: Field + Fold> PhysicalNormTerm<E> {
             Self::Direct { response } => response
                 .final_value()
                 .map(|value| vec![value])
-                .ok_or(AkitaError::InvalidProof),
+                .ok_or_else(|| {
+                    AkitaError::Internal("virtual direct response is not fully folded".into())
+                }),
             Self::LimbGram { limbs, .. } => limbs
                 .iter()
-                .map(|table| table.final_value().ok_or(AkitaError::InvalidProof))
+                .map(|table| {
+                    table.final_value().ok_or_else(|| {
+                        AkitaError::Internal(
+                            "virtual Gram response limb is not fully folded".into(),
+                        )
+                    })
+                })
                 .collect(),
         }
     }
@@ -124,7 +132,9 @@ impl<E: Field + Fold> PhysicalNormTerm<E> {
     pub(super) fn final_claim(&self) -> Result<E, AkitaError> {
         match self {
             Self::Direct { response } => {
-                let value = response.final_value().ok_or(AkitaError::InvalidProof)?;
+                let value = response.final_value().ok_or_else(|| {
+                    AkitaError::Internal("direct physical norm response is not fully folded".into())
+                })?;
                 Ok(value * value)
             }
             Self::LimbGram {
@@ -134,15 +144,25 @@ impl<E: Field + Fold> PhysicalNormTerm<E> {
             } => selectors.iter().zip(pairs).try_fold(
                 E::zero(),
                 |sum, (selector, &(left, right))| {
-                    let selector = selector.final_value().ok_or(AkitaError::InvalidProof)?;
+                    let selector = selector.final_value().ok_or_else(|| {
+                        AkitaError::Internal("gram norm selector has no fully folded value".into())
+                    })?;
                     let left = limbs
                         .get(left)
                         .and_then(ExactPrefixTable::final_value)
-                        .ok_or(AkitaError::InvalidProof)?;
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "gram norm left limb is absent or not fully folded".into(),
+                            )
+                        })?;
                     let right = limbs
                         .get(right)
                         .and_then(ExactPrefixTable::final_value)
-                        .ok_or(AkitaError::InvalidProof)?;
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "gram norm right limb is absent or not fully folded".into(),
+                            )
+                        })?;
                     Ok(sum + selector * left * right)
                 },
             ),
@@ -217,7 +237,9 @@ pub(super) fn exact_claims<E: Field + Ring>(
 ) -> Result<(u128, Vec<E>), AkitaError> {
     match plan.shape() {
         PhysicalL2NormProofShape::Direct { .. } => {
-            let response = integers.first().ok_or(AkitaError::InvalidProof)?;
+            let response = integers.first().ok_or_else(|| {
+                AkitaError::Internal("direct physical norm has no integer response".into())
+            })?;
             let response_l2_sq = response.iter().try_fold(0u128, |sum, &value| {
                 let magnitude = value.unsigned_abs();
                 sum.checked_add(magnitude.checked_mul(magnitude).ok_or_else(|| {
@@ -228,23 +250,38 @@ pub(super) fn exact_claims<E: Field + Ring>(
             Ok((response_l2_sq, Vec::new()))
         }
         shape @ PhysicalL2NormProofShape::LimbGram { .. } => {
-            let layout = shape.limb_gram_layout()?.ok_or(AkitaError::InvalidProof)?;
+            let layout = shape.limb_gram_layout()?.ok_or_else(|| {
+                AkitaError::Internal("gram physical norm claim shape has no limb layout".into())
+            })?;
             let mut integer_claims = Vec::with_capacity(layout.subclaim_count());
             for block in layout.block_ranges() {
                 for (left, right) in layout.limb_pairs() {
-                    let left_values = integers.get(left).ok_or(AkitaError::InvalidProof)?;
-                    let right_values = integers.get(right).ok_or(AkitaError::InvalidProof)?;
+                    let left_values = integers.get(left).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "gram physical norm left limb has no integer response".into(),
+                        )
+                    })?;
+                    let right_values = integers.get(right).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "gram physical norm right limb has no integer response".into(),
+                        )
+                    })?;
                     let claim = block.clone().try_fold(0i128, |sum, index| {
                         let product = left_values
                             .get(index)
                             .copied()
-                            .ok_or(AkitaError::InvalidProof)?
-                            .checked_mul(
-                                right_values
-                                    .get(index)
-                                    .copied()
-                                    .ok_or(AkitaError::InvalidProof)?,
-                            )
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "gram physical norm left response does not cover its block"
+                                        .into(),
+                                )
+                            })?
+                            .checked_mul(right_values.get(index).copied().ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "gram physical norm right response does not cover its block"
+                                        .into(),
+                                )
+                            })?)
                             .ok_or_else(|| {
                                 AkitaError::InvalidInput("limb product overflow".into())
                             })?;
@@ -284,14 +321,20 @@ pub(super) fn prepare_norm_term<E: Field + Ring>(
     match plan.shape() {
         PhysicalL2NormProofShape::Direct { .. } => {
             let mut tables = tables.into_iter();
-            let response = tables.next().ok_or(AkitaError::InvalidProof)?;
+            let response = tables.next().ok_or_else(|| {
+                AkitaError::Internal("direct physical norm has no response table".into())
+            })?;
             if tables.next().is_some() || !subclaim_weights.is_empty() {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "direct physical norm has extra response tables or subclaim weights".into(),
+                ));
             }
             Ok(PhysicalNormTerm::Direct { response })
         }
         shape @ PhysicalL2NormProofShape::LimbGram { .. } => {
-            let layout = shape.limb_gram_layout()?.ok_or(AkitaError::InvalidProof)?;
+            let layout = shape.limb_gram_layout()?.ok_or_else(|| {
+                AkitaError::Internal("gram physical norm term shape has no limb layout".into())
+            })?;
             if subclaim_weights.len() != layout.subclaim_count() {
                 return Err(AkitaError::InvalidSize {
                     expected: layout.subclaim_count(),
@@ -302,12 +345,19 @@ pub(super) fn prepare_norm_term<E: Field + Ring>(
             for (left, right) in layout.limb_pairs() {
                 let mut values = Vec::with_capacity(layout.physical_response_len());
                 for (block_index, block) in layout.block_ranges().enumerate() {
-                    let weight_index = layout
-                        .subclaim_index(block_index, left, right)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let weight = *subclaim_weights
-                        .get(weight_index)
-                        .ok_or(AkitaError::InvalidProof)?;
+                    let weight_index =
+                        layout
+                            .subclaim_index(block_index, left, right)
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "gram physical norm selector has no subclaim index".into(),
+                                )
+                            })?;
+                    let weight = *subclaim_weights.get(weight_index).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "gram physical norm selector has no subclaim weight".into(),
+                        )
+                    })?;
                     values.resize(block.end, weight);
                 }
                 selectors.push(ExactPrefixTable::new(domain_len, values, E::zero())?);

@@ -16,6 +16,165 @@ type F = fp128::Field;
 const D: usize = 128;
 const NUM_VARIABLES: usize = 16;
 
+// Test-only constructors and readback for the prepared linear terms.
+impl<E: Field> PreparedProverLinearTerms<E> {
+    pub(crate) fn zero(live_lane_count: usize, coeff_count: usize) -> Self {
+        Self {
+            lane_weights: PreparedLaneWeights::Sparse(vec![Vec::new(); live_lane_count]),
+            sources: Vec::new(),
+            live_lane_count,
+            coeff_count,
+        }
+    }
+
+    pub(crate) fn from_dense(dense: Vec<E>, live_lane_count: usize, coeff_count: usize) -> Self {
+        assert_eq!(dense.len(), live_lane_count * coeff_count);
+        let mut lane_terms = vec![Vec::new(); live_lane_count];
+        let sources = dense
+            .chunks_exact(coeff_count)
+            .enumerate()
+            .map(|(lane, values)| {
+                lane_terms[lane].push(PreparedLaneTerm {
+                    factor: E::one(),
+                    source_index: lane,
+                    lane: 0,
+                });
+                PreparedTraceSource {
+                    values: values.to_vec(),
+                    lane_count: 1,
+                }
+            })
+            .collect();
+        Self {
+            lane_weights: PreparedLaneWeights::Sparse(lane_terms),
+            sources,
+            live_lane_count,
+            coeff_count,
+        }
+    }
+
+    /// Compile arbitrary checked source segments into the shared Stage 2 engine.
+    pub(crate) fn from_structured_weights(
+        weights: &StructuredLinearWeights<E>,
+        coeff_count: usize,
+    ) -> Result<Self, AkitaError> {
+        if coeff_count == 0
+            || !coeff_count.is_power_of_two()
+            || weights.physical_field_len == 0
+            || !weights.physical_field_len.is_multiple_of(coeff_count)
+            || weights.sources.is_empty()
+            || weights.terms.is_empty()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "structured linear common-coordinate geometry is malformed".into(),
+            ));
+        }
+        let live_lane_count = weights.physical_field_len / coeff_count;
+        let sources = weights
+            .sources
+            .iter()
+            .map(|source| {
+                if source.is_empty() || !source.len().is_multiple_of(coeff_count) {
+                    return Err(AkitaError::InvalidSetup(
+                        "structured linear source geometry is malformed".into(),
+                    ));
+                }
+                Ok(PreparedTraceSource {
+                    values: source.as_ref().to_vec(),
+                    lane_count: source.len() / coeff_count,
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let mut lane_terms = vec![Vec::new(); live_lane_count];
+        for term in &weights.terms {
+            let source = weights
+                .sources
+                .get(term.source_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            let segments = weights
+                .segments
+                .get(term.segment_range.clone())
+                .ok_or(AkitaError::InvalidProof)?;
+            if segments.is_empty() {
+                return Err(AkitaError::InvalidSetup(
+                    "structured linear source geometry is malformed".into(),
+                ));
+            }
+            let source_lane_count = source.len() / coeff_count;
+            for segment in segments {
+                let target_end = segment
+                    .physical_coefficient_start
+                    .checked_add(segment.coefficient_count)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("structured linear target range overflow".into())
+                    })?;
+                let source_end = segment
+                    .source_coefficient_start
+                    .checked_add(segment.coefficient_count)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("structured linear source range overflow".into())
+                    })?;
+                if segment.coefficient_count == 0
+                    || !segment.coefficient_count.is_multiple_of(coeff_count)
+                    || !segment
+                        .physical_coefficient_start
+                        .is_multiple_of(coeff_count)
+                    || !segment.source_coefficient_start.is_multiple_of(coeff_count)
+                    || target_end > weights.physical_field_len
+                    || source_end > source.len()
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "structured linear segment is unaligned or out of bounds".into(),
+                    ));
+                }
+                let target_lane_start = segment.physical_coefficient_start / coeff_count;
+                let source_lane_start = segment.source_coefficient_start / coeff_count;
+                let lane_count = segment.coefficient_count / coeff_count;
+                for lane_offset in 0..lane_count {
+                    let target_lane =
+                        target_lane_start.checked_add(lane_offset).ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "structured linear target lane overflow".into(),
+                            )
+                        })?;
+                    let source_lane =
+                        source_lane_start.checked_add(lane_offset).ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "structured linear source lane overflow".into(),
+                            )
+                        })?;
+                    if source_lane >= source_lane_count {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    lane_terms
+                        .get_mut(target_lane)
+                        .ok_or(AkitaError::InvalidProof)?
+                        .push(PreparedLaneTerm {
+                            factor: term.factor,
+                            source_index: term.source_index,
+                            lane: source_lane,
+                        });
+                }
+            }
+        }
+        Ok(Self {
+            lane_weights: PreparedLaneWeights::Sparse(lane_terms),
+            sources,
+            live_lane_count,
+            coeff_count,
+        })
+    }
+
+    pub(crate) fn materialize_dense(&self) -> Vec<E> {
+        (0..self.live_lane_count)
+            .flat_map(|lane| {
+                (0..self.coeff_count)
+                    .map(move |coefficient| self.get(lane, coefficient, self.coeff_count))
+            })
+            .collect()
+    }
+}
+
 fn fold_prepared_trace_at_point<E: Field>(
     mut trace: PreparedProverLinearTerms<E>,
     live_len: usize,

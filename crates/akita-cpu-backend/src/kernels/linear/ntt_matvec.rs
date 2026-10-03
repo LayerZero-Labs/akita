@@ -58,7 +58,7 @@ pub(crate) fn mat_vec_mul_ntt_i8<F: Field + CanonicalEncoding, const D: usize>(
         blocks,
         num_digits,
         log_basis
-    ))
+    )?)
 }
 
 /// Dense-optimized matrix-vector multiplication over i8 digit planes.
@@ -66,7 +66,7 @@ pub(crate) fn mat_vec_mul_ntt_i8<F: Field + CanonicalEncoding, const D: usize>(
 /// Skips the full-plane zero scans that are useful for sparse inputs but are
 /// almost always wasted work on dense witnesses.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8_dense")]
-pub fn mat_vec_mul_ntt_i8_dense<F: Field + CanonicalEncoding, const D: usize>(
+pub(crate) fn mat_vec_mul_ntt_i8_dense<F: Field + CanonicalEncoding, const D: usize>(
     slot: &PreparedNttCache<D>,
     num_rows: usize,
     num_cols: usize,
@@ -83,12 +83,12 @@ pub fn mat_vec_mul_ntt_i8_dense<F: Field + CanonicalEncoding, const D: usize>(
         blocks,
         num_digits,
         log_basis
-    ))
+    )?)
 }
 
 /// Single-row dense variant of [`mat_vec_mul_ntt_i8_dense`].
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8_dense_single_row")]
-pub fn mat_vec_mul_ntt_i8_dense_single_row<F: Field + CanonicalEncoding, const D: usize>(
+pub(crate) fn mat_vec_mul_ntt_i8_dense_single_row<F: Field + CanonicalEncoding, const D: usize>(
     slot: &PreparedNttCache<D>,
     num_cols: usize,
     blocks: &[&[CyclotomicRing<F, D>]],
@@ -104,7 +104,7 @@ pub fn mat_vec_mul_ntt_i8_dense_single_row<F: Field + CanonicalEncoding, const D
         blocks,
         num_digits,
         log_basis
-    ))
+    )?)
 }
 
 /// Column-tiled A*x across multiple blocks of pre-decomposed i8 digit planes.
@@ -129,14 +129,14 @@ pub fn mat_vec_mul_ntt_digits_i8<F: Field + CanonicalEncoding, const D: usize>(
             "for predecomposed digit mat-vec",
         )?;
     }
-    Ok(dispatch_slot!(
+    dispatch_slot!(
         slot,
         num_rows,
         num_cols,
         mat_vec_mul_digits_i8_with_params,
         blocks,
         log_basis
-    ))
+    )
 }
 
 /// Predecomposed mat-vec over a source that decodes one commitment block at a
@@ -186,14 +186,14 @@ pub(crate) fn mat_vec_mul_ntt_dense_digits_i8<F: Field + CanonicalEncoding, cons
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     validate_i8_log_basis(log_basis)?;
-    Ok(dispatch_slot!(
+    dispatch_slot!(
         slot,
         num_rows,
         num_cols,
         mat_vec_mul_dense_digits_i8_with_params,
         blocks,
         log_basis
-    ))
+    )
 }
 
 /// Fold-major (block) direct-signed-i8 variant for recursive witnesses.

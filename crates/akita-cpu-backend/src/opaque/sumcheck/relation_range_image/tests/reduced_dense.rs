@@ -1,4 +1,27 @@
 use super::*;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
+#[test]
+fn expected_final_claim_rejects_missing_phase_without_panicking() {
+    let stage1_point = [F::from_u64(3), F::from_u64(5)];
+    let mut prover = new_stage2_test_prover(
+        F::one(),
+        vec![0, 1],
+        vec![F::one(); 2],
+        vec![F::one(); 2],
+        Stage2Params {
+            stage1_point: &stage1_point,
+            b: 4,
+            live_lane_count: 1,
+            lane_bits: 1,
+            coefficient_bits: 1,
+        },
+    );
+    prover.phase = None;
+
+    let result = catch_unwind(AssertUnwindSafe(|| prover.expected_final_claim()));
+    assert!(matches!(result, Ok(Err(AkitaError::Internal(_)))));
+}
 
 #[test]
 fn reduced_dense_oracle_matches_factored_stage2_across_all_rounds() {

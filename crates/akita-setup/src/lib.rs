@@ -192,6 +192,22 @@ fn get_public_matrix_storage_path<F: Field + CanonicalEncoding>(
 }
 
 #[cfg(feature = "disk-persistence")]
+// Cleans up incomplete writes; a panic in caller-supplied `write_cache` would leave the temp file.
+struct CacheTempGuard<'a> {
+    path: &'a std::path::Path,
+    armed: bool,
+}
+
+#[cfg(feature = "disk-persistence")]
+impl Drop for CacheTempGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = fs::remove_file(self.path);
+        }
+    }
+}
+
+#[cfg(feature = "disk-persistence")]
 fn atomic_write_cache(
     storage_path: &std::path::Path,
     write_cache: impl FnOnce(&mut std::io::BufWriter<fs::File>) -> Result<(), SerializationError>,
@@ -207,46 +223,46 @@ fn atomic_write_cache(
     })?;
     let temp_id = CACHE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
     let temp_path = storage_path.with_extension(format!("tmp-{}-{temp_id}", std::process::id()));
-    let result = (|| {
-        let file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)
-            .map_err(|err| {
-                AkitaError::InvalidSetup(format!(
-                    "failed to create temporary setup cache {}: {err}",
-                    temp_path.display()
-                ))
-            })?;
-        let mut writer = std::io::BufWriter::new(file);
-        write_cache(&mut writer).map_err(|err| {
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)
+        .map_err(|err| {
             AkitaError::InvalidSetup(format!(
-                "failed to serialize setup cache {}: {err}",
-                storage_path.display()
-            ))
-        })?;
-        writer.flush().map_err(|err| {
-            AkitaError::InvalidSetup(format!(
-                "failed to flush setup cache {}: {err}",
+                "failed to create temporary setup cache {}: {err}",
                 temp_path.display()
             ))
         })?;
-        // These files are recoverable performance caches: a failed or partial
-        // write is rejected and regenerated on the next load. Flushing before
-        // the atomic rename gives readers a complete file without forcing a
-        // device flush on the setup hot path.
-        drop(writer);
-        fs::rename(&temp_path, storage_path).map_err(|err| {
-            AkitaError::InvalidSetup(format!(
-                "failed to atomically replace setup cache {}: {err}",
-                storage_path.display()
-            ))
-        })
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp_path);
-    }
-    result
+    let mut temp_guard = CacheTempGuard {
+        path: &temp_path,
+        armed: true,
+    };
+    let mut writer = std::io::BufWriter::new(file);
+    write_cache(&mut writer).map_err(|err| {
+        AkitaError::InvalidSetup(format!(
+            "failed to serialize setup cache {}: {err}",
+            storage_path.display()
+        ))
+    })?;
+    writer.flush().map_err(|err| {
+        AkitaError::InvalidSetup(format!(
+            "failed to flush setup cache {}: {err}",
+            temp_path.display()
+        ))
+    })?;
+    // These files are recoverable performance caches: a failed or partial
+    // write is rejected and regenerated on the next load. Flushing before
+    // the atomic rename gives readers a complete file without forcing a
+    // device flush on the setup hot path.
+    drop(writer);
+    fs::rename(&temp_path, storage_path).map_err(|err| {
+        AkitaError::InvalidSetup(format!(
+            "failed to atomically replace setup cache {}: {err}",
+            storage_path.display()
+        ))
+    })?;
+    temp_guard.armed = false;
+    Ok(())
 }
 
 #[cfg(feature = "disk-persistence")]
@@ -284,9 +300,10 @@ pub(crate) fn save_prover_setup<
         ));
     };
 
+    // This mutex protects no state, so recovering a poisoned guard is sound.
     let _matrix_write_guard = PUBLIC_MATRIX_CACHE_WRITE_LOCK
         .lock()
-        .map_err(|_| AkitaError::InvalidSetup("public matrix cache lock poisoned".to_string()))?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let matrix_parent = public_matrix_path.parent().ok_or_else(|| {
         AkitaError::InvalidSetup("public matrix cache path has no parent directory".to_string())
     })?;

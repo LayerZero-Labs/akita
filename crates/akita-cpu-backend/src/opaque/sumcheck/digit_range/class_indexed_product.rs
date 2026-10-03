@@ -380,8 +380,12 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
             .product_stage_arities()
             .get(stage_index)
             .copied()
-            .ok_or(AkitaError::InvalidProof)?;
-        let arity = ProductArity::new(arity).ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("digit-range product stage has no planned arity".into())
+            })?;
+        let arity = ProductArity::new(arity).ok_or_else(|| {
+            AkitaError::Internal("digit-range product stage arity is unsupported".into())
+        })?;
         let expected_lanes = arity
             .degree()
             .checked_mul(parent_weights.len())
@@ -429,7 +433,11 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
             parent_weights,
             split_eq: GruenSplitEq::new(equality_point)?,
             input_claim,
-            interpolation: RoundInterpolation::new().ok_or(AkitaError::InvalidProof)?,
+            interpolation: RoundInterpolation::new().ok_or_else(|| {
+                AkitaError::Internal(
+                    "digit-range interpolation constants are not invertible in the field".into(),
+                )
+            })?,
             arity,
             num_rounds: equality_point.len(),
             rounds_completed: 0,

@@ -143,7 +143,7 @@ where
         active_a_cols,
         plan.num_digits_inner,
     )?;
-    Ok(rows.into_iter().map(crate::typed_inner_rows).collect())
+    rows.into_iter().map(crate::typed_inner_rows).collect()
 }
 
 impl<F, E, const D: usize, I> OpeningFoldKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend<F, E>
@@ -172,7 +172,7 @@ where
                 live_block_weights,
                 position_weights,
                 num_positions_per_block,
-            ),
+            )?,
             OpeningFoldPlan::Subfield {
                 multipliers,
                 num_positions_per_block,
@@ -204,6 +204,25 @@ where
     F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
+    fn evaluate_and_fold_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: OneHotBatchView<'_, F, D, I>,
+        plan: OpeningFoldPlan<'_, F>,
+    ) -> Result<Vec<OpeningFoldOutput<F, D>>, AkitaError> {
+        source
+            .polys
+            .iter()
+            .map(|poly| {
+                self.evaluate_and_fold(
+                    prepared,
+                    <OneHotPoly<F, I> as RootOpeningSource<F, D>>::opening_view(*poly)?,
+                    plan,
+                )
+            })
+            .collect()
+    }
+
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,
@@ -261,16 +280,12 @@ impl<E: Field> PackingWeightAccessor<E> for DirectPackingWeights<'_, E> {
 
     #[inline(always)]
     fn weight(&self, position: usize, low_index: usize) -> Result<E, AkitaError> {
-        let position_weight = *self
-            .point
-            .position_weights()
-            .get(position)
-            .ok_or(AkitaError::InvalidProof)?;
-        let packing_weight = *self
-            .point
-            .packing_weights()
-            .get(low_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let position_weight = *self.point.position_weights().get(position).ok_or_else(|| {
+            AkitaError::Internal("one-hot packing position has no prepared weight".into())
+        })?;
+        let packing_weight = *self.point.packing_weights().get(low_index).ok_or_else(|| {
+            AkitaError::Internal("one-hot packing low coordinate has no prepared weight".into())
+        })?;
         Ok(position_weight * packing_weight)
     }
 }
@@ -289,11 +304,12 @@ impl<E: Field> PackingWeightAccessor<E>
             self.point().geometry().subring_embedding_stride(),
             low_index,
         )
-        .ok_or(AkitaError::InvalidProof)?;
-        self.values()
-            .get(index)
-            .copied()
-            .ok_or(AkitaError::InvalidProof)
+        .ok_or_else(|| AkitaError::Internal("one-hot packing weight index overflow".into()))?;
+        self.values().get(index).copied().ok_or_else(|| {
+            AkitaError::Internal(
+                "one-hot packing weight index is outside its prepared values".into(),
+            )
+        })
     }
 }
 
@@ -392,11 +408,12 @@ where
                     let end_chunk = end_field.div_ceil(poly.onehot_k).min(poly.indices.len());
                     let mut block = vec![F::zero(); geometry.partial_base_field_width()];
                     for chunk_index in first_chunk..end_chunk {
-                        let Some(hot_index) = poly
-                            .indices
-                            .get(chunk_index)
-                            .copied()
-                            .ok_or(AkitaError::InvalidProof)?
+                        let Some(hot_index) =
+                            poly.indices.get(chunk_index).copied().ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "one-hot packing chunk has no source index".into(),
+                                )
+                            })?
                         else {
                             continue;
                         };
@@ -424,9 +441,11 @@ where
                             .chunks_exact_mut(s)
                             .zip(extension_coordinates.iter().copied())
                         {
-                            *coordinate_block
-                                .get_mut(subring_index)
-                                .ok_or(AkitaError::InvalidProof)? += coordinate;
+                            *coordinate_block.get_mut(subring_index).ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "one-hot packing coordinate exceeds its output block".into(),
+                                )
+                            })? += coordinate;
                         }
                     }
                     Ok(block)
@@ -471,17 +490,15 @@ where
         &self,
         scalars: &[F],
         num_positions_per_block: usize,
-    ) -> Vec<CyclotomicRing<F, D>> {
-        let (num_rings, num_live_blocks) = self
-            .view_layout(D, num_positions_per_block)
-            .expect("valid one hot fold layout");
-        cfg_into_iter!(0..num_live_blocks)
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        let (num_rings, num_live_blocks) = self.view_layout(D, num_positions_per_block)?;
+        Ok(cfg_into_iter!(0..num_live_blocks)
             .map(|block_idx| {
                 let ring_start = block_idx * num_positions_per_block;
                 let ring_end = (ring_start + num_positions_per_block).min(num_rings);
                 fold_onehot_block::<F, I, D>(self, ring_start..ring_end, scalars)
             })
-            .collect()
+            .collect())
     }
 
     #[cfg(test)]
@@ -524,11 +541,11 @@ where
         live_block_weights: &[F],
         position_weights: &[F],
         num_positions_per_block: usize,
-    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        crate::sources::poly_helpers::fused_evaluate_and_fold_base(
-            self.fold_blocks::<D>(position_weights, num_positions_per_block),
+    ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
+        Ok(crate::sources::poly_helpers::fused_evaluate_and_fold_base(
+            self.fold_blocks::<D>(position_weights, num_positions_per_block)?,
             live_block_weights,
-        )
+        ))
     }
 
     pub(crate) fn evaluate_and_fold_subfield<const D: usize>(

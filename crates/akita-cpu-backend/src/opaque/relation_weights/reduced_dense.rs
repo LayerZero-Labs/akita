@@ -22,12 +22,13 @@ where
     F: Field,
     E: Field + ExtField<F>,
 {
-    let challenge = challenges
-        .as_slice()
-        .get(index)
-        .ok_or(AkitaError::InvalidProof)?;
+    let challenge = challenges.as_slice().get(index).ok_or_else(|| {
+        AkitaError::Internal("reduced relation challenge index has no challenge".into())
+    })?;
     if challenge.positions.len() != challenge.coeffs.len() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "reduced relation challenge positions and coefficients differ in length".into(),
+        ));
     }
     point.sparse_kernel(challenge.positions.iter().zip(&challenge.coeffs).map(
         |(&position, &coefficient)| {
@@ -67,16 +68,18 @@ where
                 destination,
                 physical_start,
                 alpha_powers,
-                scale.mul_base(
-                    *position_weights
-                        .get(position)
-                        .ok_or(AkitaError::InvalidProof)?,
-                ),
+                scale.mul_base(*position_weights.get(position).ok_or_else(|| {
+                    AkitaError::Internal("base opening multiplier position has no weight".into())
+                })?),
             ),
             Self::Subfield(kernels) => add_scaled_kernel(
                 destination,
                 physical_start,
-                kernels.get(position).ok_or(AkitaError::InvalidProof)?,
+                kernels.get(position).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "subfield opening multiplier position has no kernel".into(),
+                    )
+                })?,
                 scale,
             ),
         }
@@ -95,7 +98,9 @@ where
     match point {
         RingMultiplierOpeningPoint::Base(base) => {
             if base.position_weights.len() != position_count {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "prepared base opening weights differ from the relation position count".into(),
+                ));
             }
             Ok(PositionMultiplierKernels::Base {
                 position_weights: &base.position_weights,
@@ -109,7 +114,9 @@ where
             |D| {
                 let rings = subfield.materialize_position_rings::<D>()?;
                 if rings.len() != position_count {
-                    return Err(AkitaError::InvalidProof);
+                    return Err(AkitaError::Internal(
+                        "prepared subfield opening ring count mismatch".into(),
+                    ));
                 }
                 let kernels = rings
                     .iter()
@@ -165,17 +172,20 @@ impl<E: Field> EtWeightSink<E> for ReducedEtSink<'_, '_, E> {
         setup_column: usize,
         constraint_scale: E,
     ) -> Result<(), AkitaError> {
-        let kernel = self
-            .challenge_kernels
-            .get(challenge_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let kernel = self.challenge_kernels.get(challenge_index).ok_or_else(|| {
+            AkitaError::Internal("reduced opening scatter has no challenge kernel".into())
+        })?;
         let kernel_start = role_subcolumn * self.plan.roles.d_d;
         add_scaled_kernel(
             &mut self.e_weights,
             physical_start,
             kernel
                 .get(kernel_start..kernel_start + self.plan.roles.d_d)
-                .ok_or(AkitaError::InvalidProof)?,
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "reduced opening challenge kernel does not cover the subcolumn".into(),
+                    )
+                })?,
             constraint_scale,
         )?;
         add_scaled_kernel(
@@ -195,17 +205,20 @@ impl<E: Field> EtWeightSink<E> for ReducedEtSink<'_, '_, E> {
         setup_column: usize,
         constraint_scale: E,
     ) -> Result<(), AkitaError> {
-        let kernel = self
-            .challenge_kernels
-            .get(challenge_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let kernel = self.challenge_kernels.get(challenge_index).ok_or_else(|| {
+            AkitaError::Internal("reduced commitment scatter has no challenge kernel".into())
+        })?;
         let kernel_start = role_subcolumn * self.plan.roles.d_b;
         add_scaled_kernel(
             &mut self.t_weights,
             physical_start,
             kernel
                 .get(kernel_start..kernel_start + self.plan.roles.d_b)
-                .ok_or(AkitaError::InvalidProof)?,
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "reduced commitment challenge kernel does not cover the subcolumn".into(),
+                    )
+                })?,
             constraint_scale,
         )?;
         add_scaled_kernel(

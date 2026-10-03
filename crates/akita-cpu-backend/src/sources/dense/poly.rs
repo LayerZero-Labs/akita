@@ -194,7 +194,7 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
         // old per-ring check over the zero-padded last ring.
         let q = (-F::one())
             .to_u128_checked()
-            .expect("Akita field element must fit in u128")
+            .ok_or_else(|| AkitaError::InvalidInput("field modulus does not fit u128".into()))?
             + 1;
         let half_q = q / 2;
         let mut small_i8_coeffs = Vec::with_capacity(physical_len);

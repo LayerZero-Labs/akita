@@ -360,7 +360,8 @@ fn mat_vec_mul_i8_dense_single_row_matches_generic_on_block_parallel_path() {
                 num_digits,
                 log_basis,
                 &params,
-            );
+            )
+            .unwrap();
             let generic_single: Vec<CyclotomicRing<F, D>> =
                 generic.into_iter().map(|row| row[0]).collect();
             assert_eq!(single, generic_single);
@@ -545,7 +546,8 @@ macro_rules! block_parallel_matches_column_tiled_wide_rows_test {
                                 &digit_block_slices,
                                 log_basis,
                                 &params,
-                            );
+                            )
+                            .unwrap();
                         let block_parallel = super::mat_vec_mul_digits_i8_block_parallel::<
                             F,
                             $width,
