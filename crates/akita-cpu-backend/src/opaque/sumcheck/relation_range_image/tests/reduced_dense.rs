@@ -99,7 +99,10 @@ fn reduced_dense_oracle_matches_factored_stage2_across_all_rounds() {
         factored.ingest_challenge(round, challenge);
         dense.ingest_challenge(round, challenge);
     }
-    assert_eq!(dense.final_w_eval(), factored.final_w_eval());
+    assert_eq!(
+        dense.final_w_eval().unwrap(),
+        factored.final_w_eval().unwrap()
+    );
     assert_eq!(dense.expected_final_claim().unwrap(), claim);
     assert_eq!(factored.expected_final_claim().unwrap(), claim);
 }

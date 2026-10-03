@@ -38,6 +38,11 @@ pub(super) struct FactoredProductTerm<E: Field> {
     total_rounds: usize,
 }
 
+enum SetupProductTable<E> {
+    Coefficient(Vec<E>),
+    Index(Vec<E>),
+}
+
 /// Two-pass setup-product term over the canonical flat setup layout.
 ///
 /// The setup source stays in the base field with row-major layout
@@ -55,9 +60,8 @@ pub(super) struct RectangularSetupProductTerm<F: Field, E: Field> {
     coefficient_rounds: usize,
     total_rounds: usize,
     coefficient_challenges: Vec<E>,
-    coefficient_table: Vec<E>,
+    table: SetupProductTable<E>,
     coefficient_factor: Vec<E>,
-    index_table: Option<Vec<E>>,
     index_factor: Vec<E>,
     input_claim: E,
 }
@@ -151,9 +155,8 @@ where
             coefficient_rounds,
             total_rounds,
             coefficient_challenges: Vec::with_capacity(coefficient_rounds),
-            coefficient_table,
+            table: SetupProductTable::Coefficient(coefficient_table),
             coefficient_factor,
-            index_table: None,
             index_factor,
             input_claim,
         };
@@ -162,7 +165,7 @@ where
         // construction so the first index round (or a zero-round final value)
         // consumes the same canonical table as every other geometry.
         if coefficient_rounds == 0 {
-            term.materialize_index_table();
+            term.table = SetupProductTable::Index(term.materialize_index_table());
         }
         Ok(term)
     }
@@ -175,41 +178,36 @@ where
         self.input_claim
     }
 
-    pub(super) fn compute_round_univariate(&self, round: usize) -> UnivariatePoly<E> {
-        let (constant, linear, quadratic) = if round < self.coefficient_rounds {
-            accumulate_left_round(&self.coefficient_table, &self.coefficient_factor, E::one())
-        } else {
-            accumulate_left_round(
-                self.index_table
-                    .as_deref()
-                    .expect("setup index table exists after coefficient rounds"),
-                &self.index_factor,
-                self.coefficient_factor[0],
-            )
+    pub(super) fn compute_round_univariate(&self) -> UnivariatePoly<E> {
+        let (constant, linear, quadratic) = match &self.table {
+            SetupProductTable::Coefficient(table) => {
+                accumulate_left_round(table, &self.coefficient_factor, E::one())
+            }
+            SetupProductTable::Index(table) => {
+                accumulate_left_round(table, &self.index_factor, self.coefficient_factor[0])
+            }
         };
         UnivariatePoly::new(vec![constant, linear, quadratic])
     }
 
     pub(super) fn ingest_challenge(&mut self, round: usize, challenge: E) {
-        if round < self.coefficient_rounds {
-            self.coefficient_challenges.push(challenge);
-            fold_dense_left_round(&mut self.coefficient_table, challenge);
-            fold_factor_in_place(&mut self.coefficient_factor, challenge);
-            if round + 1 == self.coefficient_rounds {
-                self.materialize_index_table();
+        match &mut self.table {
+            SetupProductTable::Coefficient(table) => {
+                self.coefficient_challenges.push(challenge);
+                fold_dense_left_round(table, challenge);
+                fold_factor_in_place(&mut self.coefficient_factor, challenge);
+                if round + 1 == self.coefficient_rounds {
+                    self.table = SetupProductTable::Index(self.materialize_index_table());
+                }
             }
-        } else {
-            fold_dense_left_round(
-                self.index_table
-                    .as_mut()
-                    .expect("setup index table exists after coefficient rounds"),
-                challenge,
-            );
-            fold_factor_in_place(&mut self.index_factor, challenge);
+            SetupProductTable::Index(table) => {
+                fold_dense_left_round(table, challenge);
+                fold_factor_in_place(&mut self.index_factor, challenge);
+            }
         }
     }
 
-    fn materialize_index_table(&mut self) {
+    fn materialize_index_table(&self) -> Vec<E> {
         let coefficient_eq = EqPolynomial::evals(&self.coefficient_challenges)
             .expect("validated power-of-two setup coefficient domain");
         debug_assert_eq!(coefficient_eq.len(), self.coefficient_len);
@@ -224,7 +222,7 @@ where
             setup_table_state_elements = (self.row_capacity + self.coefficient_len) as u64,
         )
         .entered();
-        let index_table = cfg_into_iter!(0..self.row_capacity)
+        cfg_into_iter!(0..self.row_capacity)
             .map(|setup_index| {
                 let start = setup_index * self.coefficient_len;
                 eval_flat_ring_at_pows_fast(
@@ -232,14 +230,15 @@ where
                     &coefficient_eq,
                 )
             })
-            .collect::<Vec<_>>();
-        self.index_table = Some(index_table);
+            .collect::<Vec<_>>()
     }
 
     pub(super) fn folded_table_value(&self) -> Result<E, AkitaError> {
-        let table = self.index_table.as_deref().ok_or_else(|| {
-            AkitaError::Internal("fully folded setup product has no index table".into())
-        })?;
+        let SetupProductTable::Index(table) = &self.table else {
+            return Err(AkitaError::Internal(
+                "fully folded setup product has no index table".into(),
+            ));
+        };
         if table.len() != 1 {
             return Err(AkitaError::Internal(format!(
                 "folded setup-product table length: expected 1, actual {}",
@@ -391,7 +390,7 @@ mod tests {
 
         for round in 0..dense.num_rounds() {
             let dense_poly = dense.compute_round_univariate(round, dense.input_claim());
-            let rectangular_poly = rectangular.compute_round_univariate(round);
+            let rectangular_poly = rectangular.compute_round_univariate();
             assert_eq!(dense_poly, rectangular_poly, "round {round}");
             let challenge = scalar((round * 19 + 11) as u64);
             dense.ingest_challenge(round, challenge);

@@ -21,7 +21,7 @@
 //!   into challenge-scaled copies of the two-round quad fold. The last prefix
 //!   round writes the folded witness for the ordinary suffix path.
 
-use super::prefix_cache::Stage2PrefixCache;
+use super::prefix_cache::{PrefixBasis, Stage2PrefixCache};
 use super::wide_mass::WideMass;
 use super::*;
 use crate::opaque::sumcheck::relation_range_image::evaluation_trace::PreparedLaneWeights;
@@ -556,14 +556,14 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         b: usize,
         live_lane_count: usize,
         coefficient_bits: usize,
-    ) -> Option<Self>
+    ) -> Result<Option<Self>, AkitaError>
     where
         E: 'static,
     {
-        let digit_bits = match b {
-            4 => 2,
-            8 => 3,
-            _ => return None, // Other bases use the ordinary coefficient-round path.
+        let (basis, digit_bits) = match b {
+            4 => (PrefixBasis::B4, 2),
+            8 => (PrefixBasis::B8, 3),
+            _ => return Ok(None), // Other bases use the ordinary coefficient-round path.
         };
         if coefficient_bits < 2
             || stage1_point.len() < 3
@@ -572,10 +572,12 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             || lane_weights.len() < live_lane_count
             || witness.len() != live_lane_count << coefficient_bits
         {
-            return None; // Unsupported geometry uses the ordinary coefficient-round path.
+            return Ok(None); // Unsupported geometry uses the ordinary coefficient-round path.
         }
         // The optimization needs equality tables after two prefix folds.
-        let (eq_low, eq_high) = split_eq.remaining_eq_tables_after(2)?;
+        let Some((eq_low, eq_high)) = split_eq.remaining_eq_tables_after(2) else {
+            return Ok(None);
+        };
         let last_round = coefficient_bits.min(MAX_PREFIX_ROUNDS) - 1;
         let coeff_count = 1usize << coefficient_bits;
         let quads_per_lane = coeff_count / 4;
@@ -641,13 +643,17 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             .par_chunks_mut(task_lanes * quads_per_lane)
             .enumerate()
             .map(scan)
-            .reduce_with(ScanTotals::merge)?;
+            .reduce_with(ScanTotals::merge);
         #[cfg(not(feature = "parallel"))]
         let totals = classes
             .chunks_mut(task_lanes * quads_per_lane)
             .enumerate()
             .map(scan)
-            .reduce(ScanTotals::merge)?;
+            .reduce(ScanTotals::merge);
+
+        let Some(totals) = totals else {
+            return Ok(None);
+        };
 
         let tau2 = stage1_point[2];
         let mixed_histogram = if quads_per_lane >= 2 {
@@ -662,11 +668,11 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         };
         let norm_cache = Stage2PrefixCache::from_norm_histogram(
             &mixed_histogram,
-            b,
+            basis,
             stage1_point[0],
             stage1_point[1],
             batching_coeff,
-        );
+        )?;
         let (even_histogram, odd_histogram) = if serves_round2 {
             (totals.even_histogram, totals.odd_histogram)
         } else {
@@ -681,7 +687,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             })
             .collect();
 
-        Some(Self {
+        Ok(Some(Self {
             b,
             digit_bits,
             last_round,
@@ -693,7 +699,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             relation_moments: CoefficientRelationMoments::new(totals.alpha_mass, source_mass),
             quad_fold: Vec::new(),
             challenges: Vec::new(),
-        })
+        }))
     }
 
     #[inline]
@@ -792,13 +798,20 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
                 .collect()
         });
         let mut at_infinity = E::zero();
-        let mut weights = self.delta_histogram.chunks_exact(radix);
-        for d3 in &digit_terms[3] {
-            for d2 in &digit_terms[2] {
+        // The scan allocates radix^4 entries and never resizes this histogram.
+        // Nested chunks expose each complete row directly, without a fallible next().
+        debug_assert_eq!(self.delta_histogram.len(), radix.pow(4));
+        let delta_plane_len = radix * radix;
+        let delta_cube_len = delta_plane_len * radix;
+        let cubes = self.delta_histogram.chunks_exact(delta_cube_len);
+        for (d3, cube) in digit_terms[3].iter().zip(cubes) {
+            for (d2, plane) in digit_terms[2]
+                .iter()
+                .zip(cube.chunks_exact(delta_plane_len))
+            {
                 let high = *d3 + *d2;
-                for d1 in &digit_terms[1] {
+                for (d1, row) in digit_terms[1].iter().zip(plane.chunks_exact(radix)) {
                     let upper = high + *d1;
-                    let row = weights.next().expect("difference histogram row");
                     for (&weight, d0) in row.iter().zip(&digit_terms[0]) {
                         if !weight.is_zero() {
                             let slope = upper + *d0;

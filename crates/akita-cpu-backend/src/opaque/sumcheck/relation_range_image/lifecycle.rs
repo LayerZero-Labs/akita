@@ -186,7 +186,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     b,
                     live_lane_count,
                     coefficient_bits,
-                );
+                )?;
                 match engine {
                     Some(engine) => Phase::CompactPrefix {
                         witness: w_evals_compact,
@@ -242,11 +242,11 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
     /// Return the fully folded witness evaluation after the final round.
     ///
-    /// # Panics
-    ///
-    /// Panics if called before the folded suffix contains one field element.
-    pub(crate) fn final_w_eval(&self) -> E {
-        let witness = match self.phase.as_ref().expect("prover phase is installed") {
+    /// Returns an internal error unless the folded suffix contains one field element.
+    pub(crate) fn final_w_eval(&self) -> Result<E, AkitaError> {
+        let witness = match self.phase.as_ref().ok_or_else(|| {
+            AkitaError::Internal("final witness prover phase is not installed".into())
+        })? {
             Phase::Lane { witness, .. } => witness,
             Phase::Coefficient {
                 witness: WitnessState::FoldedSuffix(witness),
@@ -256,10 +256,19 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             | Phase::Coefficient {
                 witness: WitnessState::CompactPrefix(_),
                 ..
-            } => panic!("witness remained compact after final fold"),
+            } => {
+                return Err(AkitaError::Internal(
+                    "final witness remained compact after final fold".into(),
+                ));
+            }
         };
-        assert_eq!(witness.len(), 1, "witness suffix not fully folded");
-        witness[0]
+        match witness.as_slice() {
+            [value] => Ok(*value),
+            _ => Err(AkitaError::Internal(format!(
+                "final witness suffix length: expected 1, actual {}",
+                witness.len(),
+            ))),
+        }
     }
 
     pub(super) fn advance_phase(&mut self, phase: Phase<E>) -> Phase<E> {
@@ -349,7 +358,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let phase = self.phase.as_ref().ok_or_else(|| {
             AkitaError::Internal("final claim prover phase is not installed".into())
         })?;
-        let witness = self.final_w_eval();
+        let witness = self.final_w_eval()?;
         let virtual_claim = self.split_eq.current_scalar() * witness * (witness + E::one());
         let relation_weight = match phase {
             Phase::CompactPrefix { weights, .. }
@@ -494,5 +503,63 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             },
             phase => phase,
         });
+    }
+}
+
+#[cfg(test)]
+mod final_witness_tests {
+    use super::*;
+    use jolt_field::{One, Prime128Offset275 as E};
+
+    fn prover() -> RelationRangeImageProver<E> {
+        RelationRangeImageProver::new_virtual_only(
+            vec![0; 8],
+            &[E::one(); 3],
+            E::zero(),
+            8,
+            2,
+            1,
+            2,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn final_witness_rejects_missing_phase() {
+        let mut prover = prover();
+        prover.phase = None;
+        assert!(
+            matches!(prover.final_w_eval(), Err(AkitaError::Internal(message))
+            if message == "final witness prover phase is not installed")
+        );
+    }
+
+    #[test]
+    fn final_witness_rejects_compact_phase() {
+        let mut prover = prover();
+        assert!(
+            matches!(prover.final_w_eval(), Err(AkitaError::Internal(message))
+            if message == "final witness remained compact after final fold")
+        );
+        prover.disable_compact_quotient_prefix();
+        assert!(
+            matches!(prover.final_w_eval(), Err(AkitaError::Internal(message))
+            if message == "final witness remained compact after final fold")
+        );
+    }
+
+    #[test]
+    fn final_witness_rejects_nonterminal_suffix() {
+        let mut prover = prover();
+        for actual in [0, 2] {
+            prover.phase = Some(Phase::Lane {
+                witness: vec![E::zero(); actual],
+                lane: LaneProduct::new(vec![E::one()]),
+            });
+            assert!(
+                matches!(prover.final_w_eval(), Err(AkitaError::Internal(message))
+                if message == format!("final witness suffix length: expected 1, actual {actual}"))
+            );
+        }
     }
 }
