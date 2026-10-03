@@ -1,5 +1,6 @@
 //! CpuBackend kernels over dense polynomial views.
 
+use super::poly::DensePoly;
 use super::views::{DenseBatchView, DenseView};
 use crate::arithmetic::coefficient_packing::{
     coefficient_packing_partials_from_position_source, FusedPackingWeights,
@@ -7,9 +8,9 @@ use crate::arithmetic::coefficient_packing::{
 use crate::opaque::DecomposeFoldWitness;
 use crate::opaque::{aggregate_decompose_fold_witnesses, CpuFoldResponses};
 use crate::opaque::{
-    CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldPlan, RootPolyMeta,
-    RootPolyShape, SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
-    SubringCoefficientPackingPlan,
+    CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldPlan, RootOpeningSource,
+    RootPolyMeta, RootPolyShape, SubringCoefficientPackingBatchKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 use crate::opaque::{OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput};
 use akita_error::AkitaError;
@@ -92,6 +93,25 @@ impl<F, E, const D: usize> OpeningBatchKernel<DenseBatchView<'_, F, D>, F, D> fo
 where
     F: Field + CanonicalEncoding,
 {
+    fn evaluate_and_fold_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: DenseBatchView<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
+    ) -> Result<Vec<OpeningFoldOutput<F, D>>, AkitaError> {
+        source
+            .polys
+            .iter()
+            .map(|poly| {
+                self.evaluate_and_fold(
+                    prepared,
+                    <DensePoly<F> as RootOpeningSource<F, D>>::opening_view(*poly)?,
+                    plan,
+                )
+            })
+            .collect()
+    }
+
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,

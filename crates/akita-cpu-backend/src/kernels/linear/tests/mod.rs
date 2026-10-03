@@ -101,7 +101,7 @@ fn mat_vec_mul_digits_i8_with_params_for_log_basis<
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    mat_vec_mul_digits_i8_with_params(ntt_mat, blocks, log_basis, params)
+    mat_vec_mul_digits_i8_with_params(ntt_mat, blocks, log_basis, params).unwrap()
 }
 
 fn quotient_from_cyclic_and_negacyclic<F: jolt_field::Field, const D: usize>(

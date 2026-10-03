@@ -8,9 +8,11 @@ pub(crate) mod arithmetic;
 pub(crate) mod commitment;
 pub(crate) mod kernels;
 pub(crate) mod opaque;
+mod portable_witness;
 pub(crate) mod setup;
 pub(crate) mod sources;
 mod validation;
+pub use portable_witness::{CompressionWitnessFragment, PortableWitnessPatch};
 
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
@@ -19,7 +21,8 @@ use jolt_field::Field;
 
 pub(crate) use akita_prover::protocol;
 pub use commitment::{
-    GroupContext, PortableCompressionState, SetupPrefixProverRegistry, SetupPrefixSlot,
+    GroupContext, PortableCompressionOutput, PortableCompressionState, SetupPrefixProverRegistry,
+    SetupPrefixSlot,
 };
 pub use opaque::standalone;
 pub use opaque::{
@@ -65,9 +68,8 @@ pub mod custom_source {
 pub mod benchmark_support {
     pub use crate::arithmetic::extension_opening_reduction::tensor_column_partials_from_base_evals;
     pub use crate::kernels::linear::{
-        centered_quotient_rows_with_i16_tail, decompose_rows_i8_into,
-        fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_digits_i8,
-        mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, FusedQuotientRows,
+        centered_quotient_rows_with_i16_tail, fused_split_eq_quotients_prover_bounds,
+        mat_vec_mul_ntt_digits_i8, FusedQuotientRows,
     };
     pub use crate::sources::poly_helpers::balanced_ring_decompose_fold_partitioned;
 }

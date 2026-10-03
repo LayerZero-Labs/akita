@@ -204,6 +204,25 @@ where
     F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
+    fn evaluate_and_fold_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: OneHotBatchView<'_, F, D, I>,
+        plan: OpeningFoldPlan<'_, F>,
+    ) -> Result<Vec<OpeningFoldOutput<F, D>>, AkitaError> {
+        source
+            .polys
+            .iter()
+            .map(|poly| {
+                self.evaluate_and_fold(
+                    prepared,
+                    <OneHotPoly<F, I> as RootOpeningSource<F, D>>::opening_view(*poly)?,
+                    plan,
+                )
+            })
+            .collect()
+    }
+
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,

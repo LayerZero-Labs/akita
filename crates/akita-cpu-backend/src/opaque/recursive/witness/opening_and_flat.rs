@@ -743,6 +743,25 @@ impl<F, E, const D: usize> OpeningBatchKernel<SuffixWitnessBatchView<'_, F, D>, 
 where
     F: Field + CanonicalEncoding,
 {
+    fn evaluate_and_fold_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: SuffixWitnessBatchView<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
+    ) -> Result<Vec<OpeningFoldOutput<F, D>>, AkitaError> {
+        source
+            .polys
+            .iter()
+            .map(|poly| {
+                self.evaluate_and_fold(
+                    prepared,
+                    <RecursiveWitnessFlat as RootOpeningSource<F, D>>::opening_view(*poly)?,
+                    plan,
+                )
+            })
+            .collect()
+    }
+
     fn decompose_fold_batch(
         &self,
         prepared: Option<&Self::PreparedSetup>,

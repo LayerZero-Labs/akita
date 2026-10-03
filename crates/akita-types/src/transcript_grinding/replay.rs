@@ -181,7 +181,9 @@ pub trait GrindingReplay {
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidProof`] when challenge sampling fails.
+    /// Returns [`AkitaError::InvalidSetup`] when the base field is not
+    /// certified for exact sampling, or [`AkitaError::InvalidProof`] when the
+    /// retry counter is exhausted or the verifier state is already invalid.
     fn ext_challenge_at<F, E>(&mut self, site: ProtocolSiteId) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
