@@ -121,13 +121,11 @@ impl<F: Field + CanonicalEncoding, E: Field> ProofAdmission<F, E> for ExternalBa
 
 #[allow(unused_variables)]
 impl<F: Field + CanonicalEncoding, E: Field> OpaqueOpeningKernel<F, E> for ExternalBackend<F, E> {
-    fn prepare_opening(
+    fn prepare_openings(
         &self,
         session: &Self::ProofSessionHandle,
-        context: &ProofContext,
-        source: OpeningSource<'_, Self::CommitmentHandle, Self::WitnessHandle>,
-        plan: &akita_prover::backend::ValidatedRecursiveGroupOpeningPlan<'_, E>,
-    ) -> Result<PreparedGroupOpening<E, Self::PreparedOpeningHandle>, AkitaError> {
+        requests: &[GroupOpeningRequest<'_, E, Self::CommitmentHandle, Self::WitnessHandle>],
+    ) -> Result<Vec<PreparedGroupOpening<E, Self::PreparedOpeningHandle>>, AkitaError> {
         Err(AkitaError::InvalidInput(
             "external fixture rejects this operation".into(),
         ))

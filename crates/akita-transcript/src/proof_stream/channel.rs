@@ -40,8 +40,9 @@ pub trait ProofChannel {
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidProof`] when the field cannot be sampled
-    /// exactly or the verifier state is already invalid.
+    /// Returns [`AkitaError::InvalidSetup`] when `F` is not certified for exact
+    /// sampling, or [`AkitaError::InvalidProof`] when the retry counter is
+    /// exhausted or the verifier state is already invalid.
     fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, AkitaError>;
 }
 

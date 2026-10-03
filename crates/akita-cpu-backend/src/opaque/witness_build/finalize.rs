@@ -1,4 +1,5 @@
 use super::assembly::GroupFoldedOpening;
+use super::compression_emission::{emit_packed_negative_binary, quotient_digits};
 use super::compression_witness::{CompressionSourceId, CompressionWitnessMaterialization};
 use super::relation_quotient::{compute_multi_group_relation_quotient, RelationQuotientOutput};
 use crate::kernels::linear::decompose_commit_blocks_into;
@@ -9,12 +10,11 @@ use crate::sources::packed_digits::PackedSignedDigitWriter;
 #[cfg(feature = "response-model-diagnostics")]
 use crate::sources::packed_digits::PackedSignedDigits;
 use crate::validation::validate_i8_setup_log_basis;
-use akita_algebra::balanced_decompose_coefficients_pow2_i8_into;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_error::AkitaError;
 use akita_params::{
-    dispatch_for_field, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
-    CompressionWitnessSpan, PackedNegativeBinary, RingRole, WitnessLayout, WitnessUnitLayout,
+    dispatch_for_field, r_decomp_levels, CommitmentRingDims, CommittedGroupParams, RingRole,
+    WitnessLayout, WitnessUnitLayout,
 };
 use akita_serialization::AkitaSerialize;
 use akita_types::{
@@ -222,37 +222,6 @@ pub(crate) struct PreparedRingSwitchGroup<F: Field + CanonicalEncoding> {
     pub(crate) recomposed_inner_rows: RingVec<F>,
     pub(crate) folded_opening: GroupFoldedOpening<F>,
     pub(crate) fold: crate::opaque::CpuAcceptedFold<F>,
-}
-
-fn emit_packed_negative_binary(
-    out: &mut PackedSignedDigitWriter,
-    span: &CompressionWitnessSpan,
-    packed: &PackedNegativeBinary,
-) -> Result<(), AkitaError> {
-    if packed.map() != span.map() || span.range().len() != packed.map().padded_digit_count() {
-        return Err(AkitaError::Internal(
-            "packed compression witness map or extent differs from its span".into(),
-        ));
-    }
-    let range = span.range();
-    const CHUNK: usize = 4096;
-    let mut scratch = [0i8; CHUNK];
-    let mut written = 0usize;
-    while written < range.len() {
-        let count = CHUNK.min(range.len() - written);
-        scratch[..count].fill(0);
-        for (offset, coefficient) in scratch[..count].iter_mut().enumerate() {
-            let linear = written + offset;
-            if linear < packed.map().real_digit_count()
-                && packed.bytes()[linear / 8] >> (linear % 8) & 1 == 1
-            {
-                *coefficient = -1;
-            }
-        }
-        out.write_at(range.start + written, &scratch[..count])?;
-        written += count;
-    }
-    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -846,22 +815,8 @@ fn emit_witness_tail<F: Field + CanonicalEncoding>(
                         row.coeffs().len(),
                     )));
                 }
-                let expected_len = levels
-                    .checked_mul(geometry.physical_coefficient_width())
-                    .ok_or_else(|| AkitaError::Internal("R witness row length overflow".into()))?;
                 let range = row_layout.range();
-                if range.len() != expected_len {
-                    return Err(AkitaError::Internal(format!(
-                        "quotient tail row extent mismatch: expected {expected_len}, actual {}",
-                        range.len(),
-                    )));
-                }
-                let mut digits = vec![0i8; expected_len];
-                balanced_decompose_coefficients_pow2_i8_into(
-                    row.coeffs(),
-                    &mut digits,
-                    &decompose_params,
-                );
+                let digits = quotient_digits(row.coeffs(), row_layout, &decompose_params)?;
                 out.write_at(range.start, &digits)?;
             }
             WitnessTailEvent::Compression { source, map_index } => {
@@ -914,7 +869,7 @@ fn emit_compression_witness_event<F: Field + CanonicalEncoding>(
                 "compression witness event refers to a missing packed stage".into(),
             )
         })?;
-    emit_packed_negative_binary(out, span, packed)
+    emit_packed_negative_binary(|offset, digits| out.write_at(offset, digits), span, packed)
 }
 
 fn emit_reduced_witness_tail<F: Field + CanonicalEncoding>(
