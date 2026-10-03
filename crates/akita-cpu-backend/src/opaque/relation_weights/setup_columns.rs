@@ -17,7 +17,11 @@ impl<F: Field> SetupRows<'_, F> {
         self.rows
             .get(row)
             .and_then(|row| row.get(col * self.ring_d..(col + 1) * self.ring_d))
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::Internal(
+                    "setup family row or ring column is outside its compiled storage".into(),
+                )
+            })
     }
 }
 
@@ -69,7 +73,11 @@ where
                     }
                     let destination = output
                         .get_mut(batch * value_width..(batch + 1) * value_width)
-                        .ok_or(AkitaError::InvalidProof)?;
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "setup contraction batch has no output destination".into(),
+                            )
+                        })?;
                     for (accumulator, &value) in destination.iter_mut().zip(&contracted) {
                         *accumulator += weight * value;
                     }
@@ -219,7 +227,11 @@ where
                     }
                     let destination = coefficient_sums
                         .get_mut(batch * family.ring_d..(batch + 1) * family.ring_d)
-                        .ok_or(AkitaError::InvalidProof)?;
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "setup contraction batch has no coefficient-sum destination".into(),
+                            )
+                        })?;
                     for (accumulator, &coefficient) in destination.iter_mut().zip(coefficients) {
                         accumulator.add_product(weight, coefficient);
                     }
@@ -256,17 +268,21 @@ pub(super) struct SetupColumnValues<E> {
 impl<E> SetupColumnValues<E> {
     pub(super) fn get(&self, batch: usize, column: usize) -> Result<&[E], AkitaError> {
         if batch >= self.batch_count || column >= self.column_count {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "contracted setup batch or column is outside its compiled dimensions".into(),
+            ));
         }
         let start = column
             .checked_mul(self.batch_count)
             .and_then(|offset| offset.checked_add(batch))
             .and_then(|index| index.checked_mul(self.value_width))
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| AkitaError::Internal("contracted setup column start overflow".into()))?;
         let end = start
             .checked_add(self.value_width)
-            .ok_or(AkitaError::InvalidProof)?;
-        self.values.get(start..end).ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| AkitaError::Internal("contracted setup column end overflow".into()))?;
+        self.values.get(start..end).ok_or_else(|| {
+            AkitaError::Internal("contracted setup column range is outside its values".into())
+        })
     }
 
     pub(super) fn get_scalar(&self, batch: usize, column: usize) -> Result<E, AkitaError>
@@ -274,7 +290,9 @@ impl<E> SetupColumnValues<E> {
         E: Copy,
     {
         let [value] = self.get(batch, column)? else {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "contracted scalar setup column is not a singleton".into(),
+            ));
         };
         Ok(*value)
     }

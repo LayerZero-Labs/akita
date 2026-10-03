@@ -17,9 +17,9 @@ impl<E: Field + Ring, const LANES: usize> ProductNodeTable<E, LANES> {
         leaf_polynomials: &[Vec<E>],
         stage_index: usize,
     ) -> Result<Self, AkitaError> {
-        let expected_lanes = plan
-            .product_stage_lane_count(stage_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let expected_lanes = plan.product_stage_lane_count(stage_index).ok_or_else(|| {
+            AkitaError::Internal("digit-range class table stage has no planned lane count".into())
+        })?;
         if LANES != expected_lanes {
             return Err(AkitaError::InvalidSize {
                 expected: expected_lanes,

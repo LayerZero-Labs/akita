@@ -316,15 +316,27 @@ impl<E: Field> CompressionRelationWeights<E> {
                 if fallback_equality.is_none() {
                     fallback_equality = Some(OffsetEqWindow::new(point)?);
                 }
-                let equality = fallback_equality.as_ref().ok_or(AkitaError::InvalidProof)?;
+                let equality = fallback_equality.as_ref().ok_or_else(|| {
+                    AkitaError::Internal(
+                        "compression fallback equality window was not initialized".into(),
+                    )
+                })?;
                 let alpha_end = event
                     .alpha_exponent_start
                     .checked_add(event.coefficient_count)
-                    .ok_or(AkitaError::InvalidProof)?;
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "unaligned compression event alpha extent overflow".into(),
+                        )
+                    })?;
                 let powers = self
                     .alpha_powers
                     .get(event.alpha_exponent_start..alpha_end)
-                    .ok_or(AkitaError::InvalidProof)?;
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "unaligned compression event exceeds the alpha power table".into(),
+                        )
+                    })?;
                 let interval =
                     powers
                         .iter()
@@ -346,18 +358,34 @@ impl<E: Field> CompressionRelationWeights<E> {
                 let alpha_end = event
                     .alpha_exponent_start
                     .checked_add(event.coefficient_count)
-                    .ok_or(AkitaError::InvalidProof)?;
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "aligned compression event alpha extent overflow".into(),
+                        )
+                    })?;
                 let powers = self
                     .alpha_powers
                     .get(event.alpha_exponent_start..alpha_end)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let low_point = point.get(..low_bits).ok_or(AkitaError::InvalidProof)?;
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "aligned compression event exceeds the alpha power table".into(),
+                        )
+                    })?;
+                let low_point = point.get(..low_bits).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "compression low point exceeds the checked point dimension".into(),
+                    )
+                })?;
                 let value = multilinear_eval(powers, low_point)?;
                 low_factor_cache.push((cache_key, value));
                 value
             };
             let high_index = event.physical_start >> low_bits;
-            let high_point = point.get(low_bits..).ok_or(AkitaError::InvalidProof)?;
+            let high_point = point.get(low_bits..).ok_or_else(|| {
+                AkitaError::Internal(
+                    "compression high point exceeds the checked point dimension".into(),
+                )
+            })?;
             let high_cache_index = if let Some(index) = high_equality_cache
                 .iter()
                 .position(|(cached_low_bits, _)| *cached_low_bits == low_bits)
@@ -371,9 +399,9 @@ impl<E: Field> CompressionRelationWeights<E> {
                 ));
                 high_equality_cache.len() - 1
             };
-            let high_equality = high_equality_cache
-                .get(high_cache_index)
-                .ok_or(AkitaError::InvalidProof)?;
+            let high_equality = high_equality_cache.get(high_cache_index).ok_or_else(|| {
+                AkitaError::Internal("compression high equality cache entry is missing".into())
+            })?;
             evaluation += event.scalar * low_factor * high_equality.1.eval(high_index);
         }
         Ok(evaluation)
@@ -410,7 +438,11 @@ where
         for source_row in 0..source_row_count {
             let row_weight = *row_weights
                 .get(source_row_start + source_row)
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "compression source row exceeds the generated row weight table".into(),
+                    )
+                })?;
             for coefficient_start in (0..source_ring_dim).step_by(digit_ring_dim) {
                 let physical_start = span_start
                     .checked_add(bit * source_coefficients)
@@ -444,18 +476,30 @@ fn compression_span_for_row<'a>(
             let span = witness_layout
                 .compression_layers()
                 .get(map_index)
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "compression F row names a missing witness layer".into(),
+                    )
+                })?
                 .f_spans()
                 .iter()
                 .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "compression F row names a missing witness group span".into(),
+                    )
+                })?;
             Ok((Some(group_index), map_index, span))
         }
         RelationRowFamily::CompressionH { map_index, .. } => {
             let span = witness_layout
                 .compression_layers()
                 .get(map_index)
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "compression H row names a missing witness layer".into(),
+                    )
+                })?
                 .h_span();
             Ok((None, map_index, span))
         }
@@ -481,14 +525,20 @@ fn successor_compression_span(
     let layer = witness_layout
         .compression_layers()
         .get(successor_index)
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("compression successor witness layer is missing".into())
+        })?;
     match group_index {
         Some(group_index) => layer
             .f_spans()
             .iter()
             .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
             .map(Some)
-            .ok_or(AkitaError::InvalidProof),
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "compression successor witness group span is missing".into(),
+                )
+            }),
         None => Ok(Some(layer.h_span())),
     }
 }
@@ -520,7 +570,9 @@ where
                     .iter()
                     .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
             })
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("initial compression witness group span is missing".into())
+            })?;
         push_recomposition::<F, E>(
             weights,
             stage.range().start,
@@ -536,12 +588,18 @@ where
     let d_start = row_families
         .iter()
         .position(|row| matches!(row, RelationRowFamily::Opening { .. }))
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::Internal(
+                "generated compression relation rows contain no opening row".into(),
+            )
+        })?;
     let opening_plan = relation_layout.opening_compression_plan()?;
     let opening_stage = witness_layout
         .compression_layers()
         .first()
-        .ok_or(AkitaError::InvalidProof)?
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("initial compression opening witness layer is missing".into())
+        })?
         .h_span();
     push_recomposition::<F, E>(
         weights,
@@ -604,7 +662,11 @@ where
         .iter()
         .map(|row| row.geometry().polynomial_modulus_dimension())
         .max()
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| {
+            AkitaError::Internal(
+                "generated compression relation rows have no modulus dimension".into(),
+            )
+        })?;
     let mut weights = CompressionRelationWeights {
         events: Vec::new(),
         alpha_powers: scalar_powers(alpha, maximum_dimension),
@@ -634,7 +696,9 @@ where
         }
         let (group_index, map_index, span) = compression_span_for_row(witness_layout, family)?;
         let map = span.map();
-        let row_weight = *row_weights.get(row_index).ok_or(AkitaError::InvalidProof)?;
+        let row_weight = *row_weights.get(row_index).ok_or_else(|| {
+            AkitaError::Internal("compression row exceeds the generated row weight table".into())
+        })?;
         let matrix_index = if let Some(index) = evaluated_matrices.iter().position(|evaluated| {
             evaluated.input_width == map.input_width()
                 && evaluated.ring_dimension == map.ring_dimension()
@@ -652,7 +716,11 @@ where
                     let start = column * map.ring_dimension();
                     let end = start + map.ring_dimension();
                     Ok(eval_flat_ring_at_pows_fast(
-                        matrix_row.get(start..end).ok_or(AkitaError::InvalidProof)?,
+                        matrix_row.get(start..end).ok_or_else(|| {
+                            AkitaError::Internal(
+                                "compression column exceeds the checked setup matrix row".into(),
+                            )
+                        })?,
                         &powers,
                     ))
                 })
@@ -665,9 +733,9 @@ where
             });
             evaluated_matrices.len() - 1
         };
-        let evaluated = evaluated_matrices
-            .get(matrix_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let evaluated = evaluated_matrices.get(matrix_index).ok_or_else(|| {
+            AkitaError::Internal("evaluated compression matrix cache entry is missing".into())
+        })?;
         for column in 0..map.input_width() {
             let start = column * map.ring_dimension();
             weights.push(
@@ -675,11 +743,11 @@ where
                 map.ring_dimension(),
                 0,
                 row_weight
-                    * evaluated
-                        .columns
-                        .get(column)
-                        .copied()
-                        .ok_or(AkitaError::InvalidProof)?,
+                    * evaluated.columns.get(column).copied().ok_or_else(|| {
+                        AkitaError::Internal(
+                            "compression column exceeds the evaluated column table".into(),
+                        )
+                    })?,
             )?;
         }
         if let Some(successor) = successor_compression_span(witness_layout, group_index, map_index)?
@@ -696,12 +764,9 @@ where
                 &row_weights,
             )?;
         }
-        let denominator = evaluated
-            .powers
-            .last()
-            .copied()
-            .ok_or(AkitaError::InvalidProof)?
-            * alpha
+        let denominator = evaluated.powers.last().copied().ok_or_else(|| {
+            AkitaError::Internal("compression modulus alpha power table is empty".into())
+        })? * alpha
             + E::one();
         for (digit, gadget) in gadget_row_scalars::<F>(
             r_decomp_levels::<F>(lp.open().digits.log_basis),

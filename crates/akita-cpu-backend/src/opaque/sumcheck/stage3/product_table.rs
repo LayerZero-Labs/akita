@@ -237,10 +237,9 @@ where
     }
 
     pub(super) fn folded_table_value(&self) -> Result<E, AkitaError> {
-        let table = self
-            .index_table
-            .as_deref()
-            .ok_or(AkitaError::InvalidProof)?;
+        let table = self.index_table.as_deref().ok_or_else(|| {
+            AkitaError::Internal("fully folded setup product has no index table".into())
+        })?;
         if table.len() != 1 {
             return Err(AkitaError::InvalidSize {
                 expected: 1,

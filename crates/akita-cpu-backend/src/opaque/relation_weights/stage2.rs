@@ -22,9 +22,11 @@ impl<E: Field> CompiledStage2Weights<E> {
     fn add_response_norm_weights(&mut self, weights: Vec<E>) -> Result<(), AkitaError> {
         match &mut self.ordinary {
             RelationWeightDescription::ReducedEvaluations { evaluations, .. } => {
-                let destination = evaluations
-                    .get_mut(..weights.len())
-                    .ok_or(AkitaError::InvalidProof)?;
+                let destination = evaluations.get_mut(..weights.len()).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "response norm weights exceed the reduced relation destination".into(),
+                    )
+                })?;
                 for (destination, weight) in destination.iter_mut().zip(weights) {
                     *destination += weight;
                 }
@@ -117,7 +119,9 @@ fn factor_response_norm_weights<E: Field + Ring>(
             .checked_add(ring_axis.len)
             .ok_or_else(|| AkitaError::InvalidSetup("response-norm span overflow".into()))?;
         if left_end > output_len {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "response norm factor span exceeds its output length".into(),
+            ));
         }
 
         for row in 0..row_axis.len {
@@ -140,16 +144,17 @@ fn factor_response_norm_weights<E: Field + Ring>(
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("response-norm lane overflow".into())
                     })?;
-                let limb_weight = limb_weights
-                    .get(limb)
-                    .copied()
-                    .ok_or(AkitaError::InvalidProof)?;
+                let limb_weight = limb_weights.get(limb).copied().ok_or_else(|| {
+                    AkitaError::Internal("response norm limb has no compiled weight".into())
+                })?;
                 for ring_chunk in 0..ring_chunks {
                     let lane = limb_start.checked_add(ring_chunk).ok_or_else(|| {
                         AkitaError::InvalidSetup("response-norm lane overflow".into())
                     })?;
                     if lane >= live_lane_count {
-                        return Err(AkitaError::InvalidProof);
+                        return Err(AkitaError::Internal(
+                            "response norm lane exceeds the live relation lane count".into(),
+                        ));
                     }
                     let physical_coefficient = ring_chunk
                         .checked_mul(coefficient_count)
@@ -187,7 +192,7 @@ where
             request.opening_source_len,
             request.opening_ring_dimension,
         ])
-        .ok_or(AkitaError::InvalidProof)?
+        .ok_or_else(|| AkitaError::InvalidInput("stage 2 opening domain product overflow".into()))?
             != plan.domain_len()
     {
         return Err(AkitaError::InvalidInput(
@@ -216,7 +221,9 @@ where
     } else if points.len() == request.groups.len() {
         OpeningFamily::SubringCoefficientPacking(points.as_slice())
     } else {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "stage 2 packing opening point count differs from its groups".into(),
+        ));
     };
     let ordinary = match parameters.ring_relation_mode {
         akita_params::RingRelationMode::QuotientLift => {
@@ -242,7 +249,9 @@ where
         }
         akita_params::RingRelationMode::ReducedEvaluation => {
             if !points.is_empty() {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "reduced relation mode contains packing opening points".into(),
+                ));
             }
             build_reduced_dense_relation_weights(
                 setup,
@@ -279,7 +288,9 @@ where
             .to_vec()
     } else {
         if !plan.binary_batching().is_zero() {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "uncompressed stage 2 relation has nonzero binary batching".into(),
+            ));
         }
         Vec::new()
     };
@@ -518,7 +529,7 @@ mod tests {
         };
         assert!(matches!(
             compiled.add_response_norm_weights(vec![extension(2); 3]),
-            Err(AkitaError::InvalidProof)
+            Err(AkitaError::Internal(_))
         ));
     }
 }

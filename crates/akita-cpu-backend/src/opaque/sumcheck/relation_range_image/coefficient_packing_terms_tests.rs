@@ -344,6 +344,53 @@ fn materialize_cpu_sources(
 }
 
 #[test]
+fn begin_stage3_without_a_next_fold_rejects_the_level() {
+    use crate::opaque::{CpuBackend, OpaqueStage3Kernel, ProofScope, Stage3Request};
+    use akita_config::proof_optimized::fp64;
+    use akita_params::{PolynomialGroupLayout, ScheduleLookupKey, SetupPrefixSlotId};
+
+    let fixture = fixture();
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<fp64::OneHot>().unwrap();
+    let schedule = catalog
+        .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
+            35, 1,
+        )))
+        .unwrap()
+        .schedule();
+    let backend = CpuBackend::<F, E>::for_arithmetic_tests();
+    let lease = backend
+        .owner()
+        .begin_proof(schedule, &fixture.opening_batch)
+        .unwrap();
+    let scope = ProofScope::admitted(
+        &backend,
+        crate::opaque::CpuProofSessionHandle::new(std::sync::Arc::clone(backend.owner()), lease),
+    );
+    let level = u32::try_from(schedule.recursive_folds.len()).unwrap();
+    let parameters = &schedule.recursive_folds.last().unwrap().params;
+    let prefix = SetupPrefixSlotId {
+        natural_len: 1,
+        commitment_profile: parameters.own_group().profile,
+    };
+    assert!(matches!(
+        backend.begin_stage3(Stage3Request {
+            session: scope.session(),
+            level,
+            prefix: &prefix,
+            parameters,
+            next_parameters: parameters,
+            relation: &fixture.relation,
+            tau1: &fixture.tau1,
+            alpha: E::one(),
+            stage2_challenges: &[],
+            address_geometry: fixture.relation_plan.relation_address_geometry(),
+        }),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    scope.finish().unwrap();
+}
+
+#[test]
 fn prover_adapter_preserves_shared_stage2_semantics() {
     let fixture = fixture();
     let packing_semantics = prepare_batch(&fixture);

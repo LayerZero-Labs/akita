@@ -266,11 +266,11 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
                 input_claim: self.claim,
             };
             self.active = Some(
-                match self
-                    .plan
-                    .product_stage_lane_count(stage)
-                    .ok_or(AkitaError::InvalidProof)?
-                {
+                match self.plan.product_stage_lane_count(stage).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "stage 1 active product stage has no planned lane count".into(),
+                    )
+                })? {
                     2 => ActiveStage::Product2(ClassIndexedProductSubcheckProver::new(
                         input.source,
                         input.plan,
@@ -298,7 +298,11 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
                         input.equality_point,
                         input.input_claim,
                     )?),
-                    _ => return Err(AkitaError::InvalidProof),
+                    _ => {
+                        return Err(AkitaError::Internal(
+                            "stage 1 active product lane count is unsupported".into(),
+                        ))
+                    }
                 },
             );
             self.begin_active();
@@ -385,13 +389,19 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
         self.claim = match &pending.polynomial {
             Stage1RoundPolynomial::EqFactored(poly) => akita_sumcheck::advance_eq_factored_claim(
                 self.claim,
-                pending.tau.ok_or(AkitaError::InvalidProof)?,
+                pending.tau.ok_or_else(|| {
+                    AkitaError::Internal(
+                        "stage 1 eq-factored round has no equality challenge".into(),
+                    )
+                })?,
                 poly,
                 challenge,
             ),
             Stage1RoundPolynomial::Standard(poly) => poly.evaluate(challenge),
         };
-        let active = self.active.as_mut().ok_or(AkitaError::InvalidProof)?;
+        let active = self.active.as_mut().ok_or_else(|| {
+            AkitaError::Internal("stage 1 challenge binding has no active stage".into())
+        })?;
         active.bind(round, challenge);
         self.point.push(challenge);
         self.next_round += 1;
@@ -413,18 +423,30 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
     ) -> Result<Stage1PublicTransition<E>, AkitaError> {
         match self.phase {
             Phase::ProductPublic if step == Stage1Step::Product(self.product_index) => {
-                let claims = match self.active.take().ok_or(AkitaError::InvalidProof)? {
+                let claims = match self.active.take().ok_or_else(|| {
+                    AkitaError::Internal(
+                        "stage 1 product public transition has no active stage".into(),
+                    )
+                })? {
                     ActiveStage::Product2(p) => p.final_child_claims(),
                     ActiveStage::Product4(p) => p.final_child_claims(),
                     ActiveStage::Product8(p) => p.final_child_claims(),
-                    _ => return Err(AkitaError::InvalidProof),
+                    _ => {
+                        return Err(AkitaError::Internal(
+                            "stage 1 product public transition contains a non-product stage".into(),
+                        ))
+                    }
                 };
                 self.pending_product_claims = Some(claims.clone());
                 self.phase = Phase::ProductBatch;
                 Ok(Stage1PublicTransition::ProductChildClaims(claims))
             }
             Phase::L2Public if step == Stage1Step::FusedRangeNorm => {
-                let physical = self.physical.as_ref().ok_or(AkitaError::InvalidProof)?;
+                let physical = self.physical.as_ref().ok_or_else(|| {
+                    AkitaError::Internal(
+                        "stage 1 physical public transition has no physical state".into(),
+                    )
+                })?;
                 self.phase = if physical.subclaims.is_empty() {
                     Phase::Merge
                 } else {
@@ -436,7 +458,11 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
                 })
             }
             Phase::FinalPublic => {
-                let active = self.active.take().ok_or(AkitaError::InvalidProof)?;
+                let active = self.active.take().ok_or_else(|| {
+                    AkitaError::Internal(
+                        "stage 1 final public transition has no active stage".into(),
+                    )
+                })?;
                 if active.step(self.product_index) != step {
                     return Err(AkitaError::InvalidInput(
                         "Stage 1 final transition step mismatch".into(),
@@ -458,7 +484,11 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
                             p.norm.virtual_evaluations()?,
                         )
                     }
-                    _ => return Err(AkitaError::InvalidProof),
+                    _ => {
+                        return Err(AkitaError::Internal(
+                            "stage 1 final public transition contains a non-final stage".into(),
+                        ))
+                    }
                 };
                 self.final_range_image = Some(range_image_evaluation);
                 self.final_virtual_evaluations = Some(virtual_evaluations.clone());
@@ -485,14 +515,21 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
             {
                 let claims = match self.plan.product_stage_lane_count(index) {
                     Some(count) => count,
-                    None => return Err(AkitaError::InvalidProof),
+                    None => {
+                        return Err(AkitaError::Internal(
+                            "stage 1 product batching stage has no planned lane count".into(),
+                        ))
+                    }
                 };
-                let child_claims = self
-                    .pending_product_claims
-                    .take()
-                    .ok_or(AkitaError::InvalidProof)?;
+                let child_claims = self.pending_product_claims.take().ok_or_else(|| {
+                    AkitaError::Internal(
+                        "stage 1 product batching has no pending child claims".into(),
+                    )
+                })?;
                 if child_claims.len() != claims {
-                    return Err(AkitaError::InvalidProof);
+                    return Err(AkitaError::Internal(
+                        "stage 1 product child claim count differs from its planned lanes".into(),
+                    ));
                 }
                 self.weights = self.plan.interstage_batch_weights(challenge, claims);
                 self.claim = self.plan.batch_claims(&self.weights, &child_claims)?;
@@ -501,7 +538,11 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
                 self.start_product_or_leaf()
             }
             (Phase::L2Batch, Stage1Transition::L2SubclaimBatch) => {
-                let physical = self.physical.as_mut().ok_or(AkitaError::InvalidProof)?;
+                let physical = self.physical.as_mut().ok_or_else(|| {
+                    AkitaError::Internal(
+                        "stage 1 physical subclaim batching has no physical state".into(),
+                    )
+                })?;
                 let mut power = E::one();
                 physical.subclaim_weights = physical
                     .subclaims
@@ -532,7 +573,11 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
             self.claim,
             coefficients,
         )?;
-        let physical = self.physical.as_mut().ok_or(AkitaError::InvalidProof)?;
+        let physical = self.physical.as_mut().ok_or_else(|| {
+            AkitaError::Internal(
+                "stage 1 fused range-norm initialization has no physical state".into(),
+            )
+        })?;
         let norm_input_claim = if physical.subclaims.is_empty() {
             E::from_u128(physical.response_l2_sq)
         } else {

@@ -74,12 +74,9 @@ impl DistinctPositionScratch {
         })?;
         let mut slot = key & mask;
         for _ in 0..self.keys.len() {
-            let occupied = self
-                .generations
-                .get(slot)
-                .copied()
-                .ok_or(AkitaError::InvalidProof)?
-                == self.generation;
+            let occupied = self.generations.get(slot).copied().ok_or_else(|| {
+                AkitaError::Internal("sparse permutation slot exceeds the generation map".into())
+            })? == self.generation;
             if !occupied {
                 return Ok((slot, false));
             }
@@ -96,10 +93,9 @@ impl DistinctPositionScratch {
     fn get(&self, key: usize) -> Result<usize, AkitaError> {
         let (slot, occupied) = self.find_slot(key)?;
         if occupied {
-            self.values
-                .get(slot)
-                .copied()
-                .ok_or(AkitaError::InvalidProof)
+            self.values.get(slot).copied().ok_or_else(|| {
+                AkitaError::Internal("occupied sparse permutation slot has no value".into())
+            })
         } else {
             Ok(key)
         }
@@ -107,12 +103,15 @@ impl DistinctPositionScratch {
 
     fn insert(&mut self, key: usize, value: usize) -> Result<(), AkitaError> {
         let (slot, _) = self.find_slot(key)?;
-        *self.keys.get_mut(slot).ok_or(AkitaError::InvalidProof)? = key;
-        *self.values.get_mut(slot).ok_or(AkitaError::InvalidProof)? = value;
-        *self
-            .generations
-            .get_mut(slot)
-            .ok_or(AkitaError::InvalidProof)? = self.generation;
+        *self.keys.get_mut(slot).ok_or_else(|| {
+            AkitaError::Internal("sparse permutation insertion key slot is absent".into())
+        })? = key;
+        *self.values.get_mut(slot).ok_or_else(|| {
+            AkitaError::Internal("sparse permutation insertion value slot is absent".into())
+        })? = value;
+        *self.generations.get_mut(slot).ok_or_else(|| {
+            AkitaError::Internal("sparse permutation insertion generation slot is absent".into())
+        })? = self.generation;
         Ok(())
     }
 }
@@ -171,7 +170,9 @@ fn sample_distinct_positions_into_sparse(
         let right = scratch.get(j)?;
         scratch.insert(i, right)?;
         scratch.insert(j, left)?;
-        *dst = u32::try_from(right).map_err(|_| AkitaError::InvalidProof)?;
+        *dst = u32::try_from(right).map_err(|_| {
+            AkitaError::Internal("sampled sparse permutation position does not fit u32".into())
+        })?;
     }
     Ok(())
 }
@@ -193,7 +194,9 @@ where
     }
     let mut perm = [T::default(); N];
     for (i, slot) in perm[..universe].iter_mut().enumerate() {
-        *slot = T::try_from(i).map_err(|_| AkitaError::InvalidProof)?;
+        *slot = T::try_from(i).map_err(|_| {
+            AkitaError::Internal("stack permutation position does not fit its tier type".into())
+        })?;
     }
     for (i, dst) in out.iter_mut().enumerate() {
         let j = i + cursor.next_usize_mod(universe - i);

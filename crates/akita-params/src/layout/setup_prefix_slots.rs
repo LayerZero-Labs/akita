@@ -429,7 +429,11 @@ pub(crate) fn active_setup_projection_geometry(
         } else {
             let group_params = *level_params
                 .preceding_group_params(group_index)
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "validated setup projection is missing a preceding group".into(),
+                    )
+                })?;
             (
                 group_params,
                 group_params.role_dims(level_params.open().matrix.ring_dimension()),

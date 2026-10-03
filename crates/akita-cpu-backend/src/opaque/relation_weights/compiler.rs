@@ -50,7 +50,9 @@ where
             RelationWitnessGeometry::for_level(lp, opening_batch, instance.extension_degree())?;
         let row_families = relation_geometry.rhs_layout().row_families()?;
         if row_families.is_empty() {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "relation geometry has no row families".into(),
+            ));
         }
         let witness_layout = instance.segment_layout(lp, None)?;
         match lp.ring_relation_mode {
@@ -169,7 +171,9 @@ where
                     .witness
                     .num_claims
                     .checked_mul(group.witness.num_live_blocks)
-                    .ok_or(AkitaError::InvalidProof)?;
+                    .ok_or_else(|| {
+                        AkitaError::Internal("relation challenge count overflow".into())
+                    })?;
                 if challenges.len() != expected_challenges {
                     return Err(AkitaError::InvalidSize {
                         expected: expected_challenges,
@@ -180,7 +184,9 @@ where
                     if point.position_len() != group.witness.num_positions
                         || point.fold_len() != group.witness.num_live_blocks
                     {
-                        return Err(AkitaError::InvalidProof);
+                        return Err(AkitaError::Internal(
+                            "prepared trace opening lengths differ from group geometry".into(),
+                        ));
                     }
                 }
                 Ok(RelationWeightGroupSources {
@@ -210,7 +216,9 @@ where
         self.group_sources
             .iter()
             .find(|group| group.group_index == group_index)
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::Internal("compiled relation group has no opening source".into())
+            })
     }
 }
 
@@ -300,7 +308,9 @@ impl<E: Field> RelationWeightCompilationPlan<E> {
         let d_start = row_families
             .iter()
             .position(|row| matches!(row, RelationRowFamily::Opening { .. }))
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("canonical relation rows have no opening family".into())
+            })?;
         let n_d_active = lp.open().matrix.output_rank();
         let d_row_weights = (0..n_d_active)
             .filter_map(|row| {
@@ -308,7 +318,9 @@ impl<E: Field> RelationWeightCompilationPlan<E> {
                 match weight {
                     Some(weight) if !weight.is_zero() => Some(Ok((row, vec![weight]))),
                     Some(_) => None,
-                    None => Some(Err(AkitaError::InvalidProof)),
+                    None => Some(Err(AkitaError::Internal(
+                        "opening relation row has no compiled weight".into(),
+                    ))),
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -329,9 +341,11 @@ impl<E: Field> RelationWeightCompilationPlan<E> {
                 Self::build_group::<F>(
                     &inputs,
                     canonical_group,
-                    d_column_ranges
-                        .get(group_index)
-                        .ok_or(AkitaError::InvalidProof)?,
+                    d_column_ranges.get(group_index).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "canonical relation group has no opening column range".into(),
+                        )
+                    })?,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -421,12 +435,14 @@ impl<E: Field> RelationWeightCompilationPlan<E> {
             || b_range.end > row_weights.len()
             || b_range.len() != expected_b_rows
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "compiled relation row ranges differ from the group geometry".into(),
+            ));
         }
         let consistency_row = relation_plan.consistency_row_index(group_index)?;
-        let consistency_weight = *row_weights
-            .get(consistency_row)
-            .ok_or(AkitaError::InvalidProof)?;
+        let consistency_weight = *row_weights.get(consistency_row).ok_or_else(|| {
+            AkitaError::Internal("relation consistency row has no compiled weight".into())
+        })?;
         let lift_gadget = |depth, log_basis| {
             gadget_row_scalars::<F>(depth, log_basis)
                 .into_iter()
@@ -439,10 +455,11 @@ impl<E: Field> RelationWeightCompilationPlan<E> {
                 let weights = (0..slice_count)
                     .map(|slice| {
                         let logical = slice_geometry.logical_row_index(slice, row, physical_n_b)?;
-                        b_row_weights
-                            .get(logical)
-                            .copied()
-                            .ok_or(AkitaError::InvalidProof)
+                        b_row_weights.get(logical).copied().ok_or_else(|| {
+                            AkitaError::Internal(
+                                "logical commitment row has no compiled weight".into(),
+                            )
+                        })
                     })
                     .collect::<Result<Vec<_>, _>>();
                 match weights {
@@ -582,6 +599,8 @@ impl<'a, F: Field> RelationWeightSetupSources<'a, F> {
         self.groups
             .iter()
             .find(|group| group.group_index == group_index)
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::Internal("compiled relation group has no setup source".into())
+            })
     }
 }

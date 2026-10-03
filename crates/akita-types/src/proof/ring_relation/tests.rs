@@ -303,6 +303,24 @@ fn resolve_rejects_bad_chunk_count() {
 }
 
 #[test]
+fn ambient_challenges_reject_an_absent_group() {
+    let lp = chunk_test_level_params(2, 2);
+    let instance = build_instance(&lp, 2, 4);
+    assert!(matches!(
+        instance.group_ambient_a_challenges(instance.group_openings().len()),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn row_ring_embedding_rejects_an_incompatible_ring_dimension() {
+    assert!(matches!(
+        RingRelationInstance::<F>::gamma_and_row_rings_from_coefficients::<1, F>(&[F::one()]),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
 fn resolve_preserves_empty_chunk_slots() {
     let num_claims = 2;
     let mut lp = chunk_test_level_params(2, num_claims);

@@ -1,5 +1,5 @@
 #![allow(private_bounds)]
-use crate::opaque::OpeningFoldKernel;
+use crate::opaque::OpeningBatchKernel;
 
 use crate::opaque::ComputeBackendSetup;
 use crate::opaque::RingSwitchRelationView;
@@ -244,7 +244,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> RootPolynomialEvaluator<F, D>
             |block_weights, position_weights, positions| {
                 self.ring_coeffs::<D>()?;
                 Ok(self
-                    .evaluate_and_fold::<D>(block_weights, position_weights, positions)
+                    .evaluate_and_fold::<D>(block_weights, position_weights, positions)?
                     .0)
             },
         )
@@ -268,7 +268,7 @@ impl<F: Field + CanonicalEncoding + Unreduced, I: crate::opaque::OneHotIndex, co
             basis,
             |block_weights, position_weights, positions| {
                 Ok(self
-                    .evaluate_and_fold::<D>(block_weights, position_weights, positions)
+                    .evaluate_and_fold::<D>(block_weights, position_weights, positions)?
                     .0)
             },
         )
@@ -305,11 +305,11 @@ where
 {
 }
 
-/// Capability: this backend can run **opening fold** kernels over a single
-/// source `P` (evaluate/fold and opaque accepted responses).
+/// Capability: this backend can run batched opening kernels over source `P`
+/// (evaluate/fold and opaque accepted responses).
 pub(crate) trait OpeningProveBackendFor<F, P, const D: usize>:
     ComputeBackendSetup<F>
-    + for<'a> OpeningFoldKernel<<P as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>
+    + for<'a> OpeningBatchKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>
     + for<'a> FoldResponseKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>
 where
     F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
@@ -324,7 +324,7 @@ where
     <F as Unreduced>::Wide: From<F>,
     P: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F>
-        + for<'a> OpeningFoldKernel<<P as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>
+        + for<'a> OpeningBatchKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>
         + for<'a> FoldResponseKernel<<P as RootOpeningSource<F, D>>::OpeningBatchView<'a>, F, D>,
 {
 }

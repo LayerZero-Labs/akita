@@ -181,12 +181,12 @@ impl RingRelationProver {
         let opening_batch = block_claims.opening_layout().clone();
         let num_groups = block_claims.opening_claims().num_groups();
         if prepared_opening_handles.len() != num_groups {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "ring relation prover prepared group count mismatch".to_string(),
             ));
         }
         if commitment_material.len() != num_groups {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "prepared commitment material group count mismatch".into(),
             ));
         }
@@ -203,7 +203,7 @@ impl RingRelationProver {
             .collect::<Result<Vec<_>, _>>()?;
         let num_claims = opening_batch.num_total_polynomials();
         if num_claims == 0 {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "batched prover requires at least one polynomial".to_string(),
             ));
         }
@@ -229,10 +229,7 @@ impl RingRelationProver {
                 &opening_batch,
                 relation_rhs_layout,
                 &group_commitments,
-            )
-            .map_err(|err| {
-                AkitaError::InvalidInput(format!("recursive witness assembly failed: {err:?}"))
-            })?;
+            )?;
         let (
             prepared_relation_groups,
             opening_payload,
@@ -250,7 +247,10 @@ impl RingRelationProver {
                 .collect::<Vec<_>>()
                 != scalar_openings
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "recursive witness build output differs from scheduled payload or scalar openings"
+                    .into(),
+            ));
         }
         akita_transcript::send_field_group(
             grinding.state_mut(),
@@ -274,10 +274,7 @@ impl RingRelationProver {
                 trace_opening_batch,
                 grinding,
                 level,
-            )
-            .map_err(|err| {
-                AkitaError::InvalidInput(format!("prepare evaluation-trace claim failed: {err:?}"))
-            })?;
+            )?;
         let row_coefficient_rings = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
@@ -285,20 +282,14 @@ impl RingRelationProver {
             |D| {
                 let rings = crate::protocol::prove::row_coefficient_rings::<F, PointF, D>(
                     &row_coefficients,
-                )
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!("row coefficient rings failed: {err:?}"))
-                })?;
+                )?;
                 Ok::<_, AkitaError>(RingVec::from_ring_elems(&rings))
             }
-        )
-        .map_err(|err| {
-            AkitaError::InvalidInput(format!("root row-coefficient preparation failed: {err:?}"))
-        })?;
+        )?;
         if !row_coefficient_rings.can_decode_vec(dims.d_a())
             || row_coefficient_rings.coeff_len() / dims.d_a() != num_claims
         {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "batched prover row coefficient length does not match claim count".to_string(),
             ));
         }
@@ -322,29 +313,31 @@ impl RingRelationProver {
             .map(|group_index| {
                 Ok(fold_grind::FoldGrindGroup {
                     group_index,
-                    opening: prepared_opening_handles
-                        .get(group_index)
-                        .ok_or(AkitaError::InvalidProof)?,
+                    opening: prepared_opening_handles.get(group_index).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "fold grind opening handle is missing for group".into(),
+                        )
+                    })?,
                     num_polynomials: opening_batch.group_layout(group_index)?.num_polynomials(),
                     params: lp.group_params_geometry(&opening_batch, group_index)?,
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let _grind_span = tracing::info_span!("fold_grind_sample").entered();
-        let grind_outputs =
-            fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, B>(
-                opening_ctx,
-                grinding,
-                level,
-                &lp,
-                &opening_batch,
-                &grind_groups,
-                None,
-            )
-            .map_err(|err| AkitaError::InvalidInput(format!("fold grind failed: {err:?}")))?;
+        let grind_outputs = fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, B>(
+            opening_ctx,
+            grinding,
+            level,
+            &lp,
+            &opening_batch,
+            &grind_groups,
+            None,
+        )?;
         drop(_grind_span);
         if grind_outputs.len() != num_groups {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "fold grind output count differs from opening group count".into(),
+            ));
         }
         let folds = grind_outputs
             .into_iter()
@@ -358,14 +351,14 @@ impl RingRelationProver {
                         width.checked_mul(group.profile.inner.matrix.ring_dimension())
                     })
                     .ok_or_else(|| {
-                        AkitaError::InvalidInput("accepted-fold response width overflow".into())
+                        AkitaError::Internal("accepted-fold response width overflow".into())
                     })?;
                 let metadata = crate::backend::AcceptedFoldHandle::metadata(&output.fold_handle);
                 if metadata.ring_dimension() != group.profile.inner.matrix.ring_dimension()
                     || metadata.response_coordinate_count() != expected_coefficients
                     || metadata.num_chunks() != lp.witness_chunk.num_chunks
                 {
-                    return Err(AkitaError::InvalidInput(format!(
+                    return Err(AkitaError::Internal(format!(
                         "accepted-fold metadata disagrees with planned group {group_index} geometry"
                     )));
                 }
@@ -392,7 +385,10 @@ impl RingRelationProver {
                 ) if challenges.geometry() == point.geometry() => Ok(
                     akita_types::RingRelationGroupOpening::coefficient_packing(challenges.clone()),
                 ),
-                _ => Err(AkitaError::InvalidProof),
+                _ => Err(AkitaError::Internal(
+                    "fold challenges differ from prepared relation opening family or geometry"
+                        .into(),
+                )),
             })
             .collect::<Result<Vec<_>, _>>()?;
         // The relation places the final group before the precommitted groups;
@@ -401,9 +397,11 @@ impl RingRelationProver {
             .groups
             .iter()
             .map(|group| {
-                group_commitments
-                    .get(group.group_index)
-                    .ok_or(AkitaError::InvalidProof)
+                group_commitments.get(group.group_index).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "relation commitment is missing for scheduled group".into(),
+                    )
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
         let relation_rhs = if lp.payload_mode.is_compressed() {
@@ -459,7 +457,9 @@ impl RingRelationProver {
         if manifest.logical_len() != expected_witness_len
             || manifest.commitment_ring_dimension() != commitment_ring_dimension
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "recursive witness manifest differs from scheduled witness plan".into(),
+            ));
         }
         Ok(PreparedRingRelationOutput {
             relation: PreparedRingRelation {
