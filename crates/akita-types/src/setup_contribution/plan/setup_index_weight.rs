@@ -168,9 +168,11 @@ impl<E: Field> SetupContributionPlan<E> {
                 let d_row = d_idx / self.d_physical_cols;
                 if group.d_col_range.contains(&d_col) {
                     let term = self.d_weights[d_row]
-                        * *e_eq
-                            .get(d_col - group.d_col_range.start)
-                            .ok_or(AkitaError::InvalidProof)?;
+                        * *e_eq.get(d_col - group.d_col_range.start).ok_or_else(|| {
+                            AkitaError::Internal(
+                                "setup D column exceeds the E column weight table".into(),
+                            )
+                        })?;
                     weight += scales[2]
                         .as_ref()
                         .map_or(term, |scale| scale[setup_idx % group.d_ratio] * term);
@@ -180,10 +182,9 @@ impl<E: Field> SetupContributionPlan<E> {
             let b_idx = setup_idx / group.b_ratio;
             let b_footprint = group.physical_b.physical_footprint()?;
             if b_idx < b_footprint {
-                let term = *weights
-                    .physical_b_weights
-                    .get(b_idx)
-                    .ok_or(AkitaError::InvalidProof)?;
+                let term = *weights.physical_b_weights.get(b_idx).ok_or_else(|| {
+                    AkitaError::Internal("setup B index exceeds the physical B weight table".into())
+                })?;
                 weight += scales[1]
                     .as_ref()
                     .map_or(term, |scale| scale[setup_idx % group.b_ratio] * term);
@@ -198,7 +199,11 @@ impl<E: Field> SetupContributionPlan<E> {
                 let a_col = a_idx % group.z_cols;
                 let a_row = a_idx / group.z_cols;
                 let term = group.a_row_weights[a_row]
-                    * *z_eq.get(a_col).ok_or(AkitaError::InvalidProof)?;
+                    * *z_eq.get(a_col).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "setup A column exceeds the Z column weight table".into(),
+                        )
+                    })?;
                 weight += scales[0]
                     .as_ref()
                     .map_or(term, |scale| scale[setup_idx % group.a_ratio] * term);

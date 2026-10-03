@@ -218,7 +218,8 @@ where
 
     let mut challenges = Vec::with_capacity(num_rounds);
     for round in 0..num_rounds {
-        let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
+        let round_id = u32::try_from(round)
+            .map_err(|_| AkitaError::Internal("sumcheck round index does not fit u32".into()))?;
         let poly = prover.round_polynomial(round, claim)?;
         if poly.evaluate(E::zero()) + poly.evaluate(E::one()) != claim {
             return Err(AkitaError::InvalidInput(
@@ -227,8 +228,15 @@ where
         }
         let mut coefficients = poly.compress().coeffs_except_linear_term().to_vec();
         let coefficient_count = coefficients.len();
-        if coefficient_count == 0 || coefficient_count > degree_bound {
-            return Err(AkitaError::InvalidProof);
+        if coefficient_count == 0 {
+            return Err(AkitaError::Internal(
+                "sumcheck compressed coefficient count is zero".into(),
+            ));
+        }
+        if coefficient_count > degree_bound {
+            return Err(AkitaError::Internal(
+                "sumcheck compressed coefficient count exceeds degree bound".into(),
+            ));
         }
         coefficients.resize(degree_bound, E::zero());
         let compressed = CompressedPoly::new(coefficients);
@@ -354,11 +362,15 @@ where
     let mut challenges = Vec::with_capacity(num_rounds);
 
     for round in 0..num_rounds {
-        let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
+        let round_id = u32::try_from(round).map_err(|_| {
+            AkitaError::Internal("equality-factored sumcheck round index does not fit u32".into())
+        })?;
         let mut coefficients = prover.round_polynomial(round, claim)?.into_coefficients();
         let coefficient_count = coefficients.len();
         if coefficient_count > degree_bound {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "equality-factored sumcheck coefficient count exceeds the degree bound".into(),
+            ));
         }
         coefficients.resize(degree_bound, E::zero());
         let poly = OmittedConstantPoly::new(coefficients);
