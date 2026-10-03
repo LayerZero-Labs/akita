@@ -78,10 +78,10 @@ pub(crate) fn build_evaluation_trace_weights<E: Field>(
                     .num_live_blocks()
                     .checked_mul(parameters.opening_digit_weights().len())
                     .and_then(|count| count.checked_mul(group_dims.d_a()))
-                    .ok_or_else(|| AkitaError::InvalidSetup("trace segment overflow".into()))?;
+                    .ok_or_else(|| AkitaError::Internal("trace segment overflow".into()))?;
                 let end = physical_coefficient_start
                     .checked_add(coeff_count)
-                    .ok_or_else(|| AkitaError::InvalidSetup("trace segment end overflow".into()))?;
+                    .ok_or_else(|| AkitaError::Internal("trace segment end overflow".into()))?;
                 if end > inputs.digit_witness_domain.live_len() {
                     return Err(AkitaError::Internal(
                         "evaluation-trace segment exceeds the live digit witness".into(),
@@ -162,14 +162,14 @@ impl<E: Field> PreparedPackingLaneMap<E> {
             )
         })?;
         if slot.is_some() {
-            return Err(AkitaError::InvalidSetup(
-                "coefficient-packing segments overlap".into(),
+            return Err(AkitaError::Internal(
+                "coefficient-packing lane already has a support segment".into(),
             ));
         }
         let encoded = segment
             .checked_add(1)
             .and_then(NonZeroUsize::new)
-            .ok_or_else(|| AkitaError::InvalidSetup("packing segment index overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("encoded packing segment index overflow".into()))?;
         *slot = Some(encoded);
         Ok(())
     }
@@ -235,21 +235,21 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         coeff_count: usize,
     ) -> Result<Self, AkitaError> {
         if coeff_count == 0 || !coeff_count.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "response-norm coefficient count must be a nonzero power of two".into(),
             ));
         }
         if coefficient_weights.len() != coeff_count {
-            return Err(AkitaError::InvalidSize {
-                expected: coeff_count,
-                actual: coefficient_weights.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "response-norm coefficient weight count: expected {coeff_count}, actual {}",
+                coefficient_weights.len(),
+            )));
         }
         if lane_weights.len() != live_lane_count {
-            return Err(AkitaError::InvalidSize {
-                expected: live_lane_count,
-                actual: lane_weights.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "response-norm lane weight count: expected {live_lane_count}, actual {}",
+                lane_weights.len(),
+            )));
         }
 
         let mut lane_terms = vec![Vec::new(); live_lane_count];
@@ -309,7 +309,7 @@ impl<E: Field> PreparedProverLinearTerms<E> {
             || !weights.physical_field_len.is_multiple_of(coeff_count)
             || weights.terms.is_empty()
         {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "evaluation-trace common-coordinate geometry is malformed".into(),
             ));
         }
@@ -324,7 +324,7 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                     })
                     .and_then(|segment_count| count.checked_add(segment_count))
                     .ok_or_else(|| {
-                        AkitaError::InvalidSetup("evaluation-trace support count overflow".into())
+                        AkitaError::Internal("evaluation-trace support count overflow".into())
                     })
             })
         })?;
@@ -345,7 +345,7 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                 || !term.opening_ring_dimension.is_multiple_of(coeff_count)
                 || term.inner_trace.len() != source_ring_dimension
             {
-                return Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::Internal(
                     "evaluation-trace source ring is incompatible with Stage 2".into(),
                 ));
             }
@@ -359,7 +359,7 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                 .len()
                 .checked_mul(term.source_ring_dimension)
                 .ok_or_else(|| {
-                    AkitaError::InvalidSetup("evaluation-trace block stride overflow".into())
+                    AkitaError::Internal("evaluation-trace block stride overflow".into())
                 })?;
             let inner_trace_index = source_inner_traces.len();
             source_inner_traces.push(Arc::clone(&term.inner_trace));
@@ -369,9 +369,7 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                         .global_block_start
                         .checked_add(local_block)
                         .ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "evaluation-trace global block overflow".into(),
-                            )
+                            AkitaError::Internal("evaluation-trace global block overflow".into())
                         })?;
                     let block_weight = *block_weights.get(global_block).ok_or_else(|| {
                         AkitaError::Internal(
@@ -380,17 +378,13 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                     })?;
                     let local_block_offset =
                         block_stride.checked_mul(local_block).ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "evaluation-trace block offset overflow".into(),
-                            )
+                            AkitaError::Internal("evaluation-trace block offset overflow".into())
                         })?;
                     let block_start = segment
                         .physical_coefficient_start
                         .checked_add(local_block_offset)
                         .ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "evaluation-trace block address overflow".into(),
-                            )
+                            AkitaError::Internal("evaluation-trace block address overflow".into())
                         })?;
                     let role_subcolumns = source_ring_dimension / term.opening_ring_dimension;
                     for role_subcolumn in 0..role_subcolumns {
@@ -401,18 +395,18 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                                 .and_then(|offset| offset.checked_add(digit))
                                 .and_then(|offset| offset.checked_mul(term.opening_ring_dimension))
                                 .ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
+                                    AkitaError::Internal(
                                         "evaluation-trace digit offset overflow".into(),
                                     )
                                 })?;
                             let coefficient_start =
                                 block_start.checked_add(digit_offset).ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
+                                    AkitaError::Internal(
                                         "evaluation-trace digit address overflow".into(),
                                     )
                                 })?;
                             if !coefficient_start.is_multiple_of(coeff_count) {
-                                return Err(AkitaError::InvalidSetup(
+                                return Err(AkitaError::Internal(
                                     "evaluation-trace support is not common-coordinate aligned"
                                         .into(),
                                 ));
@@ -421,7 +415,7 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                             let column_count = term.opening_ring_dimension / coeff_count;
                             let support_end =
                                 first_lane.checked_add(column_count).ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
+                                    AkitaError::Internal(
                                         "evaluation-trace support range overflow".into(),
                                     )
                                 })?;
@@ -478,9 +472,10 @@ impl<E: Field> PreparedProverLinearTerms<E> {
             }
             for lane_offset in 0..support.lane_count {
                 let source_lane = support.source_lane_start + lane_offset;
-                let target_lane = support.first_lane.checked_add(lane_offset).ok_or_else(|| {
-                    AkitaError::InvalidSetup("evaluation-trace lane overflow".into())
-                })?;
+                let target_lane = support
+                    .first_lane
+                    .checked_add(lane_offset)
+                    .ok_or_else(|| AkitaError::Internal("evaluation-trace lane overflow".into()))?;
                 lane_terms
                     .get_mut(target_lane)
                     .ok_or_else(|| {
@@ -517,7 +512,7 @@ impl<E: Field> PreparedProverLinearTerms<E> {
             || !physical_field_len.is_multiple_of(coeff_count)
             || terms.is_empty()
         {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "coefficient-packing linear geometry is malformed".into(),
             ));
         }
@@ -525,7 +520,7 @@ impl<E: Field> PreparedProverLinearTerms<E> {
             .into_iter()
             .map(|values| {
                 if values.is_empty() || !values.len().is_multiple_of(coeff_count) {
-                    return Err(AkitaError::InvalidSetup(
+                    return Err(AkitaError::Internal(
                         "coefficient-packing source geometry is malformed".into(),
                     ));
                 }
@@ -555,7 +550,7 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                 )
             })?;
             if term_segments.is_empty() {
-                return Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::Internal(
                     "coefficient-packing term has no support".into(),
                 ));
             }
@@ -570,7 +565,7 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                     || physical.end > physical_field_len
                     || source_range.end > source.values.len()
                 {
-                    return Err(AkitaError::InvalidSetup(
+                    return Err(AkitaError::Internal(
                         "coefficient-packing segment is unaligned or out of bounds".into(),
                     ));
                 }
@@ -588,15 +583,11 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                 for lane_offset in 0..lane_count {
                     let target_lane =
                         target_lane_start.checked_add(lane_offset).ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "coefficient-packing target lane overflow".into(),
-                            )
+                            AkitaError::Internal("coefficient-packing target lane overflow".into())
                         })?;
                     let source_lane =
                         source_lane_start.checked_add(lane_offset).ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "coefficient-packing source lane overflow".into(),
-                            )
+                            AkitaError::Internal("coefficient-packing source lane overflow".into())
                         })?;
                     if source_lane >= source.lane_count {
                         return Err(AkitaError::Internal(
@@ -661,10 +652,11 @@ impl<E: Field> PreparedProverLinearTerms<E> {
     /// Add another checked structured term set over the same witness domain.
     pub(crate) fn merge(&mut self, mut other: Self) -> Result<(), AkitaError> {
         if self.live_lane_count != other.live_lane_count || self.coeff_count != other.coeff_count {
-            return Err(AkitaError::InvalidSize {
-                expected: self.live_lane_count * self.coeff_count,
-                actual: other.live_lane_count * other.coeff_count,
-            });
+            return Err(AkitaError::Internal(format!(
+                "merged structured relation domain length: expected {}, actual {}",
+                self.live_lane_count * self.coeff_count,
+                other.live_lane_count * other.coeff_count,
+            )));
         }
         match (&self.lane_weights, &other.lane_weights) {
             (PreparedLaneWeights::Packing(_), PreparedLaneWeights::Sparse(_)) => {
@@ -683,7 +675,7 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         self.sources
             .len()
             .checked_add(sources.len())
-            .ok_or_else(|| AkitaError::InvalidSetup("packing source index overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("packing source index overflow".into()))?;
         match (&self.lane_weights, &source_weights) {
             (PreparedLaneWeights::Sparse(_), PreparedLaneWeights::Sparse(_)) => {}
             (PreparedLaneWeights::Packing(target), PreparedLaneWeights::Packing(source)) => {
@@ -692,7 +684,7 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                     .len()
                     .checked_add(source.segments.len())
                     .ok_or_else(|| {
-                        AkitaError::InvalidSetup("packing segment index overflow".into())
+                        AkitaError::Internal("merged packing segment count overflow".into())
                     })?;
                 if target
                     .lane_to_segment
@@ -700,13 +692,13 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                     .zip(&source.lane_to_segment)
                     .any(|(target, source)| target.is_some() && source.is_some())
                 {
-                    return Err(AkitaError::InvalidSetup(
-                        "coefficient-packing segments overlap".into(),
+                    return Err(AkitaError::Internal(
+                        "merged coefficient-packing support segments overlap".into(),
                     ));
                 }
             }
             _ => {
-                return Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::Internal(
                     "cannot merge different Stage 2 weight representations".into(),
                 ));
             }
@@ -781,12 +773,11 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         let actual = self
             .live_lane_count
             .checked_mul(self.coeff_count)
-            .ok_or_else(|| AkitaError::InvalidSetup("evaluation-trace length overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("evaluation-trace length overflow".into()))?;
         if actual != witness_len {
-            return Err(AkitaError::InvalidSize {
-                expected: witness_len,
-                actual,
-            });
+            return Err(AkitaError::Internal(format!(
+                "prepared linear relation witness length: expected {witness_len}, actual {actual}"
+            )));
         }
         let lane_shape_is_valid = match &self.lane_weights {
             PreparedLaneWeights::Sparse(terms) => terms.len() == self.live_lane_count,

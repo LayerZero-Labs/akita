@@ -134,7 +134,7 @@ impl<F: Field + CanonicalEncoding> CpuPreparedSetup<F> {
         }
         let slot = prepare_ntt_slot_on_prepared(self, key)?;
         if slot.ring_d != D {
-            return Err(AkitaError::InvalidSetup(format!(
+            return Err(AkitaError::Internal(format!(
                 "prepared CPU NTT ring_d mismatch: stored {}, requested {D}",
                 slot.ring_d
             )));
@@ -142,7 +142,7 @@ impl<F: Field + CanonicalEncoding> CpuPreparedSetup<F> {
         let typed = slot
             .cache
             .downcast_ref::<PreparedNttCache<D>>()
-            .ok_or_else(|| AkitaError::InvalidSetup("prepared CPU NTT type mismatch".into()))?;
+            .ok_or_else(|| AkitaError::Internal("prepared CPU NTT type mismatch".into()))?;
         f(typed)
     }
 
@@ -188,9 +188,7 @@ impl<F: Field + CanonicalEncoding> CpuPreparedSetup<F> {
                 .map(|slot| slot.cache_bytes)
             {
                 freed = freed.checked_add(bytes).ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "released shared matrix NTT cache bytes overflow".into(),
-                    )
+                    AkitaError::Internal("released shared matrix NTT cache bytes overflow".into())
                 })?;
                 released_keys.push(*key);
             }

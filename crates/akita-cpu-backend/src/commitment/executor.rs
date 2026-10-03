@@ -663,12 +663,12 @@ where
         stage: &'static str,
     ) -> Result<(), AkitaError> {
         if actual.binding() != expected {
-            return Err(AkitaError::InvalidInput(format!(
+            return Err(AkitaError::Internal(format!(
                 "{stage} operation returned state bound to a different commitment request"
             )));
         }
         if !owner.owns(actual) {
-            return Err(AkitaError::InvalidInput(format!(
+            return Err(AkitaError::Internal(format!(
                 "{stage} operation returned state owned by a different prepared implementation"
             )));
         }

@@ -166,7 +166,7 @@ impl NttExecutionRequirements {
         routing_extent: usize,
     ) -> Result<(), AkitaError> {
         if cluster == NttOperationCluster::Commit {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "commitment NTT requirements require an inner/outer stage discriminator".into(),
             ));
         }
@@ -202,7 +202,7 @@ impl NttExecutionRequirements {
         routing_extent: usize,
     ) -> Result<(), AkitaError> {
         if routing_extent < key.num_ring_elements {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "NTT routing extent is smaller than its cache prefix".into(),
             ));
         }

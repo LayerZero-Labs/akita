@@ -34,7 +34,7 @@ pub(super) fn split_disjoint_mut<'a, T>(
                 window
             })
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("relation windows overlap or exceed their domain".into())
+                AkitaError::Internal("relation windows overlap or exceed their domain".into())
             })?;
         windows[index] = Some(window);
         consumed = range.end;
@@ -234,7 +234,7 @@ pub(super) fn scatter_et<E: Field>(
         (Some(d), Some(b)) => LiftedEtSetup::Matrix { d, b },
         (None, None) => LiftedEtSetup::Deferred,
         _ => {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "lifted E/T setup phases disagree".into(),
             ));
         }

@@ -70,7 +70,7 @@ fn fold_lane_and_compute_next_round<
     (virt.totals(), relation.finish())
 }
 
-impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
+impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
     #[tracing::instrument(
         skip_all,
         name = "RelationRangeImageProver::fuse_folded_coefficients_and_compute_next_round"
@@ -81,8 +81,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         weights: &RelationWeightFactorization<E>,
         next_alpha_factor: &[E],
         challenge: E,
-    ) -> (Vec<E>, NormRoundTerms<E>, RoundMessage<E>) {
-        if self.can_skip_norm_linear_coeff() {
+    ) -> (Vec<E>, NormRoundTerms<'_, E>, RoundMessage<E>) {
+        let recovery = self.split_eq.prepare_linear_q_recovery();
+        let (output, norm, relation) = if recovery.is_some() {
             self.fuse_folded_coefficients_with::<true, false>(
                 folded_witness,
                 weights,
@@ -96,7 +97,12 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 next_alpha_factor,
                 challenge,
             )
-        }
+        };
+        (
+            output,
+            NormRoundTerms::from_totals(norm, recovery),
+            relation,
+        )
     }
 
     pub(super) fn fuse_folded_coefficients_and_compute_next_round_norm_terms(
@@ -105,8 +111,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         weights: &RelationWeightFactorization<E>,
         next_alpha_factor: &[E],
         challenge: E,
-    ) -> (Vec<E>, NormRoundTerms<E>) {
-        let (output, norm, _) = if self.can_skip_norm_linear_coeff() {
+    ) -> (Vec<E>, NormRoundTerms<'_, E>) {
+        let recovery = self.split_eq.prepare_linear_q_recovery();
+        let (output, norm, _) = if recovery.is_some() {
             self.fuse_folded_coefficients_with::<true, true>(
                 folded_witness,
                 weights,
@@ -121,7 +128,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 challenge,
             )
         };
-        (output, norm)
+        (output, NormRoundTerms::from_totals(norm, recovery))
     }
 
     fn fuse_folded_coefficients_with<const SKIP_LINEAR: bool, const SKIP_RELATION: bool>(
@@ -130,7 +137,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         weights: &RelationWeightFactorization<E>,
         next_alpha_factor: &[E],
         challenge: E,
-    ) -> (Vec<E>, NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> (Vec<E>, [E; 3], RoundMessage<E>) {
         debug_assert!(self.in_coefficient_round());
         debug_assert!(self.current_coefficient_width() >= 2);
         let old_coeff_count = weights.common_alpha_factor().len();
@@ -183,10 +190,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 left
             },
         );
-        (
-            output,
-            NormRoundTerms::from_totals::<SKIP_LINEAR>(totals.0),
-            totals.1,
-        )
+        (output, totals.0, totals.1)
     }
 }

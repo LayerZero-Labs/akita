@@ -17,10 +17,10 @@ impl<E: Field> DenseRelationWeights<E> {
             || live_len == 0
             || live_len > evaluations.len()
         {
-            return Err(AkitaError::InvalidSize {
-                expected: evaluations.len(),
-                actual: live_len,
-            });
+            return Err(AkitaError::Internal(format!(
+                "dense relation table shape or live length: expected {}, actual {live_len}",
+                evaluations.len(),
+            )));
         }
         Ok(Self {
             evaluations,
@@ -32,8 +32,8 @@ impl<E: Field> DenseRelationWeights<E> {
         &self.evaluations
     }
 
-    pub(crate) fn into_evaluations(self) -> Vec<E> {
-        self.evaluations
+    pub(crate) fn take_evaluations(&mut self) -> Vec<E> {
+        std::mem::take(&mut self.evaluations)
     }
 
     pub(crate) const fn live_len(&self) -> usize {

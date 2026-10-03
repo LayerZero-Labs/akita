@@ -296,7 +296,7 @@ where
         )?
     };
     let setup_sources = compilation.setup_sources.as_ref().ok_or_else(|| {
-        AkitaError::InvalidSetup("reduced relation requires direct setup rows".into())
+        AkitaError::Internal("reduced relation requires direct setup rows".into())
     })?;
     let mut dense = vec![E::zero(); compilation.physical_field_len];
 
@@ -310,7 +310,7 @@ where
         let b_residue_point = ResidueKernelPoint::new(alpha, group_plan.roles.d_b)?;
         let d_residue_point = ResidueKernelPoint::new(alpha, group_plan.roles.d_d)?;
         let OpeningFamily::EvaluationTrace(ring_multiplier_point) = group_source.opening else {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "reduced relation requires evaluation-trace openings".into(),
             ));
         };

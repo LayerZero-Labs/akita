@@ -6,9 +6,17 @@
 //! grid.
 
 use crate::opaque::sumcheck::prefix_lookup::*;
+use akita_error::AkitaError;
 use akita_sumcheck::reduce_signed_accum;
 use jolt_field::{Field, Ring, Unreduced, Zero};
 use jolt_poly::UnivariatePoly;
+
+/// The two bases admitted by the compact-prefix constructor.
+#[derive(Clone, Copy)]
+pub(super) enum PrefixBasis {
+    B4,
+    B8,
+}
 
 /// Range-image grid of the first two stage-2 rounds.
 ///
@@ -32,23 +40,25 @@ impl<E: Field + Unreduced> Stage2PrefixCache<E> {
     /// Class `d0 | d1 << bits | d2 << 2 bits | d3 << 3 bits` holds quads whose
     /// digits are `d_i - b / 2`, with `bits = log2(b)`.
     ///
-    /// # Panics
-    ///
-    /// Panics if `b` is not 4 or 8, or if `histogram` does not have one entry
-    /// per class.
+    /// Returns an internal error if `histogram` does not have one entry per class.
     pub(super) fn from_norm_histogram(
         histogram: &[E],
-        b: usize,
+        basis: PrefixBasis,
         tau0: E,
         tau1: E,
         batching_coeff: E,
-    ) -> Self {
-        let table: &[[i64; STAGE2_PREFIX_POINT_COUNT]] = match b {
-            4 => &STAGE2_B4_NORM_LOOKUP_TABLE,
-            8 => &STAGE2_B8_NORM_LOOKUP_TABLE,
-            _ => unreachable!("unsupported stage-2 prefix basis"),
+    ) -> Result<Self, AkitaError> {
+        let table: &[[i64; STAGE2_PREFIX_POINT_COUNT]] = match basis {
+            PrefixBasis::B4 => &STAGE2_B4_NORM_LOOKUP_TABLE,
+            PrefixBasis::B8 => &STAGE2_B8_NORM_LOOKUP_TABLE,
         };
-        assert_eq!(histogram.len(), table.len());
+        if histogram.len() != table.len() {
+            return Err(AkitaError::Internal(format!(
+                "stage-2 norm histogram length: expected {}, actual {}",
+                table.len(),
+                histogram.len(),
+            )));
+        }
         let mut pos = [E::SmallProduct::zero(); STAGE2_PREFIX_POINT_COUNT];
         let mut neg = [E::SmallProduct::zero(); STAGE2_PREFIX_POINT_COUNT];
         for (&weight, values) in histogram.iter().zip(table) {
@@ -58,14 +68,14 @@ impl<E: Field + Unreduced> Stage2PrefixCache<E> {
         }
         let grid: [E; STAGE2_PREFIX_POINT_COUNT] =
             std::array::from_fn(|point| reduce_signed_accum::<E>(pos[point], neg[point]));
-        Self {
+        Ok(Self {
             norm_x_row_coeffs: std::array::from_fn(|y| {
                 quadratic_coeffs_from_01_inf(grid[y], grid[3 + y], grid[6 + y])
             }),
             tau0,
             tau1,
             batching_coeff,
-        }
+        })
     }
 }
 

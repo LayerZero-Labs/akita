@@ -116,7 +116,10 @@ fn stage2_two_shared_sources_match_direct_path_through_all_transitions() {
             direct.ingest_challenge(round, challenge);
         }
         assert_eq!(optimized_claim, direct_claim);
-        assert_eq!(optimized.final_w_eval(), direct.final_w_eval());
+        assert_eq!(
+            optimized.final_w_eval().unwrap(),
+            direct.final_w_eval().unwrap()
+        );
         assert_eq!(optimized.expected_final_claim().unwrap(), optimized_claim);
         assert_eq!(direct.expected_final_claim().unwrap(), direct_claim);
     }
@@ -192,7 +195,10 @@ fn stage2_trace_deferred_compact_prefix_matches_direct_path() {
     }
 
     assert_eq!(prover_claim, direct_claim);
-    assert_eq!(prover.final_w_eval(), direct.final_w_eval());
+    assert_eq!(
+        prover.final_w_eval().unwrap(),
+        direct.final_w_eval().unwrap()
+    );
 }
 
 #[test]
@@ -270,5 +276,8 @@ fn stage2_trace_deferred_compact_prefix_matches_padded_reference() {
     }
 
     assert_eq!(prefix_claim, padded_claim);
-    assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+    assert_eq!(
+        prefix_prover.final_w_eval().unwrap(),
+        padded_prover.final_w_eval().unwrap()
+    );
 }

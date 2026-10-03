@@ -332,7 +332,10 @@ fn common_coordinate_factorization_matches_flattened_rounds() {
         flattened.ingest_challenge(round, challenge);
     }
     assert_eq!(factorized_claim, flattened_claim);
-    assert_eq!(factorized.final_w_eval(), flattened.final_w_eval());
+    assert_eq!(
+        factorized.final_w_eval().unwrap(),
+        flattened.final_w_eval().unwrap()
+    );
 }
 
 fn relation_round_reference(
@@ -404,9 +407,9 @@ fn stage2_compact_fold_lookup_matches_direct_formula() {
 
     let w_dense = vec![1, 2, 3, 1, 2, 3];
     let packed_dense = packed(&w_dense);
-    let dense_lut = RelationRangeImageProver::<F>::build_compact_w_fold_lut(packed_dense.view(), r);
+    let dense_lut = RelationRoundState::<F>::build_compact_w_fold_lut(packed_dense.view(), r);
     assert_eq!(
-        RelationRangeImageProver::<F>::materialize_compact_witness(packed_dense.view(), &dense_lut),
+        RelationRoundState::<F>::materialize_compact_witness(packed_dense.view(), &dense_lut),
         materialize_compact_witness_reference(&w_dense, r)
     );
 }
@@ -445,7 +448,7 @@ fn stage2_compact_round0_matches_unfused_reference() {
         let packed_witness = packed(&compact_witness);
         let (virt_poly, relation_poly) =
             prover.compute_round_compact_dense_polys(packed_witness.view());
-        let virt_ref = virtual_round_reference(&prover.split_eq, &compact_witness);
+        let virt_ref = virtual_round_reference(&prover.state.split_eq, &compact_witness);
         let relation_ref = relation_round_reference(
             &compact_witness,
             &common_alpha_factor,
@@ -532,7 +535,10 @@ fn stage2_prefix_aware_rounds_match_explicit_relation_lane_table() {
                 padded_prover.ingest_challenge(round, challenge);
             }
 
-            assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+            assert_eq!(
+                prefix_prover.final_w_eval().unwrap(),
+                padded_prover.final_w_eval().unwrap()
+            );
             assert_eq!(prefix_claim, padded_claim);
         }
     }
@@ -571,7 +577,7 @@ fn stage2_zero_gated_round0_matches_reference() {
         prover.compute_round_compact_dense_polys(packed_witness.view());
     assert_eq!(
         virt_poly,
-        virtual_round_reference(&prover.split_eq, &compact_witness)
+        virtual_round_reference(&prover.state.split_eq, &compact_witness)
     );
     assert_eq!(
         relation_poly,
@@ -646,7 +652,10 @@ fn stage2_large_odd_sparse_boolean_deferred_compact_prefix_matches_direct_path()
     }
 
     assert_eq!(prover_claim, direct_claim);
-    assert_eq!(prover.final_w_eval(), direct.final_w_eval());
+    assert_eq!(
+        prover.final_w_eval().unwrap(),
+        direct.final_w_eval().unwrap()
+    );
 }
 
 #[test]
@@ -716,7 +725,10 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
     }
 
     assert_eq!(prefix_claim, padded_claim);
-    assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+    assert_eq!(
+        prefix_prover.final_w_eval().unwrap(),
+        padded_prover.final_w_eval().unwrap()
+    );
 }
 
 #[test]
@@ -792,7 +804,10 @@ fn stage2_large_odd_dense_deferred_compact_prefix_matches_direct_path() {
     }
 
     assert_eq!(prover_claim, direct_claim);
-    assert_eq!(prover.final_w_eval(), direct.final_w_eval());
+    assert_eq!(
+        prover.final_w_eval().unwrap(),
+        direct.final_w_eval().unwrap()
+    );
 }
 
 #[test]
@@ -863,5 +878,8 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
     }
 
     assert_eq!(prefix_claim, padded_claim);
-    assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+    assert_eq!(
+        prefix_prover.final_w_eval().unwrap(),
+        padded_prover.final_w_eval().unwrap()
+    );
 }

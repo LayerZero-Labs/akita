@@ -83,29 +83,29 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
         binary_batching: E,
     ) -> Result<Self, AkitaError> {
         if !domain_len.is_power_of_two() || compact_witness.len() > domain_len {
-            return Err(AkitaError::InvalidSize {
-                expected: domain_len,
-                actual: compact_witness.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "additional relation domain or witness length: expected {domain_len}, actual {}",
+                compact_witness.len(),
+            )));
         }
         let expected_equality_variables = domain_len.trailing_zeros() as usize;
         if binary_equality_point.len() != expected_equality_variables {
-            return Err(AkitaError::InvalidSize {
-                expected: expected_equality_variables,
-                actual: binary_equality_point.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "binary equality point length: expected {expected_equality_variables}, actual {}",
+                binary_equality_point.len(),
+            )));
         }
         let mut collapsed_linear = Vec::<(usize, E)>::with_capacity(linear_weights.len());
         for (index, value) in linear_weights {
             if index >= domain_len {
-                return Err(AkitaError::InvalidSize {
-                    expected: domain_len,
-                    actual: index.saturating_add(1),
-                });
+                return Err(AkitaError::Internal(format!(
+                    "compression relation support extent: expected {domain_len}, actual {}",
+                    index.saturating_add(1),
+                )));
             }
             if let Some((previous_index, previous_value)) = collapsed_linear.last_mut() {
                 if index < *previous_index {
-                    return Err(AkitaError::InvalidInput(
+                    return Err(AkitaError::Internal(
                         "compression relation weights are not sorted".into(),
                     ));
                 }
@@ -125,13 +125,13 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
                 || interval.start < previous_end
                 || interval.end > domain_len
             {
-                return Err(AkitaError::InvalidInput(
+                return Err(AkitaError::Internal(
                     "negative-binary support interval is malformed".into(),
                 ));
             }
             binary_support_len = binary_support_len
                 .checked_add(interval.len())
-                .ok_or_else(|| AkitaError::InvalidSetup("binary support length overflow".into()))?;
+                .ok_or_else(|| AkitaError::Internal("binary support length overflow".into()))?;
             previous_end = interval.end;
         }
 
@@ -140,7 +140,7 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
         let capacity = collapsed_linear
             .len()
             .checked_add(binary_support_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("sparse weight capacity overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("sparse weight capacity overflow".into()))?;
         let binary_equality = OffsetEqWindow::new(binary_equality_point)?;
         let binary_indices = binary_intervals
             .iter()
@@ -229,9 +229,10 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
 
     #[cfg(any(debug_assertions, test))]
     pub(crate) fn input_claim(&self, compact_witness: &PackedSignedDigits) -> E {
+        let digits = compact_witness.view();
         cfg_iter!(self.weights)
             .map(|weight| {
-                let witness = compact_witness
+                let witness = digits
                     .get(weight.index)
                     .map_or_else(E::zero, |value| E::from_i64(i64::from(value)));
                 witness * weight.linear

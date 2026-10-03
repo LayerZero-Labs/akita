@@ -76,6 +76,13 @@ impl<E: Field> RelationWeightFactorization<E> {
         std::mem::take(&mut self.relation_lane_weights)
     }
 
+    pub(crate) fn take(&mut self) -> Self {
+        Self {
+            common_alpha_factor: std::mem::take(&mut self.common_alpha_factor),
+            relation_lane_weights: self.take_lane_weights(),
+        }
+    }
+
     /// Expand this factorization over its complete padded flat domain.
     #[cfg(test)]
     pub(crate) fn materialize_dense(&self) -> Result<Vec<E>, AkitaError> {
@@ -112,9 +119,9 @@ impl<E: Field> RelationLaneWeights<E> {
                 capacity.is_power_of_two()
                     && physical_field_len.is_multiple_of(relation_coefficient_block_len)
             })
-            .ok_or_else(|| AkitaError::InvalidSetup("relation lane capacity is invalid".into()))?;
+            .ok_or_else(|| AkitaError::Internal("relation lane capacity is invalid".into()))?;
         if alpha_powers.len() < relation_coefficient_block_len {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "relation alpha powers do not cover one coefficient block".into(),
             ));
         }
@@ -180,7 +187,7 @@ impl<E: Field> RelationLaneWeights<E> {
         }
         let alpha_exponent_end = alpha_exponent_start
             .checked_add(coefficient_count)
-            .ok_or_else(|| AkitaError::InvalidSetup("relation alpha range overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("relation alpha range overflow".into()))?;
         if !coefficient_count.is_power_of_two()
             || !alpha_exponent_start.is_multiple_of(self.relation_coefficient_block_len)
             || alpha_exponent_end > self.alpha_powers.len()
@@ -217,7 +224,7 @@ impl<E: Field> RelationLaneWeights<E> {
     /// Split the weights into the shared low alpha factor and the lanes.
     pub(crate) fn into_factorization(self) -> Result<RelationWeightFactorization<E>, AkitaError> {
         if self.setup_is_deferred {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "relation factorization requires direct setup contributions".into(),
             ));
         }
@@ -284,7 +291,7 @@ impl<E> LaneWindow<'_, E> {
             let start = lanes.start.checked_sub(self.first_lane)?;
             self.lanes.get_mut(start..start + lanes.len())
         })
-        .ok_or_else(|| AkitaError::InvalidSetup("relation address lies outside its window".into()))
+        .ok_or_else(|| AkitaError::Internal("relation address lies outside its window".into()))
     }
 }
 
@@ -305,5 +312,5 @@ fn aligned_lane_range(
 }
 
 fn unaligned_event() -> AkitaError {
-    AkitaError::InvalidSetup("relation event is unaligned or outside its checked domain".into())
+    AkitaError::Internal("relation event is unaligned or outside its checked domain".into())
 }
