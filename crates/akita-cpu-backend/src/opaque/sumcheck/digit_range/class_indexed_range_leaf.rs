@@ -2,7 +2,7 @@
 
 use super::class_indexed_state::ClassIndexedTableState;
 use super::compact_digit_source::CompactDigitSource;
-use super::exact_prefix::ExactPrefixTable;
+use super::exact_prefix::ExactPrefixLayout;
 use super::range_class_tables::{
     FoldedRangeImagePairTable, OrderedRangePairCoefficients, SecondRoundRangeQuartetCoefficients,
 };
@@ -16,7 +16,6 @@ use super::{
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_sumcheck::EqFactoredSumcheckInstanceProver;
-use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring};
 use jolt_field::{Fold, Unreduced};
 use jolt_poly::OmittedConstantPoly;
@@ -141,6 +140,8 @@ impl<E: Field + Ring> DepressedQuartic<E> {
 /// Final equality-factored quartic over the virtual range-image table.
 pub(crate) struct ClassIndexedRangeLeafProver<E: Field> {
     range_image: RangeImageTableState<E>,
+    pair_layout: ExactPrefixLayout,
+    quartet_layout: ExactPrefixLayout,
     split_eq: GruenSplitEq<E>,
     input_claim: E,
     polynomial_coefficients: SmallPoly<E>,
@@ -171,7 +172,13 @@ impl<E: Field + Ring> ClassIndexedRangeLeafProver<E> {
             .entered();
             OrderedRangePairCoefficients::new(source.classes(), &polynomial_coefficients)
         };
+        let pair_layout =
+            ExactPrefixLayout::new(source.domain_len().div_ceil(2), source.pair_count())?;
+        let quartet_layout =
+            ExactPrefixLayout::new(source.domain_len().div_ceil(4), source.quartet_count())?;
         Ok(Self {
+            pair_layout,
+            quartet_layout,
             range_image: RangeImageTableState::Compact(CompactRangeLeafState {
                 source,
                 pair_coefficients,
@@ -433,21 +440,18 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
                     )
                     .entered();
                     let fold_context = E::precompute(challenge);
-                    let explicit = cfg_into_iter!(0..source.quartet_count())
-                        .map(|quartet_index| {
+                    let padding_pair = folded_pairs.value_by_pair_index(0);
+                    let padding = E::fold_one(&fold_context, padding_pair, padding_pair);
+                    Some(self.quartet_layout.materialize(
+                        |quartet_index| {
                             let (left_pair, right_pair) =
                                 source.ordered_pair_indices_for_quartet(quartet_index);
                             let left = folded_pairs.value_by_pair_index(left_pair);
                             let right = folded_pairs.value_by_pair_index(right_pair);
                             E::fold_one(&fold_context, left, right)
-                        })
-                        .collect();
-                    let padding_pair = folded_pairs.value_by_pair_index(0);
-                    let padding = E::fold_one(&fold_context, padding_pair, padding_pair);
-                    Some(
-                        ExactPrefixTable::new(source.domain_len() / 4, explicit, padding)
-                            .expect("compact source and Boolean domain were validated"),
-                    )
+                        },
+                        padding,
+                    ))
                 }
                 RangeImageTableState::Compact(_) | RangeImageTableState::Materialized(_) => None,
             };
@@ -477,19 +481,12 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
                     .entered();
                     FoldedRangeImagePairTable::new(source.classes(), challenge)
                 };
-                let explicit = cfg_into_iter!(0..source.pair_count())
-                    .map(|pair_index| {
+                Some(self.pair_layout.materialize(
+                    |pair_index| {
                         folded_pairs.value_by_pair_index(source.ordered_pair_index(pair_index))
-                    })
-                    .collect();
-                Some(
-                    ExactPrefixTable::new(
-                        source.domain_len() / 2,
-                        explicit,
-                        folded_pairs.value_by_pair_index(0),
-                    )
-                    .expect("compact source and Boolean domain were validated"),
-                )
+                    },
+                    folded_pairs.value_by_pair_index(0),
+                ))
             }
             RangeImageTableState::FirstChallengeFolded(_)
             | RangeImageTableState::Materialized(_) => None,

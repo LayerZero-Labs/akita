@@ -10,21 +10,50 @@ pub(crate) struct ExactPrefixTable<T: Copy> {
     default: T,
 }
 
-impl<T: Copy> ExactPrefixTable<T> {
-    pub(crate) fn new(domain_len: usize, explicit: Vec<T>, default: T) -> Result<Self, AkitaError> {
+/// Checked shape for materializing a prefix without validating round-produced values.
+#[derive(Clone, Copy)]
+pub(super) struct ExactPrefixLayout {
+    domain_len: usize,
+    explicit_len: usize,
+}
+
+impl ExactPrefixLayout {
+    pub(super) fn new(domain_len: usize, explicit_len: usize) -> Result<Self, AkitaError> {
         if domain_len == 0 || !domain_len.is_power_of_two() {
             return Err(AkitaError::Internal(format!(
                 "exact-prefix domain length must be a nonzero power of two; got {domain_len}"
             )));
         }
-        if explicit.len() > domain_len {
+        if explicit_len > domain_len {
             return Err(AkitaError::Internal(format!(
-                "exact-prefix explicit table length: expected {domain_len}, actual {}",
-                explicit.len(),
+                "exact-prefix explicit table length: expected {domain_len}, actual {explicit_len}"
             )));
         }
         Ok(Self {
             domain_len,
+            explicit_len,
+        })
+    }
+
+    /// The checked range determines the length of the generated table.
+    pub(super) fn materialize<T: Copy + Send + Sync>(
+        self,
+        value_at: impl Fn(usize) -> T + Sync + Send,
+        default: T,
+    ) -> ExactPrefixTable<T> {
+        ExactPrefixTable {
+            domain_len: self.domain_len,
+            explicit: cfg_into_iter!(0..self.explicit_len).map(value_at).collect(),
+            default,
+        }
+    }
+}
+
+impl<T: Copy> ExactPrefixTable<T> {
+    pub(crate) fn new(domain_len: usize, explicit: Vec<T>, default: T) -> Result<Self, AkitaError> {
+        let layout = ExactPrefixLayout::new(domain_len, explicit.len())?;
+        Ok(Self {
+            domain_len: layout.domain_len,
             explicit,
             default,
         })
@@ -168,6 +197,33 @@ mod tests {
     use jolt_field::{Prime128Offset275, Ring, Zero};
 
     type F = Prime128Offset275;
+
+    #[test]
+    fn generated_prefix_uses_the_checked_layout() {
+        for domain_len in [1, 2, 4, 8, 16] {
+            for explicit_len in 0..=domain_len {
+                let layout = ExactPrefixLayout::new(domain_len, explicit_len).unwrap();
+                let table = layout.materialize(|index| index + 3, 91);
+                assert_eq!(table.domain_len(), domain_len);
+                assert_eq!(table.explicit, (3..explicit_len + 3).collect::<Vec<_>>());
+                assert_eq!(table.default_value(), 91);
+            }
+        }
+    }
+
+    #[test]
+    fn generated_prefix_rejects_invalid_shapes_before_materialization() {
+        for domain_len in [0, 3] {
+            assert!(matches!(ExactPrefixLayout::new(domain_len, 0),
+            Err(AkitaError::Internal(message)) if message == format!(
+                "exact-prefix domain length must be a nonzero power of two; got {domain_len}"
+            )));
+        }
+        assert!(
+            matches!(ExactPrefixLayout::new(4, 5), Err(AkitaError::Internal(message))
+            if message == "exact-prefix explicit table length: expected 4, actual 5")
+        );
+    }
 
     #[test]
     fn exact_prefix_fold_matches_padded_table_for_every_short_prefix() {

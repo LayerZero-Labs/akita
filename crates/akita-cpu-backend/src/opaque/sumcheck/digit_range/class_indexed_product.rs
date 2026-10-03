@@ -2,7 +2,7 @@
 
 use super::class_indexed_state::ClassIndexedTableState;
 use super::compact_digit_source::CompactDigitSource;
-use super::exact_prefix::ExactPrefixTable;
+use super::exact_prefix::ExactPrefixLayout;
 #[cfg(test)]
 use super::range_class_tables::product_coefficients;
 use super::range_class_tables::{
@@ -15,7 +15,6 @@ use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_params::DigitRangePlan;
 use akita_sumcheck::EqFactoredSumcheckInstanceProver;
-use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring};
 use jolt_field::{Fold, Unreduced};
 use jolt_poly::OmittedConstantPoly;
@@ -357,6 +356,8 @@ fn accumulate_round<E: Field + Ring + Unreduced, const LANES: usize>(
 /// One eq-factored product substage that keeps compact classes through its first two rounds.
 pub(super) struct ClassIndexedProductSubcheckProver<E: Field, const LANES: usize> {
     product_table: ProductTableState<E, LANES>,
+    pair_layout: ExactPrefixLayout,
+    quartet_layout: ExactPrefixLayout,
     parent_weights: Vec<E>,
     split_eq: GruenSplitEq<E>,
     input_claim: E,
@@ -416,7 +417,13 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
             .entered();
             OrderedProductPairCoefficients::new(&nodes, arity, &parent_weights)
         };
+        let pair_layout =
+            ExactPrefixLayout::new(source.domain_len().div_ceil(2), source.pair_count())?;
+        let quartet_layout =
+            ExactPrefixLayout::new(source.domain_len().div_ceil(4), source.quartet_count())?;
         Ok(Self {
+            pair_layout,
+            quartet_layout,
             product_table: ProductTableState::Compact(CompactProductState {
                 source,
                 nodes,
@@ -644,8 +651,12 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                     )
                     .entered();
                     let fold_context = E::precompute(challenge);
-                    let explicit = cfg_into_iter!(0..source.quartet_count())
-                        .map(|quartet_index| {
+                    let padding_pair = folded_pairs.row_by_pair_index(0);
+                    let padding = std::array::from_fn(|lane| {
+                        E::fold_one(&fold_context, padding_pair[lane], padding_pair[lane])
+                    });
+                    Some(self.quartet_layout.materialize(
+                        |quartet_index| {
                             let (left_pair, right_pair) =
                                 source.ordered_pair_indices_for_quartet(quartet_index);
                             let left = folded_pairs.row_by_pair_index(left_pair);
@@ -653,16 +664,9 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                             std::array::from_fn(|lane| {
                                 E::fold_one(&fold_context, left[lane], right[lane])
                             })
-                        })
-                        .collect();
-                    let padding_pair = folded_pairs.row_by_pair_index(0);
-                    let padding = std::array::from_fn(|lane| {
-                        E::fold_one(&fold_context, padding_pair[lane], padding_pair[lane])
-                    });
-                    Some(
-                        ExactPrefixTable::new(source.domain_len() / 4, explicit, padding)
-                            .expect("compact source and Boolean domain were validated"),
-                    )
+                        },
+                        padding,
+                    ))
                 }
                 ProductTableState::Compact(_) | ProductTableState::Materialized(_) => None,
             };
@@ -693,19 +697,12 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                     .entered();
                     FoldedProductPairTable::new(nodes, challenge)
                 };
-                let explicit = cfg_into_iter!(0..source.pair_count())
-                    .map(|pair_index| {
+                Some(self.pair_layout.materialize(
+                    |pair_index| {
                         folded_pairs.row_by_pair_index(source.ordered_pair_index(pair_index))
-                    })
-                    .collect();
-                Some(
-                    ExactPrefixTable::new(
-                        source.domain_len() / 2,
-                        explicit,
-                        folded_pairs.row_by_pair_index(0),
-                    )
-                    .expect("compact source and Boolean domain were validated"),
-                )
+                    },
+                    folded_pairs.row_by_pair_index(0),
+                ))
             }
             ProductTableState::FirstChallengeFolded(_) | ProductTableState::Materialized(_) => None,
         };
