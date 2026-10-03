@@ -129,6 +129,7 @@ after the inputs were accepted. The cause is a bug in Akita or in a custom
 backend. It is not a problem with the request, the setup, or a proof. The
 message names the failed invariant. Report it with the complete error text and
 the configuration that produced it.
+Verification can report this error too, and it still means a bug rather than a rejected proof.
 
 ## A Jolt recursion run fails
 

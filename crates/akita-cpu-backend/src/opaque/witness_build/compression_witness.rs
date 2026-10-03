@@ -41,7 +41,7 @@ impl<F: Field> CompressionWitnessMaterialization<F> {
         self.sources
             .iter()
             .find(|source| source.id == id)
-            .ok_or_else(|| AkitaError::InvalidSetup("compression source is missing".into()))
+            .ok_or_else(|| AkitaError::Internal("compression source is missing".into()))
     }
 
     #[cfg(test)]
@@ -78,6 +78,16 @@ impl<F: Field> CompressionSourceWitness<F> {
     }
 
     #[cfg(test)]
+    pub(crate) fn terminal_for_test(&self) -> &CompressionTerminalPayload<F> {
+        &self.terminal
+    }
+
+    #[cfg(test)]
+    pub(crate) fn material_for_test(&self) -> &PortableCompressionState<F> {
+        &self.material
+    }
+
+    #[cfg(test)]
     pub(crate) fn witness_for_test(&self) -> &CompressionChainWitness {
         self.witness()
     }
@@ -86,7 +96,11 @@ impl<F: Field> CompressionSourceWitness<F> {
         self.material
             .quotients()
             .and_then(|quotients| quotients.get(map_index))
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::Internal(
+                    "compression source quotient for the retained map is missing".into(),
+                )
+            })
     }
 }
 
@@ -165,7 +179,7 @@ where
             .collect::<Result<Vec<_>, _>>()?,
     );
     if outer_sources.len() != layout.groups.len() + 1 {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "compression executor omitted a relation source".into(),
         ));
     }

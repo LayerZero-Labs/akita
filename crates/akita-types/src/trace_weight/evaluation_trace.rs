@@ -145,7 +145,9 @@ where
     if inputs.prepared_points.len() != inputs.opening_batch.num_groups()
         || inputs.claim_coefficients.len() != inputs.opening_batch.num_total_polynomials()
     {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidInput(
+            "evaluation trace prepared-point or claim coefficient count mismatch".into(),
+        ));
     }
     if inputs.relation_coefficient_block_len == 0
         || !inputs.relation_coefficient_block_len.is_power_of_two()
@@ -200,12 +202,13 @@ where
                             })
                     })?;
             if covered_blocks != group_params.num_live_blocks() {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::InvalidSetup(
+                    "trace witness block coverage disagrees with the group parameters".into(),
+                ));
             }
-            let prepared = inputs
-                .prepared_points
-                .get(group_index)
-                .ok_or(AkitaError::InvalidProof)?;
+            let prepared = inputs.prepared_points.get(group_index).ok_or_else(|| {
+                AkitaError::Internal("validated trace group is missing its prepared point".into())
+            })?;
             let block_opening_point: Arc<[E]> = evaluation_trace_block_point(
                 &prepared.padded_point,
                 group_params.num_positions_per_block(),
@@ -237,7 +240,9 @@ where
                 }
             )?;
             if inner_trace.len() != group_dims.d_a() {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "generated inner trace length disagrees with the group ring dimension".into(),
+                ));
             }
             let opening_digit_weights: Arc<[E]> = gadget_row_scalars::<F>(
                 group_params.num_digits_open(),

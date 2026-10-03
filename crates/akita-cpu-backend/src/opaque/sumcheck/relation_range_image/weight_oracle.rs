@@ -54,7 +54,9 @@ impl<E: Field> DenseRelationWeights<E> {
                 return Ok(*weight);
             }
         }
-        Err(AkitaError::InvalidProof)
+        Err(AkitaError::Internal(
+            "terminal dense relation weights are not fully folded".into(),
+        ))
     }
 }
 

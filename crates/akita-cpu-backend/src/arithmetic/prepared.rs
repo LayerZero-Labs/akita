@@ -179,7 +179,7 @@ impl<F: Field + CanonicalEncoding> CpuPreparedSetup<F> {
         let mut cache = self
             .shared_ntt
             .lock()
-            .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+            .map_err(|_| AkitaError::Internal("NTT cache lock poisoned".into()))?;
         let mut released_keys = Vec::new();
         for (key, cell) in cache.iter() {
             if let Some(bytes) = cell
@@ -212,7 +212,7 @@ impl<F: Field + CanonicalEncoding> CpuPreparedSetup<F> {
         let cache = self
             .shared_ntt
             .lock()
-            .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+            .map_err(|_| AkitaError::Internal("NTT cache lock poisoned".into()))?;
         let mut metrics = cache
             .iter()
             .filter_map(|(key, entry)| {
@@ -257,7 +257,7 @@ impl<F: Field + CanonicalEncoding> CpuPreparedSetup<F> {
     ) -> Result<PreparedCrtNttProfile, AkitaError> {
         self.ntt_i8_capacity_by_ring_d
             .lock()
-            .map_err(|_| AkitaError::InvalidSetup("NTT profile lock poisoned".into()))?
+            .map_err(|_| AkitaError::Internal("NTT profile lock poisoned".into()))?
             .get(&ring_d)
             .copied()
             .map(Into::into)
@@ -306,7 +306,7 @@ fn record_ntt_profile_on_prepared<F: Field>(
     prepared
         .ntt_i8_capacity_by_ring_d
         .lock()
-        .map_err(|_| AkitaError::InvalidSetup("NTT profile lock poisoned".into()))?
+        .map_err(|_| AkitaError::Internal("NTT profile lock poisoned".into()))?
         .entry(key.ring_d)
         .or_insert(profile);
     Ok(())
@@ -327,7 +327,7 @@ fn prepare_ntt_slot_on_prepared<F: Field + CanonicalEncoding>(
             let mut cache = prepared
                 .shared_ntt
                 .lock()
-                .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+                .map_err(|_| AkitaError::Internal("NTT cache lock poisoned".into()))?;
             if let Some((key, entry)) = cache
                 .iter()
                 .filter(|(key, _)| {
@@ -361,7 +361,7 @@ fn prepare_ntt_slot_on_prepared<F: Field + CanonicalEncoding>(
                 let mut cache = prepared
                     .shared_ntt
                     .lock()
-                    .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+                    .map_err(|_| AkitaError::Internal("NTT cache lock poisoned".into()))?;
                 cache.retain(|cached_key, _| {
                     cached_key.ring_d != key.ring_d
                         || cached_key.domain != key.domain
@@ -375,7 +375,7 @@ fn prepare_ntt_slot_on_prepared<F: Field + CanonicalEncoding>(
                 let mut cache = prepared
                     .shared_ntt
                     .lock()
-                    .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+                    .map_err(|_| AkitaError::Internal("NTT cache lock poisoned".into()))?;
                 if cache
                     .get(&key)
                     .is_some_and(|current| Arc::ptr_eq(current, &entry))
