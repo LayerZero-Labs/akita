@@ -157,7 +157,11 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
                 (Some(&(linear_index, _)), Some(&(binary_index, _))) => {
                     match linear_index.cmp(&binary_index) {
                         Ordering::Less => {
-                            let (index, linear) = linear.next().ok_or(AkitaError::InvalidProof)?;
+                            let (index, linear) = linear.next().ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "peeked linear weight disappeared before binary weight".into(),
+                                )
+                            })?;
                             weights.push(SparseWeight {
                                 index,
                                 linear,
@@ -165,8 +169,18 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
                             });
                         }
                         Ordering::Equal => {
-                            let (index, linear) = linear.next().ok_or(AkitaError::InvalidProof)?;
-                            let (_, binary) = binary.next().ok_or(AkitaError::InvalidProof)?;
+                            let (index, linear) = linear.next().ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "peeked linear relation weight disappeared at the shared index"
+                                        .into(),
+                                )
+                            })?;
+                            let (_, binary) = binary.next().ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "peeked binary relation weight disappeared at the shared index"
+                                        .into(),
+                                )
+                            })?;
                             weights.push(SparseWeight {
                                 index,
                                 linear,
@@ -174,7 +188,11 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
                             });
                         }
                         Ordering::Greater => {
-                            let (index, binary) = binary.next().ok_or(AkitaError::InvalidProof)?;
+                            let (index, binary) = binary.next().ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "peeked binary weight disappeared before linear weight".into(),
+                                )
+                            })?;
                             weights.push(SparseWeight {
                                 index,
                                 linear: E::zero(),
@@ -443,7 +461,9 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
             || self.weights.len() > 1
             || self.weights.first().is_some_and(|weight| weight.index != 0)
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "terminal sparse relation support is not fully folded".into(),
+            ));
         }
         let Some(weight) = self.weights.first() else {
             return Ok(E::zero());

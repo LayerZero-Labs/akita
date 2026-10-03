@@ -1,6 +1,9 @@
 //! Spongefish state construction and canonical Akita message codecs.
 
-use akita_error::AkitaError;
+use akita_error::{
+    narrowing::{usize_to_u32, usize_to_u64},
+    AkitaError,
+};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use spongefish::{
     protocol_id, DomainSeparator, DuplexSpongeInterface, Encoding, NargDeserialize, ProverState,
@@ -578,7 +581,7 @@ fn public_bytes_record(
     site: ProtocolSiteId,
     len: usize,
 ) -> Result<ProtocolContextRecord, AkitaError> {
-    let len = u64::try_from(len).map_err(|_| AkitaError::InvalidProof)?;
+    let len = usize_to_u64(len, "public byte record length")?;
     Ok(ProtocolContextRecord::new(
         site.to_bytes(),
         ProtocolMessageKind::PublicValue as u32,
@@ -612,7 +615,7 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
     for limb in 0..E::DEGREE {
         let mut limb_site = site;
-        limb_site.limb = u32::try_from(limb).map_err(|_| AkitaError::InvalidProof)?;
+        limb_site.limb = usize_to_u32(limb, "extension challenge limb index")?;
         state.context(ProtocolContextRecord::new(
             limb_site.to_bytes(),
             ProtocolMessageKind::Challenge as u32,
@@ -756,17 +759,17 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
-    let atom_count = value_count
-        .checked_mul(E::DEGREE)
-        .ok_or(AkitaError::InvalidProof)?;
-    let encoded_bytes = atom_count
-        .checked_mul(F::NUM_BYTES)
-        .ok_or(AkitaError::InvalidProof)?;
+    let atom_count = value_count.checked_mul(E::DEGREE).ok_or_else(|| {
+        AkitaError::InvalidInput("extension record atom count overflows usize".into())
+    })?;
+    let encoded_bytes = atom_count.checked_mul(F::NUM_BYTES).ok_or_else(|| {
+        AkitaError::InvalidInput("extension record encoded byte count overflows usize".into())
+    })?;
     Ok(ProtocolContextRecord::new(
         site.to_bytes(),
         kind as u32,
-        u64::try_from(atom_count).map_err(|_| AkitaError::InvalidProof)?,
-        u64::try_from(encoded_bytes).map_err(|_| AkitaError::InvalidProof)?,
+        usize_to_u64(atom_count, "extension record atom count")?,
+        usize_to_u64(encoded_bytes, "extension record encoded byte count")?,
         0,
     ))
 }
@@ -779,14 +782,14 @@ fn field_group_record<F>(
 where
     F: CanonicalEncoding,
 {
-    let encoded_bytes = value_count
-        .checked_mul(F::NUM_BYTES)
-        .ok_or(AkitaError::InvalidProof)?;
+    let encoded_bytes = value_count.checked_mul(F::NUM_BYTES).ok_or_else(|| {
+        AkitaError::InvalidInput("field record encoded byte count overflows usize".into())
+    })?;
     Ok(ProtocolContextRecord::new(
         site.to_bytes(),
         kind as u32,
-        u64::try_from(value_count).map_err(|_| AkitaError::InvalidProof)?,
-        u64::try_from(encoded_bytes).map_err(|_| AkitaError::InvalidProof)?,
+        usize_to_u64(value_count, "field record value count")?,
+        usize_to_u64(encoded_bytes, "field record encoded byte count")?,
         0,
     ))
 }
@@ -916,8 +919,8 @@ pub fn extension_slots<E: Field>(count: usize) -> Result<Vec<E>, AkitaError> {
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidProof`] when the group record overflows or
-/// the verifier cannot decode an atom.
+/// Returns [`AkitaError::InvalidInput`] when the group record count overflows,
+/// or [`AkitaError::InvalidProof`] when the verifier cannot decode an atom.
 pub fn exchange_extension_group<F, E, S>(
     state: &mut S,
     site: ProtocolSiteId,
@@ -1004,6 +1007,31 @@ mod tests {
         CanonicalBytes, Prime128OffsetA7F7, Prime32Offset99 as F, Prime48Offset59, Prime64Offset59,
         Ring,
     };
+
+    #[test]
+    fn record_count_products_reject_argument_overflow_before_receipt() {
+        let site = ProtocolSiteId::default();
+        let kind = ProtocolMessageKind::ProofAtoms;
+        assert!(matches!(
+            extension_group_record::<F, jolt_field::FpExt4<F>>(site, kind, usize::MAX),
+            Err(AkitaError::InvalidInput(message)) if message.contains("atom count overflows")
+        ));
+        assert!(matches!(
+            extension_group_record::<F, jolt_field::FpExt4<F>>(
+                site, kind, usize::MAX / 4,
+            ),
+            Err(AkitaError::InvalidInput(message)) if message.contains("extension record encoded")
+        ));
+        assert!(matches!(
+            field_group_record::<F>(site, kind, usize::MAX),
+            Err(AkitaError::InvalidInput(message)) if message.contains("field record encoded")
+        ));
+        let mut verifier = new_verifier_channel(b"count-overflow", b"fixture", &[]).unwrap();
+        assert!(matches!(
+            receive_field_group::<F>(&mut verifier, site, usize::MAX),
+            Err(AkitaError::InvalidInput(message)) if message.contains("field record encoded")
+        ));
+    }
 
     #[test]
     fn public_absorption_never_extends_the_argument_string() {

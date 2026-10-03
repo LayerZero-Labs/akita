@@ -280,16 +280,12 @@ impl<E: Field> PackingWeightAccessor<E> for DirectPackingWeights<'_, E> {
 
     #[inline(always)]
     fn weight(&self, position: usize, low_index: usize) -> Result<E, AkitaError> {
-        let position_weight = *self
-            .point
-            .position_weights()
-            .get(position)
-            .ok_or(AkitaError::InvalidProof)?;
-        let packing_weight = *self
-            .point
-            .packing_weights()
-            .get(low_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let position_weight = *self.point.position_weights().get(position).ok_or_else(|| {
+            AkitaError::Internal("one-hot packing position has no prepared weight".into())
+        })?;
+        let packing_weight = *self.point.packing_weights().get(low_index).ok_or_else(|| {
+            AkitaError::Internal("one-hot packing low coordinate has no prepared weight".into())
+        })?;
         Ok(position_weight * packing_weight)
     }
 }
@@ -308,11 +304,12 @@ impl<E: Field> PackingWeightAccessor<E>
             self.point().geometry().subring_embedding_stride(),
             low_index,
         )
-        .ok_or(AkitaError::InvalidProof)?;
-        self.values()
-            .get(index)
-            .copied()
-            .ok_or(AkitaError::InvalidProof)
+        .ok_or_else(|| AkitaError::Internal("one-hot packing weight index overflow".into()))?;
+        self.values().get(index).copied().ok_or_else(|| {
+            AkitaError::Internal(
+                "one-hot packing weight index is outside its prepared values".into(),
+            )
+        })
     }
 }
 
@@ -411,11 +408,12 @@ where
                     let end_chunk = end_field.div_ceil(poly.onehot_k).min(poly.indices.len());
                     let mut block = vec![F::zero(); geometry.partial_base_field_width()];
                     for chunk_index in first_chunk..end_chunk {
-                        let Some(hot_index) = poly
-                            .indices
-                            .get(chunk_index)
-                            .copied()
-                            .ok_or(AkitaError::InvalidProof)?
+                        let Some(hot_index) =
+                            poly.indices.get(chunk_index).copied().ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "one-hot packing chunk has no source index".into(),
+                                )
+                            })?
                         else {
                             continue;
                         };
@@ -443,9 +441,11 @@ where
                             .chunks_exact_mut(s)
                             .zip(extension_coordinates.iter().copied())
                         {
-                            *coordinate_block
-                                .get_mut(subring_index)
-                                .ok_or(AkitaError::InvalidProof)? += coordinate;
+                            *coordinate_block.get_mut(subring_index).ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "one-hot packing coordinate exceeds its output block".into(),
+                                )
+                            })? += coordinate;
                         }
                     }
                     Ok(block)

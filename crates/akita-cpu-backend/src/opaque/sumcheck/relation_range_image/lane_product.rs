@@ -33,7 +33,9 @@ impl<E: Field> LaneProduct<E> {
     pub(super) fn final_weight(&self) -> Result<E, AkitaError> {
         match self.weights.as_slice() {
             [weight] => Ok(*weight),
-            _ => Err(AkitaError::InvalidProof),
+            _ => Err(AkitaError::Internal(
+                "terminal relation lane weights are not a singleton".into(),
+            )),
         }
     }
 }

@@ -68,6 +68,15 @@ fn trace_open_row_rejects_ring_bits_that_truncate_to_a_valid_shift() {
     assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
 }
 
+#[test]
+fn trace_open_row_rejects_a_row_wider_than_the_ring() {
+    let ring = CyclotomicRing::<AkitaF32, 64>::one();
+    assert!(matches!(
+        trace_open_ring_row::<AkitaF32, AkitaF32, 64>(&ring, &ring, 7),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
 fn ring_subfield_basis<Fq: Field, const D: usize, const K: usize>(
     _params: SubfieldParams<D, K>,
 ) -> Vec<CyclotomicRing<Fq, D>> {

@@ -31,12 +31,16 @@ impl<E: Field> SetupContributionPlan<E> {
         if role_tensors_are_aligned(tensors, ratio) {
             let low_variable_count = ratio.trailing_zeros() as usize;
             let point = self.relation_address.point();
-            let low_point = point
-                .get(..low_variable_count)
-                .ok_or(AkitaError::InvalidProof)?;
-            let high_point = point
-                .get(low_variable_count..)
-                .ok_or(AkitaError::InvalidProof)?;
+            let low_point = point.get(..low_variable_count).ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "setup role lane ratio exceeds the relation address dimension".into(),
+                )
+            })?;
+            let high_point = point.get(low_variable_count..).ok_or_else(|| {
+                AkitaError::Internal(
+                    "setup role high point split failed after low point validation".into(),
+                )
+            })?;
             let mut factored = tensors.to_vec();
             factor_aligned_role_tensors(&mut factored, ratio)?;
             let equality = OffsetEqWindow::new(high_point)?;
@@ -219,7 +223,11 @@ impl<E: Field> SetupContributionPlan<E> {
         self.relation_address
             .point()
             .split_at_checked(bridge_bits)
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "setup base bridge exceeds the relation address dimension".into(),
+                )
+            })
     }
 
     /// Number of relation-base coefficient blocks in one setup base ring.
@@ -511,6 +519,21 @@ mod projection_tests {
     use jolt_field::{One, Prime128OffsetA7F7, Ring};
 
     type F = Prime128OffsetA7F7;
+
+    #[test]
+    fn role_materialization_rejects_ratio_beyond_relation_address() {
+        let plan = SetupContributionPlan::<F>::from_test_groups(
+            1,
+            vec![F::one()].into(),
+            Vec::new(),
+            akita_params::CommitmentRingDims::uniform(64),
+        )
+        .unwrap();
+        assert!(matches!(
+            plan.materialize_role_tensor_weights(2, &[], 0, F::one()),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
 
     #[test]
     fn role_projection_preserves_unaligned_global_relation_lanes() {

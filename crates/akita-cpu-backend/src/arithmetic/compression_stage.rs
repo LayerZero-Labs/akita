@@ -190,13 +190,17 @@ where
                 relation_mode,
             }],
         )?;
-        let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
+        let output = outputs.pop().ok_or_else(|| {
+            AkitaError::Internal("single compression execution returned no output".into())
+        })?;
         let terminal_ring_dim = output
             .witness
             .plan()
             .maps()
             .last()
-            .ok_or(AkitaError::InvalidProof)?
+            .ok_or_else(|| {
+                AkitaError::Internal("compression output plan has no terminal map".into())
+            })?
             .ring_dimension();
         let terminal_payload = RingVec::from_coeffs_with_ring_dim(
             output.terminal.into_coefficients(),

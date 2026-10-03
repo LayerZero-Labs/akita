@@ -4,7 +4,7 @@ use crate::{advance_eq_factored_claim, SumcheckInstanceVerifier, SumcheckKernel}
 #[cfg(test)]
 use crate::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_error::{checked, AkitaError};
+use akita_error::{checked, narrowing::usize_to_u64, AkitaError};
 use akita_transcript::{
     prover_context, receive_extension, send_extension, verifier_context, FieldAtom,
     ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, ProverChannel, VerifierChannel,
@@ -123,14 +123,16 @@ fn context(
     Ok(ProtocolContextRecord::new(
         site.to_bytes(),
         kind as u32,
-        u64::try_from(atom_count).map_err(|_| AkitaError::InvalidProof)?,
-        u64::try_from(encoded_bytes).map_err(|_| AkitaError::InvalidProof)?,
-        u64::try_from(challenge_bytes).map_err(|_| AkitaError::InvalidProof)?,
+        usize_to_u64(atom_count, "sumcheck atom count")?,
+        usize_to_u64(encoded_bytes, "sumcheck encoded byte count")?,
+        usize_to_u64(challenge_bytes, "sumcheck challenge byte count")?,
     ))
 }
 
 fn field_bytes<F: CanonicalEncoding>(count: usize) -> Result<usize, AkitaError> {
-    checked::product([count, F::NUM_BYTES]).ok_or(AkitaError::InvalidProof)
+    checked::product([count, F::NUM_BYTES]).ok_or_else(|| {
+        AkitaError::InvalidInput("sumcheck encoded byte count overflows usize".into())
+    })
 }
 
 fn extension_atom_count<E, F>(count: usize) -> Result<usize, AkitaError>
@@ -138,7 +140,9 @@ where
     F: Field,
     E: ExtField<F>,
 {
-    checked::product([count, E::DEGREE]).ok_or(AkitaError::InvalidProof)
+    checked::product([count, E::DEGREE]).ok_or_else(|| {
+        AkitaError::InvalidInput("sumcheck extension atom count overflows usize".into())
+    })
 }
 
 fn public_claim_prover<F, E>(
@@ -490,6 +494,18 @@ mod tests {
     };
     use jolt_field::{CanonicalBytes, One, Prime128Offset275 as F, Ring, Zero};
     use jolt_poly::UnivariatePoly;
+
+    #[test]
+    fn sumcheck_count_products_reject_argument_overflow() {
+        assert!(matches!(
+            field_bytes::<F>(usize::MAX),
+            Err(AkitaError::InvalidInput(message)) if message.contains("encoded byte count")
+        ));
+        assert!(matches!(
+            extension_atom_count::<jolt_field::FpExt4<F>, F>(usize::MAX),
+            Err(AkitaError::InvalidInput(message)) if message.contains("extension atom count")
+        ));
+    }
 
     struct DenseInstance {
         evaluations: Vec<F>,

@@ -93,10 +93,16 @@ impl<E: Field> PreparedSubringCoefficientPackingPoint<E> {
         padded_point.resize(expected, E::zero());
         let mut offset = 0usize;
         let mut take_axis = |bits: usize| -> Result<&[E], AkitaError> {
-            let end = offset.checked_add(bits).ok_or(AkitaError::InvalidProof)?;
-            let axis = padded_point
-                .get(offset..end)
-                .ok_or(AkitaError::InvalidProof)?;
+            let end = offset.checked_add(bits).ok_or_else(|| {
+                AkitaError::Internal(
+                    "validated coefficient-packing axis end overflows usize".into(),
+                )
+            })?;
+            let axis = padded_point.get(offset..end).ok_or_else(|| {
+                AkitaError::Internal(
+                    "validated coefficient-packing axis exceeds the padded point".into(),
+                )
+            })?;
             offset = end;
             Ok(axis)
         };
@@ -231,24 +237,34 @@ mod tests {
             );
             assert_eq!(prepared.num_live_blocks(), 2);
         }
-        assert!(PreparedSubringCoefficientPackingPoint::new(
-            geometry,
-            BasisMode::Lagrange,
-            6,
-            4,
-            10,
-            &point[..9],
-        )
-        .is_err());
-        assert!(PreparedSubringCoefficientPackingPoint::new(
-            geometry,
-            BasisMode::Lagrange,
-            6,
-            4,
-            10,
-            &[point.as_slice(), &[F::zero()]].concat(),
-        )
-        .is_err());
+        assert!(matches!(
+            PreparedSubringCoefficientPackingPoint::new(
+                geometry,
+                BasisMode::Lagrange,
+                6,
+                4,
+                10,
+                &point[..9],
+            ),
+            Err(AkitaError::InvalidPointDimension {
+                expected: 10,
+                actual: 9,
+            })
+        ));
+        assert!(matches!(
+            PreparedSubringCoefficientPackingPoint::new(
+                geometry,
+                BasisMode::Lagrange,
+                6,
+                4,
+                10,
+                &[point.as_slice(), &[F::zero()]].concat(),
+            ),
+            Err(AkitaError::InvalidPointDimension {
+                expected: 10,
+                actual: 11,
+            })
+        ));
 
         let short_source_geometry = SubringCoefficientPackingGeometry::try_new(4, 256, 64).unwrap();
         let short_source_point = point[..9].to_vec();
@@ -262,15 +278,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(padded.num_live_blocks(), 1);
-        assert!(PreparedSubringCoefficientPackingPoint::new(
-            short_source_geometry,
-            BasisMode::Lagrange,
-            2,
-            4,
-            9,
-            &short_source_point[..8],
-        )
-        .is_err());
+        assert!(matches!(
+            PreparedSubringCoefficientPackingPoint::new(
+                short_source_geometry,
+                BasisMode::Lagrange,
+                2,
+                4,
+                9,
+                &short_source_point[..8],
+            ),
+            Err(AkitaError::InvalidPointDimension {
+                expected: 9,
+                actual: 8,
+            })
+        ));
 
         let low_arity_geometry = SubringCoefficientPackingGeometry::try_new(1, 128, 64).unwrap();
         let low_arity_point = point[..6].to_vec();

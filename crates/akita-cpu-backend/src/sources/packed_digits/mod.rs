@@ -273,9 +273,11 @@ impl PackedSignedDigitWriter {
             let bounds = encode_digits(
                 &digits[..whole],
                 self.bit_width,
-                storage
-                    .get_mut(encoded_start..encoded_end)
-                    .ok_or(AkitaError::InvalidProof)?,
+                storage.get_mut(encoded_start..encoded_end).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "streaming digit encoder whole-block range is outside its storage".into(),
+                    )
+                })?,
             );
             self.bounds.include_bounds(bounds);
             self.position += whole;
@@ -312,9 +314,11 @@ impl PackedSignedDigitWriter {
         let bounds = encode_digits(
             &self.pending[..block_len],
             self.bit_width,
-            storage
-                .get_mut(encoded_start..encoded_end)
-                .ok_or(AkitaError::InvalidProof)?,
+            storage.get_mut(encoded_start..encoded_end).ok_or_else(|| {
+                AkitaError::Internal(
+                    "streaming digit encoder pending-block range is outside its storage".into(),
+                )
+            })?,
         );
         self.bounds.include_bounds(bounds);
         self.pending = [0; DIGITS_PER_BLOCK];
