@@ -376,3 +376,23 @@ fn scalar_bit_position_does_not_overflow_at_the_index_boundary() {
         }
     }
 }
+
+#[test]
+fn writer_stays_in_the_final_partial_block_at_the_index_boundary() {
+    // A length this large cannot be allocated on a 64-bit host, so build the
+    // writer state directly: a split final block whose end is not a `usize`.
+    let mut pending = [0; DIGITS_PER_BLOCK];
+    pending[(usize::MAX - 3) % DIGITS_PER_BLOCK] = -1;
+    let mut writer = PackedSignedDigitWriter {
+        storage: Arc::from([0u8; VECTOR_LOAD_PADDING]),
+        encoded_len: 0,
+        len: usize::MAX,
+        bit_width: 2,
+        position: usize::MAX - 2,
+        pending,
+        bounds: SignedDigitBounds::ZERO,
+    };
+    writer.write_at(usize::MAX - 1, &[1]).unwrap();
+    assert_eq!(writer.position(), usize::MAX);
+    assert_eq!(writer.pending[DIGITS_PER_BLOCK - 4..], [-1, 0, 1, 0]);
+}

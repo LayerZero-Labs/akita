@@ -271,11 +271,11 @@ impl PackedSignedDigitWriter {
             });
         }
         // Skip the gap, completing the split block first if the write starts
-        // past it.
+        // past it. Compare block indices: the end of the final partial block
+        // need not be representable.
         let split = self.position % DIGITS_PER_BLOCK;
-        let split_start = self.position - split;
-        if split != 0 && start >= split_start + DIGITS_PER_BLOCK {
-            self.flush_pending(split_start)?;
+        if split != 0 && start / DIGITS_PER_BLOCK > self.position / DIGITS_PER_BLOCK {
+            self.flush_pending(self.position - split)?;
         }
         self.position = start;
 
