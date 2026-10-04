@@ -35,8 +35,9 @@ enum WidePlan<const D: usize> {
 
 enum ChallengePlan<const D: usize> {
     Wide(WidePlan<D>),
-    NarrowFull(u64),
-    NarrowWindowed(u64, WindowedChallenge),
+    /// One unchunked pass; the gather lists are present when the window
+    /// kernel serves the challenge.
+    NarrowFull(u64, Option<WindowedChallenge>),
     NarrowChunked(Vec<Range<usize>>),
 }
 
@@ -70,7 +71,7 @@ fn prepare_challenge<const D: usize>(
         return ChallengePlan::Wide(WidePlan::Rotated(rotated));
     }
     if digit_abs_bound == 0 {
-        return ChallengePlan::NarrowFull(0);
+        return ChallengePlan::NarrowFull(0, None);
     }
 
     let max_chunk_mass = i16::MAX as u64 / digit_abs_bound;
@@ -91,10 +92,7 @@ fn prepare_challenge<const D: usize>(
     };
     if contribution_bound <= i16::MAX as u64 {
         let windowed = window_span.and_then(|span| WindowedChallenge::new::<D>(challenge, span));
-        if let Some(windowed) = windowed {
-            return ChallengePlan::NarrowWindowed(contribution_bound, windowed);
-        }
-        return ChallengePlan::NarrowFull(contribution_bound);
+        return ChallengePlan::NarrowFull(contribution_bound, windowed);
     }
 
     let mut chunk_mass = 0u64;
@@ -328,12 +326,11 @@ trait DigitPlaneSet<const D: usize> {
         challenge: ValidatedSparseChallenge<'_, D>,
         plan: &WidePlan<D>,
     );
-    fn accumulate_narrow(self, acc: &mut [[i16; D]], challenge: &SparseChallenge);
-    fn accumulate_narrow_windowed(
+    fn accumulate_narrow(
         self,
         acc: &mut [[i16; D]],
         challenge: &SparseChallenge,
-        windowed: &WindowedChallenge,
+        windowed: Option<&WindowedChallenge>,
     );
     fn accumulate_chunked_narrow(
         self,
@@ -364,18 +361,16 @@ impl<const D: usize> DigitPlaneSet<D> for &[i8; D] {
     }
 
     #[inline]
-    fn accumulate_narrow(self, acc: &mut [[i16; D]], challenge: &SparseChallenge) {
-        sparse_mul_acc_narrow(self, challenge, &mut acc[0]);
-    }
-
-    #[inline]
-    fn accumulate_narrow_windowed(
+    fn accumulate_narrow(
         self,
         acc: &mut [[i16; D]],
-        _challenge: &SparseChallenge,
-        windowed: &WindowedChallenge,
+        challenge: &SparseChallenge,
+        windowed: Option<&WindowedChallenge>,
     ) {
-        windowed_mul_acc(self, windowed, &mut acc[0]);
+        match windowed {
+            Some(windowed) => windowed_mul_acc(self, windowed, &mut acc[0]),
+            None => sparse_mul_acc_narrow(self, challenge, &mut acc[0]),
+        }
     }
 
     #[inline]
@@ -436,35 +431,30 @@ impl<const D: usize> DigitPlaneSet<D> for DigitPlanes<'_, D> {
     }
 
     #[inline(always)]
-    fn accumulate_narrow(self, acc: &mut [[i16; D]], challenge: &SparseChallenge) {
+    fn accumulate_narrow(
+        self,
+        acc: &mut [[i16; D]],
+        challenge: &SparseChallenge,
+        windowed: Option<&WindowedChallenge>,
+    ) {
         match self {
-            Self::I8(planes) => {
-                for (plane, dst) in planes.iter().zip(acc) {
-                    sparse_mul_acc_narrow(plane, challenge, dst);
+            Self::I8(planes) => match windowed {
+                Some(windowed) => {
+                    for (plane, dst) in planes.iter().zip(acc) {
+                        windowed_mul_acc(plane, windowed, dst);
+                    }
                 }
-            }
+                None => {
+                    for (plane, dst) in planes.iter().zip(acc) {
+                        sparse_mul_acc_narrow(plane, challenge, dst);
+                    }
+                }
+            },
             Self::I16(planes) => {
                 for (plane, dst) in planes.iter().zip(acc) {
                     sparse_mul_acc_i16_narrow(plane, challenge, dst);
                 }
             }
-        }
-    }
-
-    #[inline(always)]
-    fn accumulate_narrow_windowed(
-        self,
-        acc: &mut [[i16; D]],
-        challenge: &SparseChallenge,
-        windowed: &WindowedChallenge,
-    ) {
-        match self {
-            Self::I8(planes) => {
-                for (plane, dst) in planes.iter().zip(acc) {
-                    windowed_mul_acc(plane, windowed, dst);
-                }
-            }
-            Self::I16(_) => self.accumulate_narrow(acc, challenge),
         }
     }
 
@@ -535,7 +525,7 @@ impl<const D: usize> FoldAccumulator<'_, D> {
                     narrow,
                     bound,
                 },
-                ChallengePlan::NarrowFull(contribution),
+                ChallengePlan::NarrowFull(contribution, windowed),
             ) => {
                 if *bound + contribution > i16::MAX as u64 {
                     flush_narrow_accumulator(narrow, wide);
@@ -544,29 +534,10 @@ impl<const D: usize> FoldAccumulator<'_, D> {
                 for (local, ring) in ring_range.enumerate() {
                     let planes = source.digit_planes(ring, num_digits, scratch);
                     let base = local * num_digits;
-                    planes.accumulate_narrow(&mut narrow[base..base + num_digits], challenge);
-                }
-                *bound += contribution;
-            }
-            (
-                Self::Narrow {
-                    wide,
-                    narrow,
-                    bound,
-                },
-                ChallengePlan::NarrowWindowed(contribution, windowed),
-            ) => {
-                if *bound + contribution > i16::MAX as u64 {
-                    flush_narrow_accumulator(narrow, wide);
-                    *bound = 0;
-                }
-                for (local, ring) in ring_range.enumerate() {
-                    let planes = source.digit_planes(ring, num_digits, scratch);
-                    let base = local * num_digits;
-                    planes.accumulate_narrow_windowed(
+                    planes.accumulate_narrow(
                         &mut narrow[base..base + num_digits],
                         challenge,
-                        windowed,
+                        windowed.as_ref(),
                     );
                 }
                 *bound += contribution;
@@ -611,9 +582,9 @@ impl<const D: usize> FoldAccumulator<'_, D> {
                 };
                 let plan = match plan {
                     ChallengePlan::Wide(plan) => plan,
-                    ChallengePlan::NarrowFull(_)
-                    | ChallengePlan::NarrowWindowed(..)
-                    | ChallengePlan::NarrowChunked(_) => &WidePlan::Generic,
+                    ChallengePlan::NarrowFull(..) | ChallengePlan::NarrowChunked(_) => {
+                        &WidePlan::Generic
+                    }
                 };
                 for (local, ring) in ring_range.enumerate() {
                     let planes = source.digit_planes(ring, num_digits, scratch);
@@ -673,9 +644,7 @@ fn element_partitioned_decompose_fold<S: FoldSource<D>, const D: usize>(
     let uses_narrow_accumulation = plans.iter().any(|prepared| {
         matches!(
             prepared.plan,
-            ChallengePlan::NarrowFull(_)
-                | ChallengePlan::NarrowWindowed(..)
-                | ChallengePlan::NarrowChunked(_)
+            ChallengePlan::NarrowFull(..) | ChallengePlan::NarrowChunked(_)
         )
     });
     let position_tile = position_tile_len(num_positions_per_block);
