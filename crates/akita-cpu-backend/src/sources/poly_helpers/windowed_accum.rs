@@ -52,6 +52,8 @@ pub(super) struct WindowedChallenge {
     corrections: Vec<i16>,
     once_words: usize,
     words_per_window: usize,
+    // Read only by the NEON kernel.
+    #[cfg_attr(not(target_arch = "aarch64"), allow(dead_code))]
     span: I8DigitSpan,
 }
 
@@ -143,7 +145,14 @@ impl WindowedChallenge {
 /// Only the NEON implementation has been measured to beat the term-at-a-time
 /// kernel, so other targets keep the existing narrow path.
 pub(super) fn gathers_windows() -> bool {
-    cfg!(target_arch = "aarch64") && super::use_simd_decompose_fold()
+    #[cfg(target_arch = "aarch64")]
+    {
+        super::use_simd_decompose_fold()
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        false
+    }
 }
 
 /// Accumulate `challenge * digit_plane` into a proven-safe i16 partial sum.
