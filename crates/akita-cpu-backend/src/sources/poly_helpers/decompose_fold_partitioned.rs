@@ -6,6 +6,7 @@ use super::narrow_accum::{
     sparse_mul_acc_terms as sparse_mul_acc_narrow_terms,
 };
 use super::rotated_accum::{accumulate_rotated_digit_plane, should_use_rotated_challenge};
+use super::windowed_accum::{gathers_windows, windowed_mul_acc, I8DigitSpan, WindowedChallenge};
 use super::{
     fill_rotated_challenge, sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_pm1,
     sparse_mul_acc_pm1, SignedDigitBasis, ValidatedSparseChallenge, ValidatedSparseChallenges,
@@ -35,6 +36,7 @@ enum WidePlan<const D: usize> {
 enum ChallengePlan<const D: usize> {
     Wide(WidePlan<D>),
     NarrowFull(u64),
+    NarrowWindowed(u64, WindowedChallenge),
     NarrowChunked(Vec<Range<usize>>),
 }
 
@@ -59,6 +61,7 @@ fn prepare_wide_plan<const D: usize>(challenge: &SparseChallenge) -> ChallengePl
 
 fn prepare_challenge<const D: usize>(
     digit_abs_bound: u64,
+    window_span: Option<I8DigitSpan>,
     challenge: &SparseChallenge,
 ) -> ChallengePlan<D> {
     if should_use_rotated_challenge::<D>(challenge) {
@@ -87,6 +90,10 @@ fn prepare_challenge<const D: usize>(
         return prepare_wide_plan(challenge);
     };
     if contribution_bound <= i16::MAX as u64 {
+        let windowed = window_span.and_then(|span| WindowedChallenge::new::<D>(challenge, span));
+        if let Some(windowed) = windowed {
+            return ChallengePlan::NarrowWindowed(contribution_bound, windowed);
+        }
         return ChallengePlan::NarrowFull(contribution_bound);
     }
 
@@ -116,6 +123,15 @@ fn partition_thread_count(num_positions_per_block: usize) -> usize {
     num_threads.min(num_positions_per_block.max(1)).max(1)
 }
 
+/// Span of stored `i8` digits known only by their absolute bound.
+fn bounded_i8_digit_span(digit_abs_bound: u64) -> I8DigitSpan {
+    if digit_abs_bound <= 63 {
+        I8DigitSpan::Half
+    } else {
+        I8DigitSpan::Full
+    }
+}
+
 fn position_tile_len(num_positions_per_block: usize) -> usize {
     let actual_threads = partition_thread_count(num_positions_per_block);
     if actual_threads <= 8 {
@@ -138,6 +154,9 @@ trait FoldSource<const D: usize>: Sync {
 
     fn num_rings(&self) -> usize;
     fn digit_abs_bound(&self) -> u64;
+    /// Value range of the digit planes when all of them are `i8`, the storage
+    /// the window-gathered narrow kernel reads.
+    fn i8_digit_span(&self) -> Option<I8DigitSpan>;
     fn scratch(&self, num_digits: usize) -> Self::Scratch;
     fn digit_planes<'a>(
         &'a self,
@@ -166,6 +185,10 @@ impl<const D: usize> FoldSource<D> for CachedDigits<'_, D> {
 
     fn digit_abs_bound(&self) -> u64 {
         self.digit_abs_bound
+    }
+
+    fn i8_digit_span(&self) -> Option<I8DigitSpan> {
+        Some(bounded_i8_digit_span(self.digit_abs_bound))
     }
 
     fn scratch(&self, _num_digits: usize) {}
@@ -206,6 +229,18 @@ impl<F: Field + CanonicalEncoding, const D: usize> FoldSource<D> for LiveRings<'
 
     fn digit_abs_bound(&self) -> u64 {
         self.basis.abs_bound
+    }
+
+    fn i8_digit_span(&self) -> Option<I8DigitSpan> {
+        // Balanced base-`2^k` digits are `[-2^(k-1), 2^(k-1) - 1]`, one short
+        // of the absolute bound on the positive side.
+        matches!(self.basis.kernel, SignedDigitKernel::I8).then(|| {
+            if self.basis.abs_bound <= 64 {
+                I8DigitSpan::Half
+            } else {
+                I8DigitSpan::Full
+            }
+        })
     }
 
     fn scratch(&self, num_digits: usize) -> Self::Scratch {
@@ -257,6 +292,10 @@ impl<const D: usize> FoldSource<D> for PackedDigits<'_> {
         self.digit_abs_bound
     }
 
+    fn i8_digit_span(&self) -> Option<I8DigitSpan> {
+        Some(bounded_i8_digit_span(self.digit_abs_bound))
+    }
+
     fn scratch(&self, _num_digits: usize) -> Self::Scratch {
         [0i8; D]
     }
@@ -290,6 +329,12 @@ trait DigitPlaneSet<const D: usize> {
         plan: &WidePlan<D>,
     );
     fn accumulate_narrow(self, acc: &mut [[i16; D]], challenge: &SparseChallenge);
+    fn accumulate_narrow_windowed(
+        self,
+        acc: &mut [[i16; D]],
+        challenge: &SparseChallenge,
+        windowed: &WindowedChallenge,
+    );
     fn accumulate_chunked_narrow(
         self,
         narrow: &mut [[i16; D]],
@@ -321,6 +366,16 @@ impl<const D: usize> DigitPlaneSet<D> for &[i8; D] {
     #[inline]
     fn accumulate_narrow(self, acc: &mut [[i16; D]], challenge: &SparseChallenge) {
         sparse_mul_acc_narrow(self, challenge, &mut acc[0]);
+    }
+
+    #[inline]
+    fn accumulate_narrow_windowed(
+        self,
+        acc: &mut [[i16; D]],
+        _challenge: &SparseChallenge,
+        windowed: &WindowedChallenge,
+    ) {
+        windowed_mul_acc(self, windowed, &mut acc[0]);
     }
 
     #[inline]
@@ -393,6 +448,23 @@ impl<const D: usize> DigitPlaneSet<D> for DigitPlanes<'_, D> {
                     sparse_mul_acc_i16_narrow(plane, challenge, dst);
                 }
             }
+        }
+    }
+
+    #[inline(always)]
+    fn accumulate_narrow_windowed(
+        self,
+        acc: &mut [[i16; D]],
+        challenge: &SparseChallenge,
+        windowed: &WindowedChallenge,
+    ) {
+        match self {
+            Self::I8(planes) => {
+                for (plane, dst) in planes.iter().zip(acc) {
+                    windowed_mul_acc(plane, windowed, dst);
+                }
+            }
+            Self::I16(_) => self.accumulate_narrow(acc, challenge),
         }
     }
 
@@ -482,6 +554,29 @@ impl<const D: usize> FoldAccumulator<'_, D> {
                     narrow,
                     bound,
                 },
+                ChallengePlan::NarrowWindowed(contribution, windowed),
+            ) => {
+                if *bound + contribution > i16::MAX as u64 {
+                    flush_narrow_accumulator(narrow, wide);
+                    *bound = 0;
+                }
+                for (local, ring) in ring_range.enumerate() {
+                    let planes = source.digit_planes(ring, num_digits, scratch);
+                    let base = local * num_digits;
+                    planes.accumulate_narrow_windowed(
+                        &mut narrow[base..base + num_digits],
+                        challenge,
+                        windowed,
+                    );
+                }
+                *bound += contribution;
+            }
+            (
+                Self::Narrow {
+                    wide,
+                    narrow,
+                    bound,
+                },
                 ChallengePlan::NarrowChunked(ranges),
             ) => {
                 if *bound != 0 {
@@ -516,9 +611,9 @@ impl<const D: usize> FoldAccumulator<'_, D> {
                 };
                 let plan = match plan {
                     ChallengePlan::Wide(plan) => plan,
-                    ChallengePlan::NarrowFull(_) | ChallengePlan::NarrowChunked(_) => {
-                        &WidePlan::Generic
-                    }
+                    ChallengePlan::NarrowFull(_)
+                    | ChallengePlan::NarrowWindowed(..)
+                    | ChallengePlan::NarrowChunked(_) => &WidePlan::Generic,
                 };
                 for (local, ring) in ring_range.enumerate() {
                     let planes = source.digit_planes(ring, num_digits, scratch);
@@ -560,6 +655,7 @@ fn element_partitioned_decompose_fold<S: FoldSource<D>, const D: usize>(
     }
 
     let digit_abs_bound = source.digit_abs_bound();
+    let window_span = source.i8_digit_span().filter(|_| gathers_windows());
     let challenges = ValidatedSparseChallenges::<D>::new(
         challenges,
         source.num_rings(),
@@ -570,14 +666,16 @@ fn element_partitioned_decompose_fold<S: FoldSource<D>, const D: usize>(
         .enumerate()
         .map(|(block_idx, challenge)| PreparedChallenge {
             challenge,
-            plan: prepare_challenge::<D>(digit_abs_bound, challenge.challenge()),
+            plan: prepare_challenge::<D>(digit_abs_bound, window_span, challenge.challenge()),
             block_start: block_idx * num_positions_per_block,
         })
         .collect::<Vec<_>>();
     let uses_narrow_accumulation = plans.iter().any(|prepared| {
         matches!(
             prepared.plan,
-            ChallengePlan::NarrowFull(_) | ChallengePlan::NarrowChunked(_)
+            ChallengePlan::NarrowFull(_)
+                | ChallengePlan::NarrowWindowed(..)
+                | ChallengePlan::NarrowChunked(_)
         )
     });
     let position_tile = position_tile_len(num_positions_per_block);
