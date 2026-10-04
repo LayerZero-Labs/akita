@@ -126,7 +126,8 @@ fn main() -> Result<(), String> {
     for family in selected_families(&names)? {
         let policy = (family.policy)();
         let artifact_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../artifacts/schedules")
+            .join("../../artifacts")
+            .join(akita_params::SCHEDULE_ARTIFACT_SET)
             .join(format!("{}.aks", family.family_name()));
         let bytes = fs::read(&artifact_path)
             .map_err(|error| format!("read {}: {error}", artifact_path.display()))?;

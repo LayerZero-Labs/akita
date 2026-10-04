@@ -163,21 +163,38 @@ where
             "terminal commitment material disagrees with the terminal plan".into(),
         ));
     }
+    let group = scheduled
+        .response_shape
+        .layout
+        .groups
+        .first()
+        .ok_or_else(|| AkitaError::Internal("terminal response shape has no group".into()))?;
     let terminal_message = crate::backend::TerminalCommitmentMaterialKernel::terminal_message(
         backend,
         &commitment_material,
     )?;
     let fold_level =
         u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
+    // Only the `t` blocks the predecessor fold sent as fields are public here.
+    // Under `dev-protocol` that excludes the last block, which the
+    // predecessor bound with a digest.
     akita_transcript::public_fields_prover(
         grinding.state_mut(),
         akita_types::FoldSite::TerminalTFields { level: fold_level }.id()?,
-        terminal_message.fields(),
+        terminal_message
+            .fields()
+            .get(..group.t_field_elems)
+            .ok_or_else(|| {
+                AkitaError::Internal("terminal t state is shorter than its scheduled prefix".into())
+            })?,
     )?;
-    let t_state = crate::backend::TerminalCommitmentMaterialKernel::consume_terminal_row(
+    let mut t_sent = crate::backend::TerminalCommitmentMaterialKernel::consume_terminal_row(
         backend,
         commitment_material,
-    )?;
+    )?
+    .into_coeffs();
+    t_sent.truncate(group.t_field_elems);
+    let t_sent = akita_types::RingVec::from_coeffs(t_sent);
 
     let consumer = backend;
     let context = backend.proof_context(session, fold_level)?;
@@ -288,11 +305,30 @@ where
                 let e_folded = folded_by_claim.into_iter().next().ok_or_else(|| {
                     AkitaError::Internal("terminal backend returned no folded opening".into())
                 })?;
+                let (e_sent, e_last_block) = e_folded
+                    .coeffs()
+                    .split_at_checked(group.e_field_elems)
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "terminal folded opening is shorter than its scheduled prefix".into(),
+                        )
+                    })?;
                 akita_transcript::send_field_group(
                     grinding.state_mut(),
                     akita_types::FoldSite::TerminalEFields { level: fold_level }.id()?,
-                    e_folded.coeffs(),
+                    e_sent,
                 )?;
+                if akita_params::RECOMPUTE_LAST_BLOCK {
+                    akita_transcript::send_field_digest(
+                        grinding.state_mut(),
+                        akita_types::FoldSite::TerminalEDigest { level: fold_level }.id()?,
+                        e_last_block,
+                    )?;
+                } else if !e_last_block.is_empty() {
+                    return Err(AkitaError::Internal(
+                        "terminal folded opening is longer than its scheduled length".into(),
+                    ));
+                }
                 let output = crate::protocol::fold_grind::sample_terminal_fold_response::<
                     F,
                     E,
@@ -311,8 +347,8 @@ where
                 let terminal_response = akita_types::build_terminal_response_from_payload::<F>(
                     params,
                     &scheduled.response_shape,
-                    &e_folded,
-                    t_state.clone(),
+                    &akita_types::RingVec::from_coeffs(e_sent.to_vec()),
+                    t_sent.clone(),
                     output.encoded_payload,
                 )?;
                 Ok::<_, AkitaError>(terminal_response)
@@ -320,12 +356,6 @@ where
         )?
     };
     crate::backend::OpaqueResourceReleaseKernel::release_witness_handle(consumer, witness_handle)?;
-    let group = scheduled
-        .response_shape
-        .layout
-        .groups
-        .first()
-        .ok_or_else(|| AkitaError::Internal("terminal response shape has no group".into()))?;
     let z_payload = terminal_response
         .z_payloads
         .first()

@@ -7,10 +7,9 @@ fn stage2_geometry(
     coefficient_bits: usize,
 ) -> Result<(usize, usize), AkitaError> {
     let lane_capacity = checked::pow2(lane_bits)
-        .ok_or_else(|| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
-    let coeff_count = checked::pow2(coefficient_bits).ok_or_else(|| {
-        AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
-    })?;
+        .ok_or_else(|| AkitaError::Internal("stage-2 lane width overflow".to_string()))?;
+    let coeff_count = checked::pow2(coefficient_bits)
+        .ok_or_else(|| AkitaError::Internal("stage-2 coefficient width overflow".to_string()))?;
     Ok((lane_capacity, coeff_count))
 }
 
@@ -68,66 +67,65 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     where
         E: 'static,
     {
-        let num_vars = lane_bits.checked_add(coefficient_bits).ok_or_else(|| {
-            AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
-        })?;
+        let num_vars = lane_bits
+            .checked_add(coefficient_bits)
+            .ok_or_else(|| AkitaError::Internal("stage-2 challenge width overflow".to_string()))?;
         if live_lane_count == 0 {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "live_lane_count must be at least 1".to_string(),
             ));
         }
         let (lane_capacity, coeff_count) = stage2_geometry(lane_bits, coefficient_bits)?;
         if live_lane_count > lane_capacity {
-            return Err(AkitaError::InvalidSize {
-                expected: lane_capacity,
-                actual: live_lane_count,
-            });
+            return Err(AkitaError::Internal(format!(
+                "stage-2 live lane count: expected {lane_capacity}, actual {live_lane_count}"
+            )));
         }
         let witness_len = live_lane_count
             .checked_mul(coeff_count)
-            .ok_or_else(|| AkitaError::InvalidInput("stage-2 witness size overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::Internal("stage-2 witness size overflow".to_string()))?;
         if w_evals_compact.len() != witness_len {
-            return Err(AkitaError::InvalidSize {
-                expected: witness_len,
-                actual: w_evals_compact.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "stage-2 compact witness length: expected {witness_len}, actual {}",
+                w_evals_compact.len(),
+            )));
         }
         if stage1_point.len() != num_vars {
-            return Err(AkitaError::InvalidSize {
-                expected: num_vars,
-                actual: stage1_point.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "stage-2 replay point length: expected {num_vars}, actual {}",
+                stage1_point.len(),
+            )));
         }
         match &relation_weights {
             RelationWeightOracle::QuotientFactored(factorization) => {
                 if factorization.common_alpha_factor().len() != coeff_count {
-                    return Err(AkitaError::InvalidSize {
-                        expected: coeff_count,
-                        actual: factorization.common_alpha_factor().len(),
-                    });
+                    return Err(AkitaError::Internal(format!(
+                        "stage-2 common alpha factor length: expected {coeff_count}, actual {}",
+                        factorization.common_alpha_factor().len(),
+                    )));
                 }
                 if factorization.relation_lane_weights().len() != lane_capacity {
-                    return Err(AkitaError::InvalidSize {
-                        expected: lane_capacity,
-                        actual: factorization.relation_lane_weights().len(),
-                    });
+                    return Err(AkitaError::Internal(format!(
+                        "stage-2 relation lane weight count: expected {lane_capacity}, actual {}",
+                        factorization.relation_lane_weights().len(),
+                    )));
                 }
             }
             RelationWeightOracle::ReducedDense(dense) => {
                 let domain_len = lane_capacity.checked_mul(coeff_count).ok_or_else(|| {
-                    AkitaError::InvalidInput("stage-2 relation domain overflow".into())
+                    AkitaError::Internal("stage-2 relation domain overflow".into())
                 })?;
                 if dense.evaluations().len() != domain_len {
-                    return Err(AkitaError::InvalidSize {
-                        expected: domain_len,
-                        actual: dense.evaluations().len(),
-                    });
+                    return Err(AkitaError::Internal(format!(
+                        "stage-2 dense relation domain length: expected {domain_len}, actual {}",
+                        dense.evaluations().len(),
+                    )));
                 }
                 if dense.live_len() != witness_len {
-                    return Err(AkitaError::InvalidSize {
-                        expected: witness_len,
-                        actual: dense.live_len(),
-                    });
+                    return Err(AkitaError::Internal(format!(
+                        "stage-2 dense relation live length: expected {witness_len}, actual {}",
+                        dense.live_len(),
+                    )));
                 }
             }
         }
@@ -147,6 +145,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     let lane = index / coeff_count;
                     let coefficient = index % coeff_count;
                     let w = w_evals_compact
+                        .view()
                         .get(index)
                         .expect("debug relation witness index is in bounds");
                     let witness = E::from_i64(i64::from(w));
@@ -168,7 +167,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             if ordinary_relation_sum + structured_relation_sum + additional_claim
                 != relation_linear_claim
             {
-                return Err(AkitaError::InvalidInput(
+                return Err(AkitaError::Internal(
                     "materialized relation weights do not match the combined relation claim".into(),
                 ));
             }
@@ -176,7 +175,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
         let input_claim = batching_coeff * range_image_evaluation + relation_linear_claim;
         let split_eq = GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?;
-        let phase = match relation_weights {
+        let mut phase = match relation_weights {
             RelationWeightOracle::QuotientFactored(weights) => {
                 let engine = CompactQuotientPrefix::new(
                     &w_evals_compact,
@@ -188,7 +187,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     b,
                     live_lane_count,
                     coefficient_bits,
-                );
+                )?;
                 match engine {
                     Some(engine) => Phase::CompactPrefix {
                         witness: w_evals_compact,
@@ -224,8 +223,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             },
         };
 
-        let mut prover = Self {
-            phase: None,
+        let mut state = RelationRoundState {
             input_claim,
             split_eq,
             additional_relation_terms,
@@ -238,17 +236,15 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             cached_round_message: None,
             rounds_completed: 0,
         };
-        prover.phase = Some(prover.advance_phase(phase));
-        Ok(prover)
+        state.advance_phase(&mut phase);
+        Ok(Self { phase, state })
     }
 
     /// Return the fully folded witness evaluation after the final round.
     ///
-    /// # Panics
-    ///
-    /// Panics if called before the folded suffix contains one field element.
-    pub(crate) fn final_w_eval(&self) -> E {
-        let witness = match self.phase.as_ref().expect("prover phase is installed") {
+    /// Returns an internal error unless the folded suffix contains one field element.
+    pub(crate) fn final_w_eval(&self) -> Result<E, AkitaError> {
+        let witness = match &self.phase {
             Phase::Lane { witness, .. } => witness,
             Phase::Coefficient {
                 witness: WitnessState::FoldedSuffix(witness),
@@ -258,101 +254,25 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             | Phase::Coefficient {
                 witness: WitnessState::CompactPrefix(_),
                 ..
-            } => panic!("witness remained compact after final fold"),
-        };
-        assert_eq!(witness.len(), 1, "witness suffix not fully folded");
-        witness[0]
-    }
-
-    pub(super) fn advance_phase(&mut self, phase: Phase<E>) -> Phase<E> {
-        let phase = match phase {
-            Phase::CompactPrefix {
-                witness,
-                weights,
-                engine,
-            } if engine.challenges().len() >= engine.last_round() => {
-                let (folded, norm) = engine.materialize(
-                    witness.view(),
-                    &self.split_eq,
-                    self.can_skip_norm_linear_coeff(),
-                );
-                let mut relation =
-                    engine.relation_message(weights.common_alpha_factor(), &self.linear_terms);
-                let norm_poly = self.norm_poly_from_prefix(norm);
-                relation.add_assign(RoundMessage::from_polynomial(&norm_poly));
-                self.cached_round_message = Some(relation);
-                self.prev_norm_poly = Some(norm_poly);
-                Phase::Coefficient {
-                    witness: WitnessState::FoldedSuffix(folded),
-                    relation: CoefficientRelation::Factored(weights),
-                    relation_moments: None,
-                }
+            } => {
+                return Err(AkitaError::Internal(
+                    "final witness remained compact after final fold".into(),
+                ));
             }
-            phase => phase,
         };
-
-        if self.rounds_completed < self.coefficient_bits() {
-            return phase;
-        }
-        match phase {
-            Phase::Coefficient {
-                witness, relation, ..
-            } => self.enter_lane_phase(witness, relation),
-            phase => phase,
-        }
-    }
-
-    fn enter_lane_phase(
-        &mut self,
-        witness: WitnessState<E>,
-        relation: CoefficientRelation<E>,
-    ) -> Phase<E> {
-        let witness = match witness {
-            WitnessState::FoldedSuffix(witness) => witness,
-            WitnessState::CompactPrefix(witness) => witness
-                .view()
-                .iter()
-                .map(|digit| E::from_i64(i64::from(digit)))
-                .collect(),
-        };
-        let (mut weights, weight_scale) = match relation {
-            CoefficientRelation::Factored(mut weights) => {
-                assert_eq!(
-                    weights.common_alpha_factor().len(),
-                    1,
-                    "lane transition requires every coefficient weight to be bound"
-                );
-                let scale = weights.common_alpha_factor()[0];
-                (weights.take_lane_weights(), scale)
-            }
-            CoefficientRelation::ReducedDense(weights) => (weights.into_evaluations(), E::one()),
-        };
-        let live = self.live_lane_count;
-        let tail = weights.get(live..).unwrap_or_default();
-        #[cfg(feature = "parallel")]
-        let last_nonzero = tail.par_iter().position_last(|weight| !weight.is_zero());
-        #[cfg(not(feature = "parallel"))]
-        let last_nonzero = tail.iter().rposition(|weight| !weight.is_zero());
-        let support = last_nonzero.map_or(live, |last| live + last + 1);
-        weights.resize(support, E::zero());
-        let (live_weights, tail) = weights.split_at_mut(live);
-        if weight_scale != E::one() {
-            cfg_iter_mut!(tail).for_each(|weight| *weight *= weight_scale);
-        }
-        self.linear_terms
-            .drain_into_lane_weights(live_weights, weight_scale);
-        Phase::Lane {
-            witness,
-            lane: LaneProduct::new(weights),
+        match witness.as_slice() {
+            [value] => Ok(*value),
+            _ => Err(AkitaError::Internal(format!(
+                "final witness suffix length: expected 1, actual {}",
+                witness.len(),
+            ))),
         }
     }
 
     pub(crate) fn expected_final_claim(&self) -> Result<E, AkitaError> {
-        let phase = self.phase.as_ref().ok_or_else(|| {
-            AkitaError::Internal("final claim prover phase is not installed".into())
-        })?;
-        let witness = self.final_w_eval();
-        let virtual_claim = self.split_eq.current_scalar() * witness * (witness + E::one());
+        let phase = &self.phase;
+        let witness = self.final_w_eval()?;
+        let virtual_claim = self.state.split_eq.current_scalar() * witness * (witness + E::one());
         let relation_weight = match phase {
             Phase::CompactPrefix { weights, .. }
             | Phase::Coefficient {
@@ -363,17 +283,22 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     weights.common_alpha_factor(),
                     weights.relation_lane_weights(),
                 ) {
-                    ([alpha], [lane]) => *alpha * *lane + self.linear_terms.final_value()?,
-                    _ => return Err(AkitaError::InvalidProof),
+                    ([alpha], [lane]) => *alpha * *lane + self.state.linear_terms.final_value()?,
+                    _ => {
+                        return Err(AkitaError::Internal(
+                            "terminal factored relation weights are not singletons".into(),
+                        ))
+                    }
                 }
             }
             Phase::Coefficient {
                 relation: CoefficientRelation::ReducedDense(weights),
                 ..
-            } => weights.terminal_weight()? + self.linear_terms.final_value()?,
+            } => weights.terminal_weight()? + self.state.linear_terms.final_value()?,
             Phase::Lane { lane, .. } => lane.final_weight()?,
         };
         let additional = self
+            .state
             .additional_relation_terms
             .as_ref()
             .map_or(Ok(E::zero()), |terms| terms.final_claim(witness))?;
@@ -381,23 +306,93 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     pub(super) fn additional_round_message(&self) -> Option<RoundMessage<E>> {
-        let additional = self.additional_relation_terms.as_ref()?;
-        Some(
-            match self.phase.as_ref().expect("prover phase is installed") {
-                Phase::CompactPrefix {
-                    witness, engine, ..
-                } => additional.round_message_compact(witness.view(), engine.challenges()),
-                Phase::Coefficient {
-                    witness: WitnessState::CompactPrefix(witness),
-                    ..
-                } => additional.round_message_compact(witness.view(), &[]),
-                Phase::Coefficient {
-                    witness: WitnessState::FoldedSuffix(witness),
-                    ..
+        let additional = self.state.additional_relation_terms.as_ref()?;
+        Some(match &self.phase {
+            Phase::CompactPrefix {
+                witness, engine, ..
+            } => additional.round_message_compact(witness.view(), engine.challenges()),
+            Phase::Coefficient {
+                witness: WitnessState::CompactPrefix(witness),
+                ..
+            } => additional.round_message_compact(witness.view(), &[]),
+            Phase::Coefficient {
+                witness: WitnessState::FoldedSuffix(witness),
+                ..
+            }
+            | Phase::Lane { witness, .. } => additional.round_message_folded(witness),
+        })
+    }
+}
+
+impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
+    pub(super) fn advance_phase(&mut self, phase: &mut Phase<E>) {
+        if let Phase::CompactPrefix {
+            witness,
+            weights,
+            engine,
+        } = phase
+        {
+            if engine.challenges().len() >= engine.last_round() {
+                let (folded, norm) = engine.materialize(
+                    witness.view(),
+                    &self.split_eq,
+                    self.split_eq.prepare_linear_q_recovery(),
+                );
+                let mut relation =
+                    engine.relation_message(weights.common_alpha_factor(), &self.linear_terms);
+                let norm_poly = self.norm_poly_from_prefix(norm);
+                relation.add_assign(RoundMessage::from_polynomial(&norm_poly));
+                self.cached_round_message = Some(relation);
+                self.prev_norm_poly = Some(norm_poly);
+                *phase = Phase::Coefficient {
+                    witness: WitnessState::FoldedSuffix(folded),
+                    relation: CoefficientRelation::Factored(weights.take()),
+                    relation_moments: None,
+                };
+            }
+        }
+
+        if self.rounds_completed < self.coefficient_bits() {
+            return;
+        }
+        if let Phase::Coefficient {
+            witness, relation, ..
+        } = phase
+        {
+            let weight_scale = match relation {
+                CoefficientRelation::Factored(weights) => {
+                    assert_eq!(
+                        weights.common_alpha_factor().len(),
+                        1,
+                        "lane transition requires every coefficient weight to be bound"
+                    );
+                    weights.common_alpha_factor()[0]
                 }
-                | Phase::Lane { witness, .. } => additional.round_message_folded(witness),
-            },
-        )
+                CoefficientRelation::ReducedDense(_) => E::one(),
+            };
+            // Materialize before taking any vector; allocation and field work
+            // must not leave the installed phase with an empty witness.
+            let witness = match witness {
+                WitnessState::CompactPrefix(witness) => witness
+                    .view()
+                    .iter()
+                    .map(|digit| E::from_i64(i64::from(digit)))
+                    .collect(),
+                WitnessState::FoldedSuffix(witness) => mem::take(witness),
+            };
+            let weights = match relation {
+                CoefficientRelation::Factored(weights) => weights.take_lane_weights(),
+                CoefficientRelation::ReducedDense(weights) => weights.take_evaluations(),
+            };
+            *phase = Phase::Lane {
+                witness,
+                lane: LaneProduct::new(weights),
+            };
+            // The transition is installed before scanning or modifying weights.
+            if let Phase::Lane { lane, .. } = phase {
+                lane.prepare_weights(self.live_lane_count, weight_scale, &mut self.linear_terms);
+            }
+        }
     }
 
     #[inline]
@@ -406,7 +401,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     #[inline]
-    pub(super) fn coefficient_rounds_completed(&self) -> usize {
+    fn coefficient_rounds_completed(&self) -> usize {
         self.rounds_completed.min(self.coefficient_bits())
     }
 
@@ -427,27 +422,24 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     #[inline]
-    pub(super) fn can_skip_norm_linear_coeff(&self) -> bool {
-        self.split_eq.can_recover_linear_q_term_from_claim()
-    }
-
-    #[inline]
-    pub(super) fn norm_poly_from_terms(&self, virt_terms: NormRoundTerms<E>) -> UnivariatePoly<E> {
+    pub(super) fn norm_poly_from_terms(
+        &self,
+        virt_terms: NormRoundTerms<'_, E>,
+    ) -> UnivariatePoly<E> {
         match virt_terms {
             NormRoundTerms::Full(virt_q_coeffs) => {
                 self.split_eq.gruen_mul(&coeffs_to_poly(virt_q_coeffs))
             }
-            NormRoundTerms::SkipLinear([q_constant, q_quadratic]) => self
-                .split_eq
-                .try_gruen_poly_deg_3(q_constant, q_quadratic, self.prev_norm_claim)
-                .expect("split-eq norm claim recovery should succeed"),
+            NormRoundTerms::SkipLinear([constant, quadratic], recovery) => {
+                recovery.gruen_poly_deg_3(constant, quadratic, self.prev_norm_claim)
+            }
         }
     }
 
     #[inline]
     pub(super) fn combine_terms(
         &self,
-        virt_terms: NormRoundTerms<E>,
+        virt_terms: NormRoundTerms<'_, E>,
         relation_message: RoundMessage<E>,
     ) -> (RoundMessage<E>, UnivariatePoly<E>) {
         let norm_poly = self.norm_poly_from_terms(virt_terms);
@@ -455,12 +447,14 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         message.add_assign(relation_message);
         (message, norm_poly)
     }
+}
 
+impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[cfg(test)]
     pub(super) fn disable_factored_relation_moments(&mut self) {
-        if let Some(Phase::Coefficient {
+        if let Phase::Coefficient {
             relation_moments, ..
-        }) = self.phase.as_mut()
+        } = &mut self.phase
         {
             *relation_moments = None;
         }
@@ -469,28 +463,75 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[cfg(test)]
     pub(super) fn has_factored_relation_moments(&self) -> bool {
         matches!(
-            self.phase.as_ref(),
-            Some(Phase::Coefficient {
+            &self.phase,
+            Phase::Coefficient {
                 relation_moments: Some(_),
                 ..
-            })
+            }
         )
     }
 
     #[cfg(test)]
     pub(super) fn disable_compact_quotient_prefix(&mut self) {
-        let Some(phase) = self.phase.take() else {
-            return;
-        };
-        self.phase = Some(match phase {
-            Phase::CompactPrefix {
-                witness, weights, ..
-            } => Phase::Coefficient {
+        if let Phase::CompactPrefix {
+            witness, weights, ..
+        } = &mut self.phase
+        {
+            // The test disables the engine before any challenge is ingested.
+            let witness = witness.clone();
+            self.phase = Phase::Coefficient {
                 witness: WitnessState::CompactPrefix(witness),
-                relation: CoefficientRelation::Factored(weights),
+                relation: CoefficientRelation::Factored(weights.take()),
                 relation_moments: None,
-            },
-            phase => phase,
-        });
+            };
+        }
+    }
+}
+
+#[cfg(test)]
+mod final_witness_tests {
+    use super::*;
+    use jolt_field::{One, Prime128Offset275 as E};
+
+    fn prover() -> RelationRangeImageProver<E> {
+        RelationRangeImageProver::new_virtual_only(
+            vec![0; 8],
+            &[E::one(); 3],
+            E::zero(),
+            8,
+            2,
+            1,
+            2,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn final_witness_rejects_compact_phase() {
+        let mut prover = prover();
+        assert!(
+            matches!(prover.final_w_eval(), Err(AkitaError::Internal(message))
+            if message == "final witness remained compact after final fold")
+        );
+        prover.disable_compact_quotient_prefix();
+        assert!(
+            matches!(prover.final_w_eval(), Err(AkitaError::Internal(message))
+            if message == "final witness remained compact after final fold")
+        );
+    }
+
+    #[test]
+    fn final_witness_rejects_nonterminal_suffix() {
+        let mut prover = prover();
+        for actual in [0, 2] {
+            prover.phase = Phase::Lane {
+                witness: vec![E::zero(); actual],
+                lane: LaneProduct::new(vec![E::one()]),
+            };
+            assert!(
+                matches!(prover.final_w_eval(), Err(AkitaError::Internal(message))
+                if message == format!("final witness suffix length: expected 1, actual {actual}"))
+            );
+        }
     }
 }

@@ -61,23 +61,22 @@ impl<'a> GrindingPlanCursor<'a> {
     }
 
     fn consume_run(&mut self, site: GrindingSite, multiplicity: usize) -> Result<(), AkitaError> {
-        let run = self
-            .plan
-            .runs()
-            .get(self.run_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let run = self.plan.runs().get(self.run_index).ok_or_else(|| {
+            AkitaError::InvalidInput("fold-challenge replay has no remaining plan run".into())
+        })?;
         if self.run_offset != 0
             || run.site() != site
             || run.grind_bits() != 0
             || run.nonce_bits() != 0
             || usize::try_from(run.multiplicity()).ok() != Some(multiplicity)
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "fold-challenge replay request differs from the next plan run".into(),
+            ));
         }
-        self.run_index = self
-            .run_index
-            .checked_add(1)
-            .ok_or(AkitaError::InvalidProof)?;
+        self.run_index = self.run_index.checked_add(1).ok_or_else(|| {
+            AkitaError::Internal("fold-challenge replay run index overflows usize".into())
+        })?;
         Ok(())
     }
 
@@ -99,9 +98,13 @@ fn next_entry(
     site: GrindingSite,
     kind: GrindingQueryKind,
 ) -> Result<GrindingPlanEntry, AkitaError> {
-    let entry = cursor.next().ok_or(AkitaError::InvalidProof)?;
+    let entry = cursor.next().ok_or_else(|| {
+        AkitaError::InvalidInput("grinding query replay has no remaining plan entry".into())
+    })?;
     if entry.site != site || site.kind() != kind {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidInput(
+            "grinding query replay site or kind differs from the next plan entry".into(),
+        ));
     }
     Ok(entry)
 }
@@ -144,8 +147,9 @@ fn fold_response_record(site: GrindingSite, nonce_bits: u8) -> ProtocolContextRe
 /// One side of grinding-plan replay.
 ///
 /// Scheduled-query code written against this trait runs unchanged for the
-/// prover and the verifier. Every failure poisons the owner so its `finish`
-/// boundary rejects even if a caller drops the error.
+/// prover and the verifier. A failed replay call may already have advanced the
+/// transcript, so it leaves the replay unusable and `finish` fails even if the
+/// caller drops the error.
 pub trait GrindingReplay {
     /// The role-specific proof channel state.
     type State: ProofChannel;
@@ -177,7 +181,9 @@ pub trait GrindingReplay {
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidProof`] when challenge sampling fails.
+    /// Returns [`AkitaError::InvalidSetup`] when the base field is not
+    /// certified for exact sampling, or [`AkitaError::InvalidProof`] when the
+    /// retry counter is exhausted or the verifier state is already invalid.
     fn ext_challenge_at<F, E>(&mut self, site: ProtocolSiteId) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
@@ -390,7 +396,7 @@ impl<'plan> ProverGrinding<'plan> {
         counter: u32,
     ) -> Result<FoldPreview, AkitaError> {
         let entry = self.cursor.peek().ok_or_else(|| {
-            AkitaError::Internal(
+            AkitaError::InvalidInput(
                 "fold-response preview has no remaining grinding plan entry".into(),
             )
         })?;
@@ -437,12 +443,12 @@ impl<'plan> ProverGrinding<'plan> {
     /// Finish plan replay and return the authoritative Spongefish argument.
     pub fn finish(self) -> Result<Vec<u8>, AkitaError> {
         if self.invalid {
-            return Err(AkitaError::Internal(
+            return Err(AkitaError::InvalidInput(
                 "an earlier grinding step failed".into(),
             ));
         }
         if !self.cursor.is_finished() {
-            return Err(AkitaError::Internal(
+            return Err(AkitaError::InvalidInput(
                 "the grinding plan has unconsumed entries".into(),
             ));
         }
@@ -709,7 +715,9 @@ where
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
         if invocation != 0 {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "grinding sumcheck verifier invocation is not zero".into(),
+            ));
         }
         self.grinding
             .grinded_ext_challenge::<F, E>(GrindingSite::SumcheckRound {

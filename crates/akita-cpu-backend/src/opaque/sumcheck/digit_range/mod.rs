@@ -24,6 +24,7 @@ mod range_class_tables;
 pub(crate) mod range_poly;
 mod round_accumulation;
 mod session;
+mod small_poly;
 
 pub use direct_range_leaf::LowBasisRangeCheckProver;
 pub(crate) use session::DigitRangeSession;
@@ -36,6 +37,7 @@ use class_indexed_product::ClassIndexedProductSubcheckProver;
 use class_indexed_range_leaf::ClassIndexedRangeLeafProver;
 use compact_digit_source::CompactDigitSource;
 use jolt_field::{Field, Ring};
+use small_poly::SmallPoly;
 
 const MAX_TREE_STAGE_Q_DEGREE: usize = 4;
 const MAX_QUARTET_TABLE_CLASS_COUNT: usize = 8;
@@ -50,12 +52,11 @@ struct ProductSubcheckInput<'a, E: Field> {
     input_claim: E,
 }
 
-fn compose_small_poly_with_affine<E: Field>(coeffs: &[E], offset: E, slope: E) -> [E; 5] {
-    debug_assert!(coeffs.len() <= MAX_TREE_STAGE_Q_DEGREE + 1);
+fn compose_small_poly_with_affine<E: Field>(coeffs: &SmallPoly<E>, offset: E, slope: E) -> [E; 5] {
     let [constant, linear, quadratic, cubic, quartic] = match coeffs {
-        [] => return [E::zero(); 5],
-        [c0] => return [*c0, E::zero(), E::zero(), E::zero(), E::zero()],
-        [c0, c1] => {
+        SmallPoly::Zero => return [E::zero(); 5],
+        SmallPoly::Constant([c0]) => return [*c0, E::zero(), E::zero(), E::zero(), E::zero()],
+        SmallPoly::Linear([c0, c1]) => {
             return [
                 *c0 + *c1 * offset,
                 *c1 * slope,
@@ -64,10 +65,9 @@ fn compose_small_poly_with_affine<E: Field>(coeffs: &[E], offset: E, slope: E) -
                 E::zero(),
             ]
         }
-        [c0, c1, c2] => [*c0, *c1, *c2, E::zero(), E::zero()],
-        [c0, c1, c2, c3] => [*c0, *c1, *c2, *c3, E::zero()],
-        [c0, c1, c2, c3, c4] => [*c0, *c1, *c2, *c3, *c4],
-        _ => unreachable!("range polynomial degree is at most four"),
+        SmallPoly::Quadratic([c0, c1, c2]) => [*c0, *c1, *c2, E::zero(), E::zero()],
+        SmallPoly::Cubic([c0, c1, c2, c3]) => [*c0, *c1, *c2, *c3, E::zero()],
+        SmallPoly::Quartic([c0, c1, c2, c3, c4]) => [*c0, *c1, *c2, *c3, *c4],
     };
 
     let two_quadratic = quadratic + quadratic;

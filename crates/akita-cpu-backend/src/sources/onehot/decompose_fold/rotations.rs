@@ -1,4 +1,5 @@
 use super::*;
+use crate::sources::poly_helpers::{ValidatedSparseChallenge, ValidatedSparseChallenges};
 
 const ROTATED_CHALLENGE_TABLE_BUDGET: usize = 1 << 28;
 
@@ -23,7 +24,8 @@ struct PreparedSparseChallenge {
 }
 
 impl PreparedSparseChallenge {
-    fn new<const D: usize>(challenge: &SparseChallenge) -> Self {
+    fn new<const D: usize>(challenge: ValidatedRotationChallenge<'_, D>) -> Self {
+        let challenge = challenge.challenge.challenge();
         debug_assert!(D <= usize::from(u16::MAX) + 1);
         let mut coefficients = challenge.coeffs.to_vec();
         coefficients.sort_unstable();
@@ -38,9 +40,8 @@ impl PreparedSparseChallenge {
             let mut positions = Vec::with_capacity(support);
             for (&position, &candidate) in challenge.positions.iter().zip(&challenge.coeffs) {
                 if candidate == coefficient {
-                    positions.push(
-                        u16::try_from(position).expect("validated challenge position fits u16"),
-                    );
+                    // Admitted positions are below D <= 65536.
+                    positions.push(position as u16);
                 }
             }
             grouped.push((coefficient, positions));
@@ -51,11 +52,9 @@ impl PreparedSparseChallenge {
                 positions.sort_unstable();
                 let wrap_cuts = (0..D)
                     .map(|shift| {
-                        u32::try_from(
-                            positions
-                                .partition_point(|&position| usize::from(position) < D - shift),
-                        )
-                        .expect("sparse challenge support fits u32")
+                        // A class cannot exceed the admitted u32 support length.
+                        positions.partition_point(|&position| usize::from(position) < D - shift)
+                            as u32
                     })
                     .collect();
                 PreparedSparseClass {
@@ -66,6 +65,41 @@ impl PreparedSparseChallenge {
             })
             .collect();
         Self { classes }
+    }
+}
+
+/// Borrowed rotation challenges with shape, position, dimension, and support
+/// bounds admitted before any parallel representation-building work begins.
+struct ValidatedRotationChallenges<'a, const D: usize> {
+    challenges: ValidatedSparseChallenges<'a, D>,
+}
+
+#[derive(Clone, Copy)]
+struct ValidatedRotationChallenge<'a, const D: usize> {
+    challenge: ValidatedSparseChallenge<'a, D>,
+}
+
+impl<'a, const D: usize> ValidatedRotationChallenges<'a, D> {
+    fn new(challenges: &'a [SparseChallenge]) -> Result<Self, AkitaError> {
+        if D == 0 || D > usize::from(u16::MAX) + 1 {
+            return Err(AkitaError::InvalidInput(
+                "rotation dimension must be in 1..=65536".into(),
+            ));
+        }
+        let challenges = ValidatedSparseChallenges::<D>::new(challenges, challenges.len(), 1)?;
+        for challenge in challenges.iter() {
+            akita_error::narrowing::usize_to_u32(
+                challenge.challenge().positions.len(),
+                "rotation challenge support",
+            )?;
+        }
+        Ok(Self { challenges })
+    }
+
+    fn get(&self, index: usize) -> ValidatedRotationChallenge<'a, D> {
+        ValidatedRotationChallenge {
+            challenge: self.challenges.get(index),
+        }
     }
 }
 
@@ -83,7 +117,7 @@ struct PreparedExpandedSparseChallenge {
 }
 
 impl PreparedExpandedSparseChallenge {
-    fn new<const D: usize>(challenge: &SparseChallenge) -> Self {
+    fn new<const D: usize>(challenge: ValidatedRotationChallenge<'_, D>) -> Self {
         let sparse = PreparedSparseChallenge::new::<D>(challenge);
         let classes = sparse
             .classes
@@ -93,8 +127,8 @@ impl PreparedExpandedSparseChallenge {
                 let mut rotated_positions = Vec::with_capacity(D.saturating_mul(support));
                 for shift in 0..D {
                     rotated_positions.extend(class.positions.iter().map(|&position| {
-                        u16::try_from((usize::from(position) + shift) % D)
-                            .expect("validated rotated position fits u16")
+                        // The admitted dimension guarantees this residue fits u16.
+                        ((usize::from(position) + shift) % D) as u16
                     }));
                 }
                 PreparedExpandedSparseClass {
@@ -195,66 +229,67 @@ fn rotation_storage_bytes<const D: usize>(challenges: &[SparseChallenge]) -> Rot
 
 pub(super) fn prepare_rotations<const D: usize>(
     challenges: &[SparseChallenge],
-) -> PreparedRotations<'_, D> {
+) -> Result<PreparedRotations<'_, D>, AkitaError> {
     prepare_rotations_with_budget(challenges, ROTATED_CHALLENGE_TABLE_BUDGET)
 }
 
 fn prepare_rotations_with_budget<const D: usize>(
     challenges: &[SparseChallenge],
     budget: usize,
-) -> PreparedRotations<'_, D> {
+) -> Result<PreparedRotations<'_, D>, AkitaError> {
+    let validated = ValidatedRotationChallenges::<D>::new(challenges)?;
     let storage = rotation_storage_bytes::<D>(challenges);
     if D >= 128 && storage.expanded_sparse <= budget {
-        return PreparedRotations {
+        return Ok(PreparedRotations {
             representation: RotationRepresentation::ExpandedSparse(
                 cfg_into_iter!(0..challenges.len())
                     .map(|challenge_idx| {
-                        PreparedExpandedSparseChallenge::new::<D>(&challenges[challenge_idx])
+                        PreparedExpandedSparseChallenge::new::<D>(validated.get(challenge_idx))
                     })
                     .collect(),
             ),
-        };
+        });
     }
     if D == 128 && storage.compact <= budget {
         let compact = cfg_into_iter!(0..challenges.len())
             .map(|challenge_idx| {
                 let mut dense = [0i8; D];
-                let challenge = &challenges[challenge_idx];
+                let challenge = validated.get(challenge_idx).challenge.challenge();
                 for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
                     dense[position as usize] = coefficient;
                 }
                 dense
             })
             .collect();
-        return PreparedRotations {
+        return Ok(PreparedRotations {
             representation: RotationRepresentation::Compact(compact),
-        };
+        });
     }
     if D == 64 && storage.dense <= budget {
         let mut rotated = vec![[0i16; D]; challenges.len() * D];
         cfg_chunks_mut!(&mut rotated, D)
             .enumerate()
             .for_each(|(challenge_idx, table)| {
-                fill_rotated_challenge(table, &challenges[challenge_idx]);
+                fill_rotated_challenge(table, validated.get(challenge_idx).challenge.challenge());
             });
-        return PreparedRotations {
+        return Ok(PreparedRotations {
             representation: RotationRepresentation::Dense(rotated),
-        };
+        });
     }
     if storage.sparse <= budget {
-        return PreparedRotations {
+        return Ok(PreparedRotations {
             representation: RotationRepresentation::Sparse(
                 cfg_into_iter!(0..challenges.len())
                     .map(|challenge_idx| {
-                        PreparedSparseChallenge::new::<D>(&challenges[challenge_idx])
+                        PreparedSparseChallenge::new::<D>(validated.get(challenge_idx))
                     })
                     .collect(),
             ),
-        };
+        });
     }
-    PreparedRotations {
+    Ok(PreparedRotations {
         representation: RotationRepresentation::Raw(challenges),
-    }
+    })
 }
 
 #[inline(always)]
@@ -363,30 +398,88 @@ mod tests {
     }
 
     #[test]
+    fn expanded_rotations_reject_an_unsupported_dimension() {
+        let challenges = [SparseChallenge {
+            positions: vec![0].into(),
+            coeffs: vec![1].into(),
+        }];
+        assert_eq!(
+            prepare_rotations_with_budget::<65537>(&challenges, usize::MAX).unwrap_err(),
+            AkitaError::InvalidInput("rotation dimension must be in 1..=65536".into()),
+        );
+    }
+
+    #[test]
+    fn expanded_rotation_dimension_accepts_the_full_u16_range() {
+        let challenge = SparseChallenge {
+            positions: vec![u32::from(u16::MAX)].into(),
+            coeffs: vec![1].into(),
+        };
+        let challenges = [challenge];
+        let validated = ValidatedRotationChallenges::<65536>::new(&challenges).unwrap();
+        let prepared = PreparedExpandedSparseChallenge::new::<65536>(validated.get(0));
+        assert_eq!(prepared.classes[0].rotated_positions[0], u16::MAX);
+        assert_eq!(prepared.classes[0].rotated_positions[1], 0);
+        assert_eq!(prepared.classes[0].wrap_cuts[0], 1);
+        assert_eq!(prepared.classes[0].wrap_cuts[1], 0);
+    }
+
+    #[test]
+    fn rotation_preparation_rejects_a_position_equal_to_the_dimension() {
+        let challenges = [SparseChallenge {
+            positions: vec![64].into(),
+            coeffs: vec![1].into(),
+        }];
+        for budget in [0, usize::MAX] {
+            assert_eq!(
+                prepare_rotations_with_budget::<64>(&challenges, budget).unwrap_err(),
+                AkitaError::InvalidInput(
+                    "sparse fold challenge position exceeds the ring dimension".into()
+                ),
+            );
+        }
+    }
+
+    #[test]
+    fn rotation_preparation_rejects_mismatched_support_lengths() {
+        let challenges = [SparseChallenge {
+            positions: vec![0, 1].into(),
+            coeffs: vec![1].into(),
+        }];
+        assert_eq!(
+            prepare_rotations_with_budget::<64>(&challenges, usize::MAX).unwrap_err(),
+            AkitaError::InvalidSize {
+                expected: 2,
+                actual: 1
+            },
+        );
+    }
+
+    #[test]
     fn every_rotation_representation_matches_dense_table() {
         let challenges = [challenge::<64>()];
-        let dense = prepare_rotations_with_budget::<64>(&challenges, usize::MAX);
+        let dense = prepare_rotations_with_budget::<64>(&challenges, usize::MAX).unwrap();
         assert_eq!(dense.kind(), "dense");
         assert_all_rotations(&dense);
 
         let challenges = [challenge::<128>()];
         let storage = rotation_storage_bytes::<128>(&challenges);
-        let compact = prepare_rotations_with_budget::<128>(&challenges, storage.compact);
+        let compact = prepare_rotations_with_budget::<128>(&challenges, storage.compact).unwrap();
         assert_eq!(compact.kind(), "compact");
         assert_all_rotations(&compact);
 
         let challenges = [challenge::<256>()];
-        let expanded = prepare_rotations_with_budget::<256>(&challenges, usize::MAX);
+        let expanded = prepare_rotations_with_budget::<256>(&challenges, usize::MAX).unwrap();
         assert_eq!(expanded.kind(), "expanded_sparse");
         assert_all_rotations(&expanded);
 
         let challenges = [challenge::<512>()];
         let storage = rotation_storage_bytes::<512>(&challenges);
-        let sparse = prepare_rotations_with_budget::<512>(&challenges, storage.sparse);
+        let sparse = prepare_rotations_with_budget::<512>(&challenges, storage.sparse).unwrap();
         assert_eq!(sparse.kind(), "sparse");
         assert_all_rotations(&sparse);
 
-        let raw = prepare_rotations_with_budget::<512>(&challenges, 0);
+        let raw = prepare_rotations_with_budget::<512>(&challenges, 0).unwrap();
         assert_eq!(raw.kind(), "raw");
         assert_all_rotations(&raw);
     }

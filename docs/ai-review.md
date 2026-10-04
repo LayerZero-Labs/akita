@@ -203,19 +203,39 @@ No remote dependency installation is needed: the runner uses Python's standard
 library and the [Responses API](https://developers.openai.com/api/docs/guides/function-calling)
 with [structured output](https://developers.openai.com/api/docs/guides/structured-outputs).
 
+## Akita-specific: artifact exclusion
+
+The root `artifacts/` directory is excluded from AI review, including all file
+types and subdirectories. Its contents are omitted from full and repeat-review
+diffs, inline anchors, and every source map, so source tools cannot retrieve them.
+The collector still lists changed excluded paths as `excluded_artifacts`, and
+the publisher adds a visible notice with their count to the review body.
+This policy is explicitly separated from generic review instructions in the
+skill's automation contract so it can be adapted when reusing the workflow.
+
+Source, generators, consumers and tests outside `artifacts/` remain in scope.
+The unchanged 300,000-character diff budget and 150-file cap apply to the remaining
+review scope. Mixed PRs can receive an approval recommendation for that scope;
+the recommendation does not cover artifact contents. Artifact-only PRs cannot
+receive one. Validate excluded contents separately through the repository's
+artifact checks and CI. This source-directory exclusion is separate from the
+temporary GitHub Actions snapshot/result artifacts and their cleanup policy.
+
 ## Limits and failures
 
 Reviews are static analysis. They cannot run tests, inspect CI logs, fetch linked
 issues/URLs, or prove other stacked PRs contain a fix. Excluded content and these
 limits must be reported when relevant. A clean automated review is not an approval.
 
-Current budgets: 150 changed files, 300,000 characters of combined full/delta
+Current local budgets: 150 in-scope changed files, 300,000 characters of combined full/delta
 diff (the delta covers only files the PR changes now or changed at the previously
 reviewed head, so base-branch changes merged in since count only where they touch
 those same files), 300,000 characters of eligible discussion, 250,000 bytes per source blob,
 32 MiB per artifact, 32 model turns, 24 reads/searches per turn, 900,000 characters
 of accumulated context, 20 new findings and 100 retained findings. Exceeding a
-budget stops the run; it never silently turns into a clean review. Artifacts
+budget stops the run; it never silently turns into a clean review. These are
+workflow policy limits, not OpenAI API limits. Collection logs report counts and
+diff sizes; budget errors identify the exceeded limit. Actions artifacts
 contain public source/review evidence, no credentials. After publication and label
 updates succeed, a separate cleanup job deletes `ai-review-snapshot` and
 `ai-review-result` from that run. It does not download their contents or delete

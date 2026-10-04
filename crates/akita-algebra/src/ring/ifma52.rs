@@ -297,9 +297,9 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         tail_params: &CrtNttParamSet<W, 1, D>,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         let num_cols = rhs.len();
-        let required = num_rows
-            .checked_mul(num_cols)
-            .ok_or(AkitaError::InvalidProof)?;
+        let required = num_rows.checked_mul(num_cols).ok_or_else(|| {
+            AkitaError::InvalidInput("prepared IFMA52 tail matrix extent overflow".into())
+        })?;
         if !self.params.has_tail(tail_params.primes[0]) {
             return Err(AkitaError::InvalidSetup(
                 "prepared IFMA52 tail does not match its parameters".into(),
@@ -335,9 +335,9 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         rhs: &[[i16; D]],
     ) -> Result<Vec<[Ifma52Residues<D>; K]>, AkitaError> {
         let num_cols = rhs.len();
-        let required = num_rows
-            .checked_mul(num_cols)
-            .ok_or(AkitaError::InvalidProof)?;
+        let required = num_rows.checked_mul(num_cols).ok_or_else(|| {
+            AkitaError::InvalidInput("prepared IFMA52 matrix extent overflow".into())
+        })?;
         if self.limbs.iter().any(|limb| limb.len() < required) {
             return Err(AkitaError::InvalidSetup(
                 "prepared IFMA52 matrix prefix is undersized".into(),

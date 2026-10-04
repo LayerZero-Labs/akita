@@ -225,7 +225,11 @@ pub fn assemble_relation_rhs<F: Field>(
         let rows = commitment_rows
             .coeffs()
             .get(commit_offset..commit_end)
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal(
+                    "validated relation assembly is missing commitment coefficients".into(),
+                )
+            })?;
         coeffs.extend_from_slice(rows);
         commit_offset = commit_end;
     }
@@ -369,7 +373,11 @@ where
         if *row_idx >= eq_tau1.len() {
             return Ok(());
         }
-        let coefficients: [F; D] = row.try_into().map_err(|_| AkitaError::InvalidProof)?;
+        let coefficients: [F; D] = row.try_into().map_err(|error| {
+            AkitaError::Internal(format!(
+                "relation coefficient chunk does not match dispatched dimension: {error}"
+            ))
+        })?;
         let ring = CyclotomicRing::from_coefficients(coefficients);
         *acc += eq_tau1[*row_idx] * eval_ring_at_pows_fast(&ring, &alpha_pows);
         *row_idx += 1;
@@ -551,9 +559,11 @@ where
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("relation claim commit offset overflow".into())
                         })?;
-                    let rows = u_typed
-                        .get(commit_offset..commit_end)
-                        .ok_or(AkitaError::InvalidProof)?;
+                    let rows = u_typed.get(commit_offset..commit_end).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "validated relation claim is missing typed commitment rows".into(),
+                        )
+                    })?;
                     accumulate_extension_rows::<F, E, D_B>(
                         &eq_tau1,
                         alpha,
@@ -589,7 +599,11 @@ where
             let coeffs = u
                 .coeffs()
                 .get(commit_coeff_offset..commit_coeff_end)
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "validated relation claim is missing flat commitment coefficients".into(),
+                    )
+                })?;
             dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Outer),
                 F,
@@ -661,10 +675,9 @@ where
         let end = offset
             .checked_add(ring_dim)
             .ok_or_else(|| AkitaError::InvalidSetup("relation RHS offset overflow".into()))?;
-        let row = rhs
-            .coeffs()
-            .get(offset..end)
-            .ok_or(AkitaError::InvalidProof)?;
+        let row = rhs.coeffs().get(offset..end).ok_or_else(|| {
+            AkitaError::Internal("validated relation RHS is missing row coefficients".into())
+        })?;
         if matches!(
             family,
             RelationRowFamily::Consistency {
@@ -696,11 +709,19 @@ where
             });
         let powers = &alpha_powers
             .get(power_index)
-            .ok_or(AkitaError::InvalidProof)?
+            .ok_or_else(|| {
+                AkitaError::Internal(
+                    "generated relation alpha powers are missing the selected dimension".into(),
+                )
+            })?
             .1;
         if include(family) {
             let row_evaluation = eval_flat_ring_at_pows_fast(row, powers);
-            claim += *row_weights.get(row_index).ok_or(AkitaError::InvalidProof)? * row_evaluation;
+            claim += *row_weights.get(row_index).ok_or_else(|| {
+                AkitaError::Internal(
+                    "generated relation row weights are missing the selected row".into(),
+                )
+            })? * row_evaluation;
         }
         offset = end;
     }

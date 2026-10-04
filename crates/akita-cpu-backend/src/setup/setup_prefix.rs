@@ -123,7 +123,11 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix plan omitted compression".into()))?
         .maps()
         .last()
-        .ok_or(AkitaError::InvalidProof)?
+        .ok_or_else(|| {
+            AkitaError::Internal(
+                "validated setup-prefix compression chain has no terminal map".into(),
+            )
+        })?
         .ring_dimension();
     let commitment_payload =
         RingVec::from_coeffs_with_ring_dim(terminal_payload.into_coeffs(), terminal_ring_dim)?;

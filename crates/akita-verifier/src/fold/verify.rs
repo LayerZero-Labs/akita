@@ -139,6 +139,7 @@ where
                 opening_point: root.challenges,
                 opening: root.opening,
                 witness: root.next_witness,
+                witness_last_block_digest: root.next_witness_last_block_digest,
                 basis: BasisMode::Lagrange,
                 witness_len: schedule.root_fold().output_witness_len,
                 setup_prefix_opening: root.setup_prefix_opening,

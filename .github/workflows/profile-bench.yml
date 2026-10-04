@@ -120,6 +120,7 @@ jobs:
           echo "AKITA_BENCH_SOURCE_SHA=$GITHUB_SHA" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_SOURCE_BRANCH=${{ github.head_ref || github.ref_name }}" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_BASE_REF=" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_PROTOCOL_FEATURE=" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_MERGE_BASE_SHA=" >> "$GITHUB_ENV"
           echo "AKITA_PROFILE_PROVE_THREADS=$profile_threads" >> "$GITHUB_ENV"
           echo "AKITA_PROFILE_VERIFY_THREADS=$profile_threads" >> "$GITHUB_ENV"
@@ -135,6 +136,11 @@ jobs:
             core.exportVariable('AKITA_BENCH_BASE_REF', pullRequest.base.ref);
             core.exportVariable('AKITA_BENCH_SOURCE_SHA', pullRequest.head.sha);
             core.exportVariable('AKITA_BENCH_SOURCE_BRANCH', pullRequest.head.ref);
+            // Pull requests into dev benchmark the dev protocol. The current
+            // protocol is benchmarked by pull requests into main.
+            if (pullRequest.base.ref === 'dev') {
+              core.exportVariable('AKITA_BENCH_PROTOCOL_FEATURE', 'dev-protocol');
+            }
 
             let mergeBaseSha = '';
             try {
@@ -208,6 +214,13 @@ jobs:
               features="$features,transcript-blake2b"
               fallback_features="$fallback_features,transcript-blake2b"
             fi
+            # A merge base from before the dev protocol existed is built
+            # without it, so the comparison is dev protocol against current.
+            if [ -n "$AKITA_BENCH_PROTOCOL_FEATURE" ] &&
+              python3 scripts/cargo_feature_exists.py akita-pcs "$AKITA_BENCH_PROTOCOL_FEATURE"; then
+              features="$features,$AKITA_BENCH_PROTOCOL_FEATURE"
+              fallback_features="$fallback_features,$AKITA_BENCH_PROTOCOL_FEATURE"
+            fi
             if python3 scripts/cargo_feature_exists.py akita-pcs "$AKITA_BENCH_PROFILE_FEATURE"; then
               CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
                 cargo build --release --quiet --example profile \
@@ -247,6 +260,9 @@ jobs:
           AKITA_BENCH_PROFILE_FEATURE: ${{ matrix.group.profile_feature }}
         run: |
           features="parallel,$AKITA_BENCH_PROFILE_FEATURE,transcript-blake2b"
+          if [ -n "$AKITA_BENCH_PROTOCOL_FEATURE" ]; then
+            features="$features,$AKITA_BENCH_PROTOCOL_FEATURE"
+          fi
           cargo build --release --quiet --example profile \
             --no-default-features --features "$features"
 
@@ -339,6 +355,7 @@ jobs:
           echo "AKITA_BENCH_SOURCE_SHA=$GITHUB_SHA" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_SOURCE_BRANCH=${{ github.head_ref || github.ref_name }}" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_BASE_REF=" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_PROTOCOL_FEATURE=" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_MERGE_BASE_SHA=" >> "$GITHUB_ENV"
           {
             echo "AKITA_BENCH_SOURCE_SUBJECT<<EOF"
@@ -355,6 +372,9 @@ jobs:
             const pullRequest = context.payload.pull_request;
 
             core.exportVariable('AKITA_BENCH_BASE_REF', pullRequest.base.ref);
+            if (pullRequest.base.ref === 'dev') {
+              core.exportVariable('AKITA_BENCH_PROTOCOL_FEATURE', 'dev-protocol');
+            }
             core.exportVariable('AKITA_BENCH_SOURCE_SHA', pullRequest.head.sha);
             core.exportVariable('AKITA_BENCH_SOURCE_BRANCH', pullRequest.head.ref);
 

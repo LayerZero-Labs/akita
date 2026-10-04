@@ -2,11 +2,21 @@
 
 use super::DIGITS_PER_BLOCK;
 
+/// Byte offset and in-byte shift of digit `index`.
+///
+/// Splits the index by eight before scaling, like `encoded_byte_len`: the
+/// byte offset is at most `index` for every supported width, so an absolute
+/// index near `usize::MAX` cannot overflow the way `index * bit_width` does.
+#[inline]
+pub(super) fn bit_position(index: usize, bit_width: u8) -> (usize, usize) {
+    let width = usize::from(bit_width);
+    let tail_bits = index % 8 * width;
+    (index / 8 * width + tail_bits / 8, tail_bits % 8)
+}
+
 #[inline]
 pub(super) fn encode_at(storage: &mut [u8], index: usize, bit_width: u8, digit: i8) {
-    let bit_offset = index * usize::from(bit_width);
-    let byte_offset = bit_offset / 8;
-    let shift = bit_offset % 8;
+    let (byte_offset, shift) = bit_position(index, bit_width);
     let mask = bit_mask(bit_width);
     let raw = (digit as u8) & mask;
     storage[byte_offset] |= raw << shift;
@@ -39,9 +49,7 @@ pub(super) fn encode_block(source: &[i8], bit_width: u8, output: &mut [u8]) {
 
 #[inline]
 pub(super) fn decode_at(storage: &[u8], index: usize, bit_width: u8) -> i8 {
-    let bit_offset = index * usize::from(bit_width);
-    let byte_offset = bit_offset / 8;
-    let shift = bit_offset % 8;
+    let (byte_offset, shift) = bit_position(index, bit_width);
     let word = u16::from(storage[byte_offset]) | (u16::from(storage[byte_offset + 1]) << 8);
     let raw = ((word >> shift) as u8) & bit_mask(bit_width);
     sign_extend(raw, bit_width)
@@ -49,9 +57,7 @@ pub(super) fn decode_at(storage: &[u8], index: usize, bit_width: u8) -> i8 {
 
 #[inline]
 pub(super) fn decode_at_zero_padded(storage: &[u8], index: usize, bit_width: u8) -> i8 {
-    let bit_offset = index * usize::from(bit_width);
-    let byte_offset = bit_offset / 8;
-    let shift = bit_offset % 8;
+    let (byte_offset, shift) = bit_position(index, bit_width);
     let low = storage.get(byte_offset).copied().unwrap_or(0);
     let high = storage.get(byte_offset + 1).copied().unwrap_or(0);
     let word = u16::from(low) | (u16::from(high) << 8);

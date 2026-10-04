@@ -60,7 +60,9 @@ pub(super) fn validate_explicit_output_isolation(
         return Ok(());
     }
     let checked_in_generated_dir = resolved_output_path(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../artifacts/schedules"),
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../artifacts")
+            .join(akita_params::SCHEDULE_ARTIFACT_SET),
     )?;
     let requested_dir = resolved_output_path(base_dir)?;
     if requested_dir.starts_with(&checked_in_generated_dir) {

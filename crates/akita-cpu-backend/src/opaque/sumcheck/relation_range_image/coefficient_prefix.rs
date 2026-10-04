@@ -1,7 +1,7 @@
 use super::*;
 use crate::opaque::sumcheck::par_fold_by_grain;
 
-impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
+impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
     #[tracing::instrument(
         skip_all,
         name = "RelationRangeImageProver::compute_compact_partial_lane_coefficient_round_terms"
@@ -10,14 +10,15 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> (NormRoundTerms<'_, E>, RoundMessage<E>) {
         debug_assert!(self.in_coefficient_round());
         debug_assert_eq!(
             compact_witness.len(),
             self.live_lane_count * weights.common_alpha_factor().len()
         );
 
-        if self.can_skip_norm_linear_coeff() {
+        let recovery = self.split_eq.prepare_linear_q_recovery();
+        let (norm, relation) = if recovery.is_some() {
             self.compute_compact_partial_lane_coefficient_round_terms_skip_linear::<true, false>(
                 compact_witness,
                 weights,
@@ -27,15 +28,17 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 compact_witness,
                 weights,
             )
-        }
+        };
+        (NormRoundTerms::from_totals(norm, recovery), relation)
     }
 
     pub(super) fn compute_compact_partial_lane_coefficient_round_norm_terms(
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         weights: &RelationWeightFactorization<E>,
-    ) -> NormRoundTerms<E> {
-        let terms = if self.can_skip_norm_linear_coeff() {
+    ) -> NormRoundTerms<'_, E> {
+        let recovery = self.split_eq.prepare_linear_q_recovery();
+        let (norm, _) = if recovery.is_some() {
             self.compute_compact_partial_lane_coefficient_round_terms_skip_linear::<true, true>(
                 compact_witness,
                 weights,
@@ -46,7 +49,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 weights,
             )
         };
-        terms.0
+        NormRoundTerms::from_totals(norm, recovery)
     }
 
     fn compute_compact_partial_lane_coefficient_round_terms_skip_linear<
@@ -56,7 +59,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> ([E; 3], RoundMessage<E>) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
@@ -145,7 +148,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             },
         );
 
-        (virt_coeffs.into_terms(), reduce_compact_rel(rel_accum))
+        (virt_coeffs.totals(), reduce_compact_rel(rel_accum))
     }
 
     #[tracing::instrument(
@@ -156,14 +159,15 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         folded_witness: &[E],
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> (NormRoundTerms<'_, E>, RoundMessage<E>) {
         debug_assert!(self.in_coefficient_round());
         debug_assert_eq!(
             folded_witness.len(),
             self.live_lane_count * weights.common_alpha_factor().len()
         );
 
-        if self.can_skip_norm_linear_coeff() {
+        let recovery = self.split_eq.prepare_linear_q_recovery();
+        let (norm, relation) = if recovery.is_some() {
             self.compute_folded_partial_lane_coefficient_round_terms_skip_linear::<true, false>(
                 folded_witness,
                 weights,
@@ -173,15 +177,17 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 folded_witness,
                 weights,
             )
-        }
+        };
+        (NormRoundTerms::from_totals(norm, recovery), relation)
     }
 
     pub(super) fn compute_folded_partial_lane_coefficient_round_norm_terms(
         &self,
         folded_witness: &[E],
         weights: &RelationWeightFactorization<E>,
-    ) -> NormRoundTerms<E> {
-        let terms = if self.can_skip_norm_linear_coeff() {
+    ) -> NormRoundTerms<'_, E> {
+        let recovery = self.split_eq.prepare_linear_q_recovery();
+        let (norm, _) = if recovery.is_some() {
             self.compute_folded_partial_lane_coefficient_round_terms_skip_linear::<true, true>(
                 folded_witness,
                 weights,
@@ -192,7 +198,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 weights,
             )
         };
-        terms.0
+        NormRoundTerms::from_totals(norm, recovery)
     }
 
     fn compute_folded_partial_lane_coefficient_round_terms_skip_linear<
@@ -202,7 +208,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         folded_witness: &[E],
         weights: &RelationWeightFactorization<E>,
-    ) -> (NormRoundTerms<E>, RoundMessage<E>) {
+    ) -> ([E; 3], RoundMessage<E>) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
@@ -282,7 +288,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 (va, ra)
             },
         );
-        (virt_coeffs.into_terms(), rel_coeffs)
+        (virt_coeffs.totals(), rel_coeffs)
     }
 
     pub(super) fn fold_folded_coefficients(

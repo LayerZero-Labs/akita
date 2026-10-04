@@ -1,5 +1,6 @@
 //! The Stage-1 polynomial `Q(x) = prod_{k < b/2} (x - k(k+1))`.
 
+use akita_error::AkitaError;
 use jolt_field::{Field, Ring, Unreduced};
 use jolt_poly::OmittedConstantPoly;
 
@@ -19,35 +20,38 @@ pub(crate) enum LinearSum {
     RangeDifference,
 }
 
-#[derive(Clone)]
-pub(crate) struct RangePoly {
-    degree_q: usize,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RangePoly {
+    Quadratic,
+    Quartic,
 }
 
 impl RangePoly {
-    pub(crate) const fn new(basis: usize) -> Self {
-        assert!(
-            matches!(basis, 4 | 8),
-            "direct range prover requires basis 4 or 8"
-        );
-        Self {
-            degree_q: basis / 2,
+    pub(crate) fn new(basis: usize) -> Result<Self, AkitaError> {
+        match basis {
+            4 => Ok(Self::Quadratic),
+            8 => Ok(Self::Quartic),
+            _ => Err(AkitaError::InvalidInput(
+                "direct range prover requires basis 4 or 8".into(),
+            )),
         }
     }
 
     /// Number of nonconstant round coefficients each pair contributes.
     pub(crate) const fn num_coefficients(&self) -> usize {
-        self.degree_q
+        match self {
+            Self::Quadratic => 2,
+            Self::Quartic => 4,
+        }
     }
 
     /// Integer factor of each nonconstant Taylor coefficient of
     /// `Q(left + X * delta)`, which the per-pair kernels leave out and
     /// [`round_poly_from_sums`](Self::round_poly_from_sums) applies once.
     pub(crate) fn taylor_factors(&self) -> &'static [u64] {
-        match self.degree_q {
-            2 => &[2, 1],
-            4 => &[4, 6, 4, 1],
-            _ => unreachable!("direct range leaf only supports quadratic and quartic checks"),
+        match self {
+            Self::Quadratic => &[2, 1],
+            Self::Quartic => &[4, 6, 4, 1],
         }
     }
 
@@ -94,7 +98,7 @@ impl RangePoly {
     /// Evaluate Q at a field element, multiplying its roots in order.
     #[inline]
     pub(crate) fn eval<E: Field + Ring>(&self, x: E) -> E {
-        (0..self.degree_q).fold(E::one(), |value, k| {
+        (0..self.num_coefficients()).fold(E::one(), |value, k| {
             let k = k as i64;
             value * (x - E::from_i64(k * (k + 1)))
         })
@@ -102,10 +106,9 @@ impl RangePoly {
 
     /// Integer evaluation for the compile-time prefix lookup tables.
     pub(crate) const fn eval_i64(&self, x: i64) -> i64 {
-        match self.degree_q {
-            2 => x * (x - 2),
-            4 => x * (x - 2) * (x - 6) * (x - 12),
-            _ => unreachable!(),
+        match self {
+            Self::Quadratic => x * (x - 2),
+            Self::Quartic => x * (x - 2) * (x - 6) * (x - 12),
         }
     }
 
@@ -139,12 +142,12 @@ impl RangePoly {
         weight: E,
     ) {
         let weighted_delta = weight * range_image_delta;
-        match self.degree_q {
-            2 => {
+        match self {
+            Self::Quadratic => {
                 sums[0] += (left_range_image - E::one()).mul_unreduced(weighted_delta);
                 sums[1] += range_image_delta.mul_unreduced(weighted_delta);
             }
-            4 => {
+            Self::Quartic => {
                 let shifted = left_range_image - E::from_u64(5);
                 let shifted_squared = shifted.square();
                 let weighted_delta_squared = weighted_delta * range_image_delta;
@@ -155,7 +158,6 @@ impl RangePoly {
                 sums[2] += shifted.mul_unreduced(weighted_delta_cubed);
                 sums[3] += range_image_delta.mul_unreduced(weighted_delta_cubed);
             }
-            _ => unreachable!("direct range leaf only supports quadratic and quartic checks"),
         }
     }
 
@@ -170,7 +172,7 @@ impl RangePoly {
     ) {
         let delta = right.value - left.value;
         let delta_squared = delta.square();
-        if self.degree_q == 2 {
+        if matches!(self, Self::Quadratic) {
             sums[1] += delta_squared.mul_unreduced(weight);
         } else {
             let weighted_delta_squared = weight * delta_squared;
@@ -178,5 +180,23 @@ impl RangePoly {
             sums[2] += (left.shifted * delta).mul_unreduced(weighted_delta_squared);
             sums[3] += delta_squared.mul_unreduced(weighted_delta_squared);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_degree_rejects_unsupported_basis() {
+        for basis in [0, 2, 16, 32, 64] {
+            assert!(matches!(
+                RangePoly::new(basis),
+                Err(AkitaError::InvalidInput(message))
+                    if message == "direct range prover requires basis 4 or 8"
+            ));
+        }
+        assert_eq!(RangePoly::new(4).unwrap(), RangePoly::Quadratic);
+        assert_eq!(RangePoly::new(8).unwrap(), RangePoly::Quartic);
     }
 }

@@ -67,6 +67,8 @@ jobs:
         run: cargo clippy --all --all-targets --release --no-default-features --features transcript-blake2b -- -D warnings
       - name: Clippy (response model diagnostics)
         run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-blake2b -- -D warnings
+      - name: Clippy (dev protocol)
+        run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-blake2b,dev-protocol -- -D warnings
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier
@@ -254,6 +256,75 @@ jobs:
       - name: Combined-family setup at exact capacities
         run: |
           cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- --exact heterogeneous::combined_family_setup_matches_per_family_proofs
+
+  # The dev protocol has its own schedule set, so its drift check runs apart
+  # from the default one. Its tests run in `test-dev-protocol`.
+  test-dev-protocol-drift:
+    name: Dev protocol schedule artifact drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: false
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-test-dev-protocol-drift
+          add-job-id-key: false
+          cache-on-failure: true
+      - name: Trusted dev artifact guard
+        run: |
+          cargo test --release -p akita-config --features dev-protocol --test trusted_schedule_artifact
+      - name: Regenerate dev schedule artifacts in temporary storage
+        env:
+          AKITA_SCHEDULE_GEN_JOBS: 2
+        run: |
+          artifact_dir="$RUNNER_TEMP/akita-schedule-artifacts-dev"
+          mkdir -p "$artifact_dir"
+          cargo run --release -p akita-planner --features catalog-gen,dev-protocol \
+            --bin gen_schedule_artifacts -- "$artifact_dir" --row-progress \
+            --catalog-baseline artifacts/schedule-catalog-dev.tsv \
+            --require-catalog-baseline-match \
+            --catalog-report "$RUNNER_TEMP/akita-schedule-dev-baseline-comparison.tsv"
+          diff -ru artifacts/schedules-dev "$artifact_dir"
+      - name: Direct modeled SIS cost for every dev schedule
+        run: |
+          cargo run --release -p akita-planner \
+            --features catalog-security,dev-protocol \
+            --example catalog_security -- --check
+
+  # The workspace test suite under the dev protocol, sharded like `test`. It
+  # uploads no timing artifacts; `test-timing` reports the default build.
+  test-dev-protocol:
+    name: Test dev protocol (${{ matrix.shard }}/${{ strategy.job-total }})
+    runs-on: GitHubRunner-Large-Public
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: false
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-test-dev-protocol
+          add-job-id-key: false
+          cache-on-failure: true
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # carg-nextest
+        with:
+          tool: cargo-nextest
+      - name: Run tests
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
+        run: |
+          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,transcript-blake2b,dev-protocol \
+            --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
 
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})

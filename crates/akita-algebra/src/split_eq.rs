@@ -57,6 +57,16 @@ pub struct GruenSplitEq<E: Field> {
     E_second: Vec<Vec<E>>,
 }
 
+/// Recovery for one round, borrowing its split equality state so it cannot advance.
+/// Private fields certify an invertible `l(1)`; consuming methods accept arbitrary
+/// coefficients and claims, whose consistency remains the caller's responsibility.
+pub struct PreparedLinearQRecovery<'a, E: Field> {
+    at_zero: E,
+    slope: E,
+    at_one_inverse: E,
+    round: std::marker::PhantomData<&'a GruenSplitEq<E>>,
+}
+
 #[allow(non_snake_case)]
 impl<E: Field> GruenSplitEq<E> {
     /// Create a new split-eq from the full challenge vector `τ`.
@@ -179,11 +189,24 @@ impl<E: Field> GruenSplitEq<E> {
         (l_at_0, l_at_1)
     }
 
+    /// Prepare recovery once; returns `None` for `l(1) = 0` or after the last round.
+    pub fn prepare_linear_q_recovery(&self) -> Option<PreparedLinearQRecovery<'_, E>> {
+        let tau = *self.tau.get(self.current_round)?;
+        let at_one = self.current_scalar * tau;
+        let at_zero = self.current_scalar - at_one;
+        Some(PreparedLinearQRecovery {
+            at_zero,
+            slope: at_one - at_zero,
+            at_one_inverse: at_one.inverse()?,
+            round: std::marker::PhantomData,
+        })
+    }
+
     /// Returns whether the current Gruen linear factor lets us recover the
     /// omitted linear coefficient of the inner polynomial from `s(0) + s(1)`.
+    /// Returns `false` after the last round because there is no current round to recover.
     pub fn can_recover_linear_q_term_from_claim(&self) -> bool {
-        let (_, l_at_1) = self.linear_factor_evals();
-        l_at_1.inverse().is_some()
+        self.prepare_linear_q_recovery().is_some()
     }
 
     /// Compute the round polynomial `s(X) = l(X) · q(X)` from the inner
@@ -193,14 +216,8 @@ impl<E: Field> GruenSplitEq<E> {
     /// for the current variable, including any constructor-supplied leading
     /// scalar. The result has degree `d + 1`.
     pub fn gruen_mul(&self, q_poly: &UnivariatePoly<E>) -> UnivariatePoly<E> {
-        let (l_at_0, l_at_1) = self.linear_factor_evals();
-        let slope = l_at_1 - l_at_0;
-        let mut coeffs = vec![E::zero(); q_poly.coefficients().len() + 1];
-        for (i, &c) in q_poly.coefficients().iter().enumerate() {
-            coeffs[i] += c * l_at_0;
-            coeffs[i + 1] += c * slope;
-        }
-        UnivariatePoly::new(coeffs)
+        let (at_zero, at_one) = self.linear_factor_evals();
+        mul_linear(q_poly.coefficients(), at_zero, at_one - at_zero)
     }
 
     /// Recover a missing linear coefficient of `q(X)` from `s(0) + s(1)` and
@@ -223,20 +240,10 @@ impl<E: Field> GruenSplitEq<E> {
             return Some(UnivariatePoly::new(vec![E::zero()]));
         }
 
-        let l_at_1_inv = l_at_1.inverse()?;
-        let q_at_0 = q_coeffs_except_linear[0];
-        let q_at_1 = (s_0_plus_s_1 - l_at_0 * q_at_0) * l_at_1_inv;
-        let sum_except_linear = q_coeffs_except_linear
-            .iter()
-            .copied()
-            .fold(E::zero(), |acc, coeff| acc + coeff);
-        let q_linear = q_at_1 - sum_except_linear;
-
-        let mut q_coeffs = Vec::with_capacity(q_coeffs_except_linear.len() + 1);
-        q_coeffs.push(q_at_0);
-        q_coeffs.push(q_linear);
-        q_coeffs.extend_from_slice(&q_coeffs_except_linear[1..]);
-        Some(self.gruen_mul(&UnivariatePoly::new(q_coeffs)))
+        Some(
+            self.prepare_linear_q_recovery()?
+                .gruen_poly_from_coeffs_except_linear(q_coeffs_except_linear, s_0_plus_s_1),
+        )
     }
 }
 
@@ -258,25 +265,55 @@ impl<E: Field + Ring> GruenSplitEq<E> {
             return Some(UnivariatePoly::new(vec![E::zero()]));
         }
 
-        let l_at_1_inv = l_at_1.inverse()?;
-        let slope = l_at_1 - l_at_0;
-        let l_at_2 = l_at_1 + slope;
-        let l_at_3 = l_at_2 + slope;
-
-        let q_at_0 = q_constant;
-        let s_at_0 = l_at_0 * q_at_0;
-        let s_at_1 = s_0_plus_s_1 - s_at_0;
-        let q_at_1 = s_at_1 * l_at_1_inv;
-
-        let twice_q_quadratic = q_quadratic_coeff + q_quadratic_coeff;
-        let q_at_2 = q_at_1 + q_at_1 - q_at_0 + twice_q_quadratic;
-        let q_at_3 = q_at_2 + q_at_1 - q_at_0 + twice_q_quadratic + twice_q_quadratic;
-
-        let mut polynomial =
-            UnivariatePoly::from_evals(&[s_at_0, s_at_1, l_at_2 * q_at_2, l_at_3 * q_at_3]);
-        polynomial.trim_trailing_zeros();
-        Some(polynomial)
+        Some(self.prepare_linear_q_recovery()?.gruen_poly_deg_3(
+            q_constant,
+            q_quadratic_coeff,
+            s_0_plus_s_1,
+        ))
     }
+}
+
+impl<E: Field> PreparedLinearQRecovery<'_, E> {
+    fn linear_term(&self, constant: E, sum_except_linear: E, claim: E) -> E {
+        (claim - self.at_zero * constant) * self.at_one_inverse - sum_except_linear
+    }
+
+    /// Apply recovery to `[q_0, q_2, ..., q_d]`; an empty slice gives the zero polynomial.
+    fn gruen_poly_from_coeffs_except_linear(
+        self,
+        coefficients: &[E],
+        claim: E,
+    ) -> UnivariatePoly<E> {
+        let Some((&constant, rest)) = coefficients.split_first() else {
+            return UnivariatePoly::new(vec![E::zero()]);
+        };
+        let sum = coefficients
+            .iter()
+            .copied()
+            .fold(E::zero(), |sum, c| sum + c);
+        let mut full = Vec::with_capacity(coefficients.len() + 1);
+        full.push(constant);
+        full.push(self.linear_term(constant, sum, claim));
+        full.extend_from_slice(rest);
+        mul_linear(&full, self.at_zero, self.slope)
+    }
+
+    /// Apply recovery to a quadratic inner polynomial without allocating its coefficients.
+    pub fn gruen_poly_deg_3(self, constant: E, quadratic: E, claim: E) -> UnivariatePoly<E> {
+        let linear = self.linear_term(constant, constant + quadratic, claim);
+        let mut polynomial = mul_linear(&[constant, linear, quadratic], self.at_zero, self.slope);
+        polynomial.trim_trailing_zeros();
+        polynomial
+    }
+}
+
+fn mul_linear<E: Field>(q_coeffs: &[E], at_zero: E, slope: E) -> UnivariatePoly<E> {
+    let mut coeffs = vec![E::zero(); q_coeffs.len() + 1];
+    for (i, &c) in q_coeffs.iter().enumerate() {
+        coeffs[i] += c * at_zero;
+        coeffs[i + 1] += c * slope;
+    }
+    UnivariatePoly::new(coeffs)
 }
 
 #[cfg(test)]
@@ -289,6 +326,111 @@ mod tests {
     use rand::SeedableRng;
 
     type F = Prime128Offset275;
+
+    #[test]
+    fn prepared_recovery_matches_existing_paths_at_every_round() {
+        let mut saw_zero_at_one = false;
+        let mut saw_zero_factor = false;
+        for tau in [
+            vec![F::from_u64(3); 5],
+            vec![F::zero(), F::one(), F::from_u64(7), F::one(), F::zero()],
+        ] {
+            for scalar in [F::one(), F::zero()] {
+                let mut split = GruenSplitEq::with_initial_scalar(&tau, scalar).unwrap();
+                for round in 0..tau.len() {
+                    let q =
+                        UnivariatePoly::new(vec![F::from_u64(5), F::from_u64(9), F::from_u64(4)]);
+                    let mut expected = split.gruen_mul(&q);
+                    let claim = expected.evaluate(F::zero()) + expected.evaluate(F::one());
+                    expected.trim_trailing_zeros();
+                    let prepared = split.prepare_linear_q_recovery();
+                    assert_eq!(
+                        prepared.is_some(),
+                        split.can_recover_linear_q_term_from_claim()
+                    );
+                    let checked = split.try_gruen_poly_deg_3(F::from_u64(5), F::from_u64(4), claim);
+                    if let Some(prepared) = prepared {
+                        let actual =
+                            prepared.gruen_poly_deg_3(F::from_u64(5), F::from_u64(4), claim);
+                        assert_eq!(Some(actual.clone()), checked);
+                        assert_eq!(actual, expected);
+                        // General recovery retains its existing coefficient representation,
+                        // including untrimmed zero polynomials and arbitrary claims.
+                        for coefficients in [
+                            vec![],
+                            vec![F::zero()],
+                            vec![F::from_u64(5)],
+                            vec![F::from_u64(5), F::from_u64(4), F::from_u64(6)],
+                        ] {
+                            for arbitrary_claim in [F::zero(), claim, F::from_u64(17)] {
+                                let cubic =
+                                    split.prepare_linear_q_recovery().unwrap().gruen_poly_deg_3(
+                                        F::from_u64(5),
+                                        F::from_u64(4),
+                                        arbitrary_claim,
+                                    );
+                                assert_eq!(
+                                    cubic.evaluate(F::zero()) + cubic.evaluate(F::one()),
+                                    arbitrary_claim
+                                );
+                                assert_eq!(
+                                    Some(cubic),
+                                    split.try_gruen_poly_deg_3(
+                                        F::from_u64(5),
+                                        F::from_u64(4),
+                                        arbitrary_claim,
+                                    )
+                                );
+                                let actual = split
+                                    .prepare_linear_q_recovery()
+                                    .unwrap()
+                                    .gruen_poly_from_coeffs_except_linear(
+                                        &coefficients,
+                                        arbitrary_claim,
+                                    );
+                                assert_eq!(
+                                    Some(actual),
+                                    split.try_gruen_poly_from_coeffs_except_linear(
+                                        &coefficients,
+                                        arbitrary_claim,
+                                    )
+                                );
+                            }
+                        }
+                    } else {
+                        let (at_zero, at_one) = split.linear_factor_evals();
+                        assert!(at_one.is_zero());
+                        saw_zero_at_one = true;
+                        if at_zero.is_zero() {
+                            saw_zero_factor = true;
+                            assert_eq!(checked, Some(UnivariatePoly::new(vec![F::zero()])));
+                            assert_eq!(
+                                split.try_gruen_poly_from_coeffs_except_linear(
+                                    &[F::from_u64(5), F::from_u64(4)],
+                                    claim,
+                                ),
+                                checked
+                            );
+                            assert_eq!(expected, checked.unwrap());
+                        } else {
+                            assert!(checked.is_none());
+                            assert!(split
+                                .try_gruen_poly_from_coeffs_except_linear(
+                                    &[F::from_u64(5), F::from_u64(4)],
+                                    claim,
+                                )
+                                .is_none());
+                        }
+                    }
+                    split.bind(F::from_u64(round as u64 + 11));
+                }
+                assert!(split.prepare_linear_q_recovery().is_none());
+                assert!(!split.can_recover_linear_q_term_from_claim());
+            }
+        }
+        assert!(saw_zero_at_one);
+        assert!(saw_zero_factor);
+    }
 
     #[test]
     fn gruen_eq_matches_full_eq_table() {
