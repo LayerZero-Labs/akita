@@ -11,11 +11,22 @@
 //! (`!x = -x - 1`, which never leaves the range of `x`) and the missing `+1`
 //! per subtracted window is added back as one precomputed constant. Every
 //! output window then runs the same add-only loop with the same trip count.
+//!
+//! NEON widens while it adds. AVX2 and AVX-512 have no widening add, so their
+//! kernel widens the plane to `i16` once and reads subtracted windows from
+//! its negation.
 
 use akita_challenges::SparseChallenge;
 
 /// Coefficients per gathered window: one 128-bit vector of `i8` digits.
 pub(super) const WINDOW: usize = 16;
+
+/// Coefficients gathered per table entry: two neighbouring windows for the
+/// AVX-512 kernel, which holds 32 `i16` sums in one register, else one.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+const GATHER: usize = 2 * WINDOW;
+#[cfg(not(all(target_arch = "x86_64", target_feature = "avx512bw")))]
+const GATHER: usize = WINDOW;
 
 /// Source offsets packed into one table word, 16 bits each.
 const WORD_OFFSETS: usize = 4;
@@ -30,25 +41,36 @@ pub(super) enum I8DigitSpan {
     Half,
 }
 
-/// A digit plane, its bitwise complement and one zero window, so one offset
-/// selects the source window and its sign, and padding offsets add nothing.
+/// A digit plane, its bitwise complement and zeros, so one offset selects the
+/// source and its sign, and padding offsets add nothing.
+///
+/// `head` repeats the first window of the plane. A two-window gather that
+/// starts in the last window of `plane` or of `complement` then continues
+/// into the first window with the opposite sign, which is what the negacyclic
+/// wrap needs.
+///
+/// The x86 kernels read the same layout from [`x86::WidePlane`] instead.
+#[cfg_attr(all(target_arch = "x86_64", target_feature = "avx2"), allow(dead_code))]
 #[repr(C, align(16))]
 struct SignedPlane<const D: usize> {
     plane: [i8; D],
     complement: [i8; D],
-    zero: [i8; WINDOW],
+    head: [i8; WINDOW],
+    zero: [i8; GATHER],
 }
 
 /// Per-window source lists for one challenge.
 ///
-/// Every output window owns `words_per_window` table words: first
-/// `once_words` words listing the terms with coefficient magnitude one, then
-/// the words listing the terms with magnitude two. Each word packs
-/// [`WORD_OFFSETS`] [`SignedPlane`] offsets; unused slots point at the zero
-/// window. `corrections[window]` is the weighted number of complemented
+/// Every run of [`GATHER`] output coefficients owns `words_per_window` table
+/// words: first `once_words` words listing the terms with coefficient
+/// magnitude one, then the words listing the terms with magnitude two. Each
+/// word packs [`WORD_OFFSETS`] [`SignedPlane`] offsets; unused slots point at
+/// the zeros. `corrections[window]` is the weighted number of complemented
 /// sources in that window's list.
 pub(super) struct WindowedChallenge {
     words: Vec<u64>,
+    // The x86 kernels read negated sources, which need no correction.
+    #[cfg_attr(all(target_arch = "x86_64", target_feature = "avx2"), allow(dead_code))]
     corrections: Vec<i16>,
     once_words: usize,
     words_per_window: usize,
@@ -66,8 +88,8 @@ impl WindowedChallenge {
         span: I8DigitSpan,
     ) -> Option<Self> {
         let num_terms = challenge.positions.len();
-        if !D.is_multiple_of(WINDOW)
-            || 2 * D + WINDOW > usize::from(u16::MAX) + 1
+        if !D.is_multiple_of(GATHER)
+            || 2 * D + WINDOW > usize::from(u16::MAX)
             || num_terms == 0
             || num_terms > i16::MAX as usize / 2
             || num_terms != challenge.coeffs.len()
@@ -94,10 +116,10 @@ impl WindowedChallenge {
         let once_words = num_once.div_ceil(WORD_OFFSETS);
         let words_per_window = once_words + (num_terms - num_once).div_ceil(WORD_OFFSETS);
         let num_windows = D / WINDOW;
-        let mut words = Vec::with_capacity(num_windows * words_per_window);
-        let mut corrections = Vec::with_capacity(num_windows);
+        let mut words = Vec::with_capacity(D / GATHER * words_per_window);
+        let mut corrections = Vec::with_capacity(D / GATHER);
         let mut offsets = Vec::with_capacity(num_terms);
-        for window in 0..num_windows {
+        for window in (0..num_windows).step_by(GATHER / WINDOW) {
             let mut correction = 0i16;
             for magnitude in [1u8, 2] {
                 offsets.clear();
@@ -107,7 +129,10 @@ impl WindowedChallenge {
                     }
                     let shift = position as usize / WINDOW;
                     // X^position moves source window `window - shift` here;
-                    // the windows that wrap past X^D come back negated.
+                    // the windows that wrap past X^D come back negated. A
+                    // two-window gather reads on into the next source
+                    // window, which `SignedPlane` keeps adjacent across the
+                    // wrap as well.
                     let wrapped = window < shift;
                     let source = if wrapped {
                         window + num_windows - shift
@@ -123,7 +148,8 @@ impl WindowedChallenge {
                 }
                 words.extend(offsets.chunks(WORD_OFFSETS).map(|group| {
                     (0..WORD_OFFSETS).fold(0u64, |word, slot| {
-                        let offset = group.get(slot).copied().unwrap_or(2 * D as u64);
+                        let zeros = (2 * D + WINDOW) as u64;
+                        let offset = group.get(slot).copied().unwrap_or(zeros);
                         word | (offset << (16 * slot))
                     })
                 }));
@@ -142,14 +168,21 @@ impl WindowedChallenge {
 
 /// Whether the window-gathered kernel is the faster narrow kernel here.
 ///
-/// Only the NEON implementation has been measured to beat the term-at-a-time
-/// kernel, so other targets keep the existing narrow path.
+/// Only the NEON, AVX2 and AVX-512 implementations have been measured to
+/// beat the term-at-a-time kernel, so other targets keep the existing narrow
+/// path.
 pub(super) fn gathers_windows() -> bool {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "avx2")
+    ))]
     {
         super::use_simd_decompose_fold()
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "avx2")
+    )))]
     {
         false
     }
@@ -166,62 +199,72 @@ pub(super) fn windowed_mul_acc<const D: usize>(
     challenge: &WindowedChallenge,
     acc: &mut [i16; D],
 ) {
-    assert!(D.is_multiple_of(WINDOW));
+    assert!(D.is_multiple_of(GATHER));
     assert_eq!(
         challenge.words.len(),
-        D / WINDOW * challenge.words_per_window
+        D / GATHER * challenge.words_per_window
     );
-    let mut signed = SignedPlane {
-        plane: *digit_plane,
-        complement: [0; D],
-        zero: [0; WINDOW],
-    };
-    for (complement, &digit) in signed.complement.iter_mut().zip(digit_plane) {
-        *complement = !digit;
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    // SAFETY: the length check above ties the table to this `D`, and the
+    // target features the kernel needs are enabled for this build.
+    unsafe {
+        x86::accumulate(digit_plane, challenge, acc);
     }
-    let windows = acc
-        .chunks_exact_mut(WINDOW)
-        .zip(challenge.words.chunks_exact(challenge.words_per_window))
-        .zip(&challenge.corrections);
-    for ((acc_window, words), &correction) in windows {
-        let (once, twice) = words.split_at(challenge.once_words);
-        #[cfg(target_arch = "aarch64")]
-        // SAFETY: `WindowedChallenge::new::<D>` only packs offsets of whole
-        // windows inside a `SignedPlane<D>`, and the length check above ties
-        // the table to this `D`; `acc_window` is exactly one window; NEON is
-        // baseline on aarch64.
-        unsafe {
-            let digits = (&raw const signed).cast::<i8>();
-            let acc_window = acc_window.as_mut_ptr();
-            match challenge.span {
-                I8DigitSpan::Full => {
-                    neon::gather_window::<false>(digits, once, twice, correction, acc_window);
-                }
-                I8DigitSpan::Half => {
-                    neon::gather_window::<true>(digits, once, twice, correction, acc_window);
-                }
-            }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
+    {
+        let mut signed = SignedPlane {
+            plane: *digit_plane,
+            complement: [0; D],
+            head: [0; WINDOW],
+            zero: [0; GATHER],
+        };
+        for (complement, &digit) in signed.complement.iter_mut().zip(digit_plane) {
+            *complement = !digit;
         }
-        #[cfg(not(target_arch = "aarch64"))]
-        {
-            for (class, scale) in [(once, 1i16), (twice, 2)] {
-                for slot in 0..class.len() * WORD_OFFSETS {
-                    let word = class[slot / WORD_OFFSETS];
-                    let offset = (word >> (16 * (slot % WORD_OFFSETS))) as u16 as usize;
-                    let source = if offset < D {
-                        &signed.plane[offset..][..WINDOW]
-                    } else if offset < 2 * D {
-                        &signed.complement[offset - D..][..WINDOW]
-                    } else {
-                        &signed.zero
-                    };
-                    for (sum, &digit) in acc_window.iter_mut().zip(source) {
-                        *sum += scale * i16::from(digit);
+        let windows = acc
+            .chunks_exact_mut(WINDOW)
+            .zip(challenge.words.chunks_exact(challenge.words_per_window))
+            .zip(&challenge.corrections);
+        for ((acc_window, words), &correction) in windows {
+            let (once, twice) = words.split_at(challenge.once_words);
+            #[cfg(target_arch = "aarch64")]
+            // SAFETY: `WindowedChallenge::new::<D>` only packs offsets of
+            // whole windows inside a `SignedPlane<D>`, and the length check
+            // above ties the table to this `D`; `acc_window` is exactly one
+            // window; NEON is baseline on aarch64.
+            unsafe {
+                let digits = (&raw const signed).cast::<i8>();
+                let acc_window = acc_window.as_mut_ptr();
+                match challenge.span {
+                    I8DigitSpan::Full => {
+                        neon::gather_window::<false>(digits, once, twice, correction, acc_window);
+                    }
+                    I8DigitSpan::Half => {
+                        neon::gather_window::<true>(digits, once, twice, correction, acc_window);
                     }
                 }
             }
-            for sum in acc_window {
-                *sum += correction;
+            #[cfg(not(target_arch = "aarch64"))]
+            {
+                for (class, scale) in [(once, 1i16), (twice, 2)] {
+                    for slot in 0..class.len() * WORD_OFFSETS {
+                        let word = class[slot / WORD_OFFSETS];
+                        let offset = (word >> (16 * (slot % WORD_OFFSETS))) as u16 as usize;
+                        let source = if offset < D {
+                            &signed.plane[offset..][..WINDOW]
+                        } else if offset < 2 * D {
+                            &signed.complement[offset - D..][..WINDOW]
+                        } else {
+                            &signed.zero[..WINDOW]
+                        };
+                        for (sum, &digit) in acc_window.iter_mut().zip(source) {
+                            *sum += scale * i16::from(digit);
+                        }
+                    }
+                }
+                for sum in acc_window {
+                    *sum += correction;
+                }
             }
         }
     }
@@ -370,6 +413,131 @@ mod neon {
         vst1q_s16(acc_window, vaddq_s16(vld1q_s16(acc_window), low));
         let acc_high = acc_window.add(WINDOW / 2);
         vst1q_s16(acc_high, vaddq_s16(vld1q_s16(acc_high), high));
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+mod x86 {
+    use super::{WindowedChallenge, GATHER, WINDOW, WORD_OFFSETS};
+    use std::arch::x86_64::*;
+
+    /// A digit plane widened to `i16`, its negation and zeros, so one offset
+    /// selects the source and its sign, and padding offsets add nothing.
+    ///
+    /// The offsets are those of [`super::SignedPlane`], counted in
+    /// coefficients. Sources are already `i16`, so adding one is a single
+    /// vector add with a memory operand, and negated sources need no
+    /// correction.
+    #[repr(C, align(64))]
+    pub(super) struct WidePlane<const D: usize> {
+        plane: [i16; D],
+        negated: [i16; D],
+        head: [i16; WINDOW],
+        zero: [i16; GATHER],
+    }
+
+    /// [`GATHER`] `i16` lanes.
+    #[cfg(target_feature = "avx512bw")]
+    type Lanes = __m512i;
+    #[cfg(not(target_feature = "avx512bw"))]
+    type Lanes = __m256i;
+
+    #[inline(always)]
+    unsafe fn zero() -> Lanes {
+        #[cfg(target_feature = "avx512bw")]
+        return _mm512_setzero_si512();
+        #[cfg(not(target_feature = "avx512bw"))]
+        return _mm256_setzero_si256();
+    }
+
+    /// # Safety
+    ///
+    /// `source` must address [`GATHER`] readable `i16` values.
+    #[inline(always)]
+    unsafe fn load(source: *const i16) -> Lanes {
+        #[cfg(target_feature = "avx512bw")]
+        return _mm512_loadu_si512(source.cast());
+        #[cfg(not(target_feature = "avx512bw"))]
+        return _mm256_loadu_si256(source.cast());
+    }
+
+    #[inline(always)]
+    unsafe fn add(left: Lanes, right: Lanes) -> Lanes {
+        #[cfg(target_feature = "avx512bw")]
+        return _mm512_add_epi16(left, right);
+        #[cfg(not(target_feature = "avx512bw"))]
+        return _mm256_add_epi16(left, right);
+    }
+
+    /// # Safety
+    ///
+    /// `target` must address [`GATHER`] writable `i16` values.
+    #[inline(always)]
+    unsafe fn store(target: *mut i16, lanes: Lanes) {
+        #[cfg(target_feature = "avx512bw")]
+        _mm512_storeu_si512(target.cast(), lanes);
+        #[cfg(not(target_feature = "avx512bw"))]
+        _mm256_storeu_si256(target.cast(), lanes);
+    }
+
+    /// Sum of all sources listed in `words`, in four independent running
+    /// sums so the add chains overlap.
+    ///
+    /// # Safety
+    ///
+    /// Every offset in `words` must leave [`GATHER`] readable values at
+    /// `sources + offset`.
+    #[inline(always)]
+    unsafe fn sum_sources(sources: *const i16, words: &[u64]) -> Lanes {
+        let mut sums = [zero(); WORD_OFFSETS];
+        for &word in words {
+            for (slot, sum) in sums.iter_mut().enumerate() {
+                let offset = (word >> (16 * slot)) as u16 as usize;
+                *sum = add(*sum, load(sources.add(offset)));
+            }
+        }
+        add(add(sums[0], sums[1]), add(sums[2], sums[3]))
+    }
+
+    /// Add `challenge * digit_plane` to `acc`.
+    ///
+    /// # Safety
+    ///
+    /// `challenge` must hold the table `WindowedChallenge::new::<D>` built,
+    /// and the build must enable AVX2 (and AVX-512BW when [`GATHER`] is two
+    /// windows).
+    #[inline(always)]
+    pub(super) unsafe fn accumulate<const D: usize>(
+        digit_plane: &[i8; D],
+        challenge: &WindowedChallenge,
+        acc: &mut [i16; D],
+    ) {
+        let mut wide = WidePlane {
+            plane: [0i16; D],
+            negated: [0i16; D],
+            head: [0i16; WINDOW],
+            zero: [0i16; GATHER],
+        };
+        let widened = wide.plane.iter_mut().zip(&mut wide.negated);
+        for ((plane, negated), &digit) in widened.zip(digit_plane) {
+            *plane = i16::from(digit);
+            *negated = -i16::from(digit);
+        }
+        wide.head.copy_from_slice(&wide.plane[..WINDOW]);
+        let sources = (&raw const wide).cast::<i16>();
+        let gathers = acc
+            .chunks_exact_mut(GATHER)
+            .zip(challenge.words.chunks_exact(challenge.words_per_window));
+        for (acc_lanes, words) in gathers {
+            let (once, twice) = words.split_at(challenge.once_words);
+            let mut sum = sum_sources(sources, once);
+            if !twice.is_empty() {
+                let twice = sum_sources(sources, twice);
+                sum = add(sum, add(twice, twice));
+            }
+            let acc_lanes = acc_lanes.as_mut_ptr();
+            store(acc_lanes, add(load(acc_lanes), sum));
+        }
     }
 }
 
