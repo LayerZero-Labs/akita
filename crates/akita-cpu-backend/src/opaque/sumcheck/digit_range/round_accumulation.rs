@@ -202,7 +202,20 @@ mod tests {
     use jolt_field::{FpExt4, Prime128Offset275, Prime32Offset99, Ring};
 
     fn check_blocked_accumulation<E: Field + Ring + Unreduced>() {
-        let first = [2, 3, 5, 7].map(E::from_u64);
+        // Inner tables below, at and above the block-binning threshold for
+        // four classes.
+        for first_len in [4, 16, 32, 64] {
+            check_blocked_accumulation_with_inner_len::<E>(first_len);
+        }
+    }
+
+    fn check_blocked_accumulation_with_inner_len<E: Field + Ring + Unreduced>(first_len: usize) {
+        // A zero weight and a cancelling pair sit among generic weights.
+        let mut first = (0..first_len)
+            .map(|index| E::from_u64((index * index + 3 * index + 2) as u64))
+            .collect::<Vec<_>>();
+        first[1] = E::zero();
+        first[3] = E::zero() - first[2];
         let second = [11, 13, 17, 19].map(E::from_u64);
         let rows = (0..first.len() * second.len())
             .map(|row| {
@@ -236,7 +249,7 @@ mod tests {
             assert_eq!(actual, expected);
 
             // Few classes bin each block; many classes weight each entry.
-            for class_count in [1, 3, rows.len()] {
+            for class_count in [1, 3, 4, rows.len()] {
                 let class_rows = &rows[..class_count];
                 let class_at = |index: usize| (index * 5 + 2) % class_count;
                 assert_eq!(

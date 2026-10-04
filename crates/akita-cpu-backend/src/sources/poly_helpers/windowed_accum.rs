@@ -385,7 +385,13 @@ mod tests {
         *state >> 33
     }
 
-    fn check<const D: usize>(stride: usize, num_terms: usize, span: I8DigitSpan, seed: u64) {
+    fn check<const D: usize>(
+        stride: usize,
+        num_terms: usize,
+        coefficients: &[i8],
+        span: I8DigitSpan,
+        seed: u64,
+    ) {
         let mut state = seed;
         let mut slots: Vec<u32> = (0..(D / stride) as u32).collect();
         let mut positions = Vec::new();
@@ -393,7 +399,7 @@ mod tests {
         for _ in 0..num_terms {
             let pick = next(&mut state) as usize % slots.len();
             positions.push(slots.swap_remove(pick) * stride as u32);
-            coeffs.push([1i8, -1, 2, -2][next(&mut state) as usize % 4]);
+            coeffs.push(coefficients[next(&mut state) as usize % coefficients.len()]);
         }
         // Mostly extreme digits, so paired and widened sums meet both ends of
         // the span.
@@ -427,11 +433,28 @@ mod tests {
     fn windowed_gather_matches_term_kernel() {
         for span in [I8DigitSpan::Full, I8DigitSpan::Half] {
             for seed in 0..8 {
-                check::<64>(16, 4, span, seed);
-                check::<256>(16, 13, span, seed);
-                check::<1024>(16, 41, span, seed);
-                check::<2048>(32, 41, span, seed);
-                check::<2048>(16, 31, span, seed);
+                check::<64>(16, 4, &[1, -1, 2, -2], span, seed);
+                check::<256>(16, 13, &[1, -1, 2, -2], span, seed);
+                check::<1024>(16, 41, &[1, -1, 2, -2], span, seed);
+                check::<2048>(32, 41, &[1, -1, 2, -2], span, seed);
+                check::<2048>(16, 31, &[1, -1, 2, -2], span, seed);
+            }
+        }
+    }
+
+    /// One coefficient magnitude puts every term in one list, so 32, 33 and
+    /// 64 terms give one eight-word block, a block plus a tail, and two
+    /// blocks.
+    #[test]
+    fn windowed_gather_matches_term_kernel_on_long_lists() {
+        for span in [I8DigitSpan::Full, I8DigitSpan::Half] {
+            for coefficients in [&[1i8, -1], &[2, -2]] {
+                for num_terms in [32, 33, 64] {
+                    for seed in 0..4 {
+                        check::<1024>(16, num_terms, coefficients, span, seed);
+                        check::<2048>(16, num_terms, coefficients, span, seed);
+                    }
+                }
             }
         }
     }
