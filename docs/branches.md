@@ -133,8 +133,9 @@ protocol. Rules 2 and 3 do not apply to this feature. These rules do:
   MUST NOT read or modify `artifacts/schedules/`. A pull request that changes
   the dev protocol's proof size MUST regenerate the dev set with
   `scripts/generate-schedule-artifacts.sh --dev`.
-- The CI job `test-dev-protocol` regenerates the dev schedule set and runs the
-  end-to-end, soundness, and transcript suites with the feature on.
+- The CI job `test-dev-protocol-drift` regenerates the dev schedule set. The
+  CI job `test-dev-protocol` runs the workspace test suite with the feature
+  on.
 - Every change MUST be listed in the table below.
 
 A build with the feature on produces and accepts only dev-protocol proofs. Do
