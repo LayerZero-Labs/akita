@@ -38,6 +38,14 @@ uncertain findings, or incomplete coverage prevent the recommendation, even if
 there are no new findings. This is a COMMENT review proposing approval; it does
 not submit GitHub's formal APPROVE action.
 
+When existing discussion blocks approval, new reviews visibly say "Approval not
+recommended" and list each unresolved discussion blocker in the review summary.
+This explains a withheld `ai-approved` label even when there are no new inline
+findings. The list uses the same Markdown escaping as inline comments and keeps
+matched code spans readable. Existing feedback is not duplicated inline.
+Previously published reviews retain their original summaries; versioned rendering
+keeps them verifiable during publication retries and label reconciliation.
+
 Every review also posts a short **usefulness assessment** in its review body,
 separate from inline code findings. It checks whether the PR solves a concrete
 problem and improves the repository enough to justify its costs, even when the

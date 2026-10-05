@@ -117,6 +117,10 @@ def approval_recommended(state):
 
 
 def review_body(state):
+    # Old reviews must still reconstruct byte-for-byte during label recovery.
+    body_version = state.get("body_version", 1)
+    if type(body_version) is not int or body_version not in (1, 2):
+        raise ReviewError("Unsupported review body version")
     encoded = base64.b64encode(json.dumps(state).encode()).decode()
     body = f"{MARKER}{encoded} -->"
     if state.get("excluded_artifact_count"):
@@ -134,6 +138,9 @@ def review_body(state):
         remaining = any(finding["status"] != "fixed" for finding in state["findings"])
         reason = "only optional nits remain" if remaining else "no unresolved findings"
         body += f"\n\nRecommended for approval: {reason} in this automated review."
+    if body_version == 2 and state["discussion_blockers"]:
+        body += "\n\nApproval not recommended: unresolved feedback from existing discussion.\n\n"
+        body += "\n".join(f"- {review_text(blocker)}" for blocker in state["discussion_blockers"])
     if len(body.encode()) > 60_000:
         raise ReviewError("Published review exceeds comment size limit")
     return body
@@ -177,7 +184,8 @@ def sync_labels(github, number, state):
 def prepare_review(snapshot, proposal):
     findings = validate(snapshot, proposal)
     result = proposal["result"]
-    state = {"repository": REPOSITORY, "number": snapshot["number"], "request": snapshot["request"],
+    state = {"body_version": 2,
+             "repository": REPOSITORY, "number": snapshot["number"], "request": snapshot["request"],
              "head": snapshot["revision"]["head"], "findings": findings,
              "reopen_epoch": snapshot["reopen_epoch"],
              "scope_digest": digest(approval_scope(snapshot["revision"], snapshot["title"], snapshot["description"])),
