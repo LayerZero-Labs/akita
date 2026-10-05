@@ -34,7 +34,7 @@ class AuthorizationTests(unittest.TestCase):
     def test_accepts_only_current_author_with_write_access(self):
         self.assertEqual(authorize(FakeGitHub(), EVENT)["number"], 7)
         for change in ("other-author", "fork", "closed", "read-only", "extra-text", "edited", "wrong-repo",
-                       "wrong-issue", "sender", "deleted-head"):
+                       "wrong-issue", "sender", "deleted-head", "bot-author"):
             with self.subTest(change=change):
                 gh, event = FakeGitHub(), copy.deepcopy(EVENT)
                 if change == "other-author":
@@ -57,6 +57,10 @@ class AuthorizationTests(unittest.TestCase):
                     event["sender"] = {"id": 999}
                 elif change == "deleted-head":
                     gh.pr["head"]["repo"] = {}
+                elif change == "bot-author":
+                    # A bot opened the PR and its account posts the command.
+                    gh.command["user"] = gh.pr["user"] = event["comment"]["user"] = event["sender"] = {
+                        **AUTHOR, "type": "Bot"}
                 with self.assertRaises(ReviewError):
                     authorize(gh, event)
 
@@ -336,6 +340,17 @@ class WorkflowTests(unittest.TestCase):
             for action in re.findall(r"\buses:\s*([^\s#]+)", path.read_text()):
                 if not action.startswith("./"):
                     self.assertRegex(action, r"^[\w./-]+@[0-9a-f]{40}$", str(path))
+
+
+class WorkflowQueueTests(unittest.TestCase):
+    def test_only_the_authors_exact_command_shares_the_per_pr_comment_queue(self):
+        text = (Path(__file__).resolve().parents[2] / ".github/workflows/ai-review.yml").read_text()
+        group = re.search(r"\n  group: >-\n((?:    .*\n)+)", text)[1]
+        group = " ".join(line.strip() for line in group.splitlines())
+        self.assertTrue(group.startswith("ai-review-${{ github.event_name }}-${{ github.event.issue.number || "
+                                         "github.event.pull_request.number }}-"))
+        self.assertIn("(github.event_name != 'issue_comment' || (github.event.comment.body == '/ai-review' && "
+                      "github.event.comment.user.id == github.event.issue.user.id)) && 'queue' || github.run_id", group)
 
 
 class TransportTests(unittest.TestCase):

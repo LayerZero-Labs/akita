@@ -6,7 +6,7 @@ import os
 import re
 import subprocess
 
-from common import MARKER, REPOSITORY, ReviewError, authorize, digest, reopen_epoch, revision, sha
+from common import MARKER, REPOSITORY, ReviewError, authorize, decode_state, digest, reopen_epoch, revision, sha
 
 # GitHub-issued identities, verified via /users/cursor[bot] and /apps/cursor.
 # Keep this allowlist in trusted workflow code, never in PR-controlled config.
@@ -72,11 +72,8 @@ def previous_state(comments, number):
     for comment in comments:
         if not comment["own"]:
             continue
-        match = re.match(re.escape(MARKER) + r"([A-Za-z0-9+/=]+) -->(?:\n|$)", comment["body"])
-        if not match:
-            raise ReviewError("Malformed previous review state")
         try:
-            state = json.loads(base64.b64decode(match[1], validate=True))
+            _, state = decode_state(comment["body"])
             if state["repository"] != REPOSITORY or state["number"] != number:
                 raise ValueError()
             sha(state["head"])
@@ -85,7 +82,7 @@ def previous_state(comments, number):
             for finding in state["findings"]:
                 if not re.fullmatch(r"[0-9a-f]{16}", finding["id"]):
                     raise ValueError()
-        except (ValueError, KeyError, TypeError):
+        except (ReviewError, ValueError, KeyError, TypeError):
             raise ReviewError("Invalid previous review state") from None
         states.append((comment.get("created_at") or comment.get("updated_at") or "", comment["id"], state))
     return max(states, default=("", 0, None))[2]

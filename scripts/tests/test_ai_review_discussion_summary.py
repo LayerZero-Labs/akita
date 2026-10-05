@@ -2,6 +2,7 @@
 
 import base64
 import json
+import random
 import unittest
 
 from ai_review_support import EVENT, FakeGitHub, proposal, snapshot
@@ -20,7 +21,8 @@ class DiscussionSummaryTests(unittest.TestCase):
         result["result"].update(findings=[], discussion_blockers=blockers)
         self.assertEqual(publish(gh, EVENT, value, result), "published")
         visible = gh.reviews[0]["body"].split(" -->", 1)[1]
-        self.assertIn("Approval not recommended: unresolved feedback from existing discussion.\n\n- ", visible)
+        self.assertIn("Approval not recommended: unresolved feedback from existing discussion.\n\n"
+                      "Unresolved feedback from existing discussion:\n- ", visible)
         for blocker in blockers:
             self.assertIn("- " + review_text(blocker), visible)
         self.assertIn("`ParentObservableKey.source_block_len`", visible)
@@ -71,7 +73,7 @@ class DiscussionSummaryTests(unittest.TestCase):
                 state = previous_state([{"id": 99, "own": True, "body": payload["body"]}], 7)
                 del state["body_version"]
                 # Literal old-format summary, independent of the current renderer.
-                old_body = MARKER + base64.b64encode(json.dumps(state).encode()).decode() + " -->"
+                old_body = MARKER + "1 " + base64.b64encode(json.dumps(state).encode()).decode() + " -->"
                 old_body += "\n\nUsefulness: benefit supported. Useful change"
                 if not blocked:
                     old_body += "\n\nRecommended for approval: no unresolved findings in this automated review."
@@ -106,7 +108,10 @@ class DiscussionSummaryTests(unittest.TestCase):
             with self.subTest(version=version), self.assertRaisesRegex(ReviewError, "body version"):
                 review_body({**state, "body_version": version})
         result = proposal(value)
-        result["result"]["discussion_blockers"] = ["x" * 1700] * 20
+        # Non-repeating text, so the compressed state does not shrink it away.
+        rng = random.Random(5)
+        result["result"]["discussion_blockers"] = ["".join(rng.choice("abcdefghijklmnopqrstuvwxyz ")
+                                                           for _ in range(1900)) for _ in range(30)]
         with self.assertRaisesRegex(ReviewError, "comment size limit"):
             prepare_review(value, result)
 

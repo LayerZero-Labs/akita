@@ -100,7 +100,9 @@ class UsefulnessTests(unittest.TestCase):
         publish(gh, EVENT, value, result)
         state = previous_state(discussions(gh, 7), 7)
         del state["usefulness"]
-        gh.reviews[0]["body"] = (MARKER + base64.b64encode(json.dumps(state).encode()).decode()
+        # A first-release (v1) state without usefulness, as the original workflow wrote it.
+        del state["body_version"]
+        gh.reviews[0]["body"] = (MARKER + "1 " + base64.b64encode(json.dumps(state).encode()).decode()
                                   + " -->\n\nRecommended for approval: no unresolved findings in this automated review.")
         self.assertEqual(previous_state(discussions(gh, 7), 7)["head"], HEAD)
         with self.assertRaisesRegex(ReviewError, "approval cleared"):
