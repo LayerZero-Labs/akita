@@ -119,7 +119,8 @@ where
         state.receive_n::<F>(group.e_field_elems)
     }
     .map(RingVec::from_coeffs)?;
-    grinding.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
+    let mut fork =
+        grinding.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
     let operator_rejection = if scheduled.response_l2_sq_cap().is_some() {
         Some(
             akita_challenges::selective_l2_operator_norm_rejection(
@@ -132,9 +133,7 @@ where
         None
     };
     let challenges = {
-        let fold_site = akita_types::FoldSite::FoldChallenge { level, group: 0 }.id()?;
-        let mut draw =
-            akita_challenges::TranscriptFoldDraw::new(grinding.state_mut(), fold_site.into());
+        let mut draw = akita_challenges::ForkFoldDraw::new(&mut fork);
         draw.draw_folding_challenges_with_rejection(
             akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
             scheduled.d_a(),

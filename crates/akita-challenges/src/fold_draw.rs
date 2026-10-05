@@ -3,7 +3,7 @@
 use crate::sampler::MAX_STACK_RING_DIM;
 use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig};
 use akita_error::AkitaError;
-use jolt_transcript::{Channel, Preview, SiteId, Sponge};
+use jolt_transcript::{Fork, Sponge};
 
 /// Byte length of every fold-challenge seed.
 pub const FOLD_CHALLENGE_SEED_LEN: usize = 32;
@@ -133,53 +133,31 @@ pub trait FoldDraw {
     }
 }
 
-/// One group-local fold-root draw against a candidate public state.
-pub struct PreviewFoldDraw<'a, H> {
-    preview: &'a mut Preview<H>,
+/// Fold-root draws from the seeded [`Fork`] of a fold-response site.
+///
+/// The prover tries counters, each on its own fork, and both roles draw the
+/// accepted counter's fold challenges from that fork, group by group in group
+/// order. The fork's seed is squeezed from the live transcript and its counter
+/// is a prover message, so every draw is bound to the transcript.
+pub struct ForkFoldDraw<'a, H> {
+    fork: &'a mut Fork<H>,
 }
 
-impl<'a, H> PreviewFoldDraw<'a, H> {
-    /// Bind this short-lived draw adapter to one candidate preview.
+impl<'a, H> ForkFoldDraw<'a, H> {
+    /// Bind this short-lived draw adapter to one fold-response fork.
     #[must_use]
-    pub const fn new(preview: &'a mut Preview<H>) -> Self {
-        Self { preview }
+    pub const fn new(fork: &'a mut Fork<H>) -> Self {
+        Self { fork }
     }
 }
 
-impl<H: Sponge> FoldDraw for PreviewFoldDraw<'_, H> {
+impl<H: Sponge> FoldDraw for ForkFoldDraw<'_, H> {
     fn absorb_and_squeeze(
         &mut self,
         payload: &[u8],
     ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
-        self.preview.absorb_bytes(payload);
-        Ok(self.preview.squeeze())
-    }
-}
-
-/// One group-local fold-root draw against a live prover or verifier transcript.
-pub struct TranscriptFoldDraw<'a, C> {
-    channel: &'a mut C,
-    site: SiteId,
-}
-
-impl<'a, C> TranscriptFoldDraw<'a, C> {
-    /// Bind this short-lived draw adapter to one schedule-derived fold group site.
-    #[must_use]
-    pub const fn new(channel: &'a mut C, site: SiteId) -> Self {
-        Self { channel, site }
-    }
-}
-
-impl<C: Channel> FoldDraw for TranscriptFoldDraw<'_, C> {
-    // Absorbed unframed, exactly as `Preview::absorb_bytes` replays it, so a
-    // previewed fold-response candidate draws the live root.
-    fn absorb_and_squeeze(
-        &mut self,
-        payload: &[u8],
-    ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
-        self.channel.site(self.site);
-        self.channel.public_all(payload);
-        Ok(self.channel.challenge_bytes())
+        self.fork.absorb(payload);
+        Ok(self.fork.squeeze())
     }
 }
 

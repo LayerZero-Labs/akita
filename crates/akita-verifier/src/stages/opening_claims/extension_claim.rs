@@ -65,7 +65,7 @@ where
 
     fn final_claims(&mut self, opening_batch: &OpeningClaimsLayout) -> Result<Vec<E>, AkitaError>;
 }
-struct GrindingEorVerifierStream<'a, 'g, 'proof, H> {
+struct GrindingEorVerifierStream<'a, 'g, 'proof, H: Sponge> {
     grinding: &'a mut akita_types::VerifierGrinding<'g, 'proof, H>,
     level: u32,
 }

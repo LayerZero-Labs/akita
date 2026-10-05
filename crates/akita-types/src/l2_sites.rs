@@ -36,8 +36,10 @@ where
 {
     let state = grinding.state_mut();
     state.site(site(level, ROLE_INTEGER).into());
-    let mut integer = response_l2_sq;
+    // A u128 travels as its sixteen little-endian bytes.
+    let mut integer = response_l2_sq.to_le_bytes();
     state.exchange(&mut integer)?;
+    let integer = u128::from_le_bytes(integer);
     state.site(site(level, ROLE_SUBCLAIMS).into());
     state.exchange_all(subclaims)?;
     Ok(integer)

@@ -83,9 +83,11 @@ where
 {
     let level = prepared.level;
     let relation_geometry = validate_fold_payloads(&prepared)?;
-    grinding.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
+    let mut fork =
+        grinding.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
     let group_challenges = derive_multi_group_stage1_challenges::<F, E, _>(
         grinding,
+        &mut fork,
         level,
         &prepared.opening_shape,
         prepared.lp,

@@ -6,9 +6,8 @@ use crate::backend::{
     FoldProbeDiagnostics, FoldProbeGeometry, FoldProbeOutcome, ValidatedFoldAcceptancePlan,
     ValidatedFoldProbePlan, ValidatedTerminalFoldProbePlan,
 };
-use akita_challenges::{FoldDraw, PreviewFoldDraw, TranscriptFoldDraw};
+use akita_challenges::{FoldDraw, ForkFoldDraw};
 use akita_error::AkitaError;
-use akita_types::GrindingReplay;
 use akita_types::GroupFoldChallenges;
 use akita_types::{
     draw_group_fold_challenges, dyadic_block_ranges, CommittedGroupParams,
@@ -105,10 +104,11 @@ where
     };
     let point_indices = [0usize];
     let site = akita_types::GrindingSite::FoldResponse { level };
-    let (nonce, (fold_handle, challenges, encoding, diagnostics)) =
+    grinding.begin_fold_response(site)?;
+    let (nonce, (fold_handle, encoding, diagnostics)) =
         first_jointly_accepted_nonce(FOLD_RESPONSE_ATTEMPTS, |nonce| {
-            let mut preview_state = grinding.preview_fold_response(site, nonce)?;
-            let mut preview = PreviewFoldDraw::new(&mut preview_state);
+            let mut fork = grinding.fold_response_fork(site, nonce)?;
+            let mut preview = ForkFoldDraw::new(&mut fork);
             let challenges = preview.draw_folding_challenges_with_rejection(
                 akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
                 params.d_a(),
@@ -139,29 +139,13 @@ where
                     diagnostics,
                 } => Ok(Some((
                     fold_handle,
-                    challenges,
                     crate::backend::ValidatedTerminalZEncodingPlan::from_probe(&plan),
                     diagnostics,
                 ))),
             }
         })?;
+    // The verifier draws the same challenges from this counter's fork.
     grinding.commit_fold_response(site, nonce)?;
-    let fold_site = akita_types::FoldSite::FoldChallenge { level, group: 0 }.id()?;
-    let mut live = TranscriptFoldDraw::new(grinding.state_mut(), fold_site.into());
-    let live_challenges = live.draw_folding_challenges_with_rejection(
-        akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
-        params.d_a(),
-        0,
-        params.blocks.live_blocks,
-        1,
-        sparse,
-        operator_rejection,
-    )?;
-    if live_challenges != challenges {
-        return Err(AkitaError::InvalidInput(
-            "terminal grind preview did not match live transcript replay".into(),
-        ));
-    }
     grinding.record_fold_challenges(level, 0, params.blocks.live_blocks)?;
     #[cfg(not(feature = "response-model-diagnostics"))]
     let _ = diagnostics;
@@ -246,12 +230,13 @@ where
         ));
     }
     let site = akita_types::GrindingSite::FoldResponse { level };
+    grinding.begin_fold_response(site)?;
     let (nonce, mut candidate_outputs) =
         first_jointly_accepted_nonce(max_grind_attempts, |nonce| {
             let mut candidate_outputs = Vec::with_capacity(groups.len());
             {
-                let mut preview_state = grinding.preview_fold_response(site, nonce)?;
-                let mut preview = PreviewFoldDraw::new(&mut preview_state);
+                let mut fork = grinding.fold_response_fork(site, nonce)?;
+                let mut preview = ForkFoldDraw::new(&mut fork);
                 for prepared_group in groups {
                     let group = &prepared_group.input;
                     let challenges = draw_group_fold_challenges::<F, E, _>(
@@ -314,32 +299,12 @@ where
             Ok(Some(candidate_outputs))
         })?;
 
+    // The verifier draws the same challenges, group by group, from this
+    // counter's fork.
     grinding.commit_fold_response(site, nonce)?;
     {
-        let _span = tracing::info_span!("fold_grind_live_replay").entered();
         for (prepared_group, output) in groups.iter().zip(candidate_outputs.iter_mut()) {
             let group = &prepared_group.input;
-            let challenges = {
-                let group_index = u32::try_from(group.group_index)
-                    .map_err(|_| AkitaError::InvalidSetup("fold group index exceeds u32".into()))?;
-                let fold_site = akita_types::FoldSite::FoldChallenge {
-                    level,
-                    group: group_index,
-                }
-                .id()?;
-                let mut live = TranscriptFoldDraw::new(grinding.state_mut(), fold_site.into());
-                draw_group_fold_challenges::<F, E, _>(
-                    &mut live,
-                    &group.params,
-                    group.group_index,
-                    group.num_polynomials,
-                )?
-            };
-            if challenges != output.challenges {
-                return Err(AkitaError::InvalidInput(
-                    "fold grind preview did not match live transcript replay".to_string(),
-                ));
-            }
             let group_index = u32::try_from(group.group_index)
                 .map_err(|_| AkitaError::InvalidSetup("fold group index exceeds u32".into()))?;
             let coordinate_count = group

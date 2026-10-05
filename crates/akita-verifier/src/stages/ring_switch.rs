@@ -58,7 +58,7 @@ where
     fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError>;
 }
 
-struct RingSwitchChallenges<'a, 'g, 'proof, H>(
+struct RingSwitchChallenges<'a, 'g, 'proof, H: Sponge>(
     &'a mut akita_types::VerifierGrinding<'g, 'proof, H>,
 );
 

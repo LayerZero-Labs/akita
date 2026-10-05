@@ -32,6 +32,6 @@ pub use config::{
     MIN_FOLD_CHALLENGE_ENTROPY_BITS, PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
 pub use fold_draw::{
-    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, PreviewFoldDraw,
-    TranscriptFoldDraw, FOLD_CHALLENGE_SEED_LEN,
+    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, ForkFoldDraw,
+    FOLD_CHALLENGE_SEED_LEN,
 };

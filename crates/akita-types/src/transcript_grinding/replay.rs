@@ -6,7 +6,8 @@ use akita_error::AkitaError;
 use akita_sumcheck::{SumcheckProverChannel, SumcheckRole, SumcheckVerifierChannel};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use jolt_transcript::{
-    Channel, Preview, ProverTranscript, SiteId, Sponge, TranscriptError, VerifierTranscript,
+    Channel, Fork, ProverTranscript, SiteId, Sponge, TranscriptError, VerifierTranscript,
+    FORK_SEED_LEN,
 };
 use std::marker::PhantomData;
 
@@ -239,11 +240,14 @@ impl<'proof, H: Sponge> GrindingReplay for VerifierGrinding<'_, 'proof, H> {
 }
 
 /// Prover transcript paired with exact grinding-plan progress.
-pub struct ProverGrinding<'a, H> {
+pub struct ProverGrinding<'a, H: Sponge> {
     state: &'a mut ProverTranscript<H>,
     cursor: GrindingPlanCursor<'a>,
     serialized_nonce_bytes: usize,
     invalid: bool,
+    /// The fork seed of the fold-response search in progress, squeezed by
+    /// [`begin_fold_response`](Self::begin_fold_response).
+    fold_seed: Option<(GrindingSite, [u8; FORK_SEED_LEN])>,
 }
 
 impl<'a, H: Sponge> ProverGrinding<'a, H> {
@@ -255,6 +259,7 @@ impl<'a, H: Sponge> ProverGrinding<'a, H> {
             cursor: GrindingPlanCursor::new(plan),
             serialized_nonce_bytes: 0,
             invalid: false,
+            fold_seed: None,
         }
     }
 
@@ -289,12 +294,54 @@ impl<'a, H: Sponge> ProverGrinding<'a, H> {
         Ok(len)
     }
 
-    /// Emit the next scheduled fold-response nonce as a canonical message.
+    /// Starts the scheduled fold-response search at `site`: squeezes the
+    /// fork seed every candidate counter is tried under.
+    pub fn begin_fold_response(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
+        let result = self.begin_fold_response_inner(site);
+        self.invalid |= result.is_err();
+        result
+    }
+
+    fn begin_fold_response_inner(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
+        let entry = self.cursor.peek().ok_or(AkitaError::InvalidProof)?;
+        if entry.site != site
+            || site.kind() != GrindingQueryKind::FoldResponse
+            || self.fold_seed.is_some()
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        self.state.site(fold_response_site(site, entry.nonce_bits));
+        self.fold_seed = Some((site, self.state.challenge_bytes()));
+        Ok(())
+    }
+
+    /// The fork a candidate `counter`'s fold challenges are drawn from, for the
+    /// search [`begin_fold_response`](Self::begin_fold_response) started.
+    pub fn fold_response_fork(
+        &self,
+        site: GrindingSite,
+        counter: u32,
+    ) -> Result<Fork<H>, AkitaError> {
+        let entry = self.cursor.peek().ok_or(AkitaError::InvalidProof)?;
+        match self.fold_seed {
+            Some((seed_site, seed))
+                if seed_site == site
+                    && entry.site == site
+                    && value_fits(counter, entry.nonce_bits) =>
+            {
+                Ok(Fork::new(&seed, counter))
+            }
+            Some(_) | None => Err(AkitaError::InvalidProof),
+        }
+    }
+
+    /// Sends the accepted fold-response `counter` as a nonce message and
+    /// returns its fork, which the accepted fold challenges come from.
     pub fn commit_fold_response(
         &mut self,
         site: GrindingSite,
         counter: u32,
-    ) -> Result<(), AkitaError> {
+    ) -> Result<Fork<H>, AkitaError> {
         let result = self.commit_fold_response_inner(site, counter);
         self.invalid |= result.is_err();
         result
@@ -304,9 +351,12 @@ impl<'a, H: Sponge> ProverGrinding<'a, H> {
         &mut self,
         site: GrindingSite,
         counter: u32,
-    ) -> Result<(), AkitaError> {
+    ) -> Result<Fork<H>, AkitaError> {
         let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse)?;
-        if !value_fits(counter, entry.nonce_bits) {
+        let Some((seed_site, seed)) = self.fold_seed.take() else {
+            return Err(AkitaError::InvalidProof);
+        };
+        if seed_site != site || !value_fits(counter, entry.nonce_bits) {
             return Err(AkitaError::InvalidProof);
         }
         self.state.site(fold_response_site(site, entry.nonce_bits));
@@ -322,26 +372,7 @@ impl<'a, H: Sponge> ProverGrinding<'a, H> {
             encoded_bytes,
             "native fold response nonce"
         );
-        Ok(())
-    }
-
-    /// Preview a fold-response candidate from the current public state
-    /// without advancing either the live transcript or the grinding plan.
-    pub fn preview_fold_response(
-        &self,
-        site: GrindingSite,
-        counter: u32,
-    ) -> Result<Preview<H>, AkitaError> {
-        let entry = self.cursor.peek().ok_or(AkitaError::InvalidProof)?;
-        if entry.site != site
-            || site.kind() != GrindingQueryKind::FoldResponse
-            || !value_fits(counter, entry.nonce_bits)
-        {
-            return Err(AkitaError::InvalidProof);
-        }
-        let mut preview = self.state.preview();
-        preview.absorb_nonce(counter);
-        Ok(preview)
+        Ok(Fork::new(&seed, counter))
     }
 
     /// Consume the plan entries for one sparse fold group.
@@ -381,7 +412,7 @@ impl<'a, H: Sponge> ProverGrinding<'a, H> {
 }
 
 /// Verifier transcript paired with exact grinding-plan progress.
-pub struct VerifierGrinding<'a, 'proof, H> {
+pub struct VerifierGrinding<'a, 'proof, H: Sponge> {
     state: &'a mut VerifierTranscript<'proof, H>,
     cursor: GrindingPlanCursor<'a>,
     serialized_nonce_bytes: usize,
@@ -422,8 +453,9 @@ impl<'a, 'proof, H: Sponge> VerifierGrinding<'a, 'proof, H> {
         Ok(())
     }
 
-    /// Receive the next scheduled fold-response nonce.
-    pub fn read_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
+    /// Squeezes the next scheduled fold-response fork seed, receives the
+    /// counter, and returns the fork the fold challenges are drawn from.
+    pub fn read_fold_response(&mut self, site: GrindingSite) -> Result<Fork<H>, AkitaError> {
         let result = self.read_fold_response_inner(site);
         if result.is_err() {
             self.poison();
@@ -431,13 +463,14 @@ impl<'a, 'proof, H: Sponge> VerifierGrinding<'a, 'proof, H> {
         result
     }
 
-    fn read_fold_response_inner(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
+    fn read_fold_response_inner(&mut self, site: GrindingSite) -> Result<Fork<H>, AkitaError> {
         let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse)?;
         self.state.site(fold_response_site(site, entry.nonce_bits));
+        let seed: [u8; FORK_SEED_LEN] = self.state.challenge_bytes();
         let remaining = self.state.remaining();
         let counter = self.state.receive_nonce(entry.nonce_bits)?;
         self.record_nonce_bytes(remaining)?;
-        Ok(counter)
+        Ok(Fork::new(&seed, counter))
     }
 
     /// Consume the plan entries for one sparse fold group.
@@ -501,7 +534,7 @@ fn grinding_sumcheck_site(
 }
 
 /// Standard-sumcheck channel borrowing a prover grinding context.
-pub struct GrindingSumcheckProver<'context, 'a, F, E, H> {
+pub struct GrindingSumcheckProver<'context, 'a, F, E, H: Sponge> {
     grinding: &'context mut ProverGrinding<'a, H>,
     protocol: super::SumcheckProtocol,
     level: u32,
@@ -509,7 +542,7 @@ pub struct GrindingSumcheckProver<'context, 'a, F, E, H> {
     _fields: PhantomData<fn() -> (F, E)>,
 }
 
-impl<'context, 'a, F, E, H> GrindingSumcheckProver<'context, 'a, F, E, H> {
+impl<'context, 'a, F, E, H: Sponge> GrindingSumcheckProver<'context, 'a, F, E, H> {
     /// Bind one sumcheck invocation to its scheduled grinding-site coordinates.
     #[must_use]
     pub fn new(
@@ -566,7 +599,7 @@ where
 }
 
 /// Standard-sumcheck channel borrowing a verifier grinding context.
-pub struct GrindingSumcheckVerifier<'context, 'a, 'proof, F, E, H> {
+pub struct GrindingSumcheckVerifier<'context, 'a, 'proof, F, E, H: Sponge> {
     grinding: &'context mut VerifierGrinding<'a, 'proof, H>,
     protocol: super::SumcheckProtocol,
     level: u32,
@@ -574,7 +607,9 @@ pub struct GrindingSumcheckVerifier<'context, 'a, 'proof, F, E, H> {
     _fields: PhantomData<fn() -> (F, E)>,
 }
 
-impl<'context, 'a, 'proof, F, E, H> GrindingSumcheckVerifier<'context, 'a, 'proof, F, E, H> {
+impl<'context, 'a, 'proof, F, E, H: Sponge>
+    GrindingSumcheckVerifier<'context, 'a, 'proof, F, E, H>
+{
     /// Bind one sumcheck invocation to its scheduled grinding-site coordinates.
     #[must_use]
     pub fn new(
@@ -635,21 +670,43 @@ where
 mod tests {
     use super::*;
     use crate::transcript::test_transcripts::{prover as new_prover, verifier as new_verifier};
-    use crate::FoldSite;
     use crate::{ChallengeFieldOrder, GrindingRun};
     use akita_challenges::{
-        FoldChallengeDrawDomain, FoldDraw, PreviewFoldDraw, SparseChallengeConfig,
-        TranscriptFoldDraw,
+        Challenges, FoldChallengeDrawDomain, FoldDraw, ForkFoldDraw, SparseChallengeConfig,
     };
     use jolt_field::Prime128Offset275 as F;
     use jolt_transcript::{grinding_predicate_accepts, GRINDING_PREDICATE_LEN};
     use std::num::NonZeroU8;
 
-    fn fold_site(level: u32, group: u32) -> SiteId {
-        FoldSite::FoldChallenge { level, group }
-            .id()
-            .unwrap()
-            .into()
+    /// The two groups' fold challenges, drawn in group order from `fork`.
+    fn draw_two_groups<H: Sponge>(
+        fork: &mut Fork<H>,
+        config: &SparseChallengeConfig,
+    ) -> (Challenges, Challenges) {
+        let mut draw = ForkFoldDraw::new(fork);
+        let first = draw
+            .draw_folding_challenges_with_rejection(
+                FoldChallengeDrawDomain::EvaluationTrace,
+                64,
+                0,
+                2,
+                1,
+                config,
+                None,
+            )
+            .unwrap();
+        let second = draw
+            .draw_folding_challenges_with_rejection(
+                FoldChallengeDrawDomain::EvaluationTrace,
+                64,
+                1,
+                1,
+                2,
+                config,
+                None,
+            )
+            .unwrap();
+        (first, second)
     }
 
     fn plan() -> GrindingPlan {
@@ -678,6 +735,9 @@ mod tests {
             .grinded_ext_challenge::<F, F>(GrindingSite::EvaluationBatch { level: 0 })
             .unwrap();
         prover
+            .begin_fold_response(GrindingSite::FoldResponse { level: 0 })
+            .unwrap();
+        let mut prover_fork = prover
             .commit_fold_response(GrindingSite::FoldResponse { level: 0 }, 7)
             .unwrap();
         prover.record_fold_challenges(0, 0, 2).unwrap();
@@ -693,12 +753,10 @@ mod tests {
             .grinded_ext_challenge::<F, F>(GrindingSite::EvaluationBatch { level: 0 })
             .unwrap();
         assert_eq!(verifier_challenge, prover_challenge);
-        assert_eq!(
-            verifier
-                .read_fold_response(GrindingSite::FoldResponse { level: 0 })
-                .unwrap(),
-            7
-        );
+        let mut verifier_fork = verifier
+            .read_fold_response(GrindingSite::FoldResponse { level: 0 })
+            .unwrap();
+        assert_eq!(verifier_fork.squeeze::<32>(), prover_fork.squeeze::<32>());
         verifier.record_fold_challenges(0, 0, 2).unwrap();
         verifier.finish().unwrap();
         transcript.finish().unwrap();
@@ -714,18 +772,17 @@ mod tests {
         )
         .unwrap();
         let mut state = new_prover(b"native-long-nonce");
+        let seed: [u8; FORK_SEED_LEN] = state.challenge_bytes();
         let nonce = (128..=u8::MAX as u32)
             .find(|&candidate| {
-                let mut preview = state.preview();
-                preview.absorb_nonce(candidate);
                 grinding_predicate_accepts(
-                    &preview.squeeze::<GRINDING_PREDICATE_LEN>(),
+                    &Fork::<jolt_transcript::Blake2b512>::new(&seed, candidate)
+                        .squeeze::<GRINDING_PREDICATE_LEN>(),
                     NonZeroU8::new(1).unwrap(),
                 )
             })
             .expect("the two-byte half of an 8-bit nonce domain must contain a winner");
         state.send_nonce(nonce);
-        let _: [u8; GRINDING_PREDICATE_LEN] = state.challenge_bytes();
         let proof = state.finish();
         assert_eq!(proof.len(), 2);
 
@@ -777,13 +834,13 @@ mod tests {
         .unwrap();
         let mut transcript = new_prover(b"native-grinding");
         let mut prover = ProverGrinding::new(&mut transcript, &plan);
-        assert_eq!(
+        assert!(matches!(
             prover.commit_fold_response(
                 GrindingSite::FoldResponse { level: 0 },
                 super::super::FOLD_RESPONSE_ATTEMPTS,
             ),
             Err(AkitaError::InvalidProof)
-        );
+        ));
         assert_eq!(prover.finish(), Err(AkitaError::InvalidProof));
 
         for (proof, expected) in [
@@ -794,8 +851,10 @@ mod tests {
             let mut transcript = new_verifier(b"native-grinding", proof);
             let mut verifier = VerifierGrinding::new(&mut transcript, &plan);
             assert_eq!(
-                verifier.read_fold_response(GrindingSite::FoldResponse { level: 0 }),
-                expected
+                verifier
+                    .read_fold_response(GrindingSite::FoldResponse { level: 0 })
+                    .map(|_| ()),
+                expected.map(|_: u32| ())
             );
             let replay = verifier.finish();
             let end = transcript.finish();
@@ -858,92 +917,27 @@ mod tests {
         let nonce = 7;
         let mut transcript = new_prover(b"native-fold-transaction");
         let mut prover = ProverGrinding::new(&mut transcript, &plan);
-        let (preview_first, preview_second) = {
-            let mut preview_state = prover.preview_fold_response(site, nonce).unwrap();
-            let first = PreviewFoldDraw::new(&mut preview_state)
-                .draw_folding_challenges_with_rejection(
-                    FoldChallengeDrawDomain::EvaluationTrace,
-                    64,
-                    0,
-                    2,
-                    1,
-                    &config,
-                    None,
-                )
-                .unwrap();
-            let second = PreviewFoldDraw::new(&mut preview_state)
-                .draw_folding_challenges_with_rejection(
-                    FoldChallengeDrawDomain::EvaluationTrace,
-                    64,
-                    1,
-                    1,
-                    2,
-                    &config,
-                    None,
-                )
-                .unwrap();
-            (first, second)
-        };
-        prover.commit_fold_response(site, nonce).unwrap();
-        let live_first = TranscriptFoldDraw::new(prover.state_mut(), fold_site(3, 0))
-            .draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::EvaluationTrace,
-                64,
-                0,
-                2,
-                1,
-                &config,
-                None,
-            )
-            .unwrap();
-        prover.record_fold_challenges(3, 0, 2).unwrap();
-        let live_second = TranscriptFoldDraw::new(prover.state_mut(), fold_site(3, 1))
-            .draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::EvaluationTrace,
-                64,
-                1,
-                1,
-                2,
-                &config,
-                None,
-            )
-            .unwrap();
-        prover.record_fold_challenges(3, 1, 2).unwrap();
-        assert_eq!(
-            (preview_first, preview_second),
-            (live_first.clone(), live_second.clone())
+        prover.begin_fold_response(site).unwrap();
+        let candidate = draw_two_groups(
+            &mut prover.fold_response_fork(site, nonce).unwrap(),
+            &config,
         );
+        let committed = draw_two_groups(
+            &mut prover.commit_fold_response(site, nonce).unwrap(),
+            &config,
+        );
+        assert_eq!(candidate, committed);
+        prover.record_fold_challenges(3, 0, 2).unwrap();
+        prover.record_fold_challenges(3, 1, 2).unwrap();
         prover.finish().unwrap();
         let proof = transcript.finish();
 
         let mut transcript = new_verifier(b"native-fold-transaction", &proof);
         let mut verifier = VerifierGrinding::new(&mut transcript, &plan);
-        assert_eq!(verifier.read_fold_response(site).unwrap(), nonce);
-        let verified_first = TranscriptFoldDraw::new(verifier.state_mut(), fold_site(3, 0))
-            .draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::EvaluationTrace,
-                64,
-                0,
-                2,
-                1,
-                &config,
-                None,
-            )
-            .unwrap();
+        let verified = draw_two_groups(&mut verifier.read_fold_response(site).unwrap(), &config);
+        assert_eq!(verified, committed);
         verifier.record_fold_challenges(3, 0, 2).unwrap();
-        let verified_second = TranscriptFoldDraw::new(verifier.state_mut(), fold_site(3, 1))
-            .draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::EvaluationTrace,
-                64,
-                1,
-                1,
-                2,
-                &config,
-                None,
-            )
-            .unwrap();
         verifier.record_fold_challenges(3, 1, 2).unwrap();
-        assert_eq!((verified_first, verified_second), (live_first, live_second));
         verifier.finish().unwrap();
         transcript.finish().unwrap();
     }

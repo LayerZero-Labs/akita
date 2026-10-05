@@ -828,7 +828,7 @@ mod tests {
                 .collect::<Vec<_>>())
         }
 
-        // Frozen at the jolt-transcript port; the round bodies before the first
+        // Frozen at the spongefish-state port; the round bodies before the first
         // challenge are unchanged from Akita cad9f221.
         let (evaluations, claim) = fixture();
         let mut standard = DenseInstance {
@@ -874,19 +874,19 @@ mod tests {
 
         assert_eq!(
             standard_proof,
-            "40000000000000000000000000000000ff1b387f5aa511e4b9336528127b418c0e4bc0b95fd9e0130254f33730c2323b5183940fc6f3d9fef6641b7dda7083e0"
+            "4000000000000000000000000000000049227796f06b10136bda182d8328234272f0fb6d0fa1ef791c5c5b0b8b436b80d3ea6e09e85716af98d63a142c0567b1"
         );
         assert_eq!(
             standard_point,
-            "b406ce9f56690479ee4c198ac45e1063540e899eac017648892ef0c8298144ddea16ad8cc5613a7dbd6e4898f083bab01c2e7124027c7cb96b598258ddffaf4b"
+            "bdc79d25fc1ac4c49a3646cb20ca88d0b217b0c8c5da19bcb9bb335dd26bd6371e3c9c14d8a1879c224aa3a3d9584c9c574bb72471cec11a9595506b5b34e4a6"
         );
         assert_eq!(
             normalized_proof,
-            "48000000000000000000000000000000276ec6d19708afe69e0f450260394bf3"
+            "480000000000000000000000000000004d9d14cff02a39d6e78912a62aa8c577"
         );
         assert_eq!(
             normalized_point,
-            "10cdacad0b2821390c8bb69db8f07b615c3fd9cd3a6bb13612629db9eaab9b1d"
+            "2b82c6994d03dd3739e363e5dbd1e71c264aa30819299b27127fbfe679315e17"
         );
     }
 }
