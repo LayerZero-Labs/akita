@@ -245,7 +245,7 @@ Current local budgets: 150 in-scope changed files, 300,000 characters of combine
 diff (the delta covers only files the PR changes now or changed at the previously
 reviewed head, so base-branch changes merged in since count only where they touch
 those same files), 300,000 characters of eligible discussion, 250,000 bytes per source blob,
-32 MiB per artifact, 32 model turns, 24 reads/searches per turn, 2,000,000 characters
+32 MiB per artifact, 48 model turns, 24 reads/searches per turn, 2,000,000 characters
 of accumulated context, 20 new findings and 100 retained findings (in practice at
 most 60: three attempts of 20). The published review must also fit GitHub's
 60,000-character comment limit; if it would not, the model is asked to shorten its
@@ -265,7 +265,8 @@ input and output respectively, not additional tokens. Missing or invalid usage
 counters are logged as `null`, not zero. Logs do not contain source, tool results,
 reasoning payloads, or credentials. History is retained intact between turns.
 The larger history allowance can increase cost and latency; model context limits,
-the 32-turn bound, and the job timeout still apply.
+the 48-turn bound, and the job timeout still apply. Measured reviews have used
+about 26 turns, so 48 leaves headroom within the history allowance.
 
 Actions artifacts contain public source/review evidence, no credentials.
 After publication and label

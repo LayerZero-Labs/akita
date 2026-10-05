@@ -1,6 +1,8 @@
 """Authorization, quotas, source tools, model isolation, and transport."""
 
+import contextlib
 import copy
+import io
 import json
 import os
 import re
@@ -260,6 +262,31 @@ class SourceToolTests(unittest.TestCase):
 
 
 class ModelTests(unittest.TestCase):
+    def test_turn_budget_allows_long_reviews_and_stops_a_model_that_never_finishes(self):
+        def scripted(finish_at):
+            calls = []
+
+            def api(origin, path, token, payload):
+                calls.append(1)
+                if len(calls) == finish_at:
+                    return {"status": "completed", "output": [{"type": "message", "content": [
+                        {"type": "output_text", "text": json.dumps(proposal(value)["result"])}]}]}
+                return {"status": "completed", "output": [{"type": "function_call", "name": "read_file",
+                        "call_id": str(len(calls)), "arguments": json.dumps(
+                            {"revision": "head", "path": "src/a.py", "start": 1, "end": 2})}]}
+            return api, calls
+
+        value = snapshot()
+        api, calls = scripted(finish_at=40)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertIn("result", review(value, "secret", "test-model", api))
+        self.assertEqual(len(calls), 40)
+        api, calls = scripted(finish_at=None)
+        with contextlib.redirect_stdout(io.StringIO()), \
+                self.assertRaisesRegex(ReviewError, r"Review step budget exhausted \(48 model turns\)"):
+            review(value, "secret", "test-model", api)
+        self.assertEqual(len(calls), 48)
+
     def test_hostile_model_tool_calls_cannot_access_environment_shell_or_network(self):
         value = snapshot()
         canary = "test-canary-not-a-real-key-739154"
