@@ -14,13 +14,23 @@ choices are involved:
 Raw mode transmits the semantic commitments directly. Compressed mode keeps
 those values private, binds them to smaller terminal payloads through two-map
 commitment chains, and adds the corresponding witness segments and physical
-rows. Neither payload choice changes which opening method was scheduled.
+rows. Here compression refers to the public commitment payloads, not to the
+complete next-level witness. Smaller payloads require additional private
+witness data to prove their compression chains. Neither payload choice changes
+which opening method was scheduled.
 
 Quotient lifting adds private polynomial-modulus quotient digits. Reduced
 evaluation instead transposes negacyclic reduction into public coefficient
 weights and omits those digits. Relation mode is independent of raw versus
 compressed payload where schedule validation permits the combination;
 production coefficient-packing folds remain quotient-lift-only.
+
+The complete recursive witness includes response, opening, and inner-commitment
+digits together with the auxiliary segments required by these choices. Its
+physical size also depends on digit depths, ring dimensions, and the successor
+source encoding. A shorter folded response does not guarantee a smaller
+complete witness; a root fold may increase the witness size even though the
+fold relations reduce to one recursive witness opening claim.
 
 After defining the payload modes, the page explains the method-dependent
 consistency geometry and both ring-relation realizations before evaluation at

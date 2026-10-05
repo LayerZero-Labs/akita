@@ -39,8 +39,10 @@ binding those commitments to smaller terminal payloads through compression
 relations. This choice changes their physical realization, not the four
 semantic constraints derived here.
 
-The goal of the fold is to replace the current polynomial blocks by a smaller
-digit witness while proving that the new witness is consistent with:
+The goal of the fold is to reduce the claims about the current polynomial
+blocks to an opening claim about a new digit witness. This is a reduction of
+the statement carried forward, not a guarantee that the complete next-level
+witness is smaller. The fold proves that the new witness is consistent with:
 
 1. the opening data computed from the old polynomial;
 2. the inner and outer commitments; and
