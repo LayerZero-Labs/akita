@@ -231,12 +231,27 @@ Current local budgets: 150 in-scope changed files, 300,000 characters of combine
 diff (the delta covers only files the PR changes now or changed at the previously
 reviewed head, so base-branch changes merged in since count only where they touch
 those same files), 300,000 characters of eligible discussion, 250,000 bytes per source blob,
-32 MiB per artifact, 32 model turns, 24 reads/searches per turn, 900,000 characters
+32 MiB per artifact, 32 model turns, 24 reads/searches per turn, 2,000,000 characters
 of accumulated context, 20 new findings and 100 retained findings. Exceeding a
 budget stops the run; it never silently turns into a clean review. These are
 workflow policy limits, not OpenAI API limits. Collection logs report counts and
-diff sizes; budget errors identify the exceeded limit. Actions artifacts
-contain public source/review evidence, no credentials. After publication and label
+diff sizes; budget errors identify the exceeded limit.
+
+Before each model call, count-only diagnostics report the turn, elapsed seconds,
+and serialized history size split into user evidence (including correction
+messages), tool results, encrypted reasoning payloads, and other overhead/output.
+These categories sum to the history size used by the local cap; the counter
+includes JSON escaping, not just source text, and is not a model token limit.
+After each response, diagnostics report that call's input, cached-input, output,
+and reasoning token counts. Cached-input and reasoning counts are subsets of
+input and output respectively, not additional tokens. Missing or invalid usage
+counters are logged as `null`, not zero. Logs do not contain source, tool results,
+reasoning payloads, or credentials. History is retained intact between turns.
+The larger history allowance can increase cost and latency; model context limits,
+the 32-turn bound, and the job timeout still apply.
+
+Actions artifacts contain public source/review evidence, no credentials.
+After publication and label
 updates succeed, a separate cleanup job deletes `ai-review-snapshot` and
 `ai-review-result` from that run. It does not download their contents or delete
 other artifacts. Failed reviews/publications retain artifacts for the configured
