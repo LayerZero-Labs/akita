@@ -263,9 +263,11 @@ chooses the least nonnegative integer $g$ with $L 2^{128} \le |E| 2^g$, which
 keeps the chance per query at most $2^{-128}$. The calculation uses integers
 and the actual prime power, including the deficit below a power of two.
 
-At a protected query with grinding target $g>0$, the prover searches a
-nonce whose accepted value must fit $g+7$ bits. Each attempt absorbs the
-canonical nonce, then produces a separate 32-byte predicate. The diagnostic
+At a protected query with grinding target $g>0$, the prover squeezes a
+32-byte seed and searches a nonce whose accepted value must fit $g+7$ bits.
+Each attempt squeezes a separate 32-byte predicate from a seeded fork, a fresh
+sponge keyed by the seed and the candidate, so no attempt touches the live
+transcript. The diagnostic
 site records the grinding query without changing the sponge. The predicate
 passes when its first $g$ low-order bits are zero.
 
@@ -347,13 +349,14 @@ records the contract.
 
 A fold-response entry carries a canonical unsigned LEB128 nonce whose value
 must fit the 12-bit search domain, shared by all commitment
-groups in that fold. The prover previews candidates until the resulting
-response satisfies the scheduled representation and norm bounds. It commits
+groups in that fold. The prover draws each candidate's challenges from its
+seeded fork until the resulting response satisfies the scheduled
+representation and norm bounds. It commits
 the winning nonce to replay, or returns an error if the bounded search is
 exhausted.
 
-The verifier reconstructs the challenges for that nonce and enforces the
-response bounds. This is separate from the proof-of-work predicate. The
+The verifier squeezes the same seed, reconstructs the challenges on that
+nonce's fork, and enforces the response bounds. This is separate from the proof-of-work predicate. The
 [PCS binding chapter](../foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces)
 explains why adversarial nonce trials must be included in random-oracle query
 accounting.

@@ -96,18 +96,20 @@ is at most approximately `exp(-128)`.
 
 The prover performs:
 
-1. Fix the complete transcript history before the protected query.
+1. Fix the complete transcript history before the protected query, and
+   squeeze the 32-byte fork seed from it.
 2. Try nonce candidates in the public range `0 <= nonce < 2^w`.
-3. Preview the grinding transition on a clone of the public transcript state.
+3. Squeeze the candidate's predicate from its seeded fork, a fresh sponge
+   keyed by the seed and the candidate.
 4. Accept a candidate if the first `g` predicate bits are zero.
 5. Commit the accepted nonce once to the live transcript.
 6. Draw the protected protocol challenge separately.
 
 The verifier performs:
 
-1. Read the next scheduled nonce.
+1. Squeeze the same fork seed, then read the next scheduled nonce.
 2. Check that it fits the public `w`-bit range.
-3. Reproduce the predicate transition.
+3. Reproduce the predicate on the nonce's fork.
 4. Reject unless the first `g` predicate bits are zero.
 5. Draw the protected challenge from the resulting live state.
 
@@ -709,19 +711,21 @@ fold-response site, the nonce is an inline Spongefish prover message.
 
 For PoW:
 
-1. Clone only the public Spongefish state for preview.
-2. Encode the candidate in canonical unsigned LEB128.
-3. Absorb those bytes into the preview state.
-4. Squeeze the separate predicate.
-5. When a candidate passes, emit it once with `prover_message`.
-6. Spongefish appends the LEB128 bytes to the argument and absorbs the same
+1. Squeeze the 32-byte fork seed from the live Spongefish state.
+2. For each candidate, squeeze the predicate from its fork (a fresh sponge
+   that absorbed the fork tag, the seed, and `LE32(candidate)`).
+3. When a candidate passes, emit it once with `prover_message` as its
+   canonical unsigned LEB128 encoding (`jolt_transcript::Nonce`).
+4. Spongefish appends the LEB128 bytes to the argument and absorbs the same
    bytes into the live state.
-7. The verifier's matching `prover_message` decodes and absorbs exactly those
-   proof bytes before checking the predicate.
+5. The verifier squeezes the same seed, and its matching `prover_message`
+   decodes and absorbs exactly those proof bytes before it checks the
+   predicate on the same fork.
 
-Fold-response search similarly previews by absorbing one LEB128 nonce, derives
-all group roots in canonical order, and commits the accepted nonce once before
-repeating that sequence on the live state.
+Fold-response search squeezes one fork seed, derives every candidate's group
+roots in canonical order on that candidate's fork, and commits the accepted
+nonce once. Both roles take the roots from the accepted nonce's fork; no
+transcript state is copied.
 
 There is no nonce prefix, count, width field, or separate packed suffix. The
 public positional grammar and grinding-plan cursor say when a nonce must occur;
