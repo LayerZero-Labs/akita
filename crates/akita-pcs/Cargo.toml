@@ -76,12 +76,12 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c93d6f0899661b9f1ff907bf3dea30386aaf59b6", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c93d6f0899661b9f1ff907bf3dea30386aaf59b6", default-features = false, features = [
   "transcript-blake2b",
 ] }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
@@ -92,11 +92,11 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c93d6f0899661b9f1ff907bf3dea30386aaf59b6", default-features = false, features = [
   "transcript-blake2b",
   "transcript-keccak",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c93d6f0899661b9f1ff907bf3dea30386aaf59b6", default-features = false }
 # Test-only: pull in `akita-config`'s workspace artifact loader and ring-plan
 # seed. Schedule rows remain checked-in external artifacts loaded at runtime.
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
