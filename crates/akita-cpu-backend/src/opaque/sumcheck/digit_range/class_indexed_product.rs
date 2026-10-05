@@ -2,7 +2,7 @@
 
 use super::class_indexed_state::ClassIndexedTableState;
 use super::compact_digit_source::CompactDigitSource;
-use super::exact_prefix::ExactPrefixTable;
+use super::exact_prefix::ExactPrefixLayout;
 #[cfg(test)]
 use super::range_class_tables::product_coefficients;
 use super::range_class_tables::{
@@ -15,7 +15,6 @@ use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_params::DigitRangePlan;
 use akita_sumcheck::EqFactoredSumcheckInstanceProver;
-use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring};
 use jolt_field::{Fold, Unreduced};
 use jolt_poly::OmittedConstantPoly;
@@ -39,13 +38,13 @@ type ProductTableState<E, const LANES: usize> = ClassIndexedTableState<
 >;
 
 #[derive(Clone, Copy)]
-enum ProductArity {
+pub(super) enum ProductArity {
     Two,
     Four,
 }
 
 impl ProductArity {
-    fn new(arity: usize) -> Option<Self> {
+    pub(super) fn new(arity: usize) -> Option<Self> {
         match arity {
             2 => Some(Self::Two),
             4 => Some(Self::Four),
@@ -53,7 +52,7 @@ impl ProductArity {
         }
     }
 
-    fn degree(self) -> usize {
+    pub(super) fn degree(self) -> usize {
         match self {
             Self::Two => 2,
             Self::Four => 4,
@@ -357,6 +356,8 @@ fn accumulate_round<E: Field + Ring + Unreduced, const LANES: usize>(
 /// One eq-factored product substage that keeps compact classes through its first two rounds.
 pub(super) struct ClassIndexedProductSubcheckProver<E: Field, const LANES: usize> {
     product_table: ProductTableState<E, LANES>,
+    pair_layout: ExactPrefixLayout,
+    quartet_layout: ExactPrefixLayout,
     parent_weights: Vec<E>,
     split_eq: GruenSplitEq<E>,
     input_claim: E,
@@ -380,19 +381,20 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
             .product_stage_arities()
             .get(stage_index)
             .copied()
-            .ok_or(AkitaError::InvalidProof)?;
-        let arity = ProductArity::new(arity).ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("digit-range product stage has no planned arity".into())
+            })?;
+        let arity = ProductArity::new(arity).ok_or_else(|| {
+            AkitaError::Internal("digit-range product stage arity is unsupported".into())
+        })?;
         let expected_lanes = arity
             .degree()
             .checked_mul(parent_weights.len())
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("range-product lane count overflow".to_string())
-            })?;
+            .ok_or_else(|| AkitaError::Internal("range-product lane count overflow".to_string()))?;
         if LANES != expected_lanes {
-            return Err(AkitaError::InvalidSize {
-                expected: expected_lanes,
-                actual: LANES,
-            });
+            return Err(AkitaError::Internal(format!(
+                "range-product implementation lane count: expected {expected_lanes}, actual {LANES}"
+            )));
         }
         let nodes = {
             let _span = tracing::info_span!(
@@ -413,14 +415,15 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
                 class_count = plan.basis() / 2,
             )
             .entered();
-            OrderedProductPairCoefficients::new(
-                &nodes,
-                plan.basis() / 2,
-                arity.degree(),
-                &parent_weights,
-            )
+            OrderedProductPairCoefficients::new(&nodes, arity, &parent_weights)
         };
+        let pair_layout =
+            ExactPrefixLayout::new(source.domain_len().div_ceil(2), source.pair_count())?;
+        let quartet_layout =
+            ExactPrefixLayout::new(source.domain_len().div_ceil(4), source.quartet_count())?;
         Ok(Self {
+            pair_layout,
+            quartet_layout,
             product_table: ProductTableState::Compact(CompactProductState {
                 source,
                 nodes,
@@ -429,18 +432,22 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
             parent_weights,
             split_eq: GruenSplitEq::new(equality_point)?,
             input_claim,
-            interpolation: RoundInterpolation::new().ok_or(AkitaError::InvalidProof)?,
+            interpolation: RoundInterpolation::new().ok_or_else(|| {
+                AkitaError::Internal(
+                    "digit-range interpolation constants are not invertible in the field".into(),
+                )
+            })?,
             arity,
             num_rounds: equality_point.len(),
             rounds_completed: 0,
         })
     }
 
-    pub(super) fn final_child_claims(&self) -> Vec<E> {
+    pub(super) fn final_child_claims(&self) -> Result<Vec<E>, AkitaError> {
         self.product_table
             .final_value()
-            .expect("product stage was not fully folded")
-            .to_vec()
+            .map(|claims| claims.to_vec())
+            .ok_or_else(|| AkitaError::Internal("product stage was not fully folded".into()))
     }
 }
 
@@ -590,7 +597,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                         .entered();
                         let quartets = SecondRoundProductQuartetCoefficients::new(
                             &folded_pairs,
-                            self.arity.degree(),
+                            self.arity,
                             &self.parent_weights,
                         );
                         let (equality_prefix_weights, equality_suffix_weights) =
@@ -644,8 +651,12 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                     )
                     .entered();
                     let fold_context = E::precompute(challenge);
-                    let explicit = cfg_into_iter!(0..source.quartet_count())
-                        .map(|quartet_index| {
+                    let padding_pair = folded_pairs.row_by_pair_index(0);
+                    let padding = std::array::from_fn(|lane| {
+                        E::fold_one(&fold_context, padding_pair[lane], padding_pair[lane])
+                    });
+                    Some(self.quartet_layout.materialize(
+                        |quartet_index| {
                             let (left_pair, right_pair) =
                                 source.ordered_pair_indices_for_quartet(quartet_index);
                             let left = folded_pairs.row_by_pair_index(left_pair);
@@ -653,16 +664,9 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                             std::array::from_fn(|lane| {
                                 E::fold_one(&fold_context, left[lane], right[lane])
                             })
-                        })
-                        .collect();
-                    let padding_pair = folded_pairs.row_by_pair_index(0);
-                    let padding = std::array::from_fn(|lane| {
-                        E::fold_one(&fold_context, padding_pair[lane], padding_pair[lane])
-                    });
-                    Some(
-                        ExactPrefixTable::new(source.domain_len() / 4, explicit, padding)
-                            .expect("compact source and Boolean domain were validated"),
-                    )
+                        },
+                        padding,
+                    ))
                 }
                 ProductTableState::Compact(_) | ProductTableState::Materialized(_) => None,
             };
@@ -693,19 +697,12 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                     .entered();
                     FoldedProductPairTable::new(nodes, challenge)
                 };
-                let explicit = cfg_into_iter!(0..source.pair_count())
-                    .map(|pair_index| {
+                Some(self.pair_layout.materialize(
+                    |pair_index| {
                         folded_pairs.row_by_pair_index(source.ordered_pair_index(pair_index))
-                    })
-                    .collect();
-                Some(
-                    ExactPrefixTable::new(
-                        source.domain_len() / 2,
-                        explicit,
-                        folded_pairs.row_by_pair_index(0),
-                    )
-                    .expect("compact source and Boolean domain were validated"),
-                )
+                    },
+                    folded_pairs.row_by_pair_index(0),
+                ))
             }
             ProductTableState::FirstChallengeFolded(_) | ProductTableState::Materialized(_) => None,
         };
@@ -735,6 +732,40 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
 mod tests {
     use super::*;
     use jolt_field::{Ext2, Prime128Offset275, Prime64Offset59};
+
+    #[test]
+    fn final_child_claims_reject_every_unfinished_storage_phase() {
+        use crate::sources::packed_digits::PackedSignedDigits;
+        use akita_params::FlatBooleanDomain;
+        use jolt_field::Zero;
+        type F = Prime128Offset275;
+        let plan = DigitRangePlan::new(16).unwrap();
+        let source = CompactDigitSource::new(
+            PackedSignedDigits::from_i8_digits_auto(vec![1; 16]),
+            FlatBooleanDomain::new(16, 4).unwrap(),
+            plan,
+        )
+        .unwrap();
+        let mut prover = ClassIndexedProductSubcheckProver::<F, 2>::new(
+            source,
+            plan,
+            &plan.leaf_coeffs::<F>(),
+            0,
+            vec![F::from_u64(1)],
+            &[F::from_u64(7); 4],
+            F::zero(),
+        )
+        .unwrap();
+        for round in 0..4 {
+            assert!(matches!(
+                prover.final_child_claims(), Err(AkitaError::Internal(message))
+                    if message == "product stage was not fully folded"
+            ));
+            prover.ingest_challenge(round, F::from_u64(11));
+        }
+        assert_eq!(prover.final_child_claims().unwrap().len(), 2);
+        assert!(ProductArity::new(3).is_none());
+    }
 
     fn check_interpolated_rounds<E: Field + Ring + Unreduced, const LANES: usize>(
         arity: ProductArity,
@@ -772,9 +803,9 @@ mod tests {
                 explicit_pair_count,
                 |pair_index| {
                     let (left, right) = pairs[pair_index];
-                    product_coefficients(left, right, arity.degree(), parent_weights)
+                    product_coefficients(left, right, arity, parent_weights)
                 },
-                product_coefficients(padding, padding, arity.degree(), parent_weights),
+                product_coefficients(padding, padding, arity, parent_weights),
             );
             assert_eq!(round(E::zero(), E::one()), expected);
             let claim = expected[0] + tau * expected[1..].iter().copied().sum::<E>();

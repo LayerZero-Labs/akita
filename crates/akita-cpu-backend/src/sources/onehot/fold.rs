@@ -5,23 +5,21 @@ pub(super) fn fold_onehot_block<F, I, const D: usize>(
     poly: &OneHotPoly<F, I>,
     ring_range: std::ops::Range<usize>,
     scalars: &[F],
-) -> CyclotomicRing<F, D>
+) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
     F: Field,
     I: OneHotIndex,
 {
     let mut coeffs_acc = [F::zero(); D];
-    let (_, coefficients) = poly
-        .ring_range_coefficients(D, ring_range.clone())
-        .expect("validated one hot fold range");
+    let (_, coefficients) = poly.ring_range_coefficients(D, ring_range.clone())?;
     for coefficient in coefficients {
-        let coefficient = coefficient.expect("validated one hot field position");
+        let coefficient = coefficient?;
         let position = coefficient.ring_idx(D) - ring_range.start;
         if let Some(&scalar) = scalars.get(position) {
             coeffs_acc[coefficient.coeff_idx(D)] += scalar;
         }
     }
-    CyclotomicRing::from_coefficients(coeffs_acc)
+    Ok(CyclotomicRing::from_coefficients(coeffs_acc))
 }
 
 #[cfg(test)]

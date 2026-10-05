@@ -89,14 +89,14 @@ fn relation_d_group_width(
         .checked_div(group_dims.d_d())
         .filter(|count| *count > 0 && opening_width.is_multiple_of(group_dims.d_d()))
         .ok_or_else(|| {
-            AkitaError::InvalidSetup("opening width does not factor the D role".into())
+            AkitaError::Internal("setup D group opening width does not factor the D role".into())
         })?;
     let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
     num_claims
         .checked_mul(group_lp.num_live_blocks())
         .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
         .and_then(|n| n.checked_mul(d_subcolumns))
-        .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))
+        .ok_or_else(|| AkitaError::Internal("setup D group width overflow".to_string()))
 }
 
 fn relation_d_column_ranges(
@@ -110,21 +110,21 @@ fn relation_d_column_ranges(
     for group_id in opening_batch.root_group_order()? {
         let slot = seen
             .get_mut(group_id)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D group id out of range".into()))?;
+            .ok_or_else(|| AkitaError::Internal("setup D group id out of range".into()))?;
         if std::mem::replace(slot, true) {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "setup D group id appears more than once".into(),
             ));
         }
         let width = relation_d_group_width(lp, opening_batch, relation_geometry, group_id)?;
         let end = cursor
             .checked_add(width)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("setup D cumulative width overflow".into()))?;
         ranges[group_id] = cursor..end;
         cursor = end;
     }
     if seen.iter().any(|present| !present) {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "setup D group ids are not contiguous".into(),
         ));
     }
@@ -139,11 +139,13 @@ fn matching_row_range(
         .iter()
         .enumerate()
         .filter_map(|(row, family)| matches(family).then_some(row));
-    let start = matched.next().ok_or(AkitaError::InvalidProof)?;
+    let start = matched
+        .next()
+        .ok_or_else(|| AkitaError::Internal("required relation row family is absent".into()))?;
     let mut end = start + 1;
     for row in matched {
         if row != end {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "relation row family is not contiguous".into(),
             ));
         }
@@ -160,7 +162,9 @@ where
     E: Field + ExtField<F>,
 {
     if inputs.claim_coefficients.len() != inputs.instance.opening_batch().num_total_polynomials() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "relation claim coefficient count differs from the opening batch".into(),
+        ));
     }
     let setup_matrix = match inputs.setup {
         RelationSetupSource::Matrix(setup) => Some(setup),
@@ -188,22 +192,28 @@ fn pack_relation_events<E: Field>(
 ) -> Result<Vec<Option<usize>>, AkitaError> {
     let mut packing_a_ring_dims = vec![None; num_groups];
     if packing_required != packing_semantics.is_some() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "packing relation requirement differs from its semantics".into(),
+        ));
     }
     if let Some(batch) = packing_semantics {
         for group in batch.groups() {
             if group.physical_field_len() != live_coeff_len
                 || group.relation_coefficient_block_len() != relation_coefficient_block_len
             {
-                return Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::Internal(
                     "packing semantics disagree with the current ring switch".into(),
                 ));
             }
             let slot = packing_a_ring_dims
                 .get_mut(group.group_index())
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "packing relation group index is outside the compiled groups".into(),
+                    )
+                })?;
             if slot.replace(group.geometry().a_ring_dimension()).is_some() {
-                return Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::Internal(
                     "packing relation group appears more than once".into(),
                 ));
             }
@@ -243,7 +253,7 @@ where
         OpeningMethod::SubringCoefficientPacking { .. }
     );
     if packing_required != matches!(opening_points, OpeningFamily::SubringCoefficientPacking(_)) {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "relation opening family disagrees with prepared points".into(),
         ));
     }
@@ -254,7 +264,9 @@ where
         .collect::<Vec<_>>();
     let rows = quotient_row_dims.len();
     if rows == 0 {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "compiled relation has no quotient rows".into(),
+        ));
     }
     let mut additional_quotient_alpha_powers = Vec::new();
     for &row_dim in &quotient_row_dims {
@@ -275,11 +287,9 @@ where
     let mut weights = RelationLaneWeights::new(
         scalar_powers(
             alpha,
-            quotient_row_dims
-                .iter()
-                .copied()
-                .max()
-                .ok_or(AkitaError::InvalidProof)?,
+            quotient_row_dims.iter().copied().max().ok_or_else(|| {
+                AkitaError::Internal("quotient row dimensions have no maximum".into())
+            })?,
         ),
         relation_coefficient_block_len,
         physical_field_len,
@@ -302,9 +312,9 @@ where
             .as_ref()
             .map(|sources| sources.group(group_index))
             .transpose()?;
-        let packing_a_ring_dim = *packing_a_ring_dims
-            .get(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let packing_a_ring_dim = *packing_a_ring_dims.get(group_index).ok_or_else(|| {
+            AkitaError::Internal("compiled relation group has no packing dimension slot".into())
+        })?;
         let group_d_a = group_plan.roles.d_a;
         let group_d_b = group_plan.roles.d_b;
         let group_d_d = group_plan.roles.d_d;
@@ -317,7 +327,7 @@ where
             (OpeningMethod::SubringCoefficientPacking { .. }, Some(a_ring_dim))
                 if a_ring_dim == group_d_a => {}
             _ => {
-                return Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::Internal(
                     "packing semantic groups do not match scheduled opening methods".into(),
                 ));
             }
@@ -330,7 +340,9 @@ where
         let total_blocks = challenges.len();
         let challenge_lanes = {
             let lane_count = akita_error::checked::product([total_blocks, lane_alpha_powers.len()])
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal("relation challenge lane count overflow".into())
+                })?;
             let mut lanes = Vec::with_capacity(lane_count);
             for index in 0..total_blocks {
                 let evaluation = challenges.eval_at_pows::<F, E>(index, &group_alpha_pows_a)?;
@@ -468,7 +480,9 @@ where
                 .find_map(|(dimension, powers)| {
                     (*dimension == row_dim).then_some(powers.as_slice())
                 })
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::Internal("quotient row dimension has no alpha powers".into())
+                })?
         };
         let row_denom = row_alpha_pows[row_dim - 1] * alpha + E::one();
         for (digit, gadget) in r_gadget.iter().enumerate() {

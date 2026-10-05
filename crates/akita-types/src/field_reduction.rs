@@ -558,10 +558,18 @@ where
 
     let mut inner_product = E::zero();
     for residue in 0..stride {
-        let lhs_low = decode(lhs, residue, false).ok_or(AkitaError::InvalidProof)?;
-        let rhs_low = decode(rhs, residue, false).ok_or(AkitaError::InvalidProof)?;
-        let lhs_high = decode(lhs, residue, true).ok_or(AkitaError::InvalidProof)?;
-        let rhs_high = decode(rhs, residue, true).ok_or(AkitaError::InvalidProof)?;
+        let lhs_low = decode(lhs, residue, false).ok_or_else(|| {
+            AkitaError::Internal("psi recovery cannot extract the low left coordinates".into())
+        })?;
+        let rhs_low = decode(rhs, residue, false).ok_or_else(|| {
+            AkitaError::Internal("psi recovery cannot extract the low right coordinates".into())
+        })?;
+        let lhs_high = decode(lhs, residue, true).ok_or_else(|| {
+            AkitaError::Internal("psi recovery cannot extract the high left coordinates".into())
+        })?;
+        let rhs_high = decode(rhs, residue, true).ok_or_else(|| {
+            AkitaError::Internal("psi recovery cannot extract the high right coordinates".into())
+        })?;
         inner_product += lhs_low * rhs_low + lhs_high * rhs_high;
     }
     Ok(inner_product)
@@ -621,15 +629,35 @@ where
             let mut row = Vec::with_capacity(ring_len);
             for shift in 0..ring_len {
                 let mut coordinates = [F::zero(); $k];
-                coordinates[0] = shifted_coefficient(&trace_product, shift, 0)
-                    .ok_or(AkitaError::InvalidProof)?;
+                coordinates[0] =
+                    shifted_coefficient(&trace_product, shift, 0).ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "trace-open row length exceeds the ring dimension".into(),
+                        )
+                    })?;
                 for (index, coordinate) in coordinates.iter_mut().enumerate().skip(1) {
-                    let position = index.checked_mul(step).ok_or(AkitaError::InvalidProof)?;
-                    let inverse = D.checked_sub(position).ok_or(AkitaError::InvalidProof)?;
-                    let left = shifted_coefficient(&trace_product, shift, position)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let right = shifted_coefficient(&trace_product, shift, inverse)
-                        .ok_or(AkitaError::InvalidProof)?;
+                    let position = index.checked_mul(step).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "trace-open coordinate position overflows usize".into(),
+                        )
+                    })?;
+                    let inverse = D.checked_sub(position).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "trace-open inverse coordinate exceeds the ring dimension".into(),
+                        )
+                    })?;
+                    let left =
+                        shifted_coefficient(&trace_product, shift, position).ok_or_else(|| {
+                            AkitaError::Internal(
+                                "trace-open left coordinate is outside the validated ring".into(),
+                            )
+                        })?;
+                    let right =
+                        shifted_coefficient(&trace_product, shift, inverse).ok_or_else(|| {
+                            AkitaError::Internal(
+                                "trace-open right coordinate is outside the validated ring".into(),
+                            )
+                        })?;
                     *coordinate = (left - right) * half;
                 }
                 row.push(E::from_base_slice(&coordinates));

@@ -25,12 +25,8 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         col_bits: usize,
         ring_bits: usize,
     ) -> Result<Self, AkitaError> {
-        if !plan.product_stage_arities().is_empty() {
-            return Err(AkitaError::InvalidInput(
-                "direct range prover requires basis 4 or 8".to_string(),
-            ));
-        }
         let basis = plan.basis();
+        let range_poly = RangePoly::new(basis)?;
         let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidInput("stage-1 challenge width overflow".to_string())
         })?;
@@ -70,32 +66,30 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             8 => 4 * 65_536,
             _ => usize::MAX,
         };
+        let split_eq = GruenSplitEq::new(tau0)?;
         let range_image =
             if num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS && expected >= octet_minimum_digits {
-                LowBasisRangeImageStorage::OctetPrefix(OctetPrefix {
-                    digits: digit_witness,
-                    tau: tau0.to_vec(),
-                    state: None,
-                })
+                LowBasisRangeImageStorage::OctetPrefix(OctetPrefix::new(
+                    digit_witness,
+                    tau0,
+                    &split_eq,
+                    basis,
+                    range_poly,
+                )?)
             } else {
                 // Ring bits are low: retain only the flat live prefix, just as
                 // octet-prefix materialization does. The omitted tail is zero.
                 LowBasisRangeImageStorage::Materialized(
-                    (0..digit_witness.len())
-                        .map(|index| {
-                            E::from_i64(i64::from(range_image_from_digit(
-                                digit_witness
-                                    .get(index)
-                                    .expect("validated live digit index"),
-                            )))
-                        })
+                    digit_witness
+                        .iter()
+                        .map(|digit| E::from_i64(i64::from(range_image_from_digit(digit))))
                         .collect(),
                 )
             };
         Ok(Self {
             range_image,
-            split_eq: GruenSplitEq::new(tau0)?,
-            range_poly: RangePoly::new(basis),
+            split_eq,
+            range_poly,
             live_x_cols,
             col_bits,
             num_vars,
@@ -107,19 +101,21 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
 
     /// Return `range_image(stage1_point)` after the final fold.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if called before the virtual table has been fully folded to a
-    /// single field element.
-    pub fn final_range_image_eval(&self) -> E {
+    /// Returns an internal error if the virtual table has not been fully folded.
+    pub fn final_range_image_eval(&self) -> Result<E, AkitaError> {
         match &self.range_image {
-            LowBasisRangeImageStorage::Materialized(range_image) => {
-                assert_eq!(range_image.len(), 1, "range_image not fully folded");
-                range_image[0]
-            }
-            LowBasisRangeImageStorage::OctetPrefix(_) => {
-                panic!("range_image stayed in the octet prefix after the final fold")
-            }
+            LowBasisRangeImageStorage::Materialized(range_image) => match range_image.as_slice() {
+                [value] => Ok(*value),
+                _ => Err(AkitaError::Internal(format!(
+                    "range-image final table length: expected 1, actual {}",
+                    range_image.len(),
+                ))),
+            },
+            LowBasisRangeImageStorage::OctetPrefix(_) => Err(AkitaError::Internal(
+                "range image stayed in the octet prefix after the final fold".into(),
+            )),
         }
     }
 

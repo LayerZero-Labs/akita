@@ -72,13 +72,19 @@ where
             &schedule
                 .recursive_folds
                 .get(request.level as usize - 1)
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "stage 3 level is outside the admitted schedule".into(),
+                    )
+                })?
                 .params
         };
         let next = &schedule
             .recursive_folds
             .get(request.level as usize)
-            .ok_or(AkitaError::InvalidProof)?
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("stage 3 has no next fold at the requested level".into())
+            })?
             .params;
         if parameters != request.parameters || next != request.next_parameters {
             return Err(AkitaError::InvalidInput(
@@ -92,7 +98,12 @@ where
         let setup_x_challenges = request
             .stage2_challenges
             .get(setup_coefficient_bits..)
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "stage 3 challenge vector is shorter than the relation coefficient prefix"
+                        .into(),
+                )
+            })?;
         let setup = build_setup_product_term(
             expanded,
             request.prefix,
@@ -134,7 +145,7 @@ where
                 "invalid Stage 3 round progression".into(),
             ));
         }
-        let polynomial = session.setup.compute_round_univariate(round);
+        let polynomial = session.setup.compute_round_univariate();
         session.pending = Some(polynomial.clone());
         Ok(polynomial)
     }
@@ -307,7 +318,7 @@ where
     if order.iter().any(|&group_index| {
         chunk_layout.num_chunks_for_group(group_index) != lp.witness_chunk.num_chunks
     }) {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "multi-group witness layout does not match root group order".to_string(),
         ));
     }
@@ -322,7 +333,7 @@ where
         let a_range = lp.a_row_range(opening_batch, group_index)?;
         let b_range = lp.commitment_row_range(opening_batch, group_index)?;
         if a_range.len() != n_a || b_range.len() != n_b {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "multi-group row ranges do not match group matrix heights".to_string(),
             ));
         }

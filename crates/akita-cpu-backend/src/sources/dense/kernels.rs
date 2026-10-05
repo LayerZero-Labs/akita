@@ -205,7 +205,12 @@ where
                     rings
                         .get(position)
                         .map(|ring| ring.coefficients())
-                        .ok_or(AkitaError::InvalidProof)
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "dense coefficient-packing position is outside its admitted source"
+                                    .into(),
+                            )
+                        })
                 },
                 |_, coefficient, source| source[coefficient],
             )?;

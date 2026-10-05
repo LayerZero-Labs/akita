@@ -81,7 +81,7 @@ pub(crate) fn observe_commitment_source(source: &RecursiveWitnessFlat) {
         // This observes the actual source selected by the commitment executor,
         // after any commitment alignment or tensor packing, not a build copy.
         for &index in &injection.pending {
-            assert_eq!(source.packed_digits().get(index), Some(1));
+            assert_eq!(source.packed_digits().view().get(index), Some(1));
         }
         injection.pending.clear();
         injection.committed_witnesses += 1;

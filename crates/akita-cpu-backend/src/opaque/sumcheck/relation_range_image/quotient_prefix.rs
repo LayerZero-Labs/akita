@@ -21,7 +21,7 @@
 //!   into challenge-scaled copies of the two-round quad fold. The last prefix
 //!   round writes the folded witness for the ordinary suffix path.
 
-use super::prefix_cache::Stage2PrefixCache;
+use super::prefix_cache::{PrefixBasis, Stage2PrefixCache};
 use super::wide_mass::WideMass;
 use super::*;
 use crate::opaque::sumcheck::relation_range_image::evaluation_trace::PreparedLaneWeights;
@@ -42,11 +42,11 @@ const SCAN_CHUNK_LANES: usize = 256;
 const MIN_LOOKUP_TASK_PAIRS: usize = 1 << 12;
 
 /// Range-image message of one prefix round.
-pub(super) enum PrefixNormRound<E: Field> {
+pub(super) enum PrefixNormRound<'a, E: Field> {
     /// Complete message, already scaled by the split-equality scalar.
     Polynomial(UnivariatePoly<E>),
     /// Inner message that the split-equality factor still multiplies.
-    Terms(NormRoundTerms<E>),
+    Terms(NormRoundTerms<'a, E>),
 }
 
 /// Leading-round state built from one scan of the compact witness.
@@ -556,14 +556,14 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         b: usize,
         live_lane_count: usize,
         coefficient_bits: usize,
-    ) -> Option<Self>
+    ) -> Result<Option<Self>, AkitaError>
     where
         E: 'static,
     {
-        let digit_bits = match b {
-            4 => 2,
-            8 => 3,
-            _ => return None, // Other bases use the ordinary coefficient-round path.
+        let (basis, digit_bits) = match b {
+            4 => (PrefixBasis::B4, 2),
+            8 => (PrefixBasis::B8, 3),
+            _ => return Ok(None), // Other bases use the ordinary coefficient-round path.
         };
         if coefficient_bits < 2
             || stage1_point.len() < 3
@@ -572,10 +572,12 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             || lane_weights.len() < live_lane_count
             || witness.len() != live_lane_count << coefficient_bits
         {
-            return None; // Unsupported geometry uses the ordinary coefficient-round path.
+            return Ok(None); // Unsupported geometry uses the ordinary coefficient-round path.
         }
         // The optimization needs equality tables after two prefix folds.
-        let (eq_low, eq_high) = split_eq.remaining_eq_tables_after(2)?;
+        let Some((eq_low, eq_high)) = split_eq.remaining_eq_tables_after(2) else {
+            return Ok(None);
+        };
         let last_round = coefficient_bits.min(MAX_PREFIX_ROUNDS) - 1;
         let coeff_count = 1usize << coefficient_bits;
         let quads_per_lane = coeff_count / 4;
@@ -641,13 +643,17 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             .par_chunks_mut(task_lanes * quads_per_lane)
             .enumerate()
             .map(scan)
-            .reduce_with(ScanTotals::merge)?;
+            .reduce_with(ScanTotals::merge);
         #[cfg(not(feature = "parallel"))]
         let totals = classes
             .chunks_mut(task_lanes * quads_per_lane)
             .enumerate()
             .map(scan)
-            .reduce(ScanTotals::merge)?;
+            .reduce(ScanTotals::merge);
+
+        let Some(totals) = totals else {
+            return Ok(None);
+        };
 
         let tau2 = stage1_point[2];
         let mixed_histogram = if quads_per_lane >= 2 {
@@ -662,11 +668,11 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         };
         let norm_cache = Stage2PrefixCache::from_norm_histogram(
             &mixed_histogram,
-            b,
+            basis,
             stage1_point[0],
             stage1_point[1],
             batching_coeff,
-        );
+        )?;
         let (even_histogram, odd_histogram) = if serves_round2 {
             (totals.even_histogram, totals.odd_histogram)
         } else {
@@ -681,7 +687,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             })
             .collect();
 
-        Some(Self {
+        Ok(Some(Self {
             b,
             digit_bits,
             last_round,
@@ -693,7 +699,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             relation_moments: CoefficientRelationMoments::new(totals.alpha_mass, source_mass),
             quad_fold: Vec::new(),
             challenges: Vec::new(),
-        })
+        }))
     }
 
     #[inline]
@@ -716,29 +722,29 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
     }
 
     /// Range-image message of a round that keeps the witness compact.
-    pub(super) fn norm_round(
+    pub(super) fn norm_round<'a>(
         &self,
         split_eq: &GruenSplitEq<E>,
-        skip_linear: bool,
-    ) -> PrefixNormRound<E> {
+        recovery: Option<PreparedLinearQRecovery<'a, E>>,
+    ) -> PrefixNormRound<'a, E> {
         match self.challenges.len() {
             0 => PrefixNormRound::Polynomial(self.norm_cache.round0_norm_poly()),
             1 => PrefixNormRound::Polynomial(self.norm_cache.round1_norm_poly(self.challenges[0])),
             2 => PrefixNormRound::Terms(self.round2_norm_terms()),
             round => {
-                PrefixNormRound::Terms(self.lookup_round_terms(round, split_eq, skip_linear, None))
+                PrefixNormRound::Terms(self.lookup_round_terms(round, split_eq, recovery, None))
             }
         }
     }
 
     /// Materialize the witness folded by every challenge so far and return it
     /// with the range-image message of the last prefix round.
-    pub(super) fn materialize(
+    pub(super) fn materialize<'a>(
         &self,
         witness: PackedSignedDigitView<'_>,
         split_eq: &GruenSplitEq<E>,
-        skip_linear: bool,
-    ) -> (Vec<E>, PrefixNormRound<E>) {
+        recovery: Option<PreparedLinearQRecovery<'a, E>>,
+    ) -> (Vec<E>, PrefixNormRound<'a, E>) {
         debug_assert_eq!(self.challenges.len(), self.last_round);
         match self.last_round {
             1 => {
@@ -746,7 +752,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
                 let half = (self.b / 2) as i16;
                 let lut = CompactPairFoldLut::from_contiguous_range(-half, half - 1, r0);
                 (
-                    RelationRangeImageProver::<E>::materialize_compact_witness(witness, &lut),
+                    RelationRoundState::<E>::materialize_compact_witness(witness, &lut),
                     PrefixNormRound::Polynomial(self.norm_cache.round1_norm_poly(r0)),
                 )
             }
@@ -758,8 +764,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             ),
             round => {
                 let mut folded = vec![E::zero(); self.classes.len() >> (round - 2)];
-                let terms =
-                    self.lookup_round_terms(round, split_eq, skip_linear, Some(&mut folded));
+                let terms = self.lookup_round_terms(round, split_eq, recovery, Some(&mut folded));
                 (folded, PrefixNormRound::Terms(terms))
             }
         }
@@ -770,7 +775,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
     /// The folded witness at a quad is linear in its digits, so the round-2
     /// slope of an even/odd quad pair is the quad fold of their digit
     /// difference.
-    fn round2_norm_terms(&self) -> NormRoundTerms<E> {
+    fn round2_norm_terms<'a>(&self) -> NormRoundTerms<'a, E> {
         let mut at_zero = E::zero();
         let mut at_one = E::zero();
         for ((&fold, &even), &odd) in self
@@ -792,13 +797,20 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
                 .collect()
         });
         let mut at_infinity = E::zero();
-        let mut weights = self.delta_histogram.chunks_exact(radix);
-        for d3 in &digit_terms[3] {
-            for d2 in &digit_terms[2] {
+        // The scan allocates radix^4 entries and never resizes this histogram.
+        // Nested chunks expose each complete row directly, without a fallible next().
+        debug_assert_eq!(self.delta_histogram.len(), radix.pow(4));
+        let delta_plane_len = radix * radix;
+        let delta_cube_len = delta_plane_len * radix;
+        let cubes = self.delta_histogram.chunks_exact(delta_cube_len);
+        for (d3, cube) in digit_terms[3].iter().zip(cubes) {
+            for (d2, plane) in digit_terms[2]
+                .iter()
+                .zip(cube.chunks_exact(delta_plane_len))
+            {
                 let high = *d3 + *d2;
-                for d1 in &digit_terms[1] {
+                for (d1, row) in digit_terms[1].iter().zip(plane.chunks_exact(radix)) {
                     let upper = high + *d1;
-                    let row = weights.next().expect("difference histogram row");
                     for (&weight, d0) in row.iter().zip(&digit_terms[0]) {
                         if !weight.is_zero() {
                             let slope = upper + *d0;
@@ -808,7 +820,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
                 }
             }
         }
-        NormRoundTerms::from_totals::<false>([at_zero, at_one - at_zero - at_infinity, at_infinity])
+        NormRoundTerms::Full([at_zero, at_one - at_zero - at_infinity, at_infinity])
     }
 
     /// Equality weights of the quad corners `[00, 10, 01, 11]` at `(r0, r1)`.
@@ -818,14 +830,14 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         [s0 * s1, r0 * s1, s0 * r1, r0 * r1]
     }
 
-    fn lookup_round_terms(
+    fn lookup_round_terms<'a>(
         &self,
         round: usize,
         split_eq: &GruenSplitEq<E>,
-        skip_linear: bool,
+        recovery: Option<PreparedLinearQRecovery<'a, E>>,
         out: Option<&mut [E]>,
-    ) -> NormRoundTerms<E> {
-        let totals = match (round, skip_linear) {
+    ) -> NormRoundTerms<'a, E> {
+        let totals = match (round, recovery.is_some()) {
             (3, false) => self.lookup_round::<2, false>(split_eq, out),
             (3, true) => self.lookup_round::<2, true>(split_eq, out),
             (4, false) => self.lookup_round::<4, false>(split_eq, out),
@@ -836,11 +848,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             (6, true) => self.lookup_round::<16, true>(split_eq, out),
             _ => unreachable!("compact prefix rounds are capped by MAX_PREFIX_ROUNDS"),
         };
-        if skip_linear {
-            NormRoundTerms::from_totals::<true>(totals)
-        } else {
-            NormRoundTerms::from_totals::<false>(totals)
-        }
+        NormRoundTerms::from_totals(totals, recovery)
     }
 
     fn lookup_round<const G: usize, const SKIP_LINEAR: bool>(
@@ -917,13 +925,15 @@ impl<E: Field + Ring + Unreduced + Fold> CompactQuotientPrefix<E> {
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[cfg(test)]
     pub(super) fn compact_quotient_prefix(&self) -> Option<&CompactQuotientPrefix<E>> {
-        match self.phase.as_ref()? {
+        match &self.phase {
             Phase::CompactPrefix { engine, .. } => Some(engine),
             Phase::Coefficient { .. } | Phase::Lane { .. } => None,
         }
     }
+}
 
-    pub(super) fn norm_poly_from_prefix(&self, norm: PrefixNormRound<E>) -> UnivariatePoly<E> {
+impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
+    pub(super) fn norm_poly_from_prefix(&self, norm: PrefixNormRound<'_, E>) -> UnivariatePoly<E> {
         match norm {
             PrefixNormRound::Polynomial(poly) => poly,
             PrefixNormRound::Terms(terms) => self.norm_poly_from_terms(terms),
@@ -936,7 +946,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         prefix: &CompactQuotientPrefix<E>,
         weights: &RelationWeightFactorization<E>,
     ) -> (RoundMessage<E>, UnivariatePoly<E>) {
-        let norm = prefix.norm_round(&self.split_eq, self.can_skip_norm_linear_coeff());
+        let norm = prefix.norm_round(&self.split_eq, self.split_eq.prepare_linear_q_recovery());
         let norm_poly = self.norm_poly_from_prefix(norm);
         let mut message =
             prefix.relation_message(weights.common_alpha_factor(), &self.linear_terms);
@@ -945,25 +955,19 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 }
 
-impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
+impl<E: Field + Ring + Unreduced + Fold> RelationRoundState<E> {
     /// Bind `r` in a compact-prefix round. The round before the last prefix
     /// round also materializes the folded witness and caches the last prefix
     /// round's message.
     pub(super) fn ingest_compact_prefix_challenge(
         &mut self,
-        witness: PackedSignedDigits,
-        mut weights: RelationWeightFactorization<E>,
-        mut engine: Box<CompactQuotientPrefix<E>>,
+        weights: &mut RelationWeightFactorization<E>,
+        engine: &mut CompactQuotientPrefix<E>,
         r: E,
-    ) -> Phase<E> {
+    ) {
         fold_evals_in_place(weights.common_alpha_factor_mut(), r);
         self.split_eq.bind(r);
         self.linear_terms.fold_coefficients(r);
         engine.bind(r);
-        Phase::CompactPrefix {
-            witness,
-            weights,
-            engine,
-        }
     }
 }

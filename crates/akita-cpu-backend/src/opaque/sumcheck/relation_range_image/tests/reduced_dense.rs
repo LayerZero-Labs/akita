@@ -2,9 +2,9 @@ use super::*;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 #[test]
-fn expected_final_claim_rejects_missing_phase_without_panicking() {
+fn expected_final_claim_rejects_unfinished_prover_without_panicking() {
     let stage1_point = [F::from_u64(3), F::from_u64(5)];
-    let mut prover = new_stage2_test_prover(
+    let prover = new_stage2_test_prover(
         F::one(),
         vec![0, 1],
         vec![F::one(); 2],
@@ -17,10 +17,10 @@ fn expected_final_claim_rejects_missing_phase_without_panicking() {
             coefficient_bits: 1,
         },
     );
-    prover.phase = None;
 
     let result = catch_unwind(AssertUnwindSafe(|| prover.expected_final_claim()));
-    assert!(matches!(result, Ok(Err(AkitaError::Internal(_)))));
+    assert!(matches!(result, Ok(Err(AkitaError::Internal(message)))
+        if message == "final witness remained compact after final fold"));
 }
 
 #[test]
@@ -99,7 +99,10 @@ fn reduced_dense_oracle_matches_factored_stage2_across_all_rounds() {
         factored.ingest_challenge(round, challenge);
         dense.ingest_challenge(round, challenge);
     }
-    assert_eq!(dense.final_w_eval(), factored.final_w_eval());
+    assert_eq!(
+        dense.final_w_eval().unwrap(),
+        factored.final_w_eval().unwrap()
+    );
     assert_eq!(dense.expected_final_claim().unwrap(), claim);
     assert_eq!(factored.expected_final_claim().unwrap(), claim);
 }
@@ -131,9 +134,9 @@ fn reduced_dense_oracle_rejects_a_live_domain_that_disagrees_with_the_witness() 
     );
     assert!(matches!(
         result,
-        Err(AkitaError::InvalidSize {
-            expected,
-            actual
-        }) if expected == witness_len && actual == witness_len - 1
+        Err(AkitaError::Internal(message)) if message == format!(
+            "stage-2 dense relation live length: expected {witness_len}, actual {}",
+            witness_len - 1,
+        )
     ));
 }

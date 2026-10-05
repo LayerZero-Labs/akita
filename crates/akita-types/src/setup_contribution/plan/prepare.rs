@@ -165,7 +165,11 @@ impl<E: Field> SetupContributionPlan<E> {
                         PhysicalBSetupPlan::new(slice_geometry, physical_n_b, b_weights)?;
                     let consistency_weight = *eq_tau1
                         .get(level_params.consistency_row_index(opening_batch, group.group_id)?)
-                        .ok_or(AkitaError::InvalidProof)?;
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "setup consistency row exceeds the validated equality table".into(),
+                            )
+                        })?;
                     let num_physical_units =
                         witness_layout.units_for_group(group.group_id)?.count();
                     let active_units = witness_layout
@@ -183,9 +187,11 @@ impl<E: Field> SetupContributionPlan<E> {
                                 actual: fold_gadget.len(),
                             });
                         }
-                        fold_gadget
-                            .get(..group.depth_fold)
-                            .ok_or(AkitaError::InvalidProof)?
+                        fold_gadget.get(..group.depth_fold).ok_or_else(|| {
+                            AkitaError::Internal(
+                                "setup fold gadget prefix exceeds its validated length".into(),
+                            )
+                        })?
                     } else {
                         fold_gadget_storage =
                             akita_params::gadget_row_scalars::<F>(group.depth_fold, log_basis_open);

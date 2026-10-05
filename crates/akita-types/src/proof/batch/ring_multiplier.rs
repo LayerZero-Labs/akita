@@ -42,8 +42,12 @@ impl<E: Field> PreparedRingMultiplier<E> {
     ) -> Result<E, AkitaError> {
         match &self.kind {
             PreparedRingMultiplierKind::Base(weights) => {
-                let multiplier = *weights.get(position).ok_or(AkitaError::InvalidProof)?;
-                let constant_weight = *functional.first().ok_or(AkitaError::InvalidProof)?;
+                let multiplier = *weights.get(position).ok_or_else(|| {
+                    AkitaError::InvalidInput("functional multiplier position out of range".into())
+                })?;
+                let constant_weight = *functional.first().ok_or_else(|| {
+                    AkitaError::InvalidInput("terminal functional must be non-empty".into())
+                })?;
                 Ok(constant_weight * multiplier)
             }
             PreparedRingMultiplierKind::Subfield {
@@ -51,31 +55,48 @@ impl<E: Field> PreparedRingMultiplier<E> {
                 extension_degree,
                 ring_dim,
             } => {
-                if functional.len() != *ring_dim || *extension_degree == 0 {
-                    return Err(AkitaError::InvalidProof);
+                if functional.len() != *ring_dim {
+                    return Err(AkitaError::InvalidSize {
+                        expected: *ring_dim,
+                        actual: functional.len(),
+                    });
                 }
-                let start = position
-                    .checked_mul(*extension_degree)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let end = start
-                    .checked_add(*extension_degree)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let coordinates = position_coordinates
-                    .get(start..end)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let (&constant, nonconstant) =
-                    coordinates.split_first().ok_or(AkitaError::InvalidProof)?;
+                if *extension_degree == 0 {
+                    return Err(AkitaError::Internal(
+                        "validated functional multiplier extension degree is zero".into(),
+                    ));
+                }
+                let start = position.checked_mul(*extension_degree).ok_or_else(|| {
+                    AkitaError::InvalidInput("functional coordinate start overflow".into())
+                })?;
+                let end = start.checked_add(*extension_degree).ok_or_else(|| {
+                    AkitaError::InvalidInput("functional coordinate end overflow".into())
+                })?;
+                let coordinates = position_coordinates.get(start..end).ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "functional multiplier coordinate index out of range".into(),
+                    )
+                })?;
+                let (&constant, nonconstant) = coordinates.split_first().ok_or_else(|| {
+                    AkitaError::Internal(
+                        "validated functional multiplier coordinates are empty".into(),
+                    )
+                })?;
                 let basis_pairs = subfield_basis_pairs(*ring_dim, *extension_degree)?;
                 let mut evaluation = functional[0] * constant;
                 for (&coordinate, &(basis_index, inverse_index)) in
                     nonconstant.iter().zip(&basis_pairs)
                 {
-                    let positive = *functional
-                        .get(basis_index)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let negative = *functional
-                        .get(inverse_index)
-                        .ok_or(AkitaError::InvalidProof)?;
+                    let positive = *functional.get(basis_index).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "positive subfield basis exceeds terminal functional".into(),
+                        )
+                    })?;
+                    let negative = *functional.get(inverse_index).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "inverse subfield basis exceeds terminal functional".into(),
+                        )
+                    })?;
                     evaluation += (positive - negative) * coordinate;
                 }
                 Ok(evaluation)
@@ -200,7 +221,9 @@ impl<F: Field> RingMultiplierOpeningPoint<F> {
                 .get(idx)
                 .copied()
                 .map(E::lift_base)
-                .ok_or(AkitaError::InvalidProof),
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("base multiplier evaluation index out of range".into())
+                }),
             Self::Subfield(point) => point.eval_position_at(idx, alpha_pows),
         }
     }
@@ -223,10 +246,9 @@ impl<F: Field> RingMultiplierOpeningPoint<F> {
     ) -> Result<(), AkitaError> {
         match self {
             Self::Base(point) => {
-                let scalar = point
-                    .position_weights
-                    .get(idx)
-                    .ok_or(AkitaError::InvalidProof)?;
+                let scalar = point.position_weights.get(idx).ok_or_else(|| {
+                    AkitaError::InvalidInput("base multiplier product index out of range".into())
+                })?;
                 *output += rhs.scale(scalar);
                 Ok(())
             }
@@ -271,6 +293,77 @@ mod tests {
 
     type F = Fp32<251>;
     type E = FpExt4<F>;
+
+    #[test]
+    fn base_multiplier_rejects_bad_position_and_empty_functional() {
+        let point = RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
+            position_weights: vec![F::one()],
+            live_block_weights: vec![F::one()],
+        });
+        let prepared = point.prepare_functional_multiplier::<F>();
+        assert!(matches!(
+            prepared.evaluate_position_functional(1, &[F::one()]),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            prepared.evaluate_position_functional(0, &[]),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            point.eval_position_at::<F>(1, &[F::one()]),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            point.accumulate_position_product(
+                1,
+                &CyclotomicRing::<F, 4>::zero(),
+                &mut CyclotomicRing::zero(),
+            ),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn subfield_multiplier_rejects_bad_shift_without_changing_output() {
+        const D: usize = 64;
+        let point = crate::prepare_opening_point::<F, E, D>(
+            &[],
+            akita_params::BasisMode::Lagrange,
+            2,
+            1,
+            6,
+        )
+        .unwrap()
+        .ring_multiplier_point;
+        let subfield = point.as_subfield().unwrap();
+        let mut output = CyclotomicRing::<F, D>::zero();
+        assert!(matches!(
+            subfield.accumulate_position_monomial(0, D, F::one(), &mut output),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert_eq!(output, CyclotomicRing::zero());
+        subfield
+            .accumulate_position_monomial(0, 0, F::one(), &mut output)
+            .unwrap();
+        assert_eq!(output.coefficients()[0], F::one());
+
+        assert!(matches!(
+            point.accumulate_position_product_high_half(
+                2,
+                &CyclotomicRing::<F, D>::zero(),
+                &mut vec![F::zero(); D],
+            ),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            point.accumulate_position_product_high_half(
+                0,
+                &CyclotomicRing::<F, D>::zero(),
+                &mut vec![F::zero(); D - 1],
+            ),
+            Err(AkitaError::InvalidSize { expected: D, actual }) if actual == D - 1
+        ));
+    }
 
     #[test]
     fn prepared_subfield_multiplier_uses_full_terminal_functional() {

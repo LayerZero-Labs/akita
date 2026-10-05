@@ -21,6 +21,73 @@ use super::test_fixtures::{
 };
 
 #[test]
+fn packing_batch_rejects_out_of_range_prepared_point_group() {
+    let fixture = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        64,
+        64,
+        4,
+        4,
+        10,
+        1,
+        1,
+    );
+    let points = [(fixture.opening_batch.num_groups(), &fixture.prepared_point)];
+    assert!(matches!(
+        prepare_coefficient_packing_batch_semantics(CoefficientPackingBatchSemanticInputs {
+            level_params: &fixture.params,
+            opening_batch: &fixture.opening_batch,
+            relation_plan: &fixture.relation_plan,
+            relation: &fixture.relation,
+            prepared_points: &points,
+            alpha: E::from_u64(3),
+            tau1: &fixture.tau1,
+            claim_coefficients: &fixture.claim_coefficients,
+        }),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn packing_batch_rejects_claim_range_from_a_different_opening_batch() {
+    let fixture = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        64,
+        64,
+        4,
+        4,
+        10,
+        1,
+        1,
+    );
+    let other_batch = OpeningClaimsLayout::new(10, 2).unwrap();
+    let other_plan = RelationRangeImagePlan::new(
+        fixture.relation_plan.relation_witness_geometry().clone(),
+        fixture.relation_plan.relation_address_geometry(),
+        fixture.relation_plan.digit_range_plan(),
+        fixture.relation_plan.witness_layout().clone(),
+        &other_batch,
+    )
+    .unwrap();
+    let points = [(0, &fixture.prepared_point)];
+    assert!(matches!(
+        prepare_coefficient_packing_batch_semantics(CoefficientPackingBatchSemanticInputs {
+            level_params: &fixture.params,
+            opening_batch: &fixture.opening_batch,
+            relation_plan: &other_plan,
+            relation: &fixture.relation,
+            prepared_points: &points,
+            alpha: E::from_u64(3),
+            tau1: &fixture.tau1,
+            claim_coefficients: &fixture.claim_coefficients,
+        }),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
+#[test]
 fn packing_rejects_tensor_projected_commitment_source() {
     let mut fixture = fixture::<F, E>(
         SisModulusProfileId::Q64Offset59,
@@ -558,7 +625,7 @@ fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
         })
         .is_err()
     );
-    assert!(
+    assert!(matches!(
         prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
             level_params: &fixture.params,
             opening_batch: &fixture.opening_batch,
@@ -569,9 +636,9 @@ fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
             alpha: E::from_u64(3),
             tau1: &fixture.tau1,
             claim_coefficients: &fixture.claim_coefficients,
-        })
-        .is_err()
-    );
+        }),
+        Err(AkitaError::Internal(_))
+    ));
     let wrong_arity_point = PreparedSubringCoefficientPackingPoint::new(
         fixture.prepared_point.geometry(),
         BasisMode::Lagrange,
