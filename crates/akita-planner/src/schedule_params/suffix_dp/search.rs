@@ -12,7 +12,7 @@ struct OpeningSearch<'a> {
 }
 
 struct ChildPlan<'a> {
-    chunk_shape: akita_params::WitnessChunkShape,
+    chunk_shape: Option<akita_params::WitnessChunkShape>,
     params: &'a CommittedGroupParams,
     next_witness_len: usize,
     next_source_moment: Option<crate::response_model::SourceMomentEstimate>,
@@ -65,7 +65,7 @@ fn plan_candidate_children(
             .get(state.level)
             .is_some_and(|successor| successor.params.setup_prefix().is_some())
     });
-    let input_chunks = (plan.chunk_shape.num_chunks > 1).then(|| Arc::new(plan.chunk_shape));
+    let input_chunks = plan.chunk_shape.map(Arc::new);
     let direct_child = if guided_successor_is_offloaded == Some(true)
         || !plan.direct_edge_is_admissible
         || plan.prune_direct_edge

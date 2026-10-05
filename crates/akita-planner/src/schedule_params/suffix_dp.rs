@@ -338,7 +338,7 @@ struct CandidateChildren<'a> {
 }
 
 struct PlannedFoldCandidate {
-    chunk_shape: akita_params::WitnessChunkShape,
+    chunk_shape: Option<akita_params::WitnessChunkShape>,
     params: CommittedGroupParams,
     next_witness_len: usize,
     opening_reduction_bytes: usize,
@@ -753,13 +753,7 @@ fn price_terminal_candidate(
             .input_chunks
             .map(|chunks| {
                 chunks.align(
-                    akita_error::checked::product([
-                        candidate_params.d_a(),
-                        candidate_params.blocks().positions_per_block,
-                    ])
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("terminal block width overflow".into())
-                    })?,
+                    akita_params::FoldSuccessor::Recursive(candidate_params).source_block_len()?,
                     1,
                 )
             })
@@ -867,13 +861,7 @@ fn price_level_candidate_with_children(
             .input_chunks
             .map(|chunks| {
                 chunks.align(
-                    akita_error::checked::product([
-                        candidate_params.d_a(),
-                        candidate_params.blocks().positions_per_block,
-                    ])
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("source block width overflow".into())
-                    })?,
+                    akita_params::FoldSuccessor::Recursive(candidate_params).source_block_len()?,
                     candidate_params.witness_chunk.num_chunks,
                 )
             })

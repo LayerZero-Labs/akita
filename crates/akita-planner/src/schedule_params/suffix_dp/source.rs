@@ -28,21 +28,27 @@ pub(super) fn attach_source_moments(
         } else {
             0
         };
-        let chunk_shape = akita_params::WitnessLayout::new(
-            &params,
-            &opening_layout,
-            &akita_params::RelationWitnessGeometry::for_level(
-                &params,
-                &opening_layout,
-                policy.claim_ext_degree,
-            )?,
-            params.witness_chunk.num_chunks,
-            akita_params::RelationQuotientPlan::for_field_bits(
-                &params,
-                policy.decomposition.field_bits(),
-            )?,
-        )?
-        .chunk_shape()?;
+        let chunk_shape = if params.witness_chunk.num_chunks > 1 {
+            Some(
+                akita_params::WitnessLayout::new(
+                    &params,
+                    &opening_layout,
+                    &akita_params::RelationWitnessGeometry::for_level(
+                        &params,
+                        &opening_layout,
+                        policy.claim_ext_degree,
+                    )?,
+                    params.witness_chunk.num_chunks,
+                    akita_params::RelationQuotientPlan::for_field_bits(
+                        &params,
+                        policy.decomposition.field_bits(),
+                    )?,
+                )?
+                .chunk_shape()?,
+            )
+        } else {
+            None
+        };
         let next_source_moment = if policy.selective_l2_response_model_enabled() {
             let source_groups = if is_root_level {
                 crate::response_model::root_group_source_moments(

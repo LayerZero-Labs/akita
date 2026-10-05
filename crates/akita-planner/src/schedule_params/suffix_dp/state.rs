@@ -33,17 +33,18 @@ impl SuffixResult {
 
 /// Exact successor geometry visible to a parent fold.
 ///
-/// The parent prices only the child's outgoing commitment payload and optional
-/// Stage-3 setup-prefix payload. The child's other matrix and opening choices
-/// remain part of the retained full schedule for the canonical tie-break, but
-/// cannot affect the parent edge price.
+/// The parent prices the child's commitment and optional Stage-3 setup-prefix
+/// payloads, and uses its grinding geometry and source-block width to price
+/// the parent fold. Other matrix and opening choices remain part of the full
+/// schedule for the canonical tie-break, but cannot affect the parent edge price.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ParentObservableKey {
     outer_payload_bytes: usize,
     setup_prefix_payload_bytes: usize,
     grinding_successor: GrindingSuccessorKey,
-    /// Successor source-block coefficient width used to pad a multi-chunk
-    /// level-0 producer. Absent when that producer does not pad chunk bodies.
+    /// Successor source-block coefficient width used to align multi-chunk
+    /// predecessor bodies. Retained policy-wide whenever multi-chunk folds
+    /// are enabled, including states whose predecessor has already contracted.
     source_block_len: Option<usize>,
 }
 

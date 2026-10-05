@@ -745,20 +745,22 @@ impl WitnessLayout {
                 .t_range
                 .end
                 .checked_sub(unit.z_range.start)
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| AkitaError::Internal("witness body range is reversed".into()))?;
             let body = shape
                 .body_lengths
                 .get_mut(unit.chunk_index)
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal("witness body chunk index exceeds the cap".into())
+                })?;
             *body = body
                 .checked_add(len)
-                .ok_or_else(|| AkitaError::InvalidSetup("witness body overflow".into()))?;
+                .ok_or_else(|| AkitaError::Internal("witness body overflow".into()))?;
         }
         if let Some(layer) = self.compression_layers.first() {
             let first_f = layer
                 .f_spans
                 .first()
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| AkitaError::Internal("compression layer has no F spans".into()))?
                 .1
                 .range
                 .start;
@@ -768,7 +770,7 @@ impl WitnessLayout {
                     .filter(|row| row.range.end <= first_f)
                     .map(|row| row.range.len()),
             )
-            .ok_or_else(|| AkitaError::InvalidSetup("witness quotient width overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("witness quotient width overflow".into()))?;
             shape.tail_alignment = layer
                 .f_spans
                 .iter()
@@ -790,9 +792,11 @@ impl WitnessLayout {
                         .map(|layer| layer.h_span.range.end),
                 )
                 .max()
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| AkitaError::Internal("witness compression tail is empty".into()))?
                 .checked_sub(first_f)
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal("witness compression tail is reversed".into())
+                })?;
         }
         Ok(shape)
     }

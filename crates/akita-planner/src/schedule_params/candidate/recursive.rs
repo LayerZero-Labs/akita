@@ -152,6 +152,7 @@ struct RecursiveCandidateCore {
     num_ring_elems: usize,
     num_positions_per_block: usize,
     num_live_blocks: usize,
+    witness_chunk_ends: Vec<usize>,
     num_digits_inner: usize,
     num_digits_open: usize,
     num_digits_fold: usize,
@@ -192,11 +193,11 @@ impl RecursiveCandidateContext<'_, '_> {
             })?;
         let block_len = checked::product([num_positions_per_block, dimensions.d_a()])
             .ok_or_else(|| AkitaError::InvalidSetup("source block width overflow".into()))?;
-        let input_len = request
+        let (input_len, witness_chunk_ends) = request
             .input_chunks
             .map(|chunks| chunks.align(block_len, num_chunks))
             .transpose()?
-            .map_or(request.current_witness_len, |(len, _)| len);
+            .unwrap_or_else(|| (request.current_witness_len, Vec::new()));
         let num_ring_elems = input_len.div_ceil(dimensions.d_a());
         let num_live_blocks = num_ring_elems.div_ceil(num_positions_per_block);
         let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, delta_commit)
@@ -210,26 +211,21 @@ impl RecursiveCandidateContext<'_, '_> {
             .checked_mul(d_a)
             .and_then(|count| count.checked_mul(num_chunks))
             .ok_or_else(|| AkitaError::InvalidSetup("fold response width overflow".into()))?;
-        let cap_blocks = request
-            .input_chunks
-            .map(|chunks| chunks.align(block_len, num_chunks))
-            .transpose()?
-            .map_or(num_live_blocks, |(_, ends)| {
-                if ends.is_empty() {
-                    return num_live_blocks;
-                }
-                let mut start = 0;
-                let max = ends
-                    .iter()
-                    .map(|&end| {
-                        let len = end - start;
-                        start = end;
-                        len
-                    })
-                    .max()
-                    .unwrap_or(0);
-                max.saturating_mul(num_chunks)
-            });
+        let cap_blocks = if witness_chunk_ends.is_empty() {
+            num_live_blocks
+        } else {
+            let mut start = 0;
+            let max = witness_chunk_ends
+                .iter()
+                .map(|&end| {
+                    let len = end - start;
+                    start = end;
+                    len
+                })
+                .max()
+                .unwrap_or(0);
+            max.saturating_mul(num_chunks)
+        };
         let modeled_linf_cap = self.source_moment.and_then(|moment| {
             moment.response_linf_cap(
                 ring_challenge_cfg.challenge_l2_sq_max(),
@@ -289,6 +285,7 @@ impl RecursiveCandidateContext<'_, '_> {
             num_ring_elems,
             num_positions_per_block,
             num_live_blocks,
+            witness_chunk_ends,
             num_digits_inner: delta_commit,
             num_digits_open: delta_open,
             num_digits_fold: inner_candidate.num_digits_fold,
@@ -405,16 +402,7 @@ impl RecursiveCandidateContext<'_, '_> {
                     source_encoding,
                     crate::policy::witness_chunk_at_level(request.policy, request.fold_level),
                 )?;
-                if let Some(chunks) = request.input_chunks {
-                    params.witness_chunk_ends = chunks
-                        .align(
-                            checked::product([core.num_positions_per_block, d_a]).ok_or_else(
-                                || AkitaError::InvalidSetup("source block width overflow".into()),
-                            )?,
-                            self.search.num_chunks,
-                        )?
-                        .1;
-                }
+                params.witness_chunk_ends = core.witness_chunk_ends.clone();
                 candidates.push(params);
             }
         }

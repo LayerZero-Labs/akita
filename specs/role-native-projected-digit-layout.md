@@ -524,7 +524,7 @@ At a trusted schedule or verifier boundary, construction **MUST** reject:
 - chunk block ranges that overlap, gap, reorder, or fail to cover `[0,F_g)`;
 - a Z/E/T range whose length differs from the formulas above;
 - an R row range whose length differs from `delta_R * r_rho`;
-- any internal range gap or overlap;
+- any internal range overlap or gap outside the canonical alignment ranges;
 - a live length, padding length, or address computation that overflows;
 - a committed domain shorter than `L`, not divisible by `d_next`, or not a
   power-of-two number of successor rings; and
