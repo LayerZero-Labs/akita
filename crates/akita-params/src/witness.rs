@@ -831,7 +831,12 @@ impl WitnessLayout {
             .collect()
     }
 
-    /// Public zero gaps aligning chunk bodies and compression spans.
+    /// Alignment gaps between chunk bodies and compression spans.
+    ///
+    /// These committed coordinates obey the ordinary digit range constraint,
+    /// but carry no relation equations. The canonical prover initializes them
+    /// to zero; verification does not require zero. A successor consumes them
+    /// as source coefficients and still enforces its response bounds.
     #[must_use]
     pub fn compression_alignment_ranges(&self) -> &[Range<usize>] {
         &self.compression_alignment_ranges

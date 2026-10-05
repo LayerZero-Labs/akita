@@ -233,7 +233,7 @@ pub(super) fn terminal(
     }))
 }
 
-pub(super) fn prepend_fold(
+pub(in crate::schedule_params) fn prepend_fold(
     policy: &PlannerPolicy,
     level: usize,
     input_witness_len: usize,
@@ -337,7 +337,7 @@ pub(super) fn prepend_fold(
     }))
 }
 
-pub(super) fn prepend_root(
+pub(in crate::schedule_params) fn prepend_root(
     policy: &PlannerPolicy,
     schedule_key: &akita_params::ScheduleLookupKey,
     input_witness_len: usize,

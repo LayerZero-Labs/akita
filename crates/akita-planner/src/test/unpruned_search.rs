@@ -11,7 +11,8 @@ mod score;
 #[path = "unpruned_search/suffix.rs"]
 mod suffix;
 
-use candidate::{prepend_fold, prepend_root, terminal};
+use candidate::terminal;
+pub(super) use candidate::{prepend_fold, prepend_root};
 use frontier::{retain as retain_frontier_candidate, OracleFrontier};
 use relation::OracleRelationState;
 use score::{schedule_descriptor_bytes, score, OracleScore};

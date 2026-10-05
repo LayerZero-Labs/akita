@@ -130,8 +130,11 @@ chunk partition refines every coarser partition.
 
 After a multi-chunk producer, a recursive witness inherits its chunk-major
 Z/E/T bodies. Each body ends at a multiple of this fold's source-block coefficient width;
-the T range itself excludes the inserted zeros. Adjacent owners merge when
-chunking contracts, and the last owner receives the complete shared tail and
+the T range itself excludes the alignment gap. The canonical prover zero fills
+these committed, range-constrained coordinates; verification allows nonzero
+filler subject to the [response bounds](../security.md#alignment-coordinates).
+Adjacent owners merge when chunking contracts, and the last owner receives the
+complete shared tail and
 final power-of-two padding. These inherited ranges can differ by more than one
 block. Single-chunk producers keep the original contiguous Z/E/T layout without
 body alignment padding.

@@ -254,6 +254,29 @@ model error. The planner freezes the resulting cap into the schedule. The
 verifier enforces that exact cap. A model error can make proving fail more
 often, but it cannot make the verifier accept a response above the cap.
 
+### Alignment coordinates
+
+Witness alignment gaps are physical committed coordinates outside the semantic
+Z/E/T, quotient, and compression spans. Stage 1 range-checks these coordinates
+with the ordinary balanced digit range. They have no direct relation equations
+and no negative-binary constraint. The canonical prover initializes them to
+zero, but verification does not require zero.
+
+The successor commitment consumes the complete physical witness, including
+alignment coordinates. Its block geometry and matrix input widths cover this
+source; SIS rank admission uses those widths and the accepted digit or response
+bounds, without assuming the filler is zero. The current fold's A-role response
+norm covers its semantic Z ranges, so changing its alignment coordinates does
+not directly change that norm. Once the successor consumes the witness, filler
+can change its response. That response must satisfy the successor's scheduled
+coefficient bound or its proved physical squared L2 cap, including the direct
+terminal norm check when applicable.
+
+Zero filler contributes no energy to the honest source model. This convention
+can be used to select a cap, but the security calculation uses the cap enforced
+by verification. Nonzero filler need not produce a response below that cap:
+range membership alone does not guarantee acceptance of every later fold.
+
 ### The accepted committed-source space
 
 A committed level stores `num_digits_inner` balanced base-`2^log_basis_inner`

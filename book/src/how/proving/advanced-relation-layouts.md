@@ -270,13 +270,20 @@ $$
 
 Root source chunks use the [canonical proportional
 partition](./opening-points-layout.md#chunks-and-fold-challenges), including
-unequal and empty ranges. When the producer has multiple chunks, each emitted Z/E/T body is zero padded
-to a multiple of the next fold's source-block coefficient width. The next fold
+unequal and empty ranges. When the producer has multiple chunks, each emitted
+Z/E/T body is aligned to a multiple of the next fold's source-block coefficient
+width. The canonical prover fills the alignment gaps with zero. The next fold
 inherits those bodies instead of repartitioning the witness equally; if its
 chunk count contracts, it merges adjacent owners. The last owner also receives
 the complete quotient and compression tail and the final power-of-two padding.
-T ranges end before the inserted zeros, so padding adds no semantic coordinates
-or source energy to A/Z pricing. This ownership changes no relation below.
+T ranges end before the alignment gaps, which add no semantic Z/E/T coordinates.
+The gaps belong to the committed witness and obey the ordinary digit range
+constraints, but carry no relation equations. Verification does not require
+zero. Zero filling adds no energy to the honest prover's source model; nonzero
+filler becomes part of the next fold's source and can affect its responses,
+which must still meet that fold's enforced bounds. See
+[response security accounting](../security.md#alignment-coordinates).
+This ownership changes no relation below.
 The transcript still samples one challenge $c_b$ for every global live block; it does not sample an
 independent challenge family for each chunk.
 

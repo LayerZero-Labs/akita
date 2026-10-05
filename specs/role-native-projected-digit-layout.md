@@ -45,7 +45,9 @@ For every chunk, the prover emits every group in authenticated relation order:
 
 ```text
 chunk 0: [group 0: Z | E | T] [group 1: Z | E | T] ...
+         [canonical body alignment, if required]
 chunk 1: [group 0: Z | E | T] [group 1: Z | E | T] ...
+         [canonical body alignment, if required]
 ...
 shared:  [native R rows]
 suffix:  [zeros, if required by the successor Boolean domain]
@@ -324,8 +326,8 @@ The valid subcolumns are exactly `0 <= s < q_B,g`. No other subcolumns exist.
 
 ## Native quotient tail
 
-After the final Z/E/T unit, the witness contains one shared R tail. Relation
-rows use the canonical order
+After the final Z/E/T unit and its alignment gap, the witness contains one shared
+R tail. Relation rows use the canonical order
 
 ```text
 [consistency_g | A_g | B_g] for each relation-order group, with B rows in
@@ -362,8 +364,14 @@ The exact live coefficient length is
 
 \[
 L=\sum_{c=0}^{W-1}\sum_{p=0}^{G-1}
-(L_Z(g(p))+L_E(g(p),c)+L_T(g(p),c))+L_R.
+(L_Z(g(p))+L_E(g(p),c)+L_T(g(p),c))+L_R+L_{\mathrm{align}}.
 \]
+
+Here $L_{\mathrm{align}}$ counts only the alignment ranges defined by
+`WitnessLayout`, including successor source-block alignment between chunk
+bodies. Compressed layouts additionally include their F/H and quotient spans;
+`WitnessLayout::live_coeff_len()` is the canonical physical end in every mode.
+Alignment ranges do not extend any semantic Z/E/T or quotient segment.
 
 Let `d_next` be the successor commitment's A ring dimension. Define
 
@@ -378,7 +386,15 @@ P=N_{cube}d_{next}.
 The committed and Stage-2 multilinear source is the coefficient vector of
 length `P` formed by the exact live prefix `[0,L)` followed by one zero suffix
 `[L,P)`. This suffix simultaneously supplies any partial successor ring and
-the Boolean-domain padding. There **MUST NOT** be zero gaps inside `[0,L)`.
+the Boolean-domain padding. Internal gaps inside `[0,L)` **MUST** be exactly
+the canonical alignment ranges; arbitrary per-role or per-group carrier padding
+is forbidden. Alignment coordinates are committed and obey the ordinary digit
+range constraints, but carry no relation equations. The canonical prover
+**MUST** initialize them to zero. Verification **MUST NOT** require zero solely
+because a coordinate is an alignment gap. A successor consumes the complete
+source, including filler, and **MUST** enforce its scheduled response bounds.
+The zero contribution of alignment to the honest source-energy estimate is
+not a soundness assumption.
 
 The prover **SHOULD** avoid materializing the suffix when a downstream kernel
 accepts an exact live prefix plus an implicit-zero domain. Serialization and
@@ -524,7 +540,8 @@ The compact representation is an optimization contract, not only a byte
 contract.
 
 - Witness emission **MUST** copy native contiguous coefficient runs directly.
-- No Z/E/T emitter may zero-fill per-role or per-group padding.
+- No Z/E/T emitter may zero-fill arbitrary per-role or per-group carrier
+  padding. Canonical inter-chunk alignment gaps remain zero initialized.
 - No relation, setup, trace, or commitment consumer may transpose an entire
   projected segment.
 - Mixed dimensions **SHOULD** use common-block tensors and batched affine

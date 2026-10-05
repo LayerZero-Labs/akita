@@ -713,6 +713,8 @@ where
         )));
     }
     let out = out.finish()?;
+    #[cfg(test)]
+    let out = super::alignment_gap_tests::fill_alignment_gaps(out, &witness_layout)?;
     #[cfg(feature = "response-model-diagnostics")]
     trace_witness_source_moments(&out, &witness_layout, lp);
     crate::opaque::CpuWitnessHandle::from_cpu(
