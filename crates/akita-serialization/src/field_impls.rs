@@ -63,6 +63,81 @@ macro_rules! impl_prime_serialization {
                     ))
                 }
             }
+
+            #[cfg(target_endian = "little")]
+            fn borrow_many_trusted(
+                bytes: crate::TrustedBytes,
+                count: usize,
+            ) -> Result<(&'static [Self], crate::TrustedBytes), SerializationError> {
+                const _: () = assert!(core::mem::size_of::<$field<0>>() == $bytes);
+                let byte_len = count.checked_mul($bytes).ok_or_else(|| {
+                    SerializationError::InvalidData("field run length overflow".into())
+                })?;
+                let run = bytes.bytes().get(..byte_len).ok_or_else(|| {
+                    SerializationError::InvalidData("field run is truncated".into())
+                })?;
+                let rest = bytes.skip(byte_len).ok_or_else(|| {
+                    SerializationError::InvalidData("field run is truncated".into())
+                })?;
+                if run.as_ptr().align_offset(core::mem::align_of::<Self>()) != 0 {
+                    return Err(SerializationError::InvalidData(
+                        "field run is not aligned for in-place use".into(),
+                    ));
+                }
+                // SAFETY: on a little-endian target the canonical wire word is the
+                // element's in-memory form; `run` holds exactly `count` elements,
+                // is aligned (checked above), and lives for `'static`. The
+                // `TrustedBytes` token vouches that every word is canonical.
+                let elements =
+                    unsafe { core::slice::from_raw_parts(run.as_ptr().cast::<Self>(), count) };
+                Ok((elements, rest))
+            }
+
+            /// One bulk read of the `count * $bytes` little-endian words into
+            /// the element storage, then the single-element rule per word:
+            /// checked under `Validate::Yes`, reduced otherwise.
+            #[cfg(target_endian = "little")]
+            fn deserialize_many_with_mode<R: Read>(
+                mut reader: R,
+                _compress: Compress,
+                validate: Validate,
+                _ctx: &(),
+                count: usize,
+            ) -> Result<Vec<Self>, SerializationError> {
+                const _: () = assert!(core::mem::size_of::<$field<0>>() == $bytes);
+                let byte_len = count.checked_mul($bytes).ok_or_else(|| {
+                    SerializationError::InvalidData("field run length overflow".into())
+                })?;
+                let mut out: Vec<Self> = Vec::new();
+                out.try_reserve_exact(count)
+                    .map_err(|_| SerializationError::InvalidData("allocation failed".into()))?;
+                out.resize(
+                    count,
+                    <$field<P> as CanonicalEncoding>::from_u128_reduced(0),
+                );
+                // SAFETY: `out` holds `count` initialized elements of `$bytes`
+                // bytes each, and any byte pattern is a valid raw word for the
+                // per-word pass below, which replaces every element.
+                let raw = unsafe {
+                    core::slice::from_raw_parts_mut(out.as_mut_ptr().cast::<u8>(), byte_len)
+                };
+                reader.read_exact(raw)?;
+                for element in &mut out {
+                    let value = <$modulus>::from_le(element.$to_canonical()) as u128;
+                    *element = if validate == Validate::Yes {
+                        <$field<P> as CanonicalEncoding>::from_u128_checked(value).ok_or_else(
+                            || {
+                                SerializationError::InvalidData(
+                                    concat!(stringify!($field), " out of range").into(),
+                                )
+                            },
+                        )?
+                    } else {
+                        <$field<P> as CanonicalEncoding>::from_u128_reduced(value)
+                    };
+                }
+                Ok(out)
+            }
         }
     };
 }
@@ -335,6 +410,61 @@ mod tests {
                 .collect::<String>();
             assert_eq!(encoded, expected_hex, "fixture {label}");
         }
+    }
+
+    /// The bulk prime-field decoder must agree with one decode per word in
+    /// both validation modes, including on words at or above the modulus.
+    fn assert_bulk_matches_single<F>(words: &[u8], count: usize)
+    where
+        F: AkitaDeserialize<Context = ()> + PartialEq + core::fmt::Debug,
+    {
+        for validate in [Validate::Yes, Validate::No] {
+            let bulk = F::deserialize_many_with_mode(words, Compress::No, validate, &(), count);
+            let mut reader = words;
+            let single = (0..count)
+                .map(|_| F::deserialize_with_mode(&mut reader, Compress::No, validate, &()))
+                .collect::<Result<Vec<_>, _>>();
+            match (bulk, single) {
+                (Ok(bulk), Ok(single)) => assert_eq!(bulk, single, "{validate:?}"),
+                (Err(_), Err(_)) => {}
+                (bulk, single) => panic!("{validate:?}: bulk {bulk:?} vs single {single:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn bulk_prime_decoding_matches_single_word_decoding() {
+        let p32 = u32::MAX - 98;
+        let p64 = u64::MAX - 58;
+        let p128 = u128::MAX - 0xffff_a7f6;
+        let words32 = [0, 1, p32 - 1, p32, p32 + 1, u32::MAX];
+        let words64 = [0, 1, p64 - 1, p64, p64 + 1, u64::MAX];
+        let words128 = [0, 1, p128 - 1, p128, p128 + 1, u128::MAX];
+        for valid in [3, 6] {
+            let bytes32: Vec<u8> = words32[..valid]
+                .iter()
+                .flat_map(|w| w.to_le_bytes())
+                .collect();
+            assert_bulk_matches_single::<Prime32Offset99>(&bytes32, valid);
+            let bytes64: Vec<u8> = words64[..valid]
+                .iter()
+                .flat_map(|w| w.to_le_bytes())
+                .collect();
+            assert_bulk_matches_single::<Prime64Offset59>(&bytes64, valid);
+            let bytes128: Vec<u8> = words128[..valid]
+                .iter()
+                .flat_map(|w| w.to_le_bytes())
+                .collect();
+            assert_bulk_matches_single::<Prime128OffsetA7F7>(&bytes128, valid);
+        }
+        assert!(Prime128OffsetA7F7::deserialize_many_with_mode(
+            &[0u8; 31][..],
+            Compress::No,
+            Validate::No,
+            &(),
+            2,
+        )
+        .is_err());
     }
 
     #[test]

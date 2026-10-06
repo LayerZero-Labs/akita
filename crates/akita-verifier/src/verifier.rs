@@ -6,7 +6,9 @@ use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
 use akita_types::AkitaVerifierSetup;
 use jolt_field::CanonicalEncoding;
 
-use crate::prepared_cache::{terminal_ntt_cache_requirement, TerminalNttCache};
+use crate::prepared_cache::{
+    terminal_ntt_cache_requirement, TerminalNttCache, TrustedTerminalCache,
+};
 
 /// An Akita verifier bound to one verifier setup and one trusted catalog.
 ///
@@ -62,12 +64,8 @@ where
     ///
     /// A single-proof verifier, such as a recursion guest, prepares only the
     /// selected row's terminal matrix. `trusted_terminal_cache` optionally
-    /// supplies that matrix as a scalar Q128 artifact from
-    /// [`crate::build_riscv64_terminal_ntt_cache`] instead of transforming it.
-    /// The artifact format checks its setup and schedule identities, geometry,
-    /// lengths, and residue ranges. It cannot prove that the transformed
-    /// payload was derived from the named setup seed, so callers must bind the
-    /// bytes to trusted setup provisioning or to the verifier program identity.
+    /// supplies that matrix as a [`TrustedTerminalCache`] instead of
+    /// transforming it.
     ///
     /// When the catalog has no such row or `setup` does not support it, the
     /// verifier admits nothing and rejects every proof.
@@ -81,7 +79,7 @@ where
         setup: AkitaVerifierSetup<Cfg::Field>,
         schedules: TrustedScheduleCatalog<Cfg>,
         selection: OpeningScheduleSelection,
-        trusted_terminal_cache: Option<&[u8]>,
+        trusted_terminal_cache: Option<TrustedTerminalCache<'_>>,
     ) -> Result<Self, AkitaError> {
         let row = match schedules.resolve_selection(selection) {
             Ok(row) if TrustedScheduleCatalog::<Cfg>::verifier_admits(setup.expanded(), row)? => {
@@ -231,7 +229,18 @@ mod tests {
             assert!(all.admitted_rows().windows(2).all(|pair| pair[0] < pair[1]));
             assert!(all.terminal_ntt_cache_bytes() > 0);
 
-            for artifact in [None, Some(artifact.as_slice())] {
+            // An in-place view needs a body aligned for its residues.
+            let words = Box::leak(vec![0u64; artifact.len().div_ceil(8)].into_boxed_slice());
+            // SAFETY: the leaked words cover `artifact.len()` bytes for `'static`.
+            let aligned: &'static mut [u8] = unsafe {
+                std::slice::from_raw_parts_mut(words.as_mut_ptr().cast::<u8>(), artifact.len())
+            };
+            aligned.copy_from_slice(&artifact);
+            for artifact in [
+                None,
+                Some(TrustedTerminalCache::Decode(artifact.as_slice())),
+                Some(TrustedTerminalCache::View(aligned)),
+            ] {
                 let one = AkitaVerifier::for_selection(
                     setup.clone(),
                     catalog.clone(),
@@ -270,7 +279,12 @@ mod tests {
                 build_riscv64_terminal_ntt_cache(&few_vars, &schedule, selection.row_digest)
                     .expect("terminal cache artifact");
             assert!(matches!(
-                AkitaVerifier::for_selection(few_vars, catalog, selection, Some(&artifact)),
+                AkitaVerifier::for_selection(
+                    few_vars,
+                    catalog,
+                    selection,
+                    Some(TrustedTerminalCache::Decode(&artifact))
+                ),
                 Err(AkitaError::InvalidSetup(_))
             ));
         });
