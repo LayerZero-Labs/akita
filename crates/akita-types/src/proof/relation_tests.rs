@@ -1,4 +1,5 @@
 use super::*;
+use akita_algebra::ring::eval_ring_at_pows_fast;
 use akita_params::layout::relation_layout::{RelationGroupRows, RelationRowGeometry};
 use akita_params::{CommitmentRingDims, CommitmentSliceCount, OpeningMethod};
 use jolt_field::{ExtField, Fp32, FpExt2, NegOneNr, Prime128OffsetA7F7, Ring, Zero};

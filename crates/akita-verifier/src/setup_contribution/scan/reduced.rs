@@ -1,4 +1,5 @@
 use super::*;
+use akita_algebra::ring::eval_ring_at_pows_fast;
 use jolt_field::{Unreduced, Zero};
 
 /// One distinct coefficient functional over the shared setup base rings.
