@@ -1,3 +1,5 @@
+#[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
+use jolt_inlines_ntt::{DEGREE as INLINE_NTT_DEGREE, DOT_PRODUCTS};
 #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use std::mem::size_of;
 
@@ -243,8 +245,85 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             return;
         }
 
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+        if params.uses_lazy_i32_dot() {
+            for k in 0..K {
+                Self::add_assign_pointwise_dot_limb(
+                    &mut self.limbs[k],
+                    |product| &lhs[product].limbs[k],
+                    |product| &rhs[product].limbs[k],
+                    lhs.len(),
+                    params.primes[k],
+                );
+            }
+            return;
+        }
         for (lhs, rhs) in lhs.iter().zip(rhs) {
             self.add_assign_pointwise_mul(lhs, rhs, params);
+        }
+    }
+
+    // Callers pass i32 canonical residues, p < 2^30, and count <= 6, the
+    // contract the SIMD lazy dot kernels share. Then the raw sum is below 6p^2
+    // and the signed Montgomery correction has magnitude below 2^31*p: their
+    // difference fits i64, and its quotient by 2^32 lies in (-p, 2p).
+    #[cfg(any(
+        test,
+        not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))
+    ))]
+    #[inline(always)]
+    pub(super) fn add_assign_pointwise_dot_limb<'a>(
+        acc: &mut [MontCoeff<W>; D],
+        lhs: impl Fn(usize) -> &'a [MontCoeff<W>; D],
+        rhs: impl Fn(usize) -> &'a [MontCoeff<W>; D],
+        count: usize,
+        prime: NttPrime<W>,
+    ) {
+        debug_assert!(count <= I32_LAZY_DOT_BATCH);
+        #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
+        if crate::ntt::butterfly::inline_ntt64::<W, D>() && count <= DOT_PRODUCTS {
+            let zero = [0i32; INLINE_NTT_DEGREE];
+            // SAFETY: PrimeWidth is sealed to i16/i32 and MontCoeff is
+            // transparent. The guards establish exactly 64 i32 coefficients;
+            // the inline API handles arrays without doubleword alignment.
+            unsafe {
+                let lhs_rows = std::array::from_fn(|index| {
+                    if index < count {
+                        &*lhs(index).as_ptr().cast::<[i32; INLINE_NTT_DEGREE]>()
+                    } else {
+                        &zero
+                    }
+                });
+                let rhs_rows = std::array::from_fn(|index| {
+                    if index < count {
+                        &*rhs(index).as_ptr().cast::<[i32; INLINE_NTT_DEGREE]>()
+                    } else {
+                        &zero
+                    }
+                });
+                jolt_inlines_ntt::pointwise_dot64(
+                    &mut *acc.as_mut_ptr().cast::<[i32; INLINE_NTT_DEGREE]>(),
+                    lhs_rows,
+                    rhs_rows,
+                    prime.p.to_i64() as i32,
+                    prime.pinv.to_i64() as i32,
+                );
+            }
+            return;
+        }
+        for (lane, coefficient) in acc.iter_mut().enumerate() {
+            let mut raw_sum = 0i64;
+            for product in 0..count {
+                raw_sum = raw_sum.wrapping_add(
+                    lhs(product)[lane].raw().to_i64() * rhs(product)[lane].raw().to_i64(),
+                );
+            }
+            let correction = (raw_sum as i32).wrapping_mul(prime.pinv.to_i64() as i32);
+            let reduced = raw_sum.wrapping_sub(i64::from(correction) * prime.p.to_i64()) >> 32;
+            let reduced = prime.reduce_range(MontCoeff::from_raw(W::from_i64(reduced)));
+            *coefficient = prime.reduce_range(MontCoeff::from_raw(
+                coefficient.raw().wrapping_add(reduced.raw()),
+            ));
         }
     }
 
@@ -344,7 +423,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         assert_eq!(accs.len(), ntt_mat.len());
         assert!(
             params.uses_lazy_i32_dot(),
-            "lazy pointwise dot requires an i32 SIMD parameter set"
+            "lazy pointwise dot requires an i32 batched parameter set"
         );
         assert!(
             !digits.is_empty() && digits.len() <= params.pointwise_dot_batch_size(),
@@ -355,6 +434,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             for (dst, digit) in scratch.iter_mut().zip(digits) {
                 lut.fill_ntt_limb::<false, D>(k, digit, params, dst);
             }
+            #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
             let rhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
                 digits
                     .get(index)
@@ -363,6 +443,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let prime = params.primes[k];
 
             for (acc, matrix_row) in accs.iter_mut().zip(ntt_mat) {
+                #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
                 let lhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
                     digits.get(index).map_or(std::ptr::null(), |_| {
                         matrix_row[column_start + index].limbs[k]
@@ -396,6 +477,18 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                         prime.pinv.to_i64() as i32,
                     );
                 }
+                #[cfg(not(any(
+                    target_arch = "aarch64",
+                    target_arch = "x86",
+                    target_arch = "x86_64"
+                )))]
+                Self::add_assign_pointwise_dot_limb(
+                    &mut acc.limbs[k],
+                    |product| &matrix_row[column_start + product].limbs[k],
+                    |product| &scratch[product],
+                    digits.len(),
+                    prime,
+                );
             }
         }
     }

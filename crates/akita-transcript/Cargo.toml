@@ -10,6 +10,7 @@ readme = "../../README.md"
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
+jolt-inlines-blake2 = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e19eda725fb9af3dc4a7fa51c6307e7cf6922dea", default-features = false, optional = true }
 jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e19eda725fb9af3dc4a7fa51c6307e7cf6922dea", default-features = false, features = [
   "asm",
   "solinas",
@@ -20,6 +21,9 @@ spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "ef97413
 
 [features]
 default = ["transcript-blake2b"]
+# Blake2b sponge over the jolt-inlines hasher (a RISC-V guest verifier); same
+# bytes as the `blake2` crate.
+blake2-inline = ["dep:jolt-inlines-blake2"]
 logging-transcript = []
 # spongefish 0.7 imports StdHash from its prover/verifier/domain modules
 # even when Akita selects Blake2b or Keccak explicitly, so sha3 is required

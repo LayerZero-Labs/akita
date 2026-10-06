@@ -17,6 +17,7 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 ] }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 keccak = { version = "0.1.6", features = ["asm"] }
+jolt-inlines-keccak256 = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e19eda725fb9af3dc4a7fa51c6307e7cf6922dea", default-features = false, optional = true }
 smallvec = { version = "1.15.2", features = ["const_generics"] }
 
 [dev-dependencies]
@@ -27,6 +28,9 @@ default = ["transcript-blake2b"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]
 parallel = ["jolt-field/parallel"]
+# Keccak-f[1600] through the jolt-inlines Keccak inline (a RISC-V guest
+# verifier); same permutation as the `keccak` crate.
+keccak-inline = ["dep:jolt-inlines-keccak256"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 
 [lints]

@@ -31,6 +31,7 @@ dependencies = [
  "akita-serialization",
  "criterion",
  "jolt-field",
+ "jolt-inlines-ntt",
  "jolt-poly",
  "rand 0.8.8",
  "rand_core 0.6.4",
@@ -45,6 +46,7 @@ dependencies = [
  "akita-error",
  "akita-transcript",
  "jolt-field",
+ "jolt-inlines-keccak256",
  "keccak 0.1.6",
  "serde",
  "shake",
@@ -108,6 +110,7 @@ dependencies = [
  "akita-transcript",
  "blake2",
  "jolt-field",
+ "jolt-inlines-blake2",
  "num-bigint 0.5.1",
  "rand 0.8.8",
  "serde",
@@ -255,6 +258,7 @@ version = "0.1.0"
 dependencies = [
  "akita-error",
  "jolt-field",
+ "jolt-inlines-blake2",
  "spongefish",
 ]
 
@@ -915,6 +919,21 @@ dependencies = [
  "serde",
  "thiserror",
 ]
+
+[[package]]
+name = "jolt-inlines-blake2"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+
+[[package]]
+name = "jolt-inlines-keccak256"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+
+[[package]]
+name = "jolt-inlines-ntt"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
 
 [[package]]
 name = "jolt-poly"
