@@ -3,9 +3,7 @@
 use crate::proof::RingVec;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::ring::{
-    eval_flat_ring_at_pows_fast, eval_ring_at, eval_ring_at_pows_fast, scalar_powers,
-};
+use akita_algebra::ring::{eval_flat_ring_at_pows_fast, eval_ring_at, scalar_powers};
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
 use akita_params::dispatch_for_field;
@@ -341,13 +339,13 @@ where
     E: Field + MulBaseUnreduced<F>,
 {
     let alpha_pows = scalar_powers(alpha, D);
-    for r in rows {
-        if *row_idx >= eq_tau1.len() {
-            return Ok(());
-        }
-        *acc += eq_tau1[*row_idx] * eval_ring_at_pows_fast(r, &alpha_pows);
-        *row_idx += 1;
-    }
+    let weights = relation_row_weights(eq_tau1, *row_idx, rows.len())?;
+    let row_slices = rows
+        .iter()
+        .map(|r| r.coefficients().as_slice())
+        .collect::<Vec<_>>();
+    *acc += E::weighted_dot_base_rows(&row_slices, weights, &alpha_pows);
+    *row_idx += rows.len();
     Ok(())
 }
 
@@ -369,20 +367,20 @@ where
         });
     }
     let alpha_pows = scalar_powers(alpha, D);
-    for row in coeffs.chunks_exact(D) {
-        if *row_idx >= eq_tau1.len() {
-            return Ok(());
-        }
-        let coefficients: [F; D] = row.try_into().map_err(|error| {
-            AkitaError::Internal(format!(
-                "relation coefficient chunk does not match dispatched dimension: {error}"
-            ))
-        })?;
-        let ring = CyclotomicRing::from_coefficients(coefficients);
-        *acc += eq_tau1[*row_idx] * eval_ring_at_pows_fast(&ring, &alpha_pows);
-        *row_idx += 1;
-    }
+    let row_slices = coeffs.chunks_exact(D).collect::<Vec<_>>();
+    let weights = relation_row_weights(eq_tau1, *row_idx, row_slices.len())?;
+    *acc += E::weighted_dot_base_rows(&row_slices, weights, &alpha_pows);
+    *row_idx += row_slices.len();
     Ok(())
+}
+
+/// The `eq_tau1` weights of `count` rows starting at `start`. Callers size
+/// `eq_tau1` to cover every relation row, so a shortfall is an internal error.
+fn relation_row_weights<E>(eq_tau1: &[E], start: usize, count: usize) -> Result<&[E], AkitaError> {
+    start
+        .checked_add(count)
+        .and_then(|end| eq_tau1.get(start..end))
+        .ok_or_else(|| AkitaError::Internal("relation rows exceed the eq_tau1 weight table".into()))
 }
 
 /// Compute the stage-2 relation claim from the public M-row data.
@@ -451,24 +449,10 @@ where
         .and_then(|count| count.checked_add(v.len()))
         .ok_or_else(|| AkitaError::InvalidSetup("relation row count overflow".into()))?;
     let eq_tau1 = EqPolynomial::evals_prefix(tau1, row_count)?;
-    let alpha_pows = scalar_powers(alpha, D);
     let mut acc = E::zero();
     let mut row_idx = 1usize + n_a;
-
-    for r in u {
-        if row_idx >= eq_tau1.len() {
-            return Ok(acc);
-        }
-        acc += eq_tau1[row_idx] * eval_ring_at_pows_fast(r, &alpha_pows);
-        row_idx += 1;
-    }
-    for r in v {
-        if row_idx >= eq_tau1.len() {
-            return Ok(acc);
-        }
-        acc += eq_tau1[row_idx] * eval_ring_at_pows_fast(r, &alpha_pows);
-        row_idx += 1;
-    }
+    accumulate_extension_rows(&eq_tau1, alpha, u, &mut row_idx, &mut acc)?;
+    accumulate_extension_rows(&eq_tau1, alpha, v, &mut row_idx, &mut acc)?;
     Ok(acc)
 }
 
