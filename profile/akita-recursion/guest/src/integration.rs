@@ -6,7 +6,7 @@ use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, SerializationError, Valid};
 use akita_types::{FpExtEncoding};
 use akita_params::{BasisMode};
-use akita_verifier::AkitaVerifier;
+use akita_verifier::{AkitaVerifier, TrustedTerminalCache};
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne};
 
@@ -83,7 +83,7 @@ where
         decoded.verifier_setup.clone(),
         schedules,
         decoded.schedule_selection,
-        PROGRAM_BOUND_VERIFIER_CACHE,
+        PROGRAM_BOUND_VERIFIER_CACHE.map(TrustedTerminalCache::Decode),
     );
     end_cycle_tracking("prepare_verifier");
     let Ok(verifier) = verifier else {
