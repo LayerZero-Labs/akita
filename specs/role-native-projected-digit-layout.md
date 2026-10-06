@@ -203,21 +203,40 @@ conversion boundary.
 
 ## Chunk partition
 
-Every group is partitioned into the same positive `W` chunk indices. For group
-`g`, define
+Every group is partitioned into the same positive `W` chunk indices. Root
+sources and frozen commitment groups use proportional boundaries:
 
 \[
-S_{g,c}=\left\lfloor\frac{cF_g}{W}\right\rfloor,
-\qquad
+S_{g,c}=\left\lfloor\frac{cF_g}{W}\right\rfloor.
+\]
+
+Recursive witness sources instead inherit the producer's aligned body
+boundaries. `WitnessChunkShape::align` pads each multi-chunk producer body to
+the consumer's source-block coefficient width, merges adjacent owners when
+chunking contracts, and assigns the complete shared tail and final padding to
+the last owner. Producer body alignment still applies when the consumer
+contracts to one chunk. Single-chunk producers retain contiguous bodies without
+body alignment padding.
+
+For either partition, let `S_{g,0} = 0` and define
+
+\[
 F_{g,c}=S_{g,c+1}-S_{g,c}.
 \]
 
 Chunk `c` owns `[S_{g,c},S_{g,c+1})`. The intervals **MUST** be adjacent, and
-their union **MUST** be `[0,F_g)`. When `W > F_g`, repeated boundaries produce
-empty intervals. The layout still retains all `W` chunk indices.
+their union **MUST** be `[0,F_g)`. Repeated boundaries produce empty intervals;
+the layout still retains all `W` chunk indices. Inherited ranges need not be
+balanced. For example, the 16:1 `fp128_onehot_multi_chunk` schedule has recursive
+block ends `[4, 8, 12, 16, 20, 24, 28, 36]`; proportional splitting of the same
+36 blocks into eight chunks would give `[4, 9, 13, 18, 22, 27, 31, 36]`.
 
 `ChunkedWitnessCfg` chooses `W`; it is not resolved address geometry.
-`WitnessLayout` owns the resolved block intervals and coefficient ranges.
+`CommittedGroupParams::witness_block_ranges()` resolves the schedule-owned
+partition for each group, including inherited recursive endpoints.
+`WitnessLayout` consumes those block intervals and owns the coefficient ranges.
+See [Chunks and fold challenges](../book/src/how/proving/opening-points-layout.md#chunks-and-fold-challenges)
+for the complete ownership contract.
 
 ## Physical unit order
 
@@ -259,14 +278,29 @@ L_T(g,c) &= H_gF_{g,c}n_{A,g}q_{B,g}\delta_{B,g}b_g
 \end{aligned}
 \]
 
-Starting from `cursor = 0`, each physical unit receives adjacent ranges:
+Starting from `cursor = 0`, each physical unit receives adjacent Z/E/T ranges.
+Let `body_alignment` be the successor's source-block coefficient width when
+this producer has `W > 1` and a successor width is configured, and `1` otherwise.
+Alignment occurs after all groups in each chunk, including the final chunk
+before the shared tail:
 
 ```text
-z_range = cursor .. cursor + L_Z(g)
-e_range = z_range.end .. z_range.end + L_E(g,c)
-t_range = e_range.end .. e_range.end + L_T(g,c)
-cursor  = t_range.end
+for chunk c in 0..W:
+    for relation-order position p in 0..G:
+        g = g(p)
+        z_range = cursor .. cursor + L_Z(g)
+        e_range = z_range.end .. z_range.end + L_E(g,c)
+        t_range = e_range.end .. e_range.end + L_T(g,c)
+        cursor  = t_range.end
+
+    aligned = align_up(cursor, body_alignment)
+    if aligned != cursor:
+        record alignment range cursor .. aligned
+    cursor = aligned
 ```
+
+Alignment ranges do not extend the semantic Z/E/T ranges. Their filler follows
+the constraints in [Complete live length and zero suffix](#complete-live-length-and-zero-suffix).
 
 Every chunk contains a complete copy of group `g`'s Z segment. E and T contain
 only the source blocks owned by that chunk. An empty chunk therefore has an
