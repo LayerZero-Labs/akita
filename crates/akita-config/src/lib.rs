@@ -193,6 +193,25 @@ impl<Cfg: CommitmentConfig> TrustedScheduleCatalog<Cfg> {
         Ok(Self::from_validated(catalog))
     }
 
+    /// Load a selected-row verifier view (see
+    /// [`ValidatedScheduleCatalog::to_verifier_view`]) from the application's
+    /// trusted setup path and bind it to this config.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the config policy is invalid
+    /// or the view is rejected by [`ValidatedScheduleCatalog::from_verifier_view`].
+    pub fn from_verifier_view(bytes: &[u8]) -> Result<Self, AkitaError> {
+        validate_config_policy::<Cfg>()?;
+        let catalog = ValidatedScheduleCatalog::from_verifier_view(
+            bytes,
+            Cfg::schedule_family_name(),
+            &policy_of::<Cfg>(),
+            Cfg::ring_challenge_config,
+        )?;
+        Ok(Self::from_validated(catalog))
+    }
+
     /// The config-free validated catalog used for row lookup and artifact I/O.
     #[must_use]
     pub fn catalog(&self) -> &ValidatedScheduleCatalog {
@@ -206,12 +225,14 @@ impl<Cfg: CommitmentConfig> TrustedScheduleCatalog<Cfg> {
     ///
     /// # Errors
     ///
-    /// Returns an error when a row's polynomial count overflows.
+    /// Returns an error for a selected-row verifier view, which cannot size a
+    /// setup, or when a row's polynomial count overflows.
     pub fn rows_within_setup_capacity(
         &self,
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<Vec<&ResolvedScheduleRow>, AkitaError> {
+        self.catalog.validate_complete()?;
         let mut rows = Vec::new();
         for row in self.rows() {
             if row_fits_setup_capacity(row, max_num_vars, max_num_batched_polys)? {
