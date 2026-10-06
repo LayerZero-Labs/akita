@@ -10,6 +10,8 @@ from publish import prepare_review
 
 
 MAX_HISTORY_CHARS = 2_000_000
+# Measured reviews take about 26 turns; this leaves room within MAX_HISTORY_CHARS.
+MAX_TURNS = 48
 
 
 def history_sizes(history):
@@ -133,7 +135,7 @@ def review(snapshot, api_key, model, api=request):
         "minItems": len(snapshot["changed"]), "maxItems": len(snapshot["changed"]),
     }
     corrections = 0
-    for turn in range(1, 33):
+    for turn in range(1, MAX_TURNS + 1):
         sizes = history_sizes(history)
         print("AI review context: " + json.dumps({"turn": turn,
               "elapsed_seconds": round(time.monotonic() - started, 3), **sizes}), flush=True)
@@ -183,4 +185,4 @@ def review(snapshot, api_key, model, api=request):
                             "Correct the structured result, using source tools if needed."})
             continue
         return proposal
-    raise ReviewError("Review step budget exhausted; no result published")
+    raise ReviewError(f"Review step budget exhausted ({MAX_TURNS} model turns); no result published")

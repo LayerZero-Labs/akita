@@ -38,6 +38,20 @@ uncertain findings, or incomplete coverage prevent the recommendation, even if
 there are no new findings. This is a COMMENT review proposing approval; it does
 not submit GitHub's formal APPROVE action.
 
+When a review withholds the approval recommendation, it visibly says "Approval
+not recommended" with every reason, and explains each one that is not already
+visible: the coverage limitations when coverage is incomplete, each unresolved
+blocker from existing discussion, and each earlier finding that is still open
+(P0–P3) or uncertain, with its priority, path, root cause and current evidence
+(at most 10, evidence shortened to 200 characters). This explains a withheld
+`ai-approved` label even when there are no new inline findings; unclear usefulness
+is shown in the usefulness line and new findings inline. These lists use the same
+Markdown escaping as inline comments and keep matched code spans readable.
+Existing feedback is not duplicated inline. Previously published reviews retain
+their original summaries; versioned rendering (`body_version`) keeps them
+verifiable during publication retries and label reconciliation, and an unknown
+version fails closed.
+
 Every review also posts a short **usefulness assessment** in its review body,
 separate from inline code findings. It checks whether the PR solves a concrete
 problem and improves the repository enough to justify its costs, even when the
@@ -231,8 +245,11 @@ Current local budgets: 150 in-scope changed files, 300,000 characters of combine
 diff (the delta covers only files the PR changes now or changed at the previously
 reviewed head, so base-branch changes merged in since count only where they touch
 those same files), 300,000 characters of eligible discussion, 250,000 bytes per source blob,
-32 MiB per artifact, 32 model turns, 24 reads/searches per turn, 2,000,000 characters
-of accumulated context, 20 new findings and 100 retained findings. Exceeding a
+32 MiB per artifact, 48 model turns, 24 reads/searches per turn, 2,000,000 characters
+of accumulated context, 20 new findings and 100 retained findings (in practice at
+most 60: three attempts of 20). The published review must also fit GitHub's
+60,000-character comment limit; if it would not, the model is asked to shorten its
+evidence and other text. Exceeding a
 budget stops the run; it never silently turns into a clean review. These are
 workflow policy limits, not OpenAI API limits. Collection logs report counts and
 diff sizes; budget errors identify the exceeded limit.
@@ -248,7 +265,8 @@ input and output respectively, not additional tokens. Missing or invalid usage
 counters are logged as `null`, not zero. Logs do not contain source, tool results,
 reasoning payloads, or credentials. History is retained intact between turns.
 The larger history allowance can increase cost and latency; model context limits,
-the 32-turn bound, and the job timeout still apply.
+the 48-turn bound, and the job timeout still apply. Measured reviews have used
+about 26 turns, so 48 leaves headroom within the history allowance.
 
 Actions artifacts contain public source/review evidence, no credentials.
 After publication and label
@@ -267,7 +285,12 @@ final check and a GitHub review write cannot be atomic; the review is always
 pinned to its reviewed commit. API write failures are not blindly retried; the
 publisher also checks for the original request ID before attempting a write.
 
-The latest state is stored in a hidden marker in the bot review body. Do not edit
+The latest state is stored in a hidden marker in the bot review body. New reviews
+write `akita-ai-review:v2`, which holds zlib-compressed state so the whole finding
+history a PR can accumulate fits GitHub's comment limit; reviews with the first
+release's uncompressed `akita-ai-review:v1` marker remain readable. Verification
+compares the published marker rather than re-compressing the state, because
+compressed bytes can differ between zlib versions. Do not edit
 those markers;
 malformed state fails closed and removal loses that historical baseline. Fixed
 findings stay in history so later regressions can be recognized. Reviews that do
@@ -275,7 +298,8 @@ not qualify for an approval recommendation still include a visible usefulness
 assessment and any missing-motivation note, while new code findings are posted inline.
 Prior thread resolution is left to humans. Review artifacts contain detailed
 coverage until deletion; the hidden PR state retains completion status and
-limitations, including issues that cannot be anchored in the current diff. An external
+limitations, including issues that cannot be anchored in the current diff, and
+incomplete reviews also show the limitations in their summary. An external
 comment cannot spoof state by copying a marker.
 
 Run local adversarial and regression tests with:

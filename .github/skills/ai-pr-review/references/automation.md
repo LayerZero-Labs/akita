@@ -89,10 +89,16 @@ On every repeated request:
    unanchorable issues as incomplete coverage in `limitations`.
 5. Return the required JSON result. Set `complete=false` for material coverage
    gaps or unresolved uncertainty. Never invent issues or claim unavailable
-   evidence was checked. Keep speculative questions in `limitations`.
+   evidence was checked. When coverage is incomplete, `limitations` is published
+   in the visible review summary: use it only for coverage gaps, unavailable
+   evidence and unanchorable issues, stated plainly. Leave out speculative
+   questions and unconfirmed suspicions entirely; they are not findings.
 
 The deterministic publisher submits a COMMENT review with new inline findings
-and a short visible PR-level usefulness assessment. Missing motivation produces
+and a short visible PR-level usefulness assessment. When it withholds the
+approval recommendation, it states every reason and shows `limitations` (if
+coverage is incomplete), `discussion_blockers`, and each earlier finding that
+still blocks approval with its `root_cause` and your `evidence`, shortened. Missing motivation produces
 a visible request to add it to the PR body, even if there are no inline findings.
 Do not fabricate an inline finding or source anchor for that note.
 Use one short paragraph per root cause and omit the priority prefix
@@ -107,8 +113,8 @@ unsupported usefulness suppress that recommendation, even when no new inline
 comments are needed. The publisher
 generates this prose; do not include it in finding bodies. It remains a COMMENT
 review, never a formal APPROVE action. All outcomes include the usefulness assessment
-and hidden state marker. Artifacts contain detailed coverage until cleanup; completion status
-and limitations remain in the hidden PR state. Snapshot and result artifacts are
+and hidden state marker. Artifacts contain detailed coverage until cleanup; the
+hidden PR state also keeps completion status and limitations. Snapshot and result artifacts are
 deleted after successful publication and label updates. Failed runs retain them
 for one day for investigation/retry; repeat reviews use the PR state, not artifacts.
 

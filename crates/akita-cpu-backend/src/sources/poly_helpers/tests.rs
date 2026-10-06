@@ -1,4 +1,5 @@
 use super::rotated_accum::{accumulate_rotated_digit_plane, should_use_rotated_challenge};
+use super::windowed_accum::{I8DigitSpan, WindowedChallenge};
 use super::{
     balanced_ring_decompose_fold_partitioned, cached_digit_decompose_fold_partitioned,
     fill_rotated_challenge, packed_tight_digit_fold_partitioned, sparse_mul_acc,
@@ -75,6 +76,127 @@ fn partitioned_fold_matches_scalar_for_embedded_subring_challenges() {
     }
     assert_eq!(actual, expected);
     assert_eq!(cached, expected);
+}
+
+/// Challenges on the 16-coefficient grid reach the window-gathered kernel
+/// through the fold driver, for every source and both digit spans. One
+/// off-grid block keeps the term kernel on the same narrow accumulator, and
+/// from basis 128 up the blocks together overflow it, so it is flushed
+/// between the two kernels.
+#[test]
+fn partitioned_fold_matches_scalar_for_window_grid_challenges() {
+    use crate::sources::packed_digits::PackedSignedDigits;
+    use jolt_field::Prime32Offset99;
+
+    type F = Prime32Offset99;
+    const D: usize = 1024;
+    const POSITIONS: usize = 3;
+    const BLOCKS: usize = 7;
+    const OFF_GRID_BLOCK: usize = 1;
+
+    let challenges = (0..BLOCKS)
+        .map(|block| SparseChallenge {
+            positions: (0..64u32)
+                .map(|index| {
+                    if block == OFF_GRID_BLOCK {
+                        index * 16 + 8
+                    } else {
+                        index * 16
+                    }
+                })
+                .collect(),
+            coeffs: (0..64)
+                .map(|index| match (index + block) % 4 {
+                    0 => -2,
+                    1 => -1,
+                    2 => 1,
+                    _ => 2,
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    for (block, challenge) in challenges.iter().enumerate() {
+        assert_eq!(
+            WindowedChallenge::new::<D>(challenge, I8DigitSpan::Half).is_some(),
+            block != OFF_GRID_BLOCK,
+        );
+    }
+
+    let mut state = 0x5eed_u64;
+    let rings = (0..BLOCKS * POSITIONS)
+        .map(|_| {
+            CyclotomicRing::from_coefficients(std::array::from_fn(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                F::from_u64(state >> 32)
+            }))
+        })
+        .collect::<Vec<CyclotomicRing<F, D>>>();
+
+    // Balanced digits reach -64 at basis 128: live rings still take the
+    // paired span there, cached and packed digits the full one. Basis 256
+    // digits fill `i8`, so pairing them would wrap.
+    for log_basis in [4u32, 7, 8] {
+        let num_digits = compute_num_digits_field_width(32, log_basis);
+        let params = BalancedDecomposePow2Params::new(num_digits, log_basis);
+        let mut digit_planes = vec![[0i8; D]; rings.len() * num_digits];
+        for (ring, planes) in rings.iter().zip(digit_planes.chunks_exact_mut(num_digits)) {
+            ring.balanced_decompose_pow2_i8_into_with_params(planes, &params);
+        }
+        let mut expected = vec![[0i32; D]; POSITIONS * num_digits];
+        for (block, challenge) in challenges.iter().enumerate() {
+            for position in 0..POSITIONS {
+                let ring = block * POSITIONS + position;
+                for digit in 0..num_digits {
+                    sparse_mul_acc_scalar(
+                        &digit_planes[ring * num_digits + digit],
+                        challenge,
+                        &mut expected[position * num_digits + digit],
+                    );
+                }
+            }
+        }
+
+        let live =
+            balanced_ring_decompose_fold_partitioned(&rings, &challenges, POSITIONS, &params)
+                .unwrap();
+        assert_eq!(live, expected, "live rings, log_basis {log_basis}");
+        let cached = cached_digit_decompose_fold_partitioned::<D>(
+            &digit_planes,
+            &challenges,
+            POSITIONS,
+            num_digits,
+            SignedDigitBasis::new(log_basis).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(cached, expected, "cached digits, log_basis {log_basis}");
+
+        // The packed source folds one digit plane per ring: the lowest here.
+        let lowest_digits = digit_planes
+            .iter()
+            .step_by(num_digits)
+            .flatten()
+            .copied()
+            .collect();
+        let packed = PackedSignedDigits::from_i8_digits_auto(lowest_digits);
+        let packed = packed_tight_digit_fold_partitioned::<D>(
+            packed.view(),
+            rings.len(),
+            &challenges,
+            POSITIONS,
+        )
+        .unwrap();
+        let expected_lowest = expected
+            .iter()
+            .step_by(num_digits)
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            packed, expected_lowest,
+            "packed digits, log_basis {log_basis}"
+        );
+    }
 }
 
 #[test]

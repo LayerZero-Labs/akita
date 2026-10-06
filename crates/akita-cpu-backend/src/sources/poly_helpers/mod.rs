@@ -7,6 +7,7 @@
 mod decompose_fold_partitioned;
 mod narrow_accum;
 mod rotated_accum;
+mod windowed_accum;
 
 pub use decompose_fold_partitioned::balanced_ring_decompose_fold_partitioned;
 pub(crate) use decompose_fold_partitioned::cached_digit_decompose_fold_partitioned;

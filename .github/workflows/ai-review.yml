@@ -9,8 +9,14 @@ on:
 permissions: {}
 
 concurrency:
-  # PR invalidation must not be displaced by a pending issue-comment run.
-  group: ai-review-${{ github.event_name }}-${{ github.event.issue.number || github.event.pull_request.number }}
+  # One queue per PR and event type, so PR invalidation is never displaced by a
+  # comment run. GitHub keeps one pending run per group, so comments other than
+  # the author's exact command get a group of their own and cannot replace a
+  # queued review request.
+  group: >-
+    ai-review-${{ github.event_name }}-${{ github.event.issue.number || github.event.pull_request.number }}-${{
+    (github.event_name != 'issue_comment' || (github.event.comment.body == '/ai-review' &&
+    github.event.comment.user.id == github.event.issue.user.id)) && 'queue' || github.run_id }}
   cancel-in-progress: false
 
 jobs:
