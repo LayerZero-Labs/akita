@@ -90,7 +90,7 @@ pub fn shared_d_digit_log_basis(
 /// Combines ring dimension, Ajtai matrix descriptions, block geometry,
 /// sparse-challenge configuration, and digit decomposition depths into a
 /// single authoritative struct.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct CommittedGroupParams {
     /// Every group this fold consumes or commits, in canonical order: an
     /// incoming setup prefix, then the frozen precommitted groups, then this
@@ -116,11 +116,41 @@ pub struct CommittedGroupParams {
     /// Multi-chunk witness layout this level commits under.
     pub witness_chunk: crate::witness::ChunkedWitnessCfg,
     /// Successor source-block width for a multi-chunk producer; absent otherwise.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub successor_block_len: Option<usize>,
     /// Endpoints of this fold's inherited own-group block partition.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub witness_chunk_ends: Vec<usize>,
+}
+
+/// Text formats omit the multi-chunk fields when they are unset, so
+/// single-chunk JSON catalog rows keep their bytes. Binary formats such as
+/// postcard carry no field names and cannot skip a field the decoder still
+/// reads, so they always carry both.
+impl serde::Serialize for CommittedGroupParams {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+
+        let omit_unset = serializer.is_human_readable();
+        let mut state = serializer.serialize_struct("CommittedGroupParams", 8)?;
+        state.serialize_field("groups", &self.groups)?;
+        state.serialize_field("open_matrix", &self.open_matrix)?;
+        state.serialize_field("payload_mode", &self.payload_mode)?;
+        state.serialize_field("ring_relation_mode", &self.ring_relation_mode)?;
+        state.serialize_field("source_encoding", &self.source_encoding)?;
+        state.serialize_field("witness_chunk", &self.witness_chunk)?;
+        if omit_unset && self.successor_block_len.is_none() {
+            state.skip_field("successor_block_len")?;
+        } else {
+            state.serialize_field("successor_block_len", &self.successor_block_len)?;
+        }
+        if omit_unset && self.witness_chunk_ends.is_empty() {
+            state.skip_field("witness_chunk_ends")?;
+        } else {
+            state.serialize_field("witness_chunk_ends", &self.witness_chunk_ends)?;
+        }
+        state.end()
+    }
 }
 
 impl CommittedGroupParams {
