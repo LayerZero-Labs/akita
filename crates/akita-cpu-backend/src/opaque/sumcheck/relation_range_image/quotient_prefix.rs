@@ -15,8 +15,10 @@
 //!   class. After the first two challenges a quad's folded value depends only
 //!   on its class. Class histograms weighted by the equality factor over the
 //!   variables after the quad give the first two range-image messages (through
-//!   the `{0, 1, Infinity}^2` grid) and the third one (through the even/odd
-//!   quad split and the histogram of class differences).
+//!   the `{0, 1, Infinity}^2` grid). For `b <= 8` they also give the third one
+//!   (through the even/odd quad split and the histogram of class differences);
+//!   basis 16 has too many class differences for a histogram and reads the
+//!   third message from the class lookups below.
 //! - Each later prefix round reads the folded witness as a sum of class lookups
 //!   into challenge-scaled copies of the two-round quad fold. The last prefix
 //!   round writes the folded witness for the ordinary suffix path.
@@ -58,6 +60,8 @@ pub(super) struct CompactQuotientPrefix<E: Field> {
     /// Digit class of every witness quad, in witness order.
     classes: Vec<u16>,
     norm_cache: Stage2PrefixCache<E>,
+    /// Whether round 2 is read from the histograms below (`b <= 8`).
+    histogram_round2: bool,
     /// Round-2 equality weight of each quad class, for even and odd quads.
     even_histogram: Vec<E>,
     odd_histogram: Vec<E>,
@@ -317,7 +321,7 @@ impl<E: Field + Unreduced + 'static> CoefficientRelationMoments<E> {
 }
 
 /// Source-mass rows of one scan chunk, grouped by mass block.
-struct BlockRows<E, const MAX_DIGIT_BASIS: usize = 8> {
+struct BlockRows<E, const MAX_DIGIT_BASIS: usize = 16> {
     /// `(block, factor, row)` in visit order.
     visits: Vec<(usize, E, u32)>,
     /// Per-block row count; zero outside [`add_to`](Self::add_to).
@@ -563,6 +567,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         let (basis, digit_bits) = match b {
             4 => (PrefixBasis::B4, 2),
             8 => (PrefixBasis::B8, 3),
+            16 => (PrefixBasis::B16, 4),
             _ => return Ok(None), // Other bases use the ordinary coefficient-round path.
         };
         if coefficient_bits < 2
@@ -598,7 +603,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             .map(|source| source.lane_count)
             .sum();
 
-        let serves_round2 = last_round >= 2;
+        let serves_round2 = last_round >= 2 && b <= 8;
         let radix = delta_radix(b);
         let delta_code = if serves_round2 {
             (0..class_count)
@@ -635,7 +640,8 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         let mut classes = vec![0u16; live_lane_count * quads_per_lane];
         let scan = |(task, task_classes): (usize, &mut [u16])| match digit_bits {
             2 => scan_lanes::<E, 2>(&layout, task * task_lanes, task_classes),
-            _ => scan_lanes::<E, 3>(&layout, task * task_lanes, task_classes),
+            3 => scan_lanes::<E, 3>(&layout, task * task_lanes, task_classes),
+            _ => scan_lanes::<E, 4>(&layout, task * task_lanes, task_classes),
         };
         // An empty scan has no compact-prefix work; use the ordinary path.
         #[cfg(feature = "parallel")]
@@ -693,6 +699,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             last_round,
             classes,
             norm_cache,
+            histogram_round2: serves_round2,
             even_histogram,
             odd_histogram,
             delta_histogram: totals.delta_histogram,
@@ -730,7 +737,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         match self.challenges.len() {
             0 => PrefixNormRound::Polynomial(self.norm_cache.round0_norm_poly()),
             1 => PrefixNormRound::Polynomial(self.norm_cache.round1_norm_poly(self.challenges[0])),
-            2 => PrefixNormRound::Terms(self.round2_norm_terms()),
+            2 if self.histogram_round2 => PrefixNormRound::Terms(self.round2_norm_terms()),
             round => {
                 PrefixNormRound::Terms(self.lookup_round_terms(round, split_eq, recovery, None))
             }
@@ -756,7 +763,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
                     PrefixNormRound::Polynomial(self.norm_cache.round1_norm_poly(r0)),
                 )
             }
-            2 => (
+            2 if self.histogram_round2 => (
                 cfg_iter!(self.classes)
                     .map(|&class| self.quad_fold[usize::from(class)])
                     .collect(),
@@ -838,6 +845,8 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         out: Option<&mut [E]>,
     ) -> NormRoundTerms<'a, E> {
         let totals = match (round, recovery.is_some()) {
+            (2, false) => self.lookup_round::<1, false>(split_eq, out),
+            (2, true) => self.lookup_round::<1, true>(split_eq, out),
             (3, false) => self.lookup_round::<2, false>(split_eq, out),
             (3, true) => self.lookup_round::<2, true>(split_eq, out),
             (4, false) => self.lookup_round::<4, false>(split_eq, out),
