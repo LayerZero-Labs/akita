@@ -91,7 +91,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
         }
         #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
         {
-            false
+            cfg!(all(feature = "ntt-inline", target_arch = "riscv64"))
+                && core::mem::size_of::<W>() == core::mem::size_of::<i32>()
         }
     }
 

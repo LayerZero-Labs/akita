@@ -5,8 +5,8 @@ use super::*;
 use crate::ntt::butterfly::forward_ntt;
 use crate::ntt::prime::NttPrime;
 use crate::ntt::tables::{
-    q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q128_RAW_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES,
-    Q64_NUM_PRIMES, Q64_PRIMES,
+    q128_primes, I16_TAIL_PRIME, I32_RAW_PRIMES, Q128_NUM_PRIMES, Q128_RAW_PRIMES, Q32_NUM_PRIMES,
+    Q32_PRIMES, Q64_NUM_PRIMES, Q64_PRIMES,
 };
 use crate::CyclotomicRing;
 
@@ -213,7 +213,7 @@ fn centered_mont_lut_matches_centered_residue_boundary() {
 }
 
 #[test]
-#[should_panic(expected = "lazy pointwise dot requires an i32 SIMD parameter set")]
+#[should_panic(expected = "lazy pointwise dot requires an i32 batched parameter set")]
 fn lazy_pointwise_dot_rejects_non_i32_parameter_sets() {
     const D: usize = 64;
     let params = CrtNttParamSet::<i16, SYNTHETIC_I16_NUM_PRIMES, D>::new(synthetic_i16_primes());
@@ -503,4 +503,133 @@ fn i32_crt_mat_vec_with_i16_tail_matches_schoolbook() {
         CyclotomicCrtNtt::mat_vec_i16::<F>(&wide_matrix, num_rows, num_cols, &rhs, &wide)
             .expect("wide matvec");
     assert_ne!(wide_only[0], actual[0]);
+}
+
+#[test]
+fn portable_lazy_dot_satisfies_canonical_montgomery_relation() {
+    const D: usize = 64;
+    type Ntt = CyclotomicCrtNtt<i32, 1, D>;
+    for p in I32_RAW_PRIMES {
+        let prime = NttPrime::compute(p);
+        for case in 0..4 {
+            let lhs: [[MontCoeff<i32>; D]; I32_LAZY_DOT_BATCH] = std::array::from_fn(|product| {
+                std::array::from_fn(|lane| {
+                    MontCoeff::from_raw(match case {
+                        0 => 0,
+                        1 => 1,
+                        2 => p - 1,
+                        _ => ((product as i64 * 7919 + lane as i64 * 104729) % i64::from(p)) as i32,
+                    })
+                })
+            });
+            let rhs = std::array::from_fn::<_, I32_LAZY_DOT_BATCH, _>(|product| {
+                std::array::from_fn::<_, D, _>(|lane| {
+                    MontCoeff::from_raw(if case == 3 {
+                        p - 1 - lhs[product][lane].raw()
+                    } else {
+                        lhs[product][lane].raw()
+                    })
+                })
+            });
+            let initial = std::array::from_fn::<_, D, _>(|lane| {
+                MontCoeff::from_raw(if lane % 2 == 0 { 0 } else { p - 1 })
+            });
+            for count in 0..=I32_LAZY_DOT_BATCH {
+                let mut actual = initial;
+                Ntt::add_assign_pointwise_dot_limb(
+                    &mut actual,
+                    |product| &lhs[product],
+                    |product| &rhs[product],
+                    count,
+                    prime,
+                );
+                for lane in 0..D {
+                    assert!((0..p).contains(&actual[lane].raw()));
+                    let products: i128 = (0..count)
+                        .map(|product| {
+                            i128::from(lhs[product][lane].raw())
+                                * i128::from(rhs[product][lane].raw())
+                        })
+                        .sum();
+                    let delta = i128::from(actual[lane].raw()) - i128::from(initial[lane].raw());
+                    assert_eq!(
+                        (delta * (1i128 << 32) - products).rem_euclid(i128::from(p)),
+                        0,
+                        "p={p} case={case} count={count} lane={lane}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The tables `forward_ntt` hands the 64-point inline (twist powers, the
+/// stage twiddle row with Montgomery one first, `p`, `pinv`) reproduce the
+/// portable transform; the inline's host fallback runs the same sequence.
+#[cfg(feature = "ntt-inline")]
+#[test]
+fn inline_ntt64_matches_portable_forward_ntt() {
+    use crate::ntt::butterfly::NttTwiddles;
+    use crate::ntt::NttKernelPlan;
+    for raw in I32_RAW_PRIMES {
+        let prime = NttPrime::<i32>::compute(raw);
+        let tw = NttTwiddles::<i32, 64>::compute(prime);
+        let input: [MontCoeff<i32>; 64] = std::array::from_fn(|lane| {
+            MontCoeff::from_raw((lane as i64 * 7919 + 13).rem_euclid(i64::from(raw)) as i32)
+        });
+        let mut portable = input;
+        forward_ntt(&mut portable, prime, &tw, NttKernelPlan::SCALAR);
+        let mut inline = input.map(MontCoeff::raw);
+        jolt_inlines_ntt::forward_ntt64(
+            &mut inline,
+            &tw.psi_pows.map(MontCoeff::raw),
+            &tw.fwd_twiddles.map(MontCoeff::raw),
+            prime.p,
+            prime.pinv,
+        );
+        let canonical = |x: i32| x.rem_euclid(raw);
+        assert_eq!(
+            inline.map(canonical),
+            portable.map(|c| canonical(c.raw())),
+            "p = {raw}"
+        );
+    }
+}
+
+#[cfg(feature = "ntt-inline")]
+#[test]
+fn fused_signed_digit_transform_preserves_coefficients() {
+    use super::convert::CenteredI16NttConverter;
+    let params = CrtNttParamSet::<i32, 6, 64>::new(I32_RAW_PRIMES.map(NttPrime::compute));
+    for case in 0..5 {
+        let coefficients = std::array::from_fn::<_, 64, _>(|lane| match case {
+            0 => 0,
+            1 => 1,
+            2 => i16::MIN,
+            3 => i16::MAX,
+            _ => (lane as i16).wrapping_mul(7919),
+        });
+        let converter = CenteredI16NttConverter::new(&params, &[coefficients]);
+        let mut actual = CyclotomicCrtNtt::zero();
+        converter.transform_inline(&coefficients, &mut actual);
+        // The doubleword-store path needs 8-byte limbs; a target 4 bytes past
+        // an 8-byte boundary takes the element-wise path.
+        let mut misaligned = Misaligned {
+            _pad: 0,
+            ntt: CyclotomicCrtNtt::zero(),
+        };
+        assert_eq!(core::ptr::addr_of!(misaligned.ntt) as usize % 8, 4);
+        converter.transform_inline(&coefficients, &mut misaligned.ntt);
+        assert_eq!(misaligned.ntt, actual);
+        let actual = actual.centered_coefficients_with_params(&params);
+        for limb in actual {
+            assert_eq!(limb, coefficients.map(i32::from));
+        }
+    }
+
+    #[repr(C, align(8))]
+    struct Misaligned {
+        _pad: u32,
+        ntt: CyclotomicCrtNtt<i32, 6, 64>,
+    }
 }
