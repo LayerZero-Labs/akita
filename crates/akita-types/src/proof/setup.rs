@@ -4,7 +4,7 @@ use super::setup_prefix::SetupPrefixVerifierRegistry;
 use akita_error::AkitaError;
 use akita_params::FlatMatrix;
 use akita_serialization::{
-    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, TrustedBytes, Valid, Validate,
 };
 #[allow(unused_imports)]
 use jolt_field::solinas::parallel::*;
@@ -580,6 +580,80 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()>> Akit
     }
 }
 
+impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()> + 'static>
+    AkitaExpandedSetup<F>
+{
+    /// View a trusted, uncompressed serialized setup in place (see
+    /// [`FlatMatrix::borrow_trusted_with_expected_shape`]), returning it with
+    /// the unread remainder of `bytes`. The descriptor is validated; the
+    /// matrix is taken as seed-derived without re-deriving it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the descriptor is malformed or the matrix cannot be
+    /// viewed in place.
+    pub fn borrow_trusted(bytes: TrustedBytes) -> Result<(Self, TrustedBytes), SerializationError> {
+        let mut reader = bytes.bytes();
+        let descriptor = AkitaSetupDescriptor::deserialize_with_mode(
+            &mut reader,
+            Compress::No,
+            Validate::Yes,
+            &(),
+        )?;
+        let matrix = bytes
+            .skip(bytes.bytes().len() - reader.len())
+            .ok_or_else(|| SerializationError::InvalidData("setup descriptor overran".into()))?;
+        let (shared_matrix, rest) = FlatMatrix::borrow_trusted_with_expected_shape(
+            matrix,
+            descriptor.num_field_elements,
+            MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+        )?;
+        Ok((
+            Self::from_trusted_seed_derived_parts_unchecked(descriptor, shared_matrix),
+            rest,
+        ))
+    }
+
+    /// Offset of the first matrix coefficient in an uncompressed serialized
+    /// setup: the position [`Self::borrow_trusted`] needs aligned to `F`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the descriptor header is malformed.
+    pub fn coefficient_offset(bytes: &[u8]) -> Result<usize, SerializationError> {
+        let mut reader = bytes;
+        AkitaSetupDescriptor::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
+        let count_header = 0usize.serialized_size(Compress::No);
+        Ok(bytes.len() - reader.len() + count_header)
+    }
+}
+
+impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()> + 'static>
+    AkitaVerifierSetup<F>
+{
+    /// View a trusted, uncompressed serialized verifier setup in place: the
+    /// public matrix is used where it lies in `bytes` instead of copied, and
+    /// is taken as seed-derived without re-deriving it, so the caller must
+    /// vouch for the bytes (the [`TrustedBytes`] token). The descriptor and
+    /// prefix registry are validated.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the setup is malformed or the matrix cannot be
+    /// viewed in place.
+    pub fn borrow_trusted(bytes: TrustedBytes) -> Result<Self, SerializationError> {
+        let (expanded, rest) = AkitaExpandedSetup::borrow_trusted(bytes)?;
+        let prefix_slots = SetupPrefixVerifierRegistry::deserialize_with_mode(
+            rest.bytes(),
+            Compress::No,
+            Validate::Yes,
+            &(),
+        )?;
+        Self::from_parts(Arc::new(expanded), prefix_slots)
+            .map_err(|err| SerializationError::InvalidData(err.to_string()))
+    }
+}
+
 impl<F: Field + CanonicalEncoding + Valid> Valid for AkitaVerifierSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
@@ -777,6 +851,38 @@ mod tests {
             suffixed.push(suffix);
             assert!(AkitaExpandedSetup::<F>::deserialize_compressed_exact(&suffixed, &()).is_err());
         }
+    }
+
+    #[test]
+    fn borrowed_verifier_setup_matches_decode_and_rejects_misalignment() {
+        let setup_seed = seed([7u8; 32]);
+        let shared_matrix = derive_public_matrix_prefix::<F>(2 * D, &setup_seed.setup_seed);
+        let prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed.setup_seed.clone());
+        let setup = AkitaVerifierSetup {
+            expanded: Arc::new(
+                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    setup_seed,
+                    shared_matrix,
+                ),
+            ),
+            prefix_slots,
+        };
+        let mut bytes = Vec::new();
+        setup.serialize_uncompressed(&mut bytes).expect("serialize");
+        let offset = AkitaExpandedSetup::<F>::coefficient_offset(&bytes).expect("offset");
+        let align = core::mem::align_of::<F>();
+        // Copy the bytes so the matrix starts `shift` bytes past an aligned address.
+        let place = |shift: usize| -> &'static [u8] {
+            let storage = Box::leak(vec![0u8; bytes.len() + 2 * align].into_boxed_slice());
+            let lead = (align - (storage.as_ptr() as usize + offset) % align) % align + shift;
+            storage[lead..lead + bytes.len()].copy_from_slice(&bytes);
+            &storage[lead..lead + bytes.len()]
+        };
+        // SAFETY: the bytes are this setup's own canonical serialization.
+        let trusted = |shift| unsafe { TrustedBytes::new(place(shift)) };
+        let borrowed = AkitaVerifierSetup::<F>::borrow_trusted(trusted(0)).expect("borrow");
+        assert_eq!(borrowed, setup);
+        assert!(AkitaVerifierSetup::<F>::borrow_trusted(trusted(1)).is_err());
     }
 
     #[test]
