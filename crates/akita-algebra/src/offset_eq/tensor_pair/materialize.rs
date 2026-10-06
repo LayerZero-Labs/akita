@@ -152,6 +152,65 @@ fn materialize_disjoint_unit_intervals<F: Field>(
 struct DenseLeftTensorView<'a, F: Field> {
     family: &'a EqPairTensorFamily<F>,
     destination_axis: usize,
+    residual_len: usize,
+    residual: Vec<(usize, F)>,
+}
+
+impl<F: Field> DenseLeftTensorView<'_, F> {
+    fn collect_residual(
+        &mut self,
+        axis_index: usize,
+        offset: usize,
+        weight: F,
+    ) -> Result<(), AkitaError> {
+        if axis_index == self.family.axes.len() {
+            self.residual.push((offset, weight));
+            return Ok(());
+        }
+        if axis_index == self.destination_axis {
+            return self.collect_residual(axis_index + 1, offset, weight);
+        }
+        let family = self.family;
+        let axis = family.axes.get(axis_index).ok_or_else(|| {
+            AkitaError::Internal("residual tensor recursion axis is absent".into())
+        })?;
+        for coordinate in 0..axis.len {
+            let factor = axis.coordinate_weight(coordinate).ok_or_else(|| {
+                AkitaError::InvalidInput("residual tensor axis coordinate weight is absent".into())
+            })?;
+            if factor.is_zero() {
+                continue;
+            }
+            let next = checked_axis_offset(offset, axis.right_stride, coordinate, "right")?;
+            let weight = if factor == F::one() {
+                weight
+            } else {
+                weight * factor
+            };
+            self.collect_residual(axis_index + 1, next, weight)?;
+        }
+        Ok(())
+    }
+
+    fn evaluate_residual(
+        &self,
+        equality: &OffsetEqWindow<F>,
+        base: usize,
+    ) -> Result<F, AkitaError> {
+        let mut value = F::zero();
+        for &(offset, weight) in &self.residual {
+            let index = base.checked_add(offset).ok_or_else(|| {
+                AkitaError::InvalidInput("paired tensor right offset overflow".into())
+            })?;
+            let term = equality.eval(index);
+            value += if weight == F::one() {
+                term
+            } else {
+                weight * term
+            };
+        }
+        Ok(value)
+    }
 }
 
 fn materialize_dense_left_overlap<F: Field>(
@@ -208,6 +267,8 @@ fn materialize_dense_left_overlap<F: Field>(
         views.push(DenseLeftTensorView {
             family,
             destination_axis,
+            residual_len: family_residual,
+            residual: Vec::new(),
         });
     }
     let work = first_axis
@@ -221,6 +282,24 @@ fn materialize_dense_left_overlap<F: Field>(
         });
     }
 
+    if first_axis.len == 0 {
+        return Ok(Some(vec![F::zero(); output_len]));
+    }
+    // The work bound above also bounds these tables because the destination
+    // axis is nonempty. Only its varying offset remains in the output loop.
+    for view in &mut views {
+        if !view.family.scalar.is_zero() {
+            view.residual
+                .try_reserve_exact(view.residual_len)
+                .map_err(|_| {
+                    AkitaError::InvalidInput(
+                        "paired tensor residual table allocation failed".into(),
+                    )
+                })?;
+            view.collect_residual(0, 0, F::one())?;
+        }
+    }
+
     let evaluate_coordinate = |(coordinate, destination): (usize, &mut F)| {
         for view in &views {
             let axis = view.family.axes.get(view.destination_axis).ok_or_else(|| {
@@ -232,14 +311,15 @@ fn materialize_dense_left_overlap<F: Field>(
                 coordinate,
                 "right",
             )?;
-            *destination += contract_residual_tensor_axes(
-                equality,
-                view.family,
-                view.destination_axis,
-                0,
-                right_offset,
-                view.family.scalar,
-            )?;
+            if view.family.scalar.is_zero() {
+                continue;
+            }
+            let term = view.evaluate_residual(equality, right_offset)?;
+            *destination += if view.family.scalar == F::one() {
+                term
+            } else {
+                view.family.scalar * term
+            };
         }
         Ok::<_, AkitaError>(())
     };
@@ -279,65 +359,6 @@ fn dense_left_destination_axis<F: Field>(family: &EqPairTensorFamily<F>) -> Opti
     destination
 }
 
-fn contract_residual_tensor_axes<F: Field>(
-    equality: &OffsetEqWindow<F>,
-    family: &EqPairTensorFamily<F>,
-    destination_axis: usize,
-    axis_index: usize,
-    right_offset: usize,
-    weight: F,
-) -> Result<F, AkitaError> {
-    if weight.is_zero() {
-        return Ok(F::zero());
-    }
-    if axis_index == family.axes.len() {
-        let equality = equality.eval(right_offset);
-        return Ok(if weight == F::one() {
-            equality
-        } else {
-            weight * equality
-        });
-    }
-    if axis_index == destination_axis {
-        return contract_residual_tensor_axes(
-            equality,
-            family,
-            destination_axis,
-            axis_index + 1,
-            right_offset,
-            weight,
-        );
-    }
-    let axis = family
-        .axes
-        .get(axis_index)
-        .ok_or_else(|| AkitaError::Internal("residual tensor recursion axis is absent".into()))?;
-    let mut acc = F::zero();
-    for coordinate in 0..axis.len {
-        let axis_weight = axis.coordinate_weight(coordinate).ok_or_else(|| {
-            AkitaError::InvalidInput("residual tensor axis coordinate weight is absent".into())
-        })?;
-        if axis_weight.is_zero() {
-            continue;
-        }
-        let next_weight = if axis_weight == F::one() {
-            weight
-        } else if weight == F::one() {
-            axis_weight
-        } else {
-            weight * axis_weight
-        };
-        acc += contract_residual_tensor_axes(
-            equality,
-            family,
-            destination_axis,
-            axis_index + 1,
-            checked_axis_offset(right_offset, axis.right_stride, coordinate, "right")?,
-            next_weight,
-        )?;
-    }
-    Ok(acc)
-}
 fn visit_tensor_coordinates<F: Field>(
     family: &EqPairTensorFamily<F>,
     axis_index: usize,
