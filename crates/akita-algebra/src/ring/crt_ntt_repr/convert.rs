@@ -25,6 +25,8 @@ enum CenteredI16NttStrategy<W: PrimeWidth, const K: usize> {
     NeonI16,
     #[cfg(target_arch = "aarch64")]
     NeonI32,
+    #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
+    Inline,
 }
 
 /// Prepared conversion policy for repeated centered-i16 NTT inputs.
@@ -35,6 +37,13 @@ pub(super) struct CenteredI16NttConverter<'a, W: PrimeWidth, const K: usize, con
 
 impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<'a, W, K, D> {
     pub(super) fn new(params: &'a CrtNttParamSet<W, K, D>, rhs: &[[i16; D]]) -> Self {
+        #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
+        if crate::ntt::butterfly::inline_ntt64::<W, D>() {
+            return Self {
+                params,
+                strategy: CenteredI16NttStrategy::Inline,
+            };
+        }
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         if crate::ntt::butterfly::use_x86_transform_ntt::<D>(params.kernel_plan) {
             return Self {
@@ -90,6 +99,8 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<
             CenteredI16NttStrategy::NeonI16 => self.transform_neon_i16(coefficients, out),
             #[cfg(target_arch = "aarch64")]
             CenteredI16NttStrategy::NeonI32 => self.transform_neon_i32(coefficients, out),
+            #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
+            CenteredI16NttStrategy::Inline => self.transform_inline(coefficients, out),
         }
     }
 
@@ -123,6 +134,50 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<
                         self.params.kernel_plan.uses_avx512_transform(),
                     );
                 }
+            }
+        }
+    }
+
+    #[cfg(all(feature = "ntt-inline", any(target_arch = "riscv64", test)))]
+    pub(super) fn transform_inline(
+        &self,
+        coefficients: &[i16; D],
+        out: &mut CyclotomicCrtNtt<W, K, D>,
+    ) {
+        assert!(D == 64 && W::R_LOG == 32);
+        // Sign-extended i32 residues, two per little-endian word: a Jolt guest
+        // expands each 32-bit store into a multi-row sequence, so aligned
+        // limbs take doubleword stores.
+        let words: [u64; 32] = std::array::from_fn(|index| {
+            let residue = |value: i16| u64::from(i32::from(value) as u32);
+            residue(coefficients[2 * index]) | (residue(coefficients[2 * index + 1]) << 32)
+        });
+        for ((limb, prime), twiddles) in out
+            .limbs
+            .iter_mut()
+            .zip(self.params.primes.iter())
+            .zip(self.params.twiddles.iter())
+        {
+            let state = limb.as_mut_ptr().cast::<u64>();
+            if state as usize & 7 == 0 {
+                // SAFETY: the sealed width and checked degree make the limb 64
+                // contiguous i32 residues, 256 bytes at this aligned address.
+                unsafe { state.cast::<[u64; 32]>().write(words) };
+            } else {
+                for (slot, &value) in limb.iter_mut().zip(coefficients) {
+                    *slot = MontCoeff::from_raw(W::from_i64(i64::from(value)));
+                }
+            }
+            // The R² twist folds signed coefficient conversion into the first product.
+            // SAFETY: The checked degree and sealed width pin these array layouts.
+            unsafe {
+                jolt_inlines_ntt::forward_ntt64(
+                    &mut *(limb as *mut _ as *mut [i32; 64]),
+                    &*(&twiddles.psi_pows_r2 as *const _ as *const [i32; 64]),
+                    &*(&twiddles.fwd_twiddles as *const _ as *const [i32; 64]),
+                    prime.p.to_i64() as i32,
+                    prime.pinv.to_i64() as i32,
+                );
             }
         }
     }
