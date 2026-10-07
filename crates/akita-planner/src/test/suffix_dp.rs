@@ -367,8 +367,14 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
 
     let mut policy = policy_of::<OneHot>();
-    policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
-        ring_dimension: 256,
+    // A singleton adaptive domain keeps the split frontier needed to expose
+    // this query tradeoff while using the production setup-first objective.
+    policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels: 2,
+        suffix_dimensions: &[256],
+        potential_a_dimensions: &[256],
+        potential_b_dimensions: &[256],
+        potential_d_dimensions: &[256],
     };
     policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
