@@ -2,18 +2,16 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum OracleObjective {
-    Payload {
-        proof_bytes: usize,
-        setup_field_elements: usize,
-    },
     SetupFirst {
         first_direct_setup_capacity: usize,
+        exact_score: u128,
         proof_bytes: usize,
         setup_field_elements: usize,
     },
     PaddedSetupEnvelopeFirst {
         setup_envelope_capacity: usize,
         first_direct_setup_capacity: usize,
+        exact_score: u128,
         proof_bytes: usize,
         first_direct_output_witness_len: usize,
     },
@@ -35,20 +33,20 @@ pub(super) fn schedule_descriptor_bytes(
     let steps = candidate
         .folds
         .iter()
-        .map(|fold| akita_types::FoldScheduleDescriptorStep {
+        .map(|fold| akita_params::FoldScheduleDescriptorStep {
             params: fold.params.as_ref(),
             payload_mode: fold.params.payload_mode,
             input_witness_len: fold.input_witness_len,
             output_witness_len: fold.output_witness_len,
         });
-    let terminal = akita_types::TerminalFoldParams {
+    let terminal = akita_params::TerminalFoldParams {
         fold_challenge_config: candidate.terminal.sparse_challenge_config,
         response_shape: candidate.terminal.response_shape.clone(),
         input_witness_len: candidate.terminal.input_witness_len,
         ..candidate.terminal.params.clone()
     };
     let mut descriptor = Vec::new();
-    akita_types::FoldSchedule::append_descriptor_bytes_from_steps(
+    akita_params::FoldSchedule::append_descriptor_bytes_from_steps(
         &mut descriptor,
         steps,
         &terminal,
@@ -64,20 +62,19 @@ pub(super) fn score(
         .first_direct_setup_field_len
         .map(|natural_len| padded_setup_prefix_len(natural_len.get()));
     let objective = match policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => OracleObjective::Payload {
-            proof_bytes: candidate.cost.proof_bytes(),
-            setup_field_elements: candidate.setup_field_elements,
-        },
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => OracleObjective::SetupFirst {
-            first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "unpruned setup-first candidate is missing direct setup size".into(),
-                )
-            })?,
-            proof_bytes: candidate.cost.proof_bytes(),
-            setup_field_elements: candidate.setup_field_elements,
-        },
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
+        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => {
+            OracleObjective::SetupFirst {
+                first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "unpruned setup-first candidate is missing direct setup size".into(),
+                    )
+                })?,
+                exact_score: candidate.cost.exact_score(),
+                proof_bytes: candidate.cost.proof_bytes(),
+                setup_field_elements: candidate.setup_field_elements,
+            }
+        }
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
             OracleObjective::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity: padded_setup_prefix_len(candidate.setup_field_elements),
                 first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
@@ -86,6 +83,7 @@ pub(super) fn score(
                             .into(),
                     )
                 })?,
+                exact_score: candidate.cost.exact_score(),
                 proof_bytes: candidate.cost.proof_bytes(),
                 first_direct_output_witness_len: candidate.first_direct_output_witness_len,
             }
@@ -94,7 +92,7 @@ pub(super) fn score(
     Ok(OracleScore {
         objective,
         legacy_root_output_witness_len: (policy.selection_policy
-            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3)
+            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6)
             .then(|| {
                 candidate
                     .folds

@@ -1,4 +1,6 @@
 use super::*;
+use akita_params::layout::relation_layout::{RelationGroupRows, RelationRowGeometry};
+use akita_params::{CommitmentRingDims, CommitmentSliceCount, OpeningMethod};
 use jolt_field::{ExtField, Fp32, FpExt2, NegOneNr, Prime128OffsetA7F7, Ring, Zero};
 
 type F = Fp32<251>;
@@ -187,10 +189,10 @@ fn group_local_a_b_dims_share_d_in_rhs_and_claim() {
         outer: 64,
         opening: 64,
     };
-    let layout = RelationRhsLayout {
-        d_ring_dimension: 64,
-        n_d: 1,
-        groups: vec![
+    let layout = RelationRhsLayout::new_for_test(
+        64,
+        1,
+        vec![
             RelationGroupRows {
                 group_index: 0,
                 role_dims: final_dims,
@@ -210,8 +212,7 @@ fn group_local_a_b_dims_share_d_in_rhs_and_claim() {
                 outer_slice_count: CommitmentSliceCount::ONE,
             },
         ],
-        compression: None,
-    };
+    );
     assert_eq!(
         relation_rhs_coeff_len(&layout).expect("mixed group rhs length"),
         256 + 256 + 128 + 128 + 2 * 128 + 2 * 64 + 64
@@ -260,10 +261,10 @@ fn group_local_a_b_dims_share_d_in_rhs_and_claim() {
 
 #[test]
 fn rows_allow_group_a_larger_than_final_group_a() {
-    let layout = RelationRhsLayout {
-        d_ring_dimension: 32,
-        n_d: 1,
-        groups: vec![
+    let layout = RelationRhsLayout::new_for_test(
+        32,
+        1,
+        vec![
             RelationGroupRows {
                 group_index: 0,
                 role_dims: CommitmentRingDims {
@@ -291,8 +292,7 @@ fn rows_allow_group_a_larger_than_final_group_a() {
                 outer_slice_count: CommitmentSliceCount::ONE,
             },
         ],
-        compression: None,
-    };
+    );
     assert_eq!(
         layout
             .row_geometries()

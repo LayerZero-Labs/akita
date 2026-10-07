@@ -560,9 +560,26 @@ z(r) = sum_j B^j * z_hat_j(r).
 LimbGram mode binds the required limb evaluations instead. Group, chunk, row,
 coefficient, and padding selectors come from the shared physical plan.
 
-The transcript samples the Stage 2 batching challenge only after it has
-absorbed the Stage 1 claims. A prover cannot choose two false relations that
-cancel under a challenge known in advance.
+Let `Delta` denote the complete Stage 2 residual that is independent of the
+physical-L2 virtual-batch challenge, and let `E_i` denote the residual for
+virtual evaluation `i`. After absorbing every virtual evaluation, the
+transcript samples `eta` and Stage 2 proves the combined identity
+
+```text
+Delta + eta * E_0 + eta^2 * E_1 + ... + eta^m * E_(m-1) = 0.
+```
+
+The constant coefficient is reserved exclusively for `Delta`. Direct mode has
+`m = 1`; LimbGram mode has one `E_i` per limb. Prover and verifier MUST derive
+the coefficient vector as `[eta, eta^2, ..., eta^m]` from one shared primitive.
+They MUST NOT start this vector at one: doing so would put `Delta` and `E_0` in
+the same constant coefficient and would allow the fixed cancellation
+`Delta = -E_0` independently of `eta`.
+
+The transcript samples `eta` only after it has absorbed all Stage 1 claims and
+virtual evaluations. Consequently, any nonzero combined residual is a
+degree-at-most-`m` polynomial in a challenge unknown when those values were
+fixed. Transcript grinding prices this site with loss factor `max(1, m)`.
 
 ### Transcript and serialization
 
@@ -573,6 +590,9 @@ evaluations.
 
 Serialization remains schedule driven and headerless. Mutation tests cover the
 norm, cap, route, subclaims, virtual evaluations, nonce, and Stage 2 values.
+This coefficient change is transcript- and protocol-breaking: the instance
+descriptor version, grinding query-policy revision, and generated schedule
+artifacts change together. Old proofs and schedule artifacts are rejected.
 
 ## Terminal L2 check
 
@@ -724,11 +744,11 @@ uniform field element, including the residual top plane. This is a
 computational pseudorandomness model, not an information-theoretic statement
 about every seed. The recursive source keeps its propagated `M` and `P`.
 
-Adaptive direct profiles price first-direct padded setup capacity first, with
-proof bytes and total setup field elements as later tie-breakers. Recursive
-setup profiles first compare the power-of-two capacity covering total setup,
-then first-direct capacity, proof bytes, and first-direct output-witness length.
-Uniform direct profiles minimize estimated proof bytes first.
+Adaptive direct profiles price first-direct padded setup capacity
+first, then the exact additive proof-and-work score, proof bytes, total setup,
+and root output-witness length. Recursive setup profiles first compare the
+power-of-two capacity covering total setup, then first-direct capacity, the
+proof-and-work score, proof bytes, and first-direct output-witness length.
 
 ### Multi-group and multi-chunk states
 
@@ -970,11 +990,11 @@ the profile's declared objective, its comparison includes:
 * The root output-witness length.
 * A canonical descriptor tie-break.
 
-Uniform direct profiles minimize proof bytes, then total setup and root
-output-witness length. Adaptive direct profiles minimize first-direct padded
-setup capacity, then proof bytes, total setup, and root output-witness length.
-Recursive-setup profiles minimize padded total-setup capacity, then first-direct
-capacity, proof bytes, and first-direct output-witness length. Numeric ties go
+Adaptive direct profiles minimize first-direct padded setup
+capacity, then the exact additive proof-and-work score, proof bytes, total
+setup, and root output-witness length. Recursive-setup profiles minimize padded
+total-setup capacity, then first-direct capacity, the proof-and-work score,
+proof bytes, and first-direct output-witness length. Numeric ties go
 directly to the canonical descriptor. These are product objectives, not
 security rules.
 
@@ -1457,9 +1477,9 @@ fully folded into the Book.
 * Akita paper, `sections/akita/3_preliminaries.tex`, for physical ring norms and
   the logical-to-physical boundary.
 * Hachi, Lemma 7, for denominator clearing in weak binding.
-* `crates/akita-types/src/sis/norm_bound.rs`.
-* `crates/akita-types/src/sis/physical_l2.rs`.
-* `crates/akita-types/src/schedule/profiles.rs`.
+* `crates/akita-params/src/sis/norm_bound.rs`.
+* `crates/akita-params/src/sis/physical_l2.rs`.
+* `crates/akita-params/src/schedule/profiles.rs`.
 * `crates/akita-challenges/src/config.rs`.
 * `crates/akita-challenges/src/sampler/mod.rs`.
 * `crates/akita-planner/src/response_model.rs`.

@@ -4,10 +4,20 @@ use akita_challenges::{Challenges, FoldChallengeDrawDomain, FoldDraw};
 use akita_error::AkitaError;
 use jolt_field::{ExtField, Field};
 
-use crate::{
-    CoefficientPackingChallenges, InnerCommitSecurityRoute, OpeningFamily, OpeningMethod,
-    SubringCoefficientPackingGeometry,
-};
+use crate::CoefficientPackingChallenges;
+use akita_params::{InnerCommitSecurityRoute, OpeningMethod, SubringCoefficientPackingGeometry};
+
+/// Runtime value carried by one of Akita's two opening methods.
+///
+/// The schedule chooses an [`OpeningMethod`]; this family preserves that same
+/// method distinction while each protocol stage supplies its own payloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OpeningFamily<Trace, Packing> {
+    /// Value belonging to the full-A evaluation-trace method.
+    EvaluationTrace(Trace),
+    /// Value belonging to subring coefficient packing.
+    SubringCoefficientPacking(Packing),
+}
 
 /// One sampled fold challenge with its method-specific algebraic views.
 pub type GroupFoldChallenges = OpeningFamily<Challenges, CoefficientPackingChallenges>;
@@ -27,10 +37,9 @@ impl OpeningFamily<Challenges, CoefficientPackingChallenges> {
 /// method and certified A-security route.
 pub fn draw_group_fold_challenges<F, E, D>(
     draw: &mut D,
-    params: &crate::GroupOpenPhaseParams,
+    params: &akita_params::GroupOpenPhaseParams,
     group_index: usize,
     num_claims: usize,
-    grind_nonce: u32,
 ) -> Result<GroupFoldChallenges, AkitaError>
 where
     F: Field,
@@ -54,7 +63,6 @@ where
                 params.num_live_blocks(),
                 num_claims,
                 &config,
-                grind_nonce,
                 rejection,
             )
             .map(OpeningFamily::EvaluationTrace)
@@ -90,7 +98,6 @@ where
                 params.num_live_blocks(),
                 num_claims,
                 &config,
-                grind_nonce,
                 None,
             )?;
             Ok(OpeningFamily::SubringCoefficientPacking(

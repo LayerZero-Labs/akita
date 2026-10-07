@@ -3,7 +3,9 @@
 use akita_algebra::offset_eq::{
     materialize_eq_tensor_left, EqPairTensorAxis, EqPairTensorFamily, OffsetEqWindow,
 };
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_field::{One, Prime128OffsetA7F7, Ring, Zero};
 
 type F = Prime128OffsetA7F7;

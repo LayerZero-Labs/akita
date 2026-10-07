@@ -1,12 +1,12 @@
 use akita_config::{
     policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
 };
+use akita_params::{GroupCommitPhaseParams, PolynomialGroupLayout, ScheduleLookupKey};
 use akita_planner::find_schedule;
-use akita_types::{AkitaScheduleLookupKey, GroupCommitPhaseParams, PolynomialGroupLayout};
 
-fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
+fn print_schedule(label: &str, planned: &akita_params::PlannedFoldSchedule) {
     let schedule = &planned.schedule;
-    let physical_setup = akita_types::setup_matrix_field_elements_for_schedule(schedule)
+    let physical_setup = akita_params::setup_matrix_field_elements_for_schedule(schedule)
         .expect("physical setup capacity");
     println!("{label}");
     println!(
@@ -54,10 +54,10 @@ fn main() -> Result<(), akita_error::AkitaError> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(36);
     let direct_policy = policy_of::<OneHot>();
-    let direct_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
+    let direct_key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
     let direct = find_schedule(
         &direct_key,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract()?,
         &[],
         &direct_policy,
         OneHot::ring_challenge_config,
@@ -70,10 +70,10 @@ fn main() -> Result<(), akita_error::AkitaError> {
     type Recursive = RecursiveCommitmentConfig<OneHot>;
     let recursive_policy = policy_of::<Recursive>();
     let scalar_recursive_key =
-        AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
+        ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
     let scalar_recursive = find_schedule(
         &scalar_recursive_key,
-        akita_config::honest_fold_policy_of::<Recursive>(),
+        Recursive::committed_source_contract()?,
         &[],
         &recursive_policy,
         Recursive::ring_challenge_config,
@@ -86,8 +86,8 @@ fn main() -> Result<(), akita_error::AkitaError> {
 
     let precommit_layout = PolynomialGroupLayout::singleton(16);
     let independent = find_schedule(
-        &AkitaScheduleLookupKey::single(precommit_layout),
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        &ScheduleLookupKey::single(precommit_layout),
+        OneHot::committed_source_contract()?,
         &[],
         &direct_policy,
         OneHot::ring_challenge_config,
@@ -96,18 +96,15 @@ fn main() -> Result<(), akita_error::AkitaError> {
         precommit_layout,
         &independent.schedule.root.params,
     )?;
-    let recursive_key = AkitaScheduleLookupKey {
+    let recursive_key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],
     };
-    let precommitted_honest_fold_policies = vec![
-        akita_config::honest_fold_policy_of::<OneHot>(),
-        akita_config::honest_fold_policy_of::<OneHot>(),
-    ];
+    let precommitted_source_contracts = vec![OneHot::committed_source_contract()?; 2];
     let adaptive_recursive = find_schedule(
         &recursive_key,
-        akita_config::honest_fold_policy_of::<Recursive>(),
-        &precommitted_honest_fold_policies,
+        Recursive::committed_source_contract()?,
+        &precommitted_source_contracts,
         &recursive_policy,
         Recursive::ring_challenge_config,
     )?;

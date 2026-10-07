@@ -1,5 +1,5 @@
 use super::*;
-use crate::{reduce_inner_opening_to_ring_element, BasisMode};
+use akita_params::{reduce_inner_opening_to_ring_element, BasisMode};
 use jolt_field::{Ext2, Fp32, FpExt4, FpExt8, One, Zero};
 
 type F = Fp32<251>;
@@ -55,6 +55,26 @@ fn trace_open_row_matches_explicit_subgroup_trace() {
     assert_trace_open_row_matches_subgroup_oracle::<Ext2<AkitaF32>, 64, 2>();
     assert_trace_open_row_matches_subgroup_oracle::<FpExt4<AkitaF32>, 64, 4>();
     assert_trace_open_row_matches_subgroup_oracle::<FpExt8<AkitaF32>, 64, 8>();
+}
+
+/// `ring_bits = 2^32 + 6` must be rejected, not narrowed to 6: the narrowed
+/// shift would return a full-looking 64-entry row for an impossible arity.
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn trace_open_row_rejects_ring_bits_that_truncate_to_a_valid_shift() {
+    const D: usize = 64;
+    let ring = CyclotomicRing::<AkitaF32, D>::one();
+    let result = trace_open_ring_row::<AkitaF32, AkitaF32, D>(&ring, &ring, (1usize << 32) + 6);
+    assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
+}
+
+#[test]
+fn trace_open_row_rejects_a_row_wider_than_the_ring() {
+    let ring = CyclotomicRing::<AkitaF32, 64>::one();
+    assert!(matches!(
+        trace_open_ring_row::<AkitaF32, AkitaF32, 64>(&ring, &ring, 7),
+        Err(AkitaError::InvalidInput(_))
+    ));
 }
 
 fn ring_subfield_basis<Fq: Field, const D: usize, const K: usize>(
@@ -355,10 +375,10 @@ fn embed_subfield_matches_psi_embed_first_slot() {
 
 #[test]
 fn pre_psi_digit_conversion_is_charged_once_before_physical_a_sizing() {
-    use crate::sis::{
+    use akita_params::sis::{
         role_a_collision_inf_norm_for_response_bound, role_a_collision_l2_sq_for_response_bound,
     };
-    use crate::SisModulusProfileId;
+    use akita_params::SisModulusProfileId;
 
     // Two logical degree-four values with unit coordinates overlap under psi.
     // The logical infinity norm is one, while the actual packed coefficient

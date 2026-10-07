@@ -1,4 +1,5 @@
 use super::*;
+use akita_error::checked;
 
 mod frontier;
 mod level_search;
@@ -26,10 +27,11 @@ pub(crate) use views::derive_recursive_candidate_views;
 #[derive(Clone, Copy)]
 pub(crate) struct RecursiveCandidateRequest<'a> {
     pub(crate) policy: &'a PlannerPolicy,
-    pub(crate) payload_mode: akita_types::CommitmentPayloadMode,
+    pub(crate) payload_mode: akita_params::CommitmentPayloadMode,
     pub(crate) opening: PlannerOpeningCandidate,
     pub(crate) dimensions: CommitmentRingDims,
     pub(crate) current_witness_len: usize,
+    pub(crate) input_chunks: Option<akita_params::WitnessChunkShape>,
     pub(crate) source: crate::InnerBasisSource,
     pub(crate) log_basis_inner: u32,
     pub(crate) log_basis_open: u32,
@@ -44,7 +46,7 @@ pub(crate) struct RecursiveCandidateRequest<'a> {
 #[derive(Clone, Copy)]
 pub(crate) struct CandidateLayoutGuide {
     pub(crate) position_index_bits: usize,
-    pub(crate) outer_slice_count: akita_types::CommitmentSliceCount,
+    pub(crate) outer_slice_count: akita_params::CommitmentSliceCount,
     pub(crate) inner_route: CandidateInnerRoute,
     pub(crate) setup_prefix: Option<SetupPrefixLayoutGuide>,
 }
@@ -56,10 +58,10 @@ pub(crate) enum CandidateInnerRoute {
 }
 
 impl CandidateInnerRoute {
-    pub(crate) const fn of(route: akita_types::InnerCommitSecurityRoute) -> Self {
+    pub(crate) const fn of(route: akita_params::InnerCommitSecurityRoute) -> Self {
         match route {
-            akita_types::InnerCommitSecurityRoute::Linf(_) => Self::Linf,
-            akita_types::InnerCommitSecurityRoute::L2 { .. } => Self::L2,
+            akita_params::InnerCommitSecurityRoute::Linf(_) => Self::Linf,
+            akita_params::InnerCommitSecurityRoute::L2 { .. } => Self::L2,
         }
     }
 }
@@ -68,7 +70,7 @@ impl CandidateInnerRoute {
 pub(crate) struct SetupPrefixLayoutGuide {
     pub(crate) log_basis_inner: u32,
     pub(crate) position_index_bits: usize,
-    pub(crate) outer_slice_count: akita_types::CommitmentSliceCount,
+    pub(crate) outer_slice_count: akita_params::CommitmentSliceCount,
 }
 
 enum RecursiveSetupPrefix<'a> {
@@ -150,6 +152,7 @@ struct RecursiveCandidateCore {
     num_ring_elems: usize,
     num_positions_per_block: usize,
     num_live_blocks: usize,
+    witness_chunk_ends: Vec<usize>,
     num_digits_inner: usize,
     num_digits_open: usize,
     num_digits_fold: usize,
@@ -176,7 +179,6 @@ impl RecursiveCandidateContext<'_, '_> {
         let search = self.search;
         let log_basis_inner = request.log_basis_inner;
         let log_basis_open = request.log_basis_open;
-        let num_ring_elems = search.num_ring_elems;
         let reduced_vars = search.reduced_vars;
         if reduced_vars <= 2
             || reduced_vars >= 53
@@ -185,11 +187,18 @@ impl RecursiveCandidateContext<'_, '_> {
         {
             return Ok(None);
         }
-        let num_positions_per_block = 1usize
-            .checked_shl((reduced_vars - block_index_bits) as u32)
-            .ok_or_else(|| {
+        let num_positions_per_block =
+            checked::pow2(reduced_vars - block_index_bits).ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive candidate position count overflow".to_string())
             })?;
+        let block_len = checked::product([num_positions_per_block, dimensions.d_a()])
+            .ok_or_else(|| AkitaError::InvalidSetup("source block width overflow".into()))?;
+        let (input_len, witness_chunk_ends) = request
+            .input_chunks
+            .map(|chunks| chunks.align(block_len, num_chunks))
+            .transpose()?
+            .unwrap_or_else(|| (request.current_witness_len, Vec::new()));
+        let num_ring_elems = input_len.div_ceil(dimensions.d_a());
         let num_live_blocks = num_ring_elems.div_ceil(num_positions_per_block);
         let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, delta_commit)
         else {
@@ -202,10 +211,25 @@ impl RecursiveCandidateContext<'_, '_> {
             .checked_mul(d_a)
             .and_then(|count| count.checked_mul(num_chunks))
             .ok_or_else(|| AkitaError::InvalidSetup("fold response width overflow".into()))?;
+        let cap_blocks = if witness_chunk_ends.is_empty() {
+            num_live_blocks
+        } else {
+            let mut start = 0;
+            let max = witness_chunk_ends
+                .iter()
+                .map(|&end| {
+                    let len = end - start;
+                    start = end;
+                    len
+                })
+                .max()
+                .unwrap_or(0);
+            max.saturating_mul(num_chunks)
+        };
         let modeled_linf_cap = self.source_moment.and_then(|moment| {
             moment.response_linf_cap(
                 ring_challenge_cfg.challenge_l2_sq_max(),
-                num_live_blocks,
+                cap_blocks,
                 num_chunks,
                 num_fold_coeffs,
                 d_a,
@@ -231,7 +255,7 @@ impl RecursiveCandidateContext<'_, '_> {
         else {
             return Ok(None);
         };
-        let Ok(width_w) = akita_types::opening_d_segment_width(
+        let Ok(width_w) = akita_params::opening_d_segment_width(
             request.opening.method(),
             policy.claim_ext_degree,
             d_a,
@@ -244,7 +268,7 @@ impl RecursiveCandidateContext<'_, '_> {
         };
         let Some((open_key, width_w)) = projected_collision_role_price(
             policy,
-            akita_types::SisMatrixRole::Open,
+            akita_params::SisMatrixRole::Open,
             dimensions.d_d(),
             dimensions.d_d(),
             width_w,
@@ -261,6 +285,7 @@ impl RecursiveCandidateContext<'_, '_> {
             num_ring_elems,
             num_positions_per_block,
             num_live_blocks,
+            witness_chunk_ends,
             num_digits_inner: delta_commit,
             num_digits_open: delta_open,
             num_digits_fold: inner_candidate.num_digits_fold,
@@ -276,7 +301,7 @@ impl RecursiveCandidateContext<'_, '_> {
     ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
         let request = self.request;
         let d_a = request.dimensions.d_a();
-        let source_encoding = akita_types::CommittedSourceEncoding::for_producer(
+        let source_encoding = akita_params::CommittedSourceEncoding::for_producer(
             request.opening.method(),
             request.policy.claim_ext_degree,
             d_a,
@@ -287,7 +312,7 @@ impl RecursiveCandidateContext<'_, '_> {
             return Ok(Vec::new());
         }
         let mut candidates = Vec::new();
-        for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+        for outer_slice_count in akita_params::CommitmentSliceCount::ALL {
             if request
                 .guide
                 .is_some_and(|guide| outer_slice_count != guide.outer_slice_count)
@@ -322,41 +347,47 @@ impl RecursiveCandidateContext<'_, '_> {
             };
             for transition in relation_domain.transitions_in(self.request.relation_traversal_order)
             {
-                let params = CommittedGroupParams::try_new(
+                let mut params = CommittedGroupParams::try_new(
                     // A recursive candidate consumes no frozen groups, so its own
                     // new group is the whole list.
-                    vec![akita_types::GroupOpenPhaseParams {
-                        profile: akita_types::GroupCommitPhaseParams {
-                            version: akita_types::GroupCommitPhaseParams::VERSION,
+                    vec![akita_params::GroupOpenPhaseParams {
+                        profile: akita_params::GroupCommitPhaseParams {
+                            version: akita_params::GroupCommitPhaseParams::VERSION,
                             // It commits one polynomial over the witness arriving at
                             // its level.
-                            group: akita_types::PolynomialGroupLayout::singleton(
-                                akita_types::padded_boolean_opening_vars(
-                                    request.current_witness_len,
+                            group: akita_params::PolynomialGroupLayout::singleton(
+                                akita_params::padded_boolean_opening_vars(
+                                    checked::product([core.num_ring_elems, d_a]).ok_or_else(
+                                        || {
+                                            AkitaError::InvalidSetup(
+                                                "witness length overflow".into(),
+                                            )
+                                        },
+                                    )?,
                                 )?,
                             ),
-                            blocks: akita_types::BlockGeometry::new(
+                            blocks: akita_params::BlockGeometry::new(
                                 core.num_ring_elems,
                                 core.num_positions_per_block,
                                 core.num_live_blocks,
                             ),
                             outer_slice_count,
-                            inner: akita_types::RoleParams::new(
-                                akita_types::GadgetDigits::new(
+                            inner: akita_params::RoleParams::new(
+                                akita_params::GadgetDigits::new(
                                     request.log_basis_inner,
                                     core.num_digits_inner,
                                 ),
                                 core.inner_commit_matrix,
                             ),
-                            outer: akita_types::RoleParams::new(
-                                akita_types::GadgetDigits::new(
+                            outer: akita_params::RoleParams::new(
+                                akita_params::GadgetDigits::new(
                                     request.log_basis_open,
                                     core.num_digits_open,
                                 ),
                                 outer_commit_matrix,
                             ),
                         },
-                        opening: akita_types::GroupOpeningPlan {
+                        opening: akita_params::GroupOpeningPlan {
                             opening_method: request.opening.method(),
                             fold_challenge_config: request.opening.challenge_config(),
                             log_basis_open: request.log_basis_open,
@@ -371,6 +402,7 @@ impl RecursiveCandidateContext<'_, '_> {
                     source_encoding,
                     crate::policy::witness_chunk_at_level(request.policy, request.fold_level),
                 )?;
+                params.witness_chunk_ends = core.witness_chunk_ends.clone();
                 candidates.push(params);
             }
         }
@@ -474,7 +506,7 @@ impl RecursiveCandidateContext<'_, '_> {
                         else {
                             continue;
                         };
-                        if relation_mode == akita_types::RingRelationMode::QuotientLift
+                        if relation_mode == akita_params::RingRelationMode::QuotientLift
                             && (bounds.score.is_some_and(|bound| bound > score.0)
                                 || bounds
                                     .witness_body
@@ -502,7 +534,7 @@ fn best_linf_candidates_for(
 ) -> Result<Vec<BestLinfCandidate>, AkitaError> {
     // Larger `r` wins exact score ties independently for each relation mode.
     let mut best = std::collections::BTreeMap::<
-        akita_types::RingRelationMode,
+        akita_params::RingRelationMode,
         (LayoutCandidateScore, usize, CommittedGroupParams, usize),
     >::new();
     let best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
@@ -761,7 +793,7 @@ pub(crate) fn derive_terminal_candidates(
     };
     let retain_setup_frontier = matches!(
         request.policy.selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
     );
     let modeled = if retain_setup_frontier {
         all_linf_candidates_for(&modeled_context, RelationSearchDomain::QuotientOnly)?

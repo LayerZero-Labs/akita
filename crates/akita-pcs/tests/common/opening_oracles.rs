@@ -5,7 +5,7 @@
 //! would let a shared point-layout or fold-order bug move both values together.
 //! These functions instead evaluate raw coefficients directly.
 
-use akita_prover::OneHotPoly;
+use akita_cpu_backend::OneHotPoly;
 use jolt_field::Field;
 
 /// Lagrange weight at one Boolean index, in little-endian variable order.

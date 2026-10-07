@@ -2,7 +2,9 @@ use akita_sis_estimator::{
     estimate, scalar_sis_from_ring, width_table::InfinityWidthProfile, AkitaModulusProfileId,
     EstimateConfig,
 };
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::{
     env, fs,
     path::{Path, PathBuf},

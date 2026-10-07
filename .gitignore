@@ -12,6 +12,7 @@ bench_results/
 
 scripts/__pycache__/
 scripts/tests/__pycache__/
+scripts/sis_golden/__pycache__/
 
 .cursor/
 crates/akita-types/src/sis/generated_l2_sis_table/audit.csv

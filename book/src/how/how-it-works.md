@@ -1,7 +1,7 @@
 # How it works
 
 Akita opens a committed polynomial by repeatedly replacing a large hidden
-table with a smaller committed witness. Every replacement comes with a proof
+table with a new committed witness. Every replacement comes with a proof
 that the new witness carries the same opening claim and satisfies the required
 commitment relations. The last witness is small enough for the verifier to
 check directly.
@@ -185,8 +185,8 @@ schedule checks, and verifier equations remain the correctness boundary.
 ## Where the lifecycle enters the code
 
 The public orchestration lives in `crates/akita-pcs/src/scheme/`. The prover
-walk begins in `crates/akita-prover/src/protocol/core/prove.rs`. The verifier
-mirror begins in `crates/akita-verifier/src/protocol/core/verify.rs`.
+walk begins in `crates/akita-prover/src/protocol/prove/root.rs`. The verifier
+mirror begins in `crates/akita-verifier/src/fold/verify.rs`.
 
 Those files should remain orchestration layers. Mathematical rules belong to
 their canonical layout, algebra, schedule, sum-check, or verifier helpers. A

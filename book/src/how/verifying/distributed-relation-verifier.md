@@ -68,7 +68,7 @@ however, create more column intervals and repeated full-width Z contributions,
 so its concrete setup scan and bookkeeping cost grows with the response-chunk
 count. This is why the count is both a schedule parameter and a verifier-capped
 resource. Relation replay lives in
-`crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs`.
+`crates/akita-verifier/src/relation/evaluation.rs`.
 Prepared setup geometry and the shared setup scan live in
 `crates/akita-types/src/setup_contribution/`.
 
@@ -563,7 +563,7 @@ matrix, now each repeated per machine:
 The shared SIS matrix (backing `A`, `B`, `D`) is regenerated from one public seed
 and is identical on every machine. The verifier scans it **once**, exactly as
 single-machine, and $\alpha$-evaluates each entry
-`r_eval(r,c) = eval_ring_at_pows(matrix[r][c], α)` **once**, because:
+`r_eval(r,c) = eval_ring_at_pows_fast(matrix[r][c], α)` **once**, because:
 
 - For `D · e_hat` and `B · t_hat`, the partition only *re-routes* which `e`/`t`
   column each scanned matrix column maps to. The set of matrix columns scanned —
@@ -620,7 +620,7 @@ exactly one witness column.
 acc = 0
 for r in 0..r_max:                 # r_max = max(n_d, n_b, n_A)        (UNCHANGED)
   for c in 0..n_cols:              # SIS columns scanned once          (UNCHANGED)
-    r_eval    = eval_ring_at_pows(matrix[r][c], alpha)   # the ONE O(D) alpha-eval — UNCHANGED count
+    r_eval    = eval_ring_at_pows_fast(matrix[r][c], alpha)  # the ONE O(D) alpha-eval — UNCHANGED count
     setup_index_weight = d_w[r] * W_col[c]                  # D·e   (partitioned, single-size)
                        + sum_g b_w[g][r] * T_col[g][c]      # B·t   (partitioned, single-size)
                        + a_w[r] * Z_comb[c]                 # A·G_fold·z_hat
@@ -777,15 +777,15 @@ indexing that has not already been bounded; malformed input is rejected with
 
 ## Implementation map
 
-- `crates/akita-types/src/witness.rs` owns physical chunk, group, and segment
+- `crates/akita-params/src/witness.rs` owns physical chunk, group, and segment
   addresses.
-- `crates/akita-types/src/witness/chunk_partition.rs` owns the exact dyadic
+- `crates/akita-params/src/witness/chunk_partition.rs` owns the exact dyadic
   block ranges.
 - `crates/akita-types/src/setup_contribution/` prepares the shared A, B, and D
   setup contribution.
-- `crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs`
+- `crates/akita-verifier/src/relation/evaluation.rs`
   combines structured, setup, quotient, and compression contributions.
-- `crates/akita-verifier/src/protocol/evaluation_trace.rs` evaluates the
+- `crates/akita-verifier/src/relation/evaluation_trace.rs` evaluates the
   opening trace over the same exact chunks.
 - `crates/akita-algebra/src/offset_eq/tensor_pair/` owns the paired equality
   contraction and its dense test oracle.

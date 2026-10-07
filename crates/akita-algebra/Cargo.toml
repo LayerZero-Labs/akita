@@ -3,13 +3,6 @@ name = "akita-algebra"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
-authors = [
-  "Markos Georghiades <mgeorghiades@a16z.com>",
-  "Quang Dao <qvd@andrew.cmu.edu>",
-  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
-  "Omid Bodaghi <omibo@layerzero.foundation>",
-  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
-]
 license = "Apache-2.0 OR MIT"
 description = "Algebra backends for the Akita polynomial commitment scheme"
 repository = "https://github.com/LayerZero-Labs/akita"
@@ -17,17 +10,18 @@ readme = "../../README.md"
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "72dc6451628d8b1dd794147a1f1cc40be0d77963", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
   "asm",
   "solinas",
 ] }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 rand_core = { version = "0.6", features = ["getrandom"] }
 rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
 
 [[bench]]

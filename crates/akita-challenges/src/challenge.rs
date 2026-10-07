@@ -5,8 +5,8 @@
 //! in [`crate::SparseChallengeConfig`], so downstream arithmetic can stay uniform
 //! regardless of how a challenge was sampled.
 //!
-//! Production challenges are expected to come from [`crate::sample_sparse_challenges`],
-//! which constructs values satisfying the invariants below. Methods on this
+//! Production challenges are expected to come from the crate's fold-challenge
+//! sampler, which constructs values satisfying the invariants below. Methods on this
 //! type check cheap shape/range errors needed for memory safety, but they do
 //! not re-validate every sampler invariant on the hot path.
 //!
@@ -118,9 +118,11 @@ impl SparseChallenge {
                     "sparse challenge coefficients must be non-zero".to_string(),
                 ));
             }
-            let word = seen
-                .get_mut(idx / u64::BITS as usize)
-                .ok_or(AkitaError::InvalidProof)?;
+            let word = seen.get_mut(idx / u64::BITS as usize).ok_or_else(|| {
+                AkitaError::Internal(
+                    "validated sparse challenge position exceeds its bitmap".into(),
+                )
+            })?;
             let mask = 1u64 << (idx % u64::BITS as usize);
             if *word & mask != 0 {
                 return Err(AkitaError::InvalidInput(
@@ -142,7 +144,7 @@ impl SparseChallenge {
     ///
     /// Returns an error if `alpha_pows` does not have length `D`, or if a
     /// term would index outside the supplied powers. This method assumes the
-    /// challenge came from [`crate::sample_sparse_challenges`] and therefore
+    /// challenge came from the crate's fold-challenge sampler and therefore
     /// does not re-check uniqueness of positions on the hot path.
     pub fn eval_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
     where

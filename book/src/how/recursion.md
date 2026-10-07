@@ -1,12 +1,12 @@
-# Recursion and proof shape
+# Recursion and proof streams
 
 A fold turns an opening of a committed source into an opening of a new digit
 witness. The schedule selects a chain of these reductions ending in a response
 that the verifier reads and checks directly. This does not require the full
 witness to shrink at every edge; in particular, the root may expand it. The
-recursion here is a
-sequence of polynomial-opening reductions. Each step proves relations about
-the previous source and passes one new witness claim to its successor.
+recursion here is a sequence of polynomial-opening reductions. Each step proves
+relations about the previous source and passes one new witness claim to its
+successor.
 
 This chapter follows a direct edge with one source group first. A grouped
 root and an edge that offloads setup use the same handoff, with the additional
@@ -65,8 +65,8 @@ digits for polynomial-modulus quotients. Compressed payloads add the digits
 used by their compression chains, and quotient lifting also adds the
 compression quotients. A raw reduced-evaluation fold has neither kind of
 auxiliary data. The
-[physical realizations](./proving/akita-fold-realizations.md) define the exact
-segments for each admitted case.
+[complete witness layouts](./proving/ring-relation-checking.md#what-enters-the-next-witness)
+define the segments for each admitted case.
 
 The response in (2) combines source blocks, but (3) includes the digitized
 response and all the opening, inner-commitment, and auxiliary segments. Reducing
@@ -232,10 +232,10 @@ explains how they use the predecessor's binding.
 
 ## Proof anatomy and schedule ownership
 
-`AkitaBatchedProof` stores one packed nonce stream, one root
-`FoldLevelProof`, zero or more recursive `FoldLevelProof` records, and one
-`TerminalLevelProof`. Each nonterminal record contains its opening payload,
-Stage 1 and Stage 2 data, and optional Stage 3 data. Extension-opening
+The proof is one Spongefish argument stream. The validated schedule
+fixes the messages for one root fold, zero or more recursive folds, and one
+terminal fold. Each nonterminal level emits its opening payload, Stage 1 and
+Stage 2 data, and optional Stage 3 data in protocol order. Extension-opening
 reduction appears only where the field and opening method require it.
 
 The next-witness binding has two variants. `OuterPayload` carries a
@@ -244,8 +244,8 @@ selects the final A-only handoff and carries no duplicate commitment payload.
 
 The selected schedule fixes level count, group geometry, decomposition,
 payload modes, and terminal response shape. The verifier validates this
-shape before replay. It does not run the offline planner or try a different
-mode when a proof fails.
+message counts and byte bounds before replay. It does not run the offline
+planner or try a different mode when a proof fails.
 
 The offline planner runs one root search. Root contraction can change candidate
 order, but it is not a feasibility rule or part of the final objective.
@@ -258,13 +258,15 @@ still enforce their explicit minimum contraction policy.
 
 ## Code map
 
-- `crates/akita-prover/src/protocol/ring_switch/commit.rs` prepares the
+- `crates/akita-cpu-backend/src/opaque/recursive/commit.rs` prepares the
   successor's physical witness, commitment, or terminal inner state.
 - `crates/akita-types/src/proof/levels.rs` defines the level records and
   successor-binding variants.
-- `crates/akita-verifier/src/protocol/core/fold/mod.rs` binds the successor
+- `crates/akita-verifier/src/fold/mod.rs` binds the successor
   before replaying ring switching and the sumcheck stages.
-- `crates/akita-verifier/src/protocol/core/suffix.rs` carries the resulting
-  point and value into the next fold and validates terminal-state identity.
+- `crates/akita-verifier/src/fold/suffix.rs` carries the resulting
+  point and value into the next fold, and
+  `crates/akita-verifier/src/fold/terminal.rs` validates terminal-state
+  identity.
 - `crates/akita-pcs/tests/transcript_hardening.rs` checks transcript agreement
   and the ordering of the final witness binding.

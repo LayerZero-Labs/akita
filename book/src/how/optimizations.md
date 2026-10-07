@@ -42,20 +42,25 @@ position_j = ring_j mod P.
 
 This is the only coordinate rule. Single chunk and multi chunk layouts do not
 need different stored block types. `OneHotPoly` stores the indices and scalar
-shape data. `OneHotView` validates the runtime ring dimension and exposes the
-logical source to a backend.
+shape data. Its D-free commitment representation carries those semantics into
+request compilation; `OneHotView` remains the typed opening view.
 
 ## One group commitment operation
 
 The protocol always commits a group. A singleton is a group with one source.
-`RootCommitKernel::commit_inner_group` is therefore the only root commitment
-operation. Dense, one hot, and recursive witness sources implement the same
-source typed boundary without sharing a CPU representation.
+Each source first advertises its representations without materializing them;
+request compilation intersects those choices with the registered operation's
+capabilities. `CommitmentExecutor` then materializes only the selected path and
+runs either independent inner/outer operations or one explicit fused operation.
+Dense, one hot, and recursive witness sources implement the same D-free
+`CommitmentSource` boundary without sharing a CPU representation. Commitment
+state remains policy-selected: a portable policy exports the existing hint,
+while a resident policy keeps backend state in process.
 
 The CPU one hot path runs this flow:
 
 ```text
-validated OneHotView values
+validated OneHotRepresentation values
         |
         v
 derive the active block interval
@@ -97,15 +102,16 @@ describes a separate, not-yet-implemented approach to reducing those retained
 tables.
 
 The implementation and its comparison with a padded-table reference are in
-`crates/akita-prover/src/backend/recursive/witness/tensor.rs`.
+`crates/akita-cpu-backend/src/opaque/recursive/witness/tensor.rs`.
 
 ## Tiling and sweep selection
 
 Tile size and arithmetic traversal solve different problems.
 
-The tile size bounds temporary memory. The default CPU backend uses one 8 MiB
-sparse commitment scratch budget per worker. One-hot and signed sparse-ring
-commitments both use it. An application may choose another nonzero budget.
+The tile size bounds temporary memory. The CPU kernel computes its scratch
+budget internally as the larger of a private 8 MiB batching target and the
+estimated minimum needed for one block. The target lets small blocks share a
+matrix pass; using only the minimum would force one block per tile.
 The estimate includes sparse entries, sweep indexes, wide accumulators,
 reduced rows, and small offset arrays. In simplified form,
 
@@ -122,7 +128,20 @@ retained CPU choices are:
 * Bucketed sweep. Entries are grouped by active matrix column, then every
   matrix row is scanned once.
 * Merge sweep. Sorted block cursors are advanced while a bounded group of
-  active columns is widened once.
+  active columns is loaded once.
+
+Both sweeps load a matrix entry `a` as `NegacyclicShiftWindows`: the canonical
+16-bit lanes of `[-a, a]`, so coefficient `j` of `a * X^k` is entry
+`D + j - k`. When a ring holds several one-hot rows (`K < D`), one block adds
+several shifts of the same entry. The windows read each shift as one
+contiguous window and add up to eight windows per pass over the wide
+destination, instead of updating the whole destination once per shift. The
+kernel runs over the flat 16-bit and 32-bit lane slices that `jolt-field`
+exposes, so each vector instruction widens and adds whole lanes rather than
+shuffling per-coefficient lane groups. Each shift adds a value
+below `2^16` to each signed 32-bit lane, so the field's commit accumulation
+budget bounds the shifts between reductions. On x86-64 the kernel dispatches
+at runtime to an AVX2 build of the same loop.
 
 Both sweeps consume the same flat sparse entries and produce the same rows.
 The private selector uses total block count, active column count, and worker
@@ -133,20 +152,18 @@ a route change is visible even when total runtime is noisy.
 
 ## CPU resource limits
 
-`CpuBackend` owns two deployment limits. The first is the largest ring switch
-operation that keeps a complete transformed matrix prefix. The second is the
-sparse commitment scratch budget for each worker. `CpuBackend::DEFAULT` uses `2^21` ring
-elements and 8 MiB. Applications may use `CpuBackend::with_resource_limits` to
-choose other values.
+`CpuBackend::with_ring_switch_cache_limit(expanded,
+max_cached_ring_switch_elements)` sets the largest ring switch operation that
+keeps a complete transformed matrix prefix. `CpuBackend::new` uses `2^21` ring
+elements. A zero limit streams every ring switch operation that has a streamed
+implementation. `usize::MAX` retains every supported operation.
 
-A zero ring switch limit streams every ring switch operation that has a
-streamed implementation. `usize::MAX` retains every supported operation. The
-commitment scratch budget must be nonzero. Each one-hot or sparse-ring kernel
-returns `InvalidSetup` before its tile allocation if even one block cannot fit.
+Commitment scratch sizing and sweep selection are internal kernel decisions,
+as described above. Scratch is per worker and excludes the prover's other
+resident data, so automatic sizing does not impose a total memory limit.
 
-These limits choose equivalent CPU execution paths. They do not change the
+These policies choose equivalent CPU execution paths. They do not change the
 proof schedule, transcript, setup bytes, proof bytes, or verifier behavior.
-The CPU backend still selects the private one hot arithmetic sweep.
 
 ## Wide accumulation
 
@@ -201,15 +218,30 @@ does it materialize the exact folded table, now one quarter of the original
 Boolean domain. The final range leaf uses the same class-indexed machinery; the
 basis-16 leaf has the dedicated two-round quartet path.
 
-On the coefficient-bound route, the direct basis-4 and basis-8 leaves go one
-round further. When there are at least three ring variables, a bivariate prefix
-reconstructs the first two sumcheck messages from the compact digits. The third
-message is computed from compact octets, and the prover materializes the range
-image only after the third challenge, at one eighth of its original length.
-The basis-8 kernel caches the value and first three normalized derivatives of
-its quartic at every folded quad, so evaluating `Q(a+dT)` needs only powers of
-`d` and a few field multiplications. A Euclidean fold instead uses the
-class-indexed leaf described below because the norm term shares its rounds.
+On the coefficient-bound route, the direct basis-4 and basis-8 leaves keep the
+digits packed for four rounds. The first three rounds bind the position of an
+entry inside an aligned octet of the flat table, so until the fourth round every
+folded entry depends only on the classes of its octet's eight entries. Before the
+first round the prover scans the packed digits once, reading each octet's class
+directly from its packed bytes, and adds the fourth round's equality weight of
+each live pair of adjacent octets to two tables indexed by octet class: one for
+the pair's even octet and one for its odd octet. Each table has at most `2^16`
+entries. Blending the two tables with the fourth round's equality coordinate
+gives the third round's weight of each octet class. The quad-class marginals of
+that blend give a bivariate prefix that reconstructs the first two sumcheck
+messages, and the third message is a sum over octet classes.
+
+The fourth message pairs adjacent octets. Its linear sum, the weighted
+difference of the two range values across each pair, separates over the two
+octet classes, so it is a sum over octet classes of the range value times the
+difference of the two tables. The higher coefficients read, per octet class, the
+folded value and two Taylor factors of the range polynomial at that value. The
+equality weight multiplies the squared difference once, so a basis-8 pair costs
+one squaring, two multiplications, and three unreduced multiplications, and a
+basis-4 pair one squaring and one unreduced multiplication. The prover
+materializes the range image only after the fourth challenge, at one sixteenth
+of its original length, and computes the fifth message in the same pass. A Euclidean fold instead uses
+the class-indexed leaf described below because the norm term shares its rounds.
 
 These are prover-only representations. The transcript contains the same stage
 claims and sumcheck polynomials defined by the protocol, and the verifier does
@@ -249,13 +281,13 @@ Euclidean prover's memory cost.
 
 Relevant sources:
 
-- `crates/akita-prover/src/backend/packed_digits/` owns compact signed-digit
+- `crates/akita-cpu-backend/src/sources/packed_digits/` owns compact signed-digit
   storage.
-- `crates/akita-prover/src/protocol/sumcheck/digit_range/` owns the direct and
+- `crates/akita-cpu-backend/src/opaque/sumcheck/digit_range/` owns the direct and
   class-indexed range provers.
-- `crates/akita-prover/src/protocol/sumcheck/physical_l2_norm.rs` fuses the
+- `crates/akita-cpu-backend/src/opaque/sumcheck/physical_l2_norm.rs` fuses the
   physical norm with the final range leaf.
-- `crates/akita-types/src/sis/physical_l2.rs` defines the direct and limb-Gram
+- `crates/akita-params/src/sis/physical_l2.rs` defines the direct and limb-Gram
   plans and reconstructs the integer norm.
 
 ## Prepared NTT state
@@ -287,11 +319,8 @@ hiding a smaller cached operation on the same matrix route. Requests from one
 fused operation share one routing extent across transform domains. Only
 retained requests are max-joined into physical cache slots.
 
-Retention is the default. `LevelProveStacks::after_root_fold` runs after the
-root fold and before the recursive suffix. Its default implementation keeps the
-prepared caches. A caller can wrap its stack selector in
-`ReleaseRootNttAfterFold` to request release at that boundary. The wrapper calls
-the root stack's release method, which visits each physical cache owner once.
+Shared prepared caches may remain available across proofs. Applications can
+call `backend.trim_caches()` to release built shared-matrix transform slots.
 
 On CPU, release removes built shared-matrix transform slots. Compression
 transforms remain resident. Active readers keep released slots alive through
@@ -299,10 +328,9 @@ shared references. The reported byte count describes removed cache entries;
 their storage can remain allocated until those readers finish. A later request
 builds its exact extent instead of reusing a removed covering slot.
 
-Use this policy when the root cache can be released without removing warm state
-needed by concurrent work. If the suffix needs an empty cache, the caller must
-prevent concurrent cache construction during release. Completing a proof with
-the default policy does not clear the shared cache. The
+Trim when releasing the shared cache will not remove warm state needed by
+concurrent work. Trimming does not guarantee an immediate drop in process
+memory, and proof completion does not clear the shared cache. The
 [setup runtime guide](../usage/setup-runtime.md#reuse-and-release-cpu-caches)
 describes this application choice.
 

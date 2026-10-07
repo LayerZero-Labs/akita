@@ -114,10 +114,10 @@ The verifier stores no witness-sized trace table and no dense block basis table.
 ## Code map
 
 - Verifier preparation and contraction:
-  `crates/akita-verifier/src/protocol/evaluation_trace.rs`.
+  `crates/akita-verifier/src/relation/evaluation_trace.rs`.
 - Shared checked trace geometry:
   `crates/akita-types/src/trace_weight/`.
-- Exact `E` addresses: `crates/akita-types/src/witness.rs`.
+- Exact `E` addresses: `crates/akita-params/src/witness.rs`.
 - Paired tensor model and kernels:
   `crates/akita-algebra/src/offset_eq/tensor_pair/`.
 - Ring and subfield trace primitives:

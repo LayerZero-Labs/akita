@@ -4,7 +4,7 @@ use super::*;
 fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
-    let domain = RingDimensionSearchDomain::uniform(256).unwrap();
+    let domain = RingDimensionSearchDomain::new([CommitmentRingDims::uniform(256)]).unwrap();
     let base_policy = policy_of::<OneHot>();
     let mut policy = policy_for_domain(base_policy, &domain);
     // The oracle enumerates every complete suffix, so keep this correctness
@@ -16,8 +16,7 @@ fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
     let selected = find_schedule(
         key,
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
-        &domain,
+        OneHot::committed_source_contract().unwrap(),
         OneHot::ring_challenge_config,
     )
     .unwrap();
@@ -28,7 +27,7 @@ fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
     let unpruned = unpruned_search::find_schedule(
         key,
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         OneHot::ring_challenge_config,
     )
     .unwrap();
@@ -56,7 +55,7 @@ fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
     );
     assert!(relation_modes[..cutover]
         .iter()
-        .all(|mode| *mode == akita_types::RingRelationMode::QuotientLift));
+        .all(|mode| *mode == akita_params::RingRelationMode::QuotientLift));
     assert!(relation_modes[cutover..]
         .iter()
         .all(|mode| mode.is_reduced_evaluation()));
@@ -79,15 +78,15 @@ fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
 fn selected_cutover_is_invariant_under_relation_traversal_order() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
-    let domain = RingDimensionSearchDomain::uniform(256).unwrap();
+    let domain = RingDimensionSearchDomain::new([CommitmentRingDims::uniform(256)]).unwrap();
     let mut policy = policy_for_domain(policy_of::<OneHot>(), &domain);
     policy.inner_basis_range.1 = policy.inner_basis_range.0;
     policy.opening_basis_range.1 = policy.opening_basis_range.0;
     let key = onehot_group(20, 1);
-    let lookup_key = akita_types::AkitaScheduleLookupKey::single(key);
+    let lookup_key = akita_params::ScheduleLookupKey::single(key);
     let canonical = crate::planner::find_schedule_in_relation_order(
         &lookup_key,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &[],
         &policy,
         OneHot::ring_challenge_config,
@@ -96,12 +95,13 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
             relation_mode_filter: RelationModeFilter::All,
             root_main_constraint: None,
             adaptation_guide: None,
+            query_prefix_count: 0,
         },
     )
     .unwrap();
     let reversed = crate::planner::find_schedule_in_relation_order(
         &lookup_key,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &[],
         &policy,
         OneHot::ring_challenge_config,
@@ -110,6 +110,7 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
             relation_mode_filter: RelationModeFilter::All,
             root_main_constraint: None,
             adaptation_guide: None,
+            query_prefix_count: 0,
         },
     )
     .unwrap();

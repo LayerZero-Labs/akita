@@ -24,7 +24,7 @@ jobs:
     steps:
       - name: Resolve PR number
         id: pr
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const prs = context.payload.workflow_run.pull_requests || [];
@@ -39,14 +39,14 @@ jobs:
 
       - name: Checkout trusted default branch
         if: steps.pr.outputs.issue-number != ''
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
 
       - name: Download current test timing artifact
         if: steps.pr.outputs.issue-number != ''
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ env.AKITA_TEST_TIMING_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/ci-test-timing-current
@@ -57,7 +57,7 @@ jobs:
       - name: Determine baseline artifacts
         if: steps.pr.outputs.issue-number != ''
         id: baselines
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -141,7 +141,7 @@ jobs:
 
       - name: Download main baseline artifact
         if: steps.baselines.outputs.main-run-id != ''
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ env.AKITA_TEST_TIMING_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/ci-test-timing-main-baseline
@@ -150,7 +150,7 @@ jobs:
 
       - name: Download previous run artifact
         if: steps.baselines.outputs.previous-run-id != ''
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ env.AKITA_TEST_TIMING_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/ci-test-timing-previous-run
@@ -181,7 +181,7 @@ jobs:
 
       - name: Upsert timing PR comment
         if: steps.pr.outputs.issue-number != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           AKITA_TEST_TIMING_COMMENT: ${{ runner.temp }}/ci-test-timing-current/comment.md
           AKITA_TEST_TIMING_ISSUE_NUMBER: ${{ steps.pr.outputs.issue-number }}

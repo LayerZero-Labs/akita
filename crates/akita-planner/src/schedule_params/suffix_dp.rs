@@ -5,11 +5,11 @@ use std::{
 };
 
 use akita_error::AkitaError;
-use akita_types::{
-    active_setup_field_len, terminal_response_planner_bytes, AkitaScheduleLookupKey,
-    CommitmentRingDims, CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    TerminalResponseShape,
+use akita_params::{
+    active_setup_field_len, CommitmentRingDims, CommittedGroupParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, TerminalResponseShape,
 };
+use akita_params::{terminal_response_planner_bytes, ScheduleLookupKey};
 
 use crate::PlannerPolicy;
 
@@ -17,7 +17,7 @@ use super::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
     dimension_candidates, level_setup_field_elements, suffix_opening_layout,
     terminal_setup_field_elements, CandidateFoldStep, CandidateInnerRoute, CandidateLayoutGuide,
-    CandidateTerminalResponse, CompleteObjectiveBound, FoldCandidatePolicy, PackedProofCost,
+    CandidateTerminalResponse, CompleteObjectiveBound, FoldCandidatePolicy, ProofCost,
     RecursiveCandidateRequest, RecursiveFoldWork, RelationCandidateTopology, RelationModeFilter,
     RelationSearchDomain, RelationTraversalOrder, RingRelationPhase, ScheduleCandidate,
     SetupPrefixCapacity, SetupPrefixLayoutGuide, SetupPrefixSearchCache, SplitBoundPolicy,
@@ -36,6 +36,7 @@ mod terminal;
 pub(super) use candidates::packing_precommit_opening_products;
 #[cfg(test)]
 pub(super) use candidates::state_allows_terminal_seed;
+pub(crate) use candidates::MAX_PRECOMMIT_OPENING_PRODUCTS;
 use frontier::{consider_child_suffixes, price_child_edge, ProjectedFrontier, Projection};
 pub(crate) use search::derive_selected_suffix_schedule;
 use source::attach_source_moments;
@@ -76,12 +77,12 @@ fn offloaded_witness_contracts(
 
 struct ChildEdge<'a> {
     policy: &'a PlannerPolicy,
+    challenge_order: akita_params::ChallengeFieldOrder,
     diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
     opening_layout: &'a OpeningClaimsLayout,
     level: u32,
     candidate_params: Arc<CommittedGroupParams>,
     current_witness_len: usize,
-    next_witness_len: usize,
     natural_setup_field_len: usize,
     level_setup_field_elements: usize,
     offloaded: bool,
@@ -90,24 +91,205 @@ struct ChildEdge<'a> {
 }
 
 impl ChildEdge<'_> {
-    fn grinding_nonce_bits(
+    fn grinding_cost(
         &self,
         suffix: &ScheduleCandidate,
-        relation_geometry: akita_types::RelationAddressGeometry,
-    ) -> Result<usize, AkitaError> {
+        relation_geometry: akita_params::RelationAddressGeometry,
+    ) -> Result<akita_params::TranscriptGrindingCost, AkitaError> {
         let successor = suffix.folds.first().map_or_else(
-            || akita_types::FoldSuccessor::Terminal(&suffix.terminal.params),
-            |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
+            || akita_params::FoldSuccessor::Terminal(&suffix.terminal.params),
+            |fold| akita_params::FoldSuccessor::Recursive(fold.params.as_ref()),
         );
-        akita_types::transcript_grinding_nonce_bits_for_planner_edge(
+        akita_params::transcript_grinding_cost_for_planner_edge(
             self.candidate_params.as_ref(),
             relation_geometry,
             self.opening_layout,
             successor,
-            self.policy.decomposition.field_bits(),
+            self.challenge_order,
             self.policy.claim_ext_degree,
             self.level,
         )
+    }
+}
+
+/// A nonterminal edge whose grinding cost becomes exact only after its
+/// successor fold (or terminal) has been selected.
+#[derive(Clone)]
+struct PendingQueryEdge {
+    params: Arc<CommittedGroupParams>,
+    opening_layout: Arc<OpeningClaimsLayout>,
+    level: u32,
+}
+
+impl PendingQueryEdge {
+    fn new(
+        state: SuffixState<'_>,
+        opening_layout: &OpeningClaimsLayout,
+        params: &CommittedGroupParams,
+    ) -> Result<Self, AkitaError> {
+        Ok(Self {
+            params: Arc::new(params.clone()),
+            opening_layout: Arc::new(opening_layout.clone()),
+            level: u32::try_from(state.level)
+                .map_err(|_| AkitaError::InvalidSetup("grinding level exceeds u32".into()))?,
+        })
+    }
+
+    fn grinding_cost(
+        &self,
+        policy: &PlannerPolicy,
+        challenge_order: akita_params::ChallengeFieldOrder,
+        successor: akita_params::FoldSuccessor<'_>,
+    ) -> Result<akita_params::TranscriptGrindingCost, AkitaError> {
+        let mut producer = (*self.params).clone();
+        producer.successor_block_len =
+            (producer.witness_chunk.num_chunks > 1).then_some(successor.source_block_len()?);
+        let output_len = producer.output_witness_len_for_field_bits(
+            policy.decomposition.field_bits(),
+            policy.claim_ext_degree,
+            &self.opening_layout,
+        )?;
+        let payload = akita_schedules::planner_support::nonterminal_level_payload_bytes(
+            policy,
+            &producer,
+            &self.opening_layout,
+            successor,
+            output_len,
+        )?;
+        akita_params::transcript_grinding_cost_for_planner_edge(
+            &self.params,
+            payload.relation_geometry,
+            &self.opening_layout,
+            successor,
+            challenge_order,
+            policy.claim_ext_degree,
+            self.level,
+        )
+    }
+
+    fn candidate_grinding_cost(
+        &self,
+        policy: &PlannerPolicy,
+        challenge_order: akita_params::ChallengeFieldOrder,
+        candidate: &ScheduleCandidate,
+    ) -> Result<akita_params::TranscriptGrindingCost, AkitaError> {
+        let successor = candidate.folds.first().map_or_else(
+            || akita_params::FoldSuccessor::Terminal(&candidate.terminal.params),
+            |fold| akita_params::FoldSuccessor::Recursive(fold.params.as_ref()),
+        );
+        self.grinding_cost(policy, challenge_order, successor)
+    }
+}
+
+/// Exact query usage above the current suffix, plus the incoming edge that is
+/// waiting for the suffix's first successor.
+#[derive(Clone)]
+pub(crate) struct QueryPrefix {
+    finalized_query_count: u64,
+    incoming: PendingQueryEdge,
+}
+
+impl QueryPrefix {
+    fn admits(
+        &self,
+        policy: &PlannerPolicy,
+        challenge_order: akita_params::ChallengeFieldOrder,
+        candidate: &ScheduleCandidate,
+    ) -> Result<bool, AkitaError> {
+        let edge = self
+            .incoming
+            .candidate_grinding_cost(policy, challenge_order, candidate)?;
+        let total = self
+            .finalized_query_count
+            .checked_add(edge.expanded_query_count)
+            .and_then(|queries| queries.checked_add(candidate.cost.expanded_query_count()))
+            .ok_or_else(|| AkitaError::InvalidSetup("candidate query count overflow".into()))?;
+        Ok(total < akita_params::TRANSCRIPT_GRINDING_QUERY_LIMIT)
+    }
+
+    fn advance(
+        &self,
+        policy: &PlannerPolicy,
+        challenge_order: akita_params::ChallengeFieldOrder,
+        successor: &CommittedGroupParams,
+        incoming: PendingQueryEdge,
+    ) -> Result<Option<Self>, AkitaError> {
+        let edge = self.incoming.grinding_cost(
+            policy,
+            challenge_order,
+            akita_params::FoldSuccessor::Recursive(successor),
+        )?;
+        let finalized_query_count = self
+            .finalized_query_count
+            .checked_add(edge.expanded_query_count)
+            .ok_or_else(|| AkitaError::InvalidSetup("candidate query count overflow".into()))?;
+        if finalized_query_count >= akita_params::TRANSCRIPT_GRINDING_QUERY_LIMIT {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            finalized_query_count,
+            incoming,
+        }))
+    }
+
+    fn admits_result(
+        &self,
+        policy: &PlannerPolicy,
+        challenge_order: akita_params::ChallengeFieldOrder,
+        result: &SuffixResult,
+    ) -> Result<bool, AkitaError> {
+        for candidate in result.payload_candidates().chain(result.setup_candidates()) {
+            if !self.admits(policy, challenge_order, candidate)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
+/// Selects between the budget-independent memo search and a caller-specific
+/// search used only when the memoized optimum does not fit that caller's
+/// transcript-query prefix.
+#[derive(Clone)]
+pub(crate) enum QuerySearch {
+    Unconstrained,
+    Root(u64),
+    Restricted(QueryPrefix),
+}
+
+impl QuerySearch {
+    fn child(
+        &self,
+        ctx: &SuffixCtx<'_>,
+        state: SuffixState<'_>,
+        opening_layout: &OpeningClaimsLayout,
+        params: &CommittedGroupParams,
+    ) -> Result<Option<Self>, AkitaError> {
+        match self {
+            Self::Unconstrained => Ok(Some(Self::Unconstrained)),
+            Self::Root(finalized_query_count) => Ok(Some(Self::Restricted(QueryPrefix {
+                finalized_query_count: *finalized_query_count,
+                incoming: PendingQueryEdge::new(state, opening_layout, params)?,
+            }))),
+            Self::Restricted(prefix) => {
+                let incoming = PendingQueryEdge::new(state, opening_layout, params)?;
+                prefix
+                    .advance(ctx.policy, ctx.challenge_order, params, incoming)
+                    .map(|next| next.map(Self::Restricted))
+            }
+        }
+    }
+
+    fn admits_terminal(
+        &self,
+        policy: &PlannerPolicy,
+        challenge_order: akita_params::ChallengeFieldOrder,
+        candidate: &ScheduleCandidate,
+    ) -> Result<bool, AkitaError> {
+        match self {
+            Self::Unconstrained | Self::Root(_) => Ok(true),
+            Self::Restricted(prefix) => prefix.admits(policy, challenge_order, candidate),
+        }
     }
 }
 
@@ -115,13 +297,13 @@ impl ChildEdge<'_> {
 struct ChildEdgePrice {
     direct_payload_bytes: usize,
     stage3_payload_bytes: usize,
-    relation_geometry: akita_types::RelationAddressGeometry,
+    relation_geometry: akita_params::RelationAddressGeometry,
 }
 
 struct PendingScheduleCandidate {
     first_direct_setup_field_len: Option<NonZeroUsize>,
     first_direct_output_witness_len: usize,
-    cost: PackedProofCost,
+    cost: ProofCost,
     setup_field_elements: usize,
     first_fold: CandidateFoldStep,
     suffix_folds: super::CandidateFoldChain,
@@ -146,7 +328,6 @@ impl StateFrontiers {
 
 struct LevelCandidateEdge<'a> {
     params: &'a CommittedGroupParams,
-    next_witness_len: usize,
     natural_setup_field_len: usize,
     require_child_fold: bool,
 }
@@ -157,6 +338,7 @@ struct CandidateChildren<'a> {
 }
 
 struct PlannedFoldCandidate {
+    chunk_shape: Option<akita_params::WitnessChunkShape>,
     params: CommittedGroupParams,
     next_witness_len: usize,
     opening_reduction_bytes: usize,
@@ -165,7 +347,7 @@ struct PlannedFoldCandidate {
 
 struct GuidedLevelCandidate {
     lower_bound: CompleteObjectiveBound,
-    natural_len: Option<usize>,
+    natural_len: usize,
     candidate: PlannedFoldCandidate,
 }
 
@@ -181,20 +363,10 @@ enum GuideScope {
 }
 
 impl GuideScope {
-    fn for_state(
-        policy: &PlannerPolicy,
-        is_complete_root: bool,
-        incoming_setup_prefix: Option<usize>,
-    ) -> Option<Self> {
+    fn for_state(is_complete_root: bool, incoming_setup_prefix: Option<usize>) -> Option<Self> {
         if is_complete_root {
             Some(Self::CompleteRoot)
-        } else if incoming_setup_prefix.is_some()
-            && matches!(
-                policy.selection_policy,
-                crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
-            )
-        {
+        } else if incoming_setup_prefix.is_some() {
             Some(Self::RecursivePrefix)
         } else {
             None
@@ -204,7 +376,7 @@ impl GuideScope {
 
 impl Iterator for CandidateTraversal {
     type Item = (
-        Option<(CompleteObjectiveBound, Option<usize>)>,
+        Option<(CompleteObjectiveBound, usize)>,
         PlannedFoldCandidate,
     );
 
@@ -266,15 +438,20 @@ fn child_edge_price(
     suffix: &ScheduleCandidate,
 ) -> Result<ChildEdgePrice, AkitaError> {
     let successor = suffix.folds.first().map_or_else(
-        || akita_types::FoldSuccessor::Terminal(&suffix.terminal.params),
-        |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
+        || akita_params::FoldSuccessor::Terminal(&suffix.terminal.params),
+        |fold| akita_params::FoldSuccessor::Recursive(fold.params.as_ref()),
     );
     let payload = akita_schedules::planner_support::nonterminal_level_payload_bytes(
         edge.policy,
         &edge.candidate_params,
         edge.opening_layout,
         successor,
-        edge.next_witness_len,
+        suffix
+            .folds
+            .first()
+            .map_or(suffix.terminal.input_witness_len, |fold| {
+                fold.input_witness_len
+            }),
     )?;
     let direct_payload_bytes = payload.direct;
     let stage3_payload_bytes = payload.stage3;
@@ -293,7 +470,7 @@ fn child_edge_price(
 fn child_choice(
     edge: &ChildEdge<'_>,
     edge_price: ChildEdgePrice,
-    edge_nonce_bits: usize,
+    edge_grinding_cost: akita_params::TranscriptGrindingCost,
     suffix: &ScheduleCandidate,
 ) -> Result<Option<PendingScheduleCandidate>, AkitaError> {
     if !frontier::ParentAdmissionClass::for_candidate(suffix).is_admitted_by(
@@ -326,21 +503,55 @@ fn child_choice(
             })?,
         )
     };
+    let output_witness_len = suffix
+        .folds
+        .first()
+        .map_or(suffix.terminal.input_witness_len, |fold| {
+            fold.input_witness_len
+        });
     let first_direct_output_witness_len = if edge.offloaded {
         suffix.first_direct_output_witness_len
     } else {
-        edge.next_witness_len
+        output_witness_len
     };
+    let mut producer = (*edge.candidate_params).clone();
+    producer.successor_block_len = (producer.witness_chunk.num_chunks > 1).then_some(
+        suffix
+            .folds
+            .first()
+            .map_or(
+                akita_params::FoldSuccessor::Terminal(&suffix.terminal.params),
+                |fold| akita_params::FoldSuccessor::Recursive(&fold.params),
+            )
+            .source_block_len()?,
+    );
     let first_fold = CandidateFoldStep {
-        params: Arc::clone(&edge.candidate_params),
+        params: Arc::new(producer),
         input_witness_len: edge.current_witness_len,
-        output_witness_len: edge.next_witness_len,
+        output_witness_len,
         estimated_direct_payload_bytes: edge_price.direct_payload_bytes,
         estimated_stage3_payload_bytes: edge_price.stage3_payload_bytes,
     };
-    let cost = suffix
-        .cost
-        .checked_prepend(edge_payload_bytes, edge_nonce_bits)?;
+    let direct_scan_elements = if edge.offloaded {
+        0
+    } else {
+        super::direct_setup_scan_work_elements(
+            edge.natural_setup_field_len,
+            edge_price
+                .relation_geometry
+                .relation_coefficient_block_len(),
+        )?
+    };
+    let work_elements = output_witness_len
+        .checked_add(direct_scan_elements)
+        .ok_or_else(|| AkitaError::InvalidSetup("edge work overflow".into()))?;
+    let cost = suffix.cost.checked_prepend(
+        edge_payload_bytes,
+        edge_grinding_cost.nonce_max_bytes,
+        edge_grinding_cost.total_nonce_bits,
+        edge_grinding_cost.expanded_query_count,
+        work_elements,
+    )?;
     Ok(Some(PendingScheduleCandidate {
         first_direct_setup_field_len,
         first_direct_output_witness_len,
@@ -368,44 +579,34 @@ fn direct_edge_lower_bound(
         1,
         output_witness_len,
     )?;
-    let proof_bytes = akita_types::level_proof_bytes(
+    let proof_bytes = akita_params::nonterminal_level_layout(
         policy.decomposition.field_bits(),
         policy.challenge_field_bits()?,
         params,
         relation_geometry,
         None,
-    )?;
+    )?
+    .encoded_len()?;
+    let lower_bound_cost = ProofCost::new(proof_bytes, 0, 0, output_witness_len as u128)?;
     Ok(CompleteObjectiveBound::for_direct_edge(
         policy,
         SetupPrefixCapacity::for_natural_len(natural_setup_field_len).field_elements(),
         output_witness_len,
+        lower_bound_cost.exact_score(),
         proof_bytes,
         level_setup_field_elements(params)?,
     ))
 }
 
 fn complete_root_bound_is_strictly_worse(
-    policy: &PlannerPolicy,
     lower_bound: CompleteObjectiveBound,
     frontier: &ProjectedFrontier,
 ) -> bool {
-    match policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => frontier
-            .by_parent_cost
-            .values()
-            .flat_map(frontier::ProjectedObjectiveChoices::payload_candidates)
-            .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => frontier
-            .by_parent_cost
-            .values()
-            .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
-            .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => frontier
-            .by_parent_cost
-            .values()
-            .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
-            .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
-    }
+    frontier
+        .by_parent_cost
+        .values()
+        .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
+        .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics()))
 }
 
 fn complete_root_setup_bound_is_strictly_worse(
@@ -428,11 +629,9 @@ fn direct_edge_bound_is_strictly_worse(
     frontier: &ProjectedFrontier,
 ) -> Result<bool, AkitaError> {
     match guide_scope {
-        GuideScope::CompleteRoot => Ok(complete_root_bound_is_strictly_worse(
-            policy,
-            lower_bound,
-            frontier,
-        )),
+        GuideScope::CompleteRoot => {
+            Ok(complete_root_bound_is_strictly_worse(lower_bound, frontier))
+        }
         GuideScope::RecursivePrefix => {
             let parent_cost = ParentObservableKey::new(policy, Some(params), None)?;
             Ok(frontier.recursive_direct_bound_is_strictly_worse(
@@ -456,19 +655,13 @@ fn candidate_traversal(
     let mut guided = candidates
         .into_iter()
         .map(|candidate| {
-            let natural_len = (matches!(
-                policy.selection_policy,
-                crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
-            ))
-            .then(|| active_setup_field_len(&candidate.params, opening_layout))
-            .transpose()?;
+            let natural_len = active_setup_field_len(&candidate.params, opening_layout)?;
             let lower_bound = direct_edge_lower_bound(
                 policy,
                 &candidate.params,
                 opening_layout,
                 candidate.next_witness_len,
-                natural_len.unwrap_or_default(),
+                natural_len,
             )?;
             Ok(GuidedLevelCandidate {
                 lower_bound,
@@ -495,9 +688,9 @@ fn candidate_traversal(
 
 fn price_terminal_candidate(
     ctx: &SuffixCtx<'_>,
-    state: SuffixState,
+    state: SuffixState<'_>,
+    query_search: &QuerySearch,
     candidate_params: &CommittedGroupParams,
-    opening_reduction_bytes: usize,
     natural_len: usize,
     frontiers: &mut StateFrontiers,
 ) -> Result<(), AkitaError> {
@@ -515,10 +708,24 @@ fn price_terminal_candidate(
     {
         return Ok(());
     }
+    let opening_reduction_bytes = akita_params::extension_opening_reduction_level_bytes(
+        policy.challenge_field_bits()?,
+        policy.claim_ext_degree,
+        candidate_params.group(),
+    )?;
     let field_bits = policy.decomposition.field_bits();
     let Some((mut direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
         policy,
-        state.current_witness_len,
+        state
+            .input_chunks
+            .map(|chunks| {
+                chunks.align(
+                    akita_params::FoldSuccessor::Recursive(candidate_params).source_block_len()?,
+                    1,
+                )
+            })
+            .transpose()?
+            .map_or(state.current_witness_len, |(len, _)| len),
         candidate_params,
         field_bits,
         ctx.key,
@@ -538,11 +745,11 @@ fn price_terminal_candidate(
         let route_kind_matches = matches!(
             (candidate_route, guide_route),
             (
-                akita_types::InnerCommitSecurityRoute::Linf(_),
-                akita_types::InnerCommitSecurityRoute::Linf(_)
+                akita_params::InnerCommitSecurityRoute::Linf(_),
+                akita_params::InnerCommitSecurityRoute::Linf(_)
             ) | (
-                akita_types::InnerCommitSecurityRoute::L2 { .. },
-                akita_types::InnerCommitSecurityRoute::L2 { .. }
+                akita_params::InnerCommitSecurityRoute::L2 { .. },
+                akita_params::InnerCommitSecurityRoute::L2 { .. }
             )
         );
         if direct_step.params.d_a() != guide.d_a()
@@ -565,11 +772,14 @@ fn price_terminal_candidate(
             AkitaError::InvalidSetup("direct setup field length must be nonzero".into())
         })?),
         first_direct_output_witness_len: 0,
-        cost: PackedProofCost::new(total, 0)?,
+        cost: ProofCost::new(total, 0, 0, 0)?,
         setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
         folds: super::CandidateFoldChain::default(),
         terminal: Arc::new(direct_step),
     };
+    if !query_search.admits_terminal(policy, ctx.challenge_order, &candidate)? {
+        return Ok(());
+    }
     frontiers.projected.consider_candidate(
         policy,
         ctx.diagnostics,
@@ -581,7 +791,7 @@ fn price_terminal_candidate(
 
 fn price_level_candidate_with_children(
     ctx: &SuffixCtx<'_>,
-    state: SuffixState,
+    state: SuffixState<'_>,
     opening_layout: &OpeningClaimsLayout,
     candidate: LevelCandidateEdge<'_>,
     children: CandidateChildren<'_>,
@@ -590,7 +800,6 @@ fn price_level_candidate_with_children(
     let policy = ctx.policy;
     let LevelCandidateEdge {
         params: candidate_params,
-        next_witness_len,
         natural_setup_field_len: natural_len,
         require_child_fold,
     } = candidate;
@@ -609,13 +818,22 @@ fn price_level_candidate_with_children(
     let level_setup_field_elements = level_setup_field_elements(candidate_params)?;
     let direct_edge = ChildEdge {
         policy,
+        challenge_order: ctx.challenge_order,
         diagnostics: ctx.diagnostics,
         opening_layout,
         level: u32::try_from(state.level)
             .map_err(|_| AkitaError::InvalidSetup("grinding level exceeds u32".into()))?,
         candidate_params: Arc::new(candidate_params.clone()),
-        current_witness_len: state.current_witness_len,
-        next_witness_len,
+        current_witness_len: state
+            .input_chunks
+            .map(|chunks| {
+                chunks.align(
+                    akita_params::FoldSuccessor::Recursive(candidate_params).source_block_len()?,
+                    candidate_params.witness_chunk.num_chunks,
+                )
+            })
+            .transpose()?
+            .map_or(state.current_witness_len, |(len, _)| len),
         natural_setup_field_len: natural_len,
         level_setup_field_elements,
         offloaded: false,
@@ -700,3 +918,7 @@ fn price_level_candidate_with_children(
 #[cfg(test)]
 #[path = "../test/suffix_dp.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../test/chunk_ownership.rs"]
+mod chunk_ownership_tests;

@@ -6,6 +6,13 @@
 
 Akita is a lattice-based polynomial commitment scheme (PCS) with transparent setup and post-quantum security. Built in Rust. Intended to replace Dory in Jolt.
 
+## Branches
+
+`main` carries the current Akita protocol. `dev` is `main` plus opt-in protocol extensions and compute backends.
+Target `dev` with new extensions, opt-in features, and backends. Target `main` with fixes, refactors, and the extension seams they need.
+On `dev`, an unselected extension must leave setup, commitment, and proof bytes identical to `main`, even when its Cargo feature is enabled.
+Contract, sync procedure, and seam rules: [`docs/branches.md`](docs/branches.md).
+
 ## CI preflight
 
 Run the cheap repository-wide gates before starting expensive compilation:
@@ -19,6 +26,7 @@ scripts/check-rust-file-lines.sh --no-baseline
 python3 -m unittest discover -s scripts/tests -p "test_*.py"
 scripts/check-crate-deps.sh akita-verifier
 scripts/check-crate-deps.sh akita-prover
+scripts/check-crate-deps.sh akita-cpu-backend
 scripts/check-crate-deps.sh akita-config
 scripts/check-crate-deps.sh akita-planner
 scripts/check-crate-deps.sh akita-setup
@@ -89,7 +97,7 @@ Follow the [#244](https://github.com/LayerZero-Labs/akita/pull/244) cutover: **o
 - If `A` needs the output of `B`, call `B` (or extend `B`); do not introduce `C` that forwards to `B`.
 - Security and sizing contracts must use the same primitives the verifier enforces. No split-brain where certification and MSIS pricing read different bounds.
 - Generic checked `usize` formulas live in `akita_error::checked`. Use those primitives directly and do not redefine local product, sum, fixed-arity multiplication, range, alignment, division, or power-of-two helpers.
-- Keep intentional boundaries: traits, arithmetic primitives, domain/security helpers, named test/bench scenarios. Delete single-use indirection.
+- Keep intentional boundaries: traits, arithmetic primitives, domain/security helpers, named test/bench scenarios, and declared extension seams ([`docs/branches.md`](docs/branches.md#land-seams-on-main-first)). Delete single-use indirection.
 
 ## Feature flags
 

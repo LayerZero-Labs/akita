@@ -5,6 +5,8 @@ Agent hot-path summary: [`AGENTS.md`](../AGENTS.md).
 
 Verifier-reachable execution is a **no-panic boundary**.
 Any malformed verifier-facing proof, setup, schedule, public claim, opening point, commitment, direct witness, or transcript input must be rejected with `AkitaError` or `SerializationError`, not by panicking.
+`InvalidProof` is for checks on proof bytes; statement, setup, and
+internal-consistency failures use their own error variants.
 `AkitaError` has one canonical definition in `akita-error`.
 
 ## In scope
@@ -28,19 +30,23 @@ honest-prover witness models are not verifier inputs. A proof cannot supply
 schedule bytes.
 
 The accepted proof topology is structural: a root fold, zero or more recursive
-folds, and one terminal cleartext witness. The verifier rejects proof-shape
-mismatches before transcript replay. Every terminal uses predecessor-bound
-inner `t` and the `consistency | A` relation. The root may be that predecessor;
+folds, and one terminal cleartext witness. The proof carries no shape header.
+The verifier derives every message count and length from the schedule, so a
+proof with another topology either fails a message read during replay or
+reaches the end with the grinding plan unfinished or bytes unread; the final
+plan-completion and EOF check rejects the latter two. Every terminal uses
+predecessor-bound inner `t` and the `consistency | A` relation. The root may be that predecessor;
 there is no separate fallback proof form, final outer `u`, or terminal B/D
 block to validate.
 
 Transcript replay is also shape-bounded. Before decoding the headerless proof,
 the verifier derives the canonical `GrindingPlan` and successor-aware fold
 geometry from the validated public schedule and opening layout. That one
-geometry determines each sumcheck round count, recursive opening layout, proof
-shape, and packed nonce-stream width. The decoder validates the stream byte
-bound and final padding before allocation; replay rejects a wrong site or query
-kind, truncation, incomplete consumption, and an out-of-range nonce.
+geometry determines each sumcheck round count, recursive opening layout, and
+proof-stream byte bound. Nonzero grinding and fold-response nonces are
+canonical inline `u32` messages. Replay rejects a wrong site or query kind,
+truncation, trailing bytes, incomplete plan consumption, and an out-of-range
+nonce.
 
 Sparse fold coordinates are verifier-reachable indexed SHAKE256 queries. Their
 group root has a fixed 32-byte boundary, coordinate indices are checked before

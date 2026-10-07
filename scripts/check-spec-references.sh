@@ -28,6 +28,20 @@ fi
 # Removed identifiers. Do not list Q16/Fp16 here: live specs may discuss retired
 # small-field profiles by name (see remove-fp16).
 dead_patterns=(
+  'CommitmentExecutionSchedule'
+  'CommitmentRoundStep'
+  'InnerOuterRouteKind'
+  'CpuProverConsumer'
+  'ProverConsumerFactory'
+  'PreparedProverGroup'
+  'ErasedPreparedProverGroup'
+  'UniformProverStack'
+  'LevelProveStacks'
+  'TieredProveStacks'
+  'ProverComputeStack'
+  'CpuBackend::with_resource_limits'
+  'commit_scratch_bytes_per_worker'
+  'DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER'
   'effective_batched_schedule'
   'trusted_setup_matrix_capacity'
   'setup_prefix_slot_ids_from_catalog'
@@ -125,6 +139,9 @@ dead_patterns=(
   'RootPolyMeta::num_ring_elems\b'
   'meta_ring_elems\b'
   'total_ring_elems\b'
+  'MultilinearPolynomial\b'
+  'multilinear_polynomial'
+  'BatchDecomposeFoldOutcome'
 )
 
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
@@ -133,6 +150,7 @@ pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 # only these live design records unless --all.
 live_specs=(
   specs/akita-compute-backend-metal.md
+  specs/composable-commitment-execution.md
   specs/quotient-free-tail-ring-relations.md
   specs/quotient-free-tail-ring-relations-implementation.md
   specs/dyadic-chunk-partition.md
@@ -152,6 +170,8 @@ live_specs=(
   specs/structured-e-term.md
   specs/subring-coefficient-packing.md
   specs/transcript-grinding.md
+  specs/grinding-nonce-encoding.md
+  specs/family-agnostic-cpu-backend.md
 )
 
 missing_live=()

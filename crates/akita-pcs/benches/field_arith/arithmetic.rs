@@ -1,7 +1,9 @@
 use std::ops::{AddAssign, MulAssign, SubAssign};
 use std::time::Instant;
 
-use criterion::{black_box, Criterion, Throughput};
+use std::hint::black_box;
+
+use criterion::{Criterion, Throughput};
 use jolt_field::Packed;
 use jolt_field::{Field, Ring};
 use rand::{rngs::StdRng, SeedableRng};

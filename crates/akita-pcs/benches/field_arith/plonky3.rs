@@ -1,6 +1,8 @@
 use std::time::Instant;
 
-use criterion::{black_box, Criterion, Throughput};
+use std::hint::black_box;
+
+use criterion::{Criterion, Throughput};
 use p3_baby_bear::BabyBear;
 use p3_field::extension::{BinomialExtensionField, QuinticTrinomialExtensionField};
 use p3_field::{

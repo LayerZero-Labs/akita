@@ -3,13 +3,6 @@ name = "akita-pcs"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
-authors = [
-  "Markos Georghiades <mgeorghiades@a16z.com>",
-  "Quang Dao <qvd@andrew.cmu.edu>",
-  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
-  "Omid Bodaghi <omibo@layerzero.foundation>",
-  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
-]
 license = "Apache-2.0 OR MIT"
 description = "A high performance and modular implementation of the Akita polynomial commitment scheme."
 repository = "https://github.com/LayerZero-Labs/akita"
@@ -39,23 +32,25 @@ default = ["parallel", "transcript-blake2b"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-config/transcript-blake2b",
+  "akita-cpu-backend/transcript-blake2b",
   "akita-prover/transcript-blake2b",
   "akita-planner/transcript-blake2b",
   "akita-setup/transcript-blake2b",
-  "akita-sumcheck/transcript-blake2b",
   "akita-transcript/transcript-blake2b",
   "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
   "akita-verifier/transcript-blake2b",
 ]
 transcript-keccak = [
   "akita-challenges/transcript-keccak",
   "akita-config/transcript-keccak",
+  "akita-cpu-backend/transcript-keccak",
   "akita-prover/transcript-keccak",
   "akita-planner/transcript-keccak",
   "akita-setup/transcript-keccak",
-  "akita-sumcheck/transcript-keccak",
   "akita-transcript/transcript-keccak",
   "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
   "akita-verifier/transcript-keccak",
 ]
 parallel = [
@@ -63,8 +58,8 @@ parallel = [
   "akita-algebra/parallel",
   "jolt-field/parallel",
   "akita-prover/parallel",
+  "akita-cpu-backend/parallel",
   "akita-setup/parallel",
-  "akita-sumcheck/parallel",
   "akita-verifier/parallel",
 ]
 profile-ci = [
@@ -91,25 +86,30 @@ profile-ci-distributed = ["profile-bench-selected"]
 # Compile the profile example with only the singleton adaptive fp128 one-hot
 # configuration. Schedule rows remain external artifacts.
 profile-onehot-fp128 = []
-disk-persistence = ["akita-setup/disk-persistence"]
+disk-persistence = [
+  "akita-setup/disk-persistence",
+  "akita-cpu-backend/disk-persistence",
+]
 logging-transcript = [
   "akita-transcript/logging-transcript",
   "akita-prover/logging-transcript",
+  "akita-cpu-backend/logging-transcript",
 ]
-response-model-diagnostics = ["akita-prover/response-model-diagnostics"]
+response-model-diagnostics = ["akita-cpu-backend/response-model-diagnostics"]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "72dc6451628d8b1dd794147a1f1cc40be0d77963", default-features = false, features = [
+akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
 akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }
 akita-setup = { version = "0.1.0", path = "../akita-setup", default-features = false }
@@ -117,6 +117,7 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false }
 # Test-only: pull in `akita-config`'s workspace artifact loader and ring-plan
 # seed. Schedule rows remain checked-in external artifacts loaded at runtime.
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
@@ -128,17 +129,17 @@ akita-planner = { version = "0.1.0", path = "../akita-planner", default-features
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
-criterion = { version = "0.5", features = ["html_reports"] }
-num-bigint = "0.4.6"
+criterion = { version = "0.8", features = ["html_reports"] }
+num-bigint = "0.5.1"
 proptest = "1.6"
 ark-bn254 = { git = "https://github.com/arkworks-rs/algebra", rev = "3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9", features = [
   "scalar_field",
 ] }
 ark-ff = { git = "https://github.com/arkworks-rs/algebra", rev = "3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9" }
-p3-field = "=0.5.3"
-p3-mersenne-31 = "=0.5.3"
-p3-baby-bear = "=0.5.3"
-p3-koala-bear = "=0.5.3"
+p3-field = "=0.7.0"
+p3-mersenne-31 = "=0.7.0"
+p3-baby-bear = "=0.7.0"
+p3-koala-bear = "=0.7.0"
 tracing-chrome = "0.7"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 serde_json = "1"
@@ -155,10 +156,6 @@ name = "ring_ntt"
 harness = false
 
 [[bench]]
-name = "ntt_matvec"
-harness = false
-
-[[bench]]
 name = "field_arith"
 harness = false
 
@@ -167,22 +164,7 @@ name = "akita_e2e"
 harness = false
 
 [[bench]]
-name = "root_kernels"
-harness = false
 
-[[bench]]
-name = "coefficient_packing"
-harness = false
-
-[[bench]]
-name = "decompose_fold"
-harness = false
-
-[[bench]]
-name = "digit_range"
-harness = false
-
-[[bench]]
 name = "fft_smooth"
 harness = false
 

@@ -12,21 +12,27 @@ which bytes are absorbed and when each challenge is drawn.
 
 ## The transcript layer
 
-Production uses the spongefish-backed `AkitaTranscript`. Its domain
-separator includes a backend-specific protocol tag, the caller's session
-label, and canonical instance bytes. The selected backend is BLAKE2b or
-Keccak; each has its own protocol tag.
+Production uses Spongefish's prover and verifier states. Its domain
+separator includes a backend-specific protocol tag, the caller's length-framed
+session bytes, and canonical instance bytes. The selected backend is BLAKE2b
+or Keccak; each has its own protocol tag.
 
-An absorb adds a public message to the transcript. A squeeze draws challenge
-bytes and advances its state. Byte messages use length framing, and field
-values use canonical encodings. Message boundaries matter: absorbing two
-messages is not equivalent to absorbing their concatenation as one message.
+Akita pins Spongefish v0.7.4. Its digest bridge encodes squeeze counters as
+fixed-width `u64` values, so Blake2b transcript bytes do not depend on whether
+the implementation uses 32-bit or 64-bit pointers. Akita keeps a known-answer
+vector for this boundary.
 
-Production absorbs and squeezes are positional. Their callsite labels are
-diagnostics and do not enter sponge bytes. The session label and explicitly
-encoded protocol context do enter the cryptographic state. Renaming a
-diagnostic label therefore differs from changing a session label, an encoded
-domain string, or replay order.
+Every logical message or challenge has a fixed public diagnostic context
+record. Proof values use prover emission and verifier receipt, derived
+or public values use public messages, and verifier challenges use
+verifier messages. Field atoms are canonical. The one variable-size terminal
+payload carries a checked length atom before its body.
+
+Production absorbs and squeezes are positional. Context records and callsite
+labels are diagnostics and do not enter sponge bytes. The backend-specific
+protocol identifier, length-framed session, canonical instance descriptor,
+messages, and replay order do enter the cryptographic state. Renaming a
+diagnostic label therefore differs from changing any of those bound values.
 
 Prover and verifier must execute the same sequence, including challenge
 lengths and canonical ordering within a batch. Equal proof objects alone do
@@ -72,8 +78,10 @@ This gives the extraction argument the required fork: one challenge can change
 while every other challenge and the surrounding transcript remain fixed.
 
 Expanding the whole challenge vector from one shared cursor would give a
-different oracle dependency. The challenge context encodes the numeric nonce
-separately from its compact 12-bit proof representation.
+different oracle dependency. Each accepted nonce has one canonical unsigned
+LEB128 representation: those exact proof bytes are absorbed into the live
+transcript before the challenge context is derived. There is no second compact
+nonce representation or separate nonce absorption.
 
 The indexed readers are an expansion of one transcript root, not additional
 Fiat--Shamir squeezes and not additional proof data.
@@ -124,16 +132,10 @@ Implementation:
 
 ## AkitaInstanceDescriptor
 
-Before replay, both parties call `akita_config::bind_transcript_instance_descriptor`
-with the validated setup, opening layout, row selection, schedule, opening basis,
-and transcript. The function derives the grinding plan and constructs an
-`AkitaInstanceDescriptor`. It then encodes that descriptor canonically and calls
-`Transcript::bind_instance_bytes`. It returns the grinding plan to the caller.
-
-The production `AkitaTranscript` initializes its Spongefish state from the
-protocol tag, session label, and instance bytes. Descriptor construction fixes
-the public instance encoding. Binding those bytes fixes the initial transcript
-state. The shared helper performs both steps before protocol replay.
+Before replay, both parties construct an `AkitaInstanceDescriptor` from the
+validated public configuration. The shared
+`bind_transcript_instance_descriptor` helper binds its canonical bytes
+through spongefish's `DomainSeparator.instance(...)`.
 
 The descriptor records the following identities:
 
@@ -161,10 +163,10 @@ different schedules diverge at the descriptor.
 
 ## Root and fold replay
 
-At the root, replay begins with the batch shape, the group commitments in
-canonical group order, each group's complete opening point, and the
-per-polynomial claimed values. The verifier checks commitment geometry before
-absorbing the payloads.
+At the root, the descriptor fixes the batch shape. Replay binds group
+commitments in canonical group order, each group's complete opening point, and
+the per-polynomial claimed values as public messages. The verifier checks
+commitment geometry before binding the payloads.
 
 A nonterminal fold then follows these dependencies:
 
@@ -217,26 +219,47 @@ draws the sparse challenges. It then absorbs the remaining response and
 performs the direct checks. There is no outgoing commitment or replay of
 Stages 1 through 3.
 
-## Grinding plan and nonce stream
+## Grinding plan and inline nonces
 
 Each proof has one public `GrindingPlan`, derived from the selected
 schedule, normalized opening layout, field tower, and policy. The plan fixes
 the order and bit width of every proof-of-work query and bounded
 fold-response search. Its digest is part of the descriptor.
 
-The plan's total bit count fixes the leading `TranscriptNonceStream` in the
-headerless proof. A decoder does not obtain a new nonce count or policy from
-untrusted proof bytes. Reading the stream checks the expected sites in order,
-with no truncation, leftover bits, or nonzero tail padding.
+Nonzero proof-of-work sites and every fold-response site carry an inline
+canonical unsigned LEB128 nonce at the exact protocol position where it is
+used. A decoder does not
+obtain a nonce count or policy from proof bytes. The plan cursor checks sites in
+order and must be exhausted when EOF is checked.
 
-Proof-of-work and fold-response search share this packed storage, but they
+The planner accepts only complete schedules whose expanded grinding query
+count is less than `u32::MAX`. If the objective-best candidate exceeds that
+capacity, planning treats it as an infeasible path and continues among schedules
+admitted by the planner's existing bounded candidate-generation policies.
+`UnsupportedSchedule` means that no feasible schedule was found within this
+domain; it does not prove that no mathematically valid schedule exists among
+layouts discarded by those policies.
+
+Proof-of-work and fold-response nonces use distinct message kinds and
 serve different purposes.
 
 ### Protected challenge queries
 
+Each field challenge site has a *loss* $L$. The security argument allows at
+most $L$ of the $|E|$ possible challenge values to be bad for the verifier, so
+one attempt at the challenge lands on a bad value with probability at most
+$L/|E|$. The next subsection shows where a loss comes from for one family of
+sites.
+
+Grinding makes each attempt cost $2^g$ hash queries on average. The plan
+chooses the least nonnegative integer $g$ with $L 2^{128} \le |E| 2^g$, which
+keeps the chance per query at most $2^{-128}$. The calculation uses integers
+and the actual prime power, including the deficit below a power of two.
+
 At a protected query with grinding target $g>0$, the prover searches a
-nonce of width $g+7$ bits. Each attempt binds the canonical grinding
-context and nonce, then produces a separate 32-byte predicate. The predicate
+nonce whose accepted value must fit $g+7$ bits. Each attempt absorbs the
+canonical nonce, then produces a separate 32-byte predicate. Diagnostic
+metadata records the grinding site without changing the sponge. The predicate
 passes when its first $g$ low-order bits are zero.
 
 The verifier repeats that predicate check. Only after it passes does replay
@@ -245,11 +268,78 @@ not reused as the challenge. A zero-bit target consumes no proof bits and
 leaves the transcript unchanged at that site.
 
 The additional seven nonce bits provide room for honest search beyond the
-expected $2^g$ attempts.
+expected $2^g$ attempts. Storage is self-delimiting and canonical; the semantic
+width is still checked from the public plan. Schedule selection adds the
+per-message maxima, `ceil(semantic_nonce_width / 7)`. This deterministic
+cost is not the realized LEB128 wire size. The verifier safety bound is derived
+separately from the complete grammar.
+
+### The loss of a claim-batching challenge
+
+**The problem.** A fold often opens several polynomials at once. The prover
+states $N$ claimed values $v_1,\dots,v_N$, one per polynomial, and the
+verifier checks them together instead of one at a time. It draws
+coefficients $\eta_1,\dots,\eta_N$ from $E$, one fresh value per claim, and
+the rest of the fold proves the single combined claim
+$\sum_k \eta_k v_k$. The question is how many bad values this draw has, that
+is, what loss to price it at.
+
+**The tempting answer, $L=1$.** Write $u_k$ for the true value of the $k$th
+polynomial and $\delta_k = v_k - u_k$ for the error in its claim. The
+combined claim is correct exactly when $\sum_k \eta_k \delta_k = 0$. If some
+$\delta_k$ is nonzero and the errors are fixed before the coefficients are
+drawn, this is one nonzero linear equation in the $\eta_k$, and a random draw
+satisfies it with probability at most $1/|E|$. That suggests $L = 1$.
+
+**Why the security argument cannot use it.** Knowledge soundness is proved
+with an extractor: a procedure that reruns a prover that makes the verifier
+accept and recovers the committed polynomials from its answers. The true
+values $u_k$ are evaluations of those recovered polynomials, and the
+extractor only obtains them from the part of the proof that comes after
+this challenge. Commitment binding does not help. It says an efficient
+prover cannot produce two different openings of one commitment; it does not
+hand the argument a single opening, and hence fixed errors $\delta_k$, before
+the coefficients are drawn. So the argument must work from accepting runs
+alone.
+
+**What the extractor does.** It reruns the prover from this challenge with
+$N+1$ coefficient vectors: a base vector $\eta$, and for each $k$ a vector
+$\eta^{(k)}$ that differs from $\eta$ only in coordinate $k$. The claims
+$v_k$ were sent before the challenge, so they are the same in every run.
+Every run also opens the same committed polynomials, or the extractor has found a commitment
+collision, so every run has the same errors $\delta_k$. The base run gives
+$\sum_j \eta_j \delta_j = 0$, and run $k$ gives the same sum with $\eta_k$
+replaced by $\eta^{(k)}_k$. Subtracting the two leaves
+$(\eta^{(k)}_k - \eta_k)\,\delta_k = 0$, so $\delta_k = 0$.
+
+For example, with $N = 2$ the extractor uses three runs, with coefficient
+vectors $(a, b)$, $(a', b)$ and $(a, b')$ where $a' \ne a$ and $b' \ne b$.
+The first two runs give $(a - a')\,\delta_1 = 0$, and the first and third
+give $(b - b')\,\delta_2 = 0$. Both claims are therefore correct.
+
+**The resulting loss.** The extractor fails only if, for some coordinate
+$k$, the prover succeeds with one value of $\eta_k$ and with no other value,
+the other coordinates held fixed. That costs at most one bad value per
+coordinate, $N$ in all, so the site has loss $L = N$. Other sites in Akita
+batch claims with powers $1, \gamma, \dots, \gamma^{N-1}$ of one scalar. That
+check is a nonzero polynomial of degree at most $N-1$ in $\gamma$, so those
+sites have loss $N-1$.
+
+In the production field, $|E| = (2^{64}-59)^2$ is slightly below $2^{128}$.
+One polynomial draws no coefficients and has no site. Nine polynomials give
+$L = 9$, and $9 \cdot 2^{128}/|E|$ lies between 8 and 16, so the site needs
+$g = 4$, where $L = 1$ would give $g = 1$.
+
+Two sites have this form: the evaluation batch of each fold, and the batch
+of reduction claims in extension-opening reduction.
+`independent_batch_loss_factor` in `akita-types` prices both. The
+[grinding nonce specification](../../../specs/grinding-nonce-encoding.md#claim-batching-sites)
+records the contract.
 
 ### Fold-response search
 
-A fold-response entry contains a 12-bit nonce, shared by all commitment
+A fold-response entry carries a canonical unsigned LEB128 nonce whose value
+must fit the 12-bit search domain, shared by all commitment
 groups in that fold. The prover previews candidates until the resulting
 response satisfies the scheduled representation and norm bounds. It commits
 the winning nonce to replay, or returns an error if the bounded search is
@@ -263,7 +353,7 @@ accounting.
 
 ## Integration and regression checks
 
-`AKITA_INSTANCE_DESCRIPTOR_VERSION` is currently `4`. Validation rejects
+`AKITA_INSTANCE_DESCRIPTOR_VERSION` is currently `5`. Validation rejects
 other versions. Pin an exact Akita revision and rerun prove and verify
 integration tests when upgrading; the repository does not promise
 compatibility across revisions.
@@ -277,11 +367,14 @@ preserve those messages in the new state.
 The current descriptor's `SetupSection.protocol_features.zk` is
 `false`. Transcript binding does not add hiding or zero knowledge.
 
-`LoggingTranscript` records semantic events for tests. Its checks compare
-prover and verifier event streams and detect a proof value used before its
-required absorption. Production labels remain outside sponge bytes. Tests
-also cover tampering and serialization roundtrips; they do not freeze one
-proof-byte digest for all future schedules.
+The protocol uses a descriptor-bound positional grammar. Context records
+capture semantic sites and widths for logging diagnostics without adding
+production hashing work. Tests cover prover/verifier vectors, tampering,
+truncation, statement/session binding, and EOF; they do not freeze one
+proof-byte digest for all future schedules. The grinding grammar and
+nonce encoding are documented in
+[`specs/transcript-grinding.md`](../../../specs/transcript-grinding.md) and
+[`specs/grinding-nonce-encoding.md`](../../../specs/grinding-nonce-encoding.md).
 
 ## Code map
 
@@ -289,15 +382,16 @@ proof-byte digest for all future schedules.
   shared descriptor and grinding plan.
 - `crates/akita-types/src/instance_descriptor/mod.rs` owns descriptor fields,
   canonical serialization, and version validation.
-- `crates/akita-transcript/src/sponge.rs` owns domain separation, framing,
-  and positional production replay.
-- `crates/akita-types/src/transcript_grinding_plan.rs` defines the ordered
-  plan; `crates/akita-transcript/src/grinding.rs` defines nonce search and
-  the proof-of-work predicate.
+- `crates/akita-transcript/src/proof_stream.rs` owns state construction,
+  context framing, canonical atom codecs, bounded bytes, and EOF-compatible
+  proof transport.
+- `crates/akita-params/src/transcript_grinding/plan.rs` defines the ordered
+  plan; `crates/akita-types/src/transcript_grinding/replay.rs` couples
+  nonce transport, predicate checks, challenges, and plan progress.
 - `crates/akita-challenges/src/sampler/xof.rs` derives the indexed sparse
   challenge streams.
-- `crates/akita-verifier/src/protocol/core/fold/mod.rs` and
-  `crates/akita-verifier/src/protocol/core/suffix.rs` enforce fold and
+- `crates/akita-verifier/src/fold/mod.rs` and
+  `crates/akita-verifier/src/fold/terminal.rs` enforce fold and
   terminal replay order.
 - `crates/akita-pcs/tests/transcript_hardening.rs` tests ordering and
   prover/verifier agreement; `crates/akita-pcs/tests/fold_linf.rs` covers

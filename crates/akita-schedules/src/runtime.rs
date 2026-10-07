@@ -1,20 +1,19 @@
 //! Planner-free runtime schedule expansion support.
 
 use akita_error::AkitaError;
-use akita_types::{
-    ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldParams,
-    FoldSchedule, FoldScheduleEstimate, FoldSuccessor, OpeningClaimsLayout, PlannedFoldSchedule,
+use akita_params::{
+    ChunkedWitnessCfg, CommittedGroupParams, DecompositionParams, FoldParams, FoldSchedule,
+    FoldScheduleEstimate, FoldSuccessor, OpeningClaimsLayout, PlannedFoldSchedule,
     PolynomialGroupLayout, RingRole, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
-    TerminalResponseShape, WitnessLayout, DEFAULT_SIS_SECURITY_POLICY, MAX_I16_LOG_BASIS,
-    MAX_I8_LOG_BASIS,
+    TerminalResponseShape, WitnessLayout, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,
 };
 use std::sync::Arc;
 
 /// Quantities materialized and checked by the current bounded planner cost model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlannerCostModelId {
-    /// Exact protocol payload plus setup-envelope accounting.
-    ExactPayloadAndSetupEnvelope,
+    /// Message payload, additive nonce maxima, and setup-envelope accounting.
+    NoncePayloadAndSetupEnvelopeV2,
 }
 
 /// Offline response-energy model used to admit selective L2 candidates.
@@ -49,14 +48,14 @@ impl PlannerCostModelId {
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
-            Self::ExactPayloadAndSetupEnvelope => 1,
+            Self::NoncePayloadAndSetupEnvelopeV2 => 2,
         }
     }
 
     /// Stable identity name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::ExactPayloadAndSetupEnvelope => "ExactPayloadAndSetupEnvelope",
+            Self::NoncePayloadAndSetupEnvelopeV2 => "NativeNoncePayloadAndSetupEnvelopeV2",
         }
     }
 }
@@ -64,53 +63,46 @@ impl PlannerCostModelId {
 /// Deterministic schedule-selection policy bound into trusted catalog artifacts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionPolicyId {
-    /// Pick proof bytes, physical setup fields, root output witness, then descriptor.
-    MinEstimatedProofPayloadV2,
-    /// Pick first direct setup, proof bytes, total setup, root output witness,
-    /// then descriptor.
-    MinFirstDirectSetupThenPayloadV2,
-    /// Pick power-of-two setup-envelope capacity, first direct setup, proof
-    /// bytes, first direct output witness, then descriptor.
-    MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3,
+    /// Pick first direct setup, exact additive cost, proof bytes, total setup,
+    /// root output witness, then descriptor.
+    MinFirstDirectSetupThenExactProofAndWorkV5,
+    /// Pick power-of-two setup-envelope capacity, first direct setup, exact
+    /// additive cost, proof bytes, first direct output witness, then descriptor.
+    MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6,
 }
 
 impl SelectionPolicyId {
     /// Canonical selection objective for one schedule policy shape.
-    pub fn for_policy(
-        recursive_setup_planning: bool,
-        ring_dimension_schedule_mode: RingDimensionScheduleMode,
-    ) -> Self {
+    pub fn for_policy(recursive_setup_planning: bool) -> Self {
         if recursive_setup_planning {
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
-        } else if matches!(
-            ring_dimension_schedule_mode,
-            RingDimensionScheduleMode::AdaptiveDimension { .. }
-        ) {
-            Self::MinFirstDirectSetupThenPayloadV2
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
         } else {
-            Self::MinEstimatedProofPayloadV2
+            Self::MinFirstDirectSetupThenExactProofAndWorkV5
         }
     }
 
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
-            Self::MinEstimatedProofPayloadV2 => 4,
-            Self::MinFirstDirectSetupThenPayloadV2 => 5,
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => 6,
+            Self::MinFirstDirectSetupThenExactProofAndWorkV5 => 14,
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => 15,
             // Tags 1 and 2 belong to the descriptor-only predecessors. Tag 3
-            // belonged to the retired setup-envelope-first policy. Never reuse
-            // an objective tag: trusted catalog admission depends on it.
+            // belonged to the retired setup-envelope-first policy. Tags 4--6
+            // selected proof bytes; tags 7--9 used rounded work cost,
+            // and tags 10--12 did not price direct verifier setup scans.
+            // Tag 13 belonged to the retired proof-and-work-first objective.
+            // Never reuse an objective tag: trusted catalog admission depends on it.
         }
     }
 
     /// Stable identity name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::MinEstimatedProofPayloadV2 => "MinEstimatedProofPayloadV2",
-            Self::MinFirstDirectSetupThenPayloadV2 => "MinFirstDirectSetupThenPayloadV2",
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
-                "MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3"
+            Self::MinFirstDirectSetupThenExactProofAndWorkV5 => {
+                "MinFirstDirectSetupThenExactProofAndWorkV5"
+            }
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
+                "MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6"
             }
         }
     }
@@ -181,45 +173,18 @@ impl RecursiveSetupSearchPolicy {
 
 /// Catalog-bound ring-dimension schedule policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RingDimensionScheduleMode {
-    /// Use one uniform A/B/D dimension from root through terminal.
-    UniformDimension { ring_dimension: usize },
-    /// Search exact A/B/D tuples over a bounded prefix, then use a monotone
-    /// sequence of uniform dimensions from the catalog-bound suffix domain.
-    AdaptiveDimension {
-        num_search_levels: usize,
-        suffix_dimensions: &'static [usize],
-        potential_a_dimensions: &'static [usize],
-        potential_b_dimensions: &'static [usize],
-        potential_d_dimensions: &'static [usize],
-    },
+pub struct RingDimensionSchedule {
+    /// Search exact A/B/D tuples over this bounded prefix.
+    pub num_search_levels: usize,
+    /// Later folds choose a monotone sequence from this equal-role domain.
+    pub suffix_dimensions: &'static [usize],
+    pub potential_a_dimensions: &'static [usize],
+    pub potential_b_dimensions: &'static [usize],
+    pub potential_d_dimensions: &'static [usize],
 }
 
 /// Number of leading fold levels covered by the audited adaptive search.
 pub const ADAPTIVE_SEARCH_LEVELS: usize = 2;
-
-impl RingDimensionScheduleMode {
-    #[must_use]
-    pub const fn uniform_dimensions(self) -> Option<CommitmentRingDims> {
-        match self {
-            Self::UniformDimension { ring_dimension } => {
-                Some(CommitmentRingDims::uniform(ring_dimension))
-            }
-            Self::AdaptiveDimension { .. } => None,
-        }
-    }
-
-    #[must_use]
-    pub const fn potential_a_dimensions(self) -> &'static [usize] {
-        match self {
-            Self::UniformDimension { .. } => &[],
-            Self::AdaptiveDimension {
-                potential_a_dimensions,
-                ..
-            } => potential_a_dimensions,
-        }
-    }
-}
 
 /// Runtime schedule validation policy.
 ///
@@ -237,13 +202,13 @@ pub struct PlannerPolicy {
     /// `None` leaves the deterministic public stream uncapped by protocol policy.
     pub setup_field_budget: Option<usize>,
     pub min_offloaded_witness_contraction: usize,
-    /// Uniform or bounded-adaptive ring-dimension schedule policy.
-    pub ring_dimension_schedule_mode: RingDimensionScheduleMode,
+    /// Bounded adaptive ring-dimension search and suffix domains.
+    pub ring_dimension_schedule: RingDimensionSchedule,
     pub decomposition: DecompositionParams,
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: SisSecurityPolicyId,
-    pub sis_table_digest: akita_types::SisTableDigest,
-    pub sis_l2_table_digest: akita_types::SisL2TableDigest,
+    pub sis_table_digest: akita_params::SisTableDigest,
+    pub sis_l2_table_digest: akita_params::SisL2TableDigest,
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     /// Inclusive A/source decomposition basis domain at every level.
@@ -253,9 +218,6 @@ pub struct PlannerPolicy {
     pub witness_chunk: ChunkedWitnessCfg,
     pub recursive_setup_planning: bool,
 }
-
-/// Preferred public name for runtime callers.
-pub type RuntimeSchedulePolicy = PlannerPolicy;
 
 impl PlannerPolicy {
     /// Number of physical witness chunks active at one fold level.
@@ -272,12 +234,6 @@ impl PlannerPolicy {
     /// Whether this family opts into the typed suffix response model.
     pub fn selective_l2_response_model_enabled(&self) -> bool {
         self.selective_l2_response_model == SelectiveL2ResponseModelId::TypedProtocolMomentsV1
-    }
-
-    /// Whether a candidate fits the optional host setup budget.
-    pub fn admits_setup_field_elements(&self, num_field_elements: usize) -> bool {
-        self.setup_field_budget
-            .is_none_or(|budget| num_field_elements <= budget)
     }
 
     /// Validate extension-field geometry and return the challenge-field width.
@@ -308,6 +264,17 @@ impl PlannerPolicy {
                 AkitaError::InvalidSetup("challenge field bit width overflow".to_string())
             })
     }
+
+    /// Exact challenge-field order used by transcript grinding plans.
+    pub fn transcript_grinding_order(
+        &self,
+    ) -> Result<akita_params::ChallengeFieldOrder, AkitaError> {
+        akita_params::ChallengeFieldOrder::from_field(
+            self.decomposition.field_bits(),
+            self.chal_ext_degree,
+            self.sis_modulus_profile.modulus(),
+        )
+    }
 }
 
 /// Suffix-DP depth cap shared by planner search and runtime policy validation.
@@ -320,17 +287,14 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     // bound the digit math is unable to represent. Defense in depth: a schedule
     // resolved from an in-process policy never passes through `SetupSection`.
     policy.decomposition.validate()?;
-    if !akita_types::sis::SUPPORTED_SIS_SECURITY_POLICIES.contains(&policy.sis_security_policy) {
+    if !akita_params::sis::SUPPORTED_SIS_SECURITY_POLICIES.contains(&policy.sis_security_policy) {
         return Err(AkitaError::InvalidSetup(format!(
             "unsupported SIS security policy {:?}",
             policy.sis_security_policy
         )));
     }
-    validate_ring_dimension_schedule_mode(policy)?;
-    let expected_selection_policy = SelectionPolicyId::for_policy(
-        policy.recursive_setup_planning,
-        policy.ring_dimension_schedule_mode,
-    );
+    validate_ring_dimension_schedule(policy)?;
+    let expected_selection_policy = SelectionPolicyId::for_policy(policy.recursive_setup_planning);
     if policy.selection_policy != expected_selection_policy {
         return Err(AkitaError::InvalidSetup(
             "schedule selection policy disagrees with the schedule mode".to_string(),
@@ -347,7 +311,7 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
         ));
     }
     if policy.selective_l2_response_model_enabled()
-        && policy.sis_l2_table_digest != akita_types::SisL2TableDigest::CURRENT
+        && policy.sis_l2_table_digest != akita_params::SisL2TableDigest::CURRENT
     {
         return Err(AkitaError::InvalidSetup(
             "selective L2 planning requires the current audited Euclidean table".into(),
@@ -373,48 +337,40 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     Ok(())
 }
 
-fn validate_ring_dimension_schedule_mode(policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    match policy.ring_dimension_schedule_mode {
-        RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-            for role in [RingRole::Inner, RingRole::Outer, RingRole::Opening] {
-                validate_scheduled_dimension(policy, role, ring_dimension)?;
-            }
-        }
-        RingDimensionScheduleMode::AdaptiveDimension {
-            num_search_levels,
-            suffix_dimensions,
-            potential_a_dimensions,
-            potential_b_dimensions,
-            potential_d_dimensions,
-        } => {
-            if num_search_levels != ADAPTIVE_SEARCH_LEVELS {
+fn validate_ring_dimension_schedule(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    let RingDimensionSchedule {
+        num_search_levels,
+        suffix_dimensions,
+        potential_a_dimensions,
+        potential_b_dimensions,
+        potential_d_dimensions,
+    } = policy.ring_dimension_schedule;
+    if num_search_levels != ADAPTIVE_SEARCH_LEVELS {
+        return Err(AkitaError::InvalidSetup(format!(
+            "adaptive search currently requires exactly {ADAPTIVE_SEARCH_LEVELS} levels, got {num_search_levels}"
+        )));
+    }
+    validate_dimension_list(policy, RingRole::Inner, suffix_dimensions)?;
+    for (role, dimensions) in [
+        (RingRole::Inner, potential_a_dimensions),
+        (RingRole::Outer, potential_b_dimensions),
+        (RingRole::Opening, potential_d_dimensions),
+    ] {
+        validate_dimension_list(policy, role, dimensions)?;
+        for &suffix_dimension in suffix_dimensions {
+            if !dimensions.contains(&suffix_dimension) {
                 return Err(AkitaError::InvalidSetup(format!(
-                    "adaptive search currently requires exactly {ADAPTIVE_SEARCH_LEVELS} levels, got {num_search_levels}"
+                    "adaptive {} domain must contain suffix D{suffix_dimension}",
+                    role_name(role)
                 )));
             }
-            validate_dimension_list(policy, RingRole::Inner, suffix_dimensions)?;
-            for (role, dimensions) in [
-                (RingRole::Inner, potential_a_dimensions),
-                (RingRole::Outer, potential_b_dimensions),
-                (RingRole::Opening, potential_d_dimensions),
-            ] {
-                validate_dimension_list(policy, role, dimensions)?;
-                for &suffix_dimension in suffix_dimensions {
-                    if !dimensions.contains(&suffix_dimension) {
-                        return Err(AkitaError::InvalidSetup(format!(
-                            "adaptive {} domain must contain suffix D{suffix_dimension}",
-                            role_name(role)
-                        )));
-                    }
-                }
-                let minimum_suffix_dimension = suffix_dimensions[0];
-                if dimensions.iter().any(|&d| d < minimum_suffix_dimension) {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "adaptive {} dimensions must be at least minimum suffix D{minimum_suffix_dimension}",
-                        role_name(role)
-                    )));
-                }
-            }
+        }
+        let minimum_suffix_dimension = suffix_dimensions[0];
+        if dimensions.iter().any(|&d| d < minimum_suffix_dimension) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "adaptive {} dimensions must be at least minimum suffix D{minimum_suffix_dimension}",
+                role_name(role)
+            )));
         }
     }
     Ok(())
@@ -428,11 +384,11 @@ fn role_name(role: RingRole) -> &'static str {
     }
 }
 
-fn sis_role(role: RingRole) -> akita_types::SisMatrixRole {
+fn sis_role(role: RingRole) -> akita_params::SisMatrixRole {
     match role {
-        RingRole::Inner => akita_types::SisMatrixRole::Inner,
-        RingRole::Outer => akita_types::SisMatrixRole::Outer,
-        RingRole::Opening => akita_types::SisMatrixRole::Open,
+        RingRole::Inner => akita_params::SisMatrixRole::Inner,
+        RingRole::Outer => akita_params::SisMatrixRole::Outer,
+        RingRole::Opening => akita_params::SisMatrixRole::Open,
     }
 }
 
@@ -441,8 +397,8 @@ fn validate_scheduled_dimension(
     role: RingRole,
     dimension: usize,
 ) -> Result<(), AkitaError> {
-    let tier = akita_types::protocol_dispatch_tier_for_sis_profile(policy.sis_modulus_profile);
-    if !akita_types::dispatch::role_dim_supported_for_tier(tier, role, dimension) {
+    let tier = akita_params::protocol_dispatch_tier_for_sis_profile(policy.sis_modulus_profile);
+    if !akita_params::dispatch::role_dim_supported_for_tier(tier, role, dimension) {
         return Err(AkitaError::InvalidSetup(format!(
             "scheduled {} dimension D{dimension} is unsupported by the {:?} protocol dispatch",
             role_name(role),
@@ -455,7 +411,7 @@ fn validate_scheduled_dimension(
             role_name(role)
         ))
     })?;
-    if !akita_types::sis::sis_role_dimension_supported(
+    if !akita_params::sis::sis_role_dimension_supported(
         sis_role(role),
         policy.sis_modulus_profile,
         dimension_u32,
@@ -466,7 +422,8 @@ fn validate_scheduled_dimension(
             policy.sis_modulus_profile
         )));
     }
-    if role == RingRole::Inner && !akita_types::SUPPORTED_CHALLENGE_RING_DIMS.contains(&dimension) {
+    if role == RingRole::Inner && !akita_params::SUPPORTED_CHALLENGE_RING_DIMS.contains(&dimension)
+    {
         return Err(AkitaError::InvalidSetup(format!(
             "scheduled A dimension D{dimension} has no production fold-challenge configuration"
         )));
@@ -510,7 +467,7 @@ pub struct CandidateFoldStep {
 #[derive(Clone, Debug)]
 /// Fully priced terminal response awaiting schedule materialization.
 pub struct CandidateTerminalResponse {
-    pub params: akita_types::TerminalFoldParams,
+    pub params: akita_params::TerminalFoldParams,
     pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
     pub input_witness_len: usize,
     pub estimated_direct_payload_bytes: usize,
@@ -518,53 +475,13 @@ pub struct CandidateTerminalResponse {
     pub estimated_payload_bytes: usize,
 }
 
-fn fold_schedule_from_candidate_parts(
-    folds: &[CandidateFoldStep],
-    terminal_response: &CandidateTerminalResponse,
-) -> Result<FoldSchedule, AkitaError> {
-    let (root, recursive_folds) = folds.split_first().ok_or_else(|| {
-        AkitaError::UnsupportedSchedule(
-            "a fold schedule requires root and terminal folds".to_string(),
-        )
-    })?;
-    Ok(FoldSchedule {
-        root: FoldParams {
-            params: (*root.params).clone(),
-            input_witness_len: root.input_witness_len,
-            output_witness_len: root.output_witness_len,
-        },
-        recursive_folds: recursive_folds
-            .iter()
-            .map(|fold| FoldParams {
-                params: (*fold.params).clone(),
-                input_witness_len: fold.input_witness_len,
-                output_witness_len: fold.output_witness_len,
-            })
-            .collect(),
-        terminal: TerminalFoldParams {
-            fold_challenge_config: terminal_response.sparse_challenge_config,
-            response_shape: terminal_response.response_shape.clone(),
-            input_witness_len: terminal_response.input_witness_len,
-            ..terminal_response.params.clone()
-        },
-    })
-}
-
-/// Price the canonical grinding plan for one complete schedule candidate.
-#[doc(hidden)]
-pub fn candidate_grinding_nonce_bits(
-    policy: &PlannerPolicy,
-    root_layout: &OpeningClaimsLayout,
-    folds: &[CandidateFoldStep],
-    terminal_response: &CandidateTerminalResponse,
-) -> Result<usize, AkitaError> {
-    let schedule = fold_schedule_from_candidate_parts(folds, terminal_response)?;
-    akita_types::transcript_grinding_nonce_bits_for_planner_candidate(
-        &schedule,
-        root_layout,
-        policy.decomposition.field_bits(),
-        policy.claim_ext_degree,
-    )
+/// Cached planner costs checked against the materialized schedule.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CandidateMaterializationCost {
+    pub proof_bytes: usize,
+    pub grinding: akita_params::TranscriptGrindingCost,
+    pub num_setup_field_elements: usize,
+    pub first_direct_setup_field_len: Option<usize>,
 }
 
 /// Exact Stage-3 payload induced when `successor` consumes a setup prefix.
@@ -585,7 +502,7 @@ pub fn stage3_payload_bytes_for_successor(
         ));
     }
     let challenge_field_bits = policy.challenge_field_bits()?;
-    Ok(akita_types::proof_size::stage3_setup_product_bytes(
+    Ok(akita_params::proof_size::stage3_setup_product_bytes(
         challenge_field_bits,
         prefix.d_setup(),
         n_prefix / prefix.d_setup(),
@@ -597,7 +514,7 @@ pub fn stage3_payload_bytes_for_successor(
 pub struct NonterminalLevelPayloadBytes {
     pub direct: usize,
     pub stage3: usize,
-    pub relation_geometry: akita_types::RelationAddressGeometry,
+    pub relation_geometry: akita_params::RelationAddressGeometry,
 }
 
 #[doc(hidden)]
@@ -619,19 +536,20 @@ pub fn nonterminal_level_payload_bytes(
         successor.ring_dimension(),
         output_witness_len,
     )?;
-    let direct = akita_types::level_proof_bytes(
+    let direct = akita_params::nonterminal_level_layout(
         policy.decomposition.field_bits(),
         challenge_field_bits,
         params,
         relation_geometry,
         next_outer_payload,
-    )?;
+    )?
+    .encoded_len()?;
     let eor = if matches!(
         params.opening_method(),
-        akita_types::OpeningMethod::EvaluationTrace
+        akita_params::OpeningMethod::EvaluationTrace
     ) {
         let opening_shape = opening_layout.aggregate_polynomial_group_layout()?;
-        akita_types::extension_opening_reduction_level_bytes(
+        akita_params::extension_opening_reduction_level_bytes(
             challenge_field_bits,
             policy.claim_ext_degree,
             opening_shape,
@@ -649,16 +567,18 @@ pub fn nonterminal_level_payload_bytes(
     })
 }
 
-/// Recompute the exact serialized proof payload for one expanded schedule.
-///
-/// This is the non-leaking reporting counterpart to artifact validation. It
-/// consumes only the public lookup key, expanded schedule, and catalog policy;
-/// no compact intermediate row or planner candidate is constructed.
-pub fn expanded_schedule_proof_payload_bytes(
-    key: &akita_types::AkitaScheduleLookupKey,
+struct ExpandedScheduleProofComponents {
+    fixed_bytes: usize,
+    terminal_planner_bytes: usize,
+    terminal_max_bytes: usize,
+    nonce_max_bytes: usize,
+}
+
+fn expanded_schedule_proof_components(
+    key: &akita_params::ScheduleLookupKey,
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,
-) -> Result<usize, AkitaError> {
+) -> Result<ExpandedScheduleProofComponents, AkitaError> {
     let field_bits = policy.decomposition.field_bits();
     key.validate(field_bits)?;
     schedule.validate_structure()?;
@@ -705,51 +625,114 @@ pub fn expanded_schedule_proof_payload_bytes(
     let terminal_predecessor_rounds = predecessor_rounds.ok_or_else(|| {
         AkitaError::InvalidSetup("terminal proof is missing predecessor relation geometry".into())
     })?;
-    let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
+    let terminal_eor = akita_params::extension_opening_reduction_level_bytes(
         policy.challenge_field_bits()?,
         policy.claim_ext_degree,
         PolynomialGroupLayout::singleton(terminal_predecessor_rounds),
     )?;
-    let terminal_response = akita_types::terminal_response_planner_bytes(
+    let terminal_planner_bytes = akita_params::terminal_response_planner_bytes(
         field_bits,
         &schedule.terminal.response_shape,
         schedule.terminal.response_l2_sq_cap(),
-    );
-    let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
+    )?;
+    let terminal_max_bytes =
+        akita_params::terminal_response_max_bytes(field_bits, &schedule.terminal.response_shape)?;
+    let grinding_plan = akita_params::derive_transcript_grinding_plan_from_public_shape(
         schedule,
         &key.opening_layout()?,
-        field_bits,
+        policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
     )?;
-    let nonce_stream_bytes = akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
-        .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
-    total
+    let fixed_bytes = total
         .checked_add(terminal_eor)
-        .and_then(|value| value.checked_add(terminal_response))
-        .and_then(|value| value.checked_add(nonce_stream_bytes))
+        .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))?;
+    Ok(ExpandedScheduleProofComponents {
+        fixed_bytes,
+        terminal_planner_bytes,
+        terminal_max_bytes,
+        nonce_max_bytes: grinding_plan.nonce_max_bytes(),
+    })
+}
+
+/// Recompute the native schedule-selection estimate for one expanded schedule.
+///
+/// The objective uses additive per-message canonical nonce maxima and the
+/// planner's terminal-response estimate. It is not a parser bound.
+pub fn expanded_schedule_proof_estimate_bytes(
+    key: &akita_params::ScheduleLookupKey,
+    schedule: &FoldSchedule,
+    policy: &PlannerPolicy,
+) -> Result<usize, AkitaError> {
+    let components = expanded_schedule_proof_components(key, schedule, policy)?;
+    components
+        .fixed_bytes
+        .checked_add(components.terminal_planner_bytes)
+        .and_then(|value| value.checked_add(components.nonce_max_bytes))
         .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))
+}
+
+/// Conservative byte bound for the canonical Spongefish proof stream.
+///
+/// Unlike the schedule-selection estimate, this uses every inline nonce's
+/// maximum canonical LEB128 width and the scheduled terminal response cap.
+pub fn expanded_schedule_proof_bound(
+    key: &akita_params::ScheduleLookupKey,
+    schedule: &FoldSchedule,
+    policy: &PlannerPolicy,
+) -> Result<usize, AkitaError> {
+    let components = expanded_schedule_proof_components(key, schedule, policy)?;
+    components
+        .fixed_bytes
+        .checked_add(components.terminal_max_bytes)
+        .and_then(|value| value.checked_add(components.nonce_max_bytes))
+        .ok_or_else(|| AkitaError::InvalidSetup("native proof byte bound overflow".into()))
 }
 
 /// Materialize and validate the schedule shared by offline search and generated replay.
 ///
-/// `cached_num_setup_field_elements` is the exact shared flat setup capacity.
+/// `cached.num_setup_field_elements` is the exact shared flat setup capacity.
 pub fn materialize_candidate_schedule(
-    cached_total: usize,
-    cached_num_setup_field_elements: usize,
-    cached_first_direct_setup_field_len: Option<usize>,
+    cached: CandidateMaterializationCost,
     policy: &PlannerPolicy,
     root_layout: &OpeningClaimsLayout,
     folds: Vec<CandidateFoldStep>,
     terminal_response: CandidateTerminalResponse,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
-    let schedule = fold_schedule_from_candidate_parts(&folds, &terminal_response)?;
+    let CandidateMaterializationCost {
+        proof_bytes: cached_total,
+        grinding: cached_grinding_cost,
+        num_setup_field_elements: cached_num_setup_field_elements,
+        first_direct_setup_field_len: cached_first_direct_setup_field_len,
+    } = cached;
     let (root, recursive_folds) = folds.split_first().ok_or_else(|| {
         AkitaError::UnsupportedSchedule(
             "a fold schedule requires root and terminal folds".to_string(),
         )
     })?;
+    let schedule = FoldSchedule {
+        root: FoldParams {
+            params: (*root.params).clone(),
+            input_witness_len: root.input_witness_len,
+            output_witness_len: root.output_witness_len,
+        },
+        recursive_folds: recursive_folds
+            .iter()
+            .map(|fold| FoldParams {
+                params: (*fold.params).clone(),
+                input_witness_len: fold.input_witness_len,
+                output_witness_len: fold.output_witness_len,
+            })
+            .collect(),
+        terminal: TerminalFoldParams {
+            fold_challenge_config: terminal_response.sparse_challenge_config,
+            response_shape: terminal_response.response_shape.clone(),
+            input_witness_len: terminal_response.input_witness_len,
+            ..terminal_response.params.clone()
+        },
+    };
+    crate::resolve::validate_canonical_transition_lengths(root_layout, &schedule, policy)?;
     let mut estimate = FoldScheduleEstimate {
-        nonce_stream_bytes: 0,
+        nonce_max_bytes: 0,
         estimated_root_direct_payload_bytes: root.estimated_direct_payload_bytes,
         estimated_root_stage3_payload_bytes: root.estimated_stage3_payload_bytes,
         estimated_recursive_direct_payload_bytes: recursive_folds
@@ -769,42 +752,44 @@ pub fn materialize_candidate_schedule(
         first_direct_setup_field_len: None,
         selected_offload_edges: 0,
     };
-    let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
+    let grinding_plan = akita_params::derive_transcript_grinding_plan_from_public_shape(
         &schedule,
         root_layout,
-        policy.decomposition.field_bits(),
+        policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
     )?;
-    estimate.nonce_stream_bytes =
-        akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
-            .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
+    if grinding_plan.total_nonce_bits() != cached_grinding_cost.total_nonce_bits
+        || grinding_plan.nonce_max_bytes() != cached_grinding_cost.nonce_max_bytes
+        || grinding_plan.expanded_query_count() != cached_grinding_cost.expanded_query_count
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "cached grinding cost ({} nonce bits, {} native bytes, {} queries) disagrees with materialized plan ({} nonce bits, {} native bytes, {} queries)",
+            cached_grinding_cost.total_nonce_bits,
+            cached_grinding_cost.nonce_max_bytes,
+            cached_grinding_cost.expanded_query_count,
+            grinding_plan.total_nonce_bits(),
+            grinding_plan.nonce_max_bytes(),
+            grinding_plan.expanded_query_count(),
+        )));
+    }
+    estimate.nonce_max_bytes = grinding_plan.nonce_max_bytes();
     let recomputed = estimate.estimated_proof_payload_bytes()?;
     if recomputed != cached_total {
         return Err(AkitaError::InvalidSetup(format!(
             "cached schedule cost {cached_total} disagrees with materialized estimate {recomputed}"
         )));
     }
-    let first_direct_setup_field_len = match policy.selection_policy {
-        SelectionPolicyId::MinEstimatedProofPayloadV2 => None,
-        SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-        | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => Some(
-            first_direct_setup_field_len_for_schedule(&schedule, root_layout)?,
-        ),
-    };
+    let first_direct_setup_field_len =
+        first_direct_setup_field_len_for_schedule(&schedule, root_layout)?;
     if let Some(cached) = cached_first_direct_setup_field_len {
-        if first_direct_setup_field_len != Some(cached) {
+        if first_direct_setup_field_len != cached {
             return Err(AkitaError::InvalidSetup(format!(
-                "cached first direct setup length {cached} disagrees with materialized length {}",
-                first_direct_setup_field_len
-                    .map_or_else(|| "none".to_string(), |value| value.to_string())
+                "cached first direct setup length {cached} disagrees with materialized length {first_direct_setup_field_len}"
             )));
         }
     }
-    if first_direct_setup_field_len.is_none() {
-        schedule.validate_structure()?;
-    }
     let recomputed_num_setup_field_elements =
-        akita_types::setup_matrix_capacity_for_schedule(&schedule)?.num_field_elements;
+        akita_params::setup_matrix_capacity_for_schedule(&schedule)?.num_field_elements;
     if recomputed_num_setup_field_elements != cached_num_setup_field_elements {
         return Err(AkitaError::InvalidSetup(format!(
             "cached setup capacity {cached_num_setup_field_elements} field elements disagrees with materialized capacity {recomputed_num_setup_field_elements}"
@@ -815,7 +800,7 @@ pub fn materialize_candidate_schedule(
         .iter()
         .filter(|fold| fold.params.setup_prefix().is_some())
         .count();
-    estimate.first_direct_setup_field_len = first_direct_setup_field_len;
+    estimate.first_direct_setup_field_len = Some(first_direct_setup_field_len);
     Ok(PlannedFoldSchedule { schedule, estimate })
 }
 
@@ -831,7 +816,7 @@ pub fn first_direct_setup_field_len_for_schedule(
             continue;
         }
         return if successor_index == 0 {
-            akita_types::active_setup_field_len(&schedule.root.params, root_layout)
+            akita_params::active_setup_field_len(&schedule.root.params, root_layout)
         } else {
             active_setup_field_len_for_recursive_producer(
                 &schedule.recursive_folds[successor_index - 1],
@@ -840,7 +825,7 @@ pub fn first_direct_setup_field_len_for_schedule(
     }
 
     schedule.recursive_folds.last().map_or_else(
-        || akita_types::active_setup_field_len(&schedule.root.params, root_layout),
+        || akita_params::active_setup_field_len(&schedule.root.params, root_layout),
         active_setup_field_len_for_recursive_producer,
     )
 }
@@ -850,7 +835,7 @@ pub fn first_direct_setup_capacity_for_schedule(
     schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
-    Ok(akita_types::padded_setup_prefix_len(
+    Ok(akita_params::padded_setup_prefix_len(
         first_direct_setup_field_len_for_schedule(schedule, root_layout)?,
     ))
 }
@@ -863,8 +848,8 @@ fn active_setup_field_len_for_recursive_producer(
         .setup_prefix()
         .map(|prefix| prefix.setup_natural_len.expect("setup prefix group"));
     let layout =
-        akita_types::suffix_opening_layout(producer.input_witness_len, incoming_prefix_len)?;
-    akita_types::active_setup_field_len(&producer.params, &layout)
+        akita_params::suffix_opening_layout(producer.input_witness_len, incoming_prefix_len)?;
+    akita_params::active_setup_field_len(&producer.params, &layout)
 }
 
 /// Derive the canonical next-witness field length for a scalar planner level.
@@ -883,21 +868,21 @@ pub fn planned_next_witness_len(
     }
     let opening_batch =
         params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
-    let quotient_plan = akita_types::RelationQuotientPlan::for_field_bits(params, field_bits)?;
+    let quotient_plan = akita_params::RelationQuotientPlan::for_field_bits(params, field_bits)?;
     if !params.compression_sources_supported()? {
         return Ok(None);
     }
-    let relation_geometry =
-        akita_types::RelationWitnessGeometry::for_level(params, &opening_batch, extension_degree)?;
     if params.setup_prefix().is_none() {
         return Ok(Some(WitnessLayout::scalar_live_coeff_len(
             params,
             &opening_batch,
-            &relation_geometry,
+            extension_degree,
             num_chunks,
             quotient_plan,
         )?));
     }
+    let relation_geometry =
+        akita_params::RelationWitnessGeometry::for_level(params, &opening_batch, extension_degree)?;
     Ok(Some(
         WitnessLayout::new(
             params,
@@ -910,28 +895,24 @@ pub fn planned_next_witness_len(
     ))
 }
 
-/// Convenience policy used by config adapters.
-pub fn default_sis_security_policy() -> SisSecurityPolicyId {
-    DEFAULT_SIS_SECURITY_POLICY
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_params::DEFAULT_SIS_SECURITY_POLICY;
 
     const A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER: &[usize] = &[64, 512];
     const SUFFIX_DIMENSIONS: &[usize] = &[64];
 
     fn adaptive_policy() -> PlannerPolicy {
         PlannerPolicy {
-            cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayloadV2,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 3,
-            ring_dimension_schedule_mode: RingDimensionScheduleMode::AdaptiveDimension {
+            ring_dimension_schedule: RingDimensionSchedule {
                 num_search_levels: 2,
                 suffix_dimensions: &[64],
                 potential_a_dimensions: A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER,
@@ -945,8 +926,8 @@ mod tests {
             },
             sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
             sis_security_policy: DEFAULT_SIS_SECURITY_POLICY,
-            sis_table_digest: akita_types::SisTableDigest::CURRENT,
-            sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
+            sis_table_digest: akita_params::SisTableDigest::CURRENT,
+            sis_l2_table_digest: akita_params::SisL2TableDigest::CURRENT,
             claim_ext_degree: 1,
             chal_ext_degree: 1,
             inner_basis_range: (3, 16),
@@ -967,16 +948,32 @@ mod tests {
     }
 
     #[test]
-    fn recursive_and_adaptive_direct_policies_use_distinct_setup_objectives() {
-        let adaptive = adaptive_policy().ring_dimension_schedule_mode;
+    fn recursive_and_direct_policies_use_distinct_setup_objectives() {
         assert_eq!(
-            SelectionPolicyId::for_policy(false, adaptive),
-            SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+            SelectionPolicyId::for_policy(false),
+            SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
         );
         assert_eq!(
-            SelectionPolicyId::for_policy(true, adaptive),
-            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+            SelectionPolicyId::for_policy(true),
+            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
         );
+    }
+
+    #[test]
+    fn setup_objective_admission_matches_recursive_setup_planning() {
+        for recursive_setup_planning in [false, true] {
+            let mut policy = PlannerPolicy {
+                recursive_setup_planning,
+                selection_policy: SelectionPolicyId::for_policy(recursive_setup_planning),
+                ..adaptive_policy()
+            };
+            validate_policy(&policy).expect("matching setup objective");
+            policy.selection_policy = SelectionPolicyId::for_policy(!recursive_setup_planning);
+            assert!(matches!(
+                validate_policy(&policy),
+                Err(AkitaError::InvalidSetup(_))
+            ));
+        }
     }
 
     #[test]
@@ -988,7 +985,7 @@ mod tests {
     #[test]
     fn typed_response_model_requires_current_l2_table_identity() {
         let mut policy = adaptive_policy();
-        policy.sis_l2_table_digest = akita_types::SisL2TableDigest([0; 32]);
+        policy.sis_l2_table_digest = akita_params::SisL2TableDigest([0; 32]);
         let error = validate_policy(&policy).expect_err("stale L2 table identity");
         assert!(error
             .to_string()
@@ -999,7 +996,7 @@ mod tests {
     fn adaptive_dimensions_still_require_role_specific_dispatch_support() {
         const UNSUPPORTED_B_DIMENSIONS: &[usize] = &[64, 512];
         let mut policy = adaptive_policy();
-        policy.ring_dimension_schedule_mode = RingDimensionScheduleMode::AdaptiveDimension {
+        policy.ring_dimension_schedule = RingDimensionSchedule {
             num_search_levels: 2,
             suffix_dimensions: &[64],
             potential_a_dimensions: A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER,
@@ -1015,7 +1012,7 @@ mod tests {
     fn adaptive_depth_is_limited_to_the_audited_l0_l1_cutover() {
         for num_search_levels in [1, 3] {
             let mut policy = adaptive_policy();
-            policy.ring_dimension_schedule_mode = RingDimensionScheduleMode::AdaptiveDimension {
+            policy.ring_dimension_schedule = RingDimensionSchedule {
                 num_search_levels,
                 suffix_dimensions: &[64],
                 potential_a_dimensions: A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER,

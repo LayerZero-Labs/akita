@@ -99,8 +99,8 @@ B, and D setup rows, their witness weights, and the powers of the ring challenge
 used at the sampled relation point.
 
 In direct mode, the verifier uses this plan to scan the public setup. In
-offloaded mode, Stage 2 accepts a claimed value and saves the same plan for
-Stage 3. The prover and verifier then run a degree two sumcheck over two
+offloaded mode, Stage 2 accepts a claimed value, and Stage 3 prepares the same
+plan again from the Stage 2 challenge point. The prover and verifier then run a degree two sumcheck over two
 coordinates:
 
 - one coordinate selects a coefficient inside a setup ring; and
@@ -145,9 +145,9 @@ The planner keeps an offloaded edge only when all of the following are true:
 Among feasible recursive schedules, the production policy first minimizes the
 power of two capacity that covers all setup objects. It then minimizes the
 first setup capacity that the verifier still scans directly. Within those
-capacity buckets, it compares exact estimated proof bytes, including every
-Stage 3 proof, and the first direct output-witness length. The canonical
-descriptor breaks remaining ties.
+capacity buckets, it compares the exact proof-and-work score, then estimated
+proof bytes, including every Stage 3 proof, and the first direct output-witness
+length. The canonical descriptor breaks remaining ties.
 
 The shipped recursive catalogs consider offloaded edges produced by the root
 and its direct child. This `RootAndFirstChildV1` domain is part of the catalog
@@ -167,6 +167,7 @@ schedule while checking a proof.
 The recursive catalog is intentionally narrower than the ordinary Akita
 catalogs. The current build can expose recursive setup schedules for:
 
+- the fp32, fp64, and fp128 dense configurations;
 - the fp128 one hot configuration; and
 - the fp128 one hot multi chunk configuration with eight chunks and two leading
   distributed levels.
@@ -194,6 +195,26 @@ row for the requested workload and dimensions.
 Support depends on supplying the matching recursive family artifact. Other base
 configurations have no recursive catalog and are rejected rather than silently
 falling back to a direct schedule under the recursive adapter.
+
+The dense artifacts cover singleton polynomials with these variable counts:
+
+| Base configuration | Recursive artifact | Variable counts |
+| --- | --- | --- |
+| `fp32::Dense` | `fp32_dense_recursive.aks` | 20, 22, 24, 26, 28, 30 |
+| `fp64::Dense` | `fp64_dense_recursive.aks` | 21, 23, 25, 27, 29 |
+| `fp128::Dense` | `fp128_dense_recursive.aks` | 20, 22, 24, 26, 28 |
+
+Load the matching artifact into
+`TrustedScheduleCatalog<RecursiveCommitmentConfig<Cfg>>`. A recursive family
+allows offloading; individual rows may still select only direct edges when
+that is the planner's preferred feasible schedule.
+
+Regenerate these artifacts with the current planner:
+
+```bash
+scripts/generate-schedule-artifacts.sh --row-progress \
+  fp32_dense_recursive fp64_dense_recursive fp128_dense_recursive
+```
 
 When a grouped proof includes commitments formed earlier, those commitments are
 created under the base configuration. The later grouped opening selects
@@ -228,12 +249,13 @@ panic.
 | Enable the recursive catalog | `crates/akita-config/src/recursive_commitment.rs` |
 | Search direct and offloaded suffixes | `crates/akita-planner/src/schedule_params/suffix_dp/` |
 | Build recursive candidates and prefix requirements | `crates/akita-planner/src/schedule_params/candidate/recursive.rs` and `candidate/setup_prefix.rs` |
-| Define prefix identities and proof data | `crates/akita-types/src/proof/setup_prefix.rs` |
+| Define prefix identities and proof data | `crates/akita-params/src/layout/setup_prefix_slots.rs` and `crates/akita-types/src/proof/setup_prefix.rs` |
 | Build the shared setup contribution plan | `crates/akita-types/src/setup_contribution/` |
+| Evaluate the setup contribution at the Stage 2 point | `crates/akita-verifier/src/setup_contribution/` |
 | Materialize required prefix commitments | `crates/akita-setup/src/recursive_prefixes.rs` |
-| Prove the setup product | `crates/akita-prover/src/protocol/sumcheck/akita_stage3/` |
+| Prove the setup product | `crates/akita-cpu-backend/src/opaque/sumcheck/stage3/` |
 | Verify Stage 3 | `crates/akita-verifier/src/stages/stage3.rs` |
-| Enforce the recursive fold handoff | `crates/akita-prover/src/protocol/core/` and `crates/akita-verifier/src/protocol/core/` |
+| Enforce the recursive fold handoff | `crates/akita-prover/src/protocol/prove/` and `crates/akita-verifier/src/fold/` |
 
 The live planner contract is
 [`specs/setup-offloading-planner.md`](../../specs/setup-offloading-planner.md).

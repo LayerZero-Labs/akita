@@ -1,11 +1,11 @@
 //! Direct scalarized SIS estimates for every canonical occurrence in a schedule.
 
-use akita_types::{FoldSchedule, ScheduleSisOccurrence};
-pub use akita_types::{ScheduleSisBound, ScheduleSisRole};
+use akita_params::{FoldSchedule, ScheduleSisOccurrence};
+pub use akita_params::{ScheduleSisBound, ScheduleSisRole};
 
 use crate::{
     estimate, scalar_sis_from_ring_euclidean, scalar_sis_from_ring_wide, CostValue, EstimateConfig,
-    EstimatorError, LatticeCost, Result, SisNorm,
+    EstimatorError, LatticeCost, Result,
 };
 
 /// Direct estimator result for one schedule-derived SIS instance.
@@ -22,7 +22,7 @@ pub struct ScheduleSisInstanceEstimate {
     /// Ring dimension.
     pub ring_dimension: usize,
     /// Exact modulus profile supplied to the scalar estimator.
-    pub modulus_profile: akita_types::SisModulusProfileId,
+    pub modulus_profile: akita_params::SisModulusProfileId,
     /// Collision bound passed to the estimator.
     pub bound: ScheduleSisBound,
     /// Complete estimator output under the table's ADPS16 quantum model.
@@ -38,15 +38,6 @@ impl ScheduleSisInstanceEstimate {
     #[must_use]
     pub fn security_bits(&self) -> f64 {
         cost_security_bits(self.cost.rop)
-    }
-
-    /// Return the norm family used by this instance.
-    #[must_use]
-    pub const fn norm(&self) -> SisNorm {
-        match self.bound {
-            ScheduleSisBound::Linf(_) => SisNorm::Infinity,
-            ScheduleSisBound::L2Squared(_) => SisNorm::Euclidean,
-        }
     }
 }
 

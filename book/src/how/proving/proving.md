@@ -31,9 +31,9 @@ A nonterminal fold starts with four kinds of information.
 | Public setup | The A, B, and D matrix entries required by this scheduled level |
 | Scheduled parameters | Ring dimensions, block geometry, digit bases, opening method, norm route, and proof shape |
 
-The fold produces:
+The fold streams:
 
-- one `FoldLevelProof` containing its commitment payloads and sum-check proofs;
+- one schedule-shaped sequence of commitment payloads and sum-check messages;
 - one recursive digit witness for the successor;
 - one opening claim that binds that witness at the final Stage 2 challenge; and
 - when setup offloading is selected, a separate opening claim for one prepared
@@ -112,9 +112,11 @@ they can remain hidden behind smaller compressed payloads. Compressed mode adds
 the two-map commitment chains, their digit witnesses, and their physical rows.
 It does not change what the four semantic relations mean.
 
-Every physical row is lifted from its native ring before the rows are combined
-for Stage 2. This is how one fold supports distinct A, B, and D ring dimensions
-without pretending that all matrices live in one ring.
+The schedule also selects how to check these ring equations: quotient lifting
+adds private quotient digits, while reduced evaluation includes ring reduction
+in public coefficient weights. Each row uses its native ring dimension.
+[Checking ring relations over a field](./ring-relation-checking.md) derives
+both methods and their common handoff to Stage 2.
 
 See [Raw and compressed realizations of an Akita
 fold](./akita-fold-realizations.md).
@@ -122,8 +124,9 @@ fold](./akita-fold-realizations.md).
 ### 6. Form and commit the successor witness
 
 The relation witness contains the response digits, opening digits, inner
-commitment digits, quotient digits, and any compression witness required by the
-selected realization. Ring switching lays these values out as the next
+commitment digits, and any compression witness required by the payload mode.
+It also contains quotient digits when the relation mode is `QuotientLift`.
+Ring switching lays these values out as the next
 field-valued witness. The prover commits to that witness with the parameters of
 the successor level.
 
@@ -181,9 +184,10 @@ The most useful order depends on what you need.
 1. [Field-to-ring evaluation reduction](./field-ring-reduction.md)
 2. [Semantic relations in an Akita fold](./akita-fold.md)
 3. [Raw and compressed realizations](./akita-fold-realizations.md)
-4. [Opening points and digit-innermost layout](./opening-points-layout.md)
-5. [Fold path and field geometry](./fold-path.md)
-6. [Sum-check stages](./sumcheck-stages.md)
+4. [Checking ring relations over a field](./ring-relation-checking.md)
+5. [Opening points and digit-innermost layout](./opening-points-layout.md)
+6. [Fold path and field geometry](./fold-path.md)
+7. [Sum-check stages](./sumcheck-stages.md)
 
 Read [Root fold and ring switching](./root-fold-ring-switch.md) when you want
 the complete coefficient-packing derivation. Read [Extension-opening
@@ -201,13 +205,13 @@ commitment, and sum-check work can stay local to separate machines.
 
 | Responsibility | Prover | Verifier |
 | --- | --- | --- |
-| Top-level schedule walk | `akita-prover/src/protocol/core/prove.rs` | `akita-verifier/src/protocol/core/verify.rs` |
-| Root and recursive fold orchestration | `akita-prover/src/protocol/core/fold/` | `akita-verifier/src/protocol/core/fold/` |
-| Extension-opening reduction | `akita-prover/src/protocol/extension_opening_reduction/` | `akita-verifier/src/protocol/core/fold/extension_claim.rs` |
-| Stage 1 range and norm proof | `akita-prover/src/protocol/sumcheck/digit_range/` and `physical_l2_norm.rs` | `akita-verifier/src/stages/stage1.rs` |
-| Stage 2 fused relation | `akita-prover/src/protocol/sumcheck/relation_range_image/` | `akita-verifier/src/stages/stage2.rs` |
-| Stage 3 setup product | `akita-prover/src/protocol/sumcheck/akita_stage3/` | `akita-verifier/src/stages/stage3.rs` |
-| Terminal path | `akita-prover/src/protocol/core/suffix.rs` | `akita-verifier/src/protocol/core/suffix.rs` and `terminal_direct.rs` |
+| Top-level schedule walk | `akita-prover/src/protocol/prove/root.rs` | `akita-verifier/src/fold/verify.rs` |
+| Root and recursive fold orchestration | `akita-prover/src/protocol/prove/fold/` | `akita-verifier/src/fold/` |
+| Extension-opening reduction | `akita-cpu-backend/src/opaque/recursive/opening/` | `akita-verifier/src/stages/opening_claims/extension_claim.rs` |
+| Stage 1 range and norm proof | `akita-cpu-backend/src/opaque/sumcheck/digit_range/` and `physical_l2_norm.rs` | `akita-verifier/src/stages/stage1.rs` |
+| Stage 2 fused relation | `akita-cpu-backend/src/opaque/sumcheck/relation_range_image/` | `akita-verifier/src/stages/stage2.rs` |
+| Stage 3 setup product | `akita-cpu-backend/src/opaque/sumcheck/stage3/` | `akita-verifier/src/stages/stage3.rs` |
+| Terminal path | `akita-prover/src/protocol/prove/suffix.rs` | `akita-verifier/src/fold/terminal.rs` and `terminal/direct.rs` |
 
 The exact source layout can evolve, so begin with the public core entry points
 and follow the shared types they call. The Book's Verification child pages

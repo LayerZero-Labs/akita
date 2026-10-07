@@ -2,16 +2,18 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_types::{
+use akita_params::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan,
     SisModulusProfileId, WitnessLayout, MAX_WITNESS_CHUNKS,
 };
+use akita_types::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan};
+use akita_verifier::SetupIndexWeightMle;
+use std::hint::black_box;
+
 use criterion::measurement::WallTime;
 use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion,
-    SamplingMode,
+    criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion, SamplingMode,
 };
 use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7, Zero};
 use std::time::Duration;
@@ -20,7 +22,7 @@ type F = Prime128OffsetA7F7;
 const D: usize = 64;
 
 struct SetupIndexWeightBenchCase {
-    plan: SetupContributionPlan<F>,
+    mle: SetupIndexWeightMle<F>,
     dense_weights: Vec<F>,
     rho: Vec<F>,
     alpha: F,
@@ -125,7 +127,7 @@ fn make_case_with_shape(
     );
     let depth_fold = level_params.num_digits_fold();
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
-    let relation_geometry = akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+    let relation_geometry = akita_params::RelationWitnessGeometry::for_evaluation_trace_execution(
         &level_params,
         &opening_batch,
     )
@@ -135,7 +137,7 @@ fn make_case_with_shape(
         &opening_batch,
         &relation_geometry,
         num_live_blocks / blocks_per_chunk,
-        akita_types::RelationQuotientPlan::quotient_lift(r_decomp_levels::<F>(log_basis)).unwrap(),
+        akita_params::RelationQuotientPlan::quotient_lift(r_decomp_levels::<F>(log_basis)).unwrap(),
     )
     .unwrap();
 
@@ -169,9 +171,12 @@ fn make_case_with_shape(
             }
         })
         .collect::<Vec<_>>();
-    let relation_address_geometry =
-        akita_types::RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len)
-            .unwrap();
+    let relation_address_geometry = akita_params::RelationAddressGeometry::new(
+        role_dims,
+        outgoing_ring_dim,
+        opening_source_len,
+    )
+    .unwrap();
     let full_vec_randomness = (0..relation_address_geometry.relation_lane_variable_count())
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
@@ -202,12 +207,10 @@ fn make_case_with_shape(
         .fold(F::zero(), |acc, (index, weight)| {
             acc + eq_eval_at_index(&rho, index) * weight
         });
-    assert_eq!(
-        plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),
-        dense
-    );
+    let mle = SetupIndexWeightMle::new(&plan).unwrap();
+    assert_eq!(mle.evaluate(&rho, alpha).unwrap(), dense);
     SetupIndexWeightBenchCase {
-        plan,
+        mle,
         dense_weights,
         rho,
         alpha,
@@ -235,11 +238,8 @@ fn bench_setup_index_weight(c: &mut Criterion) {
                 |b, case| {
                     b.iter(|| {
                         black_box(
-                            case.plan
-                                .evaluate_setup_index_weight_mle(
-                                    black_box(&case.rho),
-                                    black_box(case.alpha),
-                                )
+                            case.mle
+                                .evaluate(black_box(&case.rho), black_box(case.alpha))
                                 .unwrap(),
                         )
                     })
@@ -322,11 +322,8 @@ fn bench_setup_index_weight(c: &mut Criterion) {
             |b, case| {
                 b.iter(|| {
                     black_box(
-                        case.plan
-                            .evaluate_setup_index_weight_mle(
-                                black_box(&case.rho),
-                                black_box(case.alpha),
-                            )
+                        case.mle
+                            .evaluate(black_box(&case.rho), black_box(case.alpha))
                             .unwrap(),
                     )
                 })

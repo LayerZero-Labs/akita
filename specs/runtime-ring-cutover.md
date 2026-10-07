@@ -67,7 +67,7 @@ removed at merge:
 - the former dimension-typed commitment prover trait
 - the former dimension-typed commitment verifier trait
 - `AkitaProverSetup<F, D>`
-- `AkitaCommitmentHint<F, D>`
+- `PortableCommitmentHandle<F, D>`
 - the former dimension-typed prover opening-batch carrier
 - the former dimension-typed prover commitment-group carrier
 - `RingCommitment<F, D>` as a protocol-facing commitment object
@@ -76,7 +76,7 @@ removed at merge:
   `RingCommitment<F, D>` or absorb by pretending to be a typed ring commitment
 - top-level prover and verifier functions such as
   `akita_prover::batched_prove::<..., D>` and
-  `akita_verifier::batched_verify::<..., D>`
+  `AkitaVerifier::<..., D>::batched_verify`
 
 These names are allowed to remain only when they are leaf arithmetic types,
 backend/kernel traits, tests for low-level arithmetic, or temporary in-flight
@@ -180,7 +180,7 @@ that
    reads for role-specific data),
 2. extracts the ring dimension of the **specific role** this operation
    touches (`d_a`, `d_b`, or `d_d` from [`CommitmentRingDims`]),
-3. invokes `akita_types::dispatch_for_field!(slot, F, role_d, |D| kernel::<D>(…))`
+3. invokes `akita_params::dispatch_for_field!(slot, F, role_d, |D| kernel::<D>(…))`
    exactly once for that operation,
 4. converts any D-typed kernel output back to D-free storage inside the
    dispatch arm,
@@ -274,16 +274,16 @@ Mixed-D:
 Orchestration obtains `CommitmentRingDims` from `CommittedGroupParams::role_dims` /
 `RingLevelContext::role_dims` at each fold entry. **Role-specific buffers use
 `dims.d_a()`, `dims.d_b()`, or `dims.d_d()` — not bare
-`CommittedGroupParams::ring_dimension`.** Witness-borrow paths that still call
-`uniform_dim()` are deferred follow-on work (see Deferred below).
+`CommittedGroupParams::ring_dimension`.** No witness-borrow path gates on a
+single uniform role dimension.
 
 `RingRelationInstance` and relation helpers (`generate_relation_rhs`,
 `relation_claim_from_rows_extension`) must treat `v`, commitment rows, and
 `row_coefficient_rings` under their respective role dimensions, not a single
 stored `ring_dim`.
 
-`validate_level_dispatch::<D>(lp)` is insufficient for per-role work; kernels
-enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
+A single level dimension is insufficient for per-role work; kernels are
+dispatched through `dispatch_for_field!` keyed on the matching `d_a` / `d_b` /
 `d_d`.
 
 ### Non-Goals
@@ -309,12 +309,12 @@ enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
 - [x] Protocol-facing commitments use `RingVec<F>` or an equivalent D-free
       owned field-vector type, not `RingCommitment<F, D>`.
 - [x] Protocol-facing prover and verifier opening batches are D-free.
-- [x] `AkitaCommitmentHint` and digit-block storage no longer carry a
+- [x] `PortableCommitmentHandle` and digit-block storage no longer carry a
       compile-time `D`.
 - [x] Transcript absorption of commitments and ring-shaped proof data uses
       flat field coefficients under schedule-derived shape.
 - [x] Top-level `akita_prover::batched_prove` and
-      `akita_verifier::batched_verify` are not const-generic over a root `D`.
+      `AkitaVerifier::batched_verify` are not const-generic over a root `D`.
 - [x] Root polynomial inputs do not force `D` through PCS orchestration. Any
       remaining dimension-typed polynomial usage is confined to implementation
       views or kernel-entry conversions.
@@ -325,7 +325,7 @@ enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
 - [x] **Per-role operation dispatch (litmus):** prover and verifier fold paths
       admit `d_a`, `d_b`, `d_d` from `CommitmentRingDims` with separate
       `dispatch_for_field!` per operation (EOR, relation build, ring
-      switch, stage2, stage3, relation claim). No `uniform_dim()` fused path
+      switch, stage2, stage3, relation claim). No uniform-dimension fused path
       remains on the prove/verify hot path.
 - [x] Zero **prover** and **verifier** discriminator violations (`const D` +
       schedule types), zero banned #227 bridge names, and no F2 level-wrap in
@@ -344,13 +344,13 @@ enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
 
 **Completed slices (2026-07-03):** D-free PCS API, proof storage, prover spine
 `const D` = 0, mixed-D-per-level E2E, root poly step 11, council audit fixes
-(grind dispatch hoist, `RingView::append_flat_to_transcript` → `Result`),
+(grind dispatch hoist and checked runtime ring views),
 slices 0–4 (authority, per-role dispatch, verifier F2 teardown, planner
 `role_dims`, regression locks).
 
 **Deferred (follow-on, not merge blockers):** divergent per-role planner
-emission (`d_a ≠ d_b ≠ d_d` within one fold level), mixed ring-switch views
-when `d_d ≠ d_a`, and removing the last witness borrow `uniform_dim()` gate.
+emission (`d_a ≠ d_b ≠ d_d` within one fold level) and mixed ring-switch views
+when `d_d ≠ d_a`.
 
 ### Testing Strategy
 
@@ -517,7 +517,7 @@ digits are interpreted. If storing a dimension locally is useful for debug
 validation, it must not be a protocol authority and must not replace schedule
 validation.
 
-`AkitaCommitmentHint<F, D>` becomes `AkitaCommitmentHint<F>`.
+`PortableCommitmentHandle<F, D>` becomes `PortableCommitmentHandle<F>`.
 
 #### Prover Claims
 
@@ -547,10 +547,10 @@ The cutover:
 - A polynomial is flat field coefficients plus arity metadata. `num_vars` is
   stored independently of the scheduled ring dimension. The storage types are
   D-free, and typed views are constructed only at operation boundaries.
-- `RootPolyShape<F, D>` and the view traits (`RootCommitSource`,
-  `RootOpeningSource`, `RootTensorSource`, `DirectRootWitnessSource`) become
-  kernel-entry view constructors reached through operation adapters that
-  dispatch on the schedule's dimension for that operation.
+- `CommitmentSource<F>` provides D-free commitment representations.
+  `RootPolyShape<F, D>` and the opening/tensor view traits remain kernel-entry
+  constructors reached through operation adapters that dispatch on the
+  schedule's dimension for that operation.
 - Orchestration bounds use `RootPolyMeta<F>` only. The
   `RootProvePoly<F, D>`-style bounds on orchestration collapse into
   runtime-supported bundles following the pattern already proven in-tree by
@@ -674,7 +674,7 @@ execution list below is retained as historical implementation order.
 1. Land this spec and create the branch/PR as the single cutover vehicle.
 2. Introduce the final D-free storage names: `RingVec<F>` and borrowed view
    helpers.
-3. Convert `FlatDigitBlocks<D>` and `AkitaCommitmentHint<F, D>` to runtime-shaped
+3. Convert `FlatDigitBlocks<D>` and `PortableCommitmentHandle<F, D>` to runtime-shaped
    storage.
 4. Convert `AkitaProverSetup<F, D>` to `AkitaProverSetup<F>`.
 5. Convert protocol-facing commitments to D-free storage.

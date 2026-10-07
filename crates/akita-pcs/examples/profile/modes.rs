@@ -11,12 +11,13 @@ use crate::workload::{
 use crate::workspace_schedules::load_workspace_scheme;
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_params::{
+    CommittedGroupParams, MultiChunkProfileId, PolynomialGroupLayout, ScheduleLookupKey,
+    SetupContributionMode,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupParams, FpExtEncoding, MultiChunkProfileId,
-    PolynomialGroupLayout, SetupContributionMode,
-};
+use akita_types::FpExtEncoding;
 use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 
@@ -47,7 +48,7 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
     let layout = resolve_layout(scheme.schedules(), group);
     let plan = scheme
         .schedules()
-        .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .resolve_key(&ScheduleLookupKey::single(group))
         .expect("schedule plan")
         .schedule()
         .clone();
@@ -84,7 +85,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let layout = resolve_layout(scheme.schedules(), group);
     let plan = scheme
         .schedules()
-        .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .resolve_key(&ScheduleLookupKey::single(group))
         .expect("schedule plan")
         .schedule()
         .clone();
@@ -135,14 +136,14 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         }
         let plan = scheme
             .schedules()
-            .resolve_key(&AkitaScheduleLookupKey::single(group))
+            .resolve_key(&ScheduleLookupKey::single(group))
             .expect("schedule plan")
             .schedule()
             .clone();
         print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
         run_onehot::<FF, D, Cfg>(&scheme, label, nv, &layout, Some(&plan), true);
     } else {
-        let lookup_key = AkitaScheduleLookupKey::single(group);
+        let lookup_key = ScheduleLookupKey::single(group);
         let plan = scheme
             .schedules()
             .resolve_key(&lookup_key)
@@ -446,7 +447,7 @@ fn run_profile_onehot_fp128_with_cfg<
     let group = PolynomialGroupLayout::new(nv, 1);
     let schedule = scheme
         .schedules()
-        .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .resolve_key(&ScheduleLookupKey::single(group))
         .expect("generated fp128 one-hot schedule")
         .schedule()
         .clone();
@@ -598,10 +599,18 @@ fn run_profile_onehot_fp32(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_dense_fp32(nv: usize, num_polys: usize) {
-    type Cfg = fp32::Dense;
     assert_singleton_mode("dense_fp32", num_polys);
     let title = small_field_dense_title("fp32");
-    run_dense_mode_for::<fp32::Field, 256, Cfg>("dense_fp32", &title, nv);
+    match profile_setup_contribution_mode() {
+        SetupContributionMode::Direct => {
+            type Cfg = fp32::Dense;
+            run_dense_mode_for::<fp32::Field, 256, Cfg>("dense_fp32", &title, nv);
+        }
+        SetupContributionMode::Recursive => {
+            type Cfg = RecursiveCommitmentConfig<fp32::Dense>;
+            run_dense_mode_for::<fp32::Field, 256, Cfg>("dense_fp32", &title, nv);
+        }
+    }
 }
 
 fn run_profile_dense_fp64(nv: usize, num_polys: usize) {
@@ -651,7 +660,7 @@ fn resolve_layout<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> CommittedGroupParams {
     catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .resolve_key(&ScheduleLookupKey::single(group))
         .expect("layout")
         .schedule()
         .root

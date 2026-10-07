@@ -24,7 +24,8 @@
 //! - `akita-challenges` - Fiat-Shamir challenge sampling helpers
 //! - `akita-sumcheck` - Generic sumcheck proof types, traits, and drivers
 //! - `akita-verifier` - Verifier replay without prover-only polynomial backends
-//! - `akita-prover` - Commitment and proving kernels
+//! - `akita-prover` - Generic protocol sequencing and opaque backend contracts
+//! - `akita-cpu-backend` - Owning CPU source, commitment, and witness execution
 //! - `akita-pcs` - End-to-end [`AkitaCommitmentScheme`] orchestration plus public re-exports
 //!
 //! Verifier-only consumers should depend directly on `akita-verifier`,
@@ -46,23 +47,23 @@ mod test_support;
 
 pub use akita_algebra::fft;
 pub use akita_algebra::fft::SmoothFftField;
-pub use akita_algebra::Module;
+pub use akita_config::SetupRequirements;
 pub use akita_error::AkitaError;
 // Specialized field surfaces mirror jolt-field's curated exports.
+#[doc(hidden)]
+pub use akita_cpu_backend::custom_source;
+pub use akita_cpu_backend::{
+    AkitaProverSetup, CommitOutput, CommitmentHandle, CpuBackend, DensePoly, GroupContext,
+    OneHotPoly, SourceHandle,
+};
+pub use akita_params::{BasisMode, OpeningClaimsLayout, PrecommittedGroupProfiles};
 pub use akita_prover::{
-    CommitOutput, ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend,
-    DecomposeFoldWitness, DigitRowsComputeBackend, GroupContext, LevelProveStacks,
-    OpeningProveBackendFor, OperationCtx, PreparedGroupProveOps, PreparedProverGroup,
-    ProverOpeningData, RecursiveProveBackend, RingSwitchRelationRows, RootCommitSource,
-    RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
-    SelectedProverOpeningData, SparseRingBlockEntry, TensorBackendFor, TieredProveStacks,
-    UniformProverStack,
+    CommitmentHandleMetadata, ProverBackend, ProverOpeningData, SelectedProverOpeningData,
 };
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-pub use akita_transcript::{AkitaTranscript, Transcript};
-pub use akita_types::{
-    BasisMode, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PrecommittedGroupProfiles,
-};
+pub use akita_setup::new_prover_setup;
+pub use akita_types::{OpeningClaims, PolynomialGroupClaims};
+pub use akita_verifier::AkitaVerifier;
 pub use jolt_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };

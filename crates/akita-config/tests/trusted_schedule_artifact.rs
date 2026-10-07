@@ -3,11 +3,11 @@ use akita_config::{
     TrustedScheduleCatalog, ValidatedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
-use akita_serialization::AkitaSerialize;
-use akita_types::{
+use akita_params::{
     ChunkedWitnessCfg, DecompositionParams, OpeningScheduleSelection, ScheduleRowDigest,
     SisModulusProfileId,
 };
+use akita_serialization::AkitaSerialize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Clone, Copy, Debug)]
@@ -23,8 +23,8 @@ impl CommitmentConfig for CountingDense {
         fp128::Dense::schedule_family_name()
     }
 
-    const RING_DIMENSION_SCHEDULE_MODE: akita_config::RingDimensionScheduleMode =
-        fp128::Dense::RING_DIMENSION_SCHEDULE_MODE;
+    const RING_DIMENSION_SCHEDULE: akita_config::RingDimensionSchedule =
+        fp128::Dense::RING_DIMENSION_SCHEDULE;
     const EXT_DEGREE: usize = fp128::Dense::EXT_DEGREE;
 
     fn decomposition() -> DecompositionParams {
@@ -50,7 +50,7 @@ impl CommitmentConfig for CountingDense {
         fp128::Dense::inner_basis_range()
     }
 
-    fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+    fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
         fp128::Dense::committed_source_class()
     }
 
@@ -84,7 +84,7 @@ fn checked_in_artifact_bytes<Cfg: CommitmentConfig>() -> Vec<u8> {
 
 fn serialized_slot_ids<Cfg: CommitmentConfig>() -> Vec<String> {
     akita_config::SetupRequirements::from_catalog::<Cfg>(&checked_in_catalog::<Cfg>(), 50, 16)
-        .map(|requirements| requirements.prefix_slot_ids)
+        .map(|requirements| requirements.prefix_slot_ids().to_vec())
         .expect("derive recursive setup-prefix slots")
         .into_iter()
         .map(|slot| {
@@ -101,8 +101,7 @@ fn serialized_slot_ids<Cfg: CommitmentConfig>() -> Vec<String> {
 
 fn recursive_prefix_fixture<Cfg: CommitmentConfig>() -> (usize, String) {
     let slots = serialized_slot_ids::<Cfg>();
-    let digest =
-        akita_types::instance_descriptor::digest_descriptor_bytes(slots.join("\n").as_bytes());
+    let digest = akita_params::digest_descriptor_bytes(slots.join("\n").as_bytes());
     let digest = digest
         .into_iter()
         .map(|byte| format!("{byte:02x}"))
@@ -140,6 +139,28 @@ fn mutate_first_json_digit(bytes: &mut [u8], key: &[u8]) {
         b'8'
     } else {
         bytes[digit] + 1
+    };
+}
+
+fn mutate_first_json_number_without_changing_width(bytes: &mut [u8], key: &[u8]) {
+    let value_start = json_value_start(bytes, key, 0);
+    let number_start = bytes[value_start..]
+        .iter()
+        .position(u8::is_ascii_digit)
+        .map(|relative| value_start + relative)
+        .expect("numeric artifact value");
+    let number_end = bytes[number_start..]
+        .iter()
+        .position(|byte| !byte.is_ascii_digit())
+        .map(|relative| number_start + relative)
+        .unwrap_or(bytes.len());
+    let last_digit = bytes
+        .get_mut(number_end - 1)
+        .expect("nonempty numeric artifact value");
+    *last_digit = if *last_digit == b'0' {
+        b'1'
+    } else {
+        *last_digit - 1
     };
 }
 
@@ -315,7 +336,7 @@ fn trusted_artifact_round_trip_preserves_rows_and_selection() {
         .expect("load trusted artifact");
 
     let key =
-        akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
+        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::new(14, 1));
     let checked_in_row = checked_in.resolve_key(&key).expect("checked-in row");
     let loaded_row = loaded.resolve_key(&key).expect("artifact row");
     assert_eq!(loaded.catalog_digest(), checked_in.catalog_digest());
@@ -502,7 +523,7 @@ fn decoder_rejects_format_policy_and_duplicate_row_tampering() {
     assert!(format!("{error}").contains("protocol epoch"));
 
     let mut wrong_policy = bytes.clone();
-    mutate_first_json_digit(&mut wrong_policy, b"\"policy_digest\"");
+    mutate_first_json_number_without_changing_width(&mut wrong_policy, b"\"policy_digest\"");
     let error = TrustedScheduleCatalog::<fp128::Dense>::from_artifact_bytes(&wrong_policy)
         .expect_err("wrong policy digest must reject");
     assert!(format!("{error}").contains("policy"));
@@ -595,6 +616,7 @@ fn catalog_constructor_enforces_family_and_row_count_bounds() {
 
 #[test]
 fn recursive_prefix_slot_id_fixture() {
+    // These setup-prefix identities bind the generated schedule and policy.
     let onehot = recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHot>>();
     let multichunk =
         recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>();
@@ -602,14 +624,14 @@ fn recursive_prefix_slot_id_fixture() {
         onehot,
         (
             3,
-            "7aa5dc54754bdf48823cde0aac34c3926c207e64a118f8ebe9c44d7985484dac".to_string(),
+            "643eb959607f2fa91a51cb4e445ac706c291481c02edc47d3e6836d6185ea58d".to_string(),
         )
     );
     assert_eq!(
         multichunk,
         (
             3,
-            "20fc40144b1de0c287268de2fd6a9bf168f49fb715f60525ef410f6ab4a07156".to_string(),
+            "0ea09bafa95cc857b27075caefeaa5dda6c8fb07ade9216198aac783c6384a59".to_string(),
         )
     );
 }
@@ -618,7 +640,7 @@ fn recursive_prefix_slot_id_fixture() {
 fn setup_prefix_planning_rejects_invalid_capacity_metadata() {
     let dense = checked_in_catalog::<fp128::Dense>();
     let zero_batch = akita_config::SetupRequirements::from_catalog::<fp128::Dense>(&dense, 14, 0)
-        .map(|requirements| requirements.prefix_slot_ids)
+        .map(|requirements| requirements.prefix_slot_ids().to_vec())
         .expect_err("zero-batch setup metadata must reject for nonrecursive configs");
     assert!(format!("{zero_batch}").contains("at least 1"));
 
@@ -626,7 +648,7 @@ fn setup_prefix_planning_rejects_invalid_capacity_metadata() {
     let oversized_vars = akita_config::SetupRequirements::from_catalog::<
         RecursiveCommitmentConfig<fp128::OneHot>,
     >(&recursive, usize::BITS as usize, 1)
-    .map(|requirements| requirements.prefix_slot_ids)
+    .map(|requirements| requirements.prefix_slot_ids().to_vec())
     .expect_err("oversized setup metadata must reject for recursive configs");
     assert!(format!("{oversized_vars}").contains("exceeds preprocessing limits"));
 }
@@ -666,12 +688,249 @@ fn setup_requirements_keep_precommits_when_the_grouped_row_does_not_fit() {
         profile.group.num_polynomials(),
     )
     .expect("independent precommit remains supported");
-    let expected = akita_types::commit_only_setup_field_elements(
+    let expected = akita_params::commit_only_setup_field_elements(
         &profile.inner.matrix,
         &profile.outer.matrix,
         profile.outer_slice_count,
     )
     .unwrap();
-    assert_eq!(required.matrix_capacity.num_field_elements, expected);
-    assert!(required.prefix_slot_ids.is_empty());
+    assert_eq!(required.matrix_capacity().num_field_elements, expected);
+    assert!(required.prefix_slot_ids().is_empty());
+}
+
+#[test]
+fn setup_requirements_union_covers_both_families_at_one_bound() {
+    type OneHot = RecursiveCommitmentConfig<fp128::OneHot>;
+    type MultiChunk = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
+    let requirements_at = |max_num_vars, max_num_batched_polys| {
+        (
+            akita_config::SetupRequirements::from_catalog::<OneHot>(
+                &checked_in_catalog::<OneHot>(),
+                max_num_vars,
+                max_num_batched_polys,
+            )
+            .expect("one-hot requirements"),
+            akita_config::SetupRequirements::from_catalog::<MultiChunk>(
+                &checked_in_catalog::<MultiChunk>(),
+                max_num_vars,
+                max_num_batched_polys,
+            )
+            .expect("multichunk requirements"),
+        )
+    };
+    let (onehot, multichunk) = requirements_at(50, 16);
+    let combined = onehot
+        .clone()
+        .union(multichunk.clone())
+        .expect("same-bound requirements combine");
+
+    assert_eq!(
+        (combined.max_num_vars(), combined.max_num_batched_polys()),
+        (50, 16)
+    );
+    assert_eq!(
+        combined.matrix_capacity().num_field_elements,
+        onehot
+            .matrix_capacity()
+            .num_field_elements
+            .max(multichunk.matrix_capacity().num_field_elements)
+    );
+    assert!(combined
+        .prefix_slot_ids()
+        .windows(2)
+        .all(|pair| pair[0] < pair[1]));
+    for slot in onehot
+        .prefix_slot_ids()
+        .iter()
+        .chain(multichunk.prefix_slot_ids())
+    {
+        assert!(combined.prefix_slot_ids().contains(slot));
+    }
+    assert!(
+        combined.prefix_slot_ids().len()
+            <= onehot.prefix_slot_ids().len() + multichunk.prefix_slot_ids().len()
+    );
+    assert_eq!(
+        combined
+            .clone()
+            .union(combined.clone())
+            .expect("idempotent"),
+        combined
+    );
+
+    let (_, smaller_bound) = requirements_at(40, 16);
+    let error = onehot
+        .union(smaller_bound)
+        .expect_err("requirements at different bounds must not combine");
+    assert!(error.to_string().contains("cannot combine"));
+}
+
+/// Edit a checked-in artifact structurally. Admission audits rows before its
+/// canonical-bytes check, so the edited artifact reaches the audit. The edited
+/// bytes are not in canonical form, so every caller must pin the audit's own
+/// diagnostic: any edit at all is an `InvalidSetup` at the canonical-bytes check.
+fn edited_artifact<Cfg: CommitmentConfig>(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&checked_in_artifact_bytes::<Cfg>()).expect("artifact JSON");
+    edit(&mut value);
+    serde_json::to_vec_pretty(&value).expect("artifact JSON")
+}
+
+fn first_recursive_group(value: &mut serde_json::Value) -> &mut serde_json::Value {
+    value["rows"]
+        .as_array_mut()
+        .expect("rows")
+        .iter_mut()
+        .find_map(|row| {
+            row["schedule"]["recursive_folds"]
+                .as_array_mut()
+                .and_then(|folds| folds.first_mut())
+        })
+        .map(|fold| &mut fold["params"]["groups"]["entries"][0])
+        .expect("a row with a recursive fold group")
+}
+
+fn rejection_message<Cfg: CommitmentConfig>(bytes: &[u8]) -> String {
+    match TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(bytes) {
+        Err(akita_error::AkitaError::InvalidSetup(message)) => message,
+        other => panic!("edited artifact must be rejected as InvalidSetup, got {other:?}"),
+    }
+}
+
+/// Assert the digit-range pass rejected `role` of `group`, naming `edited`
+/// (the out-of-range half of the pair, e.g. `"log_basis 17 "`).
+fn assert_digit_range_rejection<Cfg: CommitmentConfig>(
+    bytes: &[u8],
+    group: &str,
+    role: &str,
+    edited: &str,
+) {
+    let message = rejection_message::<Cfg>(bytes);
+    assert!(
+        message.starts_with(&format!("{group}: {role} log_basis "))
+            && message.contains(edited)
+            && message.ends_with(" is outside the field decomposition"),
+        "{group} {role} must fail the digit-range pass on {edited:?}, got {message:?}"
+    );
+}
+
+#[test]
+fn unsupported_terminal_inner_log_basis_is_rejected_not_panicking() {
+    for log_basis in [0, 17, 128] {
+        let bytes = edited_artifact::<fp128::Dense>(|value| {
+            value["rows"][0]["schedule"]["terminal"]["inner"]["digits"]["log_basis"] =
+                log_basis.into();
+        });
+        assert_digit_range_rejection::<fp128::Dense>(
+            &bytes,
+            "terminal fold",
+            "A",
+            &format!("log_basis {log_basis} "),
+        );
+    }
+}
+
+#[test]
+fn unsupported_fold_group_log_basis_is_rejected_not_panicking() {
+    type Cfg = RecursiveCommitmentConfig<akita_config::proof_optimized::fp32::Dense>;
+    const GROUP: &str = "recursive fold 0 final group";
+    for log_basis in [0, 17, 128] {
+        let edited = format!("log_basis {log_basis} ");
+        let outer = edited_artifact::<Cfg>(|value| {
+            first_recursive_group(value)["profile"]["outer"]["digits"]["log_basis"] =
+                log_basis.into();
+        });
+        if log_basis == 0 {
+            // The structural check owns a zero commitment basis.
+            assert_eq!(
+                rejection_message::<Cfg>(&outer),
+                "commitment group layout requires nonzero outer basis and digit depth"
+            );
+        } else {
+            assert_digit_range_rejection::<Cfg>(&outer, GROUP, "B", &edited);
+        }
+        let opening = edited_artifact::<Cfg>(|value| {
+            first_recursive_group(value)["opening"]["log_basis_open"] = log_basis.into();
+        });
+        assert_digit_range_rejection::<Cfg>(&opening, GROUP, "opening", &edited);
+    }
+}
+
+/// A depth beyond the field decomposition is rejected before any digit formula
+/// reads it. `u64::MAX` once made admission iterate the balanced-digit series
+/// for as many rounds as the artifact asked.
+#[test]
+fn out_of_range_digit_depths_are_rejected_before_digit_formulas() {
+    let edited = format!("digit depth {} ", u64::MAX);
+    let root_fold = edited_artifact::<fp128::Dense>(|value| {
+        value["rows"][0]["schedule"]["root"]["params"]["groups"]["entries"][0]["opening"]
+            ["num_digits_fold"] = u64::MAX.into();
+    });
+    assert_digit_range_rejection::<fp128::Dense>(&root_fold, "root final group", "fold", &edited);
+    let terminal_fold = edited_artifact::<fp128::Dense>(|value| {
+        value["rows"][0]["schedule"]["terminal"]["fold"]["num_digits"] = u64::MAX.into();
+    });
+    assert_digit_range_rejection::<fp128::Dense>(&terminal_fold, "terminal fold", "fold", &edited);
+
+    type Cfg = RecursiveCommitmentConfig<akita_config::proof_optimized::fp32::Dense>;
+    for (key, role) in [("num_digits_open", "opening"), ("num_digits_fold", "fold")] {
+        let bytes = edited_artifact::<Cfg>(|value| {
+            first_recursive_group(value)["opening"][key] = u64::MAX.into();
+        });
+        assert_digit_range_rejection::<Cfg>(&bytes, "recursive fold 0 final group", role, &edited);
+    }
+}
+
+#[test]
+fn canonical_chunk_ownership_rejects_coverage_preserving_mutations() {
+    let catalog = checked_in_catalog::<fp128::OneHotMultiChunk>();
+    let key =
+        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::singleton(16));
+    let row = catalog.resolve_key(&key).unwrap();
+    let policy = policy_of::<fp128::OneHotMultiChunk>();
+    let admit = |schedule| {
+        akita_config::ResolvedScheduleRow::try_new(row.profiles().clone(), schedule, &policy)
+    };
+    admit(row.schedule().clone()).unwrap();
+    let mut mutations = Vec::new();
+    let mut changed = row.schedule().clone();
+    let consumer = &mut changed.recursive_folds[0].params;
+    let old_end = consumer.witness_chunk_ends[0];
+    assert!(old_end + 1 < consumer.witness_chunk_ends[1]);
+    consumer.witness_chunk_ends[0] += 1;
+    let ranges = consumer
+        .witness_block_ranges(0, consumer.witness_chunk.num_chunks)
+        .unwrap();
+    assert!(ranges.windows(2).all(|pair| pair[0].end == pair[1].start));
+    assert_eq!(ranges.first().unwrap().start, 0);
+    assert_eq!(ranges.last().unwrap().end, consumer.blocks().live_blocks);
+    mutations.push(changed);
+    let mut changed = row.schedule().clone();
+    changed.root.params.successor_block_len = changed
+        .root
+        .params
+        .successor_block_len
+        .map(|width| width * 2);
+    mutations.push(changed);
+    let mut changed = row.schedule().clone();
+    changed.recursive_folds[0].params.witness_chunk_ends.pop();
+    mutations.push(changed);
+    let mut changed = row.schedule().clone();
+    changed.root.output_witness_len += 64;
+    changed.recursive_folds[0].input_witness_len += 64;
+    mutations.push(changed);
+    // The pre-cutover geometry used proportional recursive ownership and no
+    // successor padding. Each half of that old/new combination must reject.
+    let mut changed = row.schedule().clone();
+    changed.recursive_folds[0].params.witness_chunk_ends.clear();
+    mutations.push(changed);
+    let mut changed = row.schedule().clone();
+    changed.root.params.successor_block_len = None;
+    mutations.push(changed);
+    for changed in mutations {
+        assert!(matches!(
+            admit(changed),
+            Err(akita_error::AkitaError::InvalidSetup(_))
+        ));
+    }
 }

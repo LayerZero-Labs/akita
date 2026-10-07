@@ -2,13 +2,11 @@
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::instance_descriptor::{
-    digest_descriptor_bytes, AKITA_INSTANCE_DESCRIPTOR_VERSION,
+use akita_params::{
+    digest_descriptor_bytes, CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
+    AKITA_INSTANCE_DESCRIPTOR_VERSION,
 };
-use akita_types::{
-    AkitaScheduleLookupKey, AkitaScheduleLookupOrderKey, CommittedGroupBatchProfile, FoldSchedule,
-    OpeningScheduleSelection,
-};
+use akita_params::{ScheduleLookupKey, ScheduleLookupOrderKey};
 use serde::de::{self, DeserializeSeed, SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -132,7 +130,7 @@ pub struct ValidatedScheduleCatalog {
     policy_digest: [u8; 32],
     catalog_digest: [u8; 32],
     rows_by_digest: Vec<ResolvedScheduleRow>,
-    rows_by_key: Vec<(AkitaScheduleLookupOrderKey, usize)>,
+    rows_by_key: Vec<(ScheduleLookupOrderKey, usize)>,
 }
 
 impl ValidatedScheduleCatalog {
@@ -382,10 +380,7 @@ impl ValidatedScheduleCatalog {
     }
 
     /// Resolve the canonical honest prover row for a runtime key.
-    pub fn resolve_key(
-        &self,
-        key: &AkitaScheduleLookupKey,
-    ) -> Result<&ResolvedScheduleRow, AkitaError> {
+    pub fn resolve_key(&self, key: &ScheduleLookupKey) -> Result<&ResolvedScheduleRow, AkitaError> {
         self.resolve_key_matching(key, None)
     }
 
@@ -399,7 +394,7 @@ impl ValidatedScheduleCatalog {
 
     fn resolve_key_matching(
         &self,
-        key: &AkitaScheduleLookupKey,
+        key: &ScheduleLookupKey,
         exact_profiles: Option<&CommittedGroupBatchProfile>,
     ) -> Result<&ResolvedScheduleRow, AkitaError> {
         let order_key = key.canonical_order_key();
@@ -700,7 +695,7 @@ fn write_indent<W: Write + ?Sized>(writer: &mut W, depth: usize) -> io::Result<(
     Ok(())
 }
 
-fn unsupported_schedule_lookup(key: &AkitaScheduleLookupKey, exact_profiles: bool) -> AkitaError {
+fn unsupported_schedule_lookup(key: &ScheduleLookupKey, exact_profiles: bool) -> AkitaError {
     AkitaError::UnsupportedSchedule(if exact_profiles {
         "no trusted schedule row matches the exact committed profiles".to_string()
     } else {
@@ -732,8 +727,8 @@ fn validate_family_name(family_name: &str) -> Result<(), AkitaError> {
     Ok(())
 }
 
-fn key_for_profiles(profiles: &CommittedGroupBatchProfile) -> AkitaScheduleLookupKey {
-    AkitaScheduleLookupKey {
+fn key_for_profiles(profiles: &CommittedGroupBatchProfile) -> ScheduleLookupKey {
+    ScheduleLookupKey {
         final_group: profiles.final_group.group,
         precommitteds: profiles.precommitteds.clone(),
     }
@@ -761,12 +756,12 @@ fn validate_schedule_challenge_hooks(
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
 ) -> Result<(), AkitaError> {
     let validate = |actual: SparseChallengeConfig,
-                    method: akita_types::OpeningMethod,
+                    method: akita_params::OpeningMethod,
                     ring_dimension: usize,
                     uses_l2: bool,
                     position: ScheduleGroupPosition| {
         let expected = match method {
-            akita_types::OpeningMethod::SubringCoefficientPacking {
+            akita_params::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
             } => SparseChallengeConfig::production_for_ring_dim(challenge_subring_dimension)
                 .ok_or_else(|| {
@@ -774,14 +769,14 @@ fn validate_schedule_challenge_hooks(
                         "{position} uses unsupported challenge subring D={challenge_subring_dimension}"
                     ))
                 })?,
-            akita_types::OpeningMethod::EvaluationTrace if uses_l2 => {
+            akita_params::OpeningMethod::EvaluationTrace if uses_l2 => {
                 akita_challenges::selective_l2_challenge_config(ring_dimension).ok_or_else(|| {
                     AkitaError::InvalidSetup(format!(
                         "{position} has no selective L2 challenge config for D={ring_dimension}"
                     ))
                 })?
             }
-            akita_types::OpeningMethod::EvaluationTrace => {
+            akita_params::OpeningMethod::EvaluationTrace => {
                 ring_challenge_config(ring_dimension)?
             }
         };
@@ -802,7 +797,7 @@ fn validate_schedule_challenge_hooks(
             params.inner_commit_matrix_params().ring_dimension(),
             matches!(
                 params.inner_commit_matrix_params().security_route(),
-                akita_types::InnerCommitSecurityRoute::L2 { .. }
+                akita_params::InnerCommitSecurityRoute::L2 { .. }
             ),
             position,
         ),
@@ -814,7 +809,7 @@ fn validate_schedule_challenge_hooks(
             params.d_a(),
             matches!(
                 params.inner().matrix.security_route(),
-                akita_types::InnerCommitSecurityRoute::L2 { .. }
+                akita_params::InnerCommitSecurityRoute::L2 { .. }
             ),
             position,
         ),
@@ -822,11 +817,11 @@ fn validate_schedule_challenge_hooks(
             position, params, ..
         } => validate(
             params.fold_challenge_config,
-            akita_types::OpeningMethod::EvaluationTrace,
+            akita_params::OpeningMethod::EvaluationTrace,
             params.d_a(),
             matches!(
                 params.inner.matrix.security_route(),
-                akita_types::InnerCommitSecurityRoute::L2 { .. }
+                akita_params::InnerCommitSecurityRoute::L2 { .. }
             ),
             position,
         ),

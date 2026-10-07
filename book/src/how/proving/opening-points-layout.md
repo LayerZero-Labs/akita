@@ -67,13 +67,13 @@ t_hat[claim][block_idx][A_row][B_subcolumn][outer_digit][B_coefficient]
 Only live subcolumns are stored. When every role dimension equals A, the
 subcolumn axis has length one and the byte order is the uniform layout.
 
-[`WitnessLayout`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/witness.rs)
+[`WitnessLayout`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-params/src/witness.rs)
 is the range authority shared by planning, proving, setup, relation evaluation,
 recursive handoff, and verification. Units are ordered by chunk and then
 authenticated relation group. Each unit records its exact
 `global_block_start`, `num_live_blocks`, and coefficient ranges.
 
-The complete physical order depends on the realization:
+In `QuotientLift` mode, the complete physical order depends on the payload:
 
 ```text
 raw:
@@ -93,8 +93,15 @@ compressed:
   [suffix alignment to the common relation coefficient block]
 ```
 
-Thus `r_hat` is logically one quotient family in relation-row order, but its
-compression rows are physically interleaved with the corresponding digit
+In `ReducedEvaluation` mode, omit every ordinary and F/H quotient row from
+these diagrams. The Z/E/T units and any compression digits remain.
+`WitnessLayout` computes the required alignment for the selected mode; it does
+not reserve placeholder ranges for omitted quotients. The [ring-checking
+chapter](./ring-relation-checking.md#what-enters-the-next-witness) explains
+why the two methods need different witnesses.
+
+In quotient-lift mode, `r_hat` is logically one quotient family in
+relation-row order, but its compression rows are physically interleaved with the corresponding digit
 layer rather than stored in one contiguous quotient tail. Every alignment
 range is zero. Boolean padding, if needed by a later flat-table sumcheck, is a
 separate zero suffix after the complete live witness.
@@ -107,7 +114,7 @@ ranges. Raw mode has no compression layers or such support intervals.
 
 ## Chunks and fold challenges
 
-Chunks own contiguous ranges of the exact `F` live blocks. For chunk `i` of
+Root source chunks own contiguous ranges of the exact `F` live blocks. For chunk `i` of
 `P`, the canonical range is
 
 ```text
@@ -121,12 +128,23 @@ the full replicated Z segment and the honest prover fills that segment with
 zero. All supported chunk counts are powers of two. Therefore, every finer
 chunk partition refines every coarser partition.
 
+After a multi-chunk producer, a recursive witness inherits its chunk-major
+Z/E/T bodies. Each body ends at a multiple of this fold's source-block coefficient width;
+the T range itself excludes the alignment gap. The canonical prover zero fills
+these committed, range-constrained coordinates; verification allows nonzero
+filler subject to the [response bounds](../security.md#alignment-coordinates).
+Adjacent owners merge when chunking contracts, and the last owner receives the
+complete shared tail and
+final power-of-two padding. These inherited ranges can differ by more than one
+block. Single-chunk producers keep the original contiguous Z/E/T layout without
+body alignment padding.
+
 Each commitment group owns a fold challenge with `F` independent sparse
 coefficients, one for every live block.
 
 ## B slices and chunks
 
-B slicing uses the same proportional block ranges as witness chunking. For
+B slicing uses proportional block ranges independently of witness ownership. For
 slice `i` of `S`, the range is
 
 ```text
@@ -134,10 +152,10 @@ slice `i` of `S`, the range is
 ```
 
 Unlike chunks, B slices must be nonempty, so `S <= F`. Both `S` and the witness
-chunk count are powers of two. One partition therefore refines the other. The
-intersection of a B slice and a witness chunk is either empty or exactly one
-range of the finer partition. The protocol selects `S` and the chunk count
-independently. It does not create a product partition.
+chunk count are powers of two. At the root, one proportional partition refines
+the other. For inherited witness chunks, a slice/chunk intersection is the
+intersection of their exact contiguous block ranges. The protocol selects `S`
+and the chunk count independently. It does not create a product partition.
 
 Slicing does not change the opening point, block indices, or fold challenge
 coordinates. It only changes how the existing block-ordered T input is sent

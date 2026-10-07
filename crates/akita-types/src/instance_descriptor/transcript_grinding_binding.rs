@@ -1,7 +1,7 @@
 //! Protocol-wide transcript-grinding contract bound into every preamble.
 
-use crate::GrindingPlan;
 use akita_error::AkitaError;
+use akita_params::GrindingPlan;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -68,16 +68,20 @@ impl AkitaDeserialize for TranscriptGrindingBinding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GrindingRun, GrindingSite};
+    use akita_params::{ChallengeFieldOrder, GrindingRun, GrindingSite};
 
     fn sample_plan() -> GrindingPlan {
         GrindingPlan::new(
             vec![
-                GrindingRun::proof_of_work(GrindingSite::EvaluationBatch { level: 0 }, 1, 128)
-                    .unwrap(),
+                GrindingRun::proof_of_work(
+                    GrindingSite::EvaluationBatch { level: 0 },
+                    1,
+                    ChallengeFieldOrder::from_full_capacity(128).unwrap(),
+                )
+                .unwrap(),
                 GrindingRun::fold_response(0),
             ],
-            128,
+            ChallengeFieldOrder::from_full_capacity(128).unwrap(),
         )
         .unwrap()
     }

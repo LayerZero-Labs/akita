@@ -1,13 +1,15 @@
 use super::*;
-use jolt_field::{Fp128x8i32, Fp64x4i32, WithCommitAccumulator};
-use jolt_field::{Fp64, Prime128Offset275, Prime32Offset99};
+use jolt_field::{Fp128x8i32, Fp32x2i32, Fp64x4i32, WithCommitAccumulator};
+use jolt_field::{Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 type F64 = Fp64<4294967197>;
-type F64Wide = Fp64<{ u64::MAX - 58 }>;
 type F128 = Prime128Offset275;
 type F32 = Prime32Offset99;
+/// Production 64-bit prime: unlike `F64`, its canonical values fill all four
+/// 16-bit commit lanes.
+type F64Full = Prime64Offset59;
 const D: usize = 64;
 
 #[test]
@@ -112,32 +114,15 @@ fn wide_shift_accumulate_matches_narrow_fp64() {
 }
 
 #[test]
-fn wide_shift_sub_matches_narrow_fp64() {
-    let mut rng = StdRng::seed_from_u64(0x5678);
-    let src = CyclotomicRing::<F64, D>::random(&mut rng);
-    let initial = CyclotomicRing::<F64, D>::random(&mut rng);
-
-    for k in 0..D {
-        let mut narrow = initial;
-        src.shift_sub_into(&mut narrow, k);
-
-        let wide_src = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&src);
-        let mut wide_dst = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&initial);
-        wide_src.shift_sub_into(&mut wide_dst, k);
-        let wide_reduced: CyclotomicRing<F64, D> = wide_dst.reduce();
-
-        assert_eq!(narrow, wide_reduced, "shift_sub k={k}");
-    }
-}
-
-#[test]
 fn wide_mul_by_monomial_sum_matches_narrow_fp64() {
     let mut rng = StdRng::seed_from_u64(0xabcd);
     let src = CyclotomicRing::<F64, D>::random(&mut rng);
     let positions = vec![0, 5, 17, 42, 63];
 
     let mut narrow = CyclotomicRing::<F64, D>::zero();
-    src.mul_by_monomial_sum_into(&mut narrow, &positions);
+    for &k in &positions {
+        narrow += src.negacyclic_shift(k);
+    }
 
     let wide_src = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&src);
     let mut wide_dst = WideCyclotomicRing::<Fp64x4i32, D>::zero();
@@ -177,42 +162,18 @@ fn wide_many_accumulations_fp128() {
         src.shift_accumulate_into(&mut narrow, k % D);
         wide_src.shift_accumulate_into(&mut wide_dst, k % D);
     }
-    for k in 0..30 {
-        src.shift_sub_into(&mut narrow, k % D);
-        wide_src.shift_sub_into(&mut wide_dst, k % D);
-    }
 
     let wide_reduced: CyclotomicRing<F128, D> = wide_dst.reduce();
     assert_eq!(narrow, wide_reduced);
 }
 
-#[test]
-fn center_for_decomposition_hits_fp128_overflow_boundaries() {
-    let q = (-F128::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
-    let i128_max = i128::MAX as u128;
-
-    for &(levels, log_basis) in &[(64usize, 2u32), (32usize, 4u32)] {
-        let threshold = decompose_centering_threshold(levels, log_basis, q);
-        let cases = [
-            (threshold, false),
-            (threshold + 1, true),
-            (q - i128_max - 1, true),
-            (q - i128_max, false),
-            (q - 1, false),
-        ];
-
-        for (canonical, expect_overflow) in cases {
-            let (_, first_digit) = center_for_decomposition(canonical, q, threshold, log_basis);
-            assert_eq!(
-                first_digit.is_some(),
-                expect_overflow,
-                "unexpected overflow classification for levels={levels}, log_basis={log_basis}, canonical={canonical}"
-            );
-        }
-    }
+fn decompose_i8(ring: &CyclotomicRing<F128, D>, levels: usize, log_basis: u32) -> Vec<[i8; D]> {
+    let mut digits = vec![[0i8; D]; levels];
+    ring.balanced_decompose_pow2_i8_into_with_params(
+        &mut digits,
+        &BalancedDecomposePow2Params::new(levels, log_basis),
+    );
+    digits
 }
 
 #[test]
@@ -240,16 +201,7 @@ fn asymmetric_centering_boundary_roundtrip_fp128() {
             F128::from_u128_reduced(boundary_values[i % boundary_values.len()])
         }));
 
-        let mut digits = vec![CyclotomicRing::<F128, D>::zero(); levels];
-        ring.balanced_decompose_pow2_into(&mut digits, log_basis);
-        let recomposed = CyclotomicRing::gadget_recompose_pow2(&digits, log_basis);
-        assert_eq!(
-            ring, recomposed,
-            "field roundtrip failed for log_basis={log_basis}, levels={levels}"
-        );
-
-        let mut i8_digits = vec![[0i8; D]; levels];
-        ring.balanced_decompose_pow2_i8_into(&mut i8_digits, log_basis);
+        let i8_digits = decompose_i8(&ring, levels, log_basis);
         let recomposed_i8 = CyclotomicRing::gadget_recompose_pow2_i8(&i8_digits, log_basis);
         assert_eq!(
             ring, recomposed_i8,
@@ -259,147 +211,8 @@ fn asymmetric_centering_boundary_roundtrip_fp128() {
 }
 
 #[test]
-fn flat_coefficient_decomposition_matches_ring_digit_layout() {
-    let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|index| match index % 6 {
-        0 => F128::zero(),
-        1 => F128::one(),
-        2 => -F128::one(),
-        3 => F128::from_u64((index * 17) as u64),
-        4 => F128::from_i64(-((index * 19) as i64)),
-        _ => F128::from_u128_reduced(u128::MAX - index as u128),
-    }));
-
-    for (levels, log_basis) in [(128, 1), (64, 2), (32, 4), (16, 8)] {
-        let ring_digits = ring.balanced_decompose_pow2_i8(levels, log_basis);
-        let mut flat_digits = vec![0i8; D * levels];
-        let q = (-F128::one())
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128")
-            + 1;
-        let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
-        balanced_decompose_coefficients_pow2_i8_into(&ring.coeffs, &mut flat_digits, &params);
-        assert_eq!(flat_digits, ring_digits.as_flattened());
-    }
-}
-
-#[test]
-fn fp32_i8_decomposition_matches_scalar_at_centering_boundaries() {
-    let q = (-F32::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
-    for log_basis in 1..=8 {
-        let levels = 32usize.div_ceil(log_basis as usize);
-        let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
-        let threshold = decompose_centering_threshold(levels, log_basis, q);
-        let boundary_values = [
-            0,
-            1,
-            threshold.saturating_sub(1),
-            threshold,
-            threshold + 1,
-            q / 2,
-            q / 2 + 1,
-            q - (i32::MAX as u128) - 1,
-            q - (i32::MAX as u128),
-            q - 2,
-            q - 1,
-        ];
-        let coefficients: [F32; D] =
-            from_fn(|index| F32::from_u128_reduced(boundary_values[index % boundary_values.len()]));
-        let mut actual = vec![0i8; D * levels];
-        balanced_decompose_coefficients_pow2_i8_into(&coefficients, &mut actual, &params);
-
-        let b = 1i128 << log_basis;
-        let half_b = b >> 1;
-        let mask = b - 1;
-        let mut expected = vec![0i8; D * levels];
-        for (coefficient, value) in coefficients.iter().enumerate() {
-            let (mut quotient, first) = peel_first_balanced_digit(
-                value
-                    .to_u128_checked()
-                    .expect("Akita field element must fit in u128"),
-                q,
-                threshold,
-                mask,
-                half_b,
-                b,
-                log_basis,
-            );
-            expected[coefficient] = first as i8;
-            for level in 1..levels {
-                let raw = quotient & mask;
-                let digit = if raw >= half_b { raw - b } else { raw };
-                quotient = (quotient - digit) >> log_basis;
-                expected[level * D + coefficient] = digit as i8;
-            }
-        }
-        assert_eq!(actual, expected, "log_basis={log_basis}");
-    }
-}
-
-#[test]
-fn fp64_i8_decomposition_matches_generic_at_centering_boundaries() {
-    let q = (-F64Wide::one())
-        .to_u128_checked()
-        .expect("Fp64 values fit in u128")
-        + 1;
-    for log_basis in 1..=8 {
-        let levels = 64usize.div_ceil(log_basis as usize);
-        let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
-        let threshold = decompose_centering_threshold(levels, log_basis, q);
-        let boundary_values = [
-            0,
-            1,
-            threshold.saturating_sub(1),
-            threshold,
-            threshold + 1,
-            q / 2,
-            q / 2 + 1,
-            q - (i64::MAX as u128) - 1,
-            q - (i64::MAX as u128),
-            q - 2,
-            q - 1,
-        ];
-        let coefficients: [F64Wide; D] = from_fn(|index| {
-            F64Wide::from_u128_reduced(boundary_values[index % boundary_values.len()])
-        });
-        let mut actual = vec![0i8; D * levels];
-        balanced_decompose_coefficients_pow2_i8_into(&coefficients, &mut actual, &params);
-
-        let b = 1i128 << log_basis;
-        let half_b = b >> 1;
-        let mask = b - 1;
-        let mut expected = vec![0i8; D * levels];
-        for (coefficient, value) in coefficients.iter().enumerate() {
-            let (mut quotient, first) = peel_first_balanced_digit(
-                value.to_u128_checked().expect("Fp64 values fit in u128"),
-                q,
-                threshold,
-                mask,
-                half_b,
-                b,
-                log_basis,
-            );
-            expected[coefficient] = first as i8;
-            for level in 1..levels {
-                let raw = quotient & mask;
-                let digit = if raw >= half_b { raw - b } else { raw };
-                quotient = (quotient - digit) >> log_basis;
-                expected[level * D + coefficient] = digit as i8;
-            }
-        }
-        assert_eq!(actual, expected, "log_basis={log_basis}");
-    }
-}
-
-#[test]
 fn fp32_i8_decomposition_with_zero_levels_is_a_noop() {
-    let q = (-F32::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
-    let params = BalancedDecomposePow2Params::new(0, 8, q);
+    let params = BalancedDecomposePow2Params::new(0, 8);
     let coefficients = [F32::one(); D];
     let mut output = [];
 
@@ -419,7 +232,11 @@ fn balanced_i16_decomposition_supports_bases_ten_and_eleven() {
     }));
 
     for log_basis in [10, 11] {
-        let digits = ring.balanced_decompose_pow2_i16(12, log_basis);
+        let mut digits = vec![[0i16; D]; 12];
+        ring.balanced_decompose_pow2_i16_into(
+            &mut digits,
+            &BalancedDecomposePow2Params::new(12, log_basis),
+        );
         let bound = 1i16 << (log_basis - 1);
         assert!(digits
             .iter()
@@ -447,8 +264,117 @@ fn balanced_i8_decomposition_includes_bases_seven_and_eight() {
         _ => F128::from_i64(127),
     }));
     for log_basis in [7, 8] {
-        let digits = ring.balanced_decompose_pow2_i8(16, log_basis);
+        let digits = decompose_i8(&ring, 16, log_basis);
         let recomposed = CyclotomicRing::gadget_recompose_pow2_i8(&digits, log_basis);
         assert_eq!(recomposed, ring);
     }
+}
+
+#[test]
+fn coefficient_inner_product_is_constant_term_of_conjugate_product() {
+    let mut rng = StdRng::seed_from_u64(0xC7);
+    for _ in 0..16 {
+        let a = CyclotomicRing::<F128, D>::random(&mut rng);
+        let b = CyclotomicRing::<F128, D>::random(&mut rng);
+        assert_eq!(a.constant_term(), a.coefficients()[0]);
+        assert_eq!(
+            a.coefficient_inner_product(&b),
+            (a * b.sigma_m1()).constant_term()
+        );
+        assert_eq!(
+            a.coefficient_inner_product(&b),
+            b.coefficient_inner_product(&a)
+        );
+    }
+    let x = CyclotomicRing::<F64, D>::x();
+    assert_eq!(x.sigma_m1().coefficients()[D - 1], -F64::one());
+    assert_eq!(x.coefficient_inner_product(&x), F64::one());
+    assert_eq!(x.constant_term(), F64::zero());
+}
+
+fn check_shift_windows_match_wide_accumulation<F, const D: usize>(seed: u64)
+where
+    F: Field + WithCommitAccumulator,
+{
+    let mut rng = StdRng::seed_from_u64(seed);
+    let edge = CyclotomicRing::<F, D>::from_coefficients(from_fn(|i| match i % 4 {
+        0 => -F::one(),
+        1 => F::one(),
+        2 => F::zero(),
+        _ => -F::from_u64(2),
+    }));
+    let mut windows = NegacyclicShiftWindows::<F, D>::default();
+    for src in [CyclotomicRing::<F, D>::random(&mut rng), edge] {
+        windows.load(&src);
+        let wide_src = WideCyclotomicRing::<F::Wide, D>::from_ring(&src);
+        for batch in [0, 1, 3, 7, 11, 2 * D] {
+            let initial = CyclotomicRing::<F, D>::random(&mut rng);
+            let shifts: Vec<usize> = (0..batch)
+                .map(|_| (rng.next_u64() % D as u64) as usize)
+                .collect();
+            let mut expected = WideCyclotomicRing::<F::Wide, D>::from_ring(&initial);
+            for &shift in &shifts {
+                wide_src.shift_accumulate_into(&mut expected, shift);
+            }
+            let mut actual = WideCyclotomicRing::<F::Wide, D>::from_ring(&initial);
+            windows.accumulate_shifts_into(&mut actual, &shifts);
+            assert_eq!(
+                actual.reduce::<F>(),
+                expected.reduce::<F>(),
+                "D={D} batch={batch}"
+            );
+        }
+    }
+}
+
+#[test]
+fn shift_windows_match_wide_accumulation() {
+    check_shift_windows_match_wide_accumulation::<F32, 64>(0x51);
+    check_shift_windows_match_wide_accumulation::<F32, 512>(0x52);
+    check_shift_windows_match_wide_accumulation::<F64, 64>(0x53);
+    check_shift_windows_match_wide_accumulation::<F64, 512>(0x54);
+    check_shift_windows_match_wide_accumulation::<F64Full, 64>(0x59);
+    check_shift_windows_match_wide_accumulation::<F64Full, 512>(0x5a);
+    check_shift_windows_match_wide_accumulation::<F128, 64>(0x55);
+    check_shift_windows_match_wide_accumulation::<F128, 128>(0x56);
+    check_shift_windows_match_wide_accumulation::<F128, 256>(0x57);
+    check_shift_windows_match_wide_accumulation::<F128, 512>(0x58);
+}
+
+fn check_shift_windows_stay_exact_at_commit_budget<F>()
+where
+    F: Field + WithCommitAccumulator,
+{
+    // `-1` has the largest canonical lanes; shift 0 reads it through the
+    // positive half and shift `D - 1` of `1` reads it through the negative half.
+    let budget = <F as WithCommitAccumulator>::MAX_COMMIT_ACCUMULATIONS;
+    for (value, shift) in [(-F::one(), 0), (F::one(), D - 1)] {
+        let src = CyclotomicRing::<F, D>::from_coefficients([value; D]);
+        let mut windows = NegacyclicShiftWindows::<F, D>::default();
+        windows.load(&src);
+        let mut wide = WideCyclotomicRing::<F::Wide, D>::zero();
+        windows.accumulate_shifts_into(&mut wide, &vec![shift; budget]);
+
+        let expected = src
+            .negacyclic_shift(shift)
+            .scale(&F::from_u64(budget as u64));
+        assert_eq!(wide.reduce::<F>(), expected, "shift={shift}");
+    }
+}
+
+#[test]
+fn shift_windows_stay_exact_at_commit_budget() {
+    check_shift_windows_stay_exact_at_commit_budget::<F32>();
+    check_shift_windows_stay_exact_at_commit_budget::<F64Full>();
+    check_shift_windows_stay_exact_at_commit_budget::<F128>();
+}
+
+#[test]
+#[should_panic(expected = "out of range")]
+fn shift_windows_reject_shift_of_d() {
+    let src = CyclotomicRing::<F32, D>::one();
+    let mut windows = NegacyclicShiftWindows::<F32, D>::default();
+    windows.load(&src);
+    let mut wide = WideCyclotomicRing::<Fp32x2i32, D>::zero();
+    windows.accumulate_shifts_into(&mut wide, &[D]);
 }

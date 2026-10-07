@@ -194,10 +194,27 @@ The proof sends only `[c0, c2, ..., cd]`. The verifier recovers the missing
 linear contribution while evaluating the message at the next challenge. This
 saves one field element in every round without changing the protocol.
 
-The types `UniPoly` and `CompressedUniPoly` in
-`akita-algebra/src/uni_poly.rs` own this rule. Proof decoding is headerless:
+The types `UnivariatePoly` and `CompressedPoly` in `jolt-poly` own this rule.
+`akita-serialization` preserves Akita's wire encoding. Proof decoding is headerless:
 the verifier derives each expected coefficient count from the proof shape
 rather than trusting a length supplied by the proof.
+
+Every ordinary round message must retain at least its constant coefficient.
+The prover compresses the zero polynomial to `[0]`, including when its full
+coefficient vector is empty. An empty compressed message is malformed: the
+verifier cannot use it to reconstruct the linear coefficient from the incoming
+claim. Both ordinary sum-check drivers check the round count, nonempty messages,
+and degree bounds before absorbing any data in their own replay. A caller may
+already have absorbed the public statement or batching data before entering a
+driver.
+
+A single stored coefficient can still represent a linear polynomial, so its
+degree estimate is one. Ordinary rounds require a degree bound of at least one,
+even for constant polynomials. A zero-round proof instead has no messages and
+leaves the input claim for the final oracle check. These rules differ from
+[equality-factored sum-check](./eq-factored-sumcheck.md), where a valid constant
+inner polynomial has an empty message and its constant term is recovered from
+the normalized claim.
 
 ## Batching several claims
 
@@ -249,7 +266,7 @@ rule in `batched_sumcheck.rs`.
 | --- | --- |
 | Evaluate a multilinear table | `akita-algebra/src/poly.rs` |
 | Build equality-polynomial tables | `akita-algebra/src/eq_poly.rs` |
-| Represent and compress round polynomials | `akita-algebra/src/uni_poly.rs` |
+| Represent and compress round polynomials | `jolt-poly/src/univariate.rs` and `jolt-poly/src/compressed_univariate.rs` |
 | Define prover and verifier instance contracts | `akita-sumcheck/src/traits.rs` |
 | Encode proofs and verify ordinary rounds | `akita-sumcheck/src/types.rs` |
 | Batch claims and right-align shorter instances | `akita-sumcheck/src/batched_sumcheck.rs` |

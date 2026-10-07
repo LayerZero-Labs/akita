@@ -43,25 +43,54 @@ let setup = scheme.setup_prover(
 ```
 
 A larger covering setup can serve a smaller proof under the same public seed.
-The commitment and proof bind the public setup identity, not the amount of
+Of the setup, the commitment and proof bind only the seed, not the amount of
 matrix data that one prover happened to store.
 
 For a recursive configuration, setup construction also prepares the setup
 prefix commitments required by its supplied catalog. The host should build
 setup with the configuration that will produce the final proofs.
 
+## Share one setup across families
+
+Configurations with the same field can share one setup, and those that also
+share the extension field can share one backend. Compute each catalog's
+requirements at the same bound, combine them, and build the setup from the
+combined requirements:
+
+```rust
+let requirements = SetupRequirements::from_catalog::<DenseConfig>(
+    dense_scheme.schedules(),
+    max_num_vars,
+    max_total_batched_polys,
+)?
+.union(SetupRequirements::from_catalog::<OneHotConfig>(
+    onehot_scheme.schedules(),
+    max_num_vars,
+    max_total_batched_polys,
+)?)?;
+let setup = akita_pcs::new_prover_setup::<Field>(&requirements)?;
+```
+
+The combined setup uses the same public seed as each per-family setup, so a
+proof produced with it is byte-identical to one produced with the smaller
+per-family setup. The transcript's instance descriptor binds the field
+algebra, the family's decomposition and SIS profile, the setup seed, the
+selected schedule row, the grinding plan, and the call layout. It binds no
+provisioned capacity: neither the setup's variable and polynomial bounds nor
+its materialized matrix length. Commitments read the same seed-derived matrix
+prefix under either setup. Each commitment call uses its producer catalog.
+Each opening selects a row from, and is admitted against, its opening catalog.
+
+`SetupRequirements<F>` is tied to the field and has no public constructor
+other than `from_catalog` and `union`, so every requirement passed to
+`new_prover_setup` comes from validated catalog metadata.
+
 ## Prepare the compute backend
 
 The CPU backend turns public setup into reusable execution state.
 
 ```rust
-let backend = CpuBackend::DEFAULT;
-let prepared = backend.prepare_setup(&setup)?;
-let stack = UniformProverStack::uniform(
-    &backend,
-    &prepared,
-    setup.expanded.as_ref(),
-)?;
+let backend = std::sync::Arc::new(CpuBackend::new(setup.expanded.clone())?);
 ```
 
 The prepared state starts with empty transform caches. Commitment and proving
@@ -73,9 +102,10 @@ stream and are not covered by `AkitaSetupSeed`. Two machines may retain
 different transform domains and prefix lengths while producing identical
 commitments and proofs.
 
-Keep `backend`, `prepared`, and `stack` alive across repeated work. This makes
-later commitments and proofs reuse the matrix transforms already built by the
-first one.
+Keep the shared `backend` alive across repeated work. It owns prepared setup
+resources and caches. Reusable commitment handles retain their immutable sources,
+while every proof creates separate temporary state. Finishing or abandoning one
+proof leaves other proofs and commitments valid.
 
 ## Build verifier setup
 
@@ -114,20 +144,10 @@ Those commitments authenticate the offloaded public setup contributions.
 Prepared state stays warm by default. That is the right policy for a service
 that proves many statements with the same setup.
 
-Some hosts need to lower peak memory between the root fold and the recursive
-suffix. `ReleaseRootNttAfterFold::new(stacks)` wraps a stack selector and requests
-release through `LevelProveStacks::after_root_fold`. The root stack visits each
-physical cache owner once.
-
-The CPU backend removes built shared-matrix transform entries and keeps
-compression transforms. Active readers retain the storage they still need.
-Release therefore does not guarantee an immediate drop in process memory.
-Later operations rebuild removed entries when needed.
-
-Choose this policy when the root caches can be released without removing warm
-state needed by concurrent work. If the suffix needs an empty cache, prevent
-concurrent cache construction at the release boundary. The default stack policy
-keeps prepared caches after the root fold and across later proofs.
+Applications can call `backend.trim_caches()` to release reusable transform
+entries. Active operations retain the storage they still need. Proof completion
+releases proof-owned temporary state while shared caches may survive for later
+proofs. Cache entries rebuild lazily when needed.
 
 The release policy changes local memory and compute time. It does not change
 setup identity, commitment identity, or proof bytes. Measure the complete host

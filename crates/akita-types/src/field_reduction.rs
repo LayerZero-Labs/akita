@@ -4,12 +4,10 @@
 //! `F_{q^k}` to `R_q` reduction. They are intentionally standalone so the
 //! mathematical contract can be tested independently of the prover API.
 
-use crate::dispatch_for_field;
 use akita_algebra::CyclotomicRing;
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_serialization::Valid;
-use jolt_field::{CanonicalEncoding, Ext2, ExtField, Field, FpExt4, FpExt8, PseudoMersenne, Ring};
-use std::array::from_fn;
+use jolt_field::{Ext2, ExtField, Field, FpExt4, FpExt8, PseudoMersenne, Ring};
 
 /// Extension fields whose `ExtField::to_base_vec` coordinates are the
 /// ring-subfield coordinates consumed by [`psi_embed`] and [`embed_subfield`].
@@ -129,12 +127,6 @@ impl<const D: usize, const K: usize> SubfieldParams<D, K> {
         }
 
         Ok(Self { _private: () })
-    }
-
-    /// Extension degree `K`.
-    #[inline]
-    pub const fn extension_degree(&self) -> usize {
-        K
     }
 
     /// Automorphism exponents generating `H`, modulo `2D`.
@@ -352,34 +344,6 @@ where
     }
 }
 
-/// Runtime-dimension form of [`embed_ring_subfield_scalar`]: returns the
-/// embedded element as `ring_d` flat coefficients.
-///
-/// # Errors
-///
-/// Returns an error if `ring_d` is unsupported, the extension degree is
-/// unsupported, or the scalar does not expose exactly `K = [E:F]`
-/// ring-subfield coordinates.
-pub fn embed_ring_subfield_scalar_flat<F, E>(
-    ring_d: usize,
-    value: E,
-    error: AkitaError,
-) -> Result<Vec<F>, AkitaError>
-where
-    F: Field + Ring + CanonicalEncoding,
-    E: FpExtEncoding<F>,
-{
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Outer),
-        F,
-        ring_d,
-        |D| {
-            embed_ring_subfield_scalar::<F, E, D>(value, error.clone())
-                .map(|ring| ring.coefficients().to_vec())
-        }
-    )
-}
-
 /// Pack a base-field digit evaluation table into the canonical tensor
 /// extension ring-subfield representation.
 ///
@@ -440,7 +404,9 @@ pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
                     }
                     let mut coordinates = [0i8; $k];
                     for coordinate in coordinates.iter_mut().take(width) {
-                        *coordinate = digits.next().ok_or(AkitaError::InvalidProof)?;
+                        *coordinate = digits.next().ok_or_else(|| {
+                            AkitaError::Internal("tensor digit iterator ended early".into())
+                        })?;
                     }
                     if idx < half {
                         let shift = idx;
@@ -592,10 +558,18 @@ where
 
     let mut inner_product = E::zero();
     for residue in 0..stride {
-        let lhs_low = decode(lhs, residue, false).ok_or(AkitaError::InvalidProof)?;
-        let rhs_low = decode(rhs, residue, false).ok_or(AkitaError::InvalidProof)?;
-        let lhs_high = decode(lhs, residue, true).ok_or(AkitaError::InvalidProof)?;
-        let rhs_high = decode(rhs, residue, true).ok_or(AkitaError::InvalidProof)?;
+        let lhs_low = decode(lhs, residue, false).ok_or_else(|| {
+            AkitaError::Internal("psi recovery cannot extract the low left coordinates".into())
+        })?;
+        let rhs_low = decode(rhs, residue, false).ok_or_else(|| {
+            AkitaError::Internal("psi recovery cannot extract the low right coordinates".into())
+        })?;
+        let lhs_high = decode(lhs, residue, true).ok_or_else(|| {
+            AkitaError::Internal("psi recovery cannot extract the high left coordinates".into())
+        })?;
+        let rhs_high = decode(rhs, residue, true).ok_or_else(|| {
+            AkitaError::Internal("psi recovery cannot extract the high right coordinates".into())
+        })?;
         inner_product += lhs_low * rhs_low + lhs_high * rhs_high;
     }
     Ok(inner_product)
@@ -636,8 +610,7 @@ where
     F: Field + Ring,
     E: FpExtEncoding<F>,
 {
-    let ring_len = 1usize
-        .checked_shl(ring_bits as u32)
+    let ring_len = checked::pow2(ring_bits)
         .ok_or_else(|| AkitaError::InvalidInput("trace-open row length overflow".to_string()))?;
     let trace_partner = packed_inner_point.sigma_m1();
     let mut trace_product = CyclotomicRing::zero();
@@ -656,139 +629,40 @@ where
             let mut row = Vec::with_capacity(ring_len);
             for shift in 0..ring_len {
                 let mut coordinates = [F::zero(); $k];
-                coordinates[0] = shifted_coefficient(&trace_product, shift, 0)
-                    .ok_or(AkitaError::InvalidProof)?;
+                coordinates[0] =
+                    shifted_coefficient(&trace_product, shift, 0).ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "trace-open row length exceeds the ring dimension".into(),
+                        )
+                    })?;
                 for (index, coordinate) in coordinates.iter_mut().enumerate().skip(1) {
-                    let position = index.checked_mul(step).ok_or(AkitaError::InvalidProof)?;
-                    let inverse = D.checked_sub(position).ok_or(AkitaError::InvalidProof)?;
-                    let left = shifted_coefficient(&trace_product, shift, position)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let right = shifted_coefficient(&trace_product, shift, inverse)
-                        .ok_or(AkitaError::InvalidProof)?;
+                    let position = index.checked_mul(step).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "trace-open coordinate position overflows usize".into(),
+                        )
+                    })?;
+                    let inverse = D.checked_sub(position).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "trace-open inverse coordinate exceeds the ring dimension".into(),
+                        )
+                    })?;
+                    let left =
+                        shifted_coefficient(&trace_product, shift, position).ok_or_else(|| {
+                            AkitaError::Internal(
+                                "trace-open left coordinate is outside the validated ring".into(),
+                            )
+                        })?;
+                    let right =
+                        shifted_coefficient(&trace_product, shift, inverse).ok_or_else(|| {
+                            AkitaError::Internal(
+                                "trace-open right coordinate is outside the validated ring".into(),
+                            )
+                        })?;
                     *coordinate = (left - right) * half;
                 }
                 row.push(E::from_base_slice(&coordinates));
             }
             Ok(row)
-        }};
-    }
-
-    match E::DEGREE {
-        1 => arm!(1),
-        2 => arm!(2),
-        4 => arm!(4),
-        8 => arm!(8),
-        _ => Err(AkitaError::InvalidInput(
-            "unsupported ring-subfield extension degree".to_string(),
-        )),
-    }
-}
-
-fn lift_ring_to_extension<F, E, const D: usize>(ring: &CyclotomicRing<F, D>) -> CyclotomicRing<E, D>
-where
-    F: Field,
-    E: ExtField<F>,
-{
-    CyclotomicRing::from_coefficients(from_fn(|idx| E::lift_base(ring.coefficients()[idx])))
-}
-
-fn weighted_negacyclic_shift_sum<E, const D: usize>(
-    ring: &CyclotomicRing<E, D>,
-    eq_coords: &[E],
-) -> CyclotomicRing<E, D>
-where
-    E: Field,
-{
-    let mut out = CyclotomicRing::<E, D>::zero();
-    for (coord, weight) in eq_coords.iter().copied().enumerate() {
-        if weight.is_zero() {
-            continue;
-        }
-        ring.shift_scale_accumulate_into(&mut out, coord, weight);
-    }
-    out
-}
-
-fn decode_extension_linear_trace<F, E, const D: usize, const K: usize>(
-    params: SubfieldParams<D, K>,
-    trace_input: &CyclotomicRing<E, D>,
-) -> Result<E, AkitaError>
-where
-    F: Field + Ring,
-    E: ExtField<F>,
-{
-    if K == 1 {
-        return Ok(trace_input.coefficients()[0]);
-    }
-
-    let traced = trace_h::<E, D, K>(params, trace_input);
-    let scale_inv = F::from_u64(params.packed_len() as u64)
-        .inverse()
-        .ok_or_else(|| AkitaError::InvalidInput("trace scale is not invertible".to_string()))?;
-    let scale_inv = E::lift_base(scale_inv);
-    let coeffs = traced.coefficients();
-    let step = D / (2 * K);
-    let mut out = coeffs[0] * scale_inv;
-
-    let mut j = 1usize;
-    while j < K {
-        let mut basis_coords = [F::zero(); K];
-        basis_coords[j] = F::one();
-        let basis = E::from_base_slice(&basis_coords);
-        out += coeffs[j * step] * scale_inv * basis;
-        j += 1;
-    }
-
-    Ok(out)
-}
-
-/// `Σ_c eq_coords[c] · TraceOpen(folded · X^c)` for a pre-folded extension ring.
-///
-/// `folded` is the block-weighted, lifted fold-block ring for one trace term:
-/// `Σ_block col_factor(block) · lift(block_ring)`. Because the whole trace-open
-/// pipeline (shift sum, ring product, `Tr_H`, decode) is `E`-linear in the ring
-/// argument, summing the per-block trace opens equals one trace open of the
-/// folded ring. The caller therefore pays a single `Tr_H` of one ring product
-/// per term instead of one per fold block.
-pub(crate) fn trace_open_folded_ring_mle_dot<F, E, const D: usize>(
-    folded: &CyclotomicRing<E, D>,
-    eq_coords: &[E],
-    packed_inner_point: &CyclotomicRing<F, D>,
-    ring_bits: usize,
-) -> Result<E, AkitaError>
-where
-    F: Field + Ring,
-    E: FpExtEncoding<F> + ExtField<F>,
-{
-    let ring_bits = u32::try_from(ring_bits).map_err(|_| {
-        AkitaError::InvalidInput("trace-open ring bits exceed platform width".to_string())
-    })?;
-    let ring_len = 1usize
-        .checked_shl(ring_bits)
-        .ok_or_else(|| AkitaError::InvalidInput("trace-open eq length overflow".to_string()))?;
-    if ring_len != D {
-        return Err(AkitaError::InvalidSize {
-            expected: D,
-            actual: ring_len,
-        });
-    }
-    if eq_coords.len() != ring_len {
-        return Err(AkitaError::InvalidSize {
-            expected: ring_len,
-            actual: eq_coords.len(),
-        });
-    }
-    macro_rules! arm {
-        ($k:expr) => {{
-            let params = SubfieldParams::<D, $k>::new().map_err(|_| {
-                AkitaError::InvalidInput(
-                    "claim-field degree must divide the ring dimension".to_string(),
-                )
-            })?;
-            let shifted = weighted_negacyclic_shift_sum::<E, D>(folded, eq_coords);
-            let trace_partner = lift_ring_to_extension::<F, E, D>(&packed_inner_point.sigma_m1());
-            let trace_input = shifted * trace_partner;
-            decode_extension_linear_trace::<F, E, D, $k>(params, &trace_input)
         }};
     }
 

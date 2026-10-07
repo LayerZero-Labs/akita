@@ -70,13 +70,9 @@ impl<F: Field> EqPairTensorAxis<F> {
         bit_factors: impl Into<Arc<[[F; 2]]>>,
     ) -> Result<Self, AkitaError> {
         let bit_factors = bit_factors.into();
-        let len = 1usize
-            .checked_shl(u32::try_from(bit_factors.len()).map_err(|_| {
-                AkitaError::InvalidInput("paired tensor bit-product arity overflow".into())
-            })?)
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("paired tensor bit-product length overflow".into())
-            })?;
+        let len = checked::pow2(bit_factors.len()).ok_or_else(|| {
+            AkitaError::InvalidInput("paired tensor bit-product length overflow".into())
+        })?;
         Ok(Self {
             len,
             left_stride,
@@ -174,8 +170,7 @@ impl<F: Field> EqPairTensorFamily<F> {
                     ));
                 }
                 EqPairTensorWeights::BitProduct(factors)
-                    if 1usize.checked_shl(u32::try_from(factors.len()).unwrap_or(u32::MAX))
-                        == Some(axis.len) => {}
+                    if checked::pow2(factors.len()) == Some(axis.len) => {}
                 EqPairTensorWeights::BitProduct(_) => {
                     return Err(AkitaError::InvalidInput(
                         "paired tensor bit-product length mismatch".into(),
@@ -192,7 +187,11 @@ impl<F: Field> EqPairTensorFamily<F> {
 
             if axis.len == 1 {
                 if !matches!(axis.weights, EqPairTensorWeights::Unit) {
-                    let weight = axis.coordinate_weight(0).ok_or(AkitaError::InvalidProof)?;
+                    let weight = axis.coordinate_weight(0).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "validated singleton tensor axis has no coordinate weight".into(),
+                        )
+                    })?;
                     if weight.is_zero() {
                         return Ok(Self {
                             left_offset,
@@ -221,7 +220,9 @@ impl<F: Field> EqPairTensorFamily<F> {
                         .is_some_and(|stride| stride == axis.right_stride)
             });
             if merged {
-                let inner = normalized.last_mut().ok_or(AkitaError::InvalidProof)?;
+                let inner = normalized.last_mut().ok_or_else(|| {
+                    AkitaError::Internal("paired tensor merge selected no normalized axis".into())
+                })?;
                 inner.len = inner.len.checked_mul(axis.len).ok_or_else(|| {
                     AkitaError::InvalidInput("paired tensor merged length overflow".into())
                 })?;

@@ -17,26 +17,31 @@
 //! you need to reach into them, that's a signal to either move the consumer
 //! into this crate or expose a narrower entry point.
 //!
-//! These items are kept public solely so a small number of integration tests
-//! in `akita-pcs` can exercise specific replay primitives in isolation:
-//! [`prepare_relation_matrix_evaluator`], [`RelationMatrixEvaluator`],
-//! [`RingSwitchReplay`], and [`AkitaStage1Verifier`]. They are not part of the
-//! verifier's intended downstream API.
+//! Two replay primitives are public but are not part of the verifier's
+//! intended downstream API: [`RelationMatrixEvaluator`], which the
+//! `benchmark-support` relation-evaluator bench drives directly, and
+//! [`Stage1Verifier`], which downstream range-proof lanes reuse.
 
-mod prepared_cache;
-mod protocol;
-mod stages;
-
-pub use akita_types::CommitmentVerifier;
-pub use prepared_cache::build_riscv64_terminal_ntt_cache;
-pub use protocol::{
-    batched_verify, prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
-};
 #[cfg(any(test, feature = "benchmark-support"))]
-pub use protocol::{evaluation_trace_benchmark_case, EvaluationTraceBenchmarkCase};
+mod benchmark_support;
+mod coefficient_packing_relation;
+mod fold;
+mod prepared_cache;
+mod relation;
+mod setup_contribution;
+mod stages;
+mod terminal;
+mod verifier;
+
+#[cfg(any(test, feature = "benchmark-support"))]
+pub use benchmark_support::{evaluation_trace_benchmark_case, EvaluationTraceBenchmarkCase};
 #[cfg(feature = "benchmark-support")]
-pub use protocol::{
+pub use benchmark_support::{
     relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
     RelationEvaluatorBenchmarkCase,
 };
-pub use stages::stage1::AkitaStage1Verifier;
+pub use prepared_cache::build_riscv64_terminal_ntt_cache;
+pub use relation::RelationMatrixEvaluator;
+pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};
+pub use stages::stage1::Stage1Verifier;
+pub use verifier::AkitaVerifier;

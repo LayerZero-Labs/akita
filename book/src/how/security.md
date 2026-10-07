@@ -51,9 +51,17 @@ certified under the proven-pruned beta and zeta domain. Parallel generation
 parallelizes independent rows and does not change the certificate domain or
 output ordering.
 
+The infinity estimator evaluates Gaussian probabilities in log space, using
+the complementary error-function tail when the coordinate probability is
+close to one. Numerical allowances are applied toward greater attack success
+before combining coordinates, so rounding uncertainty favors a cheaper
+attack. Independent high-precision power-series fixtures check the probability
+calculation and integer repetition thresholds. These checks cover numerical
+regressions; they do not certify all floating-point lattice simulation steps.
+
 The estimator hardening described above changes the acceptance model. The
 checked-in SIS table retains the unversioned `Quantum128BitADPS16` policy ID
-and wire tag `1`; evaluator revision `akita-infinity-width-v3`, the regenerated
+and wire tag `1`; evaluator revision `akita-infinity-width-v4`, the regenerated
 table digest, and dependent catalog identities bind the corrected semantics.
 The q32 Inner/A profile guard stops at `2^28 - 1`; q64 uses `2^41 - 1`; q128
 uses `2^44 - 1`. Within those guards, the audited A cells are the exact
@@ -151,10 +159,10 @@ implementation acceptance criteria live in
 
 **Implementation map**
 
-- `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `l2_table.rs`,
+- `crates/akita-params/src/sis/mod.rs`, `ajtai_key.rs`, `l2_table.rs`,
   `physical_l2.rs`, `generated_sis_table/`, and `norm_bound.rs`.
 - `docs/security-posture.md`, `specs/sis-quantum128-scalar-n-table.md`.
-- `crates/akita-types/src/sis/generated_sis_table/policy_audit.csv` (canonical
+- `crates/akita-params/src/sis/generated_sis_table/policy_audit.csv` (canonical
   production table certificate).
 
 ## Norm bounds and weak binding
@@ -245,6 +253,29 @@ distribution-free grinding bound if the 3 percent envelope covers the source
 model error. The planner freezes the resulting cap into the schedule. The
 verifier enforces that exact cap. A model error can make proving fail more
 often, but it cannot make the verifier accept a response above the cap.
+
+### Alignment coordinates
+
+Witness alignment gaps are physical committed coordinates outside the semantic
+Z/E/T, quotient, and compression spans. Stage 1 range-checks these coordinates
+with the ordinary balanced digit range. They have no direct relation equations
+and no negative-binary constraint. The canonical prover initializes them to
+zero, but verification does not require zero.
+
+The successor commitment consumes the complete physical witness, including
+alignment coordinates. Its block geometry and matrix input widths cover this
+source; SIS rank admission uses those widths and the accepted digit or response
+bounds, without assuming the filler is zero. The current fold's A-role response
+norm covers its semantic Z ranges, so changing its alignment coordinates does
+not directly change that norm. Once the successor consumes the witness, filler
+can change its response. That response must satisfy the successor's scheduled
+coefficient bound or its proved physical squared L2 cap, including the direct
+terminal norm check when applicable.
+
+Zero filler contributes no energy to the honest source model. This convention
+can be used to select a cap, but the security calculation uses the cap enforced
+by verification. Nonzero filler need not produce a response below that cap:
+range membership alone does not guarantee acceptance of every later fold.
 
 ### The accepted committed-source space
 
@@ -345,23 +376,25 @@ condition used for unit pairwise challenge differences. This fact belongs to
 the field and challenge security review. It is not planner metadata and does
 not require a per-schedule certificate.
 
-For CWSS extraction, fix the transcript prefix, group root, shared fold-response
-nonce, and all coordinate-oracle answers except one. Reprogramming coordinate
-`j` gives two accepting transcripts whose challenge difference is zero outside
-`j`. The production LS18 condition makes every nonzero sparse-challenge
-difference a unit, so subtracting the accepted relations isolates that opening.
-The extractor uses the central accepting vector and one such fork for every
-claim-major coordinate. The random-oracle reduction charges all root and
-coordinate queries, including the jointly searched fold nonce. It does not
-assume that two arbitrary full-vector forks are enough.
+For a coordinatewise fork, fix the transcript prefix, group root, shared
+fold-response nonce, and all coordinate-oracle answers except one. If both
+forks yield accepting transcripts, their challenge difference is zero outside
+that coordinate. The production LS18 condition makes every nonzero
+sparse-challenge difference a unit, so subtracting the accepted relations
+algebraically isolates that opening. A binary CWSS extractor would need a
+central accepting vector and one such accepting fork for every claim-major
+coordinate. Complete accepting descendant trees authenticate the later
+relations and response bounds. The indexed matching-input game bounds failure
+to obtain these forks by charging every queried or verifier-completed
+coordinate address; see the [fold argument](../../../specs/transcript-grinding.md#indexed-address-fold-bound).
 
 The packed consistency equation still gives one polynomial identity in `E[Y]`.
 After including the `(Y^s + 1)Q_pack` term, its degree is at most `2s-1`, so the
-conditional polynomial-check error is `(2s-1)/|E|`. This term is added to the
-existing CWSS, random-oracle forking, sum-check, collision, and MSIS terms. See
-the active
+conditional polynomial-check error is `(2s-1)/|E|`. This term must be composed
+with the CWSS, random-oracle, sum-check, collision, and MSIS terms. The active
 [subring coefficient packing design record](../../../specs/subring-coefficient-packing.md)
-for the complete accounting.
+gives the algebraic relation and its separate field-check loss. The fold
+contribution is accounted by the indexed-address theorem above.
 
 The challenge response identity is exact when the accepted challenge has
 scalar covariance. The fixed point operator norm filter is not assumed to have
@@ -372,15 +405,15 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
 
 **Implementation map**
 
-- `crates/akita-types/src/sis/norm_bound.rs` owns the two physical collision
+- `crates/akita-params/src/sis/norm_bound.rs` owns the two physical collision
   formulas. `crates/akita-types/src/proof/relation_range_image.rs` owns the
-  physical response map. `crates/akita-prover/src/protocol/sumcheck/physical_l2_norm.rs`
+  physical response map. `crates/akita-cpu-backend/src/opaque/sumcheck/physical_l2_norm.rs`
   and `crates/akita-verifier/src/stages/physical_l2_norm.rs` own proof and replay.
 - `specs/archive/2026-Q3/weak-binding-norm-fix.md` records the earlier fold reprice.
 - `specs/fold-linf-rejection.md` (fold digit-count tightening).
 - `specs/selective-l2-fold-security-sizing.md` (implemented physical norm correction
   and optional L2 route).
-- `crates/akita-types/src/config.rs` (`DecompositionParams::log_commit_bound`) and
-  `crates/akita-prover/src/api/commitment.rs`
+- `crates/akita-params/src/config.rs` (`DecompositionParams::log_commit_bound`) and
+  `crates/akita-cpu-backend/src/commitment/api.rs`
   (`ensure_sources_fit_accepted_interval`) own the declared
   committed-source bound and the producer-side range check.

@@ -122,7 +122,7 @@ Both converge on the same five moves; copy them.
 |------|-----------|-------|
 | EOR dense fold and accumulation | `extension_opening_reduction/dense.rs` (`accumulate_dense_round_with`, `fused_fold_and_accumulate_with`) | scalar `E::fold_one`, scalar `Deg2RoundAccum` |
 | EOR factor fold | `extension_opening_reduction/tables.rs` (`DenseEorFactor::fold_in_place`) and the fused path above | scalar `Vec<E>` |
-| EOR partials | `akita-types/src/extension_opening_reduction.rs` (`tensor_column_partials_split_fold`) | scalar base by extension contraction through `SplitEqEvals` |
+| EOR partials | `akita-cpu-backend/src/arithmetic/extension_opening_reduction.rs` (`tensor_column_partials_split_fold`) | scalar base by extension contraction through `SplitEqEvals` |
 | equality table | `akita-algebra/src/eq_poly.rs` (`EqPolynomial::evals_mapped`) | scalar `Vec<E>` with parallel mapped construction |
 | digit-range round + fold | `digit_range/direct_range_leaf/`, `digit_range/class_indexed_product.rs`, `digit_range/class_indexed_range_leaf.rs` | basis-specialized compact and class-indexed kernels |
 | stage2 round + fold | `akita_stage2/dense_terms.rs:189-216`, `round_flow.rs:234` | scalar |

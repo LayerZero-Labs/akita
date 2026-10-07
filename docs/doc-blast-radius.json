@@ -18,10 +18,10 @@
         "crates/akita-planner/**",
         "crates/akita-config/**",
         "crates/akita-schedules/**",
-        "crates/akita-types/src/schedule*",
-        "crates/akita-types/src/**/schedule*",
-        "crates/akita-types/src/proof_size.rs",
-        "crates/akita-types/src/**/proof_size*"
+        "crates/akita-params/src/schedule*",
+        "crates/akita-params/src/**/schedule*",
+        "crates/akita-params/src/proof_size.rs",
+        "crates/akita-params/src/**/proof_size*"
       ],
       "consider_updating": [
         "book/src/how/configuration.md",
@@ -35,7 +35,7 @@
       "description": "Single-point opening batch descriptor and layout",
       "code": [
         "crates/akita-types/src/proof/opening_batch.rs",
-        "crates/akita-types/src/layout/opening_point.rs"
+        "crates/akita-params/src/layout/opening_point.rs"
       ],
       "consider_updating": [
         "book/src/how/proving/opening-points-layout.md",
@@ -45,19 +45,9 @@
       ]
     },
     {
-      "id": "witness-polyops",
-      "description": "Shared witness/polynomial view vocabulary",
-      "code": ["crates/akita-witness/**"],
-      "consider_updating": [
-        "book/src/how/architecture.md",
-        "book/src/how/proving/sumcheck-stages.md",
-        "specs/archive/2026-Q3/akita-polyops-cutover.md"
-      ]
-    },
-    {
       "id": "sis-security",
       "description": "SIS floors, norm bounds, challenge sampling",
-      "code": ["crates/akita-types/src/sis/**", "crates/akita-challenges/**"],
+      "code": ["crates/akita-params/src/sis/**", "crates/akita-challenges/**"],
       "consider_updating": [
         "book/src/how/security.md",
         "book/src/foundations/lattices-sis.md",
@@ -110,12 +100,15 @@
       "description": "Setup expansion and Ajtai commitment",
       "code": [
         "crates/akita-setup/**",
-        "crates/akita-prover/src/api/commitment.rs",
+        "crates/akita-cpu-backend/src/commitment/**",
+        "crates/akita-cpu-backend/src/opaque/**",
         "crates/akita-prover/src/backend/**"
       ],
       "consider_updating": [
         "book/src/how/commitment.md",
         "book/src/usage/commitment-api.md",
+        "book/src/usage/setup-runtime.md",
+        "specs/family-agnostic-cpu-backend.md",
         "specs/setup-*.md"
       ]
     },
@@ -151,7 +144,8 @@
       "id": "extension-opening",
       "description": "Extension-opening reduction prover paths",
       "code": [
-        "crates/akita-prover/src/protocol/extension_opening_reduction/**",
+        "crates/akita-cpu-backend/src/opaque/recursive/opening/**",
+        "crates/akita-cpu-backend/src/arithmetic/extension_opening_reduction.rs",
         "crates/akita-types/src/extension_opening_reduction.rs"
       ],
       "consider_updating": [

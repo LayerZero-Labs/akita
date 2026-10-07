@@ -704,7 +704,7 @@ divisible by its own dimension; the containing public matrix need not be.
 Every backend operation that consumes a public matrix MUST declare its exact
 matrix prefix and transform domain from the same rows and active width passed
 to the kernel. The implementation MUST have one canonical derivation path used
-by prewarming, lazy cache checks, memory reporting, and tests. A prewarm planner
+by prewarming, lazy cache acquisition, and tests. A prewarm planner
 and the actual kernel call MUST NOT compute independent approximations.
 
 The implementation realizes that contract as follows:
@@ -715,14 +715,9 @@ The implementation realizes that contract as follows:
   `batched_prove` call. Prior root commitments are source- and backend-shaped
   separate API calls; `add_setup_prefix_commitment` likewise adds the
   independently invoked setup-prefix preprocessing call layout;
-- `prewarm_ntt_requirements` routes each level through its selected
-  `ProverComputeStack` cluster before transcript binding; and
-- `planned_ntt_cache_metrics` routes the same requirements, partitions them by
-  process-local physical `NttCacheOwnerId`, and max-joins keys per owner before
-  asking the selected backend for bytes. This preserves real cache aliasing
-  when several levels or clusters share one prepared setup. Integration and
-  stack tests cover one fully shared owner, two partially shared owners, and
-  four independent owners, and require planned and resident bytes to agree.
+- CPU prewarming resolves schedule requirements inside the owning backend and
+  max-joins retained requirements by its private cache ownership. Generic
+  proving carries no cache identifiers or physical routing requirements.
 
 The execution compiler first max-joins one `(level, cluster, D, domain)` route.
 After routing, requirements that land on the same physical owner combine again
@@ -756,9 +751,9 @@ otherwise rejected warm cannot poison a later valid smaller prefix.
 
 #### Operation clusters
 
-`ProverComputeStack` permits commit, opening, tensor, and ring-switch clusters
-to use different backends and prepared setups. NTT requirements MUST therefore
-be routed to the cluster that actually executes the operation.
+The owning backend resolves commitment, opening, tensor, and ring-switch
+requirements to its internal execution components. NTT requirements MUST be
+resolved to the component that actually executes the operation.
 
 The implementation MUST NOT warm every role dimension on all four clusters.
 A cluster with no NTT consumer has no NTT requirement. A uniform stack may
@@ -963,9 +958,10 @@ Each artifact under that lineage records its exact materialized field count. A
 validated artifact with a larger count may satisfy a smaller request because
 the derivation is prefix-compatible. The derivation version is already inside
 `AkitaSetupSeed`; config type names, schedule ring dimensions, and generation D
-are not semantic cache keys. Provisioning limits and a schedule/catalog digest
-MAY key or validate the derived setup-prefix registry because that registry
-promises a particular set of precomputed slots.
+are not semantic cache keys. The derived setup-prefix registry promises a
+particular set of precomputed slots, so it is keyed by that slot set rather
+than by provisioning limits or a catalog digest
+([`family-agnostic-cpu-backend.md`](family-agnostic-cpu-backend.md)).
 
 The base-prefix artifact serializes only `AkitaSetupSeed`, the materialized
 field count, and the flat coefficients. It does not serialize host admission
@@ -1444,15 +1440,15 @@ or pass-through aliases that recreate the old API.
 - `specs/role-native-projected-digit-layout.md`
 - `specs/setup-offloading-planner.md`
 - `crates/akita-types/src/proof/setup.rs`
-- `crates/akita-types/src/proof/setup_envelope.rs`
+- `crates/akita-params/src/layout/setup_envelope.rs`
 - `crates/akita-types/src/proof/setup_prefix.rs`
-- `crates/akita-types/src/layout/flat_matrix.rs`
+- `crates/akita-params/src/layout/flat_matrix.rs`
 - `crates/akita-types/src/ntt_cache.rs`
-- `crates/akita-prover/src/compute/backend.rs`
-- `crates/akita-prover/src/compute/cpu.rs`
-- `crates/akita-prover/src/compute/stack.rs`
-- `crates/akita-prover/src/api/setup_prefix.rs`
-- `crates/akita-verifier/src/protocol/core/terminal_ntt.rs`
+- `crates/akita-prover/src/backend/`
+- `crates/akita-cpu-backend/src/opaque/backend.rs`
+- `crates/akita-cpu-backend/src/arithmetic/stack.rs`
+- `crates/akita-prover/src/setup.rs`
+- `crates/akita-verifier/src/terminal/ntt.rs`
 - `crates/akita-setup/src/lib.rs`
 - `crates/akita-setup/src/recursive_prefixes.rs`
 - `book/src/usage/commitment-api.md`

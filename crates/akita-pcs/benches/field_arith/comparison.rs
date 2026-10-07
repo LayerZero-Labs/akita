@@ -1,6 +1,8 @@
 use ark_bn254::Fr as BN254Fr;
 use ark_ff::{AdditiveGroup, Field, UniformRand};
-use criterion::{black_box, Criterion};
+use std::hint::black_box;
+
+use criterion::Criterion;
 use rand::{rngs::StdRng, SeedableRng};
 
 pub(crate) fn bench_comparisons(c: &mut Criterion) {

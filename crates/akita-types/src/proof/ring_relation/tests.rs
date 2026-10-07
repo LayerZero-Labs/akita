@@ -1,18 +1,17 @@
-#[path = "tests/dimension_tests.rs"]
-mod dimension_tests;
 #[path = "tests/support.rs"]
 mod support;
 
 use super::*;
-use crate::layout::GroupOpenPhaseParams;
-use crate::r_decomp_levels;
 use crate::DigitBlocks;
-use crate::{
-    emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes, relation_rhs_coeff_len,
+use crate::{emit_witness_e_planes, emit_witness_t_planes, relation_rhs_coeff_len};
+use akita_algebra::CyclotomicRing;
+use akita_challenges::{SparseChallenge, SparseChallengeConfig};
+use akita_params::layout::GroupOpenPhaseParams;
+use akita_params::r_decomp_levels;
+use akita_params::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
     PolynomialGroupLayout, RingOpeningPoint,
 };
-use akita_challenges::{SparseChallenge, SparseChallengeConfig};
 use jolt_field::{Fp32, One, Zero};
 use support::{flatten_markers, marker};
 
@@ -23,15 +22,15 @@ const MULTI_GROUP_D: usize = 64;
 fn relation_layout(
     lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
-) -> crate::RelationRhsLayout {
-    crate::RelationWitnessGeometry::for_evaluation_trace_execution(lp, opening_batch)
+) -> akita_params::RelationRhsLayout {
+    akita_params::RelationWitnessGeometry::for_evaluation_trace_execution(lp, opening_batch)
         .expect("relation geometry")
         .rhs_layout()
         .clone()
 }
 
 fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
-    let inner_bound = *crate::sis::inner_coeff_linf_bounds(
+    let inner_bound = *akita_params::sis::inner_coeff_linf_bounds(
         lp.inner().matrix.sis_modulus_profile(),
         u32::try_from(lp.d_a()).expect("test ring dimension"),
     )
@@ -74,7 +73,7 @@ fn opening_point(lp: &CommittedGroupParams) -> RingOpeningPoint<F> {
 
 fn test_level_params(_num_fold_claims: usize) -> CommittedGroupParams {
     let mut params = CommittedGroupParams::params_only(
-        crate::SisModulusProfileId::Q32Offset99,
+        akita_params::SisModulusProfileId::Q32Offset99,
         D,
         2,
         1,
@@ -150,7 +149,6 @@ fn relation_instance_rejects_empty_y() {
         vec![F::one()],
         RingVec::from_ring_elems::<D>(&[CyclotomicRing::one()]),
         RingVec::from_ring_elems::<D>(&[]),
-        RingVec::from_ring_elems::<D>(&[]),
         CommitmentRingDims::uniform(D),
     )
     .expect_err("empty rhs must be rejected");
@@ -166,7 +164,7 @@ fn chunk_test_level_params(
 ) -> CommittedGroupParams {
     // num_live_blocks = 2^block_index_bits, num_positions_per_block = 2^position_index_bits, single-tier.
     let mut params = CommittedGroupParams::params_only(
-        crate::SisModulusProfileId::Q32Offset99,
+        akita_params::SisModulusProfileId::Q32Offset99,
         D,
         2,
         1,
@@ -204,7 +202,6 @@ fn build_instance(
         vec![F::one(); num_claims],
         RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::one(); num_claims]),
         RingVec::from_coeffs(vec![F::zero(); rhs_coeff_len]),
-        RingVec::from_ring_elems::<D>(&[]),
         CommitmentRingDims::uniform(D),
     )
     .expect("instance")
@@ -215,14 +212,6 @@ fn resolve_single_chunk_matches_legacy_offsets() {
     let num_claims = 3;
     let lp = chunk_test_level_params(1, num_claims);
     assert_eq!(lp.witness_chunk.num_chunks, 1);
-    let _lens = ring_relation_segment_lengths::<F>(
-        &lp,
-        RingRelationOpeningCounts {
-            num_claims,
-            num_t_vectors: num_claims,
-        },
-    )
-    .expect("lengths");
 
     let resolved = build_instance(&lp, num_claims, 4)
         .segment_layout(&lp, None)
@@ -245,7 +234,7 @@ fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
     for w in [1usize, 2, 4, 8] {
         let mut lp = chunk_test_level_params(3, num_claims); // num_live_blocks = 8
         if w > 1 {
-            lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
+            lp.witness_chunk = akita_params::witness::ChunkedWitnessCfg {
                 num_chunks: w,
                 num_activated_levels: 1,
             };
@@ -304,7 +293,7 @@ fn resolve_rejects_bad_chunk_count() {
     let num_claims = 2;
     // num_chunks = 3 is not a power of two.
     let mut lp = chunk_test_level_params(3, num_claims);
-    lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
+    lp.witness_chunk = akita_params::witness::ChunkedWitnessCfg {
         num_chunks: 3,
         num_activated_levels: 1,
     };
@@ -314,17 +303,35 @@ fn resolve_rejects_bad_chunk_count() {
 }
 
 #[test]
+fn ambient_challenges_reject_an_absent_group() {
+    let lp = chunk_test_level_params(2, 2);
+    let instance = build_instance(&lp, 2, 4);
+    assert!(matches!(
+        instance.group_ambient_a_challenges(instance.group_openings().len()),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn row_ring_embedding_rejects_an_incompatible_ring_dimension() {
+    assert!(matches!(
+        RingRelationInstance::<F>::gamma_and_row_rings_from_coefficients::<1, F>(&[F::one()]),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
 fn resolve_preserves_empty_chunk_slots() {
     let num_claims = 2;
     let mut lp = chunk_test_level_params(2, num_claims);
-    lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
+    lp.witness_chunk = akita_params::witness::ChunkedWitnessCfg {
         num_chunks: 8,
         num_activated_levels: 1,
     };
     let layout = build_instance(&lp, num_claims, 4)
         .segment_layout(&lp, None)
         .expect("layout with empty chunk slots");
-    let expected_ranges = crate::dyadic_block_ranges(4, 8).expect("chunk ranges");
+    let expected_ranges = akita_params::dyadic_block_ranges(4, 8).expect("chunk ranges");
     assert_eq!(layout.units().len(), 8);
     for (unit, expected_range) in layout.units().iter().zip(expected_ranges) {
         assert_eq!(unit.global_block_range(), expected_range);
@@ -369,7 +376,6 @@ fn relation_segment_layout_uses_same_axis_contract() {
         vec![F::one(); 3],
         RingVec::from_ring_elems::<D>(&[CyclotomicRing::one(); 3]),
         RingVec::from_coeffs(vec![F::zero(); rhs_coeff_len]),
-        RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); relation_rhs_layout.n_d]),
         CommitmentRingDims::uniform(D),
     )
     .expect("same-axis relation");
@@ -381,17 +387,22 @@ fn relation_segment_layout_uses_same_axis_contract() {
     assert_eq!(unit.e_range().start, unit.z_range().end);
     assert_eq!(unit.t_range().start, unit.e_range().end);
     assert_eq!(layout.tail_range().start, unit.t_range().end);
-    instance
-        .check_v_shape_for_level(&lp)
-        .expect("v rows match layout");
+    RingRelationInstance::check_v_shape_for_level(
+        &RingVec::from_ring_elems::<D>(&vec![
+            CyclotomicRing::<F, D>::zero();
+            relation_rhs_layout.n_d
+        ]),
+        &lp,
+    )
+    .expect("v rows match layout");
 }
 
 fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout) {
-    use crate::schedule::GroupCommitPhaseParams;
+    use akita_params::schedule::GroupCommitPhaseParams;
     let fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(MULTI_GROUP_D)
         .expect("multi-group test ring dimension has a production challenge");
     let lp = CommittedGroupParams::params_only(
-        crate::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::SisModulusProfileId::Q128OffsetA7F7,
         MULTI_GROUP_D,
         3,
         2,
@@ -402,7 +413,7 @@ fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout
     .with_decomp(4, 16, 2, 2, 2)
     .expect("multi-group main params");
     let mut precommit_lp = CommittedGroupParams::params_only(
-        crate::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::SisModulusProfileId::Q128OffsetA7F7,
         MULTI_GROUP_D,
         3,
         2,
@@ -419,7 +430,7 @@ fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout
             PolynomialGroupLayout::new(4, 1),
             &precommit_lp,
         ),
-        opening: crate::GroupOpeningPlan::evaluation_trace(
+        opening: akita_params::GroupOpeningPlan::evaluation_trace(
             precommit_lp.fold_challenge_config(),
             precommit_lp.open().digits.log_basis,
             precommit_lp.open().digits.num_digits,
@@ -460,10 +471,6 @@ fn multi_group_segment_layout_total_matches_next_w_len() {
             opening_batch.num_total_polynomials()
         ]),
         RingVec::from_coeffs(vec![F::zero(); relation_rhs_coefficients]),
-        RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
-            CyclotomicRing::zero();
-            lp.open().matrix.output_rank()
-        ]),
         CommitmentRingDims::uniform(MULTI_GROUP_D),
     )
     .expect("multi-group instance");
@@ -506,7 +513,7 @@ fn multi_group_segment_layout_total_matches_next_w_len() {
 #[test]
 fn multi_group_segment_layout_resolves_group_shard_product() {
     let (mut lp, opening_batch) = multi_group_one_three_fixture();
-    lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
+    lp.witness_chunk = akita_params::witness::ChunkedWitnessCfg {
         num_chunks: 2,
         num_activated_levels: 1,
     };
@@ -527,10 +534,6 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
         vec![F::one(); gamma_len],
         RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![CyclotomicRing::one(); gamma_len]),
         RingVec::from_coeffs(vec![F::zero(); relation_rhs_coefficients]),
-        RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
-            CyclotomicRing::zero();
-            lp.open().matrix.output_rank()
-        ]),
         CommitmentRingDims::uniform(MULTI_GROUP_D),
     )
     .expect("multi-group instance");
@@ -573,7 +576,6 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
             .expect("group layout")
             .num_polynomials();
         let num_live_blocks = params.num_live_blocks();
-        let depth_witness = params.num_digits_inner();
         let depth_commit = params.num_digits_outer();
         let depth_open = params.num_digits_open();
         let n_a = params.a_rows_len();
@@ -595,7 +597,6 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
             MULTI_GROUP_D,
         )
         .expect("T digits");
-        let depth_fold = params.num_digits_fold();
         for unit in layout.units_for_group(group_index).expect("units") {
             emit_witness_e_planes::<MULTI_GROUP_D>(
                 &mut emitted,
@@ -617,22 +618,6 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
                 num_live_blocks,
             )
             .expect("emit T");
-            let z_source = (0..params.num_positions_per_block() * depth_witness * depth_fold)
-                .map(|index| {
-                    marker::<MULTI_GROUP_D>(500 * group_index + 100 * unit.chunk_index() + index)
-                })
-                .collect::<Vec<_>>();
-            emit_witness_z_planes::<MULTI_GROUP_D>(
-                &mut emitted,
-                unit,
-                params.num_positions_per_block(),
-                depth_witness,
-                depth_fold,
-                &z_source,
-            )
-            .expect("emit Z");
-            let z_range = unit.z_range();
-            assert_eq!(&emitted[z_range], flatten_markers(z_source).as_slice());
 
             let mut expected_e = Vec::new();
             for claim in 0..num_claims {
@@ -685,7 +670,7 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
     const PACK_D_A: usize = 256;
     const PACK_D_D: usize = 64;
     let mut lp = CommittedGroupParams::params_only(
-        crate::SisModulusProfileId::Q32Offset99,
+        akita_params::SisModulusProfileId::Q32Offset99,
         PACK_D_A,
         2,
         1,
@@ -696,9 +681,10 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
     .with_decomp(4, 8, 1, 2, 2)
     .expect("packing params");
     lp.own_group_mut().opening.num_digits_fold = 3;
-    lp.own_group_mut().opening.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: 64,
-    };
+    lp.own_group_mut().opening.opening_method =
+        akita_params::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
     lp.own_group_mut().opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(64).expect("packing config");
     certify_test_sis_bounds(&mut lp);
@@ -756,8 +742,9 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
     );
     assert!(group_opening.evaluation_trace_multiplier_point().is_err());
 
-    let relation_geometry = crate::RelationWitnessGeometry::for_level(&lp, &opening_batch, 2)
-        .expect("relation geometry");
+    let relation_geometry =
+        akita_params::RelationWitnessGeometry::for_level(&lp, &opening_batch, 2)
+            .expect("relation geometry");
     let rhs_len = relation_rhs_coeff_len(relation_geometry.rhs_layout()).expect("rhs len");
     let instance = RingRelationInstance::<F>::new(
         vec![group_opening],
@@ -766,7 +753,6 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
         vec![F::one()],
         RingVec::from_ring_elems::<PACK_D_A>(&[CyclotomicRing::one()]),
         RingVec::from_coeffs(vec![F::zero(); rhs_len]),
-        RingVec::from_ring_elems::<PACK_D_D>(&[]),
         lp.role_dims(),
     )
     .expect("packing instance");
@@ -828,7 +814,6 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
         vec![F::one()],
         RingVec::from_ring_elems::<PACK_D_A>(&[CyclotomicRing::one()]),
         RingVec::from_coeffs(vec![F::zero(); rhs_len]),
-        RingVec::from_ring_elems::<PACK_D_D>(&[]),
         lp.role_dims(),
     )
     .expect("carrier construction is schedule-independent");
@@ -848,7 +833,6 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
         vec![F::one()],
         RingVec::from_ring_elems::<PACK_D_A>(&[CyclotomicRing::one()]),
         RingVec::from_coeffs(vec![F::zero(); rhs_len]),
-        RingVec::from_ring_elems::<PACK_D_D>(&[]),
         lp.role_dims(),
     )
     .expect("wrong-k carrier construction is schedule-independent");

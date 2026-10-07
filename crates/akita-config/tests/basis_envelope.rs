@@ -3,8 +3,9 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_types::sis::{HonestFoldPolicy, HonestFoldSizingQuery};
-use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use akita_params::sis::{HonestFoldPolicy, HonestFoldSizingQuery};
+use akita_params::PolynomialGroupLayout;
+use akita_params::ScheduleLookupKey;
 
 fn catalog<Cfg: CommitmentConfig>() -> akita_config::TrustedScheduleCatalog<Cfg> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -36,23 +37,20 @@ fn large_fields_search_the_complete_i16_inner_basis_domain() {
 fn large_field_dense_presets_search_the_extended_a_dimension_domain() {
     for (mode, expected_a) in [
         (
-            fp128::Dense::RING_DIMENSION_SCHEDULE_MODE,
+            fp128::Dense::RING_DIMENSION_SCHEDULE,
             &[64, 128, 256, 512, 1024][..],
         ),
         (
-            akita_config::proof_optimized::fp64::Dense::RING_DIMENSION_SCHEDULE_MODE,
+            akita_config::proof_optimized::fp64::Dense::RING_DIMENSION_SCHEDULE,
             &[64, 128, 256, 512, 1024, 2048][..],
         ),
     ] {
-        let akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+        let akita_schedules::RingDimensionSchedule {
             potential_a_dimensions,
             potential_b_dimensions,
             potential_d_dimensions,
             ..
-        } = mode
-        else {
-            panic!("large-field dense presets must use adaptive dimensions");
-        };
+        } = mode;
         assert_eq!(potential_a_dimensions, expected_a);
         assert!(potential_b_dimensions.iter().all(|&d| d <= 256));
         assert!(potential_d_dimensions.iter().all(|&d| d <= 256));
@@ -68,7 +66,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
     let catalog = catalog::<Cfg>();
 
     for &nv in BASIS_ENVELOPE_NUM_VARS {
-        let schedule = match catalog.resolve_key(&AkitaScheduleLookupKey::single(
+        let schedule = match catalog.resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::new(nv, 1),
         )) {
             Ok(row) => row.schedule().clone(),
@@ -98,8 +96,8 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
             .num_digits_fold(HonestFoldSizingQuery {
                 ring_dimension: root.d_a(),
                 challenge_dimension: match root.opening_method() {
-                    akita_types::OpeningMethod::EvaluationTrace => root.d_a(),
-                    akita_types::OpeningMethod::SubringCoefficientPacking {
+                    akita_params::OpeningMethod::EvaluationTrace => root.d_a(),
+                    akita_params::OpeningMethod::SubringCoefficientPacking {
                         challenge_subring_dimension,
                     } => challenge_subring_dimension,
                 },
@@ -111,9 +109,16 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
 
                 num_chunks: root.witness_chunk.num_chunks,
                 num_fold_coeffs,
-                witness_norms: honest_policy
-                    .witness_norms_for_inner_basis(root.inner().digits.log_basis, root.d_a())
-                    .expect("one-hot source geometry"),
+                witness_norms: Cfg::committed_source_contract()
+                    .unwrap()
+                    .source_norms(
+                        root.inner().digits.log_basis,
+                        root.inner().digits.num_digits,
+                        root.d_a(),
+                        1usize << nv,
+                    )
+                    .expect("one-hot source geometry")
+                    .fold_witness,
                 log_basis_response: root.open().digits.log_basis,
                 challenge_config: &root.fold_challenge_config(),
             })

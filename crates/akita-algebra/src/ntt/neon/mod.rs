@@ -7,9 +7,14 @@
 
 use std::sync::OnceLock;
 
+#[cfg(target_endian = "little")]
+mod field_limbs;
 mod i16_kernels;
 mod i32_kernels;
+mod twiddles;
 
+#[cfg(target_endian = "little")]
+pub(crate) use field_limbs::field_residues_i32;
 #[cfg(feature = "parallel")]
 pub use i16_kernels::add_reduce_i16;
 pub(crate) use i16_kernels::{
@@ -19,10 +24,11 @@ pub(crate) use i16_kernels::{
 #[cfg(feature = "parallel")]
 pub use i32_kernels::add_reduce_i32;
 pub(crate) use i32_kernels::{
-    centered_i16_to_mont_i32, centered_i8_to_mont_i32, forward_ntt_cyclic_i32, forward_ntt_i32,
-    forward_ntt_i8_i32, inverse_ntt_cyclic_i32, inverse_ntt_i32, pointwise_dot_acc_i32,
-    pointwise_mul_acc_i32,
+    centered_i8_to_mont_i32, forward_ntt_centered_i16_i32, forward_ntt_cyclic_i32,
+    forward_ntt_cyclic_i8_i32, forward_ntt_i32, forward_ntt_i8_i32, inverse_ntt_cyclic_i32,
+    inverse_ntt_i32, pointwise_dot_acc_i32, pointwise_mul_acc_i32,
 };
+pub(crate) use twiddles::BarrettTwiddles;
 
 /// Whether the NEON NTT path is active. Cached on first call.
 /// Set `AKITA_SCALAR_NTT=1` to force scalar fallback.
@@ -40,3 +46,6 @@ pub(crate) fn i16_values_in_balanced_range(values: &[i16], bound: i16) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod centered_tests;

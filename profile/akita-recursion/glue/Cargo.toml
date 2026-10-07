@@ -3,7 +3,6 @@ name = "akita-recursion-glue"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
-authors = ["Omid Bodaghi <omibo@layerzero.foundation>"]
 license = "Apache-2.0 OR MIT"
 description = "Shared blob format for shipping Akita verifier inputs to a Jolt guest program."
 repository = "https://github.com/LayerZero-Labs/hachi"
@@ -15,10 +14,12 @@ default = ["transcript-blake2b"]
 transcript-blake2b = [
   "akita-config/transcript-blake2b",
   "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
 ]
 transcript-keccak = [
   "akita-config/transcript-keccak",
   "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
 ]
 trusted-benchmark-artifact = []
 
@@ -26,12 +27,14 @@ trusted-benchmark-artifact = []
 akita-error = { version = "0.1.0", path = "../../../crates/akita-error" }
 akita-algebra = { version = "0.1.0", path = "../../../crates/akita-algebra" }
 akita-config = { version = "0.1.0", path = "../../../crates/akita-config", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "72dc6451628d8b1dd794147a1f1cc40be0d77963", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 akita-serialization = { version = "0.1.0", path = "../../../crates/akita-serialization" }
+akita-schedules = { version = "0.1.0", path = "../../../crates/akita-schedules" }
 akita-types = { version = "0.1.0", path = "../../../crates/akita-types", default-features = false }
+akita-params = { version = "0.1.0", path = "../../../crates/akita-params", default-features = false }
 
 [dev-dependencies]
 akita-challenges = { version = "0.1.0", path = "../../../crates/akita-challenges", default-features = false }

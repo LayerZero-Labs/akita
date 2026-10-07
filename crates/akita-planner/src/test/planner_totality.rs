@@ -1,7 +1,7 @@
 use super::*;
 
 use akita_config::{
-    honest_fold_policy_of, policy_of,
+    policy_of,
     proof_optimized::{fp128::DenseMultiChunk, fp64::Dense},
     CommitmentConfig,
 };
@@ -16,7 +16,7 @@ fn root_candidate_classes<Cfg: CommitmentConfig>(
     num_vars: usize,
 ) -> Result<(bool, bool), AkitaError> {
     let policy = policy_of::<Cfg>();
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
     let input_bits = (1usize << num_vars) * policy.decomposition.field_bits() as usize;
     let mut has_contractive = false;
     let mut has_noncontractive = false;
@@ -32,18 +32,20 @@ fn root_candidate_classes<Cfg: CommitmentConfig>(
         )? {
             for inner_basis in Cfg::inner_basis_range().0..=Cfg::inner_basis_range().1 {
                 for opening_basis in Cfg::opening_basis_range().0..=Cfg::opening_basis_range().1 {
-                    for (params, output_witness_len) in root_level_candidates_for_basis(
-                        &key,
-                        honest_fold_policy_of::<Cfg>(),
-                        &[],
-                        &policy,
-                        dimensions,
-                        opening,
-                        &[],
-                        inner_basis,
-                        opening_basis,
-                        None,
-                    )? {
+                    for (params, output_witness_len) in
+                        root_level_candidates_with_fresh_preparation(
+                            &key,
+                            Cfg::committed_source_contract().unwrap(),
+                            &[],
+                            &policy,
+                            dimensions,
+                            opening,
+                            &[],
+                            inner_basis,
+                            opening_basis,
+                            None,
+                        )?
+                    {
                         let contracts = output_witness_len
                             * (params.open().digits.log_basis as usize)
                             < input_bits;
@@ -63,10 +65,10 @@ fn root_candidate_classes<Cfg: CommitmentConfig>(
 #[test]
 fn contractive_winner_remains_selected() {
     let policy = policy_of::<Dense>();
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(14));
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(14));
     let schedule = find_schedule(
         &key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[],
         &policy,
         Dense::ring_challenge_config,
@@ -85,10 +87,10 @@ fn contractive_winner_remains_selected() {
 #[test]
 fn noncontractive_root_is_selected_by_the_complete_policy() {
     let policy = policy_of::<Dense>();
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(9));
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(9));
     let schedule = find_schedule(
         &key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[],
         &policy,
         Dense::ring_challenge_config,
@@ -104,10 +106,10 @@ fn noncontractive_root_is_selected_by_the_complete_policy() {
 #[test]
 fn noncontractive_multi_chunk_root_can_beat_contractive_candidates() {
     let policy = policy_of::<DenseMultiChunk>();
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
     let schedule = find_schedule(
         &key,
-        honest_fold_policy_of::<DenseMultiChunk>(),
+        DenseMultiChunk::committed_source_contract().unwrap(),
         &[],
         &policy,
         DenseMultiChunk::ring_challenge_config,
@@ -127,10 +129,10 @@ fn noncontractive_multi_chunk_root_can_beat_contractive_candidates() {
 fn valid_small_scalar_root_has_a_schedule() {
     let policy = policy_of::<Dense>();
     for num_vars in 8..=9 {
-        let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
+        let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
         let schedule = find_schedule(
             &key,
-            honest_fold_policy_of::<Dense>(),
+            Dense::committed_source_contract().unwrap(),
             &[],
             &policy,
             Dense::ring_challenge_config,
@@ -167,7 +169,7 @@ fn valid_small_scalar_root_has_a_schedule() {
 fn valid_small_grouped_root_has_a_schedule() {
     let precommitted_group = PolynomialGroupLayout::singleton(16);
     let policy = policy_of::<Dense>();
-    let producer_key = AkitaScheduleLookupKey::single(precommitted_group);
+    let producer_key = ScheduleLookupKey::single(precommitted_group);
     let producer_dimensions = CommitmentRingDims {
         inner: 128,
         outer: 64,
@@ -181,9 +183,9 @@ fn valid_small_grouped_root_has_a_schedule() {
     )
     .expect("valid D64 producer opening request")
     .expect("D64 producer opening");
-    let producer = root_level_candidates_for_basis(
+    let producer = root_level_candidates_with_fresh_preparation(
         &producer_key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[],
         &policy,
         producer_dimensions,
@@ -201,14 +203,14 @@ fn valid_small_grouped_root_has_a_schedule() {
     let precommitted_profile =
         GroupCommitPhaseParams::try_from_params(precommitted_group, &producer)
             .expect("scalar producer profile");
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(8),
         precommitteds: vec![precommitted_profile],
     };
     let schedule = find_schedule(
         &key,
-        honest_fold_policy_of::<Dense>(),
-        &[honest_fold_policy_of::<Dense>()],
+        Dense::committed_source_contract().unwrap(),
+        &[Dense::committed_source_contract().unwrap()],
         &policy,
         Dense::ring_challenge_config,
     )

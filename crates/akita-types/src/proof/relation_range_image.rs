@@ -6,10 +6,10 @@ use akita_algebra::offset_eq::{EqPairTensorAxis, EqPairTensorFamily};
 use akita_error::AkitaError;
 use jolt_field::{Field, Ring};
 
-use crate::{
-    CommitmentRingDims, CommittedGroupParams, DigitRangePlan, FlatBooleanDomain,
-    InnerCommitSecurityRoute, OpeningClaimsLayout, PhysicalL2NormProofShape,
-    RelationAddressGeometry, RelationRowFamily, RelationWitnessGeometry, WitnessLayout,
+use akita_params::{
+    CommittedGroupParams, DigitRangePlan, FlatBooleanDomain, InnerCommitSecurityRoute,
+    OpeningClaimsLayout, PhysicalL2NormProofShape, RelationAddressGeometry, RelationRowFamily,
+    RelationWitnessGeometry, WitnessLayout,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17,6 +17,24 @@ struct PhysicalResponseSegment {
     physical_start: usize,
     physical_len: usize,
     witness_start: usize,
+}
+
+/// Batch physical-L2 virtual evaluations while reserving the constant term.
+///
+/// Stage 2 adds this batch to an independently constructed relation/opening
+/// residual. That residual owns the constant coefficient, so virtual
+/// evaluation `i` receives `eta^(i + 1)`, not `eta^i`.
+#[must_use]
+pub fn batch_l2_virtual_evaluations<E: Field>(eta: E, evaluations: &[E]) -> (E, Vec<E>) {
+    let mut claim = E::zero();
+    let mut coefficients = Vec::with_capacity(evaluations.len());
+    let mut power = eta;
+    for &evaluation in evaluations {
+        coefficients.push(power);
+        claim += evaluation * power;
+        power *= eta;
+    }
+    (claim, coefficients)
 }
 
 /// Checked map from the canonical physical folded response to the Z digit
@@ -181,10 +199,19 @@ impl PhysicalResponsePlan {
                     .ok_or_else(|| AkitaError::InvalidSetup("L2 physical row overflow".into()))?;
                 match self.shape {
                     PhysicalL2NormProofShape::Direct { .. } => {
-                        let table = tables.first_mut().ok_or(AkitaError::InvalidProof)?;
+                        let table = tables.first_mut().ok_or_else(|| {
+                            AkitaError::Internal(
+                                "direct L2 response has no virtual integer table".into(),
+                            )
+                        })?;
                         let output = table
                             .get_mut(physical_row..physical_row + self.ring_dimension)
-                            .ok_or(AkitaError::InvalidProof)?;
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "direct L2 physical row exceeds its virtual integer table"
+                                        .into(),
+                                )
+                            })?;
                         let mut basis_power = 1i128;
                         for limb in 0..self.fold_digit_count {
                             let index = witness_row + limb * self.ring_dimension;
@@ -219,7 +246,9 @@ impl PhysicalResponsePlan {
                             decode_digits(index, &mut digits)?;
                             let output = table
                                 .get_mut(physical_row..physical_row + self.ring_dimension)
-                                .ok_or(AkitaError::InvalidProof)?;
+                                .ok_or_else(|| {
+                                    AkitaError::Internal("L2 limb row exceeds integer table".into())
+                                })?;
                             for (value, &digit) in output.iter_mut().zip(&digits) {
                                 *value = i128::from(digit);
                             }
@@ -316,18 +345,25 @@ pub fn reconstruct_l2_sq_from_gram(
         for (left, right) in layout.limb_pairs() {
             let claim_index = layout
                 .subclaim_index(block_index, left, right)
-                .ok_or(AkitaError::InvalidProof)?;
-            let claim = claims
-                .get(claim_index)
-                .copied()
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal("validated limb-Gram layout has no subclaim index".into())
+                })?;
+            let claim = claims.get(claim_index).copied().ok_or_else(|| {
+                AkitaError::Internal(
+                    "validated limb-Gram claims are missing the indexed claim".into(),
+                )
+            })?;
             let exponent = left
                 .checked_add(right)
                 .ok_or_else(|| AkitaError::InvalidSetup("L2 exponent overflow".into()))?;
             let scale = powers
                 .get(exponent)
                 .copied()
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "generated L2 basis powers are missing the Gram exponent".into(),
+                    )
+                })?
                 .checked_mul(if left == right { 1 } else { 2 })
                 .ok_or_else(|| AkitaError::InvalidSetup("L2 Gram scale overflow".into()))?;
             total =
@@ -505,6 +541,17 @@ impl RelationRangeImagePlan {
                         AkitaError::InvalidSetup("witness block coverage overflow".into())
                     })?;
             }
+            if let Some(range) =
+                witness_layout
+                    .compression_alignment_ranges()
+                    .iter()
+                    .find(|range| {
+                        range.start == witness_cursor
+                            && range.start < witness_layout.tail_range().start
+                    })
+            {
+                witness_cursor = range.end;
+            }
         }
 
         if witness_layout.tail_range().start != witness_cursor
@@ -516,7 +563,7 @@ impl RelationRangeImagePlan {
         }
         let row_geometries = relation_witness_geometry.rhs_layout().row_geometries()?;
         match witness_layout.relation_quotient_layout() {
-            crate::RelationQuotientLayout::QuotientLift { rows, .. } => {
+            akita_params::RelationQuotientLayout::QuotientLift { rows, .. } => {
                 if rows.len() != row_geometries.len()
                     || rows
                         .iter()
@@ -528,7 +575,7 @@ impl RelationRangeImagePlan {
                     ));
                 }
             }
-            crate::RelationQuotientLayout::ReducedEvaluation => {}
+            akita_params::RelationQuotientLayout::ReducedEvaluation => {}
         }
 
         Ok(Self {
@@ -570,12 +617,6 @@ impl RelationRangeImagePlan {
         &self.witness_layout
     }
 
-    /// Nested inner/outer/opening ring dimensions.
-    #[must_use]
-    pub fn role_dims(&self) -> CommitmentRingDims {
-        self.relation_address_geometry.role_dims()
-    }
-
     /// Groups in authenticated root processing order.
     #[must_use]
     pub fn groups(&self) -> &[RelationRangeImageGroupPlan] {
@@ -597,7 +638,19 @@ impl RelationRangeImagePlan {
                     } if *row_group_index == group_index
                 )
             })
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                if self
+                    .groups
+                    .iter()
+                    .any(|group| group.group_index == group_index)
+                {
+                    AkitaError::InvalidInput("relation group has no consistency row".into())
+                } else {
+                    AkitaError::InvalidInput(
+                        "consistency row group index is absent from the relation plan".into(),
+                    )
+                }
+            })
     }
 
     /// Canonical trailing scalar-opening row after every physical relation row.
@@ -625,10 +678,46 @@ impl RelationRangeImagePlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        dyadic_block_ranges, CommitmentSliceCount, PolynomialGroupLayout, RelationGroupRows,
-        RelationRhsLayout, RelationRowGeometry, WitnessQuotientRowLayout, WitnessUnitLayout,
+    use akita_params::{
+        dyadic_block_ranges, CommitmentRingDims, CommitmentSliceCount, PolynomialGroupLayout,
+        RelationGroupRows, RelationRhsLayout, RelationRowGeometry, WitnessQuotientRowLayout,
+        WitnessUnitLayout,
     };
+    use jolt_field::Prime128OffsetA7F7;
+
+    #[test]
+    fn l2_virtual_batch_reserves_the_constant_coefficient() {
+        type E = Prime128OffsetA7F7;
+        let eta = E::from_u64(3);
+        let evaluations = [E::from_u64(5), E::from_u64(7), E::from_u64(11)];
+
+        let (one_claim, one) = batch_l2_virtual_evaluations(eta, &evaluations[..1]);
+        assert_eq!(one, vec![E::from_u64(3)]);
+        assert_eq!(one_claim, E::from_u64(15));
+
+        let (two_claim, two) = batch_l2_virtual_evaluations(eta, &evaluations[..2]);
+        assert_eq!(two, vec![E::from_u64(3), E::from_u64(9)]);
+        assert_eq!(two_claim, E::from_u64(78));
+
+        let (three_claim, three) = batch_l2_virtual_evaluations(eta, &evaluations);
+        assert_eq!(three, vec![E::from_u64(3), E::from_u64(9), E::from_u64(27)]);
+        assert_eq!(three_claim, E::from_u64(375));
+    }
+
+    #[test]
+    fn l2_virtual_batch_cannot_cancel_the_stage2_constant_at_eta_zero() {
+        type E = Prime128OffsetA7F7;
+        let relation_opening_residual = E::from_u64(17);
+        let virtual_residuals = [-relation_opening_residual, E::from_u64(29)];
+        let zero = E::from_u64(0);
+        let (virtual_batch, coefficients) = batch_l2_virtual_evaluations(zero, &virtual_residuals);
+
+        assert_eq!(coefficients, vec![zero, zero]);
+        assert_eq!(
+            relation_opening_residual + virtual_batch,
+            relation_opening_residual
+        );
+    }
 
     fn test_relation_geometry(
         opening_batch: &OpeningClaimsLayout,
@@ -643,13 +732,13 @@ mod tests {
                 group_index,
                 role_dims,
                 opening_geometry,
-                opening_method: crate::OpeningMethod::EvaluationTrace,
+                opening_method: akita_params::OpeningMethod::EvaluationTrace,
                 n_a: 1,
                 physical_b_rows: 1,
                 outer_slice_count: CommitmentSliceCount::ONE,
             })
             .collect();
-        RelationWitnessGeometry::from_parts(
+        RelationWitnessGeometry::from_parts_for_test(
             1,
             RelationRhsLayout::new_for_test(role_dims.d_d(), 1, groups),
         )
@@ -712,6 +801,55 @@ mod tests {
         WitnessLayout::new_for_test(units, quotient_rows, 1)
     }
 
+    #[test]
+    fn consistency_row_rejects_an_absent_group() {
+        let plan = plan_for(&[1], 1, CommitmentRingDims::uniform(64), 64, 4);
+        assert!(plan.consistency_row_index(0).is_ok());
+        assert!(matches!(
+            plan.consistency_row_index(1),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn consistency_row_rejects_a_group_missing_from_supplied_geometry() {
+        let fixture = plan_for(&[1], 1, CommitmentRingDims::uniform(64), 64, 4);
+        let relation_geometry = fixture.relation_witness_geometry().clone();
+        let mut cursor = 0;
+        let rows = relation_geometry
+            .rhs_layout()
+            .row_geometries()
+            .unwrap()
+            .into_iter()
+            .map(|geometry| {
+                let start = cursor;
+                cursor += geometry.physical_coefficient_width();
+                WitnessQuotientRowLayout::new_for_test(geometry, start..cursor)
+            })
+            .collect();
+        let witness_layout = WitnessLayout::new_for_test(Vec::new(), rows, 1);
+        let address_geometry = RelationAddressGeometry::for_relation(
+            &relation_geometry,
+            64,
+            witness_layout.live_coeff_len(),
+        )
+        .unwrap();
+        let opening_batch = OpeningClaimsLayout::from_group_sizes(3, &[1, 1]).unwrap();
+        let plan = RelationRangeImagePlan::new(
+            relation_geometry,
+            address_geometry,
+            DigitRangePlan::new(4).unwrap(),
+            witness_layout,
+            &opening_batch,
+        )
+        .unwrap();
+        assert!(plan.consistency_row_index(0).is_ok());
+        assert!(matches!(
+            plan.consistency_row_index(1),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+
     fn plan_for(
         group_sizes: &[usize],
         chunks_per_group: usize,
@@ -771,7 +909,6 @@ mod tests {
                             basis,
                         );
                         assert_eq!(plan.digit_range_plan().basis(), basis);
-                        assert_eq!(plan.role_dims(), role_dims);
                         let geometry = plan.relation_address_geometry();
                         assert_eq!(geometry.relation_coefficient_block_len(), role_dims.d_d());
                         assert_eq!(
@@ -950,7 +1087,19 @@ mod tests {
             reconstruct_l2_sq_from_gram(shape, 4, &claims).expect("signed block Gram norm"),
             154
         );
-        assert!(reconstruct_l2_sq_from_gram(shape, 4, &claims[..8]).is_err());
+        assert!(matches!(
+            reconstruct_l2_sq_from_gram(shape, 4, &claims[..8]),
+            Err(AkitaError::InvalidSize {
+                expected: 9,
+                actual: 8,
+            })
+        ));
+        let mut forged_claims = vec![0; claims.len()];
+        forged_claims[0] = -1;
+        assert!(matches!(
+            reconstruct_l2_sq_from_gram(shape, 4, &forged_claims),
+            Err(AkitaError::InvalidProof)
+        ));
     }
 
     #[test]
@@ -960,8 +1109,9 @@ mod tests {
             block_len: 1,
             limb_count: 2,
         };
-        assert!(
-            reconstruct_l2_sq_from_gram(shape, usize::MAX, &[i128::MAX, 0, i128::MAX]).is_err()
-        );
+        assert!(matches!(
+            reconstruct_l2_sq_from_gram(shape, usize::MAX, &[i128::MAX, 0, i128::MAX]),
+            Err(AkitaError::InvalidSetup(_))
+        ));
     }
 }

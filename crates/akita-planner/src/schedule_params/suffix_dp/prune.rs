@@ -1,12 +1,15 @@
+use std::cell::OnceCell;
+
 use akita_error::AkitaError;
-use akita_types::{active_setup_field_len, OpeningClaimsLayout};
+use akita_params::{active_setup_field_len, OpeningClaimsLayout};
 
 use crate::schedule_params::{level_setup_field_elements, pareto};
 
-type LevelFrontierEntry = ([usize; 6], Vec<u8>, super::PlannedFoldCandidate);
+type LevelFrontierEntry = ([usize; 6], OnceCell<Vec<u8>>, super::PlannedFoldCandidate);
 
 pub(super) fn level_candidates(
     opening_layout: &OpeningClaimsLayout,
+    incoming_chunk_padding: bool,
     candidates: Vec<super::PlannedFoldCandidate>,
 ) -> Result<Vec<super::PlannedFoldCandidate>, AkitaError> {
     let mut frontier: Vec<LevelFrontierEntry> = Vec::new();
@@ -14,7 +17,7 @@ pub(super) fn level_candidates(
         let params = &candidate.params;
         let outer_payload_coeffs = params.outer_payload_geometry()?.transmitted_coefficients();
         let coords = [
-            akita_types::padded_setup_prefix_len(active_setup_field_len(params, opening_layout)?),
+            akita_params::padded_setup_prefix_len(active_setup_field_len(params, opening_layout)?),
             level_setup_field_elements(params)?,
             outer_payload_coeffs,
             params
@@ -31,7 +34,7 @@ pub(super) fn level_candidates(
                 .ok_or_else(|| AkitaError::InvalidSetup("D output dimension overflow".into()))?,
             candidate.opening_reduction_bytes,
         ];
-        let descriptor = params.canonical_descriptor_bytes();
+        let descriptor = OnceCell::new();
         pareto::insert(
             &mut frontier,
             (coords, descriptor, candidate),
@@ -43,24 +46,50 @@ pub(super) fn level_candidates(
                     && best_candidate.params.role_dims() == candidate_entry.params.role_dims()
                     && matches!(
                         best_candidate.params.opening_method(),
-                        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+                        akita_params::OpeningMethod::SubringCoefficientPacking { .. }
                     ) == matches!(
                         candidate_entry.params.opening_method(),
-                        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+                        akita_params::OpeningMethod::SubringCoefficientPacking { .. }
                     )
                     && std::mem::discriminant(
                         &best_candidate.params.inner().matrix.security_route(),
                     ) == std::mem::discriminant(
                         &candidate_entry.params.inner().matrix.security_route(),
                     )
+                    // The consumer's block width affects its predecessor's
+                    // padded output even when this consumer has one owner.
+                    && (!incoming_chunk_padding
+                        || best_candidate.params.blocks().positions_per_block
+                            == candidate_entry.params.blocks().positions_per_block)
+                    && (best_candidate.params.witness_chunk.num_chunks == 1
+                        || (best_candidate.params.blocks().positions_per_block
+                            == candidate_entry.params.blocks().positions_per_block
+                            && best_candidate.chunk_shape == candidate_entry.chunk_shape))
                     && best_candidate.next_witness_len == candidate_entry.next_witness_len
                     && best_candidate.next_source_moment == candidate_entry.next_source_moment
-                    && pareto::canonical_dominates(
-                        best,
-                        best_descriptor,
-                        candidate,
-                        candidate_descriptor,
-                    )
+                    && {
+                        // Descriptors only break exact coordinate ties. Cache
+                        // them on demand; unequal costs need no serialization.
+                        let (best_descriptor, candidate_descriptor): (&[u8], &[u8]) =
+                            if best == candidate {
+                                (
+                                    best_descriptor.get_or_init(|| {
+                                        best_candidate.params.canonical_descriptor_bytes()
+                                    }),
+                                    candidate_descriptor.get_or_init(|| {
+                                        candidate_entry.params.canonical_descriptor_bytes()
+                                    }),
+                                )
+                            } else {
+                                (&[], &[])
+                            };
+                        pareto::canonical_dominates(
+                            best,
+                            best_descriptor,
+                            candidate,
+                            candidate_descriptor,
+                        )
+                    }
             },
         );
     }

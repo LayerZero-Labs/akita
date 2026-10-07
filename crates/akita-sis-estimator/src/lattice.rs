@@ -5,9 +5,9 @@ use num_traits::{ToPrimitive, Zero};
 
 use crate::{
     config::{EstimateConfig, OptimizerConfig, SearchMode, ShapeModel},
-    cost::{CostValue, EstimateTag, LatticeCost, LogCost},
+    cost::{CostValue, LatticeCost, LogCost},
     error::{EstimatorError, Result},
-    math::{erf, log2_positive, sis_trivially_easy},
+    math::{log2_erf_from_log2_arg, log2_positive, sis_trivially_easy},
     params::{Bound, SisParameters},
     probability::log2_amplify,
     reduction::{
@@ -82,12 +82,7 @@ pub fn cost_infinity_fixed(
             })?;
     let uses_small_box = infinity_uses_small_box(params, effective_dimension)?;
     if effective_dimension < u64::from(beta) {
-        return Ok(proven_above_target_cost(
-            params,
-            beta,
-            zeta,
-            effective_dimension,
-        ));
+        return Ok(proven_above_target_cost(beta, zeta, effective_dimension));
     }
 
     let identity_vectors = effective_dimension as i128 - params.n as i128;
@@ -145,12 +140,12 @@ pub fn cost_infinity_fixed(
     };
     let log_probability = (log_trial_prob + log2_positive(short.count)).min(0.0);
     if !log_probability.is_finite() {
-        return Ok(infinite_cost(params, beta, zeta, effective_dimension));
+        return Ok(infinite_cost(beta, zeta, effective_dimension));
     }
 
     let repetitions_log2 = log2_amplify(config.success_probability.get(), log_probability);
     if !repetitions_log2.is_finite() {
-        return Ok(infinite_cost(params, beta, zeta, effective_dimension));
+        return Ok(infinite_cost(beta, zeta, effective_dimension));
     }
 
     let pre_repeat_sieve = pre_repeat_sieve_log2(short.cost_red_log2, bkz_log2);
@@ -173,11 +168,6 @@ pub fn cost_infinity_fixed(
         d: effective_dimension,
         prob: probability_from_log2(log_probability),
         repetitions: Some(log2_to_cost_value(repetitions_log2)),
-        tag: params
-            .tag
-            .as_ref()
-            .map(|value| EstimateTag::new(value.clone()))
-            .unwrap_or_default(),
     })
 }
 
@@ -268,23 +258,58 @@ fn validate_infinity_profile(config: &EstimateConfig) -> Result<()> {
 }
 
 fn length_bound_as_f64(bound: &Bound) -> Result<f64> {
-    match bound {
-        Bound::Integer(value) => {
-            if value.is_zero() {
-                return Err(EstimatorError::InvalidParameter {
-                    field: "length_bound",
-                    reason: "integer bound must be positive".to_string(),
-                });
-            }
-            Ok(value.to_f64().unwrap_or(f64::INFINITY))
-        }
-        Bound::Float(value) => Ok(*value),
+    bound.validate()?;
+    let value = match bound {
+        Bound::Integer(value) => value.to_f64().unwrap_or(f64::INFINITY),
+        Bound::Float(value) => *value,
         Bound::Rational {
             numerator,
             denominator,
-        } => Ok(numerator.to_f64().unwrap_or(0.0) / denominator.to_f64().unwrap_or(1.0)),
-        Bound::SqrtInteger(value) => Ok(value.to_f64().unwrap_or(f64::INFINITY).sqrt()),
+        } => {
+            let mut exponent = i128::from(numerator.bits()) - i128::from(denominator.bits());
+            if (numerator % denominator).is_zero() {
+                // Exact integers use the same rounding as Bound::Integer.
+                (numerator / denominator).to_f64().unwrap_or(f64::INFINITY)
+            } else if exponent > 1024 {
+                f64::INFINITY
+            } else if exponent < -1074 {
+                0.0
+            } else {
+                // Normalize to floor(log2(numerator / denominator)). Bit
+                // lengths alone can overestimate it by one, depending on
+                // common factors in the representation.
+                let below_power = if exponent >= 0 {
+                    numerator < &(denominator << exponent as usize)
+                } else {
+                    &(numerator << (-exponent) as usize) < denominator
+                };
+                exponent -= i128::from(below_power);
+                // Divide exact integers at the output's binary scale, so
+                // common factors of any size cancel before conversion. Round
+                // the bound upward (toward a cheaper attack), including at
+                // the subnormal boundary.
+                let shift = (52 - exponent).min(1074) as i32;
+                let (scaled_numerator, scaled_denominator) = if shift >= 0 {
+                    (numerator << shift as usize, denominator.clone())
+                } else {
+                    (numerator.clone(), denominator << (-shift) as usize)
+                };
+                let mut significand = &scaled_numerator / &scaled_denominator;
+                if !(&scaled_numerator % &scaled_denominator).is_zero() {
+                    significand += 1u8;
+                }
+                significand.to_f64().unwrap_or(f64::INFINITY) * 2.0_f64.powf(f64::from(-shift))
+            }
+        }
+        Bound::SqrtInteger(value) => value.to_f64().unwrap_or(f64::INFINITY).sqrt(),
+    };
+    if !value.is_finite() || value <= 0.0 {
+        return Err(EstimatorError::InvalidParameter {
+            field: "length_bound",
+            reason: "bound is outside the supported finite positive f64 range".to_string(),
+        });
     }
+    Ok(value)
 }
 
 fn infinity_log_trial_probability(
@@ -342,13 +367,6 @@ fn dilithium_log_trial_probability_lgsa_summary(
     let mut log_trial_prob = log2_erf_from_log2_arg(log2_erf_arg) * gaussian_coords;
     log_trial_prob += log2_positive((2.0 * length_bound + 1.0) / q_f) * idx_start as f64;
     Ok(log_trial_prob)
-}
-
-fn log2_erf_from_log2_arg(log2_arg: f64) -> f64 {
-    if log2_arg < -20.0 {
-        return log2_arg + log2_positive(2.0 / std::f64::consts::PI.sqrt());
-    }
-    log2_positive(erf(log2_arg.exp2()))
 }
 
 fn dilithium_log_trial_probability(
@@ -421,12 +439,7 @@ fn probability_from_log2(log_probability: f64) -> Option<crate::numeric::Probabi
     }
 }
 
-fn infinite_cost(
-    params: &SisParameters,
-    beta: u32,
-    zeta: u64,
-    effective_dimension: u64,
-) -> LatticeCost {
+fn infinite_cost(beta: u32, zeta: u64, effective_dimension: u64) -> LatticeCost {
     LatticeCost {
         rop: CostValue::Infinity,
         red: Some(CostValue::Infinity),
@@ -438,20 +451,10 @@ fn infinite_cost(
         d: effective_dimension,
         prob: None,
         repetitions: None,
-        tag: params
-            .tag
-            .as_ref()
-            .map(|value| EstimateTag::new(value.clone()))
-            .unwrap_or_default(),
     }
 }
 
-fn proven_above_target_cost(
-    params: &SisParameters,
-    beta: u32,
-    zeta: u64,
-    effective_dimension: u64,
-) -> LatticeCost {
+fn proven_above_target_cost(beta: u32, zeta: u64, effective_dimension: u64) -> LatticeCost {
     LatticeCost {
         rop: CostValue::ProvenAboveTarget(LogCost::new(f64::INFINITY)),
         red: None,
@@ -463,11 +466,6 @@ fn proven_above_target_cost(
         d: effective_dimension,
         prob: None,
         repetitions: None,
-        tag: params
-            .tag
-            .as_ref()
-            .map(|value| EstimateTag::new(value.clone()))
-            .unwrap_or_default(),
     }
 }
 
@@ -618,7 +616,8 @@ mod tests {
         let cost = cost_infinity_fixed(343, &params, zeta, &config).unwrap();
 
         assert_eq!(cost.d, effective_dimension);
-        assert!((cost.rop.log2().unwrap() - 118.916_112_523_987).abs() < 1e-9);
+        // Independently recomputed by scripts/sis_golden/probability_oracle.py.
+        assert!((cost.rop.log2().unwrap() - 118.915_126_048_466).abs() < 1e-7);
     }
 
     #[test]

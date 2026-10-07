@@ -1,10 +1,12 @@
 #![allow(missing_docs)]
 
-use akita_types::{CommitmentRingDims, RingRelationMode};
+use akita_params::{CommitmentRingDims, RingRelationMode};
 use akita_verifier::{
     relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
 };
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use jolt_field::{One, Prime128OffsetA7F7};
 use std::time::Duration;
 
@@ -136,7 +138,6 @@ fn bench_relation_evaluator(c: &mut Criterion) {
                                     .evaluator
                                     .eval_flat_at_point_with_deferred_setup::<F>(
                                         black_box(&benchmark_case.point),
-                                        black_box(&benchmark_case.setup),
                                         black_box(benchmark_case.alpha),
                                         black_box(F::one()),
                                     )
@@ -168,7 +169,6 @@ fn bench_relation_evaluator(c: &mut Criterion) {
                             .evaluator
                             .eval_flat_at_point_with_deferred_setup::<F>(
                                 black_box(&benchmark_case.point),
-                                black_box(&benchmark_case.setup),
                                 black_box(benchmark_case.alpha),
                                 black_box(F::one()),
                             )

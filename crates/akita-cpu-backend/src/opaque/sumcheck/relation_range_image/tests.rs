@@ -1,0 +1,940 @@
+mod lane_product;
+mod reduced_dense;
+mod reference;
+mod trace_prefix;
+
+use super::*;
+use crate::opaque::pad_compact_witness;
+use akita_algebra::eq_poly::EqPolynomial;
+use jolt_field::{One, Prime128Offset275};
+use jolt_poly::UnivariatePoly;
+
+type F = Prime128Offset275;
+
+fn packed(witness: &[i8]) -> PackedSignedDigits {
+    PackedSignedDigits::from_i8_digits_auto(witness.to_vec())
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct Stage2Params<'a> {
+    stage1_point: &'a [F],
+    b: usize,
+    live_lane_count: usize,
+    lane_bits: usize,
+    coefficient_bits: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DirectRelationRangeImageEvaluation {
+    range_image: F,
+    relation: F,
+    evaluation_trace: F,
+    fused_claim: F,
+}
+
+fn direct_relation_range_image_evaluation(
+    batching_coeff: F,
+    compact_witness: &[i8],
+    common_alpha_factor: &[F],
+    relation_lane_weights: &[F],
+    evaluation_trace_weights: &[F],
+    params: &Stage2Params<'_>,
+) -> DirectRelationRangeImageEvaluation {
+    let lane_capacity = 1usize << params.lane_bits;
+    let coeff_count = 1usize << params.coefficient_bits;
+    assert_eq!(compact_witness.len(), params.live_lane_count * coeff_count);
+    assert_eq!(common_alpha_factor.len(), coeff_count);
+    assert_eq!(relation_lane_weights.len(), lane_capacity);
+    assert_eq!(evaluation_trace_weights.len(), compact_witness.len());
+    let padded = if params.live_lane_count == (1usize << params.lane_bits) {
+        compact_witness.to_vec()
+    } else {
+        pad_compact_witness(
+            compact_witness,
+            params.live_lane_count,
+            params.lane_bits,
+            params.coefficient_bits,
+        )
+    };
+    let equality_weights = EqPolynomial::evals(params.stage1_point).unwrap();
+    assert_eq!(equality_weights.len(), padded.len());
+
+    let mut range_image = F::zero();
+    let mut relation = F::zero();
+    let mut evaluation_trace = F::zero();
+    for (physical_index, &digit) in padded.iter().enumerate() {
+        let digit = F::from_i64(i64::from(digit));
+        range_image += equality_weights[physical_index] * digit * (digit + F::one());
+        let lane = physical_index / coeff_count;
+        let coefficient = physical_index % coeff_count;
+        relation += digit * common_alpha_factor[coefficient] * relation_lane_weights[lane];
+        if lane < params.live_lane_count {
+            evaluation_trace += digit * evaluation_trace_weights[physical_index];
+        }
+    }
+    DirectRelationRangeImageEvaluation {
+        range_image,
+        relation,
+        evaluation_trace,
+        fused_claim: batching_coeff * range_image + relation + evaluation_trace,
+    }
+}
+
+fn new_stage2_test_prover(
+    batching_coeff: F,
+    compact_witness: Vec<i8>,
+    common_alpha_factor: Vec<F>,
+    relation_lane_weights: Vec<F>,
+    params: Stage2Params<'_>,
+) -> RelationRangeImageProver<F> {
+    let zero_trace_weights = vec![F::zero(); compact_witness.len()];
+    let direct = direct_relation_range_image_evaluation(
+        batching_coeff,
+        &compact_witness,
+        &common_alpha_factor,
+        &relation_lane_weights,
+        &zero_trace_weights,
+        &params,
+    );
+    RelationRangeImageProver::new(
+        batching_coeff,
+        packed(&compact_witness),
+        params.stage1_point,
+        direct.range_image,
+        params.b,
+        RelationWeightOracle::QuotientFactored(
+            RelationWeightFactorization::new(common_alpha_factor, relation_lane_weights).unwrap(),
+        ),
+        params.live_lane_count,
+        params.lane_bits,
+        params.coefficient_bits,
+        direct.relation,
+        PreparedProverLinearTerms::from_dense(
+            zero_trace_weights,
+            params.live_lane_count,
+            1usize << params.coefficient_bits,
+        ),
+        None,
+    )
+    .unwrap()
+}
+
+pub(super) fn new_stage2_test_prover_with_trace(
+    batching_coeff: F,
+    compact_witness: Vec<i8>,
+    common_alpha_factor: Vec<F>,
+    relation_lane_weights: Vec<F>,
+    trace_compact: Vec<F>,
+    params: Stage2Params<'_>,
+) -> RelationRangeImageProver<F> {
+    let linear_terms = PreparedProverLinearTerms::from_dense(
+        trace_compact.clone(),
+        params.live_lane_count,
+        1usize << params.coefficient_bits,
+    );
+    new_stage2_test_prover_with_linear_terms(
+        batching_coeff,
+        compact_witness,
+        common_alpha_factor,
+        relation_lane_weights,
+        trace_compact,
+        linear_terms,
+        params,
+    )
+}
+
+pub(super) fn new_stage2_test_prover_with_linear_terms(
+    batching_coeff: F,
+    compact_witness: Vec<i8>,
+    common_alpha_factor: Vec<F>,
+    relation_lane_weights: Vec<F>,
+    linear_weights_dense: Vec<F>,
+    linear_terms: PreparedProverLinearTerms<F>,
+    params: Stage2Params<'_>,
+) -> RelationRangeImageProver<F> {
+    let direct = direct_relation_range_image_evaluation(
+        batching_coeff,
+        &compact_witness,
+        &common_alpha_factor,
+        &relation_lane_weights,
+        &linear_weights_dense,
+        &params,
+    );
+    RelationRangeImageProver::new(
+        batching_coeff,
+        packed(&compact_witness),
+        params.stage1_point,
+        direct.range_image,
+        params.b,
+        RelationWeightOracle::QuotientFactored(
+            RelationWeightFactorization::new(common_alpha_factor, relation_lane_weights).unwrap(),
+        ),
+        params.live_lane_count,
+        params.lane_bits,
+        params.coefficient_bits,
+        direct.relation + direct.evaluation_trace,
+        linear_terms,
+        None,
+    )
+    .unwrap()
+}
+
+pub(super) fn pad_trace_compact(
+    trace_compact: &[F],
+    live_lane_count: usize,
+    lane_bits: usize,
+    coefficient_bits: usize,
+) -> Vec<F> {
+    let coeff_count = 1usize << coefficient_bits;
+    let lane_capacity = 1usize << lane_bits;
+    assert_eq!(trace_compact.len(), live_lane_count * coeff_count);
+    let mut padded = vec![F::zero(); lane_capacity * coeff_count];
+    for lane in 0..live_lane_count {
+        let src = lane * coeff_count;
+        let dst = lane * coeff_count;
+        padded[dst..dst + coeff_count].copy_from_slice(&trace_compact[src..src + coeff_count]);
+    }
+    padded
+}
+
+#[test]
+fn direct_fused_equation_matches_checked_stage2_input_claim() {
+    for (live_lane_count, lane_bits, coefficient_bits) in [
+        (5usize, 3usize, 2usize),
+        (8usize, 3usize, 2usize),
+        // Partial live relation-lane prefix over a four-coordinate common block.
+        (23usize, 5usize, 2usize),
+    ] {
+        let coeff_count = 1usize << coefficient_bits;
+        let lane_capacity = 1usize << lane_bits;
+        let digit_witness = (0..live_lane_count * coeff_count)
+            .map(|index| ((index * 11 + 3) % 8) as i8 - 4)
+            .collect::<Vec<_>>();
+        let stage1_point = (0..lane_bits + coefficient_bits)
+            .map(|index| F::from_u64(index as u64 + 17))
+            .collect::<Vec<_>>();
+        let common_alpha_factor = (0..coeff_count)
+            .map(|index| F::from_u64(3 * index as u64 + 5))
+            .collect::<Vec<_>>();
+        let relation_lane_weights = (0..lane_capacity)
+            .map(|index| F::from_u64(7 * index as u64 + 11))
+            .collect::<Vec<_>>();
+        let evaluation_trace_weights = (0..digit_witness.len())
+            .map(|index| F::from_u64(13 * index as u64 + 19))
+            .collect::<Vec<_>>();
+        let batching_coeff = F::from_u64(29);
+        let params = Stage2Params {
+            stage1_point: &stage1_point,
+            b: 8,
+            live_lane_count,
+            lane_bits,
+            coefficient_bits,
+        };
+        let direct = direct_relation_range_image_evaluation(
+            batching_coeff,
+            &digit_witness,
+            &common_alpha_factor,
+            &relation_lane_weights,
+            &evaluation_trace_weights,
+            &params,
+        );
+        let prover = new_stage2_test_prover_with_trace(
+            batching_coeff,
+            digit_witness,
+            common_alpha_factor,
+            relation_lane_weights,
+            evaluation_trace_weights,
+            params,
+        );
+
+        assert_eq!(prover.input_claim(), direct.fused_claim);
+        assert_eq!(
+            direct.fused_claim,
+            batching_coeff * direct.range_image + direct.relation + direct.evaluation_trace
+        );
+    }
+}
+
+#[test]
+fn common_coordinate_factorization_matches_flattened_rounds() {
+    // Four coefficient bits exercise the fused folded-coefficient transition after
+    // the compact quotient prefix.
+    let common_coeff_count = 16usize;
+    let live_relation_lanes = 5usize;
+    let common_bits = common_coeff_count.trailing_zeros() as usize;
+    let lane_bits = live_relation_lanes.next_power_of_two().trailing_zeros() as usize;
+    let num_vars = common_bits + lane_bits;
+    let stage1_point = (0..num_vars)
+        .map(|index| F::from_u64(11 * index as u64 + 7))
+        .collect::<Vec<_>>();
+    let common_alpha_factor = (0..common_coeff_count)
+        .map(|index| F::from_u64(13 * index as u64 + 17))
+        .collect::<Vec<_>>();
+    let relation_lane_weights = (0..(1usize << lane_bits))
+        .map(|index| F::from_u64(19 * index as u64 + 23))
+        .collect::<Vec<_>>();
+    let dense_relation_weights = relation_lane_weights
+        .iter()
+        .flat_map(|&lane_weight| {
+            common_alpha_factor
+                .iter()
+                .map(move |&alpha| lane_weight * alpha)
+        })
+        .collect::<Vec<_>>();
+    let witness = (0..(live_relation_lanes * common_coeff_count))
+        .map(|index| ((5 * index + 3) % 8) as i8 - 4)
+        .collect::<Vec<_>>();
+    let evaluation_trace_weights = (0..witness.len())
+        .map(|index| F::from_u64(29 * index as u64 + 31))
+        .collect::<Vec<_>>();
+    let batching_coeff = F::from_u64(37);
+
+    let mut factorized = new_stage2_test_prover_with_trace(
+        batching_coeff,
+        witness.clone(),
+        common_alpha_factor,
+        relation_lane_weights,
+        evaluation_trace_weights.clone(),
+        Stage2Params {
+            stage1_point: &stage1_point,
+            b: 8,
+            live_lane_count: live_relation_lanes,
+            lane_bits,
+            coefficient_bits: common_bits,
+        },
+    );
+    let mut flattened = new_stage2_test_prover_with_trace(
+        batching_coeff,
+        witness,
+        vec![F::one()],
+        dense_relation_weights,
+        evaluation_trace_weights,
+        Stage2Params {
+            stage1_point: &stage1_point,
+            b: 8,
+            live_lane_count: live_relation_lanes * common_coeff_count,
+            lane_bits: num_vars,
+            coefficient_bits: 0,
+        },
+    );
+
+    assert_eq!(factorized.input_claim(), flattened.input_claim());
+    let mut factorized_claim = factorized.input_claim();
+    let mut flattened_claim = flattened.input_claim();
+    for round in 0..num_vars {
+        let factorized_poly = factorized.compute_round_univariate(round, factorized_claim);
+        let flattened_poly = flattened.compute_round_univariate(round, flattened_claim);
+        assert_eq!(factorized_poly, flattened_poly, "round {round}");
+        let challenge = F::from_u64(41 * round as u64 + 43);
+        factorized_claim = factorized_poly.evaluate(challenge);
+        flattened_claim = flattened_poly.evaluate(challenge);
+        factorized.ingest_challenge(round, challenge);
+        flattened.ingest_challenge(round, challenge);
+    }
+    assert_eq!(factorized_claim, flattened_claim);
+    assert_eq!(
+        factorized.final_w_eval().unwrap(),
+        flattened.final_w_eval().unwrap()
+    );
+}
+
+fn relation_round_reference(
+    compact_witness: &[i8],
+    common_alpha_factor: &[F],
+    relation_lane_weights: &[F],
+    coefficient_bits: usize,
+) -> UnivariatePoly<F> {
+    let half = compact_witness.len() / 2;
+    let current_coefficient_mask = (1usize << coefficient_bits).wrapping_sub(1);
+    let mut evals = [F::zero(); 3];
+    for j in 0..half {
+        let w_0 = F::from_i64(compact_witness[2 * j] as i64);
+        let w_1 = F::from_i64(compact_witness[2 * j + 1] as i64);
+        let a_0 = common_alpha_factor[(2 * j) & current_coefficient_mask];
+        let a_1 = common_alpha_factor[(2 * j + 1) & current_coefficient_mask];
+        let m_0 = relation_lane_weights[(2 * j) >> coefficient_bits];
+        let m_1 = relation_lane_weights[(2 * j + 1) >> coefficient_bits];
+        evals[0] += w_0 * a_0 * m_0;
+        evals[1] += w_1 * a_1 * m_1;
+        let w_2 = w_1 + w_1 - w_0;
+        let a_2 = a_1 + a_1 - a_0;
+        let m_2 = m_1 + m_1 - m_0;
+        evals[2] += w_2 * a_2 * m_2;
+    }
+    let mut polynomial = UnivariatePoly::from_evals(&evals);
+    polynomial.trim_trailing_zeros();
+    polynomial
+}
+
+fn virtual_round_reference(
+    split_eq: &GruenSplitEq<F>,
+    compact_witness: &[i8],
+) -> UnivariatePoly<F> {
+    let half = compact_witness.len() / 2;
+    let (e_first, e_second) = split_eq.remaining_eq_tables();
+    let num_first = e_first.len();
+    let first_bits = num_first.trailing_zeros();
+    let mut evals = [F::zero(); 3];
+    for j in 0..half {
+        let j_low = j & (num_first - 1);
+        let j_high = j >> first_bits;
+        let eq_rem = e_first[j_low] * e_second[j_high];
+        let w_0 = F::from_i64(compact_witness[2 * j] as i64);
+        let w_1 = F::from_i64(compact_witness[2 * j + 1] as i64);
+        let w_2 = w_1 + w_1 - w_0;
+        evals[0] += eq_rem * w_0 * (w_0 + F::one());
+        evals[1] += eq_rem * w_1 * (w_1 + F::one());
+        evals[2] += eq_rem * w_2 * (w_2 + F::one());
+    }
+    let mut polynomial = UnivariatePoly::from_evals(&evals);
+    polynomial.trim_trailing_zeros();
+    split_eq.gruen_mul(&polynomial)
+}
+
+fn materialize_compact_witness_reference(compact_witness: &[i8], r: F) -> Vec<F> {
+    (0..compact_witness.len() / 2)
+        .map(|j| {
+            let w_0 = F::from_i64(compact_witness[2 * j] as i64);
+            let w_1 = F::from_i64(compact_witness[2 * j + 1] as i64);
+            w_0 + r * (w_1 - w_0)
+        })
+        .collect()
+}
+
+#[test]
+fn stage2_compact_fold_lookup_matches_direct_formula() {
+    let r = F::from_u64(53);
+
+    let w_dense = vec![1, 2, 3, 1, 2, 3];
+    let packed_dense = packed(&w_dense);
+    let dense_lut = RelationRoundState::<F>::build_compact_w_fold_lut(packed_dense.view(), r);
+    assert_eq!(
+        RelationRoundState::<F>::materialize_compact_witness(packed_dense.view(), &dense_lut),
+        materialize_compact_witness_reference(&w_dense, r)
+    );
+}
+
+#[test]
+fn stage2_compact_round0_matches_unfused_reference() {
+    let lane_bits = 3usize;
+    let coefficient_bits = 2usize;
+    let n = 1usize << (lane_bits + coefficient_bits);
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
+        .map(|i| F::from_u64((i as u64) + 2))
+        .collect();
+    let common_alpha_factor: Vec<F> = (0..(1usize << coefficient_bits))
+        .map(|i| F::from_u64((3 * i as u64) + 5))
+        .collect();
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
+        .map(|i| F::from_u64((7 * i as u64) + 11))
+        .collect();
+
+    for b in [4usize, 8, 16, 32] {
+        let half = (b / 2) as i8;
+        let compact_witness: Vec<i8> = (0..n).map(|i| ((i * 5 + 3) % b) as i8 - half).collect();
+        let prover = new_stage2_test_prover(
+            F::from_u64(13),
+            compact_witness.clone(),
+            common_alpha_factor.clone(),
+            relation_lane_weights.clone(),
+            Stage2Params {
+                stage1_point: &stage1_point,
+                b,
+                live_lane_count: 1usize << lane_bits,
+                lane_bits,
+                coefficient_bits,
+            },
+        );
+        let packed_witness = packed(&compact_witness);
+        let (virt_poly, relation_poly) =
+            prover.compute_round_compact_dense_polys(packed_witness.view());
+        let virt_ref = virtual_round_reference(&prover.state.split_eq, &compact_witness);
+        let relation_ref = relation_round_reference(
+            &compact_witness,
+            &common_alpha_factor,
+            &relation_lane_weights,
+            coefficient_bits,
+        );
+
+        assert_eq!(
+            virt_poly, virt_ref,
+            "compact virtual round mismatch for b={b}"
+        );
+        assert_eq!(
+            relation_poly, relation_ref,
+            "compact relation round mismatch for b={b}"
+        );
+    }
+}
+
+#[test]
+fn stage2_prefix_aware_rounds_match_explicit_relation_lane_table() {
+    let coefficient_bits = 2usize;
+    for b in [4usize, 8, 16, 32] {
+        let half = (b / 2) as i8;
+        for live_lane_count in [5usize, 6usize] {
+            let lane_bits = live_lane_count.next_power_of_two().trailing_zeros() as usize;
+            let lane_capacity = 1usize << lane_bits;
+            let coeff_count = 1usize << coefficient_bits;
+            let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
+                .map(|i| ((i * 7 + 5) % b) as i8 - half)
+                .collect();
+            let w_padded =
+                pad_compact_witness(&w_prefix, live_lane_count, lane_bits, coefficient_bits);
+            let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
+                .map(|i| F::from_u64((i as u64) + 31))
+                .collect();
+            let common_alpha_factor: Vec<F> = (0..coeff_count)
+                .map(|i| F::from_u64((5 * i as u64) + 7))
+                .collect();
+            let relation_lane_weights: Vec<F> = (0..lane_capacity)
+                .map(|i| F::from_u64((11 * i as u64) + 13))
+                .collect();
+
+            let mut prefix_prover = new_stage2_test_prover(
+                F::from_u64(17),
+                w_prefix.clone(),
+                common_alpha_factor.clone(),
+                relation_lane_weights.clone(),
+                Stage2Params {
+                    stage1_point: &stage1_point,
+                    b,
+                    live_lane_count,
+                    lane_bits,
+                    coefficient_bits,
+                },
+            );
+            let mut padded_prover = new_stage2_test_prover(
+                F::from_u64(17),
+                w_padded.clone(),
+                common_alpha_factor.clone(),
+                relation_lane_weights.clone(),
+                Stage2Params {
+                    stage1_point: &stage1_point,
+                    b,
+                    live_lane_count: 1usize << lane_bits,
+                    lane_bits,
+                    coefficient_bits,
+                },
+            );
+            let mut prefix_claim = prefix_prover.input_claim();
+            let mut padded_claim = padded_prover.input_claim();
+
+            for round in 0..(lane_bits + coefficient_bits) {
+                let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+                let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
+                assert_eq!(
+                    prefix_poly, padded_poly,
+                    "round {round} polynomial mismatch live_lane_count={live_lane_count} b={b}"
+                );
+
+                let challenge = F::from_u64((round as u64) + 37);
+                prefix_claim = prefix_poly.evaluate(challenge);
+                padded_claim = padded_poly.evaluate(challenge);
+                prefix_prover.ingest_challenge(round, challenge);
+                padded_prover.ingest_challenge(round, challenge);
+            }
+
+            assert_eq!(
+                prefix_prover.final_w_eval().unwrap(),
+                padded_prover.final_w_eval().unwrap()
+            );
+            assert_eq!(prefix_claim, padded_claim);
+        }
+    }
+}
+
+#[test]
+fn stage2_zero_gated_round0_matches_reference() {
+    let lane_bits = 3usize;
+    let coefficient_bits = 1usize;
+    let compact_witness = vec![-1, 0, -1, 0, 0, -1, 0, -1, -1, 0, -1, 0, 0, -1, 0, -1];
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
+        .map(|i| F::from_u64((i as u64) + 41))
+        .collect();
+    let common_alpha_factor: Vec<F> = (0..(1usize << coefficient_bits))
+        .map(|i| F::from_u64((3 * i as u64) + 43))
+        .collect();
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
+        .map(|i| F::from_u64((5 * i as u64) + 47))
+        .collect();
+
+    let prover = new_stage2_test_prover(
+        F::from_u64(19),
+        compact_witness.clone(),
+        common_alpha_factor.clone(),
+        relation_lane_weights.clone(),
+        Stage2Params {
+            stage1_point: &stage1_point,
+            b: 8,
+            live_lane_count: 1usize << lane_bits,
+            lane_bits,
+            coefficient_bits,
+        },
+    );
+    let packed_witness = packed(&compact_witness);
+    let (virt_poly, relation_poly) =
+        prover.compute_round_compact_dense_polys(packed_witness.view());
+    assert_eq!(
+        virt_poly,
+        virtual_round_reference(&prover.state.split_eq, &compact_witness)
+    );
+    assert_eq!(
+        relation_poly,
+        relation_round_reference(
+            &compact_witness,
+            &common_alpha_factor,
+            &relation_lane_weights,
+            coefficient_bits
+        )
+    );
+}
+
+#[test]
+fn stage2_large_odd_sparse_boolean_deferred_compact_prefix_matches_direct_path() {
+    let lane_bits = 16usize;
+    let coefficient_bits = 6usize;
+    let live_lane_count = 34_519usize;
+    let b = 8usize;
+    let coeff_count = 1usize << coefficient_bits;
+    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
+        .map(|i| if (i * 73 + 19) % 17 == 0 { -1 } else { 0 })
+        .collect();
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
+        .map(|i| F::from_u64((3 * i as u64) + 167))
+        .collect();
+    let common_alpha_factor: Vec<F> = (0..coeff_count)
+        .map(|i| F::from_u64((5 * i as u64) + 173))
+        .collect();
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
+        .map(|i| F::from_u64((7 * i as u64) + 179))
+        .collect();
+    let params = Stage2Params {
+        stage1_point: &stage1_point,
+        b,
+        live_lane_count,
+        lane_bits,
+        coefficient_bits,
+    };
+
+    let mut prover = new_stage2_test_prover(
+        F::from_u64(191),
+        w_prefix.clone(),
+        common_alpha_factor.clone(),
+        relation_lane_weights.clone(),
+        params,
+    );
+    let mut direct = new_stage2_test_prover(
+        F::from_u64(191),
+        w_prefix,
+        common_alpha_factor,
+        relation_lane_weights,
+        params,
+    );
+    direct.disable_compact_quotient_prefix();
+
+    let mut prover_claim = prover.input_claim();
+    let mut direct_claim = direct.input_claim();
+
+    for round in 0..(lane_bits + coefficient_bits) {
+        let prover_poly = prover.compute_round_univariate(round, prover_claim);
+        let direct_poly = direct.compute_round_univariate(round, direct_claim);
+        assert_eq!(
+            prover_poly, direct_poly,
+            "round {round} polynomial mismatch for large odd sparse boolean witness"
+        );
+
+        let challenge = F::from_u64((11 * round as u64) + 197);
+        prover_claim = prover_poly.evaluate(challenge);
+        direct_claim = direct_poly.evaluate(challenge);
+        prover.ingest_challenge(round, challenge);
+        direct.ingest_challenge(round, challenge);
+    }
+
+    assert_eq!(prover_claim, direct_claim);
+    assert_eq!(
+        prover.final_w_eval().unwrap(),
+        direct.final_w_eval().unwrap()
+    );
+}
+
+#[test]
+fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
+    let lane_bits = 16usize;
+    let coefficient_bits = 6usize;
+    let live_lane_count = 34_519usize;
+    let b = 8usize;
+    let coeff_count = 1usize << coefficient_bits;
+    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
+        .map(|i| if (i * 73 + 19) % 17 == 0 { -1 } else { 0 })
+        .collect();
+    let w_padded = pad_compact_witness(&w_prefix, live_lane_count, lane_bits, coefficient_bits);
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
+        .map(|i| F::from_u64((3 * i as u64) + 223))
+        .collect();
+    let common_alpha_factor: Vec<F> = (0..coeff_count)
+        .map(|i| F::from_u64((5 * i as u64) + 227))
+        .collect();
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
+        .map(|i| F::from_u64((7 * i as u64) + 229))
+        .collect();
+
+    let mut prefix_prover = new_stage2_test_prover(
+        F::from_u64(233),
+        w_prefix,
+        common_alpha_factor.clone(),
+        relation_lane_weights.clone(),
+        Stage2Params {
+            stage1_point: &stage1_point,
+            b,
+            live_lane_count,
+            lane_bits,
+            coefficient_bits,
+        },
+    );
+    let mut padded_prover = new_stage2_test_prover(
+        F::from_u64(233),
+        w_padded,
+        common_alpha_factor,
+        relation_lane_weights,
+        Stage2Params {
+            stage1_point: &stage1_point,
+            b,
+            live_lane_count: 1usize << lane_bits,
+            lane_bits,
+            coefficient_bits,
+        },
+    );
+
+    let mut prefix_claim = prefix_prover.input_claim();
+    let mut padded_claim = padded_prover.input_claim();
+
+    for round in 0..(lane_bits + coefficient_bits) {
+        let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+        let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
+        assert_eq!(
+            prefix_poly, padded_poly,
+            "round {round} polynomial mismatch for padded large odd sparse boolean witness"
+        );
+
+        let challenge = F::from_u64((13 * round as u64) + 239);
+        prefix_claim = prefix_poly.evaluate(challenge);
+        padded_claim = padded_poly.evaluate(challenge);
+        prefix_prover.ingest_challenge(round, challenge);
+        padded_prover.ingest_challenge(round, challenge);
+    }
+
+    assert_eq!(prefix_claim, padded_claim);
+    assert_eq!(
+        prefix_prover.final_w_eval().unwrap(),
+        padded_prover.final_w_eval().unwrap()
+    );
+}
+
+#[test]
+fn stage2_large_odd_dense_deferred_compact_prefix_matches_direct_path() {
+    for b in [8, 16] {
+        dense_compact_prefix_matches_direct_path(b, 16, 6, 34_519);
+        // Prefixes that end at rounds 1, 2 and 3.
+        for coefficient_bits in [2, 3, 4] {
+            dense_compact_prefix_matches_direct_path(b, 7, coefficient_bits, 77);
+        }
+    }
+}
+
+/// The periodic witness of the test above repeats a handful of digit classes.
+/// Here every lane has its own digits and both ends of the digit range occur,
+/// so the later coefficient rounds still see many classes.
+#[test]
+fn stage2_pseudorandom_dense_compact_prefix_matches_direct_path() {
+    for b in [8, 16] {
+        for (lane_bits, coefficient_bits, live_lane_count) in [(7, 6, 77), (10, 7, 777)] {
+            let half = (b / 2) as i8;
+            let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ (b * live_lane_count) as u64;
+            let mut w_prefix: Vec<i8> = (0..(live_lane_count << coefficient_bits))
+                .map(|_| {
+                    state = state
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    ((state >> 33) % b as u64) as i8 - half
+                })
+                .collect();
+            w_prefix[0] = -half;
+            w_prefix[1] = half - 1;
+            let last = w_prefix.len() - 1;
+            w_prefix[last - 1] = half - 1;
+            w_prefix[last] = -half;
+            compact_prefix_matches_direct_path(
+                b,
+                lane_bits,
+                coefficient_bits,
+                live_lane_count,
+                w_prefix,
+            );
+        }
+    }
+}
+
+fn dense_compact_prefix_matches_direct_path(
+    b: usize,
+    lane_bits: usize,
+    coefficient_bits: usize,
+    live_lane_count: usize,
+) {
+    let half = (b / 2) as i8;
+    let w_prefix: Vec<i8> = (0..(live_lane_count << coefficient_bits))
+        .map(|i| ((i * 29 + 17) % b) as i8 - half)
+        .collect();
+    compact_prefix_matches_direct_path(b, lane_bits, coefficient_bits, live_lane_count, w_prefix);
+}
+
+fn compact_prefix_matches_direct_path(
+    b: usize,
+    lane_bits: usize,
+    coefficient_bits: usize,
+    live_lane_count: usize,
+    w_prefix: Vec<i8>,
+) {
+    let coeff_count = 1usize << coefficient_bits;
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
+        .map(|i| F::from_u64((17 * i as u64) + 241))
+        .collect();
+    let common_alpha_factor: Vec<F> = (0..coeff_count)
+        .map(|i| F::from_u64((19 * i as u64) + 251))
+        .collect();
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
+        .map(|i| F::from_u64((23 * i as u64) + 257))
+        .collect();
+    let params = Stage2Params {
+        stage1_point: &stage1_point,
+        b,
+        live_lane_count,
+        lane_bits,
+        coefficient_bits,
+    };
+
+    let mut prover = new_stage2_test_prover(
+        F::from_u64(263),
+        w_prefix.clone(),
+        common_alpha_factor.clone(),
+        relation_lane_weights.clone(),
+        params,
+    );
+    let mut direct = new_stage2_test_prover(
+        F::from_u64(263),
+        w_prefix,
+        common_alpha_factor,
+        relation_lane_weights,
+        params,
+    );
+    assert!(prover.compact_quotient_prefix().is_some());
+    direct.disable_compact_quotient_prefix();
+
+    let mut prover_claim = prover.input_claim();
+    let mut direct_claim = direct.input_claim();
+
+    for round in 0..(lane_bits + coefficient_bits) {
+        let prover_poly = prover.compute_round_univariate(round, prover_claim);
+        let direct_poly = direct.compute_round_univariate(round, direct_claim);
+        assert_eq!(
+            prover_poly.evaluate(F::zero()) + prover_poly.evaluate(F::one()),
+            prover_claim,
+            "prefix path sumcheck invariant mismatch at round {round}"
+        );
+        assert_eq!(
+            direct_poly.evaluate(F::zero()) + direct_poly.evaluate(F::one()),
+            direct_claim,
+            "direct path sumcheck invariant mismatch at round {round}"
+        );
+        assert_eq!(
+            prover_poly, direct_poly,
+            "round {round} polynomial mismatch for dense witness, b={b}"
+        );
+
+        let challenge = F::from_u64((29 * round as u64) + 269);
+        prover_claim = prover_poly.evaluate(challenge);
+        direct_claim = direct_poly.evaluate(challenge);
+        prover.ingest_challenge(round, challenge);
+        direct.ingest_challenge(round, challenge);
+    }
+
+    assert_eq!(prover_claim, direct_claim);
+    assert_eq!(
+        prover.final_w_eval().unwrap(),
+        direct.final_w_eval().unwrap()
+    );
+}
+
+#[test]
+fn stage2_large_odd_dense_prefix_matches_padded_reference() {
+    let lane_bits = 16usize;
+    let coefficient_bits = 6usize;
+    let live_lane_count = 34_519usize;
+    let b = 8usize;
+    let half = (b / 2) as i8;
+    let coeff_count = 1usize << coefficient_bits;
+    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
+        .map(|i| ((i * 31 + 11) % b) as i8 - half)
+        .collect();
+    let w_padded = pad_compact_witness(&w_prefix, live_lane_count, lane_bits, coefficient_bits);
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
+        .map(|i| F::from_u64((31 * i as u64) + 271))
+        .collect();
+    let common_alpha_factor: Vec<F> = (0..coeff_count)
+        .map(|i| F::from_u64((37 * i as u64) + 277))
+        .collect();
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
+        .map(|i| F::from_u64((41 * i as u64) + 281))
+        .collect();
+
+    let mut prefix_prover = new_stage2_test_prover(
+        F::from_u64(283),
+        w_prefix,
+        common_alpha_factor.clone(),
+        relation_lane_weights.clone(),
+        Stage2Params {
+            stage1_point: &stage1_point,
+            b,
+            live_lane_count,
+            lane_bits,
+            coefficient_bits,
+        },
+    );
+    let mut padded_prover = new_stage2_test_prover(
+        F::from_u64(283),
+        w_padded,
+        common_alpha_factor,
+        relation_lane_weights,
+        Stage2Params {
+            stage1_point: &stage1_point,
+            b,
+            live_lane_count: 1usize << lane_bits,
+            lane_bits,
+            coefficient_bits,
+        },
+    );
+
+    let mut prefix_claim = prefix_prover.input_claim();
+    let mut padded_claim = padded_prover.input_claim();
+
+    for round in 0..(lane_bits + coefficient_bits) {
+        let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+        let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
+        assert_eq!(
+            prefix_poly, padded_poly,
+            "round {round} polynomial mismatch for padded large odd dense witness"
+        );
+
+        let challenge = F::from_u64((43 * round as u64) + 293);
+        prefix_claim = prefix_poly.evaluate(challenge);
+        padded_claim = padded_poly.evaluate(challenge);
+        prefix_prover.ingest_challenge(round, challenge);
+        padded_prover.ingest_challenge(round, challenge);
+    }
+
+    assert_eq!(prefix_claim, padded_claim);
+    assert_eq!(
+        prefix_prover.final_w_eval().unwrap(),
+        padded_prover.final_w_eval().unwrap()
+    );
+}

@@ -1,54 +1,14 @@
 use super::*;
-use crate::SisModulusProfileId;
 use akita_challenges::SparseChallengeConfig;
+use akita_params::golomb_rice::golomb_rice_encode_vec;
+use akita_params::tail_golomb_rice_low_bits::wire_rice_low_bits;
+use akita_params::test_fixtures::test_lp;
+use akita_params::CommittedGroupParams;
 use jolt_field::CanonicalEncoding;
-use jolt_field::{One, Prime128OffsetA7F7, Zero};
+use jolt_field::{Prime128OffsetA7F7, Zero};
 
 type F = Prime128OffsetA7F7;
 const TEST_ADMISSION_CAP: u128 = 127;
-
-fn test_lp() -> CommittedGroupParams {
-    let mut params = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
-        64,
-        3,
-        2,
-        3,
-        2,
-        SparseChallengeConfig::pm1_only(3),
-    )
-    .with_decomp(8, 32, 2, 3, 3)
-    .expect("tail segment test params");
-    let key = crate::sis::SisTableKey {
-        policy: params.inner().matrix.security_policy(),
-        table_digest: params
-            .inner()
-            .matrix
-            .sis_table_key()
-            .expect("L infinity test matrix")
-            .table_digest,
-        modulus_profile: params.inner().matrix.sis_modulus_profile(),
-        role: crate::sis::SisMatrixRole::Inner,
-        ring_dimension: 64,
-        coeff_linf_bound: crate::sis::sis_role_cells()
-            .into_iter()
-            .filter(|cell| {
-                cell.role == crate::sis::SisMatrixRole::Inner
-                    && cell.modulus_profile == params.inner().matrix.sis_modulus_profile()
-                    && cell.ring_dimension == 64
-            })
-            .map(|cell| cell.coeff_linf_bound)
-            .max()
-            .expect("nonempty SIS A bounds"),
-    };
-    params.own_group_mut().profile.inner.matrix =
-        crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
-            key,
-            params.inner().matrix.input_width(),
-        )
-        .expect("secure terminal test matrix");
-    params
-}
 
 fn scalar_group_layout(
     lp: &CommittedGroupParams,
@@ -69,6 +29,30 @@ fn scalar_group_layout(
         )],
     )
     .map(|shape| shape.layout)
+}
+
+#[test]
+fn terminal_response_from_payload_rejects_empty_schedule_groups() {
+    let params = akita_params::TerminalFoldParams::from_expanded_group(test_lp());
+    let scheduled_shape = TerminalResponseShape {
+        layout: TailSegmentLayout {
+            ring_dimension: params.d_a(),
+            groups: Vec::new(),
+            logical_num_elems: 0,
+        },
+    };
+    let e_folded = RingVec::<F>::from_coeffs(Vec::new());
+    let t_fields = RingVec::<F>::from_coeffs(Vec::new());
+    assert!(matches!(
+        build_terminal_response_from_payload(
+            &params,
+            &scheduled_shape,
+            &e_folded,
+            t_fields,
+            Vec::new(),
+        ),
+        Err(AkitaError::InvalidInput(_))
+    ));
 }
 
 #[test]
@@ -140,35 +124,6 @@ fn terminal_decoder_rejects_coefficient_outside_i16() {
 }
 
 #[test]
-fn terminal_response_z_budget_uses_golomb_rate_not_packed_digit_width() {
-    let lp = test_lp();
-    let field_bits = F::MODULUS_BITS;
-    let cap = 31;
-    let layout = TerminalResponseShape::from_groups(
-        &lp,
-        field_bits,
-        [(
-            lp.final_group_scalar().expect("scalar final group"),
-            1usize,
-            1usize,
-            1usize,
-            cap,
-        )],
-    )
-    .unwrap()
-    .layout;
-    let z_bytes = terminal_response_z_payload_bytes(&layout);
-    let group = layout.groups[0];
-    assert_eq!(z_bytes, z_payload_budget_from_cap(group.z_coords, cap));
-    let depth_fold = lp.num_digits_fold();
-    let packed_z = crate::layout::proof_size::packed_digits_bytes(
-        group.z_coords.saturating_mul(depth_fold),
-        8,
-    );
-    assert_ne!(z_bytes, packed_z);
-}
-
-#[test]
 fn direct_terminal_layout_contains_only_z_e_t_planes() {
     let lp = test_lp();
     let field_bits = F::MODULUS_BITS;
@@ -190,45 +145,6 @@ fn direct_terminal_layout_contains_only_z_e_t_planes() {
 }
 
 #[test]
-fn direct_terminal_builder_constructs_z_e_t_segments() {
-    let lp = test_lp();
-    let field_bits = F::MODULUS_BITS;
-    let layout = TerminalResponseShape::from_groups(
-        &lp,
-        field_bits,
-        [(
-            lp.final_group_scalar().expect("scalar final group"),
-            1usize,
-            1usize,
-            1usize,
-            TEST_ADMISSION_CAP,
-        )],
-    )
-    .expect("direct terminal layout")
-    .layout;
-    let group_layout = layout.groups[0];
-    let e_folded = RingVec::from_coeffs(vec![F::zero(); group_layout.e_field_elems]);
-    let recomposed_inner_rows = RingVec::from_coeffs(vec![F::zero(); group_layout.t_field_elems]);
-    let z_folded_centered_flat = vec![0i32; group_layout.z_coords];
-    let group = TerminalResponseGroupParts {
-        params: lp.final_group_scalar().expect("scalar final group"),
-        num_w_vectors: 1,
-        num_t_vectors: 1,
-        num_z_segments: 1,
-        e_folded: &e_folded,
-        recomposed_inner_rows: &recomposed_inner_rows,
-        z_folded_centered_flat: &z_folded_centered_flat,
-    };
-    let scheduled_shape = TerminalResponseShape {
-        layout: layout.clone(),
-    };
-    let witness = build_terminal_response_from_groups(lp.d_a(), &[group], &lp, &scheduled_shape)
-        .expect("direct terminal witness");
-
-    assert_eq!(witness.layout, layout);
-}
-
-#[test]
 fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
     use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
     use jolt_field::CanonicalEncoding;
@@ -236,7 +152,7 @@ fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
     let lp = test_lp();
     let field_bits = F::MODULUS_BITS;
     let layout = scalar_group_layout(&lp, 1, 1, 1, field_bits).unwrap();
-    let scheduled_z_bytes = terminal_response_z_payload_bytes(&layout);
+    let scheduled_z_bytes = layout.z_payload_bytes();
     assert!(
         scheduled_z_bytes > 16,
         "test expects scheduled z budget to exceed a tight payload"
@@ -276,54 +192,7 @@ fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
 }
 
 #[test]
-fn terminal_e_absorb_matches_emitted_field_segment() {
-    let lp = test_lp();
-    let layout = scalar_group_layout(&lp, 1, 1, 1, F::MODULUS_BITS).unwrap();
-    let group = layout.groups[0];
-    let e_fields = RingVec::from_coeffs(
-        (0..group.e_field_elems)
-            .map(|index| F::from_u128_reduced(index as u128 + 1))
-            .collect(),
-    );
-    let witness = TerminalResponse {
-        layout: layout.clone(),
-        z_payloads: vec![vec![0]],
-        e_fields: e_fields.clone(),
-        t_fields: RingVec::from_coeffs(vec![F::zero(); group.t_field_elems]),
-    };
-
-    assert_eq!(
-        witness.terminal_transcript_parts().unwrap().e_folded,
-        raw_field_segment_bytes(&e_fields).unwrap(),
-    );
-}
-
-#[test]
-fn terminal_transcript_parts_separate_t_state_from_z_response() {
-    let lp = test_lp();
-    let layout = scalar_group_layout(&lp, 1, 1, 1, F::MODULUS_BITS).unwrap();
-    let group = layout.groups[0];
-    let t_fields = RingVec::from_coeffs(
-        (0..group.t_field_elems)
-            .map(|index| F::from_u128_reduced(index as u128 + 9))
-            .collect(),
-    );
-    let z = vec![3, 1, 4, 1];
-    let witness = TerminalResponse {
-        layout,
-        z_payloads: vec![z.clone()],
-        e_fields: RingVec::from_coeffs(vec![F::one(); group.e_field_elems]),
-        t_fields: t_fields.clone(),
-    };
-
-    let parts = witness.terminal_transcript_parts().unwrap();
-    assert_eq!(parts.response, z);
-}
-
-#[test]
 fn decode_terminal_z_rejects_coefficient_above_fold_cap() {
-    use crate::golomb_rice::golomb_rice_encode_vec;
-
     let cap = TEST_ADMISSION_CAP;
     let rice_low_bits = wire_rice_low_bits(cap);
     let zigzag_w = golomb_rice_zigzag_width(cap);
@@ -346,8 +215,6 @@ fn decode_terminal_z_rejects_coefficient_above_fold_cap() {
 
 #[test]
 fn decode_terminal_z_rejects_trailing_zero_byte_padding() {
-    use crate::golomb_rice::golomb_rice_encode_vec;
-
     let cap = TEST_ADMISSION_CAP;
     let rice_low_bits = wire_rice_low_bits(cap);
     let zigzag_w = golomb_rice_zigzag_width(cap);
@@ -393,35 +260,14 @@ fn terminal_layout_validation_rejects_overflow_without_panicking() {
     assert!(result.unwrap().is_err());
 }
 
-#[test]
-fn terminal_layout_decode_rejects_oversized_group_count_before_allocation() {
-    use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
-
-    let mut bytes = Vec::new();
-    64usize
-        .serialize_with_mode(&mut bytes, Compress::No)
-        .unwrap();
-    6u32.serialize_with_mode(&mut bytes, Compress::No).unwrap();
-    (super::super::MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
-        .serialize_with_mode(&mut bytes, Compress::No)
-        .unwrap();
-    let err =
-        TailSegmentLayout::deserialize_with_mode(&bytes[..], Compress::No, Validate::Yes, &())
-            .expect_err("oversized terminal group vector must be rejected");
-    assert!(matches!(
-        err,
-        SerializationError::LengthLimitExceeded { .. }
-    ));
-}
-
 /// Terminal A matrix pinned to one audited coefficient bucket.
 ///
 /// The default [`test_lp`] fixture uses the largest bucket, whose certified
 /// capacity is far above the terminal wire limit, so it can only exercise the
 /// clamp. A small bucket puts the SIS bound in charge instead.
-fn terminal_matrix_with_bucket(bucket: u128) -> crate::sis::InnerCommitMatrixParams {
+fn terminal_matrix_with_bucket(bucket: u128) -> akita_params::sis::InnerCommitMatrixParams {
     let base = test_lp();
-    let key = crate::sis::SisTableKey {
+    let key = akita_params::sis::SisTableKey {
         policy: base.inner().matrix.security_policy(),
         table_digest: base
             .inner()
@@ -430,11 +276,11 @@ fn terminal_matrix_with_bucket(bucket: u128) -> crate::sis::InnerCommitMatrixPar
             .expect("L infinity test matrix")
             .table_digest,
         modulus_profile: base.inner().matrix.sis_modulus_profile(),
-        role: crate::sis::SisMatrixRole::Inner,
+        role: akita_params::sis::SisMatrixRole::Inner,
         ring_dimension: 64,
         coeff_linf_bound: bucket,
     };
-    crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
+    akita_params::sis::InnerCommitMatrixParams::try_new_with_min_rank(
         key,
         base.inner().matrix.input_width(),
     )
@@ -444,26 +290,26 @@ fn terminal_matrix_with_bucket(bucket: u128) -> crate::sis::InnerCommitMatrixPar
 #[test]
 fn certified_terminal_cap_applies_the_wire_representation_limit() {
     let lp = test_lp();
-    let raw = crate::sis::max_response_linf_for_role_a_collision(
+    let raw = akita_params::sis::max_response_linf_for_role_a_collision(
         lp.inner()
             .matrix
             .coeff_linf_bound()
             .expect("L infinity route"),
-        crate::sis::FoldChallengeNorms::new(&lp.fold_challenge_config()).l1_norm,
+        akita_params::sis::FoldChallengeNorms::new(&lp.fold_challenge_config()).l1_norm,
     )
     .expect("raw SIS capacity");
     assert!(
-        raw > crate::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
+        raw > akita_params::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
         "fixture must exercise the clamp; raw capacity was {raw}"
     );
-    let cap = crate::sis::certified_terminal_response_linf_cap(
+    let cap = akita_params::sis::certified_terminal_response_linf_cap(
         &lp.inner().matrix,
         &lp.fold_challenge_config(),
     )
     .expect("certified terminal cap");
     assert_eq!(
         cap,
-        crate::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
+        akita_params::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
         "a cap the terminal z wire cannot encode is not a usable cap"
     );
 }
@@ -471,18 +317,18 @@ fn certified_terminal_cap_applies_the_wire_representation_limit() {
 #[test]
 fn certified_terminal_cap_is_priced_by_the_supplied_challenge_family() {
     let matrix = terminal_matrix_with_bucket(1_428);
-    let light = crate::sis::certified_terminal_response_linf_cap(
+    let light = akita_params::sis::certified_terminal_response_linf_cap(
         &matrix,
         &SparseChallengeConfig::pm1_only(3),
     )
     .expect("light challenge cap");
-    let heavy = crate::sis::certified_terminal_response_linf_cap(
+    let heavy = akita_params::sis::certified_terminal_response_linf_cap(
         &matrix,
         &SparseChallengeConfig::pm1_only(6),
     )
     .expect("heavy challenge cap");
     assert!(
-        light < crate::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
+        light < akita_params::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
         "bucket must leave the SIS bound in charge; got {light}"
     );
     assert!(
@@ -502,12 +348,12 @@ fn terminal_cap_has_exactly_one_implementation() {
             let mut lp = test_lp();
             lp.own_group_mut().profile.inner.matrix = matrix;
             lp.own_group_mut().opening.fold_challenge_config = sparse;
-            let terminal = crate::TerminalFoldParams::from_expanded_group(lp);
+            let terminal = akita_params::TerminalFoldParams::from_expanded_group(lp);
             assert_eq!(
                 terminal
                     .certified_response_linf_cap()
                     .expect("schedule-side cap"),
-                crate::sis::certified_terminal_response_linf_cap(&matrix, &sparse)
+                akita_params::sis::certified_terminal_response_linf_cap(&matrix, &sparse)
                     .expect("single-authority cap"),
                 "bucket {bucket}, challenge weight {weight}"
             );

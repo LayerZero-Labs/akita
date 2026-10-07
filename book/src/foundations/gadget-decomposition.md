@@ -347,23 +347,23 @@ to 127, while each operation initializes only the part needed by its basis.
 
 The main code path is:
 
-1. `DecompositionParams` in `crates/akita-types/src/config.rs` records
+1. `DecompositionParams` in `crates/akita-params/src/config.rs` records
    `log_basis`, `log_commit_bound`, and the optional `log_open_bound`.
-2. `crates/akita-types/src/sis/decomposition_digits.rs` computes the exact
+2. `crates/akita-params/src/sis/decomposition_digits.rs` computes the exact
    digit count for each protocol role.
 3. The generated schedule stores the selected counts in
    `CommittedGroupParams`.
 4. `crates/akita-algebra/src/ring/cyclotomic/decomposition.rs` performs the
    coefficient decomposition and rebuilding operation.
-5. `crates/akita-prover/src/kernels/linear/decompose.rs` uses the packed `i8`
+5. `crates/akita-cpu-backend/src/kernels/linear/decompose.rs` uses the packed `i8`
    kernel. Wider inner decompositions use
-   `crates/akita-prover/src/compute/cpu/exact_i16.rs`.
-6. `crates/akita-types/src/sis/committed_source.rs` checks the accepted source
+   `crates/akita-cpu-backend/src/arithmetic/exact_i16.rs`.
+6. `crates/akita-params/src/sis/committed_source.rs` checks the accepted source
    range and source class.
 
 Supporting limits live in these files:
 
-- `crates/akita-types/src/signed_digit.rs` selects `i8` or `i16` storage.
+- `crates/akita-params/src/signed_digit.rs` selects `i8` or `i16` storage.
 - `crates/akita-algebra/src/ring/crt_ntt_repr/lut.rs` prepares signed `i8`
   digits for the CRT and NTT commitment path.
 - `crates/akita-schedules/src/runtime.rs` validates schedule basis ranges.
@@ -382,10 +382,10 @@ verifier use the same values.
 | --- | --- | --- |
 | A coefficient is rebuilt from balanced powers of the base | [The general decomposition rule](#the-general-decomposition-rule) and [the gadget matrix](#from-one-coefficient-to-a-vector) | `decomposition.rs` extracts the digits, while `digit_math.rs` produces the public powers used to rebuild them |
 | The asymmetric range and full field centering need no extra digit | [The exact range](#the-exact-range-of-a-digit-list) and [full field elements](#full-field-elements) | `decompose_centering_threshold` applies the exact threshold, including the 128 bit overflow boundary |
-| Every committed digit is in the balanced set | [The balanced digit set](#the-general-decomposition-rule) | `proof/stage1.rs` defines the range polynomial and `akita-verifier/src/stages/stage1.rs` verifies its sumcheck proof |
+| Every committed digit is in the balanced set | [The balanced digit set](#the-general-decomposition-rule) | `layout/digit_range.rs` defines the range polynomial and `akita-verifier/src/stages/stage1.rs` verifies its sumcheck proof |
 | Different protocol values can use different bases and depths | [Where Akita uses decomposition](#where-akita-uses-decomposition) | `decomposition_digits.rs` separates root sources, recursive sources, setup prefixes, openings, and folded responses |
 | Prover and verifier use the same choice | [The public schedule](#where-akita-uses-decomposition) | The resolved schedule stores each role specific basis and depth in `CommittedGroupParams` |
-| A committed source satisfies the assumptions used to size it | [Source width and source shape](#source-width-and-source-shape-are-separate) | `committed_source.rs` defines the contract and `akita-prover/src/api/commitment.rs` enforces its numeric and structural parts |
+| A committed source satisfies the assumptions used to size it | [Source width and source shape](#source-width-and-source-shape-are-separate) | `committed_source.rs` defines the contract and `akita-cpu-backend/src/backend/commitment/api.rs` enforces its numeric and structural parts |
 | Compact extraction and field conversion preserve the same digits | [How digits are stored](#how-digits-are-stored) | `signed_digit.rs` selects `i8` or `i16`, `decomposition.rs` extracts the digits, and `crt_ntt_repr/lut.rs` prepares `i8` digits for multiplication |
 | SIMD extraction agrees with scalar extraction | [The fast path and fallback](#how-digits-are-stored) | `decomposition/aarch64.rs` and `decomposition/x86.rs` implement the fast paths, while the centering boundary tests compare their public dispatch with the scalar definition |
 
@@ -417,8 +417,8 @@ A code review or security audit can follow the mechanism in this order.
    the same digits and reconstruction.
 
 The focused regression tests are in
-`crates/akita-types/src/sis/decomposition_digits.rs`,
-`crates/akita-types/src/sis/committed_source.rs`, and
+`crates/akita-params/src/sis/decomposition_digits.rs`,
+`crates/akita-params/src/sis/committed_source.rs`, and
 `crates/akita-algebra/src/ring/cyclotomic/tests.rs`. The Stage 1 range topology
 tests live in `crates/akita-types/src/proof/stage1.rs`. Together, these tests
 cover the asymmetric field boundary, the exact positive reach, the

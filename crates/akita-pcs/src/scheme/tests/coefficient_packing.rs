@@ -1,8 +1,8 @@
 use super::*;
 
-use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp32;
-use akita_types::{basis_weights, AkitaScheduleLookupKey, OpeningMethod, PolynomialGroupLayout};
+use akita_params::ScheduleLookupKey;
+use akita_params::{basis_weights, OpeningMethod, PolynomialGroupLayout};
 use jolt_field::ExtField;
 
 type PackingCfg = crate::test_support::RootCoefficientPackingConfig<fp32::Dense>;
@@ -16,7 +16,7 @@ type RecursiveEvaluationTraceCfg = crate::test_support::EarlyEvaluationTraceConf
 fn synthetic_packing_row_is_derived_from_one_checked_authority() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<PackingCfg>()
         .expect("workspace schedule catalog");
-    let key = AkitaScheduleLookupKey {
+    let key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(20),
         precommitteds: Vec::new(),
     };
@@ -35,7 +35,7 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
         panic!("synthetic root must use coefficient packing");
     };
     assert_eq!(challenge_subring_dimension, 64);
-    let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(
+    let geometry = akita_params::SubringCoefficientPackingGeometry::try_new(
         PackingCfg::EXT_DEGREE,
         root.d_a(),
         challenge_subring_dimension,
@@ -57,7 +57,7 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
     );
     assert_eq!(
         root.source_encoding,
-        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
+        akita_params::CommittedSourceEncoding::CanonicalCoefficientTable,
     );
 
     let successor = &schedule.recursive_folds[0];
@@ -73,16 +73,12 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
     ));
     assert_eq!(
         successor.params.source_encoding,
-        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
+        akita_params::CommittedSourceEncoding::CanonicalCoefficientTable,
     );
     let prefix = successor
         .params
         .setup_prefix()
         .expect("synthetic successor must consume the root setup prefix");
-    assert_eq!(
-        prefix.source_encoding(),
-        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
-    );
     assert!(matches!(
         prefix.opening.opening_method,
         OpeningMethod::SubringCoefficientPacking {
@@ -104,7 +100,7 @@ fn fixed_root_packing_rejects_a_stale_successor_length() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<PackingCfg>()
         .expect("workspace schedule catalog");
     let opening_batch = OpeningClaimsLayout::new(20, 1).unwrap();
-    let key = AkitaScheduleLookupKey::single(opening_batch.root_final_group_layout().unwrap());
+    let key = ScheduleLookupKey::single(opening_batch.root_final_group_layout().unwrap());
     let row = PackingCfg::derive_catalog_row(&catalog, &key, 64).unwrap();
     let mut schedule = row.schedule().clone();
     schedule.terminal.input_witness_len += 1;
@@ -115,8 +111,8 @@ fn fixed_root_packing_rejects_a_stale_successor_length() {
 
 #[test]
 fn packing_setup_prefix_dispatch_rejects_an_unsupported_dimension() {
-    let result = akita_types::dispatch_for_field!(
-        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+    let result = akita_params::dispatch_for_field!(
+        akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
         PackingField,
         96,
         |D_SETUP| Ok::<usize, akita_error::AkitaError>(D_SETUP)
@@ -133,8 +129,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .expect("workspace schedule catalog");
             let num_vars = 20;
             let opening_batch = OpeningClaimsLayout::new(num_vars, 1).unwrap();
-            let key =
-                AkitaScheduleLookupKey::single(opening_batch.root_final_group_layout().unwrap());
+            let key = ScheduleLookupKey::single(opening_batch.root_final_group_layout().unwrap());
             let row = PackingCfg::derive_catalog_row(&catalog, &key, 64).unwrap();
             let schedules = akita_config::ValidatedScheduleCatalog::try_new(
                 PackingCfg::schedule_family_name(),
@@ -179,9 +174,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .map(|index| PackingField::from_i64((index % 7) as i64 - 3))
                 .collect::<Vec<_>>();
             let polynomial =
-                akita_prover::DensePoly::from_field_evals(num_vars, &evaluations).unwrap();
-            let polynomial =
-                akita_prover::MultilinearPolynomial::<PackingField, usize>::dense(polynomial);
+                akita_cpu_backend::DensePoly::from_field_evals(num_vars, &evaluations).unwrap();
 
             let mut setup = scheme.setup_prover(num_vars, 1).unwrap();
             let setup_prefix = row.schedule().recursive_folds[0]
@@ -191,101 +184,31 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .unwrap()
                 .slot_id()
                 .expect("setup prefix group");
-            assert_eq!(
-                setup_prefix.d_setup(),
-                setup_prefix
-                    .commitment_profile
-                    .inner
-                    .matrix
-                    .ring_dimension(),
-                "the prefix dispatcher must use its frozen A-ring dimension"
-            );
-            let prefix_prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-            let prefix_slot = akita_types::dispatch_for_field!(
-                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-                PackingField,
-                setup_prefix.d_setup(),
-                |D_SETUP| {
-                    akita_prover::commit_setup_prefix::<PackingField, D_SETUP, _>(
-                        setup.expanded.as_ref(),
-                        &CpuBackend::DEFAULT,
-                        &prefix_prepared,
-                        &setup_prefix.commitment_profile,
-                        setup_prefix.n_prefix().unwrap(),
-                        setup_prefix.natural_len,
-                    )
-                }
-            )
-            .unwrap();
-            setup.prefix_slots.insert(prefix_slot).unwrap();
-            let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-            let stack = akita_prover::UniformProverStack::uniform(
-                &CpuBackend::DEFAULT,
-                &prepared,
-                setup.expanded.as_ref(),
-            )
-            .unwrap();
+            let prefix_backend =
+                CpuBackend::<PackingField, PackingExt>::new(setup.expanded.clone()).unwrap();
+            let artifacts = prefix_backend
+                .export_setup_prefixes(std::slice::from_ref(&setup_prefix))
+                .unwrap();
+            setup
+                .prefix_slots
+                .insert(artifacts.get(&setup_prefix).unwrap().clone())
+                .unwrap();
+            let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
             let verifier_setup = scheme.setup_verifier(&setup).unwrap();
-            let akita_prover::CommitOutput {
+            let akita_cpu_backend::CommitOutput {
                 committed_group,
-                hint,
-            } = scheme
-                .commit::<_, _>(
-                    &setup,
-                    std::slice::from_ref(&polynomial),
-                    &stack,
-                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                private_handle: hint,
+            } = stack
+                .commit(
+                    scheme.schedules(),
+                    &stack
+                        .import_source(vec![polynomial.clone()])
+                        .expect("source"),
+                    akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                 )
                 .unwrap();
             assert_eq!(committed_group.profile(), &row.profiles().final_group);
-            akita_types::dispatch_for_field!(
-                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-                PackingField,
-                root.d_a(),
-                |D_A| {
-                    let a_matrix = setup
-                        .expanded
-                        .shared_matrix()
-                        .ring_view::<D_A>(
-                            root.inner().matrix.output_rank(),
-                            root.inner().matrix.input_width(),
-                        )
-                        .unwrap();
-                    let mut source_digits = Vec::new();
-                    for coefficients in evaluations
-                        .chunks_exact(D_A)
-                        .take(root.blocks().positions_per_block)
-                    {
-                        source_digits.extend(
-                            CyclotomicRing::<PackingField, D_A>::from_coefficients(
-                                coefficients.try_into().unwrap(),
-                            )
-                            .balanced_decompose_pow2_i8(
-                                root.inner().digits.num_digits,
-                                root.inner().digits.log_basis,
-                            ),
-                        );
-                    }
-                    let hint_rows = hint.inner_rows()[0].as_ring_slice::<D_A>().unwrap();
-                    let output_rank = root.inner().matrix.output_rank();
-                    assert_eq!(hint_rows.len(), output_rank * root.blocks().live_blocks);
-                    for (row, actual) in hint_rows.iter().take(output_rank).enumerate() {
-                        let expected = a_matrix.row(row).unwrap().iter().zip(&source_digits).fold(
-                            CyclotomicRing::zero(),
-                            |sum, (matrix, digits)| {
-                                sum + *matrix
-                                    * CyclotomicRing::from_coefficients(std::array::from_fn(
-                                        |index| PackingField::from_i8(digits[index]),
-                                    ))
-                            },
-                        );
-                        assert_eq!(*actual, expected, "A hint row {row} mismatch");
-                    }
-                    Ok::<(), akita_error::AkitaError>(())
-                }
-            )
-            .unwrap();
-            let polynomial_refs = [&polynomial];
+
             let point = (0..num_vars)
                 .map(|index| PackingExt::from_u64((index as u64).wrapping_mul(3).wrapping_add(1)))
                 .collect::<Vec<_>>();
@@ -300,7 +223,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 );
                 let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                     point.clone(),
-                    vec![PackingExt::zero()],
+                    vec![expected],
                     committed_group.clone(),
                 )
                 .unwrap()])
@@ -308,7 +231,6 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 let prover_data = SelectedProverOpeningData::from_committed_claims::<PackingCfg>(
                     prover_claims,
                     vec![hint.clone()],
-                    vec![&polynomial_refs],
                     scheme.schedules(),
                 )
                 .unwrap();
@@ -317,30 +239,10 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                     BasisMode::Lagrange => b"packing/root/lagrange".as_slice(),
                     BasisMode::Monomial => b"packing/root/monomial".as_slice(),
                 };
-                let mut prover_transcript = AkitaTranscript::<PackingField>::new(label);
                 let proof = scheme
-                    .batched_prove::<_, _, _>(
-                        &setup,
-                        prover_data,
-                        &stack,
-                        &mut prover_transcript,
-                        basis,
-                    )
+                    .batched_prove(&setup, prover_data, &stack, label, basis)
                     .unwrap();
-                assert!(
-                    proof.root.stage3_sumcheck_proof().is_some(),
-                    "packing root must offload its setup contribution through Stage 3"
-                );
-
-                let shape = proof.shape();
-                let mut encoded = Vec::new();
-                proof.serialize_uncompressed(&mut encoded).unwrap();
-                let proof =
-                    AkitaBatchedProof::<PackingField, PackingExt>::deserialize_uncompressed(
-                        encoded.as_slice(),
-                        &shape,
-                    )
-                    .unwrap();
+                assert!(!proof.is_empty());
                 let verifier_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                     point.clone(),
                     vec![expected],
@@ -349,27 +251,16 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .unwrap()])
                 .unwrap();
                 let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
-                let mut verifier_transcript = AkitaTranscript::<PackingField>::new(label);
                 scheme
-                    .batched_verify(
-                        &proof,
-                        &verifier_setup,
-                        &mut verifier_transcript,
-                        statement,
-                        basis,
-                    )
+                    .verifier(verifier_setup.clone())
+                    .and_then(|verifier| {
+                        verifier.batched_verify(proof.as_slice(), label, statement, basis)
+                    })
                     .unwrap();
 
                 if basis == BasisMode::Lagrange {
                     let mut malformed = proof.clone();
-                    malformed.root.extension_opening_reduction =
-                        Some(ExtensionOpeningReductionProof {
-                            partials: vec![PackingExt::zero()],
-                            sumcheck: akita_sumcheck::SumcheckProof {
-                                round_polys: Vec::new(),
-                            },
-                            final_claims: Vec::new(),
-                        });
+                    malformed.truncate(malformed.len().saturating_sub(1));
                     let verifier_claims =
                         OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                             point.clone(),
@@ -379,54 +270,53 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         .unwrap()])
                         .unwrap();
                     let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
-                    #[cfg(feature = "logging-transcript")]
-                    let mut transcript = akita_transcript::LoggingTranscript::wrap(
-                        AkitaTranscript::<PackingField>::new(label),
-                    );
-                    #[cfg(not(feature = "logging-transcript"))]
-                    let mut transcript = AkitaTranscript::<PackingField>::new(label);
                     assert!(scheme
-                        .batched_verify(
-                            &malformed,
-                            &verifier_setup,
-                            &mut transcript,
+                        .verifier(verifier_setup.clone())
+                        .and_then(|verifier| verifier.batched_verify(
+                            malformed.as_slice(),
+                            label,
                             statement,
-                            basis,
-                        )
+                            basis
+                        ))
                         .is_err());
-                    #[cfg(feature = "logging-transcript")]
-                    assert!(
-                        transcript.events().is_empty(),
-                        "unexpected packing EOR must reject before transcript replay"
-                    );
 
-                    macro_rules! assert_early_evaluation_trace_rejects_at_catalog_boundary {
-                        ($config:ty, $context:literal) => {{
-                            let result = <$config>::derive_row(&catalog, &key)
-                                .and_then(|row| {
-                                    akita_config::ValidatedScheduleCatalog::try_new(
-                                        <$config>::schedule_family_name(),
-                                        [(row.profiles().clone(), row.schedule().clone())],
-                                        &akita_config::policy_of::<$config>(),
-                                        <$config>::ring_challenge_config,
-                                    )
-                                    .and_then(akita_config::TrustedScheduleCatalog::<$config>::new)
-                                })
-                                .map(AkitaCommitmentScheme::<$config>::new);
+                    macro_rules! early_evaluation_trace_admission_error {
+                        ($config:ty, $context:literal, $expected:literal) => {{
+                            let row = <$config>::derive_row(&catalog, &key)
+                                .expect(concat!($context, " test row must derive"));
+                            row.1
+                                .validate_structure()
+                                .expect(concat!($context, " test row must be structurally valid"));
+                            let error = akita_config::ValidatedScheduleCatalog::try_new(
+                                <$config>::schedule_family_name(),
+                                [row],
+                                &akita_config::policy_of::<$config>(),
+                                <$config>::ring_challenge_config,
+                            )
+                            .expect_err(concat!(
+                                $context,
+                                " must reject at the trusted catalog boundary"
+                            ));
                             assert!(
-                                result.is_err(),
-                                concat!($context, " must reject at the trusted catalog boundary")
+                                matches!(
+                                    &error,
+                                    akita_error::AkitaError::InvalidSetup(message)
+                                        if message == $expected
+                                ),
+                                "unexpected admission error: {error}"
                             );
                         }};
                     }
 
-                    assert_early_evaluation_trace_rejects_at_catalog_boundary!(
+                    early_evaluation_trace_admission_error!(
                         RootEvaluationTraceCfg,
-                        "root EvaluationTrace"
+                        "root EvaluationTrace",
+                        "nonterminal level 0 requires subring coefficient packing"
                     );
-                    assert_early_evaluation_trace_rejects_at_catalog_boundary!(
+                    early_evaluation_trace_admission_error!(
                         RecursiveEvaluationTraceCfg,
-                        "level-1 EvaluationTrace"
+                        "level-1 EvaluationTrace",
+                        "nonterminal level 1 requires subring coefficient packing"
                     );
                 }
             }

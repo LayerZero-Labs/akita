@@ -4,12 +4,13 @@ use std::collections::VecDeque;
 fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::ScheduleMemoKey {
     let topology = incoming_setup_prefix.map_or(
         super::SuffixTopology::Direct {
-            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            payload_phase: akita_params::CommitmentPayloadPhase::CompressedPrefix,
             relation_phase: super::RingRelationPhase::QuotientPrefix,
         },
         |natural_len| super::SuffixTopology::SetupPrefixed { natural_len },
     );
     super::ScheduleMemoKey {
+        input_chunks: None,
         level,
         current_witness_len: 1024,
         current_lb: 3,
@@ -26,14 +27,14 @@ fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
     let direct = memo_key(1, None);
     let prefixed = memo_key(2, Some(1));
     let mut memo = super::ScheduleMemo::new();
-    for key in [direct, prefixed] {
+    for key in [direct.clone(), prefixed.clone()] {
         memo.insert(key, super::empty_suffix_result(), None);
     }
     assert!(memo.contains(&direct));
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&prefixed));
 
-    memo.insert(direct, super::empty_suffix_result(), None);
+    memo.insert(direct.clone(), super::empty_suffix_result(), None);
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&direct));
     assert!(memo.contains(&prefixed));
@@ -41,7 +42,7 @@ fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
 
 #[test]
 fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
-    use akita_types::RingRelationMode::{QuotientLift, ReducedEvaluation};
+    use akita_params::RingRelationMode::{QuotientLift, ReducedEvaluation};
 
     let prefix = super::RingRelationPhase::QuotientPrefix;
     let reduced = super::RingRelationPhase::ReducedEvaluationSuffix;
@@ -64,9 +65,9 @@ fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
         .is_empty());
 
     let quotient_key = memo_key(2, None);
-    let mut reduced_key = quotient_key;
+    let mut reduced_key = quotient_key.clone();
     reduced_key.topology = super::SuffixTopology::Direct {
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        payload_phase: akita_params::CommitmentPayloadPhase::CompressedPrefix,
         relation_phase: reduced,
     };
     assert_ne!(quotient_key, reduced_key);
@@ -78,21 +79,21 @@ fn suffix_cache_gives_referenced_entry_a_second_chance() {
     let cold = memo_key(2, None);
     let mut entries = std::collections::HashMap::from([
         (
-            hot,
+            hot.clone(),
             super::MemoEntry {
                 result: super::empty_suffix_result(),
                 referenced: true,
             },
         ),
         (
-            cold,
+            cold.clone(),
             super::MemoEntry {
                 result: super::empty_suffix_result(),
                 referenced: false,
             },
         ),
     ]);
-    let mut insertion_order = VecDeque::from([hot, cold]);
+    let mut insertion_order = VecDeque::from([hot.clone(), cold.clone()]);
 
     super::evict_suffix_entry(&mut entries, &mut insertion_order);
 
@@ -106,8 +107,8 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
     let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
     let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
         .expect("D64 challenge");
-    let mut shell = akita_types::CommittedGroupParams::params_only(
-        akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    let mut shell = akita_params::CommittedGroupParams::params_only(
+        akita_params::SisModulusProfileId::Q128OffsetA7F7,
         256,
         2,
         2,
@@ -115,7 +116,7 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
         2,
         challenge,
     );
-    shell.payload_mode = akita_types::CommitmentPayloadMode::Raw;
+    shell.payload_mode = akita_params::CommitmentPayloadMode::Raw;
     let evaluation_trace = shell.with_decomp(8, 64, 2, 2, 2).unwrap();
     let mut wider_opening = shell.with_decomp(8, 128, 2, 2, 2).unwrap();
     assert_ne!(
@@ -137,7 +138,7 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
             &policy,
             &evaluation_trace,
             &opening_layout,
-            akita_types::FoldSuccessor::Recursive(&evaluation_trace),
+            akita_params::FoldSuccessor::Recursive(&evaluation_trace),
             512,
         )
         .unwrap(),
@@ -145,7 +146,7 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
             &policy,
             &evaluation_trace,
             &opening_layout,
-            akita_types::FoldSuccessor::Recursive(&wider_opening),
+            akita_params::FoldSuccessor::Recursive(&wider_opening),
             512,
         )
         .unwrap(),
@@ -153,7 +154,7 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
     );
 
     let mut reduced_successor = evaluation_trace.clone();
-    reduced_successor.ring_relation_mode = akita_types::RingRelationMode::ReducedEvaluation;
+    reduced_successor.ring_relation_mode = akita_params::RingRelationMode::ReducedEvaluation;
     assert_ne!(
         evaluation_trace.canonical_descriptor_bytes(),
         reduced_successor.canonical_descriptor_bytes()
@@ -171,7 +172,7 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
     let mut descriptor_distinct = evaluation_trace.clone();
     let inner = descriptor_distinct.inner().matrix;
     descriptor_distinct.own_group_mut().profile.inner.matrix =
-        akita_types::InnerCommitMatrixParams::new_unchecked(
+        akita_params::InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
             inner
                 .sis_table_key()
@@ -195,9 +196,9 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
         super::ParentObservableKey::new(&policy, Some(&descriptor_distinct), None).unwrap(),
         "successor details invisible to the parent must share one class"
     );
-    let layout = akita_types::OpeningClaimsLayout::new(10, 1).unwrap();
-    let grind_bits = |successor| {
-        let successor = akita_types::FoldSuccessor::Recursive(successor);
+    let layout = akita_params::OpeningClaimsLayout::new(10, 1).unwrap();
+    let grinding_cost = |successor| {
+        let successor = akita_params::FoldSuccessor::Recursive(successor);
         let relation_geometry = evaluation_trace
             .relation_address_geometry(
                 &layout,
@@ -206,31 +207,31 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
                 512,
             )
             .unwrap();
-        akita_types::transcript_grinding_nonce_bits_for_planner_edge(
+        akita_params::transcript_grinding_cost_for_planner_edge(
             &evaluation_trace,
             relation_geometry,
             &layout,
             successor,
-            policy.decomposition.field_bits(),
+            policy.transcript_grinding_order().unwrap(),
             policy.claim_ext_degree,
             1,
         )
         .unwrap()
     };
     assert_eq!(
-        grind_bits(&evaluation_trace),
-        grind_bits(&descriptor_distinct),
+        grinding_cost(&evaluation_trace),
+        grinding_cost(&descriptor_distinct),
         "one parent-observable successor class must have one grinding price"
     );
     assert_eq!(
-        grind_bits(&evaluation_trace),
-        grind_bits(&reduced_successor),
+        grinding_cost(&evaluation_trace),
+        grinding_cost(&reduced_successor),
         "relation details invisible to the parent must not change grinding price"
     );
 
     let outer = wider_opening.outer().matrix;
     wider_opening.own_group_mut().profile.outer.matrix =
-        akita_types::OuterCommitMatrixParams::new_unchecked(
+        akita_params::OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),
@@ -255,27 +256,329 @@ fn terminal_seed_requires_a_scalar_state_without_setup_prefix() {
 }
 
 #[test]
-fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
-    let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::OneHot>();
-    let crate::RingDimensionScheduleMode::AdaptiveDimension {
-        num_search_levels, ..
-    } = policy.ring_dimension_schedule_mode
-    else {
-        panic!("test preset must be adaptive");
+fn guided_early_pruning_includes_recursive_prefixes() {
+    assert!(matches!(
+        super::GuideScope::for_state(true, None),
+        Some(super::GuideScope::CompleteRoot)
+    ));
+    assert!(matches!(
+        super::GuideScope::for_state(false, Some(1)),
+        Some(super::GuideScope::RecursivePrefix)
+    ));
+    assert!(super::GuideScope::for_state(false, None).is_none());
+}
+
+#[test]
+fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
+    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
+    let challenge = akita_challenges::SparseChallengeConfig::pm1_only(3);
+    let mut params = akita_params::CommittedGroupParams::params_only(
+        akita_params::SisModulusProfileId::Q128OffsetA7F7,
+        64,
+        3,
+        4,
+        3,
+        2,
+        challenge,
+    )
+    .with_decomp(4, 32, 2, 2, 2)
+    .expect("candidate parameters");
+    let inner = params.inner().matrix;
+    params.own_group_mut().profile.inner.matrix =
+        akita_params::InnerCommitMatrixParams::new_unchecked(
+            inner.security_policy(),
+            inner
+                .sis_table_key()
+                .expect("L infinity matrix")
+                .table_digest,
+            inner.sis_modulus_profile(),
+            inner.output_rank(),
+            inner.input_width(),
+            4_095,
+            inner.ring_dimension(),
+        );
+    let successor_params = params.clone().with_decomp(4, 4096, 2, 2, 2).unwrap();
+    let (terminal_params, linf_cap) =
+        akita_params::TerminalFoldParams::try_from_expanded_group(params.clone())
+            .expect("terminal parameters");
+    let response_shape = akita_params::TerminalResponseShape::derive(&terminal_params, linf_cap)
+        .expect("terminal response shape");
+    let candidate = |queries| super::ScheduleCandidate {
+        first_direct_setup_field_len: std::num::NonZeroUsize::new(1),
+        first_direct_output_witness_len: 512,
+        cost: super::ProofCost::new(1, 0, queries, 512).expect("candidate cost"),
+        setup_field_elements: 1,
+        folds: super::super::CandidateFoldChain::default().prepend(super::CandidateFoldStep {
+            params: std::sync::Arc::new(successor_params.clone()),
+            input_witness_len: 1_024,
+            output_witness_len: 512,
+            estimated_direct_payload_bytes: 1,
+            estimated_stage3_payload_bytes: 0,
+        }),
+        terminal: std::sync::Arc::new(super::CandidateTerminalResponse {
+            params: terminal_params.clone(),
+            sparse_challenge_config: challenge,
+            input_witness_len: 512,
+            estimated_direct_payload_bytes: 0,
+            response_shape: response_shape.clone(),
+            estimated_payload_bytes: 0,
+        }),
     };
+    let state = super::SuffixState {
+        input_chunks: None,
+        level: 0,
+        current_witness_len: 1_024,
+        current_lb: 0,
+        source_moment: None,
+        dimension_ceiling: params.role_dims(),
+        topology: super::SuffixTopology::Direct {
+            payload_phase: akita_params::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::RingRelationPhase::QuotientPrefix,
+        },
+    };
+    let opening_layout = super::suffix_opening_layout(1_024, None).expect("opening layout");
+    let incoming =
+        super::PendingQueryEdge::new(state, &opening_layout, &params).expect("incoming edge");
+    let challenge_order = policy.transcript_grinding_order().unwrap();
+    let edge_queries = incoming
+        .candidate_grinding_cost(&policy, challenge_order, &candidate(0))
+        .expect("edge grinding cost")
+        .expanded_query_count;
+    let suffix_queries = 10;
+    let prefix = super::QueryPrefix {
+        finalized_query_count: akita_params::TRANSCRIPT_GRINDING_QUERY_LIMIT
+            - edge_queries
+            - suffix_queries
+            - 1,
+        incoming,
+    };
+
+    assert!(prefix
+        .admits(&policy, challenge_order, &candidate(suffix_queries))
+        .expect("query admission"));
+    assert!(!prefix
+        .admits(&policy, challenge_order, &candidate(suffix_queries + 1))
+        .expect("query rejection"));
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn restricted_search_recovers_pruned_query_tradeoff() {
+    use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
+
+    let mut policy = policy_of::<OneHot>();
+    // A singleton adaptive domain keeps the split frontier needed to expose
+    // this query tradeoff while using the production setup-first objective.
+    policy.ring_dimension_schedule = crate::RingDimensionSchedule {
+        num_search_levels: 2,
+        suffix_dimensions: &[256],
+        potential_a_dimensions: &[256],
+        potential_b_dimensions: &[256],
+        potential_d_dimensions: &[256],
+    };
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
+    policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
+    let key =
+        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::singleton(14));
+    let root = crate::planner::find_schedule(
+        &key,
+        OneHot::committed_source_contract().unwrap(),
+        &[],
+        &policy,
+        OneHot::ring_challenge_config,
+    )
+    .unwrap()
+    .schedule
+    .root;
+    policy.inner_basis_range = (3, 3);
+    policy.opening_basis_range = (6, 6);
+    let ctx = super::SuffixCtx {
+        policy: &policy,
+        challenge_order: policy.transcript_grinding_order().unwrap(),
+        diagnostics: None,
+        ring_challenge_config: &OneHot::ring_challenge_config,
+        key: key.final_group,
+        setup_field_budget: None,
+        root_lookup_key: Some(&key),
+        root_main_constraint: None,
+        adaptation_guide: None,
+        root_source_contract: Some(OneHot::committed_source_contract().unwrap()),
+        precommitted_source_contracts: &[],
+        level_zero_is_root: true,
+        relation_traversal_order: super::RelationTraversalOrder::Canonical,
+        relation_mode_filter: super::RelationModeFilter::All,
+    };
+    let state = super::SuffixState {
+        input_chunks: None,
+        level: 1,
+        current_witness_len: 215_104,
+        current_lb: 3,
+        source_moment: None,
+        dimension_ceiling: akita_params::CommitmentRingDims::uniform(256),
+        topology: super::SuffixTopology::Direct {
+            payload_phase: akita_params::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::RingRelationPhase::QuotientPrefix,
+        },
+    };
+    let mut memo = super::ScheduleMemo::new();
+    let domain = super::candidates::CandidateDomain::prepare(&ctx, state).unwrap();
+    let generated = domain
+        .generate_recursive_for_opening_basis(&ctx, state, 6, &mut memo.setup_prefixes)
+        .unwrap();
+    let candidates = super::attach_source_moments(&ctx, state, false, generated.folds).unwrap();
+    let coords = |candidate: &super::PlannedFoldCandidate| {
+        let params = &candidate.params;
+        [
+            akita_params::padded_setup_prefix_len(
+                akita_params::active_setup_field_len(params, &domain.opening_layout).unwrap(),
+            ),
+            super::level_setup_field_elements(params).unwrap(),
+            params
+                .outer_payload_geometry()
+                .unwrap()
+                .transmitted_coefficients(),
+            params.outer().matrix.output_rank() * params.role_dims().d_b(),
+            params.open().matrix.output_rank() * params.role_dims().d_d(),
+            candidate.opening_reduction_bytes,
+        ]
+    };
+    let find = |target| {
+        candidates
+            .iter()
+            .find(|candidate| candidate.next_witness_len == 201_856 && coords(candidate) == target)
+            .unwrap()
+    };
+    let high_query = find([65_536, 65_536, 32, 256, 256, 0]);
+    let low_query = find([524_288, 327_680, 32, 256, 256, 0]);
+    let child_state = super::SuffixState {
+        input_chunks: None,
+        level: 2,
+        current_witness_len: high_query.next_witness_len,
+        current_lb: 6,
+        source_moment: high_query.next_source_moment,
+        dimension_ceiling: high_query.params.role_dims(),
+        topology: state.topology.direct_successor(
+            high_query.params.payload_mode,
+            high_query.params.ring_relation_mode,
+        ),
+    };
+    let low_child_state = super::SuffixState {
+        input_chunks: None,
+        level: 2,
+        current_witness_len: low_query.next_witness_len,
+        current_lb: 6,
+        source_moment: low_query.next_source_moment,
+        dimension_ceiling: low_query.params.role_dims(),
+        topology: state.topology.direct_successor(
+            low_query.params.payload_mode,
+            low_query.params.ring_relation_mode,
+        ),
+    };
+    assert_eq!(
+        child_state.memo_key(&policy),
+        low_child_state.memo_key(&policy)
+    );
+    let child = super::derive_selected_suffix_schedule(
+        &ctx,
+        &mut memo,
+        child_state,
+        2,
+        super::QuerySearch::Unconstrained,
+    )
+    .unwrap();
+    let child_candidate = child.payload_candidates().next().unwrap();
+    let edge_queries = |candidate: &super::PlannedFoldCandidate| {
+        super::PendingQueryEdge::new(state, &domain.opening_layout, &candidate.params)
+            .unwrap()
+            .candidate_grinding_cost(&policy, ctx.challenge_order, child_candidate)
+            .unwrap()
+            .expanded_query_count
+    };
+    assert_eq!(
+        (edge_queries(high_query), edge_queries(low_query)),
+        (95, 85)
+    );
+    let incoming = super::PendingQueryEdge::new(
+        super::SuffixState { level: 0, ..state },
+        &key.opening_layout().unwrap(),
+        &root.params,
+    )
+    .unwrap();
+    let parent_queries = incoming
+        .grinding_cost(
+            &policy,
+            ctx.challenge_order,
+            akita_params::FoldSuccessor::Recursive(&low_query.params),
+        )
+        .unwrap()
+        .expanded_query_count;
+    let prefix = super::QueryPrefix {
+        finalized_query_count: akita_params::TRANSCRIPT_GRINDING_QUERY_LIMIT
+            - parent_queries
+            - edge_queries(low_query)
+            - child_candidate.cost.expanded_query_count()
+            - 1,
+        incoming,
+    };
+    let generated = super::candidates::GeneratedCandidates {
+        terminal: Vec::new(),
+        folds: [high_query, low_query]
+            .map(|candidate| super::candidates::RawFoldCandidate {
+                params: candidate.params.clone(),
+                next_witness_len: candidate.next_witness_len,
+            })
+            .into(),
+    };
+    let mut frontiers = super::StateFrontiers::new();
+    super::search::process_candidate_batch(
+        &ctx,
+        &mut memo,
+        state,
+        1,
+        6,
+        &domain.opening_layout,
+        false,
+        false,
+        generated,
+        &mut frontiers,
+        &super::QuerySearch::Restricted(prefix.clone()),
+    )
+    .unwrap();
+    assert!(frontiers
+        .projected
+        .by_parent_cost
+        .values()
+        .flat_map(super::frontier::ProjectedObjectiveChoices::payload_candidates)
+        .any(|candidate| candidate.folds.first().is_some_and(|fold| {
+            fold.params.canonical_descriptor_bytes()
+                == low_query.params.canonical_descriptor_bytes()
+        })));
+    assert!(std::sync::Arc::ptr_eq(
+        memo.get(&child_state.memo_key(&policy)).unwrap(),
+        &child,
+    ));
+}
+
+#[test]
+fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
+    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::OneHot>();
+    let crate::RingDimensionSchedule {
+        num_search_levels, ..
+    } = policy.ring_dimension_schedule;
     let state = |level, dimension_ceiling| super::SuffixState {
+        input_chunks: None,
         level,
         current_witness_len: 1024,
         current_lb: 3,
         source_moment: None,
         dimension_ceiling,
         topology: super::SuffixTopology::Direct {
-            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            payload_phase: akita_params::CommitmentPayloadPhase::CompressedPrefix,
             relation_phase: super::RingRelationPhase::QuotientPrefix,
         },
     };
-    let d64 = akita_types::CommitmentRingDims::uniform(64);
-    let d256 = akita_types::CommitmentRingDims::uniform(256);
+    let d64 = akita_params::CommitmentRingDims::uniform(64);
+    let d256 = akita_params::CommitmentRingDims::uniform(256);
 
     assert_ne!(
         state(num_search_levels - 1, d64).memo_key(&policy),
@@ -285,47 +588,37 @@ fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
     assert_eq!(
         state(num_search_levels, d64).memo_key(&policy),
         state(num_search_levels, d256).memo_key(&policy),
-        "uniform suffix states must not retain dead dimension history"
-    );
-
-    policy.ring_dimension_schedule_mode =
-        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
-    assert_ne!(
-        state(num_search_levels, d64).memo_key(&policy),
-        state(num_search_levels, d256).memo_key(&policy),
-        "uniform-mode keys retain the explicit caller ceiling"
+        "suffix states must not retain dead dimension history"
     );
 }
 
 #[test]
 fn fp32_suffix_memo_key_retains_only_the_effective_transition_ceiling() {
     let policy = akita_config::policy_of::<akita_config::proof_optimized::fp32::OneHot>();
-    let crate::RingDimensionScheduleMode::AdaptiveDimension {
+    let crate::RingDimensionSchedule {
         num_search_levels, ..
-    } = policy.ring_dimension_schedule_mode
-    else {
-        panic!("test preset must be adaptive");
-    };
+    } = policy.ring_dimension_schedule;
     let state = |dimension_ceiling| super::SuffixState {
+        input_chunks: None,
         level: num_search_levels,
         current_witness_len: 1024,
         current_lb: 3,
         source_moment: None,
         dimension_ceiling,
         topology: super::SuffixTopology::Direct {
-            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            payload_phase: akita_params::CommitmentPayloadPhase::CompressedPrefix,
             relation_phase: super::RingRelationPhase::QuotientPrefix,
         },
     };
 
     assert_eq!(
-        state(akita_types::CommitmentRingDims::uniform(128)).memo_key(&policy),
-        state(akita_types::CommitmentRingDims::uniform(256)).memo_key(&policy),
+        state(akita_params::CommitmentRingDims::uniform(128)).memo_key(&policy),
+        state(akita_params::CommitmentRingDims::uniform(256)).memo_key(&policy),
         "D128 and larger ceilings admit the same fp32 suffix domain"
     );
     assert_ne!(
-        state(akita_types::CommitmentRingDims::uniform(64)).memo_key(&policy),
-        state(akita_types::CommitmentRingDims::uniform(128)).memo_key(&policy),
+        state(akita_params::CommitmentRingDims::uniform(64)).memo_key(&policy),
+        state(akita_params::CommitmentRingDims::uniform(128)).memo_key(&policy),
         "a D64 transition must prevent suffix states from rising back to D128"
     );
 }

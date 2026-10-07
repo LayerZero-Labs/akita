@@ -2,7 +2,9 @@
 
 use akita_algebra::fft::SmoothFftField;
 use akita_algebra::fft::{field_pow, primitive_nth_root, rs_extend_fft, SmoothDomain};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_field::Prime128OffsetA7F7;
 use jolt_field::{Field, One, Zero};
 use rand::{rngs::StdRng, SeedableRng};

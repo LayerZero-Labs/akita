@@ -8,22 +8,42 @@
 
 use std::{num::NonZeroUsize, sync::Arc};
 
+/// One modeled proof byte has the same weight as this many units of protocol work.
+pub(crate) const WORK_ELEMENTS_PER_OBJECTIVE_BYTE: u128 = 1 << 18;
+
+/// Charge the direct verifier for both scanning field elements and processing
+/// each common-base setup ring. Offloaded edges do not incur this work.
+pub(crate) fn direct_setup_scan_work_elements(
+    natural_field_len: usize,
+    base_ring_dim: usize,
+) -> Result<usize, AkitaError> {
+    let rings = akita_error::checked::div_ceil(natural_field_len, base_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("direct setup scan ring count overflow".into()))?;
+    natural_field_len
+        .checked_mul(2)
+        .and_then(|fields| {
+            rings
+                .checked_mul(64)
+                .and_then(|overhead| fields.checked_add(overhead))
+        })
+        .ok_or_else(|| AkitaError::InvalidSetup("direct setup scan work overflow".into()))
+}
+
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::sis::{
+use akita_params::sis::{
     decomposed_s_block_ring_count, num_digits_for_linf_cap, num_digits_inner_for_bound,
     num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec,
-    HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams,
+    BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldSizingQuery,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
 };
-use akita_types::{
+use akita_params::{
     active_setup_field_len, padded_setup_prefix_len, CommitmentRingDims, CommittedGroupParams,
     DecompositionParams, GroupCommitPhaseParams, GroupOpenPhaseParams, OpeningClaimsLayout,
-    PolynomialGroupLayout,
+    PolynomialGroupLayout, TranscriptGrindingCost,
 };
 #[cfg(all(test, feature = "catalog-gen"))]
-use akita_types::{try_extension_opening_reduction_level_bytes, PlannedFoldSchedule};
+use akita_params::{try_extension_opening_reduction_level_bytes, PlannedFoldSchedule};
 
 use crate::{InnerBasisSource, PlannerPolicy};
 
@@ -36,10 +56,11 @@ mod suffix_dp;
 #[cfg(all(test, feature = "catalog-gen"))]
 #[path = "test/unpruned_search.rs"]
 mod unpruned_search;
+pub use akita_params::suffix_opening_layout;
 pub(crate) use akita_schedules::planner_support::{
-    materialize_candidate_schedule, CandidateFoldStep, CandidateTerminalResponse,
+    materialize_candidate_schedule, CandidateFoldStep, CandidateMaterializationCost,
+    CandidateTerminalResponse,
 };
-pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
     derive_ab_commitment_candidate, derive_fold_candidates, derive_recursive_candidate_views,
     derive_terminal_candidates, recursive_split_search_domain, AbCommitmentCandidateRequest,
@@ -59,17 +80,19 @@ pub(crate) use relation_transition::{
 };
 pub(crate) use setup_score::{level_setup_field_elements, terminal_setup_field_elements};
 pub(crate) use suffix_dp::{
-    derive_selected_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState, SuffixTopology,
+    derive_selected_suffix_schedule, QuerySearch, ScheduleMemo, SuffixCtx, SuffixState,
+    SuffixTopology, MAX_PRECOMMIT_OPENING_PRODUCTS,
 };
 
 pub(crate) fn root_inner_basis_source(
-    honest_fold_policy: HonestFoldPolicySpec,
-    log_bound: u32,
+    source: akita_params::sis::CommittedSourceContract,
 ) -> InnerBasisSource {
-    match honest_fold_policy {
-        HonestFoldPolicySpec::UnitOneHot(_) => InnerBasisSource::UnitOneHot,
-        HonestFoldPolicySpec::BalancedSignedDigit(_) => {
-            InnerBasisSource::RawCoefficients { log_bound }
+    match source.class() {
+        akita_params::sis::CommittedSourceClass::UnitOneHot { .. } => InnerBasisSource::UnitOneHot,
+        akita_params::sis::CommittedSourceClass::BalancedSignedDigit => {
+            InnerBasisSource::RawCoefficients {
+                log_bound: source.decomposition().log_commit_bound,
+            }
         }
     }
 }
@@ -93,54 +116,47 @@ pub(crate) fn dimension_candidates(
     ceiling: CommitmentRingDims,
 ) -> Result<Vec<CommitmentRingDims>, AkitaError> {
     ceiling.validate_role_projection()?;
-    let candidates = match policy.ring_dimension_schedule_mode {
-        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-            vec![CommitmentRingDims::uniform(ring_dimension)]
-        }
-        crate::RingDimensionScheduleMode::AdaptiveDimension {
-            num_search_levels,
-            suffix_dimensions,
-            potential_a_dimensions,
-            potential_b_dimensions,
-            potential_d_dimensions,
-        } => {
-            if level >= num_search_levels {
-                let Some(maximum_suffix_dimension) =
-                    suffix_dimension_ceiling(suffix_dimensions, ceiling)
-                else {
-                    return Ok(Vec::new());
-                };
-                suffix_dimensions
-                    .iter()
-                    .copied()
-                    .take_while(|&dimension| dimension <= maximum_suffix_dimension)
-                    .map(CommitmentRingDims::uniform)
-                    .collect()
-            } else {
-                let mut candidates = Vec::new();
-                for &inner in potential_a_dimensions {
-                    if inner > ceiling.d_a() {
+    let crate::RingDimensionSchedule {
+        num_search_levels,
+        suffix_dimensions,
+        potential_a_dimensions,
+        potential_b_dimensions,
+        potential_d_dimensions,
+    } = policy.ring_dimension_schedule;
+    let candidates = if level >= num_search_levels {
+        let Some(maximum_suffix_dimension) = suffix_dimension_ceiling(suffix_dimensions, ceiling)
+        else {
+            return Ok(Vec::new());
+        };
+        suffix_dimensions
+            .iter()
+            .copied()
+            .take_while(|&dimension| dimension <= maximum_suffix_dimension)
+            .map(CommitmentRingDims::uniform)
+            .collect()
+    } else {
+        let mut candidates = Vec::new();
+        for &inner in potential_a_dimensions {
+            if inner > ceiling.d_a() {
+                continue;
+            }
+            for &outer in potential_b_dimensions {
+                if outer > ceiling.d_b() || !inner.is_multiple_of(outer) {
+                    continue;
+                }
+                for &opening in potential_d_dimensions {
+                    if opening > ceiling.d_d() || !inner.is_multiple_of(opening) {
                         continue;
                     }
-                    for &outer in potential_b_dimensions {
-                        if outer > ceiling.d_b() || !inner.is_multiple_of(outer) {
-                            continue;
-                        }
-                        for &opening in potential_d_dimensions {
-                            if opening > ceiling.d_d() || !inner.is_multiple_of(opening) {
-                                continue;
-                            }
-                            candidates.push(CommitmentRingDims {
-                                inner,
-                                outer,
-                                opening,
-                            });
-                        }
-                    }
+                    candidates.push(CommitmentRingDims {
+                        inner,
+                        outer,
+                        opening,
+                    });
                 }
-                candidates
             }
         }
+        candidates
     };
     Ok(candidates)
 }
@@ -148,30 +164,26 @@ pub(crate) fn dimension_candidates(
 pub(crate) fn initial_dimension_ceiling(
     policy: &PlannerPolicy,
 ) -> Result<CommitmentRingDims, AkitaError> {
-    match policy.ring_dimension_schedule_mode {
-        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-            Ok(CommitmentRingDims::uniform(ring_dimension))
-        }
-        crate::RingDimensionScheduleMode::AdaptiveDimension {
-            potential_a_dimensions,
-            potential_b_dimensions,
-            potential_d_dimensions,
-            ..
-        } => Ok(CommitmentRingDims {
-            inner: potential_a_dimensions
-                .last()
-                .copied()
-                .ok_or_else(|| AkitaError::InvalidSetup("adaptive A domain is empty".into()))?,
-            outer: potential_b_dimensions
-                .last()
-                .copied()
-                .ok_or_else(|| AkitaError::InvalidSetup("adaptive B domain is empty".into()))?,
-            opening: potential_d_dimensions
-                .last()
-                .copied()
-                .ok_or_else(|| AkitaError::InvalidSetup("adaptive D domain is empty".into()))?,
-        }),
-    }
+    let crate::RingDimensionSchedule {
+        potential_a_dimensions,
+        potential_b_dimensions,
+        potential_d_dimensions,
+        ..
+    } = policy.ring_dimension_schedule;
+    Ok(CommitmentRingDims {
+        inner: potential_a_dimensions
+            .last()
+            .copied()
+            .ok_or_else(|| AkitaError::InvalidSetup("adaptive A domain is empty".into()))?,
+        outer: potential_b_dimensions
+            .last()
+            .copied()
+            .ok_or_else(|| AkitaError::InvalidSetup("adaptive B domain is empty".into()))?,
+        opening: potential_d_dimensions
+            .last()
+            .copied()
+            .ok_or_else(|| AkitaError::InvalidSetup("adaptive D domain is empty".into()))?,
+    })
 }
 
 fn suffix_dimension_ceiling(
@@ -189,11 +201,7 @@ fn suffix_dimension_ceiling(
 #[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) const ADAPTIVE_SUFFIX_RING_DIMENSION: usize = 64;
 
-/// Explicit A/B/D dimensions admitted by mixed-D planner search.
-///
-/// The planner policy's uniform ring dimension defines only the implicit
-/// singleton domain used by [`crate::find_schedule`]. Mixed-dimension search supplies
-/// this explicit set of schedule-owned A/B/D tuples.
+/// Explicit A/B/D tuples used to construct adaptive planner test domains.
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RingDimensionSearchDomain {
@@ -222,20 +230,9 @@ impl RingDimensionSearchDomain {
         Ok(Self { candidates })
     }
 
-    /// Construct the explicit singleton domain used by a uniform policy.
-    #[cfg(feature = "catalog-gen")]
-    pub(crate) fn uniform(ring_dimension: usize) -> Result<Self, AkitaError> {
-        Self::new([CommitmentRingDims::uniform(ring_dimension)])
-    }
-
     /// Canonically ordered admitted A/B/D tuples.
     pub(crate) fn candidates(&self) -> &[CommitmentRingDims] {
         &self.candidates
-    }
-
-    #[cfg(feature = "catalog-gen")]
-    pub(crate) fn validate_for_policy(&self, policy: &PlannerPolicy) -> Result<(), AkitaError> {
-        akita_schedules::planner_support::validate_policy(policy)
     }
 }
 
@@ -365,101 +362,125 @@ impl CandidateFoldChain {
 pub(crate) struct ScheduleCandidate {
     pub(crate) first_direct_setup_field_len: Option<NonZeroUsize>,
     pub(crate) first_direct_output_witness_len: usize,
-    pub(crate) cost: PackedProofCost,
+    pub(crate) cost: ProofCost,
     pub(crate) setup_field_elements: usize,
     pub(crate) folds: CandidateFoldChain,
     pub(crate) terminal: Arc<CandidateTerminalResponse>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct PackedProofCost {
+pub(crate) struct ProofCost {
     payload_bytes: usize,
+    nonce_bytes: usize,
     nonce_bits: usize,
+    expanded_query_count: u64,
+    work_elements: u128,
 }
 
-impl PackedProofCost {
-    pub(crate) fn new(payload_bytes: usize, nonce_bits: usize) -> Result<Self, AkitaError> {
+impl ProofCost {
+    pub(crate) fn new(
+        payload_bytes: usize,
+        nonce_bytes: usize,
+        expanded_query_count: u64,
+        work_elements: u128,
+    ) -> Result<Self, AkitaError> {
         let cost = Self {
             payload_bytes,
-            nonce_bits,
+            nonce_bytes,
+            nonce_bits: 0,
+            expanded_query_count,
+            work_elements,
         };
-        cost.checked_proof_bytes()
-            .ok_or_else(|| AkitaError::InvalidSetup("candidate proof size overflow".into()))?;
+        cost.validate_objective()?;
         Ok(cost)
     }
 
     pub(crate) fn proof_bytes(self) -> usize {
         self.checked_proof_bytes()
-            .expect("validated packed proof cost")
+            .expect("validated native proof cost")
+    }
+
+    pub(crate) fn exact_score(self) -> u128 {
+        self.checked_exact_score()
+            .expect("validated additive proof-and-work cost")
     }
 
     pub(crate) fn checked_prepend(
         self,
         payload_bytes: usize,
+        nonce_bytes: usize,
         nonce_bits: usize,
+        expanded_query_count: u64,
+        work_elements: usize,
     ) -> Result<Self, AkitaError> {
-        Self::new(
-            self.payload_bytes
-                .checked_add(payload_bytes)
-                .ok_or_else(|| AkitaError::InvalidSetup("suffix proof payload overflow".into()))?,
-            self.nonce_bits.checked_add(nonce_bits).ok_or_else(|| {
-                AkitaError::InvalidSetup("candidate nonce bit length overflow".into())
-            })?,
-        )
+        let payload_bytes = self
+            .payload_bytes
+            .checked_add(payload_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("suffix proof payload overflow".into()))?;
+        let nonce_bits = self.nonce_bits.checked_add(nonce_bits).ok_or_else(|| {
+            AkitaError::InvalidSetup("candidate nonce bit length overflow".into())
+        })?;
+        let nonce_bytes = self
+            .nonce_bytes
+            .checked_add(nonce_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("native nonce byte length overflow".into()))?;
+        let expanded_query_count = self
+            .expanded_query_count
+            .checked_add(expanded_query_count)
+            .ok_or_else(|| AkitaError::InvalidSetup("candidate query count overflow".into()))?;
+        let work_elements = self
+            .work_elements
+            .checked_add(work_elements as u128)
+            .ok_or_else(|| AkitaError::InvalidSetup("candidate work overflow".into()))?;
+        let cost = Self {
+            payload_bytes,
+            nonce_bytes,
+            nonce_bits,
+            expanded_query_count,
+            work_elements,
+        };
+        cost.validate_objective()?;
+        Ok(cost)
     }
 
-    #[cfg(all(test, feature = "catalog-gen"))]
-    pub(crate) const fn nonce_bits(self) -> usize {
-        self.nonce_bits
+    pub(crate) fn grinding_cost(self) -> TranscriptGrindingCost {
+        TranscriptGrindingCost {
+            total_nonce_bits: self.nonce_bits,
+            nonce_max_bytes: self.nonce_bytes,
+            expanded_query_count: self.expanded_query_count,
+        }
     }
 
-    pub(crate) fn never_worse_for_every_parent(self, other: Self) -> bool {
-        let Some((left, left_jump)) = self.parent_alignment_order() else {
-            return false;
-        };
-        let Some((right, right_jump)) = other.parent_alignment_order() else {
-            return false;
-        };
-        left < right || (left == right && left_jump >= right_jump)
+    pub(crate) const fn expanded_query_count(self) -> u64 {
+        self.expanded_query_count
     }
 
-    pub(crate) fn strictly_better_for_every_parent(self, other: Self) -> bool {
-        let Some((left, left_jump)) = self.parent_alignment_order() else {
-            return false;
-        };
-        let Some((right, right_jump)) = other.parent_alignment_order() else {
-            return false;
-        };
-        left < right
-            && (left.checked_add(1).is_some_and(|next| next < right) || left_jump >= right_jump)
+    pub(crate) const fn fits_query_limit(self) -> bool {
+        self.expanded_query_count < akita_params::TRANSCRIPT_GRINDING_QUERY_LIMIT
     }
 
-    /// Proof bytes at parent remainder zero and the first remainder at which
-    /// this suffix gains another nonce byte. These two values completely
-    /// describe all eight parent alignments, avoiding an eight-way checked
-    /// division in every frontier comparison.
-    fn parent_alignment_order(self) -> Option<(usize, usize)> {
-        // The old exhaustive comparison rejected either operand when any of
-        // its eight alignments overflowed. Preserve that behavior.
-        self.checked_proof_bytes_with_parent_remainder(7)?;
-        let proof_bytes = self.checked_proof_bytes()?;
-        let remainder = self.nonce_bits % 8;
-        let jump = match remainder {
-            0 => 1,
-            1 => 8,
-            _ => 9 - remainder,
-        };
-        Some((proof_bytes, jump))
+    pub(crate) fn never_worse(self, other: Self) -> bool {
+        (self.exact_score(), self.proof_bytes()) <= (other.exact_score(), other.proof_bytes())
+    }
+
+    pub(crate) fn strictly_better(self, other: Self) -> bool {
+        (self.exact_score(), self.proof_bytes()) < (other.exact_score(), other.proof_bytes())
+    }
+
+    fn validate_objective(self) -> Result<(), AkitaError> {
+        self.checked_exact_score()
+            .ok_or_else(|| AkitaError::InvalidSetup("candidate objective overflow".into()))?;
+        Ok(())
+    }
+
+    fn checked_exact_score(self) -> Option<u128> {
+        (self.checked_proof_bytes()? as u128)
+            .checked_mul(WORK_ELEMENTS_PER_OBJECTIVE_BYTE)?
+            .checked_add(self.work_elements)
     }
 
     fn checked_proof_bytes(self) -> Option<usize> {
-        self.checked_proof_bytes_with_parent_remainder(0)
-    }
-
-    fn checked_proof_bytes_with_parent_remainder(self, parent_remainder: usize) -> Option<usize> {
-        let nonce_bytes =
-            akita_error::checked::div_ceil(self.nonce_bits.checked_add(parent_remainder)?, 8)?;
-        self.payload_bytes.checked_add(nonce_bytes)
+        self.payload_bytes.checked_add(self.nonce_bytes)
     }
 }
 
@@ -482,7 +503,7 @@ impl SetupPrefixCapacity {
 pub(crate) struct CandidateMetrics {
     pub(crate) first_direct_setup_capacity: SetupPrefixCapacity,
     pub(crate) first_direct_output_witness_len: usize,
-    pub(crate) cost: PackedProofCost,
+    pub(crate) cost: ProofCost,
     pub(crate) setup_field_elements: usize,
 }
 
@@ -514,7 +535,7 @@ impl ScheduleCandidate {
 pub(crate) fn candidate_schedule_descriptor_bytes(
     first_fold: Option<&CandidateFoldStep>,
     suffix_folds: &CandidateFoldChain,
-    terminal: &akita_types::TerminalFoldParams,
+    terminal: &akita_params::TerminalFoldParams,
     diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
 ) -> Result<Vec<u8>, AkitaError> {
     let started = diagnostics.map(|_| std::time::Instant::now());
@@ -535,17 +556,17 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
         let descriptor_steps =
             folds()
                 .enumerate()
-                .map(|(index, fold)| akita_types::FoldScheduleDescriptorStep {
+                .map(|(index, fold)| akita_params::FoldScheduleDescriptorStep {
                     params: &fold.params,
                     payload_mode: if index < carrier_prefix_len {
-                        akita_types::CommitmentPayloadMode::Compressed
+                        akita_params::CommitmentPayloadMode::Compressed
                     } else {
                         fold.params.payload_mode
                     },
                     input_witness_len: fold.input_witness_len,
                     output_witness_len: fold.output_witness_len,
                 });
-        akita_types::FoldSchedule::append_descriptor_bytes_from_steps(
+        akita_params::FoldSchedule::append_descriptor_bytes_from_steps(
             &mut bytes,
             descriptor_steps,
             terminal,
@@ -572,22 +593,19 @@ pub(crate) fn prune_locally_unprofitable_slices(
     opening_layout: &OpeningClaimsLayout,
     candidates: Vec<CommittedGroupParams>,
 ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
-    if policy.selection_policy == crate::SelectionPolicyId::MinEstimatedProofPayloadV2
-        || candidates.len() <= 1
-    {
+    if candidates.len() <= 1 {
         return Ok(candidates);
     }
     let mut best_setup = None;
     let mut retained = Vec::new();
     for params in candidates {
         let setup_score = match policy.selection_policy {
-            crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => {
+            crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => {
                 padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?)
             }
-            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
+            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
                 padded_setup_prefix_len(level_setup_field_elements(&params)?)
             }
-            crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => unreachable!(),
         };
         match best_setup.map(|best| setup_score.cmp(&best)) {
             None | Some(std::cmp::Ordering::Less) => {
@@ -612,7 +630,7 @@ pub(crate) fn layout_candidate_score(
 ) -> Result<LayoutCandidateScore, AkitaError> {
     if num_live_blocks == 0
         || num_chunks == 0
-        || num_chunks > akita_types::MAX_WITNESS_CHUNKS
+        || num_chunks > akita_params::MAX_WITNESS_CHUNKS
         || !num_chunks.is_power_of_two()
     {
         return Err(AkitaError::InvalidSetup(
@@ -644,4 +662,4 @@ mod adaptive_dimension_tests;
 #[path = "test/adaptive_search.rs"]
 mod adaptive_search_tests;
 
-pub(crate) use akita_types::{RelationCandidateTopology, RingRelationPhase};
+pub(crate) use akita_params::{RelationCandidateTopology, RingRelationPhase};

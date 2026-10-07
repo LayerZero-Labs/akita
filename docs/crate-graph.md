@@ -15,20 +15,21 @@ orchestration lives in `akita-pcs`.
 |-------|------|
 | `akita-error` | Shared protocol error and reusable checked integer formulas |
 | `jolt-field` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
-| `akita-witness` | Shared `PolynomialView` / `WitnessProvider` vocabulary |
 | `akita-serialization` | Serialization, validation, compression traits |
 | `akita-algebra` | Modules, NTTs, cyclotomic rings, polynomials |
 | `akita-transcript` | Fiat-Shamir transcript and descriptor preamble |
 | `akita-challenges` | Challenge sampling helpers |
 | `akita-sumcheck` | Sumcheck proofs, drivers, folding, batching |
-| `akita-types` | Proof/setup/schedule/layout shapes, SIS floors, proof-size helpers |
+| `akita-params` | Parameter geometry, sizing, SIS tables, schedules, compression plans, witness layout, dispatch, and grinding plans |
+| `akita-types` | Proof, setup, and claim wire values, shared protocol math, and native transcript replay |
 | `akita-sis-estimator` | Offline scalar SIS attack-cost estimation and artifact certification |
 | `akita-planner` | `Cfg`-free schedule search and optional preset-driven artifact emission |
 | `akita-schedules` | Versioned artifacts, row audit, and validated owned catalogs |
 | `akita-config` | Presets, `CommitmentConfig`, and artifact-family policy binding |
 | `akita-setup` | Setup construction and optional cache |
 | `akita-verifier` | Verifier replay (no prover polynomial backends) |
-| `akita-prover` | Commitment, proving, witnesses, polynomial backends |
+| `akita-prover` | Generic protocol sequencing and opaque backend contracts |
+| `akita-cpu-backend` | Owning CPU sources, commitments, witness arithmetic, and caches |
 | `akita-pcs` | Umbrella orchestration, examples, integration tests |
 
 ## Dependency Layers
@@ -38,11 +39,11 @@ graph TD
   Error["akita-error"]
   Ser["akita-serialization"]
   Field["jolt-field (external)"]
-  Witness["akita-witness"]
   Algebra["akita-algebra"]
   Transcript["akita-transcript"]
   Challenges["akita-challenges"]
   Sumcheck["akita-sumcheck"]
+  Params["akita-params"]
   Types["akita-types"]
   SisEstimator["akita-sis-estimator"]
   Planner["akita-planner"]
@@ -50,16 +51,15 @@ graph TD
   Config["akita-config"]
   Verifier["akita-verifier"]
   Prover["akita-prover"]
+  Cpu["akita-cpu-backend"]
   Setup["akita-setup"]
   Pcs["akita-pcs"]
 
-  Witness --> Error
-  Witness --> Field
   Algebra --> Error
   Algebra --> Field
   Algebra --> Ser
+  Transcript --> Error
   Transcript --> Field
-  Transcript --> Ser
   Challenges --> Error
   Challenges --> Field
   Challenges --> Transcript
@@ -68,6 +68,14 @@ graph TD
   Sumcheck --> Field
   Sumcheck --> Ser
   Sumcheck --> Transcript
+  Params --> Error
+  Params --> Algebra
+  Params --> Challenges
+  Params --> Field
+  Params --> Ser
+  Params --> Sumcheck
+  Params --> Transcript
+  Types --> Params
   Types --> Error
   Types --> Algebra
   Types --> Challenges
@@ -75,22 +83,24 @@ graph TD
   Types --> Ser
   Types --> Sumcheck
   Types --> Transcript
-  SisEstimator --> Types
+  SisEstimator --> Params
   Planner --> Error
   Planner --> Challenges
   Planner --> Schedules
-  Planner --> Types
+  Planner --> Params
   Planner -. catalog-gen .-> Config
   Planner -. catalog-security .-> SisEstimator
   Schedules --> Error
   Schedules --> Challenges
-  Schedules --> Types
+  Schedules --> Params
+  Config --> Params
   Config --> Error
   Config --> Challenges
   Config --> Field
   Config --> Transcript
   Config --> Types
   Config --> Schedules
+  Verifier --> Params
   Verifier --> Error
   Verifier --> Algebra
   Verifier --> Challenges
@@ -100,6 +110,7 @@ graph TD
   Verifier --> Sumcheck
   Verifier --> Transcript
   Verifier --> Types
+  Prover --> Params
   Prover --> Error
   Prover --> Algebra
   Prover --> Challenges
@@ -109,19 +120,33 @@ graph TD
   Prover --> Sumcheck
   Prover --> Transcript
   Prover --> Types
+  Cpu --> Prover
+  Cpu --> Params
+  Cpu --> Error
+  Cpu --> Algebra
+  Cpu --> Challenges
+  Cpu --> Config
+  Cpu --> Field
+  Cpu --> Ser
+  Cpu --> Sumcheck
+  Cpu --> Transcript
+  Cpu --> Types
+  Setup --> Params
   Setup --> Error
   Setup --> Algebra
   Setup --> Config
   Setup --> Field
-  Setup --> Prover
+  Setup --> Cpu
   Setup --> Ser
   Setup --> Types
+  Pcs --> Params
   Pcs --> Error
   Pcs --> Algebra
   Pcs --> Challenges
   Pcs --> Config
   Pcs --> Field
   Pcs --> Prover
+  Pcs --> Cpu
   Pcs --> Ser
   Pcs --> Setup
   Pcs --> Sumcheck
@@ -136,26 +161,20 @@ graph TD
   `akita_error::checked`. The formulas return `Option` and do not choose a
   protocol error variant. Callers map failure at the boundary where its meaning
   is known. Generic checked helpers must not be redefined in downstream crates.
-- `akita-witness` owns the shared borrowed witness/polynomial view vocabulary
-  (`PolynomialView`, `WitnessProvider`) consumed by sumcheck and polyops paths.
-  It depends only on `akita-error` and external `jolt-field`. At the time of this graph,
-  it is a workspace member without downstream `Cargo.toml` edges; cite it from
-  the architecture chapter and polyops/sumcheck specs until prover/sumcheck
-  depend on it explicitly.
 - `akita-planner` is the offline schedule search and artifact emission engine.
-  Normal planner search is `Cfg`-free and depends on `akita-types`,
+  Normal planner search is `Cfg`-free and depends on `akita-params`,
   `akita-challenges`, `akita-error`, and `akita-schedules`. The optional
   `catalog-gen` feature also enables `akita-config`, allowing artifact-emission
   binaries to name concrete `CommitmentConfig` presets.
 - `akita-sis-estimator` owns the offline scalar SIS cost model and table
   certification logic. It depends on inert schedule and matrix descriptions in
-  `akita-types`. The planner's optional `catalog-security` feature uses it to
+  `akita-params`. The planner's optional `catalog-security` feature uses it to
   report direct modeled costs for expanded artifact rows; normal planner,
   schedule, prover, and verifier builds do not depend on the estimator.
 - `akita-schedules` owns canonical artifact encoding, bounded decoding, semantic
   row audit, and the immutable `ValidatedScheduleCatalog` indexes used at runtime.
   Tracked `.aks` family files are deterministic planner output but are never
-  linked into the crate. It depends only on `akita-error`, `akita-types`, and
+  linked into the crate. It depends only on `akita-error`, `akita-params`, and
   `akita-challenges`.
 - `akita-config` owns concrete runtime presets, the single `CommitmentConfig`
   policy trait, and the `TrustedScheduleCatalog<Cfg>` capability that binds a
@@ -167,15 +186,31 @@ graph TD
   and resolves only the statement's row digest. Verifier-reachable
   schedule resolution must reject malformed input with `AkitaError`, never panic
   (see [`docs/verifier-contract.md`](verifier-contract.md)).
-- `akita-prover` owns polynomial backends, prover setup artifacts, NTT/matrix
-  kernels, the explicit compute-backend operation traits, recursive and
-  ring-switch witness construction, proving orchestration, and the
-  Akita-specific sumcheck stage provers.
-- `akita-types` owns inert shared protocol data: proof/setup/claim shapes,
-  opening-point and layout math, schedule contracts, SIS sizing (`akita_types::sis`),
-  and transcript append traits. It should not grow planner search or prover
-  algorithms (offline search and compact emission machinery live in
-  `akita-planner`).
+- `akita-prover` owns protocol sequencing, transcripts, checked public plans,
+  proof assembly, and opaque operation contracts. Its production dependency
+  graph never reaches `akita-cpu-backend`, including through optional features.
+- `akita-cpu-backend` owns imported sources, retained commitment material,
+  opening and recursive witness arithmetic, EOR and Stage 1/2/3 computation,
+  prepared setup resources, and caches. Applications share one `CpuBackend`
+  explicitly through `Arc`; each backend has an independent logical identity.
+  Reusable commitments retain their sources and admit independent proof sessions.
+  It has one dev-only edge, not drawn in the graph above: its relation tests
+  check prover witnesses against the verifier's setup-contribution evaluators
+  (`DirectScan`), so `akita-verifier` is a `[dev-dependencies]` entry. It must
+  never become a normal dependency: `scripts/check-crate-deps.sh
+  akita-cpu-backend` walks normal edges only and forbids `akita-verifier`.
+  The cpu-backend `parallel` feature forwards `akita-verifier/parallel`, so
+  those tests run the scan with the same parallelism as the prover side.
+- `akita-setup` owns application-side setup persistence. Restoring an artifact
+  requires backend validation before it becomes an opaque commitment handle;
+  serialized process-local identities carry no authority.
+- `akita-params` owns parameter geometry, sizing, SIS tables (`akita_params::sis`),
+  schedule contracts, compression plans, witness layout, dispatch, and grinding
+  plans. It does not depend on `akita-types`; schedules and the SIS estimator
+  use it directly without pulling in wire proof values.
+- `akita-types` owns proof/setup/claim wire values, shared protocol math, and
+  native transcript replay. Offline search and compact emission machinery live
+  in `akita-planner`.
 - `akita-pcs` is the broad umbrella crate: it owns the end-to-end
   `AkitaCommitmentScheme` orchestration, re-exports the full public surface, and
   hosts examples and integration tests. Verifier-only integrations should not use

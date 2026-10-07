@@ -183,7 +183,7 @@ $$
 Their product is $R_b$. Each $L_\ell$ is quartic except at basis $4$, where
 the only leaf is quadratic. Product substages prove how these leaves combine,
 using only arity-$2$ or arity-$4$ products. The topology is fixed by
-[`DigitRangePlan`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/stage1.rs):
+[`DigitRangePlan`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-params/src/layout/digit_range.rs):
 
 | Basis | Product substages | Final leaf |
 |---:|---|---|
@@ -284,7 +284,7 @@ At the root there is one parent with weight $1$ and claim $0$. Each product
 substage expands the current parents into their children; the fresh powers of
 $\gamma$ compress those child claims back into one claim for the next
 substage. The prover and verifier follow the same transcript order
-([`digit_range/mod.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/digit_range/mod.rs),
+([`digit_range/mod.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/sumcheck/digit_range/mod.rs),
 [`stage1.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/stage1.rs)).
 
 ### The final leaf
@@ -416,17 +416,39 @@ no quotient ranges. Neither axis adds a second Stage-2 sumcheck.
 When Stage 1 also proves a physical norm, Stage 2 adds the Z virtualization
 relation derived from the schedule. It proves that each final physical response
 or limb evaluation is the balanced basis recomposition of the committed Z digit
-plane evaluations at the same point. The transcript samples the batching
-challenge after it has absorbed all Stage 1 claims, including the ordinary
-range image. This order prevents one false virtual relation from canceling
-another.
+plane evaluations at the same point.
+
+Write $\Delta$ for everything in the Stage-2 residual that does not depend on
+the physical-L2 batching challenge, and write $E_i$ for the residual of virtual
+evaluation $i$. The prover and verifier derive
+
+$$
+\Delta
++\eta E_0
++\eta^2 E_1
++\cdots
++\eta^m E_{m-1}.
+$$
+
+Thus the constant coefficient belongs only to $\Delta$. The virtual
+coefficients start at $\eta$, not at one. This distinction is load-bearing: a
+coefficient vector $(1,\eta,\ldots)$ would place $\Delta$ and $E_0$ in the same
+constant coefficient, so the prover could arrange the challenge-independent
+cancellation $\Delta=-E_0$. With the shifted identity above, an identically zero
+polynomial has separately zero constant and virtual coefficients.
+
+The transcript absorbs all Stage-1 claims and physical-L2 virtual evaluations
+before sampling $\eta$. Direct mode has one virtual residual; LimbGram mode has
+one per limb. The resulting polynomial has degree at most $m$, and the
+transcript-grinding plan prices that degree.
 
 ### Start with the schedule-selected ring relation
 
-The physical row families and both ring-relation realizations are derived in
-[Payload and ring-relation realizations of an Akita
-fold](./akita-fold-realizations.md). We first derive the existing quotient-lift
-factorization, then state the reduced-evaluation replacement.
+[Raw and compressed payload realizations](./akita-fold-realizations.md)
+defines the physical rows. [Checking ring relations over a
+field](./ring-relation-checking.md) derives the two ways to turn them into
+field claims. Here we first derive the quotient-lift factorization, then
+state the reduced-evaluation replacement.
 
 Let $w_j(X)$ be the $j$-th ring element encoded by the digit witness, and let
 row $i$ of the ordinary extended fold relation be

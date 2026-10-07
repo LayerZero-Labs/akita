@@ -1,8 +1,10 @@
 #![allow(missing_docs)]
 
-use akita_types::BasisMode;
+use akita_params::BasisMode;
 use akita_verifier::evaluation_trace_benchmark_case;
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::time::Duration;
 
 fn bench_evaluation_trace(c: &mut Criterion) {

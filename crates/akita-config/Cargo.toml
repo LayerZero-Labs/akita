@@ -4,13 +4,6 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
 autobins = false
-authors = [
-  "Markos Georghiades <mgeorghiades@a16z.com>",
-  "Quang Dao <qvd@andrew.cmu.edu>",
-  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
-  "Omid Bodaghi <omibo@layerzero.foundation>",
-  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
-]
 license = "Apache-2.0 OR MIT"
 description = "Runtime configuration presets and schedule policy for the Akita polynomial commitment scheme"
 repository = "https://github.com/LayerZero-Labs/akita"
@@ -23,19 +16,21 @@ transcript-blake2b = [
   "akita-schedules/transcript-blake2b",
   "akita-transcript/transcript-blake2b",
   "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
 ]
 transcript-keccak = [
   "akita-challenges/transcript-keccak",
   "akita-schedules/transcript-keccak",
   "akita-transcript/transcript-keccak",
   "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
 ]
 test-support = []
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "72dc6451628d8b1dd794147a1f1cc40be0d77963", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
   "asm",
   "solinas",
 ] }
@@ -43,6 +38,13 @@ akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-feat
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
+
+[dev-dependencies]
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [
+  "test-support",
+] }
+serde_json = "1"
 
 [lints]
 workspace = true

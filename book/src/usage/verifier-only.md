@@ -40,26 +40,18 @@ The verifier receives these public values:
 - The approved external schedule artifact or its validated catalog.
 - A schedule selection produced with the proof.
 - Ordered commitments, points, and claimed values.
-- An expected proof shape.
-- Compressed proof bytes.
+- Spongefish argument bytes.
 - The application transcript domain and basis mode.
 
 The host should place them in one versioned public artifact or authenticate the
 setup separately. The [proof artifacts guide](./proof-artifacts.md) explains the
 bundle.
 
-## Decode with the expected shape
+## Keep proof bytes opaque
 
-```rust
-let proof = AkitaBatchedProof::<F, E>::deserialize_compressed(
-    &mut std::io::Cursor::new(&proof_bytes),
-    &expected_shape,
-)?;
-```
-
-The expected shape must come from the selected row in the host's approved
-catalog. It gives the decoder concrete bounds before it allocates nested proof
-objects.
+Do not decode the proof into a host-side Rust object. Pass the argument
+bytes to verification; the approved schedule supplies all message counts and
+allocation bounds.
 
 Commitments and verifier setup use their own canonical decoders and validation
 rules. Decode every public object before constructing the statement.
@@ -88,29 +80,32 @@ group is last, and every earlier group is a precommitted group.
 
 ## Verify directly
 
-Create a verifier side transcript with the application session label, then call
-the top level verifier entry point.
+Build one `AkitaVerifier` from the verifier setup and the trusted catalog, then
+pass the application session label to its verification method.
 
 ```rust
-let mut transcript =
-    AkitaTranscript::<F>::unbound_verifier(TRANSCRIPT_DOMAIN);
-
-akita_verifier::batched_verify::<Config, _>(
-    &proof,
-    &verifier_setup,
-    &catalog,
-    &mut transcript,
+let verifier = akita_verifier::AkitaVerifier::new(verifier_setup, catalog)?;
+verifier.batched_verify(
+    &proof_bytes,
+    TRANSCRIPT_DOMAIN,
     statement,
     BasisMode::Lagrange,
 )?;
 ```
+
+Construction fixes the catalog rows this verifier admits: those whose opening
+key fits the setup descriptor and whose direct matrix uses fit the setup's
+public matrix. It prepares the terminal matrix transforms of those rows once.
+Verification never mutates the verifier, so one instance can serve many proofs
+and threads. A verifier that checks a single proof, such as a zkVM guest, uses
+`AkitaVerifier::for_selection` to admit and prepare only that proof's row.
 
 The verifier resolves the explicit schedule selection in the supplied catalog.
 It does not run the planner. It then binds the instance descriptor, validates
 the public claims, and replays every fold through terminal verification.
 
 The repository's [quickstart example](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-pcs/examples/quickstart.rs)
-uses this direct verifier call after producing and decoding a proof. Cargo
+uses this verifier after producing and decoding a proof. Cargo
 compiles that call as part of the normal example checks.
 
 ## Supply verifier setup

@@ -1,15 +1,11 @@
 //! Explicit one-row catalogs for quotient/reduced relation-mode tests.
 
-use akita_config::{
-    honest_fold_policy_of, policy_of, CommitmentConfig, TrustedScheduleCatalog,
-    ValidatedScheduleCatalog,
-};
+use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog, ValidatedScheduleCatalog};
 use akita_error::AkitaError;
-use akita_planner::{find_schedule_for_test_relation_mode, TestRelationModeFilter};
-use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, GroupCommitPhaseParams,
-    OpeningScheduleSelection,
+use akita_params::{
+    CommittedGroupBatchProfile, GroupCommitPhaseParams, OpeningScheduleSelection, ScheduleLookupKey,
 };
+use akita_planner::{find_schedule_for_test_relation_mode, TestRelationModeFilter};
 
 /// Two valid catalogs for the same opening key, differing only in the
 /// planner's permitted ring-relation modes.
@@ -21,19 +17,19 @@ pub(crate) struct CrossModeCatalogs<Cfg: CommitmentConfig> {
 }
 
 fn planned_row<Base: CommitmentConfig>(
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
     relation_modes: TestRelationModeFilter,
-) -> Result<(CommittedGroupBatchProfile, akita_types::FoldSchedule), AkitaError> {
+) -> Result<(CommittedGroupBatchProfile, akita_params::FoldSchedule), AkitaError> {
     if !key.precommitteds.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "cross-mode fixture supports one final group only".into(),
         ));
     }
     let policy = policy_of::<Base>();
-    let final_honest_fold_policy = honest_fold_policy_of::<Base>();
+    let final_source_contract = Base::committed_source_contract()?;
     let planned = find_schedule_for_test_relation_mode(
         key,
-        final_honest_fold_policy,
+        final_source_contract,
         &[],
         &policy,
         Base::ring_challenge_config,
@@ -51,7 +47,7 @@ fn planned_row<Base: CommitmentConfig>(
 
 /// Plan and admit quotient-only and adaptive rows without ambient registries.
 pub(crate) fn cross_mode_catalogs<Base: CommitmentConfig>(
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
 ) -> Result<CrossModeCatalogs<Base>, AkitaError> {
     let (quotient_profiles, quotient_schedule) =
         planned_row::<Base>(key, TestRelationModeFilter::QuotientOnly)?;

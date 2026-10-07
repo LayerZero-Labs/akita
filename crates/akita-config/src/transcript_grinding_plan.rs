@@ -2,7 +2,7 @@
 
 use crate::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_types::{FoldSchedule, GrindingPlan, OpeningClaimsLayout};
+use akita_params::{ChallengeFieldOrder, FoldSchedule, GrindingPlan, OpeningClaimsLayout};
 use jolt_field::{CanonicalEncoding, ExtField};
 
 /// Derive the only accepted grinding plan for one effective schedule and call.
@@ -14,16 +14,22 @@ where
     Cfg::Field: CanonicalEncoding,
     Cfg::ExtField: ExtField<Cfg::Field>,
 {
+    Cfg::validate_sis_modulus_profile()?;
     let extension_degree = <Cfg::ExtField as ExtField<Cfg::Field>>::DEGREE;
     if Cfg::EXT_DEGREE != extension_degree {
         return Err(AkitaError::InvalidSetup(
             "grinding plan extension degree does not match the field tower".into(),
         ));
     }
-    akita_types::derive_transcript_grinding_plan_from_public_shape(
+    let challenge_order = ChallengeFieldOrder::from_field(
+        <Cfg::Field as CanonicalEncoding>::MODULUS_BITS,
+        extension_degree,
+        Cfg::sis_modulus_profile().modulus(),
+    )?;
+    akita_params::derive_transcript_grinding_plan_from_public_shape(
         schedule,
         root_layout,
-        <Cfg::Field as CanonicalEncoding>::MODULUS_BITS,
+        challenge_order,
         extension_degree,
     )
 }
@@ -32,8 +38,7 @@ where
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
-    use akita_types::{GrindingQueryKind, GrindingSite, GRINDING_NONCE_SLACK_BITS};
-    use jolt_field::PseudoMersenne;
+    use akita_params::{GrindingQueryKind, GrindingSite, GRINDING_NONCE_SLACK_BITS};
 
     #[test]
     fn production_onehot_plan_is_canonical_and_fully_priced() {
@@ -41,7 +46,7 @@ mod tests {
             .expect("one-hot schedule catalog");
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
         let row = catalog
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
                 layout.root_final_group_layout().expect("root group"),
             ))
             .expect("generated production row");
@@ -83,10 +88,10 @@ mod tests {
             (
                 43,
                 50,
-                383,
+                400,
                 [
-                    236, 232, 157, 232, 43, 58, 62, 68, 118, 58, 218, 127, 36, 83, 166, 123, 31,
-                    133, 157, 222, 197, 92, 67, 6, 62, 148, 191, 98, 57, 29, 78, 210,
+                    201, 141, 145, 223, 13, 192, 44, 142, 174, 252, 217, 177, 224, 123, 135, 2,
+                    122, 211, 6, 174, 3, 127, 123, 102, 130, 17, 69, 136, 179, 80, 247, 229,
                 ],
             )
         );
@@ -98,25 +103,25 @@ mod tests {
             .expect("one-hot schedule catalog");
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
         let row = catalog
-            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
                 layout.root_final_group_layout().expect("root group"),
             ))
             .expect("generated production row");
         let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout)
             .expect("grinding plan");
         let root = &row.schedule().root;
-        let rounds = akita_types::sumcheck_rounds(root.params.d_a(), root.output_witness_len);
+        let rounds = akita_params::sumcheck_rounds(root.params.d_a(), root.output_witness_len);
         let basis = 1usize
             .checked_shl(root.params.open().digits.log_basis)
             .expect("digit range basis");
-        let range = akita_types::DigitRangePlan::new(basis).expect("digit range plan");
+        let range = akita_params::DigitRangePlan::new(basis).expect("digit range plan");
         let (stages, _) = range
             .proof_shapes_for_route(rounds, root.params.inner().matrix.security_route())
             .expect("Stage 1 shapes");
 
         for run in plan.runs() {
             let GrindingSite::SumcheckRound {
-                protocol: akita_types::SumcheckProtocol::Stage1,
+                protocol: akita_params::SumcheckProtocol::Stage1,
                 level: 0,
                 stage,
                 ..
@@ -132,22 +137,29 @@ mod tests {
     }
 
     #[test]
-    fn exact_field_orders_report_the_pseudo_mersenne_deficit_without_repricing() {
-        fn exact_order<F: PseudoMersenne>(extension_degree: usize) -> (u32, u128, usize) {
-            (F::MODULUS_BITS, F::OFFSET, extension_degree)
+    fn exact_field_orders_price_pseudo_mersenne_deficits() {
+        fn check<Cfg: CommitmentConfig>()
+        where
+            Cfg::Field: CanonicalEncoding,
+        {
+            Cfg::validate_sis_modulus_profile().unwrap();
+            let order = ChallengeFieldOrder::from_field(
+                <Cfg::Field as CanonicalEncoding>::MODULUS_BITS,
+                Cfg::EXT_DEGREE,
+                Cfg::sis_modulus_profile().modulus(),
+            )
+            .unwrap();
+            for exponent in 0..akita_params::MAX_GRINDING_BITS {
+                assert_eq!(
+                    akita_params::grind_bits_for_loss(1u64 << exponent, order).unwrap(),
+                    exponent + 1,
+                );
+            }
+            assert_eq!(akita_params::grind_bits_for_loss(3, order).unwrap(), 2);
         }
-
-        for (bits, _, degree) in [
-            exact_order::<fp128::Field>(1),
-            exact_order::<crate::proof_optimized::fp64::Field>(2),
-            exact_order::<crate::proof_optimized::fp32::Field>(4),
-        ] {
-            assert_eq!(
-                akita_types::nominal_challenge_capacity_bits(bits, degree).unwrap(),
-                128
-            );
-            assert_eq!(akita_types::grind_bits_for_loss(3, 128).unwrap(), 2);
-        }
+        check::<fp128::OneHot>();
+        check::<crate::proof_optimized::fp64::OneHot>();
+        check::<crate::proof_optimized::fp32::OneHot>();
     }
 
     #[test]
@@ -201,6 +213,31 @@ mod tests {
                 assert!(count(GrindingQueryKind::FoldChallengeGroup) > 0);
                 assert!(plan.expanded_query_count() >= plan.runs().len() as u64);
 
+                for run in plan.runs() {
+                    let GrindingSite::L2VirtualBatch { level } = run.site() else {
+                        continue;
+                    };
+                    let params = if level == 0 {
+                        &row.schedule().root.params
+                    } else {
+                        &row.schedule().recursive_folds
+                            [usize::try_from(level - 1).expect("fold level fits usize")]
+                        .params
+                    };
+                    let akita_params::InnerCommitSecurityRoute::L2 {
+                        norm_proof_shape, ..
+                    } = params.inner().matrix.security_route()
+                    else {
+                        panic!("L2 virtual-batch query requires an L2 security route");
+                    };
+                    assert_eq!(
+                        run.loss_factor(),
+                        u64::try_from(norm_proof_shape.virtual_evaluation_count())
+                            .expect("virtual evaluation count fits u64"),
+                        "shifted virtual batching must price its highest eta degree"
+                    );
+                }
+
                 // A level's Stage 3 rounds are induced by its *successor's*
                 // setup prefix, and their count is the prefix group's own
                 // committed width. Pin that against the stored layout so no
@@ -218,7 +255,7 @@ mod tests {
                             matches!(
                                 run.site(),
                                 GrindingSite::SumcheckRound {
-                                    protocol: akita_types::SumcheckProtocol::Stage3,
+                                    protocol: akita_params::SumcheckProtocol::Stage3,
                                     level: run_level,
                                     ..
                                 } if run_level == level

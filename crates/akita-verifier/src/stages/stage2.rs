@@ -1,17 +1,22 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
-use crate::protocol::evaluation_trace::PreparedEvaluationTrace;
-use crate::protocol::ring_switch::{PreparedRelationGroups, RelationMatrixEvaluator};
+use crate::coefficient_packing_relation::{
+    CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
+};
+use crate::relation::evaluation_trace::PreparedEvaluationTrace;
+use crate::relation::{PreparedRelationGroups, RelationMatrixEvaluator};
+use crate::stages::ring_switch::RingSwitchVerifyOutput;
+use crate::stages::stage1::Stage1Replay;
 use akita_algebra::{
     eq_poly::EqPolynomial,
     offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily},
 };
 use akita_error::AkitaError;
-use akita_sumcheck::SumcheckInstanceVerifier;
+use akita_serialization::AkitaSerialize;
+use akita_types::AkitaVerifierSetup;
 use akita_types::{
-    AkitaExpandedSetup, CoefficientPackingVerifierBatchSemantics,
-    CoefficientPackingVerifierGroupSemantics, CompressionRelationWeights, FpExtEncoding,
-    NegativeBinarySupport, OpeningFamily, ReducedCompressionRelationWeights,
+    AkitaExpandedSetup, CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
+    OpeningFamily, ReducedCompressionRelationWeights,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
@@ -113,7 +118,7 @@ impl<'a, E: Field> Stage2OpeningSemantics<'a, E> {
         )))
     }
 
-    fn opening_claim(&self) -> E {
+    pub(crate) fn opening_claim(&self) -> E {
         match &self.0 {
             OpeningFamily::EvaluationTrace(trace) => trace.opening_claim,
             OpeningFamily::SubringCoefficientPacking(packing) => packing.opening_claim,
@@ -124,7 +129,6 @@ impl<'a, E: Field> Stage2OpeningSemantics<'a, E> {
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
 pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     batching_coeff: E,
-    range_image_evaluation: E,
     witness_eval: E,
     stage1_point: Vec<E>,
     relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
@@ -132,12 +136,39 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     alpha: E,
-    num_rounds: usize,
-    relation_claim: E,
     opening_semantics: Stage2OpeningSemantics<'a, E>,
-    physical_l2_claim: E,
     physical_l2_families: Vec<EqPairTensorFamily<E>>,
     _marker: std::marker::PhantomData<F>,
+}
+
+/// Replayed inputs for [`AkitaStage2Verifier::new`].
+pub(crate) struct Stage2VerifierInput<'a, F: Field, E: Field> {
+    /// Stage 2 batching coefficient drawn after Stage 1.
+    pub(crate) batching_coeff: E,
+    /// Prover-sent witness evaluation at the Stage 2 point.
+    pub(crate) witness_eval: E,
+    /// Stage 1 sumcheck point.
+    pub(crate) stage1_point: Vec<E>,
+    /// Prepared relation-matrix evaluator from the ring switch.
+    pub(crate) relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
+    /// Payload-mode compression oracle.
+    pub(crate) compression: Stage2CompressionOracle<'a, E>,
+    /// Expanded public setup.
+    pub(crate) setup: &'a AkitaExpandedSetup<F>,
+    /// Ring-switch alpha challenge.
+    pub(crate) alpha: E,
+    /// Stage 3 setup claim when the setup contribution is deferred.
+    pub(crate) setup_claim: Option<E>,
+    /// Relation lane variable count.
+    pub(crate) col_bits: usize,
+    /// Relation coefficient variable count.
+    pub(crate) ring_bits: usize,
+    /// Opening-claim semantics for this level.
+    pub(crate) opening_semantics: Stage2OpeningSemantics<'a, E>,
+    /// Batched physical L2 virtual claim, zero without a physical plan.
+    pub(crate) physical_l2_claim: E,
+    /// Physical L2 virtualization families.
+    pub(crate) physical_l2_families: Vec<EqPairTensorFamily<E>>,
 }
 
 pub(crate) enum Stage2CompressionOracle<'a, E: Field> {
@@ -161,25 +192,23 @@ where
 {
     /// Construct a verifier from the shared stage-2 context and the witness
     /// oracle selected by the current proof level.
-    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new")]
-    pub(crate) fn new(
-        batching_coeff: E,
-        range_image_evaluation: E,
-        witness_eval: E,
-        stage1_point: Vec<E>,
-        relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
-        compression: Stage2CompressionOracle<'a, E>,
-        setup: &'a AkitaExpandedSetup<F>,
-        alpha: E,
-        setup_claim: Option<E>,
-        relation_claim: E,
-        col_bits: usize,
-        ring_bits: usize,
-        opening_semantics: Stage2OpeningSemantics<'a, E>,
-        physical_l2_claim: E,
-        physical_l2_families: Vec<EqPairTensorFamily<E>>,
-    ) -> Result<Self, AkitaError> {
+    pub(crate) fn new(input: Stage2VerifierInput<'a, F, E>) -> Result<Self, AkitaError> {
+        let Stage2VerifierInput {
+            batching_coeff,
+            witness_eval,
+            stage1_point,
+            relation_matrix_evaluator,
+            compression,
+            setup,
+            alpha,
+            setup_claim,
+            col_bits,
+            ring_bits,
+            opening_semantics,
+            physical_l2_claim,
+            physical_l2_families,
+        } = input;
         let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidSetup("stage-2 variable count overflow".to_string())
         })?;
@@ -194,7 +223,6 @@ where
         }
         Ok(Self {
             batching_coeff,
-            range_image_evaluation,
             witness_eval,
             stage1_point,
             relation_matrix_evaluator,
@@ -202,38 +230,20 @@ where
             setup_claim,
             setup,
             alpha,
-            num_rounds,
-            relation_claim,
             opening_semantics,
-            physical_l2_claim,
             physical_l2_families,
             _marker: std::marker::PhantomData,
         })
     }
 }
 
-impl<'a, F, E> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E>
+impl<'a, F, E> AkitaStage2Verifier<'a, F, E>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
 {
-    fn num_rounds(&self) -> usize {
-        self.num_rounds
-    }
-
-    fn degree_bound(&self) -> usize {
-        3
-    }
-
-    fn input_claim(&self) -> E {
-        self.batching_coeff * self.range_image_evaluation
-            + self.relation_claim
-            + self.opening_semantics.opening_claim()
-            + self.physical_l2_claim
-    }
-
     #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
-    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError> {
+    pub(crate) fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError> {
         let w_eval = {
             let _span = tracing::info_span!("stage2_witness_eval").entered();
             self.witness_eval
@@ -254,9 +264,7 @@ where
             match self.setup_claim {
                 Some(claim) => self
                     .relation_matrix_evaluator
-                    .eval_flat_at_point_with_deferred_setup::<F>(
-                        challenges, self.setup, self.alpha, claim,
-                    ),
+                    .eval_flat_at_point_with_deferred_setup::<F>(challenges, self.alpha, claim),
                 None => self
                     .relation_matrix_evaluator
                     .eval_flat_at_point::<F>(challenges, self.setup, self.alpha),
@@ -325,6 +333,96 @@ where
     }
 }
 
+/// Stage 2 sumcheck rounds and the prover's witness evaluation, before the
+/// output claim is checked.
+pub(crate) struct Stage2RoundReplay<E: Field> {
+    pub(crate) output_claim: E,
+    pub(crate) challenges: Vec<E>,
+    pub(crate) witness_eval: E,
+}
+
+/// Checked Stage 2 output: the fold's next opening point and claim.
+pub(crate) struct Stage2Output<E: Field> {
+    pub(crate) point: Vec<E>,
+    pub(crate) witness_eval: E,
+}
+
+/// Replay the Stage 2 rounds from the batched Stage 1, relation, opening, and
+/// physical L2 input claims.
+pub(crate) fn replay_stage2<F, E>(
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    level: u32,
+    stage1: &Stage1Replay<'_, E>,
+    relation_claim: E,
+    opening_semantics: &Stage2OpeningSemantics<'_, E>,
+    shape: akita_sumcheck::SumcheckShape,
+) -> Result<Stage2RoundReplay<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    let input_claim = stage1.batching_coeff * stage1.range_image_evaluation
+        + relation_claim
+        + opening_semantics.opening_claim()
+        + stage1.physical_l2_claim;
+    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
+        grinding,
+        akita_params::SumcheckProtocol::Stage2,
+        level,
+        0,
+    );
+    let replay =
+        akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(&mut channel, 0, input_claim, shape)?;
+    let witness_eval = akita_types::stage2_w_eval::<F, E, _>(grinding, level, E::zero())?;
+    Ok(Stage2RoundReplay {
+        output_claim: replay.output_claim,
+        challenges: replay.challenges,
+        witness_eval,
+    })
+}
+
+/// Check the Stage 2 output claim once the Stage 3 setup claim is known.
+pub(crate) fn validate_stage2_replay<F, E>(
+    setup: &AkitaVerifierSetup<F>,
+    stage1: Stage1Replay<'_, E>,
+    rs: &RingSwitchVerifyOutput<E>,
+    setup_claim: Option<E>,
+    opening_semantics: Stage2OpeningSemantics<'_, E>,
+    replay: Stage2RoundReplay<E>,
+) -> Result<Stage2Output<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+{
+    let witness_eval = replay.witness_eval;
+    let stage2_verifier = AkitaStage2Verifier::<F, E>::new(Stage2VerifierInput {
+        batching_coeff: stage1.batching_coeff,
+        witness_eval,
+        stage1_point: stage1.stage1_point,
+        relation_matrix_evaluator: &rs.relation_matrix_evaluator,
+        compression: stage1.compression,
+        setup: setup.expanded(),
+        alpha: rs.alpha,
+        setup_claim,
+        col_bits: rs.relation_address_geometry.relation_lane_variable_count(),
+        ring_bits: rs
+            .relation_address_geometry
+            .relation_coefficient_variable_count(),
+        opening_semantics,
+        physical_l2_claim: stage1.physical_l2_claim,
+        physical_l2_families: stage1.physical_l2_families,
+    })?;
+
+    let expected = stage2_verifier.expected_output_claim(&replay.challenges)?;
+    if replay.output_claim != expected {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(Stage2Output {
+        point: replay.challenges,
+        witness_eval,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn evaluate_compression_oracle<F, E>(
     compression: &Stage2CompressionOracle<'_, E>,
@@ -373,17 +471,19 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::ring_switch::{FlatRelationContext, RelationMatrixEvaluator};
+    use crate::coefficient_packing_relation::prepare_coefficient_packing_verifier_batch_semantics;
+    use crate::coefficient_packing_relation::tests::materialize_stage2;
+    use crate::relation::{FlatRelationContext, RelationMatrixEvaluator};
     use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
+    use akita_params::{
+        BasisMode, CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams,
+        OpeningClaimsLayout, OpeningMethod, RelationAddressGeometry, RelationWitnessGeometry,
+        SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
+    };
     use akita_types::{
-        prepare_coefficient_packing_batch_semantics,
-        prepare_coefficient_packing_verifier_batch_semantics, relation_rhs_coeff_len,
-        AkitaSetupDescriptor, BasisMode, CoefficientPackingBatchSemanticInputs,
-        CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams,
-        OpeningClaimsLayout, OpeningMethod, PreparedSubringCoefficientPackingPoint,
-        RelationAddressGeometry, RelationRangeImagePlan, RelationWitnessGeometry,
-        RingRelationGroupOpening, RingRelationInstance, RingVec, SisModulusProfileId,
-        SubringCoefficientPackingGeometry, WitnessLayout,
+        prepare_coefficient_packing_batch_semantics, relation_rhs_coeff_len, AkitaSetupDescriptor,
+        CoefficientPackingBatchSemanticInputs, PreparedSubringCoefficientPackingPoint,
+        RelationRangeImagePlan, RingRelationGroupOpening, RingRelationInstance, RingVec,
     };
     use jolt_field::Zero;
     use jolt_field::{Ext2, Prime64Offset59};
@@ -398,7 +498,7 @@ mod tests {
         let d_a = 256;
         let d_d = 128;
         let challenge_config = SparseChallengeConfig::production_for_ring_dim(s).unwrap();
-        let mut params = akita_types::CommittedGroupParams::params_only(
+        let mut params = akita_params::CommittedGroupParams::params_only(
             SisModulusProfileId::Q64Offset59,
             d_a,
             2,
@@ -431,7 +531,7 @@ mod tests {
             &opening_batch,
             &relation_geometry,
             1,
-            akita_types::RelationQuotientPlan::for_field_bits(&params, F::MODULUS_BITS)
+            akita_params::RelationQuotientPlan::for_field_bits(&params, F::MODULUS_BITS)
                 .expect("relation quotient plan"),
         )
         .unwrap();
@@ -501,7 +601,6 @@ mod tests {
                 relation_rhs_coeff_len(relation_geometry.rhs_layout())
                     .unwrap()
             ]),
-            RingVec::from_coeffs(Vec::new()),
             params.role_dims(),
         )
         .unwrap();
@@ -523,7 +622,7 @@ mod tests {
             },
         )
         .unwrap();
-        let (_, expanded_oracle) =
+        let expanded_oracle =
             prepare_coefficient_packing_batch_semantics(CoefficientPackingBatchSemanticInputs {
                 level_params: &params,
                 opening_batch: &opening_batch,
@@ -537,7 +636,7 @@ mod tests {
             .unwrap();
         let evaluator = RelationMatrixEvaluator {
             relation_address_geometry,
-            groups: crate::protocol::ring_switch::PreparedRelationGroups::QuotientLift(Vec::new()),
+            groups: crate::relation::PreparedRelationGroups::QuotientLift(Vec::new()),
             log_basis: params.open().digits.log_basis,
             eq_tau1: Arc::from(Vec::<E>::new()),
             flat_context: FlatRelationContext {
@@ -546,7 +645,6 @@ mod tests {
                 witness_layout: Arc::new(witness_layout),
                 extension_degree: <E as ExtField<F>>::DEGREE,
             },
-            setup_plan_cache: Default::default(),
         };
         let setup: AkitaExpandedSetup<F> =
             AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
@@ -560,26 +658,25 @@ mod tests {
             );
         let domain = relation_address_geometry.digit_witness_domain();
         let scalar_opening = E::from_u64(19);
-        let verifier = AkitaStage2Verifier::<F, E>::new(
-            E::zero(),
-            E::zero(),
-            E::from_u64(23),
-            vec![E::zero(); domain.num_vars()],
-            &evaluator,
-            Stage2CompressionOracle::Raw,
-            &setup,
+        let verifier = AkitaStage2Verifier::<F, E>::new(Stage2VerifierInput {
+            batching_coeff: E::zero(),
+            witness_eval: E::from_u64(23),
+            stage1_point: vec![E::zero(); domain.num_vars()],
+            relation_matrix_evaluator: &evaluator,
+            compression: Stage2CompressionOracle::Raw,
+            setup: &setup,
             alpha,
-            None,
-            E::zero(),
-            relation_address_geometry.relation_lane_variable_count(),
-            relation_address_geometry.relation_coefficient_variable_count(),
-            Stage2OpeningSemantics::packing(&batch, &[(0, scalar_opening)]).unwrap(),
-            E::zero(),
-            Vec::new(),
-        )
+            setup_claim: None,
+            col_bits: relation_address_geometry.relation_lane_variable_count(),
+            ring_bits: relation_address_geometry.relation_coefficient_variable_count(),
+            opening_semantics: Stage2OpeningSemantics::packing(&batch, &[(0, scalar_opening)])
+                .unwrap(),
+            physical_l2_claim: E::zero(),
+            physical_l2_families: Vec::new(),
+        })
         .unwrap();
         assert_eq!(
-            verifier.input_claim(),
+            verifier.opening_semantics.opening_claim(),
             batch.groups()[0].scalar_claim_weight() * scalar_opening
         );
         let point = (0..domain.num_vars())
@@ -595,10 +692,16 @@ mod tests {
                 .compact_factors()
                 .evaluate_relation_at_point(&point)
                 .unwrap()
-                + expanded_oracle.groups()[0]
-                    .stage2_terms()
-                    .evaluate_at_point(&point)
-                    .unwrap()
+                + akita_algebra::poly::multilinear_eval(
+                    &materialize_stage2(
+                        &expanded_oracle.groups()[0],
+                        expanded_oracle.groups()[0]
+                            .physical_field_len()
+                            .next_power_of_two(),
+                    ),
+                    &point,
+                )
+                .unwrap()
         );
 
         assert!(Stage2OpeningSemantics::packing(

@@ -18,8 +18,8 @@ claims live in a proper extension (`EXT_DEGREE > 1`, `fp32` / `fp64`), never
 on field bit-width. See
 [Fold path and field geometry](./proving/fold-path.md).
 
-`CommitmentConfig` selects either a uniform schedule mode or bounded adaptive
-A, B, and D domains. It does not carry a separate default ring dimension.
+`CommitmentConfig` selects bounded adaptive A, B, and D domains. It does not
+carry a separate default ring dimension.
 The resolved schedule owns every dimension used by setup preparation,
 commitment, proving, and verification. Setup-prefix slots also record the
 dimension selected by the fold that consumes the prefix.
@@ -48,7 +48,9 @@ the committed profiles, which the validated catalog retains for lookup. Resolvin
 a key, profile, or selection borrows the catalog's row.
 
 `SetupRequirements::from_catalog` computes the matrix capacity and recursive
-prefix slots together. Setup construction reuses those requirements when loading,
+prefix slots together, and records the capacity bound it was computed at.
+`SetupRequirements::union` combines requirements from several catalogs at the
+same bound. Setup construction reuses those requirements when loading,
 repairing, or generating a setup. Independently supported precommitted groups still
 contribute to matrix capacity when their larger grouped schedule exceeds the
 requested bounds.
@@ -75,12 +77,12 @@ witness lengths before it uses the schedule.
 
 **Implementation map**
 
-- `crates/akita-types/src/layout/params.rs` defines `CommittedGroupParams`.
-- `crates/akita-types/src/schedule/profiles.rs` defines
+- `crates/akita-params/src/layout/params.rs` defines `CommittedGroupParams`.
+- `crates/akita-params/src/schedule/profiles.rs` defines
   `GroupCommitPhaseParams`.
-- `crates/akita-types/src/layout/params/precommitted.rs` defines
+- `crates/akita-params/src/layout/params/precommitted.rs` defines
   `GroupOpenPhaseParams` and `GroupOpeningPlan`.
-- `crates/akita-types/src/schedule.rs` defines `FoldParams`,
+- `crates/akita-params/src/schedule.rs` defines `FoldParams`,
   `TerminalFoldParams`, and `FoldSchedule`.
 - `crates/akita-schedules/src/resolve.rs` validates artifact rows before the
   prover or verifier uses them.
@@ -100,7 +102,7 @@ an error rather than panicking.
 - [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner overview, search model, and artifact generation.
 - `crates/akita-planner/src/` owns search and emission. Runtime catalog
   expansion and audit live in `crates/akita-schedules/src/`.
-- `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`level_proof_bytes`, planned witness sizing).
+- `crates/akita-params/src/proof_size.rs` and `crates/akita-params/src/layout/proof_size.rs` (`nonterminal_level_layout`, planned witness sizing).
 - `crates/akita-planner/src/generated_families.rs`,
   `crates/akita-planner/src/emit/`, and
   `crates/akita-schedules/src/artifact.rs`.
@@ -150,24 +152,30 @@ proof-supplied negotiation field and there is no verifier fallback.
 Applications sometimes select a schedule for one large final polynomial group
 before they know the exact small groups that will already be committed when the
 final group opens. `akita_planner::find_adapted_schedule` handles this offline
-case without rerunning the exhaustive planner.
+case, usually without rerunning the exhaustive planner.
 
 The application supplies a validated scalar `ResolvedScheduleRow` and a
 `GroupedGenerationRequest` containing exact frozen producer descriptors. The
-adapter retains the scalar row's structure: recursive depth, dimensions, block
+guided search retains the scalar row's structure: recursive depth, dimensions, block
 splits, slices, digit bases, opening choices, relation modes, witness chunking,
 terminal shape, and setup-prefix topology. It then rebuilds every value that
 depends on the combined groups, including D widths and ranks, witness lengths,
 relation rows, setup-prefix lengths, response bounds, grinding parameters, and
 proof accounting.
 
-This is a conditional search, not a second global optimizer. It returns
-`AkitaError::UnsupportedSchedule` if the scalar structure cannot support the
-grouped request. Adaptation rejects more than 256 precommitted producers before
-copying request data. Coefficient-packing adaptation also rejects more than 256
-canonical precommit opening products before allocating them. Callers that need
-a different structure can run the exhaustive offline `find_schedule` path
-explicitly.
+This guided search is a conditional search, not a second global optimizer.
+When the scalar structure cannot support the grouped request, adaptation falls
+back to the exhaustive offline `find_schedule` for the same key. It therefore
+fails only when the request is invalid or no schedule exists in the audited
+domain. The fallback costs one full search, and its row need not retain the
+scalar row's structure.
+
+Both searches give every group of an interchangeable class (equal commit-phase
+profile and source contract) the same root opening. Many identical producers,
+such as the chunks of one large object, therefore cost one opening choice
+between them, and planning time grows only slowly with their number. Distinct
+classes multiply the opening choices; beyond 256 combinations the searches skip
+the affected root opening dimension instead of enumerating them.
 
 An adapted row is not trusted merely because planning succeeded. The
 application merges its selected rows, validates them with

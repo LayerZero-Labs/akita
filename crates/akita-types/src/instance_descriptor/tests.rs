@@ -1,10 +1,10 @@
 use super::*;
-use crate::{
-    CommittedGroupParams, FoldParams, FoldSchedule, GrindingPlan, GrindingRun, GrindingSite,
-    InnerCommitMatrixParams, OpeningClaimsLayout, OpeningScheduleSelection, ScheduleRowDigest,
-    TerminalFoldParams, TerminalResponseShape,
-};
 use akita_challenges::SparseChallengeConfig;
+use akita_params::{
+    ChallengeFieldOrder, CommittedGroupParams, FoldParams, FoldSchedule, GrindingPlan, GrindingRun,
+    GrindingSite, InnerCommitMatrixParams, OpeningClaimsLayout, OpeningScheduleSelection,
+    ScheduleRowDigest, TerminalFoldParams, TerminalResponseShape,
+};
 use jolt_field::Prime32Offset99;
 
 // `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
@@ -59,11 +59,13 @@ fn sample_selection() -> OpeningScheduleSelection {
 fn sample_descriptor() -> AkitaInstanceDescriptor {
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("valid opening batch");
     let grinding_plan = GrindingPlan::new(
-        vec![
-            GrindingRun::proof_of_work(GrindingSite::EvaluationBatch { level: 0 }, 1, 128)
-                .expect("sample grinding run"),
-        ],
-        128,
+        vec![GrindingRun::proof_of_work(
+            GrindingSite::EvaluationBatch { level: 0 },
+            opening_batch.num_total_polynomials() as u64,
+            ChallengeFieldOrder::from_full_capacity(128).unwrap(),
+        )
+        .expect("sample grinding run")],
+        ChallengeFieldOrder::from_full_capacity(128).unwrap(),
     )
     .expect("sample grinding plan");
     AkitaInstanceDescriptor::new(
@@ -244,7 +246,7 @@ fn grinding_binding_has_the_exact_dedicated_descriptor_position() {
         .grinding
         .serialize_uncompressed(&mut grinding_bytes)
         .expect("serialize grinding binding");
-    assert_eq!(descriptor.version, 4);
+    assert_eq!(descriptor.version, 5);
     assert_eq!(
         &bytes[offset..offset + grinding_bytes.len()],
         grinding_bytes
@@ -370,7 +372,7 @@ fn role_local_ring_dimension_changes_plan_binding() {
 fn ring_relation_mode_changes_plan_and_transcript_preamble_binding() {
     let first = sample_schedule();
     let mut second = first.clone();
-    second.root.params.ring_relation_mode = crate::RingRelationMode::ReducedEvaluation;
+    second.root.params.ring_relation_mode = akita_params::RingRelationMode::ReducedEvaluation;
     let first_plan = PlanSection::from_schedule(sample_selection(), &first);
     let second_plan = PlanSection::from_schedule(sample_selection(), &second);
     assert_ne!(first_plan, second_plan);

@@ -8,19 +8,13 @@
 //! strict decoding remains the default.
 
 use crate::{AkitaJoltCase, AkitaJoltInputs, AkitaJoltOpeningGroup};
-use akita_config::{
-    derive_transcript_grinding_plan, CommitmentConfig, TrustedScheduleCatalog,
-    MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
-};
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES};
 use akita_error::checked;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use akita_types::{
-    canonical_proof_shape, AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup,
-    AkitaSetupDescriptor, AkitaVerifierSetup, CommittedGroup, FlatMatrix, OpeningScheduleSelection,
-    SetupPrefixVerifierRegistry, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
-};
+use akita_types::{AkitaExpandedSetup, AkitaSetupDescriptor, AkitaVerifierSetup, CommittedGroup, SetupPrefixVerifierRegistry, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS};
+use akita_params::{FlatMatrix, OpeningScheduleSelection};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::sync::Arc;
 
@@ -48,7 +42,7 @@ pub const BLOB_VALIDATE: Validate = Validate::Yes;
 pub const MAX_JOLT_BLOB_BYTES: u64 = 805_306_368;
 
 /// Magic header so the guest fails fast if it gets the wrong bytes.
-const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv5";
+const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv6";
 const CATALOG_FRAME_MAGIC: [u8; 8] = *b"AKCATF01";
 const CATALOG_FRAME_HEADER_BYTES: usize = CATALOG_FRAME_MAGIC.len() + 8;
 const MAX_TRANSCRIPT_DOMAIN_BYTES: usize = 1024;
@@ -263,7 +257,7 @@ where
         self.commitment
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup
-            .expanded
+            .expanded()
             .descriptor
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         bytes.push(u8::try_from(layout.setup_matrix_padding).map_err(|_| {
@@ -283,13 +277,11 @@ where
             0,
         );
         self.verifier_setup
-            .expanded
+            .expanded()
             .shared_matrix
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup
-            .prefix_slots
-            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
-        self.proof_shape
+            .prefix_slots()
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.proof.serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         if bytes.len() != encoded_size {
@@ -325,7 +317,7 @@ where
             self.schedule_selection.serialized_size(BLOB_COMPRESS),
             self.commitment.serialized_size(BLOB_COMPRESS),
             self.verifier_setup
-                .expanded
+                .expanded()
                 .descriptor
                 .serialized_size(BLOB_COMPRESS),
         ])
@@ -335,13 +327,12 @@ where
         let unpadded_size = checked::sum([
             padding_record_offset,
             self.verifier_setup
-                .expanded
+                .expanded()
                 .shared_matrix
                 .serialized_size(BLOB_COMPRESS),
             self.verifier_setup
-                .prefix_slots
+                .prefix_slots()
                 .serialized_size(BLOB_COMPRESS),
-            self.proof_shape.serialized_size(BLOB_COMPRESS),
             self.proof.serialized_size(BLOB_COMPRESS),
         ])
         .ok_or_else(|| {
@@ -678,24 +669,9 @@ where
             &(),
         )?;
         let verifier_setup = decode_setup(&mut rest, bytes.len())?;
-        let proof_shape = AkitaBatchedProofShape::deserialize_with_mode(
-            &mut rest,
-            BLOB_COMPRESS,
-            BLOB_VALIDATE,
-            &(),
-        )?;
-        Self::validate_proof_shape_before_allocation::<Cfg>(
-            schedule_selection,
-            &proof_shape,
-            rest.len(),
-            schedules,
-        )?;
-        let proof = AkitaBatchedProof::<F, E>::deserialize_with_mode(
-            &mut rest,
-            BLOB_COMPRESS,
-            BLOB_VALIDATE,
-            &proof_shape,
-        )?;
+        let proof_bound = Self::proof_byte_bound::<Cfg>(schedule_selection, schedules)?;
+        let proof =
+            Self::decode_capped_bytes(&mut rest, proof_bound, "akita-jolt native proof stream")?;
         reject_trailing_bytes(rest)?;
         let inputs = Self {
             case,
@@ -707,7 +683,6 @@ where
             schedule_selection,
             commitment,
             verifier_setup,
-            proof_shape,
             proof,
         };
         inputs
@@ -716,44 +691,26 @@ where
         Ok(inputs)
     }
 
-    fn validate_proof_shape_before_allocation<Cfg>(
+    fn proof_byte_bound<Cfg>(
         schedule_selection: OpeningScheduleSelection,
-        proof_shape: &AkitaBatchedProofShape,
-        proof_bytes_available: usize,
         schedules: &TrustedScheduleCatalog<Cfg>,
-    ) -> Result<(), SerializationError>
+    ) -> Result<usize, SerializationError>
     where
         Cfg: CommitmentConfig<Field = F, ExtField = E>,
     {
-        proof_shape.validate_decode_budget(
-            proof_bytes_available,
-            F::zero().serialized_size(BLOB_COMPRESS),
-            E::zero().serialized_size(BLOB_COMPRESS),
-        )?;
         let resolved = schedules
             .resolve_selection(schedule_selection)
             .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-        let root_opening_layout = resolved
-            .profiles()
-            .opening_layout()
-            .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-        let grinding_plan =
-            derive_transcript_grinding_plan::<Cfg>(resolved.schedule(), &root_opening_layout)
-                .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-        proof_shape.validate_grinding_plan(&grinding_plan)?;
-        let expected_shape = canonical_proof_shape(
+        let key = akita_params::ScheduleLookupKey {
+            final_group: resolved.profiles().final_group.group,
+            precommitteds: resolved.profiles().precommitteds.clone(),
+        };
+        akita_schedules::expanded_schedule_proof_bound(
+            &key,
             resolved.schedule(),
-            &root_opening_layout,
-            E::DEGREE,
-            &grinding_plan,
+            &akita_config::policy_of::<Cfg>(),
         )
-        .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-        if *proof_shape != expected_shape {
-            return Err(SerializationError::InvalidData(
-                "proof shape does not match the selected canonical schedule".to_string(),
-            ));
-        }
-        Ok(())
+        .map_err(|error| SerializationError::InvalidData(error.to_string()))
     }
 }
 

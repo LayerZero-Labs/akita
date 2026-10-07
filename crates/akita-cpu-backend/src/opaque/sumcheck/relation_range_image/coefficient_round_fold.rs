@@ -1,0 +1,195 @@
+use super::*;
+use crate::opaque::sumcheck::par_fold_by_grain;
+
+#[allow(clippy::too_many_arguments)]
+fn fold_lane_and_compute_next_round<
+    E: Field + Ring + Unreduced,
+    const SKIP_LINEAR: bool,
+    const SKIP_RELATION: bool,
+>(
+    linear_lane: &PreparedLinearLane<'_, E>,
+    source: &[E],
+    target: &mut [E],
+    next_alpha_factor: &[E],
+    lane: usize,
+    lane_weight: E,
+    challenge: E,
+    e_first: &[E],
+    e_second: &[E],
+    first_bits: usize,
+    block_size: usize,
+) -> ([E; 3], RoundMessage<E>) {
+    let next_coeff_count = target.len();
+    let next_coefficient_half = next_coeff_count / 2;
+    let equality_address_base = lane * next_coefficient_half;
+    let mut virt = FieldNorm::<E, SKIP_LINEAR>::zero();
+    let mut relation = RelationPairAccumulator::<E>::zero();
+    let mut blk = 0usize;
+
+    while blk < next_coefficient_half {
+        let (j_high, blk_end) = stage2_eq_block(
+            equality_address_base,
+            blk,
+            e_first.len(),
+            first_bits,
+            block_size,
+            next_coefficient_half,
+        );
+        let mut inner_virt = ProductNorm::<E, SKIP_LINEAR>::zero();
+
+        for coefficient_pair in blk..blk_end {
+            let left = 2 * coefficient_pair;
+            let source_base = 2 * left;
+            let w0 =
+                source[source_base] + challenge * (source[source_base + 1] - source[source_base]);
+            let w1 = source[source_base + 2]
+                + challenge * (source[source_base + 3] - source[source_base + 2]);
+            target[left] = w0;
+            target[left + 1] = w1;
+            let dw = w1 - w0;
+
+            let j_low = (equality_address_base + coefficient_pair) & (e_first.len() - 1);
+            let e_in = e_first[j_low];
+            inner_virt.add(w0, dw, e_in);
+
+            if !SKIP_RELATION {
+                let p0 = next_alpha_factor[left] * lane_weight;
+                let p1 = next_alpha_factor[left + 1] * lane_weight;
+                let (t0, t1) = linear_lane.pair(left);
+                let q0 = p0 + t0;
+                let q1 = p1 + t1;
+                relation.add_pair(w1, dw, q0, q1);
+            }
+        }
+
+        let e_out = e_second[j_high];
+        virt.scaled_add(e_out, inner_virt.reduce());
+        blk = blk_end;
+    }
+
+    (virt.totals(), relation.finish())
+}
+
+impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
+    #[tracing::instrument(
+        skip_all,
+        name = "RelationRangeImageProver::fuse_folded_coefficients_and_compute_next_round"
+    )]
+    pub(super) fn fuse_folded_coefficients_and_compute_next_round(
+        &self,
+        folded_witness: &[E],
+        weights: &RelationWeightFactorization<E>,
+        next_alpha_factor: &[E],
+        challenge: E,
+    ) -> (Vec<E>, NormRoundTerms<'_, E>, RoundMessage<E>) {
+        let recovery = self.split_eq.prepare_linear_q_recovery();
+        let (output, norm, relation) = if recovery.is_some() {
+            self.fuse_folded_coefficients_with::<true, false>(
+                folded_witness,
+                weights,
+                next_alpha_factor,
+                challenge,
+            )
+        } else {
+            self.fuse_folded_coefficients_with::<false, false>(
+                folded_witness,
+                weights,
+                next_alpha_factor,
+                challenge,
+            )
+        };
+        (
+            output,
+            NormRoundTerms::from_totals(norm, recovery),
+            relation,
+        )
+    }
+
+    pub(super) fn fuse_folded_coefficients_and_compute_next_round_norm_terms(
+        &self,
+        folded_witness: &[E],
+        weights: &RelationWeightFactorization<E>,
+        next_alpha_factor: &[E],
+        challenge: E,
+    ) -> (Vec<E>, NormRoundTerms<'_, E>) {
+        let recovery = self.split_eq.prepare_linear_q_recovery();
+        let (output, norm, _) = if recovery.is_some() {
+            self.fuse_folded_coefficients_with::<true, true>(
+                folded_witness,
+                weights,
+                next_alpha_factor,
+                challenge,
+            )
+        } else {
+            self.fuse_folded_coefficients_with::<false, true>(
+                folded_witness,
+                weights,
+                next_alpha_factor,
+                challenge,
+            )
+        };
+        (output, NormRoundTerms::from_totals(norm, recovery))
+    }
+
+    fn fuse_folded_coefficients_with<const SKIP_LINEAR: bool, const SKIP_RELATION: bool>(
+        &self,
+        folded_witness: &[E],
+        weights: &RelationWeightFactorization<E>,
+        next_alpha_factor: &[E],
+        challenge: E,
+    ) -> (Vec<E>, [E; 3], RoundMessage<E>) {
+        debug_assert!(self.in_coefficient_round());
+        debug_assert!(self.current_coefficient_width() >= 2);
+        let old_coeff_count = weights.common_alpha_factor().len();
+        let next_coeff_count = old_coeff_count / 2;
+        debug_assert_eq!(next_alpha_factor.len(), next_coeff_count);
+        debug_assert_eq!(folded_witness.len(), self.live_lane_count * old_coeff_count);
+
+        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
+        let first_bits = e_first.len().trailing_zeros() as usize;
+        let next_coefficient_half = next_coeff_count / 2;
+        let block_size = e_first.len().min(next_coefficient_half);
+        let mut output = vec![E::zero(); self.live_lane_count * next_coeff_count];
+        let identity = || ([E::zero(); 3], RoundMessage::zero());
+        let fold = |mut totals, (lane, target)| {
+            let source_start = lane * old_coeff_count;
+            let source = &folded_witness[source_start..source_start + old_coeff_count];
+            let lane_weight = if SKIP_RELATION {
+                E::zero()
+            } else {
+                weights.relation_lane_weights()[lane]
+            };
+            let linear_lane = if SKIP_RELATION {
+                PreparedLinearLane::zero()
+            } else {
+                self.linear_terms.resolve_lane(lane)
+            };
+            let terms = fold_lane_and_compute_next_round::<E, SKIP_LINEAR, SKIP_RELATION>(
+                &linear_lane,
+                source,
+                target,
+                next_alpha_factor,
+                lane,
+                lane_weight,
+                challenge,
+                e_first,
+                e_second,
+                first_bits,
+                block_size,
+            );
+            add_round_terms(&mut totals, terms);
+            totals
+        };
+        let totals = par_fold_by_grain(
+            cfg_chunks_mut!(output, next_coeff_count).enumerate(),
+            next_coefficient_half,
+            identity,
+            fold,
+            |mut left, right| {
+                add_round_terms(&mut left, right);
+                left
+            },
+        );
+        (output, totals.0, totals.1)
+    }
+}

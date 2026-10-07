@@ -1,97 +1,8 @@
 //! Shared stage-1 tree shape and polynomial helpers.
 
-use crate::proof::PhysicalL2NormProofWireShape;
-use crate::{AkitaStage1Proof, AkitaStage1StageShape, InnerCommitSecurityRoute};
 use akita_error::AkitaError;
-use akita_transcript::{append_ext_field, labels, Transcript};
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
-
-/// Absorb digit-range product child claims in their canonical transcript order.
-pub fn append_digit_range_child_claims<F, E, T>(claims: &[E], transcript: &mut T)
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-    T: Transcript<F>,
-{
-    for claim in claims {
-        append_ext_field::<F, E, T>(transcript, labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM, claim);
-    }
-}
-
-/// Checked flat Boolean domain for the compact digit witness.
-///
-/// The first `live_len` addresses contain digits and the remaining addresses
-/// up to `domain_len()` are public zero padding. Variables bind in increasing
-/// physical-address bit order.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct FlatBooleanDomain {
-    live_len: usize,
-    num_vars: usize,
-}
-
-impl FlatBooleanDomain {
-    /// Construct a checked live prefix inside a Boolean hypercube.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the domain width overflows, the live prefix is
-    /// empty, or the live prefix exceeds the Boolean domain.
-    pub fn new(live_len: usize, num_vars: usize) -> Result<Self, AkitaError> {
-        let shift = u32::try_from(num_vars)
-            .map_err(|_| AkitaError::InvalidInput("Boolean domain width overflow".to_string()))?;
-        let domain_len = 1usize
-            .checked_shl(shift)
-            .ok_or_else(|| AkitaError::InvalidInput("Boolean domain width overflow".to_string()))?;
-        if live_len == 0 || live_len > domain_len {
-            return Err(AkitaError::InvalidSize {
-                expected: domain_len,
-                actual: live_len,
-            });
-        }
-        Ok(Self { live_len, num_vars })
-    }
-
-    /// Number of explicit witness entries before zero padding.
-    #[must_use]
-    pub fn live_len(self) -> usize {
-        self.live_len
-    }
-
-    /// Total number of Boolean variables.
-    #[must_use]
-    pub fn num_vars(self) -> usize {
-        self.num_vars
-    }
-
-    /// Padded Boolean-domain length.
-    #[must_use]
-    pub fn domain_len(self) -> usize {
-        1usize << self.num_vars
-    }
-
-    /// Number of live blocks after grouping by `block_variable_count` low bits.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the block width is larger than the domain or the
-    /// live prefix is not block-aligned.
-    pub fn live_block_count(self, block_variable_count: usize) -> Result<usize, AkitaError> {
-        if block_variable_count > self.num_vars {
-            return Err(AkitaError::InvalidSize {
-                expected: self.num_vars,
-                actual: block_variable_count,
-            });
-        }
-        let block_len = 1usize << block_variable_count;
-        if !self.live_len.is_multiple_of(block_len) {
-            return Err(AkitaError::InvalidInput(format!(
-                "live digit prefix {} is not aligned to block length {block_len}",
-                self.live_len
-            )));
-        }
-        Ok(self.live_len / block_len)
-    }
-}
+use akita_params::layout::digit_range::FlatBooleanDomain;
+use jolt_field::Field;
 
 /// Checked equality point in physical digit-table binding order.
 ///
@@ -171,307 +82,16 @@ impl<E: Field> DigitRangeEqualityPoint<E> {
     }
 }
 
-/// Checked topology for the balanced digit range proof.
-///
-/// This is the single authority for the supported basis, product-stage
-/// arities, leaf factorization, proof shape, and child-claim order. It is
-/// constructed from the concrete range basis already selected by the
-/// ring-switch boundary and has no dependency on level parameters.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DigitRangePlan {
-    log_basis: u8,
-}
-
-impl DigitRangePlan {
-    /// Construct the canonical range topology for a supported concrete basis.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error unless `basis` is one of `4, 8, 16, 32, 64`.
-    pub fn new(basis: usize) -> Result<Self, AkitaError> {
-        if !matches!(basis, 4 | 8 | 16 | 32 | 64) {
-            return Err(AkitaError::InvalidInput(format!(
-                "digit range basis must be one of 4, 8, 16, 32, 64; got {basis}"
-            )));
-        }
-        Ok(Self {
-            log_basis: basis.trailing_zeros() as u8,
-        })
-    }
-
-    /// Concrete balanced decomposition basis.
-    #[must_use]
-    pub fn basis(self) -> usize {
-        1usize << self.log_basis
-    }
-
-    /// Base-2 logarithm of [`Self::basis`].
-    #[must_use]
-    pub fn log_basis(self) -> u8 {
-        self.log_basis
-    }
-
-    /// Product-stage arities in transcript order, before the leaf stage.
-    #[must_use]
-    pub fn product_stage_arities(&self) -> &[usize] {
-        match self.log_basis {
-            2 | 3 => &[],
-            4 => &[2],
-            5 => &[4],
-            6 => &[2, 4],
-            _ => unreachable!("DigitRangePlan construction validates log basis"),
-        }
-    }
-
-    /// Number of child lanes emitted by one product substage.
-    #[must_use]
-    pub fn product_stage_lane_count(self, stage_index: usize) -> Option<usize> {
-        let arity = *self.product_stage_arities().get(stage_index)?;
-        let parent_count = self.product_stage_arities()[..stage_index]
-            .iter()
-            .copied()
-            .product::<usize>();
-        parent_count.checked_mul(arity)
-    }
-
-    /// Number of quartic (or smaller for basis four) leaf factors.
-    #[must_use]
-    pub fn leaf_factor_count(self) -> usize {
-        match self.log_basis {
-            2 | 3 => 1,
-            4 => 2,
-            5 => 4,
-            6 => 8,
-            _ => unreachable!("DigitRangePlan construction validates log basis"),
-        }
-    }
-
-    /// Degree of the final range leaf.
-    #[must_use]
-    pub fn leaf_degree(self) -> usize {
-        if self.log_basis == 2 {
-            2
-        } else {
-            4
-        }
-    }
-
-    /// Number of range subproofs in transcript order.
-    #[must_use]
-    pub fn stage_count(self) -> usize {
-        self.product_stage_arities().len() + 1
-    }
-
-    /// Wire shape of one range subproof in transcript order.
-    #[must_use]
-    pub fn stage_shape(self, rounds: usize, stage_index: usize) -> Option<AkitaStage1StageShape> {
-        if stage_index < self.product_stage_arities().len() {
-            let arity = self.product_stage_arities()[stage_index];
-            return Some(AkitaStage1StageShape {
-                sumcheck_proof: (rounds, arity),
-                child_claims: self.product_stage_lane_count(stage_index)?,
-            });
-        }
-        (stage_index == self.product_stage_arities().len()).then_some(AkitaStage1StageShape {
-            sumcheck_proof: (rounds, self.leaf_degree()),
-            child_claims: 0,
-        })
-    }
-
-    /// Wire shapes of all range subproofs in transcript order.
-    #[must_use]
-    pub fn stage_shapes(self, rounds: usize) -> Vec<AkitaStage1StageShape> {
-        (0..self.stage_count())
-            .filter_map(|stage_index| self.stage_shape(rounds, stage_index))
-            .collect()
-    }
-
-    /// Derive the headerless Stage 1 wire shape from the scheduled A route.
-    pub fn proof_shapes_for_route(
-        self,
-        rounds: usize,
-        route: InnerCommitSecurityRoute,
-    ) -> Result<
-        (
-            Vec<AkitaStage1StageShape>,
-            Option<PhysicalL2NormProofWireShape>,
-        ),
-        AkitaError,
-    > {
-        match route {
-            InnerCommitSecurityRoute::Linf(_) => Ok((self.stage_shapes(rounds), None)),
-            InnerCommitSecurityRoute::L2 {
-                norm_proof_shape, ..
-            } => {
-                norm_proof_shape.validate()?;
-                Ok((
-                    self.stage_shapes(rounds)
-                        .into_iter()
-                        .take(self.product_stage_arities().len())
-                        .collect(),
-                    Some(PhysicalL2NormProofWireShape {
-                        subclaims: norm_proof_shape.subclaim_count().ok_or_else(|| {
-                            AkitaError::InvalidSetup("L2 norm subclaim count overflow".into())
-                        })?,
-                        virtual_evaluations: norm_proof_shape.virtual_evaluation_count(),
-                        sumcheck: vec![self.leaf_degree() + 1; rounds],
-                    }),
-                ))
-            }
-        }
-    }
-
-    /// Validate the complete in-memory range-proof shape without allocation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the number of substages, rounds, polynomial degree,
-    /// or child claims differs from this plan.
-    pub fn validate_proof_shape<E: Field>(
-        self,
-        proof: &AkitaStage1Proof<E>,
-        rounds: usize,
-    ) -> Result<(), AkitaError> {
-        if proof.stages.len() != self.stage_count() {
-            return Err(AkitaError::InvalidSize {
-                expected: self.stage_count(),
-                actual: proof.stages.len(),
-            });
-        }
-        for (stage_index, stage) in proof.stages.iter().enumerate() {
-            let expected = self
-                .stage_shape(rounds, stage_index)
-                .ok_or(AkitaError::InvalidProof)?;
-            if stage.sumcheck_proof.round_polys.len() != expected.sumcheck_proof.0 {
-                return Err(AkitaError::InvalidSize {
-                    expected: expected.sumcheck_proof.0,
-                    actual: stage.sumcheck_proof.round_polys.len(),
-                });
-            }
-            for round_poly in &stage.sumcheck_proof.round_polys {
-                if round_poly.coeffs_except_constant_term.len() != expected.sumcheck_proof.1 {
-                    return Err(AkitaError::InvalidSize {
-                        expected: expected.sumcheck_proof.1,
-                        actual: round_poly.coeffs_except_constant_term.len(),
-                    });
-                }
-            }
-            if stage.child_claims.len() != expected.child_claims {
-                return Err(AkitaError::InvalidSize {
-                    expected: expected.child_claims,
-                    actual: stage.child_claims.len(),
-                });
-            }
-        }
-        Ok(())
-    }
-
-    /// Coefficients of the final range-leaf polynomials.
-    pub fn leaf_coeffs<E: Field + Ring>(self) -> Vec<Vec<E>> {
-        stage1_root_values::<E>(self.basis())
-            .chunks(4)
-            .map(poly_coeffs_from_roots)
-            .collect()
-    }
-
-    /// Evaluate the complete balanced-digit range polynomial at `range_image`.
-    pub fn evaluate_range_polynomial<E: Field + Ring>(self, range_image: E) -> E {
-        let mut value = E::one();
-        for root in stage1_root_values::<E>(self.basis()) {
-            value *= range_image - root;
-        }
-        value
-    }
-
-    /// Evaluate one leaf polynomial at a range-image value.
-    pub fn evaluate_leaf_polynomial<E: Field>(self, coeffs: &[E], range_image: E) -> E {
-        coeffs
-            .iter()
-            .rev()
-            .copied()
-            .fold(E::zero(), |acc, coeff| acc * range_image + coeff)
-    }
-
-    /// Return powers of the interstage batching challenge.
-    pub fn interstage_batch_weights<E: Field>(self, gamma: E, count: usize) -> Vec<E> {
-        let mut weights = Vec::with_capacity(count);
-        let mut weight = E::one();
-        for _ in 0..count {
-            weights.push(weight);
-            weight *= gamma;
-        }
-        weights
-    }
-
-    /// Batch child claims using the current interstage weights.
-    pub fn batch_claims<E: Field>(self, weights: &[E], claims: &[E]) -> Result<E, AkitaError> {
-        if weights.len() != claims.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: weights.len(),
-                actual: claims.len(),
-            });
-        }
-        Ok(weights
-            .iter()
-            .zip(claims.iter())
-            .fold(E::zero(), |acc, (&weight, &claim)| acc + weight * claim))
-    }
-
-    /// Batch leaf-polynomial coefficient vectors using interstage weights.
-    pub fn batch_leaf_polynomials<E: Field>(
-        self,
-        weights: &[E],
-        leaf_polynomials: &[Vec<E>],
-    ) -> Result<Vec<E>, AkitaError> {
-        if weights.len() != leaf_polynomials.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: weights.len(),
-                actual: leaf_polynomials.len(),
-            });
-        }
-        let max_len = leaf_polynomials.iter().map(Vec::len).max().unwrap_or(0);
-        let mut batched = vec![E::zero(); max_len];
-        for (weight, polynomial) in weights.iter().zip(leaf_polynomials.iter()) {
-            for (coefficient, &term) in batched.iter_mut().zip(polynomial.iter()) {
-                *coefficient += *weight * term;
-            }
-        }
-        Ok(batched)
-    }
-}
-
-fn stage1_root_values<E: Field + Ring>(b: usize) -> Vec<E> {
-    let half = b / 2;
-    (0..half)
-        .map(|k| {
-            let k = k as i64;
-            E::from_i64(k * (k + 1))
-        })
-        .collect()
-}
-
-fn poly_coeffs_from_roots<E: Field>(roots: &[E]) -> Vec<E> {
-    let mut coeffs = vec![E::one()];
-    for &root in roots {
-        let mut next = vec![E::zero(); coeffs.len() + 1];
-        for (idx, &coeff) in coeffs.iter().enumerate() {
-            next[idx] -= coeff * root;
-            next[idx + 1] += coeff;
-        }
-        coeffs = next;
-    }
-    coeffs
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
+    use akita_params::layout::digit_range::DigitRangePlan;
+    use akita_params::{
         InnerCommitSecurityRoute, PhysicalL2NormProofShape, SisL2TableDigest, SisL2TableKey,
         SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, SisTableKey,
     };
-    use jolt_field::One;
     use jolt_field::Prime128Offset275;
+    use jolt_field::{One, Ring};
 
     type F = Prime128Offset275;
 
@@ -492,6 +112,10 @@ mod tests {
                 .map(|shape| (shape.sumcheck_proof.1, shape.child_claims))
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected_stages);
+            assert!(plan.stage_shape(7, plan.stage_count()).is_none());
+            assert!(plan
+                .product_stage_lane_count(plan.product_stage_arities().len())
+                .is_none());
             assert_eq!(plan.leaf_coeffs::<F>().len(), plan.leaf_factor_count());
         }
     }
@@ -573,7 +197,7 @@ mod tests {
             policy: SisSecurityPolicyId::Quantum128BitADPS16,
             table_digest: SisTableDigest::CURRENT,
             modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
-            role: crate::SisMatrixRole::Inner,
+            role: akita_params::SisMatrixRole::Inner,
             ring_dimension: 64,
             coeff_linf_bound: 1,
         });

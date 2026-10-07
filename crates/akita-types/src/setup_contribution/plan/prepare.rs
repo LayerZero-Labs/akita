@@ -1,17 +1,5 @@
+use super::setup_index_weight::build_group_role_tensors;
 use super::*;
-
-fn intern_reduced_functional<E: Field>(
-    cache: &mut Vec<(usize, ReducedRoleCoefficientState<E>)>,
-    dimension: usize,
-    prepare: impl FnOnce() -> Result<ReducedRoleCoefficientState<E>, AkitaError>,
-) -> Result<ReducedRoleCoefficientState<E>, AkitaError> {
-    if let Some((_, prepared)) = cache.iter().find(|(cached, _)| *cached == dimension) {
-        return Ok(prepared.clone());
-    }
-    let candidate = prepare()?;
-    cache.push((dimension, candidate.clone()));
-    Ok(candidate)
-}
 
 impl<E: Field> SetupContributionPlan<E> {
     #[allow(clippy::too_many_arguments)]
@@ -44,7 +32,7 @@ impl<E: Field> SetupContributionPlan<E> {
             validate_setup_inputs(level_params, opening_batch, witness_layout, groups)?;
             validate_static_inputs(level_params, opening_batch, &eq_tau1)?
         };
-        let relation_geometry = crate::RelationWitnessGeometry::for_level(
+        let relation_geometry = akita_params::RelationWitnessGeometry::for_level(
             level_params,
             opening_batch,
             extension_degree,
@@ -91,15 +79,17 @@ impl<E: Field> SetupContributionPlan<E> {
             let row_families = relation_geometry.rhs_layout().row_families()?;
             let d_row_start = row_families
                 .iter()
-                .position(|family| matches!(family, crate::RelationRowFamily::Opening { .. }))
+                .position(|family| {
+                    matches!(family, akita_params::RelationRowFamily::Opening { .. })
+                })
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D rows are missing".into()))?;
             let d_row_end = d_row_start
                 .checked_add(d_rows)
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D row range overflow".into()))?;
             if d_row_end > rows
-                || row_families[d_row_start..d_row_end]
-                    .iter()
-                    .any(|family| !matches!(family, crate::RelationRowFamily::Opening { .. }))
+                || row_families[d_row_start..d_row_end].iter().any(|family| {
+                    !matches!(family, akita_params::RelationRowFamily::Opening { .. })
+                })
             {
                 return Err(AkitaError::InvalidSetup(
                     "setup D rows disagree with the relation layout".into(),
@@ -145,7 +135,7 @@ impl<E: Field> SetupContributionPlan<E> {
                         .checked_mul(t_vector_width)
                         .and_then(|cols| cols.checked_mul(*b_subcolumns))
                         .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
-                    let slice_geometry = crate::CommitmentSliceGeometry::try_new(
+                    let slice_geometry = akita_params::CommitmentSliceGeometry::try_new(
                         group_params.outer_slice_count(),
                         num_live_blocks,
                         group.num_claims,
@@ -175,16 +165,17 @@ impl<E: Field> SetupContributionPlan<E> {
                         PhysicalBSetupPlan::new(slice_geometry, physical_n_b, b_weights)?;
                     let consistency_weight = *eq_tau1
                         .get(level_params.consistency_row_index(opening_batch, group.group_id)?)
-                        .ok_or(AkitaError::InvalidProof)?;
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "setup consistency row exceeds the validated equality table".into(),
+                            )
+                        })?;
                     let num_physical_units =
                         witness_layout.units_for_group(group.group_id)?.count();
-                    let active_unit_ranges = witness_layout
+                    let active_units = witness_layout
                         .units_for_group(group.group_id)?
                         .filter(|unit| unit.num_live_blocks() != 0)
-                        .map(|unit| SetupUnitRange {
-                            global_block_start: unit.global_block_start(),
-                            num_live_blocks: unit.num_live_blocks(),
-                        })
+                        .cloned()
                         .collect::<Vec<_>>()
                         .into();
                     drop(geometry_span);
@@ -196,12 +187,14 @@ impl<E: Field> SetupContributionPlan<E> {
                                 actual: fold_gadget.len(),
                             });
                         }
-                        fold_gadget
-                            .get(..group.depth_fold)
-                            .ok_or(AkitaError::InvalidProof)?
+                        fold_gadget.get(..group.depth_fold).ok_or_else(|| {
+                            AkitaError::Internal(
+                                "setup fold gadget prefix exceeds its validated length".into(),
+                            )
+                        })?
                     } else {
                         fold_gadget_storage =
-                            crate::gadget_row_scalars::<F>(group.depth_fold, log_basis_open);
+                            akita_params::gadget_row_scalars::<F>(group.depth_fold, log_basis_open);
                         &fold_gadget_storage
                     };
                     let fold_gadget: std::sync::Arc<[E]> = group_fold_gadget
@@ -236,11 +229,9 @@ impl<E: Field> SetupContributionPlan<E> {
                         z_cols,
                         n_a,
                         physical_b,
-                        required: 0,
-                        segments: Vec::new().into(),
                         a_row_weights,
                         fold_gadget,
-                        active_unit_ranges,
+                        active_units,
                         num_physical_units,
                         d_tensors: Vec::new(),
                         a_tensors: Vec::new(),
@@ -260,7 +251,7 @@ impl<E: Field> SetupContributionPlan<E> {
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
-        let projection_geometry = crate::SetupProjectionGeometry::from_groups(
+        let projection_geometry = akita_params::SetupProjectionGeometry::from_groups(
             relation_address_geometry.role_dims(),
             d_rows,
             d_physical_cols,
@@ -268,249 +259,27 @@ impl<E: Field> SetupContributionPlan<E> {
         )?;
         let setup_base = projection_geometry.base_ring_dim();
         let relation_base = relation_address_geometry.relation_coefficient_block_len();
-        let relation_base_bridge = setup_base
-            .checked_div(relation_base)
-            .filter(|ratio| {
-                relation_base != 0
-                    && setup_base.is_multiple_of(relation_base)
-                    && ratio.is_power_of_two()
-            })
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "Stage 3 setup base does not decompose over the Stage 2 relation base".into(),
-                )
-            })?;
-        let bridge_bits = relation_base_bridge.trailing_zeros() as usize;
-        let bridge_point = relation_address
-            .point()
-            .get(..bridge_bits)
-            .ok_or(AkitaError::InvalidProof)?;
-        let setup_address_point = relation_address
-            .point()
-            .get(bridge_bits..)
-            .ok_or(AkitaError::InvalidProof)?;
-        let setup_relation_address = PreparedRelationAddress::new(setup_address_point)?;
-        let relation_base_bridge_point: std::sync::Arc<[E]> = bridge_point.to_vec().into();
         for group in &mut dynamic_groups {
             group.set_projection_ratios(setup_base, relation_base)?;
+            let [d_tensors, b_tensors, a_tensors] =
+                build_group_role_tensors(relation_address_geometry, group, witness_layout)?;
+            group.d_tensors = d_tensors;
+            group.physical_b.relation_tensors = b_tensors;
+            group.a_tensors = a_tensors;
         }
-        let mut plan = SetupContributionPlan {
+        let plan = SetupContributionPlan {
             groups: dynamic_groups,
             d_rows,
             d_physical_cols,
             d_weights,
-            setup_index_tensors: Vec::new(),
             relation_address,
-            setup_relation_address,
-            relation_base_bridge_point,
             relation_address_geometry,
             projection_geometry,
-            direct_scan_state: DirectScanState::Unprepared,
         };
-        plan.setup_index_tensors = plan.prepare_setup_index_tensors(witness_layout)?;
+        // Stage 3 bridges the relation base up to the setup base; reject a
+        // relation address that cannot be split that way before any use.
+        plan.relation_base_bridge_split()?;
         Ok(plan)
-    }
-
-    /// Materialize the derived column-weight and scan caches used only by the
-    /// direct setup scan.
-    pub fn materialize_direct_scan(
-        &mut self,
-        functional: PreparedCoefficientFunctional<E>,
-    ) -> Result<(), AkitaError> {
-        match (&self.direct_scan_state, &functional) {
-            (DirectScanState::Unprepared, _) => {}
-            (
-                DirectScanState::Lifted {
-                    alpha: prepared, ..
-                },
-                PreparedCoefficientFunctional::LiftedPower { alpha },
-            ) if prepared == alpha => return Ok(()),
-            (
-                DirectScanState::Reduced {
-                    alpha: prepared_alpha,
-                    coefficient_point: prepared_point,
-                    ..
-                },
-                PreparedCoefficientFunctional::ReducedEvaluation {
-                    alpha,
-                    coefficient_point,
-                },
-            ) if prepared_alpha == alpha
-                && prepared_point.as_ref() == coefficient_point.as_ref() =>
-            {
-                return Ok(())
-            }
-            _ => {
-                return Err(AkitaError::InvalidInput(
-                    "direct setup weights were prepared for a different coefficient functional"
-                        .into(),
-                ));
-            }
-        }
-        let mut reduced_functional_cache = Vec::new();
-        let maximum_functionals = checked::product([self.groups.len(), 3]).ok_or_else(|| {
-            AkitaError::InvalidSetup("direct setup functional count overflow".into())
-        })?;
-        reduced_functional_cache
-            .try_reserve_exact(maximum_functionals)
-            .map_err(|_| AkitaError::InvalidSetup("too many direct setup functionals".into()))?;
-        let prepared_state = match functional {
-            PreparedCoefficientFunctional::LiftedPower { alpha } => {
-                let groups = self
-                    .groups
-                    .iter()
-                    .map(|group| self.materialize_lifted_direct_scan_weights(group, alpha))
-                    .collect::<Result<Vec<_>, _>>()?;
-                DirectScanState::Lifted { alpha, groups }
-            }
-            PreparedCoefficientFunctional::ReducedEvaluation {
-                alpha,
-                coefficient_point,
-            } => {
-                let groups = self
-                    .groups
-                    .iter()
-                    .map(|group| {
-                        self.materialize_reduced_direct_scan_weights(
-                            group,
-                            alpha,
-                            &coefficient_point,
-                            &mut reduced_functional_cache,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                DirectScanState::Reduced {
-                    alpha,
-                    coefficient_point,
-                    groups,
-                }
-            }
-        };
-        for (group_index, group) in self.groups.iter_mut().enumerate() {
-            let weights = prepared_state
-                .weights(group_index)
-                .ok_or_else(|| AkitaError::InvalidSetup("direct setup group is missing".into()))?;
-            {
-                let _span = tracing::info_span!("setup_materialize_scan_segments").entered();
-                group.refresh_segments(
-                    weights,
-                    &self.d_weights,
-                    self.d_rows,
-                    self.d_physical_cols,
-                )?;
-            }
-        }
-        self.direct_scan_state = prepared_state;
-        Ok(())
-    }
-
-    fn materialize_reduced_direct_scan_weights(
-        &self,
-        group: &SetupContributionGroupPlan<E>,
-        alpha: E,
-        coefficient_point: &[E],
-        cache: &mut Vec<(usize, ReducedRoleCoefficientState<E>)>,
-    ) -> Result<ReducedDirectScanWeights<E>, AkitaError> {
-        let a_role = intern_reduced_functional(cache, group.role_dims.d_a(), || {
-            self.prepare_reduced_role_coefficient_state(
-                group.role_dims.d_a(),
-                alpha,
-                coefficient_point,
-            )
-        })?;
-        let b_role = intern_reduced_functional(cache, group.role_dims.d_b(), || {
-            self.prepare_reduced_role_coefficient_state(
-                group.role_dims.d_b(),
-                alpha,
-                coefficient_point,
-            )
-        })?;
-        let d_role = intern_reduced_functional(cache, group.role_dims.d_d(), || {
-            self.prepare_reduced_role_coefficient_state(
-                group.role_dims.d_d(),
-                alpha,
-                coefficient_point,
-            )
-        })?;
-        let evaluate_e = || {
-            self.materialize_reduced_role_tensor_weights(
-                group.d_relation_ratio,
-                group.role_dims.d_d(),
-                &group.d_tensors,
-                group.d_col_range.len(),
-            )
-        };
-        let evaluate_t = || {
-            self.materialize_reduced_role_tensor_weights(
-                group.b_relation_ratio,
-                group.role_dims.d_b(),
-                &group.physical_b.relation_tensors,
-                group.physical_b.logical_input_width(),
-            )
-        };
-        let evaluate_z = || {
-            self.materialize_reduced_role_tensor_weights(
-                group.a_relation_ratio,
-                group.role_dims.d_a(),
-                &group.a_tensors,
-                group.z_cols,
-            )
-        };
-        let (e, t, z) = materialize_three_roles(
-            group.d_col_range.len(),
-            group.physical_b.logical_input_width(),
-            group.z_cols,
-            evaluate_e,
-            evaluate_t,
-            evaluate_z,
-        )?;
-        Ok(ReducedDirectScanWeights {
-            weights: DirectScanWeights { e, t, z },
-            roles: [a_role, b_role, d_role],
-        })
-    }
-
-    fn materialize_lifted_direct_scan_weights(
-        &self,
-        group: &SetupContributionGroupPlan<E>,
-        alpha: E,
-    ) -> Result<DirectScanWeights<E>, AkitaError> {
-        let evaluate_e = || {
-            let _span = tracing::info_span!("setup_materialize_e_weights").entered();
-            self.materialize_role_tensor_weights(
-                group.d_relation_ratio,
-                &group.d_tensors,
-                group.d_col_range.len(),
-                alpha,
-            )
-        };
-        let evaluate_t = || {
-            let _span = tracing::info_span!("setup_materialize_t_weights").entered();
-            self.materialize_role_tensor_weights(
-                group.b_relation_ratio,
-                &group.physical_b.relation_tensors,
-                group.physical_b.logical_input_width(),
-                alpha,
-            )
-        };
-        let evaluate_z = || {
-            let _span = tracing::info_span!("setup_materialize_z_weights").entered();
-            self.materialize_role_tensor_weights(
-                group.a_relation_ratio,
-                &group.a_tensors,
-                group.z_cols,
-                alpha,
-            )
-        };
-        let (e, t, z) = materialize_three_roles(
-            group.d_col_range.len(),
-            group.physical_b.logical_input_width(),
-            group.z_cols,
-            evaluate_e,
-            evaluate_t,
-            evaluate_z,
-        )?;
-        Ok(DirectScanWeights { e, t, z })
     }
 
     /// Common-base packed-scan footprint.
@@ -531,29 +300,100 @@ impl<E: Field> SetupContributionPlan<E> {
     pub const fn relation_address_geometry(&self) -> RelationAddressGeometry {
         self.relation_address_geometry
     }
+
+    /// Per-group plans in setup-group order.
+    #[must_use]
+    pub fn groups(&self) -> &[SetupContributionGroupPlan<E>] {
+        &self.groups
+    }
+
+    /// Mutable per-group plans, for tests that perturb one prepared group.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn groups_mut_for_test(&mut self) -> &mut [SetupContributionGroupPlan<E>] {
+        &mut self.groups
+    }
+
+    /// Number of shared physical D rows.
+    #[must_use]
+    pub const fn d_rows(&self) -> usize {
+        self.d_rows
+    }
+
+    /// Physical D width shared by every group's column range.
+    #[must_use]
+    pub const fn d_physical_cols(&self) -> usize {
+        self.d_physical_cols
+    }
+
+    /// Row weights of the shared physical D rows.
+    #[must_use]
+    pub fn d_weights(&self) -> &[E] {
+        &self.d_weights
+    }
+
+    /// Relation-address point and equality window the plan was prepared for.
+    #[must_use]
+    pub const fn relation_address(&self) -> &PreparedRelationAddress<E> {
+        &self.relation_address
+    }
 }
 
-fn materialize_three_roles<A, B, C>(
-    e_len: usize,
-    t_len: usize,
-    z_len: usize,
-    evaluate_e: impl FnOnce() -> Result<A, AkitaError> + Send,
-    evaluate_t: impl FnOnce() -> Result<B, AkitaError> + Send,
-    evaluate_z: impl FnOnce() -> Result<C, AkitaError> + Send,
-) -> Result<(A, B, C), AkitaError>
-where
-    A: Send,
-    B: Send,
-    C: Send,
-{
-    // Each tensor materializer owns its internal parallel threshold. Fork the
-    // independent role preparations only once their largest output is large.
-    const PARALLEL_THRESHOLD: usize = 1 << 14;
-    if e_len.max(t_len).max(z_len) >= PARALLEL_THRESHOLD {
-        let (e, (t, z)) = cfg_join!(evaluate_e, || cfg_join!(evaluate_t, evaluate_z));
-        Ok((e?, t?, z?))
-    } else {
-        Ok((evaluate_e()?, evaluate_t()?, evaluate_z()?))
+#[cfg(any(test, feature = "test-support"))]
+impl<E: Field> SetupContributionPlan<E> {
+    /// Assemble a plan from hand-built groups for setup-scan fixtures.
+    ///
+    /// Every group is retargeted to `role_dims`, the projection geometry is
+    /// the common-base footprint of the groups, and the relation address is
+    /// empty, so only tensor-free direct scans are meaningful on the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the groups' footprints or `role_dims` do not form
+    /// a valid projection geometry.
+    pub fn from_test_groups(
+        d_physical_cols: usize,
+        d_weights: std::sync::Arc<[E]>,
+        mut groups: Vec<SetupContributionGroupPlan<E>>,
+        role_dims: akita_params::CommitmentRingDims,
+    ) -> Result<Self, AkitaError> {
+        let d_rows = d_weights.len();
+        let mut a_footprint = 0usize;
+        let mut b_footprint = 0usize;
+        for group in &groups {
+            let group_a = checked::product([group.n_a, group.z_cols])
+                .ok_or_else(|| AkitaError::InvalidSetup("test A footprint overflow".into()))?;
+            a_footprint = a_footprint.max(group_a);
+            b_footprint = b_footprint.max(group.physical_b.physical_footprint()?);
+        }
+        let d_footprint = checked::product([d_rows, d_physical_cols])
+            .ok_or_else(|| AkitaError::InvalidSetup("test D footprint overflow".into()))?;
+        let projection_geometry = SetupProjectionGeometry::from_role_footprints(
+            role_dims,
+            a_footprint,
+            b_footprint,
+            d_footprint,
+        )?;
+        let relation_address_geometry = RelationAddressGeometry::new(
+            role_dims,
+            role_dims.d_a(),
+            role_dims.common_relation_coeff_count(),
+        )?;
+        for group in &mut groups {
+            group.role_dims = role_dims;
+            group.set_projection_ratios(
+                projection_geometry.base_ring_dim(),
+                relation_address_geometry.relation_coefficient_block_len(),
+            )?;
+        }
+        Ok(Self {
+            groups,
+            d_rows,
+            d_physical_cols,
+            d_weights,
+            relation_address: PreparedRelationAddress::new(&[])?,
+            relation_address_geometry,
+            projection_geometry,
+        })
     }
 }
 
@@ -601,7 +441,7 @@ fn validate_static_inputs<E: Field>(
             ));
         }
         let role_dims = level_params.group_role_dims(opening_batch, group_index)?;
-        let expected_b_width = crate::CommitmentSliceGeometry::try_new(
+        let expected_b_width = akita_params::CommitmentSliceGeometry::try_new(
             group_params.outer_slice_count(),
             num_live_blocks,
             group_layout.num_polynomials(),

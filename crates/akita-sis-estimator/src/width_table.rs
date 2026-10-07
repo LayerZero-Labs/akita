@@ -34,7 +34,7 @@ pub static COEFF_LINF_BOUNDS: LazyLock<Vec<u64>> = LazyLock::new(|| {
 
 fn canonical_scalar_origins() -> Vec<(AkitaModulusProfileId, u32, u64)> {
     let mut origins = BTreeSet::new();
-    origins.extend(akita_types::sis::sis_role_cells().into_iter().map(|cell| {
+    origins.extend(akita_params::sis::sis_role_cells().into_iter().map(|cell| {
         (
             cell.modulus_profile.into(),
             cell.ring_dimension,
@@ -42,21 +42,21 @@ fn canonical_scalar_origins() -> Vec<(AkitaModulusProfileId, u32, u64)> {
         )
     }));
     origins.extend(
-        akita_types::sis::compression::compression_sis_cells().map(|cell| {
+        akita_params::sis::compression::compression_sis_cells().map(|cell| {
             (
                 cell.modulus_profile.into(),
                 cell.ring_dimension,
-                u64::try_from(akita_types::sis::compression::COMPRESSION_SIS_COEFF_LINF_BOUND)
+                u64::try_from(akita_params::sis::compression::COMPRESSION_SIS_COEFF_LINF_BOUND)
                     .expect("compression SIS bound exceeds u64"),
             )
         }),
     );
     for profile in [
-        akita_types::sis::SisModulusProfileId::Q32Offset99,
-        akita_types::sis::SisModulusProfileId::Q64Offset59,
-        akita_types::sis::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::sis::SisModulusProfileId::Q32Offset99,
+        akita_params::sis::SisModulusProfileId::Q64Offset59,
+        akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
     ] {
-        let dimensions = akita_types::compression_ring_dimensions(profile);
+        let dimensions = akita_params::compression_ring_dimensions(profile);
         let doubled = dimensions
             .into_iter()
             .max()
@@ -65,7 +65,7 @@ fn canonical_scalar_origins() -> Vec<(AkitaModulusProfileId, u32, u64)> {
         origins.insert((
             profile.into(),
             u32::try_from(doubled).expect("compression diagnostic dimension fits u32"),
-            u64::try_from(akita_types::sis::compression::COMPRESSION_SIS_COEFF_LINF_BOUND)
+            u64::try_from(akita_params::sis::compression::COMPRESSION_SIS_COEFF_LINF_BOUND)
                 .expect("compression SIS bound exceeds u64"),
         ));
     }
@@ -102,10 +102,10 @@ pub static FAMILIES: LazyLock<Vec<AkitaModulusProfileId>> = LazyLock::new(|| {
 });
 
 /// Maximum module rank emitted for each scalar row.
-pub const DEFAULT_MAX_RANK: u32 = akita_types::sis::SIS_MAX_MODULE_RANK;
+pub const DEFAULT_MAX_RANK: u32 = akita_params::sis::SIS_MAX_MODULE_RANK;
 
 /// Policy table search cap.
-pub const DEFAULT_SEARCH_CAP: u64 = akita_types::sis::SIS_REQUIRED_MAX_WIDTH;
+pub const DEFAULT_SEARCH_CAP: u64 = akita_params::sis::SIS_REQUIRED_MAX_WIDTH;
 
 /// Legacy L2 generator cap retained for the independent Euclidean table.
 /// The quantum infinity table itself uses [`DEFAULT_SEARCH_CAP`] uniformly.
@@ -126,7 +126,7 @@ pub const PRODUCTION_CERTIFICATE_DOMAIN: &str = concat!(
 /// Change this value whenever an estimator or certification change can alter
 /// a work result. Operational changes such as parallelism and progress output
 /// do not change it.
-pub const INFINITY_WIDTH_EVALUATOR_ID: &str = "akita-infinity-width-v3";
+pub const INFINITY_WIDTH_EVALUATOR_ID: &str = "akita-infinity-width-v4";
 
 /// Optimizer profile used to discover and certify scalar boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -208,6 +208,23 @@ pub struct InfinityWidthWorkItem {
     pub coeff_linf_bound: u64,
 }
 
+/// Extension seam: explicit offline SIS origins for extensions tracked in #45.
+///
+/// One exact semantic origin admitted to an offline width-table request.
+///
+/// Production generation derives these origins from Akita's reachable matrix
+/// roles. Staged protocols can provide a small explicit set without pretending
+/// their ring degrees are reachable native schedules.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InfinityWidthOrigin {
+    /// Exact coefficient modulus.
+    pub modulus_profile: AkitaModulusProfileId,
+    /// Ring degree used by scalarization.
+    pub d: u32,
+    /// Exact coefficient infinity collision bound.
+    pub coeff_linf_bound: u64,
+}
+
 impl InfinityWidthWorkItem {
     /// Content address under one complete table-generation configuration.
     ///
@@ -258,6 +275,9 @@ pub struct InfinityWidthTableConfig {
     pub profile: InfinityWidthProfile,
     /// Progress report interval.
     pub progress_every: Option<usize>,
+    /// Explicit staged-protocol origins. `None` selects Akita's canonical
+    /// production-role coverage.
+    pub explicit_origins: Option<Vec<InfinityWidthOrigin>>,
 }
 
 impl Default for InfinityWidthTableConfig {
@@ -271,6 +291,7 @@ impl Default for InfinityWidthTableConfig {
             search_cap: None,
             profile: InfinityWidthProfile::LocalMinimum,
             progress_every: None,
+            explicit_origins: None,
         }
     }
 }
@@ -287,6 +308,7 @@ pub fn is_production_infinity_width_table_config(config: &InfinityWidthTableConf
         && config.policy == SisSecurityPolicy::Quantum128BitADPS16
         && config.search_cap.is_none()
         && config.profile == InfinityWidthProfile::LocalMinimum
+        && config.explicit_origins.is_none()
 }
 
 /// Compact attack certificate for one accepted or rejected boundary.
@@ -356,9 +378,19 @@ impl InfinityWidthRow {
         "policy,modulus_profile,d,rank,coeff_linf_bound,max_width,scalar_n,search_cap,hit_cap,profile,target_bits,max_adps16_quantum_rop_log2,next_adps16_quantum_rop_log2,max_beta,max_zeta,next_beta,next_zeta,cutoff_kind"
     }
 
-    /// Format a deterministic audit row.
+    /// Format a deterministic audit row with round-trip precision for costs.
     pub fn to_csv_record(&self) -> String {
-        self.to_record(cost_log2_text)
+        self.to_record(cost_log2_record_text)
+    }
+
+    /// Decode one audit CSV record produced by [`Self::to_csv_record`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the record is malformed or contains unsupported
+    /// row values.
+    pub fn from_csv_record(record: &str) -> Result<Self> {
+        parse_csv_record(record)
     }
 
     fn to_record(&self, format_cost: fn(Option<CostValue>) -> String) -> String {
@@ -413,7 +445,7 @@ impl InfinityWidthRow {
         format!(
             "{}\n{}\n",
             Self::WORK_RESULT_SCHEMA,
-            self.to_record(cost_log2_work_text)
+            self.to_record(cost_log2_record_text)
         )
     }
 
@@ -486,7 +518,12 @@ pub fn infinity_width_work_items(
 ) -> Result<Vec<InfinityWidthWorkItem>> {
     validate_table_config(config)?;
     let mut work = Vec::new();
-    for (modulus_profile, d, bound) in canonical_scalar_origins() {
+    for origin in requested_origins(config) {
+        let InfinityWidthOrigin {
+            modulus_profile,
+            d,
+            coeff_linf_bound: bound,
+        } = origin;
         if !config.profiles.contains(&modulus_profile)
             || !config.ring_dims.contains(&d)
             || !config.coeff_linf_bounds.contains(&bound)
@@ -509,6 +546,7 @@ pub fn infinity_width_work_items(
         );
     }
     work.sort_unstable();
+    work.dedup();
     Ok(work)
 }
 
@@ -528,11 +566,7 @@ pub fn generate_infinity_width_row(
         || !config.coeff_linf_bounds.contains(&item.coeff_linf_bound)
         || item.rank == 0
         || item.rank > config.max_rank
-        || !canonical_scalar_origins().contains(&(
-            item.modulus_profile,
-            item.d,
-            item.coeff_linf_bound,
-        ))
+        || !origin_is_requested(config, item)
     {
         return invalid_config(
             "work_item",
@@ -981,7 +1015,45 @@ fn validate_table_config(config: &InfinityWidthTableConfig) -> Result<()> {
     if config.max_rank == 0 {
         return invalid_config("max_rank", "max_rank must be positive");
     }
+    if config
+        .explicit_origins
+        .as_ref()
+        .is_some_and(|origins| origins.is_empty())
+    {
+        return invalid_config("explicit_origins", "explicit origin set must not be empty");
+    }
     Ok(())
+}
+
+fn requested_origins(config: &InfinityWidthTableConfig) -> Vec<InfinityWidthOrigin> {
+    config.explicit_origins.clone().unwrap_or_else(|| {
+        canonical_scalar_origins()
+            .into_iter()
+            .map(
+                |(modulus_profile, d, coeff_linf_bound)| InfinityWidthOrigin {
+                    modulus_profile,
+                    d,
+                    coeff_linf_bound,
+                },
+            )
+            .collect()
+    })
+}
+
+fn origin_is_requested(config: &InfinityWidthTableConfig, item: InfinityWidthWorkItem) -> bool {
+    let origin = InfinityWidthOrigin {
+        modulus_profile: item.modulus_profile,
+        d: item.d,
+        coeff_linf_bound: item.coeff_linf_bound,
+    };
+    match config.explicit_origins.as_ref() {
+        Some(origins) => origins.contains(&origin),
+        None => canonical_scalar_origins().contains(&(
+            origin.modulus_profile,
+            origin.d,
+            origin.coeff_linf_bound,
+        )),
+    }
 }
 
 fn invalid_config<T>(field: &'static str, reason: &str) -> Result<T> {
@@ -991,19 +1063,7 @@ fn invalid_config<T>(field: &'static str, reason: &str) -> Result<T> {
     })
 }
 
-fn cost_log2_text(value: Option<CostValue>) -> String {
-    match value {
-        Some(CostValue::Finite(cost)) if cost.log2.is_finite() => format!("{:.12}", cost.log2),
-        Some(CostValue::ProvenAboveTarget(lower_bound)) => {
-            format!("above-target:{:.12}", lower_bound.log2)
-        }
-        Some(CostValue::Infinity) => "unclassified-infinity".to_string(),
-        Some(CostValue::Finite(_)) => "non-finite".to_string(),
-        None => String::new(),
-    }
-}
-
-fn cost_log2_work_text(value: Option<CostValue>) -> String {
+fn cost_log2_record_text(value: Option<CostValue>) -> String {
     match value {
         Some(CostValue::Finite(cost)) if cost.log2.is_finite() => cost.log2.to_string(),
         Some(CostValue::ProvenAboveTarget(lower_bound)) => {

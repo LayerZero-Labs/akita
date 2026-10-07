@@ -1,8 +1,8 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
 use super::setup_prefix::SetupPrefixVerifierRegistry;
-use crate::FlatMatrix;
 use akita_error::AkitaError;
+use akita_params::FlatMatrix;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -10,8 +10,8 @@ use akita_serialization::{
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
 use rand_core::{CryptoRng, RngCore};
-use sha3::digest::{ExtendableOutput, Update, XofReader};
-use sha3::Shake256;
+use shake::digest::{ExtendableOutput, Update, XofReader};
+use shake::Shake256;
 use std::io::{Read, Write};
 use std::sync::Arc;
 
@@ -70,26 +70,6 @@ pub const MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS: usize = 1 << 26;
 const PUBLIC_MATRIX_DOMAIN: &[u8] = b"akita/commitment/public-field-stream";
 const PUBLIC_MATRIX_DERIVATION_TAG: &[u8] = b"shake256-paged-v1";
 
-/// Exact base-field capacity of the shared public setup vector.
-///
-/// The setup stores one flat vector of field elements. A/B/D matrices are
-/// role-local prefix views of this vector, so capacity is the maximum required
-/// role footprint, not `max_rows * max_stride`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SetupMatrixCapacity {
-    /// Number of materialized base-field elements.
-    pub num_field_elements: usize,
-}
-
-impl SetupMatrixCapacity {
-    /// Smallest non-empty shared setup capacity.
-    pub const fn minimum() -> Self {
-        Self {
-            num_field_elements: std::num::NonZeroUsize::MIN.get(),
-        }
-    }
-}
-
 /// Seed-only stage for deterministic setup expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaSetupDescriptor {
@@ -116,26 +96,46 @@ pub struct AkitaExpandedSetup<F: Field> {
 }
 
 /// Verifier setup artifact derived from prover setup.
-#[derive(Debug, Clone)]
+///
+/// Semantic state is immutable so clones can safely share prepared matrix
+/// caches. To replace a setup, construct a new value with [`Self::from_parts`].
+///
+/// ```compile_fail
+/// use akita_types::AkitaVerifierSetup;
+/// use jolt_field::Prime32Offset99;
+/// fn replace(setup: &mut AkitaVerifierSetup<Prime32Offset99>,
+///            other: AkitaVerifierSetup<Prime32Offset99>) {
+///     setup.expanded = other.expanded;
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use akita_types::AkitaVerifierSetup;
+/// use jolt_field::Prime32Offset99;
+/// fn replace(setup: &mut AkitaVerifierSetup<Prime32Offset99>,
+///            other: AkitaVerifierSetup<Prime32Offset99>) {
+///     setup.prefix_slots = other.prefix_slots;
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaVerifierSetup<F: Field> {
     /// Expanded matrix stage used for verification.
-    pub expanded: Arc<AkitaExpandedSetup<F>>,
+    expanded: Arc<AkitaExpandedSetup<F>>,
     /// Public setup-prefix commitment metadata for setup-claim offloading.
-    pub prefix_slots: SetupPrefixVerifierRegistry<F>,
-    /// Locally derived, negacyclic-only matrix prefixes for direct verifier checks.
-    /// This performance cache is neither serialized nor part of setup identity.
-    verifier_ntt: Arc<crate::ntt_cache::VerifierNttCache>,
+    prefix_slots: SetupPrefixVerifierRegistry<F>,
 }
-
-impl<F: Field> PartialEq for AkitaVerifierSetup<F> {
-    fn eq(&self, other: &Self) -> bool {
-        self.expanded == other.expanded && self.prefix_slots == other.prefix_slots
-    }
-}
-
-impl<F: Field> Eq for AkitaVerifierSetup<F> {}
 
 impl<F: Field> AkitaVerifierSetup<F> {
+    /// Borrow the immutable expanded matrix stage.
+    pub fn expanded(&self) -> &Arc<AkitaExpandedSetup<F>> {
+        &self.expanded
+    }
+
+    /// Borrow the public setup-prefix commitment metadata.
+    pub fn prefix_slots(&self) -> &SetupPrefixVerifierRegistry<F> {
+        &self.prefix_slots
+    }
+
     /// Construct verifier setup state from expanded setup and structurally checked prefix metadata.
     ///
     /// This constructor binds the registry to the public matrix identity. It
@@ -154,79 +154,7 @@ impl<F: Field> AkitaVerifierSetup<F> {
         Ok(Self {
             expanded,
             prefix_slots,
-            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         })
-    }
-
-    /// In-memory byte footprint of verifier NTT prefixes materialized so far.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the cache lock was poisoned.
-    pub fn verifier_ntt_cache_bytes(&self) -> Result<usize, AkitaError> {
-        self.verifier_ntt.cache_bytes()
-    }
-}
-
-impl<F: Field + CanonicalEncoding> AkitaVerifierSetup<F> {
-    /// Install a prepared scalar Q128 cache whose bytes have trusted provenance.
-    ///
-    /// The artifact format checks its setup and schedule identities, target
-    /// representation, geometry, lengths, and residue ranges. It cannot prove
-    /// that the transformed payload was derived from the named setup seed.
-    /// Callers must bind the bytes to trusted setup provisioning or to the
-    /// verifier program identity before calling this method.
-    pub fn install_trusted_prepared_verifier_ntt_cache(
-        &self,
-        artifact: &[u8],
-        schedule_row_digest: crate::ScheduleRowDigest,
-    ) -> Result<(), AkitaError> {
-        let metadata = crate::prepared_verifier_ntt_cache_metadata(artifact)?;
-        let setup_seed_digest = crate::setup_seed_digest(&self.expanded.descriptor.setup_seed)
-            .map_err(|error| AkitaError::InvalidSetup(format!("setup seed identity: {error}")))?;
-        let expected_binding = crate::PreparedVerifierNttCacheBinding {
-            setup_seed_digest,
-            schedule_row_digest,
-            setup_field_elements: self.expanded.descriptor.num_field_elements,
-        };
-        crate::dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            metadata.ring_dimension,
-            |D| {
-                let (decoded_metadata, prepared) =
-                    crate::ntt_cache::decode_riscv64_scalar_q128_cache::<F, D>(
-                        artifact,
-                        expected_binding,
-                    )?;
-                self.verifier_ntt
-                    .install_trusted(decoded_metadata, prepared)
-            }
-        )
-    }
-
-    /// Return an exact or covering negacyclic prefix, preparing it on demand.
-    pub fn prepared_verifier_ntt_prefix<const D: usize>(
-        &self,
-        num_ring_elements: usize,
-        tail_num_ring_elements: usize,
-        width: usize,
-        rhs_abs_bound: u64,
-    ) -> Result<Arc<crate::PreparedNttCache<D>>, AkitaError> {
-        let key = crate::NttCacheKey {
-            ring_d: D,
-            num_ring_elements,
-            domain: crate::NttTransformDomain::Negacyclic,
-        };
-        self.verifier_ntt.prepare::<F, D>(
-            &self.expanded,
-            key,
-            tail_num_ring_elements,
-            crate::NttCacheMode::ExactNegacyclic {
-                width,
-                rhs_abs_bound,
-            },
-        )
     }
 }
 
@@ -406,7 +334,7 @@ impl SetupSeedPageXof {
 }
 
 fn field_modulus_bytes<F: Field + CanonicalEncoding>() -> [u8; 32] {
-    crate::field_modulus_be_bytes::<F>()
+    akita_params::field_modulus_be_bytes::<F>()
         .expect("setup fields must have a modulus of at most 256 bits")
 }
 
@@ -717,48 +645,59 @@ mod tests {
     type SmallF = Fp64<4294967197>;
     const SMALL_D: usize = 64;
 
-    fn prefix_commitment_params(n_prefix: usize, d_setup: usize) -> crate::GroupOpenPhaseParams {
-        let a_bound = *crate::sis::inner_coeff_linf_bounds(
-            crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+    fn prefix_commitment_params(
+        n_prefix: usize,
+        d_setup: usize,
+    ) -> akita_params::GroupOpenPhaseParams {
+        let a_bound = *akita_params::sis::inner_coeff_linf_bounds(
+            akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
             u32::try_from(d_setup).expect("test ring dimension"),
         )
         .first()
         .expect("exact prefix A bounds");
-        let inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
-            crate::SisTableKey {
-                policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                table_digest: crate::sis::SisTableDigest::CURRENT,
-                modulus_profile: crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-                role: crate::sis::SisMatrixRole::Inner,
+        let inner_commit_matrix = akita_params::InnerCommitMatrixParams::try_new_with_min_rank(
+            akita_params::SisTableKey {
+                policy: akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: akita_params::sis::SisTableDigest::CURRENT,
+                modulus_profile: akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+                role: akita_params::sis::SisMatrixRole::Inner,
                 ring_dimension: u32::try_from(d_setup).expect("test ring dimension"),
                 coeff_linf_bound: a_bound,
             },
             1,
         )
         .expect("audited prefix A matrix");
-        let outer_commit_matrix = crate::OuterCommitMatrixParams::try_new_with_min_rank(
-            crate::SisTableKey {
-                policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                table_digest: crate::sis::SisTableDigest::CURRENT,
-                modulus_profile: crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-                role: crate::sis::SisMatrixRole::Outer,
+        let outer_commit_matrix = akita_params::OuterCommitMatrixParams::try_new_with_min_rank(
+            akita_params::SisTableKey {
+                policy: akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: akita_params::sis::SisTableDigest::CURRENT,
+                modulus_profile: akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+                role: akita_params::sis::SisMatrixRole::Outer,
                 ring_dimension: u32::try_from(d_setup).expect("test ring dimension"),
                 coeff_linf_bound: 3,
             },
             inner_commit_matrix.output_rank() * (n_prefix / d_setup),
         )
         .expect("audited prefix B matrix");
-        crate::GroupOpenPhaseParams {
+        akita_params::GroupOpenPhaseParams {
             setup_natural_len: None,
-            profile: crate::GroupCommitPhaseParams {
-                version: crate::GroupCommitPhaseParams::VERSION,
-                group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
-                blocks: crate::BlockGeometry::new(n_prefix / d_setup, 1, n_prefix / d_setup),
-                outer_slice_count: crate::CommitmentSliceCount::ONE,
-                inner: crate::RoleParams::new(crate::GadgetDigits::new(1, 1), inner_commit_matrix),
-                outer: crate::RoleParams::new(crate::GadgetDigits::new(1, 1), outer_commit_matrix),
+            profile: akita_params::GroupCommitPhaseParams {
+                version: akita_params::GroupCommitPhaseParams::VERSION,
+                group: akita_params::PolynomialGroupLayout::singleton(
+                    n_prefix.trailing_zeros() as usize
+                ),
+                blocks: akita_params::BlockGeometry::new(n_prefix / d_setup, 1, n_prefix / d_setup),
+                outer_slice_count: akita_params::CommitmentSliceCount::ONE,
+                inner: akita_params::RoleParams::new(
+                    akita_params::GadgetDigits::new(1, 1),
+                    inner_commit_matrix,
+                ),
+                outer: akita_params::RoleParams::new(
+                    akita_params::GadgetDigits::new(1, 1),
+                    outer_commit_matrix,
+                ),
             },
-            opening: crate::GroupOpeningPlan::evaluation_trace(
+            opening: akita_params::GroupOpeningPlan::evaluation_trace(
                 akita_challenges::SparseChallengeConfig::pm1_only(0),
                 1,
                 1,
@@ -786,14 +725,14 @@ mod tests {
         let d_setup = 64;
         let commitment_params = prefix_commitment_params(d_setup, d_setup);
         let matrix = &commitment_params.profile.outer.matrix;
-        let payload_coefficients = crate::CompressionChainPlan::for_complete_source(
+        let payload_coefficients = akita_params::CompressionChainPlan::for_complete_source(
             matrix.sis_modulus_profile(),
             matrix.output_rank() * matrix.ring_dimension(),
         )
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
         let slot = SetupPrefixVerifierSlot {
-            id: crate::scheduled_setup_prefix(d_setup - 1, commitment_params)
+            id: akita_params::scheduled_setup_prefix(d_setup - 1, commitment_params)
                 .slot_id()
                 .expect("setup prefix group"),
             commitment: SetupPrefixPublicCommitment {
@@ -809,7 +748,6 @@ mod tests {
                 ),
             ),
             prefix_slots,
-            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
         let mut bytes = Vec::new();
@@ -873,7 +811,6 @@ mod tests {
                 ),
             ),
             prefix_slots: SetupPrefixVerifierRegistry::new(setup_seed),
-            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
         let mut bytes = Vec::new();
@@ -898,7 +835,6 @@ mod tests {
                 ),
             ),
             prefix_slots: SetupPrefixVerifierRegistry::new(setup_seed),
-            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
         let mut bytes = Vec::new();

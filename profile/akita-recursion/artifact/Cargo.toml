@@ -3,7 +3,6 @@ name = "akita-recursion-artifact"
 version = "0.1.0"
 edition = "2021"
 description = "Produce an Akita verifier-input blob for the Jolt recursion guest."
-authors = ["Omid Bodaghi <omibo@layerzero.foundation>"]
 license = "Apache-2.0 OR MIT"
 publish = false
 
@@ -17,16 +16,17 @@ akita-recursion-glue = { path = "../glue" }
 akita-serialization = { path = "../../../crates/akita-serialization" }
 akita-config = { path = "../../../crates/akita-config", default-features = false, features = [
 ] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "72dc6451628d8b1dd794147a1f1cc40be0d77963", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 akita-pcs = { path = "../../../crates/akita-pcs", default-features = false, features = [
   "parallel",
 ] }
-akita-prover = { path = "../../../crates/akita-prover" }
-akita-transcript = { path = "../../../crates/akita-transcript" }
+akita-prover = { path = "../../../crates/akita-prover", default-features = false }
+akita-cpu-backend = { path = "../../../crates/akita-cpu-backend" }
 akita-types = { path = "../../../crates/akita-types" }
+akita-params = { path = "../../../crates/akita-params" }
 akita-verifier = { path = "../../../crates/akita-verifier" }
 
 clap = { version = "4", features = ["derive"] }
@@ -41,7 +41,7 @@ parallel = [
   "dep:rayon",
   "akita-pcs/parallel",
   "jolt-field/parallel",
-  "akita-prover/parallel",
+  "akita-cpu-backend/parallel",
 ]
 
 [lints.rust]

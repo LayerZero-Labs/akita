@@ -106,11 +106,6 @@ impl<E: Field> EqPolynomial<E> {
             .fold(E::one(), |acc, v| acc * v))
     }
 
-    /// Compute the zero selector: `eq(r, 0) = Πᵢ (1 − rᵢ)`.
-    pub fn zero_selector(r: &[E]) -> E {
-        r.iter().fold(E::one(), |acc, &r_i| acc * (E::one() - r_i))
-    }
-
     /// Compute the full evaluation table `{ eq(r, x) : x ∈ {0,1}^n }`.
     ///
     /// Uses **little-endian** bit order: entry `b` has bit `k` of `b`
@@ -654,18 +649,6 @@ mod tests {
         }
         let r = vec![F::one(); vars];
         assert!(EqPolynomial::<F>::evals_cached(&r).is_err());
-    }
-
-    #[test]
-    fn zero_selector_matches_mle_at_origin() {
-        let mut rng = StdRng::seed_from_u64(0x00);
-        for n in 1..8 {
-            let r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
-            let zeros = vec![F::zero(); n];
-            let expected = EqPolynomial::mle(&r, &zeros).unwrap();
-            let actual = EqPolynomial::zero_selector(&r);
-            assert_eq!(actual, expected, "n={n}");
-        }
     }
 
     #[cfg(feature = "parallel")]

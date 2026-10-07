@@ -33,7 +33,7 @@ axes.
   - [Why use different ring dimensions](#why-use-different-ring-dimensions)
   - [Role-native projection and decomposition](#role-native-projection-and-decomposition)
   - [The four relations in their native rings](#the-four-relations-in-their-native-rings)
-  - [Lift and switch the native rows](#lift-and-switch-the-native-rows)
+  - [Check each row in its native ring](#check-each-row-in-its-native-ring)
   - [Relation to compressed realization](#relation-to-compressed-realization)
   - [Composition with groups and chunks](#composition-with-groups-and-chunks)
 
@@ -178,8 +178,8 @@ but not the ordinary quotient or compression machinery.
 ### Return to the single-group recursion
 
 The root fold consumes this multi-group semantic structure. After the semantic
-rows have been realized and lifted as described on the previous page, their
-witness coordinates form one complete flat ring-switch witness. That witness
+rows have been realized and prepared for [field
+checking](./ring-relation-checking.md), their witness coordinates form one complete flat ring-switch witness. That witness
 is aligned to the successor commitment ring dimension and committed once.
 Stage 2 evaluates it at its sumcheck-derived opening point, producing one
 witness-side opening claim for the next fold.
@@ -268,11 +268,23 @@ $$
 \frac{(j+1)N}{C}-1\right\}.
 $$
 
-These ranges partition the live blocks without padding. The production layout
-also supports unequal and empty ranges through the [canonical proportional
-partition](./opening-points-layout.md#chunks-and-fold-challenges); that physical
-generality does not change the relations below. The transcript still samples
-one challenge $c_b$ for every global live block; it does not sample an
+Root source chunks use the [canonical proportional
+partition](./opening-points-layout.md#chunks-and-fold-challenges), including
+unequal and empty ranges. When the producer has multiple chunks, each emitted
+Z/E/T body is aligned to a multiple of the next fold's source-block coefficient
+width. The canonical prover fills the alignment gaps with zero. The next fold
+inherits those bodies instead of repartitioning the witness equally; if its
+chunk count contracts, it merges adjacent owners. The last owner also receives
+the complete quotient and compression tail and the final power-of-two padding.
+T ranges end before the alignment gaps, which add no semantic Z/E/T coordinates.
+The gaps belong to the committed witness and obey the ordinary digit range
+constraints, but carry no relation equations. Verification does not require
+zero. Zero filling adds no energy to the honest prover's source model; nonzero
+filler becomes part of the next fold's source and can affect its responses,
+which must still meet that fold's enforced bounds. See
+[response security accounting](../security.md#alignment-coordinates).
+This ownership changes no relation below.
+The transcript still samples one challenge $c_b$ for every global live block; it does not sample an
 independent challenge family for each chunk.
 
 Before the opening query, the incoming commitment has already fixed the
@@ -475,10 +487,11 @@ $$
 $$
 
 Thus $\mathbf w$ is the complete chunk-major logical witness for those four
-families, not one separately proved witness per chunk. The physical
-realizations extend it with the shared ordinary quotients and, in compressed
-mode, the compression data described on the [realizations
-page](./akita-fold-realizations.md).
+families, not one separately proved witness per chunk. The physical witness
+aligns multi-chunk bodies with zeros, then appends quotient digits and compression
+data as required by the selected relation and payload modes. The
+[complete witness layouts](./ring-relation-checking.md#what-enters-the-next-witness)
+describe both choices.
 
 The local responses still define the same global folded response
 algebraically:
@@ -802,70 +815,40 @@ subcolumn layout, and every quotient row added by the physical realization is
 stored at that row's exact native dimension. No batch-wide carrier ring is
 introduced for witness storage.
 
-### Lift and switch the native rows
+<a id="lift-and-switch-the-native-rows"></a>
 
-Rows over different quotient rings cannot be combined directly. The physical
-realization first lifts each row from its native quotient ring to an exact
-polynomial identity. If row $i$ has native dimension $d_i$ and semantic form
+### Check each row in its native ring
 
-$$
-L_i(X)=y_i(X)
-\qquad\text{in }F[X]/(X^{d_i}+1),
-$$
+For `EvaluationTrace`, consistency and $\mathbf A$ rows use $d_A$,
+$\mathbf B$ rows use $d_B$, and $\mathbf D$ rows use $d_D$. Apply the
+selected checking method to each row at that row's native dimension $d_i$.
+Quotient lifting uses its modulus factor $\alpha^{d_i}+1$ and private
+quotient digits. Reduced evaluation uses its public kernel $\kappa^{(d_i)}$
+without quotient digits.
 
-then the prover supplies a native quotient $r_i(X)$ such that
-
-$$
-L_i(X)
--(X^{d_i}+1)r_i(X)
-=y_i(X).
-\tag{8}
-$$
-
-Consistency and $\mathbf A$ rows therefore have $R_A$-native quotients,
-$\mathbf B$ rows have $R_B$-native quotients, and $\mathbf D$ rows have
-$R_D$-native quotients. These quotient polynomials are digit-decomposed and
-included in the physical witness.
-
-Ring switching then samples one extension-field element $\alpha$ and evaluates
-every lifted row at that same point:
-
-$$
-\boxed{
-L_i(\alpha)
--(\alpha^{d_i}+1)r_i(\alpha)
-=y_i(\alpha)
-\qquad\text{for every physical row }i.
-}
-\tag{9}
-$$
-
-After Equation (9), all rows are scalar identities over the same extension
-field even though they originated in different cyclotomic rings. Stage 2 can
-therefore batch them with its row challenge $\tau_1$.
-
-This is the precise role of ring switching in the mixed-ring protocol. It does
-not first convert all relations into one common quotient ring. Role-native
-projection makes each relation well formed in its own ring; the native
-quotient lift and evaluation at $\alpha$ then place all row checks in one
-common field. The [realizations page](./akita-fold-realizations.md#ring-relation-realization-before-sumcheck)
-derives this lift for the complete physical witness.
+Both methods evaluate at the shared field point $\alpha$. The resulting
+scalar claims lie in the same extension field and can be batched with
+$\tau_1$. This does not convert the original relations into one common
+quotient ring. [Checking ring relations over a field](./ring-relation-checking.md#from-one-equation-to-the-full-relation)
+derives the two checks and their handoff to Stage 2.
 
 ### Relation to compressed realization
 
-Compressed realization uses the same native-row quotient and ring-switch
-mechanism. In raw mode, the semantic commitment images
+Compressed realization uses the selected ring-relation mode for its
+additional native rows as well. In raw mode, the semantic commitment images
 $\mathbf u=\mathbf B\hat{\mathbf t}$ and
 $\mathbf v_D=\mathbf D\hat{\mathbf e}$ are public. In compressed mode they are
 private intermediate values, and additional $\mathbf F$ and $\mathbf H$ rows
 bind them to smaller public payloads. Those compression rows have their own
-native ring dimensions, quotients, and instances of Equation (9).
+native ring dimensions. Quotient lifting gives each one a native quotient;
+reduced evaluation uses the corresponding residue weights without quotient
+digits.
 
 The difference is structural. Mixed $\mathbf A$/$\mathbf B$/$\mathbf D$
 dimensions assign native rings to the existing four semantic relation
 families. Compression adds new $\mathbf F$/$\mathbf H$ physical row families.
-Once the rows have been formed, both constructions use the same native
-quotient lift and ring-switch evaluation before Stage 2.
+Once the rows have been formed, the selected ring-relation mode turns them
+into field claims before Stage 2.
 
 Choosing a smaller $d_B$ or $d_D$ is not automatically cheaper. The physical
 column counts expand by the projection ratios
@@ -888,7 +871,7 @@ minimizing each dimension independently.
 Mixed dimensions compose with the two earlier axes without changing their
 ownership rules. Each commitment group owns its $\mathbf A$ and $\mathbf B$
 dimensions, while the consuming level owns the shared $\mathbf D$ dimension.
-Each chunk retains the native layouts of its group's
+Each chunk retains the layouts of its group's
 $[\hat{\mathbf z}\mid\hat{\mathbf e}\mid\hat{\mathbf t}]$ unit; chunking changes
 the block ranges and column support, not the ring assigned to a relation row.
 
@@ -902,8 +885,9 @@ $$
  \mid\hat{\mathbf t}^{(j)}_g].
 $$
 
-The resulting physical witness remains one chunk-major flat coefficient vector
-followed by the shared native quotient rows and any compression suffix. Stage 2
-uses each row's own dimension in its powers of $\alpha$ and denominator
-$\alpha^{d_i}+1$, so group, chunk, and mixed-ring layouts can be combined
-without introducing a common carrier ring.
+The resulting physical witness remains one chunk-major flat coefficient
+vector with any required compression suffix. Quotient-lift mode adds the
+shared ordinary quotient digits and any compression quotients. Each row uses
+its own dimension in the quotient-lift weights or the reduced-evaluation
+kernel. Thus group, chunk, and mixed-ring layouts combine without introducing
+a common carrier ring.

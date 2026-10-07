@@ -831,9 +831,9 @@ The implemented transcript structure is specified normatively in
 [`specs/transcript-grinding.md`](transcript-grinding.md). For a fixed group root
 and the fixed shared fold-response nonce, coordinate `(claim, block)` is a
 separate indexed random-oracle query. Reprogramming it leaves every other fold
-coordinate and the live transcript state unchanged. Thus the implementation
-supplies the coordinatewise CWSS transcripts below without relying
-on extraction from full-vector forks.
+coordinate and the live transcript state unchanged. This supplies the fork
+structure used by the accepting-tree extraction and indexed-address bound in
+the [grinding specification](transcript-grinding.md#fold-extraction-from-accepting-children).
 
 Consider two accepting transcripts with the same pre-challenge commitments and
 different challenge at one claim/block position. Let
@@ -855,20 +855,23 @@ relations gives
 L(G(z - z')) = delta(Y) e_j           in C.
 ```
 
-Because `delta` is a unit in both rings, these equations determine the opened
-`t_j` and `e_j` from the fork. The existing B/F binding of `t_hat`, D/H binding
-of `e_hat`, A binding of the folded source, range proof for all digit planes,
-and quotient checks then give the same weak-opening/MSIS reduction as the
-current fold.
+Because `delta` is a unit in both rings, these equations algebraically
+determine the opened `t_j` and `e_j` from such an accepting fork. The complete
+accepting descendant trees authenticate the native relations and scheduled
+response bounds. Cross-multiplying unit differences against those bounded
+responses yields the scheduled short collision if two weak openings disagree;
+unit division alone does not preserve coefficient norms.
 
-The extractor takes one central accepting vector and one coordinatewise fork
-for every claim and block position. The CWSS sum charges the support of every
-coordinate. The online random-oracle reduction separately charges group-root
-queries, indexed coordinate queries, and repeated roots caused by the shared
-fold-response nonce. Root collisions, root prequeries, sum-check errors, the
-`(2s - 1)/|E|` ring-switch error, and all A/B/D/F/H MSIS terms remain additive.
-This accounting does not claim extraction from challenge entropy alone or from
-two arbitrary full-vector forks.
+A binary CWSS extractor uses one central accepting vector and one
+coordinatewise accepting fork for every claim and block position. Its
+whole-fold error ledger includes every coordinate and group. The indexed
+random-oracle reduction instead charges every touched coordinate address and
+every untouched address completed by final verification, including fresh
+queries induced by shared fold-response nonce trials.
+Root collisions, root prequeries, sum-check errors, the `(2s - 1)/|E|`
+ring-switch error, and A/B/D/F/H MSIS terms also belong in the composition.
+The [indexed fold bound](transcript-grinding.md#indexed-address-fold-bound)
+gives the adaptive query accounting and its reduction-cost boundary.
 
 ### Ring-switch polynomial check
 
@@ -1249,7 +1252,7 @@ geometry. It does not enlarge the partial opening or quotient.
 
 The planner enumerates every admitted `(d_A, s)` pair at levels 0 and 1 under
 the incoming dimension ceiling. It preserves the selective L2 branch's current
-dimension policy and uniform suffix after level 1. This feature does not add A
+dimension policy and equal-role suffix after level 1. This feature does not add A
 dimension search beyond level 1. A terminal reached inside that adaptive
 prefix may use an admitted adaptive dimension.
 
@@ -1259,16 +1262,21 @@ It does not add a semantic preference for smaller `s` or larger `d_A`.
 
 ### Objective and exact pricing
 
-Adaptive direct catalogs retain `MinFirstDirectSetupThenPayloadV2`:
-first-direct padded setup capacity, proof payload, exact total setup field
-elements, root output-witness length, and the canonical descriptor. Recursive
-catalogs use `MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3`, which first
-compares the next-power-of-two capacity covering the total setup envelope.
+Adaptive direct catalogs use `MinFirstDirectSetupThenExactProofAndWorkV5`:
+first-direct padded setup capacity, exact additive proof-and-work score,
+proof bytes, exact total setup field elements, root output-witness
+length, and the canonical descriptor.
+
+The additive work term includes each fold's outgoing witness and, for a direct
+edge, twice the natural setup-scan length plus 64 units per common-base ring.
+Offloaded edges have no direct-scan charge. Recursive catalogs use
+`MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6`, which first compares
+the next-power-of-two capacity covering the total setup envelope.
 Exact setup differences within one recursive capacity bucket are tolerated
-before comparing first-direct capacity, proof payload, and first-direct
-output-witness length. A numeric tie then goes directly to the canonical descriptor.
-No objective component for `s`, `d_A`, rank, fold count, or prover time is
-added.
+before comparing first-direct capacity, the proof-and-work score, proof bytes, and first-direct
+output-witness length. A numeric tie then goes
+directly to the canonical descriptor. No direct objective component for `s`,
+`d_A`, rank, fold count, or measured wall-clock time is added.
 
 For every subring packing candidate, the planner MUST recompute at least the
 following values.
@@ -1327,12 +1335,12 @@ The retained catalog improves in aggregate under both setup coordinates and
 proof payload. The two proof regressions remain explicit in the per-row review
 data; setup-primary selection does not imply per-row proof nonregression.
 
-At the checked head, the fp32 dense nv20 adaptive direct rows use
-`MinFirstDirectSetupThenPayloadV2`. Their first-direct padded
-capacities are 131,072 and 262,144 fields. Their six-level schedules use
-458,752 and 524,288 total setup fields and produce 62,447 and 63,254 proof
-bytes across six fold levels. The checked decision is recorded in the
+At the pinned head of that comparison, the fp32 dense nv20 adaptive direct
+rows had first-direct padded capacities of 131,072 and 262,144 fields. Their
+six-level schedules used 458,752 and 524,288 total setup fields and modeled
+62,447 and 63,254 proof bytes. Those historical results are recorded in the
 [catalog evidence note](evidence/subring-coefficient-packing/README.md#current-fp32-nv20-adaptive-objective).
+The current catalog is regenerated under the proof-only policy above.
 
 ### B slicing interaction
 
@@ -1368,7 +1376,7 @@ The planner MUST keep the search bounded in the following ways.
 5. Search subring packing candidates only at levels 0 and 1.
 6. Apply B slicing only after A and `t_hat` geometry is known.
 7. Keep the existing deterministic frontier and memo state objective.
-8. Keep the current uniform suffix after the adaptive prefix.
+8. Keep the current equal-role suffix after the adaptive prefix.
 9. Compare the pruned result with an unpruned oracle on small fixtures.
 
 ## Implementation boundaries
@@ -1432,7 +1440,7 @@ The planner MUST keep the search bounded in the following ways.
 
 - Add bounded subring packing candidates and the level policy above.
 - Extend the existing two level adaptive search with the bounded `s` registry.
-  Keep the current uniform suffix after that prefix.
+  Keep the current equal-role suffix after that prefix.
 - Recompute exact ranks, setup, compression, proof bytes, and successors.
 - Regenerate every affected catalog on top of the selective L2 branch.
 - Add report columns for opening method, challenge subring dimension, packing
@@ -1503,11 +1511,12 @@ The planner MUST keep the search bounded in the following ways.
 - [x] Short schedule tests cover root to terminal and root to one recursive
       fold to terminal without inserting another fold.
 - [x] The planner searches every admitted `(d_A, s)` pair only inside the two
-      level adaptive prefix and keeps the current uniform suffix.
-- [x] Adaptive direct catalogs minimize first-direct setup capacity, proof
-      payload, exact total setup, root output-witness length, and the canonical
+      level adaptive prefix and keeps the current equal-role suffix.
+- [x] Adaptive direct catalogs minimize first-direct setup capacity, the exact
+      proof-and-work score, proof bytes, exact total setup, root output-witness length, and the canonical
       descriptor. Recursive catalogs minimize padded total setup-envelope
-      capacity, first-direct setup capacity, proof payload, first-direct
+      capacity, first-direct setup capacity, the exact proof-and-work score,
+      proof bytes, first-direct
       output-witness length, and then the canonical descriptor. The objective has no
       explicit `s`, `d_A`, or fold-count component.
 - [x] `d_D` not dividing the selected native or hidden-digit width rejects
@@ -1624,13 +1633,13 @@ open review blockers are resolved.
   current production sparse families and role dimensions.
 - [EOR streamed prover](archive/2026-Q3/eor-streamed-prover.md), historical EOR prover path and
   performance context.
-- [`crates/akita-types/src/layout/proof_size.rs`](../crates/akita-types/src/layout/proof_size.rs),
+- [`crates/akita-params/src/layout/proof_size.rs`](../crates/akita-params/src/layout/proof_size.rs),
   canonical current EOR byte formula.
 - [`crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`](../crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs),
   current high-half, consistency, and A quotient construction.
 - [`crates/akita-prover/src/protocol/ring_switch/relation_weights.rs`](../crates/akita-prover/src/protocol/ring_switch/relation_weights.rs),
   current structured relation weights and challenge reuse.
-- [`crates/akita-verifier/src/protocol/ring_switch.rs`](../crates/akita-verifier/src/protocol/ring_switch.rs),
+- [`crates/akita-verifier/src/relation/mod.rs`](../crates/akita-verifier/src/relation/mod.rs),
   current `c_alphas` preparation.
-- [`crates/akita-verifier/src/protocol/evaluation_trace.rs`](../crates/akita-verifier/src/protocol/evaluation_trace.rs),
+- [`crates/akita-verifier/src/relation/evaluation_trace.rs`](../crates/akita-verifier/src/relation/evaluation_trace.rs),
   current trace-based scalar-opening contraction.

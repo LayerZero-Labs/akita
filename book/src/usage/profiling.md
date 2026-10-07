@@ -10,7 +10,7 @@ schedule and proof size breakdown.
 Run this command from `crates/akita-pcs`:
 
 ```bash
-AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
+AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=36 \
   cargo run --release --no-default-features \
   --features parallel,profile-onehot-fp128,transcript-blake2b \
   --example profile
@@ -25,8 +25,8 @@ debugging the harness itself.
 
 ## What the default statement proves
 
-`onehot_fp128` commits to one multilinear polynomial with $2^{32}$ entries and
-opens it at one 32 coordinate point. The source stores one selected position in
+`onehot_fp128` commits to one multilinear polynomial with $2^{36}$ entries and
+opens it at one 36 coordinate point. The source stores one selected position in
 each 256 entry chunk.
 
 The public statement proves commitment and opening consistency. One hot is the
@@ -60,7 +60,7 @@ commit, prove, encode, and verify phases for protocol comparisons.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `AKITA_MODE` | `onehot_fp128` | Configuration and source representation |
-| `AKITA_NUM_VARS` | `32` | Number of multilinear variables |
+| `AKITA_NUM_VARS` | `32` | Number of multilinear variables; use 36 for parity measurements |
 | `AKITA_NUM_POLYS` | `1` | Number of polynomials in the final group |
 | `AKITA_PROFILE_PROVE_THREADS` | Rayon default | Prover worker count |
 | `AKITA_PROFILE_VERIFY_THREADS` | Prover count | Verifier worker count |
@@ -98,9 +98,9 @@ Inspect it without opening Perfetto:
 
 ```bash
 jq '{run, root, peak_rss_gib, cpu_utilization}' \
-  profile_traces/akita_nv32_onehot_fp128_*.summary.json
+  profile_traces/akita_nv36_onehot_fp128_*.summary.json
 jq '.spans["AkitaCommitmentScheme::batched_prove"]' \
-  profile_traces/akita_nv32_onehot_fp128_*.summary.json
+  profile_traces/akita_nv36_onehot_fp128_*.summary.json
 ```
 
 The sampled memory line shows when memory changes. The exact process high water

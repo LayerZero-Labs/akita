@@ -23,7 +23,7 @@ The integration has four small crates.
 | --- | --- | --- |
 | `artifact` | Native host | Creates a real Akita commitment, opening proof, and verifier bundle |
 | `glue` | Host and guest | Defines the bounded `AkitaJoltInputs` wire format |
-| `guest` | Jolt RISC-V guest | Decodes the bundle and calls `akita_verifier::batched_verify` |
+| `guest` | Jolt RISC-V guest | Decodes the bundle and calls `AkitaVerifier::batched_verify` |
 | `host` | Native host | Compiles the guest, runs Jolt, and checks the outer proof |
 
 The data flow is direct:
@@ -61,13 +61,12 @@ the remaining work belongs to guest compilation, execution, or the Jolt prover.
 - the claimed value and commitment;
 - the exact generated schedule selection;
 - the verifier setup;
-- the expected proof shape;
-- the Akita proof.
+- the canonical native Akita proof bytes.
 
 The decoder checks a format marker, the fixed source-view dimension, bounded
-lengths, complete consumption of the input, and the shape of each nested Akita
-object. The guest then rebuilds the same singleton opening statement used by
-the native verifier.
+lengths, complete consumption of the input, and a schedule-derived upper bound
+on the proof stream before allocation. The guest then rebuilds the same
+opening statement used by the native verifier.
 
 The guest depends on `akita-verifier` rather than the complete PCS package. It
 does not carry the polynomial backend, setup generator, or planner into the
@@ -118,8 +117,8 @@ The guest reports three cycle regions:
 | Marker | Work measured |
 | --- | --- |
 | `deserialize_input` | Decode and validate the verifier bundle |
-| `transcript_init` | Build the verifier transcript and public statement |
-| `akita_verify` | Run the Akita verifier kernel |
+| `prepare_verifier` | Admit the selected row and install or prepare its terminal matrix |
+| `akita_verify` | Build the public statement and run the Akita verifier |
 
 At large arities, decoding the expanded verifier setup can dominate the guest
 trace. Measuring it separately makes that transport cost visible instead of
