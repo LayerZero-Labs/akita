@@ -369,7 +369,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     let mut policy = policy_of::<OneHot>();
     // A singleton adaptive domain keeps the split frontier needed to expose
     // this query tradeoff while using the production setup-first objective.
-    policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::AdaptiveDimension {
+    policy.ring_dimension_schedule = crate::RingDimensionSchedule {
         num_search_levels: 2,
         suffix_dimensions: &[256],
         potential_a_dimensions: &[256],
@@ -561,13 +561,10 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
 
 #[test]
 fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
-    let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::OneHot>();
-    let crate::RingDimensionScheduleMode::AdaptiveDimension {
+    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::OneHot>();
+    let crate::RingDimensionSchedule {
         num_search_levels, ..
-    } = policy.ring_dimension_schedule_mode
-    else {
-        panic!("test preset must be adaptive");
-    };
+    } = policy.ring_dimension_schedule;
     let state = |level, dimension_ceiling| super::SuffixState {
         input_chunks: None,
         level,
@@ -591,27 +588,16 @@ fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
     assert_eq!(
         state(num_search_levels, d64).memo_key(&policy),
         state(num_search_levels, d256).memo_key(&policy),
-        "uniform suffix states must not retain dead dimension history"
-    );
-
-    policy.ring_dimension_schedule_mode =
-        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
-    assert_ne!(
-        state(num_search_levels, d64).memo_key(&policy),
-        state(num_search_levels, d256).memo_key(&policy),
-        "uniform-mode keys retain the explicit caller ceiling"
+        "suffix states must not retain dead dimension history"
     );
 }
 
 #[test]
 fn fp32_suffix_memo_key_retains_only_the_effective_transition_ceiling() {
     let policy = akita_config::policy_of::<akita_config::proof_optimized::fp32::OneHot>();
-    let crate::RingDimensionScheduleMode::AdaptiveDimension {
+    let crate::RingDimensionSchedule {
         num_search_levels, ..
-    } = policy.ring_dimension_schedule_mode
-    else {
-        panic!("test preset must be adaptive");
-    };
+    } = policy.ring_dimension_schedule;
     let state = |dimension_ceiling| super::SuffixState {
         input_chunks: None,
         level: num_search_levels,

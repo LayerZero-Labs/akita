@@ -94,10 +94,10 @@ geometry.
 
 The `ring_challenge_config` closure supplies the sparse challenge configuration for an A-role dimension. It is a closure instead of a config method so the planner stays independent of `CommitmentConfig`.
 
-`PlannerPolicy::ring_dimension_schedule_mode` is the only dimension-domain
-authority. Uniform policies carry one A, B, and D value in that mode. Adaptive
-policies carry separate bounded domains. The selected schedule records the
-exact dimensions used at each level.
+`PlannerPolicy::ring_dimension_schedule` is the dimension-domain authority.
+The planner searches separate bounded A, B, and D domains over the adaptive
+prefix, then a monotone suffix domain. The selected schedule records the exact
+dimensions used at each level.
 
 ## Resolution Flow
 

@@ -744,7 +744,7 @@ uniform field element, including the residual top plane. This is a
 computational pseudorandomness model, not an information-theoretic statement
 about every seed. The recursive source keeps its propagated `M` and `P`.
 
-Uniform and adaptive direct profiles price first-direct padded setup capacity
+Adaptive direct profiles price first-direct padded setup capacity
 first, then the exact additive proof-and-work score, proof bytes, total setup,
 and root output-witness length. Recursive setup profiles first compare the
 power-of-two capacity covering total setup, then first-direct capacity, the
@@ -990,7 +990,7 @@ the profile's declared objective, its comparison includes:
 * The root output-witness length.
 * A canonical descriptor tie-break.
 
-Uniform and adaptive direct profiles minimize first-direct padded setup
+Adaptive direct profiles minimize first-direct padded setup
 capacity, then the exact additive proof-and-work score, proof bytes, total
 setup, and root output-witness length. Recursive-setup profiles minimize padded
 total-setup capacity, then first-direct capacity, the proof-and-work score,

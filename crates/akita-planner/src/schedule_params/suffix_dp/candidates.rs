@@ -555,13 +555,7 @@ impl<'a> CandidateDomain<'a> {
             opening_shape,
         )?;
         let retain_split_frontier = state.topology.incoming_setup_prefix().is_some()
-            || matches!(
-                policy.ring_dimension_schedule_mode,
-                crate::RingDimensionScheduleMode::AdaptiveDimension {
-                    num_search_levels,
-                    ..
-                } if state.level < num_search_levels
-            );
+            || state.level < policy.ring_dimension_schedule.num_search_levels;
         let fold_policy = if retain_split_frontier {
             FoldCandidatePolicy::Frontier(SplitBoundPolicy::Enabled)
         } else {

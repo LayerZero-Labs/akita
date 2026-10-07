@@ -2,7 +2,7 @@
 
 use akita_error::AkitaError;
 use akita_params::MAX_I16_LOG_BASIS;
-use akita_schedules::{ChunkedWitnessCfg, DecompositionParams, PlannerPolicy, SelectionPolicyId};
+use akita_schedules::{ChunkedWitnessCfg, DecompositionParams, PlannerPolicy};
 
 /// Coefficient source whose A-matrix decomposition basis is being selected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,13 +54,6 @@ impl InnerBasisSource {
             ))),
         }
     }
-}
-
-pub(crate) fn direct_only_policy(mut policy: PlannerPolicy) -> PlannerPolicy {
-    policy.recursive_setup_planning = false;
-    policy.recursive_setup_search_policy = crate::RecursiveSetupSearchPolicy::Exhaustive;
-    policy.selection_policy = SelectionPolicyId::for_policy(false);
-    policy
 }
 
 pub(crate) fn witness_chunk_at_level(

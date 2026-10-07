@@ -173,18 +173,14 @@ impl RecursiveSetupSearchPolicy {
 
 /// Catalog-bound ring-dimension schedule policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RingDimensionScheduleMode {
-    /// Use one uniform A/B/D dimension from root through terminal.
-    UniformDimension { ring_dimension: usize },
-    /// Search exact A/B/D tuples over a bounded prefix, then use a monotone
-    /// sequence of uniform dimensions from the catalog-bound suffix domain.
-    AdaptiveDimension {
-        num_search_levels: usize,
-        suffix_dimensions: &'static [usize],
-        potential_a_dimensions: &'static [usize],
-        potential_b_dimensions: &'static [usize],
-        potential_d_dimensions: &'static [usize],
-    },
+pub struct RingDimensionSchedule {
+    /// Search exact A/B/D tuples over this bounded prefix.
+    pub num_search_levels: usize,
+    /// Later folds choose a monotone sequence from this equal-role domain.
+    pub suffix_dimensions: &'static [usize],
+    pub potential_a_dimensions: &'static [usize],
+    pub potential_b_dimensions: &'static [usize],
+    pub potential_d_dimensions: &'static [usize],
 }
 
 /// Number of leading fold levels covered by the audited adaptive search.
@@ -206,8 +202,8 @@ pub struct PlannerPolicy {
     /// `None` leaves the deterministic public stream uncapped by protocol policy.
     pub setup_field_budget: Option<usize>,
     pub min_offloaded_witness_contraction: usize,
-    /// Uniform or bounded-adaptive ring-dimension schedule policy.
-    pub ring_dimension_schedule_mode: RingDimensionScheduleMode,
+    /// Bounded adaptive ring-dimension search and suffix domains.
+    pub ring_dimension_schedule: RingDimensionSchedule,
     pub decomposition: DecompositionParams,
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: SisSecurityPolicyId,
@@ -297,7 +293,7 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
             policy.sis_security_policy
         )));
     }
-    validate_ring_dimension_schedule_mode(policy)?;
+    validate_ring_dimension_schedule(policy)?;
     let expected_selection_policy = SelectionPolicyId::for_policy(policy.recursive_setup_planning);
     if policy.selection_policy != expected_selection_policy {
         return Err(AkitaError::InvalidSetup(
@@ -341,48 +337,40 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     Ok(())
 }
 
-fn validate_ring_dimension_schedule_mode(policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    match policy.ring_dimension_schedule_mode {
-        RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-            for role in [RingRole::Inner, RingRole::Outer, RingRole::Opening] {
-                validate_scheduled_dimension(policy, role, ring_dimension)?;
-            }
-        }
-        RingDimensionScheduleMode::AdaptiveDimension {
-            num_search_levels,
-            suffix_dimensions,
-            potential_a_dimensions,
-            potential_b_dimensions,
-            potential_d_dimensions,
-        } => {
-            if num_search_levels != ADAPTIVE_SEARCH_LEVELS {
+fn validate_ring_dimension_schedule(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    let RingDimensionSchedule {
+        num_search_levels,
+        suffix_dimensions,
+        potential_a_dimensions,
+        potential_b_dimensions,
+        potential_d_dimensions,
+    } = policy.ring_dimension_schedule;
+    if num_search_levels != ADAPTIVE_SEARCH_LEVELS {
+        return Err(AkitaError::InvalidSetup(format!(
+            "adaptive search currently requires exactly {ADAPTIVE_SEARCH_LEVELS} levels, got {num_search_levels}"
+        )));
+    }
+    validate_dimension_list(policy, RingRole::Inner, suffix_dimensions)?;
+    for (role, dimensions) in [
+        (RingRole::Inner, potential_a_dimensions),
+        (RingRole::Outer, potential_b_dimensions),
+        (RingRole::Opening, potential_d_dimensions),
+    ] {
+        validate_dimension_list(policy, role, dimensions)?;
+        for &suffix_dimension in suffix_dimensions {
+            if !dimensions.contains(&suffix_dimension) {
                 return Err(AkitaError::InvalidSetup(format!(
-                    "adaptive search currently requires exactly {ADAPTIVE_SEARCH_LEVELS} levels, got {num_search_levels}"
+                    "adaptive {} domain must contain suffix D{suffix_dimension}",
+                    role_name(role)
                 )));
             }
-            validate_dimension_list(policy, RingRole::Inner, suffix_dimensions)?;
-            for (role, dimensions) in [
-                (RingRole::Inner, potential_a_dimensions),
-                (RingRole::Outer, potential_b_dimensions),
-                (RingRole::Opening, potential_d_dimensions),
-            ] {
-                validate_dimension_list(policy, role, dimensions)?;
-                for &suffix_dimension in suffix_dimensions {
-                    if !dimensions.contains(&suffix_dimension) {
-                        return Err(AkitaError::InvalidSetup(format!(
-                            "adaptive {} domain must contain suffix D{suffix_dimension}",
-                            role_name(role)
-                        )));
-                    }
-                }
-                let minimum_suffix_dimension = suffix_dimensions[0];
-                if dimensions.iter().any(|&d| d < minimum_suffix_dimension) {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "adaptive {} dimensions must be at least minimum suffix D{minimum_suffix_dimension}",
-                        role_name(role)
-                    )));
-                }
-            }
+        }
+        let minimum_suffix_dimension = suffix_dimensions[0];
+        if dimensions.iter().any(|&d| d < minimum_suffix_dimension) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "adaptive {} dimensions must be at least minimum suffix D{minimum_suffix_dimension}",
+                role_name(role)
+            )));
         }
     }
     Ok(())
@@ -924,7 +912,7 @@ mod tests {
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 3,
-            ring_dimension_schedule_mode: RingDimensionScheduleMode::AdaptiveDimension {
+            ring_dimension_schedule: RingDimensionSchedule {
                 num_search_levels: 2,
                 suffix_dimensions: &[64],
                 potential_a_dimensions: A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER,
@@ -972,26 +960,19 @@ mod tests {
     }
 
     #[test]
-    fn setup_objective_admission_is_independent_of_ring_dimension_mode() {
-        let adaptive = adaptive_policy();
-        for mode in [
-            RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 },
-            adaptive.ring_dimension_schedule_mode,
-        ] {
-            for recursive_setup_planning in [false, true] {
-                let mut policy = PlannerPolicy {
-                    ring_dimension_schedule_mode: mode,
-                    recursive_setup_planning,
-                    selection_policy: SelectionPolicyId::for_policy(recursive_setup_planning),
-                    ..adaptive
-                };
-                validate_policy(&policy).expect("matching setup objective");
-                policy.selection_policy = SelectionPolicyId::for_policy(!recursive_setup_planning);
-                assert!(matches!(
-                    validate_policy(&policy),
-                    Err(AkitaError::InvalidSetup(_))
-                ));
-            }
+    fn setup_objective_admission_matches_recursive_setup_planning() {
+        for recursive_setup_planning in [false, true] {
+            let mut policy = PlannerPolicy {
+                recursive_setup_planning,
+                selection_policy: SelectionPolicyId::for_policy(recursive_setup_planning),
+                ..adaptive_policy()
+            };
+            validate_policy(&policy).expect("matching setup objective");
+            policy.selection_policy = SelectionPolicyId::for_policy(!recursive_setup_planning);
+            assert!(matches!(
+                validate_policy(&policy),
+                Err(AkitaError::InvalidSetup(_))
+            ));
         }
     }
 
@@ -1015,7 +996,7 @@ mod tests {
     fn adaptive_dimensions_still_require_role_specific_dispatch_support() {
         const UNSUPPORTED_B_DIMENSIONS: &[usize] = &[64, 512];
         let mut policy = adaptive_policy();
-        policy.ring_dimension_schedule_mode = RingDimensionScheduleMode::AdaptiveDimension {
+        policy.ring_dimension_schedule = RingDimensionSchedule {
             num_search_levels: 2,
             suffix_dimensions: &[64],
             potential_a_dimensions: A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER,
@@ -1031,7 +1012,7 @@ mod tests {
     fn adaptive_depth_is_limited_to_the_audited_l0_l1_cutover() {
         for num_search_levels in [1, 3] {
             let mut policy = adaptive_policy();
-            policy.ring_dimension_schedule_mode = RingDimensionScheduleMode::AdaptiveDimension {
+            policy.ring_dimension_schedule = RingDimensionSchedule {
                 num_search_levels,
                 suffix_dimensions: &[64],
                 potential_a_dimensions: A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER,

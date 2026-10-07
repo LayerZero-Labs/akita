@@ -829,31 +829,13 @@ pub(crate) fn find_schedule_in_relation_order(
         ));
     }
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
-    let scalar_policy;
-    let active_policy = if key.precommitteds.is_empty() && !policy.recursive_setup_planning {
-        // Ordinary scalar families use the direct objective. Recursive
-        // companion families retain their setup-aware objective so a scalar
-        // root may carry its setup opening into the first suffix fold.
-        scalar_policy = crate::policy::direct_only_policy(*policy);
-        &scalar_policy
-    } else {
-        policy
-    };
-    let setup_field_budget = if matches!(
-        active_policy.selection_policy,
-        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-    ) {
-        active_policy.setup_field_budget
-    } else {
-        None
-    };
+    let setup_field_budget = policy.setup_field_budget;
     let root_input_witness_len = checked::pow2(key.final_group.num_vars()).ok_or_else(|| {
         AkitaError::InvalidSetup("multi-group root-fold witness length overflow".to_string())
     })?;
     let suffix_ctx = SuffixCtx {
-        policy: active_policy,
-        challenge_order: active_policy.transcript_grinding_order()?,
+        policy,
+        challenge_order: policy.transcript_grinding_order()?,
         diagnostics,
         ring_challenge_config,
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
@@ -867,7 +849,7 @@ pub(crate) fn find_schedule_in_relation_order(
         relation_traversal_order: options.relation_traversal_order,
         relation_mode_filter: options.relation_mode_filter,
     };
-    let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(active_policy)?;
+    let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(policy)?;
     let initial_state = SuffixState {
         input_chunks: None,
         level: 0,
@@ -899,15 +881,10 @@ pub(crate) fn find_schedule_in_relation_order(
         diagnostics.record_setup_prefix_cache(hits, misses);
     }
     let suffix = suffix?;
-    let best = select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?;
+    let best = select_complete_candidate(policy, suffix.setup_candidates(), diagnostics)?;
 
     let Some(best) = best.cloned() else {
-        if key.precommitteds.is_empty()
-            && matches!(
-                active_policy.ring_dimension_schedule_mode,
-                crate::RingDimensionScheduleMode::AdaptiveDimension { .. }
-            )
-        {
+        if key.precommitteds.is_empty() {
             return Err(AkitaError::UnsupportedSchedule(format!(
                 "no mixed-D schedule in the audited fold domain for num_vars={}, num_polynomials={}",
                 key.final_group.num_vars(),
@@ -943,23 +920,15 @@ pub(crate) fn find_schedule_in_relation_order(
             key.final_group.num_vars()
         )));
     };
-    let first_direct_setup_field_len = if matches!(
-        active_policy.selection_policy,
-        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-    ) {
-        Some(
-            best.first_direct_setup_field_len
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "setup-first schedule is missing its first direct setup size".into(),
-                    )
-                })?
-                .get(),
-        )
-    } else {
-        None
-    };
+    let first_direct_setup_field_len = Some(
+        best.first_direct_setup_field_len
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "setup-first schedule is missing its first direct setup size".into(),
+                )
+            })?
+            .get(),
+    );
     if let Some(diagnostics) = diagnostics {
         let metrics = best.metrics();
         let folds = best.folds.to_vec();
@@ -970,7 +939,7 @@ pub(crate) fn find_schedule_in_relation_order(
             })?
             .output_witness_len;
         diagnostics.record_selected(
-            active_policy.selection_policy,
+            policy.selection_policy,
             metrics,
             root_output_witness_len,
             folds
@@ -991,7 +960,7 @@ pub(crate) fn find_schedule_in_relation_order(
             num_setup_field_elements: best.setup_field_elements,
             first_direct_setup_field_len,
         },
-        active_policy,
+        policy,
         &root_layout,
         best.folds.to_vec(),
         best.terminal.as_ref().clone(),
