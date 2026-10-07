@@ -260,6 +260,7 @@ dependencies = [
 name = "akita-serialization"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.2.17",
  "jolt-field",
  "jolt-poly",
  "thiserror",
@@ -301,12 +302,10 @@ dependencies = [
  "akita-params",
  "akita-serialization",
  "akita-sumcheck",
- "blake2 0.11.0",
  "jolt-field",
  "jolt-poly",
  "jolt-transcript",
  "rand_core 0.6.4",
- "serde",
  "shake",
  "tracing",
 ]

@@ -16,6 +16,16 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9d2eb0f211ae7c35f2c765002e7ece72c1dae424", default-features = false }
 thiserror = "2.0"
 
+
+# jolt-field's transcript codec traits come from spongefish, which enables
+# rand's getrandom; wasm32-unknown-unknown has no default getrandom backend,
+# so select the JavaScript one there.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
+[package.metadata.cargo-machete]
+ignored = ["getrandom"]
+
 [lints]
 workspace = true
 
