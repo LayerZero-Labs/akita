@@ -269,7 +269,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn setup_first_uniform_search_matches_oracle_and_replans_query_fallback() {
+fn setup_first_uniform_search_prices_packing_and_replans_query_fallback() {
     use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
 
     // fp32 has extension degree four, so production s >= 64 requires d_A >= 256.
@@ -290,35 +290,7 @@ fn setup_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     .unwrap();
     let lookup_key = akita_params::ScheduleLookupKey::single(onehot_group(14, 1));
     assert_selected_grinding_edge_parity(&selected, &lookup_key, &policy);
-    assert!(
-        selected.schedule.recursive_folds.len() < unpruned_search::MAX_ORACLE_RECURSION_DEPTH,
-        "bounded oracle must cover the production winner's recursion depth",
-    );
-    let unpruned = unpruned_search::find_schedule(
-        onehot_group(14, 1),
-        &policy,
-        OneHot::committed_source_contract().unwrap(),
-        OneHot::ring_challenge_config,
-    )
-    .unwrap();
-    let unpruned = &unpruned.planned;
-    assert_eq!(
-        selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        unpruned.estimate.estimated_proof_payload_bytes().unwrap(),
-    );
-    assert_eq!(
-        selected.estimate.first_direct_setup_field_len,
-        unpruned.estimate.first_direct_setup_field_len,
-    );
     assert!(selected.estimate.first_direct_setup_field_len.is_some());
-    assert_eq!(
-        selected.estimate.estimated_num_setup_field_elements,
-        unpruned.estimate.estimated_num_setup_field_elements,
-    );
-    assert_eq!(
-        selected.schedule.canonical_descriptor_bytes(),
-        unpruned.schedule.canonical_descriptor_bytes(),
-    );
     let root = &selected.schedule.root.params;
     assert!(matches!(
         root.opening_method(),

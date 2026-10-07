@@ -525,8 +525,12 @@ fn contracting_chunk_search_matches_unpruned_complete_objective() {
             num_chunks,
             num_activated_levels: 1,
         };
-        policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
-            ring_dimension: 256,
+        policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels: 2,
+            suffix_dimensions: &[256],
+            potential_a_dimensions: &[256],
+            potential_b_dimensions: &[256],
+            potential_d_dimensions: &[256],
         };
         policy.selection_policy =
             crate::SelectionPolicyId::for_policy(policy.recursive_setup_planning);
@@ -582,8 +586,12 @@ fn contracting_chunk_pruning_preserves_consumer_widths_in_both_orders() {
             num_chunks,
             num_activated_levels: 1,
         };
-        policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
-            ring_dimension: 256,
+        policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels: 2,
+            suffix_dimensions: &[256],
+            potential_a_dimensions: &[256],
+            potential_b_dimensions: &[256],
+            potential_d_dimensions: &[256],
         };
         policy.selection_policy =
             crate::SelectionPolicyId::for_policy(policy.recursive_setup_planning);
