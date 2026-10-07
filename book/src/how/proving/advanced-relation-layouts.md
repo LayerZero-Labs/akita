@@ -848,7 +848,7 @@ This is the precise role of ring switching in the mixed-ring protocol. It does
 not first convert all relations into one common quotient ring. Role-native
 projection makes each relation well formed in its own ring; the native
 quotient lift and evaluation at $\alpha$ then place all row checks in one
-common field. The [realizations page](./akita-fold-realizations.md#lift-the-physical-ring-relations-before-sumcheck)
+common field. The [realizations page](./akita-fold-realizations.md#ring-relation-realization-before-sumcheck)
 derives this lift for the complete physical witness.
 
 ### Relation to compressed realization

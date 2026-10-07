@@ -29,8 +29,8 @@ policy and the checker use the same live set in
 | [`setup-offloading-planner`](../../../specs/setup-offloading-planner.md) | implemented | Current recursive setup selection policy and external artifact contract. |
 | [`sis-quantum128-scalar-n-table`](../../../specs/sis-quantum128-scalar-n-table.md) | implemented | Current 128-bit SIS security policy source. |
 | [`structured-e-term`](../../../specs/structured-e-term.md) | implemented | Current structured verifier E-term contract. |
-| [`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md) | active | Merged implementation still has an unresolved proof blocker. |
-| [`transcript-grinding`](../../../specs/transcript-grinding.md) | proposed | Defines the planned public proof-of-work policy and packed nonce stream. |
+| [`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md) | active | Defines packing relations, indexed fold challenges, and planner contracts. Its review record reports all three blockers repaired. |
+| [`transcript-grinding`](../../../specs/transcript-grinding.md) | active | Defines the proof-of-work and fold-response search contracts, indexed challenge queries, and packed nonce stream. |
 
 ## Archived records
 

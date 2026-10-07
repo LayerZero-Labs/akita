@@ -8,7 +8,7 @@ opening method for each nonterminal fold.
 | `SubringCoefficientPacking` | Required for nonterminal folds at absolute levels 0 and 1 | omitted |
 | `EvaluationTrace` | Later nonterminal folds and the terminal path | required only when the claim field is a proper extension |
 
-See [base-field coefficients vs extension evaluation points](../../foundations/rings-and-fields.md#base-field-coefficients-vs-extension-evaluation-points).
+See [Coefficients and evaluation points have different roles](../../foundations/rings-and-fields.md#coefficients-and-evaluation-points-have-different-roles).
 For the packing path, read the three obligations in order: the [direct scalar
 opening](./field-ring-reduction.md#subring-coefficient-packing-shorter-partials),
 the [source/fold consistency

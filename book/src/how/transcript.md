@@ -124,10 +124,16 @@ Implementation:
 
 ## AkitaInstanceDescriptor
 
-Before replay, both parties construct an `AkitaInstanceDescriptor` from the
-validated public configuration. The shared
-`bind_transcript_instance_descriptor` helper binds its canonical bytes
-through spongefish's `DomainSeparator.instance(...)`.
+Before replay, both parties call `akita_config::bind_transcript_instance_descriptor`
+with the validated setup, opening layout, row selection, schedule, opening basis,
+and transcript. The function derives the grinding plan and constructs an
+`AkitaInstanceDescriptor`. It then encodes that descriptor canonically and calls
+`Transcript::bind_instance_bytes`. It returns the grinding plan to the caller.
+
+The production `AkitaTranscript` initializes its Spongefish state from the
+protocol tag, session label, and instance bytes. Descriptor construction fixes
+the public instance encoding. Binding those bytes fixes the initial transcript
+state. The shared helper performs both steps before protocol replay.
 
 The descriptor records the following identities:
 

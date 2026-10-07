@@ -54,7 +54,7 @@ Key structural facts:
 3. **Commit.** The context-aware `commit` entry point (in `akita-prover`, orchestrated by the same scheme instance) produces one committed polynomial group using `GroupContext`. Scheduler mode selects the scalar row when the group has no precommitted groups, or the exact grouped row when it does. Explicit mode validates caller-supplied root parameters. A group committed under a scalar row may later be supplied as a precommitted group.
 4. **Claims.** The caller supplies ordered `PolynomialGroupClaims`; each group owns its complete point, evaluations, and commitment.
 5. **Prove.** `batched_prove` walks the schedule level by level. It prepares each group with the scheduled opening method, runs the sumchecks, performs EOR when required, and hands the last folded witness to the direct terminal proof.
-6. **Verify.** `batched_verify` resolves the proof row digest in the trusted catalog, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. The proof never supplies schedule bytes. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.
+6. **Verify.** `batched_verify` resolves the proof row digest in the trusted catalog, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. The proof never supplies schedule bytes. Both parties call `bind_transcript_instance_descriptor`. It constructs the canonical instance bytes, binds them to the transcript, and returns the grinding plan.
 
 Entry points: `crates/akita-pcs/src/scheme/mod.rs`, `crates/akita-prover/src/protocol/core/prove.rs`, `crates/akita-verifier/src/protocol/core/verify.rs`.
 
@@ -69,6 +69,31 @@ degree-two sumcheck over the native setup domain.
 Its round count and planned size do not depend on the successor witness length.
 The [setup offloading chapter](./setup-offloading.md) follows this path from
 offline planning through the recursive verifier handoff.
+
+## Prover and compute state
+
+The application retains its source polynomials. `PreparedProverGroup` borrows
+those polynomials, while `ProverOpeningData` holds the ordered commitment hints
+and public claims. Fold preparation creates a prover-only `RingRelationWitness`.
+Its response, opening, and auxiliary data remain private proving state.
+
+`ProverComputeStack` borrows four operation contexts: commitment, opening,
+tensor projection, and ring switching. Each `OperationCtx` pairs a backend with
+its prepared setup. Its constructor checks that the prepared setup matches the
+explicit expanded setup. The stack validates all four contexts against that
+same setup before proof execution.
+
+`LevelProveStacks` selects a compute stack for each fold. This choice routes
+arithmetic work and prepared caches. The resolved schedule still determines the
+protocol parameters, and the prover controls transcript order. Prepared
+transforms can remain available across proofs. Their lifetime is separate from
+the temporary relation witness and sumcheck state created during a proof.
+
+The checked context and stack interfaces are in
+`crates/akita-prover/src/compute/stack.rs`. The prepared-group carrier is in
+`crates/akita-prover/src/api/prepared_group.rs`. The
+[setup runtime guide](../usage/setup-runtime.md#reuse-and-release-cpu-caches)
+explains the optional cache-release policy.
 
 ## Ring-dimension ownership
 

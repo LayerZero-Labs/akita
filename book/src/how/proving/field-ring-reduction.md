@@ -689,28 +689,37 @@ This subsection applies when the schedule selects `EvaluationTrace`. A fold
 that selects `SubringCoefficientPacking` uses the coefficient-packing flow in
 the following subsection instead.
 
-The base-field path follows the reduction above:
+The code references below use a fixed implementation revision. The base-field
+path follows the reduction above:
 
 1. **Prepare the opening weights.**
-   [`prepare_opening_point`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/batch.rs)
+   [`prepare_opening_point`](https://github.com/LayerZero-Labs/akita/blob/efc4d118391ef644aceab9ea185484c73fd22b8c/crates/akita-types/src/proof/batch.rs)
    constructs $Q_p$, $B_b$, and $P$.
 2. **Evaluate the ring polynomial.**
-   [`evaluate_claims_at_prepared_point`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/core/fold_kernels.rs)
+   [`evaluate_claims_at_prepared_point`](https://github.com/LayerZero-Labs/akita/blob/efc4d118391ef644aceab9ea185484c73fd22b8c/crates/akita-prover/src/protocol/core/fold_kernels.rs)
    returns the position-folded rings $E_b$ and the temporary ring $Y$.
 3. **Recover the scalar evaluation.**
-   [`scalar_opening_from_folded_ring`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/core/fold_kernels.rs)
+   [`scalar_opening_from_folded_ring`](https://github.com/LayerZero-Labs/akita/blob/efc4d118391ef644aceab9ea185484c73fd22b8c/crates/akita-prover/src/protocol/core/fold_kernels.rs)
    computes $\operatorname{TraceOpen}_P(Y)$.
 4. **Prepare the trace factors.**
-   [`prepare_evaluation_trace_group_parameters`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/trace_weight/evaluation_trace.rs)
+   [`prepare_evaluation_trace_group_parameters`](https://github.com/LayerZero-Labs/akita/blob/efc4d118391ef644aceab9ea185484c73fd22b8c/crates/akita-types/src/trace_weight/evaluation_trace.rs)
    prepares the block point underlying $B_b$, the gadget weights $G_h$, and
    the inner trace weights $J_\ell$.
 5. **Construct the trace weights.**
-   [`build_evaluation_trace_weights`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image/evaluation_trace.rs)
+   [`build_evaluation_trace_weights`](https://github.com/LayerZero-Labs/akita/blob/efc4d118391ef644aceab9ea185484c73fd22b8c/crates/akita-prover/src/protocol/sumcheck/relation_range_image/evaluation_trace.rs)
    combines those factors with the claim coefficients and physical $\hat e$
    locations to construct $T(x)$.
 6. **Fuse the Stage-2 relation.**
-   [`accumulate_fused_relation_linear`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs)
+   [`accumulate_fused_relation_linear`](https://github.com/LayerZero-Labs/akita/blob/efc4d118391ef644aceab9ea185484c73fd22b8c/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs)
    adds the prepared linear relation to the fused Stage-2 sumcheck.
+
+`PreparedFold::relation_groups` retains one method-selected point and the
+derived scalar openings for each group. The relation builder prepares this
+metadata together with the group's private witness. For evaluation trace,
+`PreparedRelationGroup::kind()` gives the prepared $P$, $Q$, and $B$ factors.
+`PreparedFold::witness` holds the prover-only `RingRelationWitness`, including
+the opening digits. These are different objects: the point supplies public
+weights, while the witness supplies private digit values.
 
 The main data flow is:
 
@@ -718,7 +727,7 @@ The main data flow is:
 opening point r
       |
       v
-PreparedOpeningPoint { Q_p, B_b, P }
+PreparedOpeningPoint: weights Q_p, B_b, P
       |
       v
 OpeningFoldOutput
@@ -728,9 +737,9 @@ OpeningFoldOutput
                                                   v
 PreparedFold
 |-- evaluation_trace_claim: v_tr
-|-- evaluation_trace_points: prepared opening points
+|-- relation_groups: method-selected points and scalar openings
 |-- evaluation_trace_claim_coefficients: c_q
-`-- witness: contains E_b and e_hat
+`-- witness: private group opening state and e_hat
       |
       v
 prepare_evaluation_trace_group_parameters
@@ -752,21 +761,22 @@ The main values are:
 
 | Code value | Mathematical object |
 |---|---|
-| `PreparedOpeningPoint::ring_opening_point.position_weights` | $Q_p$ |
-| `PreparedOpeningPoint::ring_opening_point.live_block_weights` | $B_b$ |
-| `PreparedOpeningPoint::packed_inner_point` | $P(X)$ |
+| `PreparedOpeningPoint::ring_multiplier_point.as_base().position_weights` in the base-field case | $Q_p$ |
+| `PreparedOpeningPoint::ring_multiplier_point.as_base().live_block_weights` in the base-field case | $B_b$ |
+| `PreparedOpeningPoint::packed_inner_trusted()` | $P(X)$ |
 | `OpeningFoldOutput::folded` | $E_0,E_1,\ldots$ |
 | `OpeningFoldOutput::eval` | temporary $Y(X)$ |
 | `PreparedEvaluationTraceClaim::claimed_evaluation` | $v_{\mathrm{tr}}=\operatorname{TraceOpen}_P(Y)$ |
 | `PreparedEvaluationTraceClaim::claim_coefficients` | claim-batching coefficients $c_q$ |
-| `RingRelationGroupWitness::e_folded` | position-folded rings $E_b$ |
+| `RingRelationGroupWitness::folded_opening`, in its `EvaluationTrace` variant | position-folded rings $E_b$ |
 | `RingRelationGroupWitness::e_hat` | digit rings $\hat e_{b,h}(X)$ |
 | `PreparedFold::evaluation_trace_claim` | $v_{\mathrm{tr}}$ carried into Stage 2 |
-| `PreparedFold::evaluation_trace_points` | prepared $P$, $Q$, and $B$ for each group |
+| `PreparedFold::relation_groups`, through `PreparedRelationGroup::kind()` | prepared $P$, $Q$, and $B$ for each evaluation-trace group |
+| `PreparedFold::witness` | private relation witness, including the opening digits |
 | `PreparedFold::evaluation_trace_claim_coefficients` | $c_q$ carried into trace-weight construction |
-| `EvaluationTraceGroupParameters::block_opening_point` | block point from which $B_b$ is evaluated |
-| `EvaluationTraceGroupParameters::opening_digit_weights` | $G_h$ |
-| `EvaluationTraceGroupParameters::inner_trace` | $J_\ell$, equal to $I_\ell$ in the base-field case |
+| `EvaluationTraceGroupParameters::block_opening_point()` | block point from which $B_b$ is evaluated |
+| `EvaluationTraceGroupParameters::opening_digit_weights()` | $G_h$ |
+| `EvaluationTraceGroupParameters::inner_trace()` | $J_\ell$, equal to $I_\ell$ in the base-field case |
 | `EvaluationTraceWeights` | $T(x)$ |
 
 The temporary ring $Y$ is used only to compute $v_{\mathrm{tr}}$; it is not
@@ -785,7 +795,7 @@ directly from the committed digit witness.
 The implementation follows the same derivation in three stages:
 
 1. **Prepare the point.**
-   [`PreparedSubringCoefficientPackingPoint`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/subring_coefficient_packing.rs)
+   [`PreparedSubringCoefficientPackingPoint`](https://github.com/LayerZero-Labs/akita/blob/efc4d118391ef644aceab9ea185484c73fd22b8c/crates/akita-types/src/subring_coefficient_packing.rs)
    checks $D=k\eta s$ and prepares the packing, tail, position, and block
    weights.
 2. **Pack and bind the partials.**
@@ -794,16 +804,16 @@ The implementation follows the same derivation in three stages:
    It recombines those coordinates as in Equation (30), then binds their digit
    decompositions before sampling the fold challenges.
 3. **Fold and verify.**
-   [`fold_coefficient_packing_group`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/coefficient_packing.rs)
+   [`fold_coefficient_packing_group`](https://github.com/LayerZero-Labs/akita/blob/efc4d118391ef644aceab9ea185484c73fd22b8c/crates/akita-prover/src/protocol/coefficient_packing.rs)
    folds the packed partials and produces $Q_{\mathrm{pack}}$. Stage 2 then
    checks both the packing relation and the direct scalar opening, using
    $\beta_t I_j^{\mathrm{tail}}$ to rebuild each extension-valued coefficient.
 
 The reference tests in
-[`subring_coefficient_packing_reference_tests.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/subring_coefficient_packing_reference_tests.rs)
+[`subring_coefficient_packing_reference_tests.rs`](https://github.com/LayerZero-Labs/akita/blob/efc4d118391ef644aceab9ea185484c73fd22b8c/crates/akita-types/src/subring_coefficient_packing_reference_tests.rs)
 compare the direct partial and scalar formulas with the flat factorization.
 The Stage-2 tests in
-[`coefficient_packing_relation_tests.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/coefficient_packing_relation_tests.rs)
+[`coefficient_packing_relation_tests.rs`](https://github.com/LayerZero-Labs/akita/blob/efc4d118391ef644aceab9ea185484c73fd22b8c/crates/akita-types/src/proof/coefficient_packing_relation_tests.rs)
 compare the expanded prover terms with the verifier's compact evaluation and
 check that every extension-coordinate plane is bound.
 

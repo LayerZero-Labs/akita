@@ -287,12 +287,24 @@ hiding a smaller cached operation on the same matrix route. Requests from one
 fused operation share one routing extent across transform domains. Only
 retained requests are max-joined into physical cache slots.
 
-Retention is the default. A caller with an isolated root owner may apply
-`ReleaseRootNttAfterFold`. Release removes every built shared matrix key once
-per physical owner. Existing readers remain valid through shared ownership. A
-later smaller request builds the smaller exact extent instead of reviving an
-empty covering slot. Small compression NTT entries remain resident and are
-reused after this boundary.
+Retention is the default. `LevelProveStacks::after_root_fold` runs after the
+root fold and before the recursive suffix. Its default implementation keeps the
+prepared caches. A caller can wrap its stack selector in
+`ReleaseRootNttAfterFold` to request release at that boundary. The wrapper calls
+the root stack's release method, which visits each physical cache owner once.
+
+On CPU, release removes built shared-matrix transform slots. Compression
+transforms remain resident. Active readers keep released slots alive through
+shared references. The reported byte count describes removed cache entries;
+their storage can remain allocated until those readers finish. A later request
+builds its exact extent instead of reusing a removed covering slot.
+
+Use this policy when the root cache can be released without removing warm state
+needed by concurrent work. If the suffix needs an empty cache, the caller must
+prevent concurrent cache construction during release. Completing a proof with
+the default policy does not clear the shared cache. The
+[setup runtime guide](../usage/setup-runtime.md#reuse-and-release-cpu-caches)
+describes this application choice.
 
 `CpuPreparedSetup::shared_ntt_cache_bytes` and
 `compression_ntt_cache_bytes` report each namespace. `ntt_cache_bytes` returns

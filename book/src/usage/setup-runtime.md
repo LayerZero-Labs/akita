@@ -114,10 +114,20 @@ Those commitments authenticate the offloaded public setup contributions.
 Prepared state stays warm by default. That is the right policy for a service
 that proves many statements with the same setup.
 
-Some hosts need to lower peak memory between the root commitment and later
-folds. `ReleaseRootNttAfterFold` wraps a prover stack and releases large shared
-matrix transform entries after the root fold. The entries rebuild when a later
-proof needs them again.
+Some hosts need to lower peak memory between the root fold and the recursive
+suffix. `ReleaseRootNttAfterFold::new(stacks)` wraps a stack selector and requests
+release through `LevelProveStacks::after_root_fold`. The root stack visits each
+physical cache owner once.
+
+The CPU backend removes built shared-matrix transform entries and keeps
+compression transforms. Active readers retain the storage they still need.
+Release therefore does not guarantee an immediate drop in process memory.
+Later operations rebuild removed entries when needed.
+
+Choose this policy when the root caches can be released without removing warm
+state needed by concurrent work. If the suffix needs an empty cache, prevent
+concurrent cache construction at the release boundary. The default stack policy
+keeps prepared caches after the root fold and across later proofs.
 
 The release policy changes local memory and compute time. It does not change
 setup identity, commitment identity, or proof bytes. Measure the complete host

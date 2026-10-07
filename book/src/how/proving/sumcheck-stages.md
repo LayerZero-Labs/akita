@@ -34,7 +34,7 @@ clear response norm directly. See [The proving protocol](./proving.md).
   - [Domain and challenge order](#domain-and-challenge-order)
   - [The verifier](#the-verifier)
 - [Stage 2: fused relation sumcheck](#stage-2-fused-relation-sumcheck)
-  - [Start with the ordinary ring relation](#start-with-the-ordinary-ring-relation)
+  - [Start with the schedule-selected ring relation](#start-with-the-schedule-selected-ring-relation)
   - [Batch the matrix rows](#batch-the-matrix-rows)
   - [Expand the ring elements into one flat witness](#expand-the-ring-elements-into-one-flat-witness)
   - [Raw and compressed relation terms](#raw-and-compressed-relation-terms)
