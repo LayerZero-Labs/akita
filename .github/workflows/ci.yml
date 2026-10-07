@@ -102,6 +102,8 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Require one jolt-field identity and no akita-field
         run: scripts/check-shared-field-identity.sh
+      - name: Keep spongefish's sponge state private (no yolocrypto)
+        run: scripts/check-no-yolocrypto.sh
 
   doc:
     name: Documentation
