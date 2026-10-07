@@ -722,7 +722,7 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn adaptive_search_requires_a_monotonic_d64_suffix_domain() {
+fn adaptive_search_rejects_missing_suffix_and_unsupported_role_dimensions() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<OneHot>();
@@ -735,7 +735,8 @@ fn adaptive_search_requires_a_monotonic_d64_suffix_domain() {
         },
     ])
     .unwrap();
-    let missing_policy = policy_for_domain(base_policy, &missing_d64);
+    let mut missing_policy = policy_for_domain(base_policy, &missing_d64);
+    missing_policy.ring_dimension_schedule.suffix_dimensions = &[64];
     let error = find_schedule(
         onehot_group(16, 1),
         &missing_policy,
