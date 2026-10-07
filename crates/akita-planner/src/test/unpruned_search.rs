@@ -11,7 +11,8 @@ mod score;
 #[path = "unpruned_search/suffix.rs"]
 mod suffix;
 
-use candidate::{prepend_fold, prepend_root, terminal};
+use candidate::terminal;
+pub(super) use candidate::{prepend_fold, prepend_root};
 use frontier::{retain as retain_frontier_candidate, OracleFrontier};
 use relation::OracleRelationState;
 use score::{schedule_descriptor_bytes, score, OracleScore};
@@ -26,6 +27,7 @@ struct UnprunedCtx<'a> {
 struct UnprunedState {
     level: usize,
     input_witness_len: usize,
+    input_chunks: akita_params::WitnessChunkShape,
     current_log_basis: u32,
     source_moment: Option<crate::response_model::SourceMomentEstimate>,
     dimension_ceiling: CommitmentRingDims,
@@ -37,6 +39,7 @@ impl std::hash::Hash for UnprunedState {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.level.hash(state);
         self.input_witness_len.hash(state);
+        self.input_chunks.hash(state);
         self.current_log_basis.hash(state);
         self.source_moment.hash(state);
         self.dimension_ceiling.d_a().hash(state);
@@ -109,7 +112,6 @@ pub(super) struct OracleSearchResult {
 struct RootCandidate<'a> {
     params: &'a CommittedGroupParams,
     input_witness_len: usize,
-    output_witness_len: usize,
 }
 
 fn consider_complete_schedule(
@@ -134,7 +136,6 @@ fn consider_complete_schedule(
         schedule_key,
         root.input_witness_len,
         root.params,
-        root.output_witness_len,
         suffix,
     )?
     else {
@@ -231,6 +232,21 @@ pub(super) fn find_schedule(
                         visit_suffixes(
                             &ctx,
                             UnprunedState {
+                                input_chunks: akita_params::WitnessLayout::new(
+                                    &root_params,
+                                    &schedule_key.opening_layout()?,
+                                    &akita_params::RelationWitnessGeometry::for_level(
+                                        &root_params,
+                                        &schedule_key.opening_layout()?,
+                                        policy.claim_ext_degree,
+                                    )?,
+                                    root_params.witness_chunk.num_chunks,
+                                    akita_params::RelationQuotientPlan::for_field_bits(
+                                        &root_params,
+                                        field_bits,
+                                    )?,
+                                )?
+                                .chunk_shape()?,
                                 level: 1,
                                 input_witness_len: output_witness_len,
                                 current_log_basis: log_basis,
@@ -249,7 +265,6 @@ pub(super) fn find_schedule(
                                     RootCandidate {
                                         params: &root_params,
                                         input_witness_len,
-                                        output_witness_len,
                                     },
                                     &suffix,
                                     &complete_schedules,

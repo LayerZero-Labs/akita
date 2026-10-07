@@ -272,3 +272,21 @@ fn source_moment_bucketing_is_conservative_and_below_one_over_sixty_four() {
         assert!(bucketed - value < value.div_ceil(64).max(1));
     }
 }
+
+#[test]
+fn chunk_alignment_adds_no_source_energy() {
+    let opening = OpeningClaimsLayout::new(0, 1).unwrap();
+    let source = SourceMomentEstimate::new(1 << 16).unwrap();
+    for chunks in [1, 2] {
+        let mut params = response_geometry_params(akita_params::OpeningMethod::EvaluationTrace);
+        params.witness_chunk.num_chunks = chunks;
+        let compact = next_source_moment(&params, &opening, &[source], 128, 2).unwrap();
+        params.successor_block_len = (chunks > 1).then_some(1 << 16);
+        let padded = next_source_moment(&params, &opening, &[source], 128, 2).unwrap();
+        assert_eq!(compact, padded);
+        assert_eq!(
+            compact.response_l2_sq_cap(75),
+            padded.response_l2_sq_cap(75)
+        );
+    }
+}

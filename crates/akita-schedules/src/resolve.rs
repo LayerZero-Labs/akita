@@ -39,7 +39,7 @@ impl ResolvedScheduleRow {
         schedule.validate_nonterminal_opening_execution(policy.claim_ext_degree)?;
         audit_resolved_schedule(&profiles, &schedule, policy)?;
         validate_schedule_ring_dims(&schedule)?;
-        validate_canonical_transition_lengths(&profiles, &schedule, policy)?;
+        validate_canonical_transition_lengths(&profiles.opening_layout()?, &schedule, policy)?;
         let selection = OpeningScheduleSelection {
             row_digest: schedule_row_digest(&profiles, &schedule)?,
         };
@@ -79,13 +79,35 @@ impl ResolvedScheduleRow {
     }
 }
 
-fn validate_canonical_transition_lengths(
-    profiles: &CommittedGroupBatchProfile,
+pub(crate) fn validate_canonical_transition_lengths(
+    root_layout: &akita_params::OpeningClaimsLayout,
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
+    for (index, producer) in std::iter::once(&schedule.root)
+        .chain(&schedule.recursive_folds)
+        .enumerate()
+    {
+        let successor = schedule.recursive_folds.get(index).map_or(
+            akita_params::FoldSuccessor::Terminal(&schedule.terminal),
+            |fold| akita_params::FoldSuccessor::Recursive(&fold.params),
+        );
+        if producer.params.successor_block_len
+            != (producer.params.witness_chunk.num_chunks > 1)
+                .then_some(successor.source_block_len()?)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "witness padding disagrees with successor block".into(),
+            ));
+        }
+    }
     let field_bits = policy.decomposition.field_bits();
     let root_params = &schedule.root.params;
+    if !root_params.witness_chunk_ends.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "root witness ownership must be proportional".into(),
+        ));
+    }
     let expected_root_input = root_input_witness_len(root_params);
     if schedule.root.input_witness_len != expected_root_input {
         return Err(AkitaError::InvalidSetup(format!(
@@ -93,26 +115,11 @@ fn validate_canonical_transition_lengths(
             schedule.root.input_witness_len
         )));
     }
-    let expected_root_output = if root_params.has_preceding_groups() {
-        root_params.output_witness_len_for_field_bits(
-            field_bits,
-            policy.claim_ext_degree,
-            &profiles.opening_layout()?,
-        )?
-    } else {
-        planned_next_witness_len(
-            field_bits,
-            policy.claim_ext_degree,
-            root_params,
-            profiles.final_group.group.num_polynomials(),
-            root_params.witness_chunk.num_chunks,
-        )?
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "root schedule uses unsupported compression source geometry".to_string(),
-            )
-        })?
-    };
+    let expected_root_output = root_params.output_witness_len_for_field_bits(
+        field_bits,
+        policy.claim_ext_degree,
+        root_layout,
+    )?;
     if schedule.root.output_witness_len != expected_root_output {
         return Err(AkitaError::InvalidSetup(format!(
             "root output witness length {} is not canonical; expected {expected_root_output}",
@@ -121,7 +128,30 @@ fn validate_canonical_transition_lengths(
     }
 
     let mut expected_input = expected_root_output;
+    let mut producer = &schedule.root;
+    let mut producer_opening = root_layout.clone();
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
+        let geometry = akita_params::RelationWitnessGeometry::for_level(
+            &producer.params,
+            &producer_opening,
+            policy.claim_ext_degree,
+        )?;
+        let layout = akita_params::WitnessLayout::new(
+            &producer.params,
+            &producer_opening,
+            &geometry,
+            producer.params.witness_chunk.num_chunks,
+            akita_params::RelationQuotientPlan::for_field_bits(&producer.params, field_bits)?,
+        )?;
+        let (len, ends) = layout.chunk_shape()?.align(
+            akita_params::FoldSuccessor::Recursive(&step.params).source_block_len()?,
+            step.params.witness_chunk.num_chunks,
+        )?;
+        if len != expected_input || ends != step.params.witness_chunk_ends {
+            return Err(AkitaError::InvalidSetup(
+                "recursive witness ownership is not inherited from its producer".into(),
+            ));
+        }
         if step.input_witness_len != expected_input {
             return Err(AkitaError::InvalidSetup(format!(
                 "recursive fold {index} input witness length {} is not canonical; expected {expected_input}",
@@ -147,6 +177,13 @@ fn validate_canonical_transition_lengths(
             )));
         }
         expected_input = expected_output;
+        producer = step;
+        producer_opening = akita_params::suffix_opening_layout(
+            step.input_witness_len,
+            step.params
+                .setup_prefix()
+                .and_then(|prefix| prefix.setup_natural_len),
+        )?;
     }
     if schedule.terminal.input_witness_len != expected_input {
         return Err(AkitaError::InvalidSetup(format!(

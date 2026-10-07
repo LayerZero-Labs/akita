@@ -10,6 +10,7 @@ fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::Schedu
         |natural_len| super::SuffixTopology::SetupPrefixed { natural_len },
     );
     super::ScheduleMemoKey {
+        input_chunks: None,
         level,
         current_witness_len: 1024,
         current_lb: 3,
@@ -26,14 +27,14 @@ fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
     let direct = memo_key(1, None);
     let prefixed = memo_key(2, Some(1));
     let mut memo = super::ScheduleMemo::new();
-    for key in [direct, prefixed] {
+    for key in [direct.clone(), prefixed.clone()] {
         memo.insert(key, super::empty_suffix_result(), None);
     }
     assert!(memo.contains(&direct));
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&prefixed));
 
-    memo.insert(direct, super::empty_suffix_result(), None);
+    memo.insert(direct.clone(), super::empty_suffix_result(), None);
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&direct));
     assert!(memo.contains(&prefixed));
@@ -64,7 +65,7 @@ fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
         .is_empty());
 
     let quotient_key = memo_key(2, None);
-    let mut reduced_key = quotient_key;
+    let mut reduced_key = quotient_key.clone();
     reduced_key.topology = super::SuffixTopology::Direct {
         payload_phase: akita_params::CommitmentPayloadPhase::CompressedPrefix,
         relation_phase: reduced,
@@ -78,21 +79,21 @@ fn suffix_cache_gives_referenced_entry_a_second_chance() {
     let cold = memo_key(2, None);
     let mut entries = std::collections::HashMap::from([
         (
-            hot,
+            hot.clone(),
             super::MemoEntry {
                 result: super::empty_suffix_result(),
                 referenced: true,
             },
         ),
         (
-            cold,
+            cold.clone(),
             super::MemoEntry {
                 result: super::empty_suffix_result(),
                 referenced: false,
             },
         ),
     ]);
-    let mut insertion_order = VecDeque::from([hot, cold]);
+    let mut insertion_order = VecDeque::from([hot.clone(), cold.clone()]);
 
     super::evict_suffix_entry(&mut entries, &mut insertion_order);
 
@@ -301,6 +302,7 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
             4_095,
             inner.ring_dimension(),
         );
+    let successor_params = params.clone().with_decomp(4, 4096, 2, 2, 2).unwrap();
     let (terminal_params, linf_cap) =
         akita_params::TerminalFoldParams::try_from_expanded_group(params.clone())
             .expect("terminal parameters");
@@ -312,7 +314,7 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
         cost: super::ProofCost::new(1, 0, queries, 512).expect("candidate cost"),
         setup_field_elements: 1,
         folds: super::super::CandidateFoldChain::default().prepend(super::CandidateFoldStep {
-            params: std::sync::Arc::new(params.clone()),
+            params: std::sync::Arc::new(successor_params.clone()),
             input_witness_len: 1_024,
             output_witness_len: 512,
             estimated_direct_payload_bytes: 1,
@@ -328,6 +330,7 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
         }),
     };
     let state = super::SuffixState {
+        input_chunks: None,
         level: 0,
         current_witness_len: 1_024,
         current_lb: 0,
@@ -340,7 +343,7 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
     };
     let opening_layout = super::suffix_opening_layout(1_024, None).expect("opening layout");
     let incoming =
-        super::PendingQueryEdge::new(state, &opening_layout, &params, 512).expect("incoming edge");
+        super::PendingQueryEdge::new(state, &opening_layout, &params).expect("incoming edge");
     let challenge_order = policy.transcript_grinding_order().unwrap();
     let edge_queries = incoming
         .candidate_grinding_cost(&policy, challenge_order, &candidate(0))
@@ -405,6 +408,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
         relation_mode_filter: super::RelationModeFilter::All,
     };
     let state = super::SuffixState {
+        input_chunks: None,
         level: 1,
         current_witness_len: 215_104,
         current_lb: 3,
@@ -420,9 +424,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     let generated = domain
         .generate_recursive_for_opening_basis(&ctx, state, 6, &mut memo.setup_prefixes)
         .unwrap();
-    let candidates =
-        super::attach_source_moments(&ctx, state, false, &domain.opening_layout, generated.folds)
-            .unwrap();
+    let candidates = super::attach_source_moments(&ctx, state, false, generated.folds).unwrap();
     let coords = |candidate: &super::PlannedFoldCandidate| {
         let params = &candidate.params;
         [
@@ -448,6 +450,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     let high_query = find([65_536, 65_536, 32, 256, 256, 0]);
     let low_query = find([524_288, 327_680, 32, 256, 256, 0]);
     let child_state = super::SuffixState {
+        input_chunks: None,
         level: 2,
         current_witness_len: high_query.next_witness_len,
         current_lb: 6,
@@ -459,6 +462,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
         ),
     };
     let low_child_state = super::SuffixState {
+        input_chunks: None,
         level: 2,
         current_witness_len: low_query.next_witness_len,
         current_lb: 6,
@@ -483,16 +487,11 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     .unwrap();
     let child_candidate = child.payload_candidates().next().unwrap();
     let edge_queries = |candidate: &super::PlannedFoldCandidate| {
-        super::PendingQueryEdge::new(
-            state,
-            &domain.opening_layout,
-            &candidate.params,
-            candidate.next_witness_len,
-        )
-        .unwrap()
-        .candidate_grinding_cost(&policy, ctx.challenge_order, child_candidate)
-        .unwrap()
-        .expanded_query_count
+        super::PendingQueryEdge::new(state, &domain.opening_layout, &candidate.params)
+            .unwrap()
+            .candidate_grinding_cost(&policy, ctx.challenge_order, child_candidate)
+            .unwrap()
+            .expanded_query_count
     };
     assert_eq!(
         (edge_queries(high_query), edge_queries(low_query)),
@@ -502,7 +501,6 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
         super::SuffixState { level: 0, ..state },
         &key.opening_layout().unwrap(),
         &root.params,
-        state.current_witness_len,
     )
     .unwrap();
     let parent_queries = incoming
@@ -527,7 +525,6 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
             .map(|candidate| super::candidates::RawFoldCandidate {
                 params: candidate.params.clone(),
                 next_witness_len: candidate.next_witness_len,
-                opening_reduction_bytes: candidate.opening_reduction_bytes,
             })
             .into(),
     };
@@ -571,6 +568,7 @@ fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
         panic!("test preset must be adaptive");
     };
     let state = |level, dimension_ceiling| super::SuffixState {
+        input_chunks: None,
         level,
         current_witness_len: 1024,
         current_lb: 3,
@@ -614,6 +612,7 @@ fn fp32_suffix_memo_key_retains_only_the_effective_transition_ceiling() {
         panic!("test preset must be adaptive");
     };
     let state = |dimension_ceiling| super::SuffixState {
+        input_chunks: None,
         level: num_search_levels,
         current_witness_len: 1024,
         current_lb: 3,

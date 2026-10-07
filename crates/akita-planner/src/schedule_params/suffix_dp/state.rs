@@ -33,15 +33,19 @@ impl SuffixResult {
 
 /// Exact successor geometry visible to a parent fold.
 ///
-/// The parent prices only the child's outgoing commitment payload and optional
-/// Stage-3 setup-prefix payload. The child's other matrix and opening choices
-/// remain part of the retained full schedule for the canonical tie-break, but
-/// cannot affect the parent edge price.
+/// The parent prices the child's commitment and optional Stage-3 setup-prefix
+/// payloads, and uses its grinding geometry and source-block width to price
+/// the parent fold. Other matrix and opening choices remain part of the full
+/// schedule for the canonical tie-break, but cannot affect the parent edge price.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ParentObservableKey {
     outer_payload_bytes: usize,
     setup_prefix_payload_bytes: usize,
     grinding_successor: GrindingSuccessorKey,
+    /// Successor source-block coefficient width used to align multi-chunk
+    /// predecessor bodies. Retained policy-wide whenever multi-chunk folds
+    /// are enabled, including states whose predecessor has already contracted.
+    source_block_len: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -74,6 +78,9 @@ impl ParentObservableKey {
                 AkitaError::InvalidSetup("parent key is missing its terminal successor".into())
             })?;
             return Ok(Self {
+                source_block_len: (policy.chunks_at_level(0) > 1)
+                    .then(|| akita_params::FoldSuccessor::Terminal(terminal).source_block_len())
+                    .transpose()?,
                 outer_payload_bytes: 0,
                 setup_prefix_payload_bytes: 0,
                 grinding_successor: GrindingSuccessorKey::Terminal {
@@ -95,6 +102,9 @@ impl ParentObservableKey {
             ))
             .ok_or_else(|| AkitaError::InvalidSetup("outer payload byte count overflow".into()))?;
         Ok(Self {
+            source_block_len: (policy.chunks_at_level(0) > 1)
+                .then(|| akita_params::FoldSuccessor::Recursive(first).source_block_len())
+                .transpose()?,
             outer_payload_bytes,
             setup_prefix_payload_bytes:
                 akita_schedules::planner_support::stage3_payload_bytes_for_successor(
@@ -112,10 +122,12 @@ impl ParentObservableKey {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct ScheduleMemoKey {
     pub(super) level: usize,
     pub(super) current_witness_len: usize,
+    /// Immutable producer geometry, shared with child states and eviction keys.
+    pub(super) input_chunks: Option<Arc<akita_params::WitnessChunkShape>>,
     pub(super) current_lb: u32,
     pub(super) source_moment: Option<crate::response_model::SourceMomentEstimate>,
     pub(super) d_a: usize,
@@ -125,7 +137,7 @@ pub(super) struct ScheduleMemoKey {
 }
 
 impl ScheduleMemoKey {
-    const fn is_direct(self) -> bool {
+    const fn is_direct(&self) -> bool {
         self.topology.incoming_setup_prefix().is_none()
     }
 }
@@ -142,8 +154,8 @@ pub(super) struct MemoEntry {
     pub(super) referenced: bool,
 }
 
-// Completed frontier entries omit construction-only descriptors. The larger
-// quota stayed within the former peak for the measured high pressure row.
+// Completed frontier entries omit construction-only descriptors and share
+// incoming ownership shapes between the map, eviction queue, and child states.
 const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 524_288;
 // Prefix layouts create a much wider stream of one-off states than ordinary
 // suffixes. Separate quotas keep that stream from evicting direct states while
@@ -152,6 +164,66 @@ const MAX_DIRECT_SUFFIX_CACHE_ENTRIES: usize = 393_216;
 const MAX_PREFIXED_SUFFIX_CACHE_ENTRIES: usize =
     MAX_SUFFIX_SEARCH_CACHE_ENTRIES - MAX_DIRECT_SUFFIX_CACHE_ENTRIES;
 const MAX_SECOND_CHANCE_PROBES: usize = 16;
+
+#[cfg(test)]
+#[test]
+#[ignore = "manual peak-RSS measurement with both cache quotas saturated"]
+fn memo_cache_pressure() {
+    let multi = std::env::var_os("AKITA_MEMO_MULTI_CHUNK").is_some();
+    let mut memo = ScheduleMemo::new();
+    let result = empty_suffix_result();
+    for (topology, capacity) in [
+        (
+            SuffixTopology::Direct {
+                payload_phase: akita_params::CommitmentPayloadPhase::CompressedPrefix,
+                relation_phase: RingRelationPhase::QuotientPrefix,
+            },
+            MAX_DIRECT_SUFFIX_CACHE_ENTRIES,
+        ),
+        (
+            SuffixTopology::SetupPrefixed { natural_len: 64 },
+            MAX_PREFIXED_SUFFIX_CACHE_ENTRIES,
+        ),
+    ] {
+        for index in 0..capacity + 1 {
+            // Give every multi-chunk state its own allocation: even without
+            // sharing between sibling states, map/deque copies share the shape.
+            let input_chunks = multi.then(|| {
+                let mut body_lengths = [64; akita_params::MAX_WITNESS_CHUNKS];
+                body_lengths[0] += index;
+                Arc::new(akita_params::WitnessChunkShape {
+                    body_lengths,
+                    num_chunks: 8,
+                    tail_prefix_len: 0,
+                    tail_alignment: 1,
+                    tail_len: 5,
+                    tail_suffix_alignment: 1,
+                })
+            });
+            memo.insert(
+                ScheduleMemoKey {
+                    level: 1,
+                    current_witness_len: 1024 + index,
+                    input_chunks,
+                    current_lb: 3,
+                    source_moment: None,
+                    d_a: 64,
+                    d_b: 64,
+                    d_d: 64,
+                    topology,
+                },
+                Arc::clone(&result),
+                None,
+            );
+        }
+    }
+    assert_eq!(memo.len(), MAX_SUFFIX_SEARCH_CACHE_ENTRIES);
+    eprintln!(
+        "multi={multi}, memo_entries={}, key_bytes={}",
+        memo.len(),
+        std::mem::size_of::<ScheduleMemoKey>()
+    );
+}
 
 pub(super) fn evict_suffix_entry(
     entries: &mut HashMap<ScheduleMemoKey, MemoEntry>,
@@ -208,7 +280,7 @@ impl ScheduleMemo {
         result: Arc<SuffixResult>,
         diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
     ) {
-        if let Entry::Occupied(mut existing) = self.entries.entry(key) {
+        if let Entry::Occupied(mut existing) = self.entries.entry(key.clone()) {
             existing.insert(MemoEntry {
                 result,
                 referenced: true,
@@ -229,7 +301,7 @@ impl ScheduleMemo {
         if insertion_order.len() >= capacity {
             evict_suffix_entry(&mut self.entries, insertion_order);
         }
-        insertion_order.push_back(key);
+        insertion_order.push_back(key.clone());
         self.entries.insert(
             key,
             MemoEntry {
@@ -289,9 +361,10 @@ pub(crate) struct SuffixCtx<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct SuffixState {
+pub(crate) struct SuffixState<'a> {
     pub(crate) level: usize,
     pub(crate) current_witness_len: usize,
+    pub(crate) input_chunks: Option<&'a Arc<akita_params::WitnessChunkShape>>,
     pub(crate) current_lb: u32,
     pub(crate) source_moment: Option<crate::response_model::SourceMomentEstimate>,
     pub(crate) dimension_ceiling: CommitmentRingDims,
@@ -380,7 +453,7 @@ impl SuffixTopology {
     }
 }
 
-impl SuffixState {
+impl SuffixState<'_> {
     pub(super) fn memo_key(self, policy: &PlannerPolicy) -> ScheduleMemoKey {
         let memo_dimensions = match policy.ring_dimension_schedule_mode {
             crate::RingDimensionScheduleMode::AdaptiveDimension {
@@ -399,6 +472,7 @@ impl SuffixState {
         ScheduleMemoKey {
             level: self.level,
             current_witness_len: self.current_witness_len,
+            input_chunks: self.input_chunks.cloned(),
             current_lb: self.current_lb,
             source_moment: self.source_moment,
             d_a: memo_dimensions.d_a(),

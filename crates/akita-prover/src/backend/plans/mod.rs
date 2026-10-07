@@ -15,7 +15,7 @@ pub use relation::{
 pub enum FoldProbeGeometry<'a> {
     /// One ordinary, unpartitioned response.
     Sparse,
-    /// One response per canonical dyadic block range.
+    /// One response per schedule-owned block range.
     SparseChunked { chunk_ranges: &'a [Range<usize>] },
 }
 
@@ -116,11 +116,19 @@ impl<'a> ValidatedFoldProbePlan<'a> {
             .ok_or_else(|| AkitaError::InvalidInput("fold response size overflow".into()))?;
         if let FoldProbeGeometry::SparseChunked { chunk_ranges } = geometry {
             if chunk_ranges.len() < 2
+                || !chunk_ranges.len().is_power_of_two()
+                || chunk_ranges.len() > akita_params::MAX_WITNESS_CHUNKS
+                || chunk_ranges.first().is_none_or(|range| range.start != 0)
                 || chunk_ranges
-                    != akita_params::dyadic_block_ranges(expected_live_blocks, chunk_ranges.len())?
+                    .last()
+                    .is_none_or(|range| range.end != expected_live_blocks)
+                || chunk_ranges.iter().any(|range| range.start > range.end)
+                || chunk_ranges
+                    .windows(2)
+                    .any(|pair| pair[0].end != pair[1].start)
             {
                 return Err(AkitaError::InvalidInput(
-                    "chunked fold probe requires the canonical dyadic ranges".into(),
+                    "chunked fold probe requires an ordered block partition".into(),
                 ));
             }
         }

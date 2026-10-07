@@ -9,6 +9,7 @@ type LevelFrontierEntry = ([usize; 6], OnceCell<Vec<u8>>, super::PlannedFoldCand
 
 pub(super) fn level_candidates(
     opening_layout: &OpeningClaimsLayout,
+    incoming_chunk_padding: bool,
     candidates: Vec<super::PlannedFoldCandidate>,
 ) -> Result<Vec<super::PlannedFoldCandidate>, AkitaError> {
     let mut frontier: Vec<LevelFrontierEntry> = Vec::new();
@@ -55,6 +56,15 @@ pub(super) fn level_candidates(
                     ) == std::mem::discriminant(
                         &candidate_entry.params.inner().matrix.security_route(),
                     )
+                    // The consumer's block width affects its predecessor's
+                    // padded output even when this consumer has one owner.
+                    && (!incoming_chunk_padding
+                        || best_candidate.params.blocks().positions_per_block
+                            == candidate_entry.params.blocks().positions_per_block)
+                    && (best_candidate.params.witness_chunk.num_chunks == 1
+                        || (best_candidate.params.blocks().positions_per_block
+                            == candidate_entry.params.blocks().positions_per_block
+                            && best_candidate.chunk_shape == candidate_entry.chunk_shape))
                     && best_candidate.next_witness_len == candidate_entry.next_witness_len
                     && best_candidate.next_source_moment == candidate_entry.next_source_moment
                     && {

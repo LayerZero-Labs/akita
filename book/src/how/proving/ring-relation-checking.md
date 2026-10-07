@@ -426,7 +426,7 @@ For compressed payloads, retain the notation $\boldsymbol\xi_{F,\ell}$ and
 $\boldsymbol\xi_{H,\ell}$ for the two chains' compression digits at layer
 $\ell$. Write $\hat{\mathbf r}_{F,\ell}$ and
 $\hat{\mathbf r}_{H,\ell}$ for that layer's quotient digits. The physical
-order, with zero-alignment ranges suppressed, is
+order, with alignment ranges suppressed, is
 
 $$
 \begin{aligned}
@@ -446,7 +446,12 @@ It keeps the compression digits and their restricted $\{-1,0\}$ check when
 the payload is compressed. `WitnessLayout` derives the live ranges and any
 required alignment for the selected mode. Missing quotients have no placeholder
 coordinates. They contribute no range-check work or successor commitment
-input. Raw mode has no compression-alignment ranges.
+input. On multi-chunk folds, both payload modes align each chunk's Z/E/T body
+to the successor's source-block boundary. The semantic T range ends before
+the alignment gap. The canonical prover zero fills these gaps; verification
+allows in-range filler, subject to all later response checks, as described in
+[alignment coordinates](../security.md#alignment-coordinates).
+Single-chunk folds keep the contiguous, unpadded Z/E/T body.
 
 For coefficient packing, the shared ordinary quotient segment includes the
 consistency-row slot for the digit-decomposed coordinate planes of

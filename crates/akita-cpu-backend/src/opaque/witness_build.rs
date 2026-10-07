@@ -1,3 +1,5 @@
+#[cfg(test)]
+pub(crate) mod alignment_gap_tests;
 mod assembly;
 mod coefficient_packing;
 mod commitment_material;

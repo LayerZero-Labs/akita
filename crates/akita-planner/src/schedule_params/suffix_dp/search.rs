@@ -2,7 +2,7 @@ use super::*;
 use crate::schedule_params::ReducedTransitionRejection;
 
 struct OpeningSearch<'a> {
-    state: SuffixState,
+    state: SuffixState<'a>,
     depth: usize,
     open_log_basis: u32,
     opening_layout: &'a OpeningClaimsLayout,
@@ -12,6 +12,7 @@ struct OpeningSearch<'a> {
 }
 
 struct ChildPlan<'a> {
+    chunk_shape: Option<akita_params::WitnessChunkShape>,
     params: &'a CommittedGroupParams,
     next_witness_len: usize,
     next_source_moment: Option<crate::response_model::SourceMomentEstimate>,
@@ -26,7 +27,7 @@ struct PlannedChildren {
     offloaded: Option<Arc<SuffixResult>>,
 }
 
-fn adaptation_guide_allows_state(ctx: &SuffixCtx<'_>, state: SuffixState) -> bool {
+fn adaptation_guide_allows_state(ctx: &SuffixCtx<'_>, state: SuffixState<'_>) -> bool {
     let Some(guide) = ctx.adaptation_guide else {
         return true;
     };
@@ -48,13 +49,10 @@ fn plan_candidate_children(
     plan: ChildPlan<'_>,
 ) -> Result<PlannedChildren, AkitaError> {
     let state = search.state;
-    let Some(child_query_search) = search.query_search.child(
-        ctx,
-        state,
-        search.opening_layout,
-        plan.params,
-        plan.next_witness_len,
-    )?
+    let Some(child_query_search) =
+        search
+            .query_search
+            .child(ctx, state, search.opening_layout, plan.params)?
     else {
         return Ok(PlannedChildren {
             direct: None,
@@ -67,6 +65,7 @@ fn plan_candidate_children(
             .get(state.level)
             .is_some_and(|successor| successor.params.setup_prefix().is_some())
     });
+    let input_chunks = plan.chunk_shape.map(Arc::new);
     let direct_child = if guided_successor_is_offloaded == Some(true)
         || !plan.direct_edge_is_admissible
         || plan.prune_direct_edge
@@ -79,6 +78,7 @@ fn plan_candidate_children(
             ctx,
             memo,
             SuffixState {
+                input_chunks: input_chunks.as_ref(),
                 level: state.level + 1,
                 current_witness_len: plan.next_witness_len,
                 current_lb: search.open_log_basis,
@@ -119,6 +119,7 @@ fn plan_candidate_children(
             ctx,
             memo,
             SuffixState {
+                input_chunks: input_chunks.as_ref(),
                 level: state.level + 1,
                 current_witness_len: plan.next_witness_len,
                 current_lb: search.open_log_basis,
@@ -147,6 +148,7 @@ fn price_planned_fold_candidate(
 ) -> Result<(), AkitaError> {
     let state = search.state;
     let PlannedFoldCandidate {
+        chunk_shape,
         params,
         next_witness_len,
         opening_reduction_bytes: _,
@@ -222,6 +224,7 @@ fn price_planned_fold_candidate(
         memo,
         search,
         ChildPlan {
+            chunk_shape,
             params: &params,
             next_witness_len,
             next_source_moment,
@@ -237,7 +240,6 @@ fn price_planned_fold_candidate(
         search.opening_layout,
         LevelCandidateEdge {
             params: &params,
-            next_witness_len,
             natural_setup_field_len: natural_len,
             require_child_fold: search.require_child_fold,
         },
@@ -272,7 +274,7 @@ fn finish_state(retains_setup_projection: bool, frontiers: StateFrontiers) -> Su
 pub(super) fn process_candidate_batch(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
-    state: SuffixState,
+    state: SuffixState<'_>,
     depth: usize,
     open_log_basis: u32,
     opening_layout: &OpeningClaimsLayout,
@@ -288,26 +290,21 @@ pub(super) fn process_candidate_batch(
         .saturating_add(generated.folds.len());
     let terminal_candidate_count = generated.terminal.len();
     for candidate in generated.terminal {
-        let natural_len = active_setup_field_len(&candidate.params, opening_layout)?;
-        price_terminal_candidate(
-            ctx,
-            state,
-            query_search,
-            &candidate.params,
-            candidate.opening_reduction_bytes,
-            natural_len,
-            frontiers,
-        )?;
+        let natural_len = active_setup_field_len(&candidate, opening_layout)?;
+        price_terminal_candidate(ctx, state, query_search, &candidate, natural_len, frontiers)?;
     }
-    let candidates_with_source =
-        attach_source_moments(ctx, state, is_root_level, opening_layout, generated.folds)?;
+    let candidates_with_source = attach_source_moments(ctx, state, is_root_level, generated.folds)?;
     // Complete-root candidates are traversed in exact lower-bound order.
     // Recursive states do not have that global admission rule and retain
     // local Pareto pruning.
     let candidates = if is_root_level || matches!(query_search, QuerySearch::Restricted(_)) {
         candidates_with_source
     } else {
-        prune::level_candidates(opening_layout, candidates_with_source)?
+        prune::level_candidates(
+            opening_layout,
+            state.input_chunks.is_some(),
+            candidates_with_source,
+        )?
     };
     if let Some(diagnostics) = ctx.diagnostics {
         diagnostics.record_candidates(
@@ -321,16 +318,19 @@ pub(super) fn process_candidate_batch(
     let incoming_setup_prefix = state.topology.incoming_setup_prefix();
     let guide_scope = GuideScope::for_state(ctx.policy, is_root_level, incoming_setup_prefix);
     let traversal = candidate_traversal(ctx.policy, guide_scope, opening_layout, candidates)?;
-    let search = OpeningSearch {
-        state,
-        depth,
-        open_log_basis,
-        opening_layout,
-        require_child_fold,
-        guide_scope,
-        query_search: query_search.clone(),
-    };
     for (guide, candidate) in traversal {
+        let opening_layout = candidate
+            .params
+            .opening_layout_for_final_group(candidate.params.group())?;
+        let search = OpeningSearch {
+            state,
+            depth,
+            open_log_basis,
+            opening_layout: &opening_layout,
+            require_child_fold,
+            guide_scope,
+            query_search: query_search.clone(),
+        };
         price_planned_fold_candidate(ctx, memo, &search, guide, candidate, frontiers)?;
     }
     Ok(())
@@ -341,7 +341,7 @@ pub(super) fn process_candidate_batch(
 pub(crate) fn derive_selected_suffix_schedule(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
-    state: SuffixState,
+    state: SuffixState<'_>,
     depth: usize,
     query_search: QuerySearch,
 ) -> Result<Arc<SuffixResult>, AkitaError> {
