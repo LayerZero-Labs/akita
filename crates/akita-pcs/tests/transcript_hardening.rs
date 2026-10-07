@@ -20,7 +20,7 @@ use common::mutations::{
 };
 use common::*;
 use jolt_field::One;
-use jolt_transcript::{ProverTranscript, VerifierTranscript};
+use jolt_transcript::{Channel, ProtocolId, ProverTranscript, VerifierTranscript};
 
 const NUM_VARS: usize = 14;
 const LABEL: &[u8] = b"hardening/onehot/native";
@@ -103,6 +103,31 @@ fn stream_binds_session_statement_basis_and_eof() {
         #[cfg(feature = "logging")]
         let verifier_events = verifier.events().to_vec();
         verifier.finish().expect("honest proof is consumed exactly");
+
+        // The caller's transcript is bound: the same proof under another
+        // protocol id, or after a caller prefix the prover never absorbed,
+        // rejects.
+        const OTHER_PROTOCOL: ProtocolId = ProtocolId::new::<AkitaSponge>("akita-pcs/other-caller");
+        for (protocol, prefix) in [
+            (&OTHER_PROTOCOL, None),
+            (&PROOF_STREAM_PROTOCOL, Some(&b"caller prefix"[..])),
+        ] {
+            let mut verifier = VerifierTranscript::<AkitaSponge>::new(protocol, LABEL, &proof);
+            if let Some(prefix) = prefix {
+                verifier.public_bytes(prefix);
+            }
+            let verified = scheme.verifier(verifier_setup.clone()).and_then(|akita| {
+                akita.batched_verify(
+                    &mut verifier,
+                    verify_input::<OneHotCfg>(&point, &[opening], &commitment, scheme.schedules()),
+                    BasisMode::Lagrange,
+                )
+            });
+            assert!(
+                verified.is_err() || verifier.finish().is_err(),
+                "a proof must not verify on a different caller transcript"
+            );
+        }
         #[cfg(feature = "logging")]
         {
             assert!(!prover_events.is_empty());

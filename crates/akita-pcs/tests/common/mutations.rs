@@ -16,23 +16,29 @@ pub(crate) struct MessageRange {
 
 /// Every prover message in `events`, in transcript order.
 ///
-/// Consecutive messages at one site (a bounded payload's length and body) get
-/// increasing ordinals so each stays an independent mutation target.
+/// Each message's ordinal counts the earlier messages at its site anywhere in
+/// the proof, so every message (a bounded payload's length and body, or two
+/// messages at one site with a squeeze between them) stays an independent
+/// mutation target.
 pub(crate) fn message_ranges(events: &[TranscriptEvent]) -> Vec<MessageRange> {
     let mut messages: Vec<MessageRange> = Vec::new();
-    let mut previous: Option<(ProtocolSiteId, u32)> = None;
+    let mut counts: Vec<(ProtocolSiteId, u32)> = Vec::new();
     for event in events {
         let Some(range) = event.narg.clone() else {
-            previous = None;
             continue;
         };
         assert_eq!(event.op, TranscriptOp::Message);
         let site = ProtocolSiteId::from_bytes(event.site.0);
-        let ordinal = match previous {
-            Some((last, ordinal)) if last == site => ordinal + 1,
-            _ => 0,
+        let ordinal = match counts.iter_mut().find(|(seen, _)| *seen == site) {
+            Some((_, count)) => {
+                *count += 1;
+                *count
+            }
+            None => {
+                counts.push((site, 0));
+                0
+            }
         };
-        previous = Some((site, ordinal));
         messages.push(MessageRange {
             site,
             ordinal,

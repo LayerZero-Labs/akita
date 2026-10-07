@@ -851,7 +851,7 @@ mod tests {
     }
 
     #[test]
-    fn arithmetic_cutover_preserves_proof_and_challenges() {
+    fn arithmetic_proof_and_challenges_match_their_snapshot() {
         fn hex(bytes: &[u8]) -> String {
             bytes.iter().map(|byte| format!("{byte:02x}")).collect()
         }
@@ -862,8 +862,9 @@ mod tests {
                 .collect::<Vec<_>>())
         }
 
-        // Frozen at the spongefish-state port; the round bodies before the first
-        // challenge are unchanged from Akita cad9f221.
+        // A snapshot taken by this code at the spongefish-state port, not
+        // independent ground truth: it fails on any change to the argument
+        // string or the challenges, which is a proof-format change.
         let (evaluations, claim) = fixture();
         let mut standard = DenseInstance {
             evaluations,

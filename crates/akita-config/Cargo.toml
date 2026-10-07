@@ -28,6 +28,7 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [
   "test-support",
 ] }
+rand_core = "0.6"
 serde_json = "1"
 
 [lints]
