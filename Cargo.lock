@@ -62,6 +62,7 @@ dependencies = [
  "akita-serialization",
  "akita-types",
  "jolt-field",
+ "rand_core 0.6.4",
  "serde_json",
 ]
 
@@ -899,7 +900,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=c93d6f0899661b9f1ff907bf3dea30386aaf59b6#c93d6f0899661b9f1ff907bf3dea30386aaf59b6"
+source = "git+https://github.com/a16z/jolt?rev=9d2eb0f211ae7c35f2c765002e7ece72c1dae424#9d2eb0f211ae7c35f2c765002e7ece72c1dae424"
 dependencies = [
  "cc",
  "num-traits",
@@ -913,7 +914,7 @@ dependencies = [
 [[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=c93d6f0899661b9f1ff907bf3dea30386aaf59b6#c93d6f0899661b9f1ff907bf3dea30386aaf59b6"
+source = "git+https://github.com/a16z/jolt?rev=9d2eb0f211ae7c35f2c765002e7ece72c1dae424#9d2eb0f211ae7c35f2c765002e7ece72c1dae424"
 dependencies = [
  "jolt-field",
  "jolt-utils",
@@ -927,7 +928,7 @@ dependencies = [
 [[package]]
 name = "jolt-transcript"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=c93d6f0899661b9f1ff907bf3dea30386aaf59b6#c93d6f0899661b9f1ff907bf3dea30386aaf59b6"
+source = "git+https://github.com/a16z/jolt?rev=9d2eb0f211ae7c35f2c765002e7ece72c1dae424#9d2eb0f211ae7c35f2c765002e7ece72c1dae424"
 dependencies = [
  "jolt-field",
  "rand 0.8.8",
@@ -939,7 +940,7 @@ dependencies = [
 [[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=c93d6f0899661b9f1ff907bf3dea30386aaf59b6#c93d6f0899661b9f1ff907bf3dea30386aaf59b6"
+source = "git+https://github.com/a16z/jolt?rev=9d2eb0f211ae7c35f2c765002e7ece72c1dae424#9d2eb0f211ae7c35f2c765002e7ece72c1dae424"
 dependencies = [
  "num-traits",
 ]

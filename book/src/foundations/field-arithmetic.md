@@ -217,11 +217,11 @@ The field code is supplied by Akita's pinned `jolt-field` dependency.
 
 | Property | Primary source |
 | --- | --- |
-| Registered pseudo-Mersenne types and exact rejection sampling | [`solinas/mod.rs`](https://github.com/a16z/jolt/blob/c93d6f0899661b9f1ff907bf3dea30386aaf59b6/crates/jolt-field/src/solinas/mod.rs) |
-| 32- and 64-bit word arithmetic | [`solinas/word.rs`](https://github.com/a16z/jolt/blob/c93d6f0899661b9f1ff907bf3dea30386aaf59b6/crates/jolt-field/src/solinas/word.rs) |
-| 128-bit two-limb arithmetic and fused multiply-add | [`solinas/fp128.rs`](https://github.com/a16z/jolt/blob/c93d6f0899661b9f1ff907bf3dea30386aaf59b6/crates/jolt-field/src/solinas/fp128.rs) |
-| Unreduced products and accumulators | [`solinas/unreduced.rs`](https://github.com/a16z/jolt/blob/c93d6f0899661b9f1ff907bf3dea30386aaf59b6/crates/jolt-field/src/solinas/unreduced.rs) |
-| Extension arithmetic | [`solinas/ext.rs`](https://github.com/a16z/jolt/blob/c93d6f0899661b9f1ff907bf3dea30386aaf59b6/crates/jolt-field/src/solinas/ext.rs) |
+| Registered pseudo-Mersenne types and exact rejection sampling | [`solinas/mod.rs`](https://github.com/a16z/jolt/blob/9d2eb0f211ae7c35f2c765002e7ece72c1dae424/crates/jolt-field/src/solinas/mod.rs) |
+| 32- and 64-bit word arithmetic | [`solinas/word.rs`](https://github.com/a16z/jolt/blob/9d2eb0f211ae7c35f2c765002e7ece72c1dae424/crates/jolt-field/src/solinas/word.rs) |
+| 128-bit two-limb arithmetic and fused multiply-add | [`solinas/fp128.rs`](https://github.com/a16z/jolt/blob/9d2eb0f211ae7c35f2c765002e7ece72c1dae424/crates/jolt-field/src/solinas/fp128.rs) |
+| Unreduced products and accumulators | [`solinas/unreduced.rs`](https://github.com/a16z/jolt/blob/9d2eb0f211ae7c35f2c765002e7ece72c1dae424/crates/jolt-field/src/solinas/unreduced.rs) |
+| Extension arithmetic | [`solinas/ext.rs`](https://github.com/a16z/jolt/blob/9d2eb0f211ae7c35f2c765002e7ece72c1dae424/crates/jolt-field/src/solinas/ext.rs) |
 | Production field selection | `crates/akita-config/src/proof_optimized/` |
 
 A field change must preserve canonical encoding, exact sampling, centered

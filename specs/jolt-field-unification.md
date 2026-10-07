@@ -401,12 +401,12 @@ and Fiat-Shamir schedule while bounding decoder allocation from trusted shape.
 
 Akita consumes `jolt-field` from either a standalone registry release or an
 immutable full upstream Jolt Git revision. During stacked review it pins
-upstream commit `c93d6f0899661b9f1ff907bf3dea30386aaf59b6`, the merge commit of
+upstream commit `9d2eb0f211ae7c35f2c765002e7ece72c1dae424`, the merge commit of
 Jolt PR #1942 on Jolt `main`. That revision includes the merged field stack,
 kernel work, and coefficient access from Jolt PRs #1792, #1794, and #1810.
 
 Audit delta from the previous pin `e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c`
-to `c93d6f0899661b9f1ff907bf3dea30386aaf59b6` in `crates/jolt-field`:
+to `9d2eb0f211ae7c35f2c765002e7ece72c1dae424` in `crates/jolt-field`:
 
 - Jolt PR #1799 makes the `from_canonical_*` constructors `unsafe`, with the
   existing `x < P` precondition as the safety contract; their behavior is

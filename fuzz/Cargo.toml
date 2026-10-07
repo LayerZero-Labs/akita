@@ -8,14 +8,14 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c93d6f0899661b9f1ff907bf3dea30386aaf59b6", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9d2eb0f211ae7c35f2c765002e7ece72c1dae424", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 akita-serialization = { path = "../crates/akita-serialization" }
 akita-error = { path = "../crates/akita-error" }
 akita-sumcheck = { path = "../crates/akita-sumcheck" }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c93d6f0899661b9f1ff907bf3dea30386aaf59b6", default-features = false, features = [
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9d2eb0f211ae7c35f2c765002e7ece72c1dae424", default-features = false, features = [
   "transcript-blake2b",
 ] }
 libfuzzer-sys = "0.4.12"
