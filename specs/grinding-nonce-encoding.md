@@ -976,9 +976,9 @@ choice if the sole objective is the smallest fixed worst-case nonce section.
 
 Current PR:
 
-- `jolt-transcript` (`grinding.rs`, `prover.rs`, `verifier.rs`, `preview.rs`;
-  originally `akita-transcript`) — unsigned LEB128 codec, preview, commit,
-  receipt, absorption, and challenge extraction;
+- `jolt-transcript` (`grinding.rs`, `nonce.rs`, `fork.rs`, `prover.rs`,
+  `verifier.rs`; originally `akita-transcript`) — unsigned LEB128 codec,
+  seeded-fork search, nonce message, receipt, and challenge extraction;
 - `crates/akita-types/src/transcript_grinding/replay.rs` — public plan
   cursor and verifier checks;
 - `crates/akita-params/src/transcript_grinding/plan.rs` — canonical plan

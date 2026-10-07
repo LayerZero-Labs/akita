@@ -48,27 +48,38 @@ not establish that agreement.
 ## Sparse fold challenges
 
 A fold needs one sparse ring challenge for every `(claim, live block)` pair.
-Akita draws them in claim-major order. It performs only one live transcript
-squeeze per commitment group, while still giving each pair an independently
-forkable random-oracle coordinate.
+Akita draws them in claim-major order from a seeded fork of the live
+transcript, so the prover's search over fold responses never copies or rewinds
+the transcript, while each pair still gets an independently forkable
+random-oracle coordinate.
+
+### The fold-response fork
+
+At each fold-response site, the live transcript squeezes one 32-byte seed. The
+prover tries counters $c$ in $[0, 4096)$; each candidate's challenges come from
+the fork keyed by the seed and $c$, a fresh sponge that absorbs the fork tag,
+the seed, and `LE32(c)`. The prover sends the first counter whose fold response
+meets its bounds as a canonical unsigned LEB128 nonce message, so the live
+transcript absorbs exactly those proof bytes before any later challenge. The
+verifier squeezes the same seed, receives and range-checks the counter, and
+rebuilds the same fork.
 
 ### The group root
 
-Before the squeeze, the transcript absorbs the complete public draw context:
+For each commitment group, in group order, the fork absorbs the complete public
+draw context:
 
 - group index, number of live blocks, and number of claims;
 - total number of challenge coordinates;
 - challenge ring dimension;
 - counts of coefficients at magnitude 1 and magnitude 2;
-- the shared fold-response grinding nonce;
 - the coefficient-packing method domain and challenge-subring dimension, when
   coefficient packing is selected; and
 - the operator-norm rejection policy, when the selected L2 route requires it.
 
-The transcript then squeezes one 32-byte group root. Evaluation trace preserves
-its established domain encoding. Coefficient packing adds a distinct method
-domain so the same transcript state cannot reinterpret a draw under the two
-opening methods.
+The fork then squeezes the group's 32-byte root. Evaluation trace preserves its
+established domain encoding. Coefficient packing adds a distinct method domain
+so the same fork cannot reinterpret a draw under the two opening methods.
 
 ### One indexed stream per coordinate
 
@@ -85,12 +96,11 @@ This gives the extraction argument the required fork: one challenge can change
 while every other challenge and the surrounding transcript remain fixed.
 
 Expanding the whole challenge vector from one shared cursor would give a
-different oracle dependency. Each accepted nonce has one canonical unsigned
-LEB128 representation: those exact proof bytes are absorbed into the live
-transcript before the challenge context is derived. There is no second compact
-nonce representation or separate nonce absorption.
+different oracle dependency. The accepted counter has one canonical unsigned
+LEB128 representation, and the fork it keys is a function of the transcript's
+seed and those exact proof bytes; there is no second counter encoding.
 
-The indexed readers are an expansion of one transcript root, not additional
+The indexed readers are an expansion of one group root, not additional live
 Fiat--Shamir squeezes and not additional proof data.
 
 ### Positions, magnitudes, and signs
@@ -120,14 +130,16 @@ continues reading the same coordinate stream until one is accepted. The search
 is capped at 4096 candidates.
 
 This rejection rule is part of the public challenge method. The policy and
-threshold are bound before the group root is squeezed, and the verifier repeats
+threshold are bound into the fork before the group root is squeezed, and the verifier repeats
 the same deterministic search. Coefficient-packing folds use the L-infinity
 security route and reject an operator-norm policy.
 
 Implementation:
 
-- `crates/akita-challenges/src/fold_draw.rs` binds the group context and owns
-  the single transcript squeeze.
+- `crates/akita-challenges/src/fold_draw.rs` binds the group context into the
+  fold-response fork and squeezes each group root from it.
+- `crates/akita-types/src/transcript_grinding/replay.rs` squeezes the fork seed,
+  sends or receives the counter, and builds the fork for both roles.
 - `crates/akita-challenges/src/sampler/xof.rs` defines the indexed SHAKE256
   stream and unbiased bounded draws.
 - `crates/akita-challenges/src/sampler/position_sample.rs` implements the

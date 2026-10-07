@@ -340,10 +340,12 @@ transcript also binds the method, challenge subring dimension, challenge
 family, group order, claim count, and block count. After challenge folding, the
 prover binds `Q_pack` and the next witness before sampling `alpha`.
 
-Both opening methods squeeze one dedicated 32-byte root per commitment group.
-They then derive coordinate `(claim, block)` from a fresh SHAKE256 stream whose
-input is exactly that root followed by the claim-major coordinate index as a
-little-endian `u64`. The fixed widths make this encoding unambiguous. The
+Both opening methods squeeze one dedicated 32-byte root per commitment group
+from the fold-response fork, the sponge keyed by a seed squeezed from the live
+transcript and the accepted counter, which is a proof message. They then derive
+coordinate `(claim, block)` from a fresh SHAKE256 stream whose input is exactly
+that root followed by the claim-major coordinate index as a little-endian
+`u64`. The fixed widths make this encoding unambiguous. The
 coordinate streams do not mutate the live transcript. Sequential and parallel
 samplers therefore return the same ordered vector, and one coordinate can be
 forked without changing any other coordinate.
@@ -353,8 +355,8 @@ condition used for unit pairwise challenge differences. This fact belongs to
 the field and challenge security review. It is not planner metadata and does
 not require a per-schedule certificate.
 
-For a coordinatewise fork, fix the transcript prefix, group root, shared
-fold-response nonce, and all coordinate-oracle answers except one. If both
+For a coordinatewise fork, fix the transcript prefix, fork seed, accepted
+counter, group root, and all coordinate-oracle answers except one. If both
 forks yield accepting transcripts, their challenge difference is zero outside
 that coordinate. The production LS18 condition makes every nonzero
 sparse-challenge difference a unit, so subtracting the accepted relations
