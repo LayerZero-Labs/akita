@@ -116,54 +116,47 @@ pub(crate) fn dimension_candidates(
     ceiling: CommitmentRingDims,
 ) -> Result<Vec<CommitmentRingDims>, AkitaError> {
     ceiling.validate_role_projection()?;
-    let candidates = match policy.ring_dimension_schedule_mode {
-        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-            vec![CommitmentRingDims::uniform(ring_dimension)]
-        }
-        crate::RingDimensionScheduleMode::AdaptiveDimension {
-            num_search_levels,
-            suffix_dimensions,
-            potential_a_dimensions,
-            potential_b_dimensions,
-            potential_d_dimensions,
-        } => {
-            if level >= num_search_levels {
-                let Some(maximum_suffix_dimension) =
-                    suffix_dimension_ceiling(suffix_dimensions, ceiling)
-                else {
-                    return Ok(Vec::new());
-                };
-                suffix_dimensions
-                    .iter()
-                    .copied()
-                    .take_while(|&dimension| dimension <= maximum_suffix_dimension)
-                    .map(CommitmentRingDims::uniform)
-                    .collect()
-            } else {
-                let mut candidates = Vec::new();
-                for &inner in potential_a_dimensions {
-                    if inner > ceiling.d_a() {
+    let crate::RingDimensionSchedule {
+        num_search_levels,
+        suffix_dimensions,
+        potential_a_dimensions,
+        potential_b_dimensions,
+        potential_d_dimensions,
+    } = policy.ring_dimension_schedule;
+    let candidates = if level >= num_search_levels {
+        let Some(maximum_suffix_dimension) = suffix_dimension_ceiling(suffix_dimensions, ceiling)
+        else {
+            return Ok(Vec::new());
+        };
+        suffix_dimensions
+            .iter()
+            .copied()
+            .take_while(|&dimension| dimension <= maximum_suffix_dimension)
+            .map(CommitmentRingDims::uniform)
+            .collect()
+    } else {
+        let mut candidates = Vec::new();
+        for &inner in potential_a_dimensions {
+            if inner > ceiling.d_a() {
+                continue;
+            }
+            for &outer in potential_b_dimensions {
+                if outer > ceiling.d_b() || !inner.is_multiple_of(outer) {
+                    continue;
+                }
+                for &opening in potential_d_dimensions {
+                    if opening > ceiling.d_d() || !inner.is_multiple_of(opening) {
                         continue;
                     }
-                    for &outer in potential_b_dimensions {
-                        if outer > ceiling.d_b() || !inner.is_multiple_of(outer) {
-                            continue;
-                        }
-                        for &opening in potential_d_dimensions {
-                            if opening > ceiling.d_d() || !inner.is_multiple_of(opening) {
-                                continue;
-                            }
-                            candidates.push(CommitmentRingDims {
-                                inner,
-                                outer,
-                                opening,
-                            });
-                        }
-                    }
+                    candidates.push(CommitmentRingDims {
+                        inner,
+                        outer,
+                        opening,
+                    });
                 }
-                candidates
             }
         }
+        candidates
     };
     Ok(candidates)
 }
@@ -171,30 +164,26 @@ pub(crate) fn dimension_candidates(
 pub(crate) fn initial_dimension_ceiling(
     policy: &PlannerPolicy,
 ) -> Result<CommitmentRingDims, AkitaError> {
-    match policy.ring_dimension_schedule_mode {
-        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-            Ok(CommitmentRingDims::uniform(ring_dimension))
-        }
-        crate::RingDimensionScheduleMode::AdaptiveDimension {
-            potential_a_dimensions,
-            potential_b_dimensions,
-            potential_d_dimensions,
-            ..
-        } => Ok(CommitmentRingDims {
-            inner: potential_a_dimensions
-                .last()
-                .copied()
-                .ok_or_else(|| AkitaError::InvalidSetup("adaptive A domain is empty".into()))?,
-            outer: potential_b_dimensions
-                .last()
-                .copied()
-                .ok_or_else(|| AkitaError::InvalidSetup("adaptive B domain is empty".into()))?,
-            opening: potential_d_dimensions
-                .last()
-                .copied()
-                .ok_or_else(|| AkitaError::InvalidSetup("adaptive D domain is empty".into()))?,
-        }),
-    }
+    let crate::RingDimensionSchedule {
+        potential_a_dimensions,
+        potential_b_dimensions,
+        potential_d_dimensions,
+        ..
+    } = policy.ring_dimension_schedule;
+    Ok(CommitmentRingDims {
+        inner: potential_a_dimensions
+            .last()
+            .copied()
+            .ok_or_else(|| AkitaError::InvalidSetup("adaptive A domain is empty".into()))?,
+        outer: potential_b_dimensions
+            .last()
+            .copied()
+            .ok_or_else(|| AkitaError::InvalidSetup("adaptive B domain is empty".into()))?,
+        opening: potential_d_dimensions
+            .last()
+            .copied()
+            .ok_or_else(|| AkitaError::InvalidSetup("adaptive D domain is empty".into()))?,
+    })
 }
 
 fn suffix_dimension_ceiling(
@@ -212,11 +201,7 @@ fn suffix_dimension_ceiling(
 #[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) const ADAPTIVE_SUFFIX_RING_DIMENSION: usize = 64;
 
-/// Explicit A/B/D dimensions admitted by mixed-D planner search.
-///
-/// The planner policy's uniform ring dimension defines only the implicit
-/// singleton domain used by [`crate::find_schedule`]. Mixed-dimension search supplies
-/// this explicit set of schedule-owned A/B/D tuples.
+/// Explicit A/B/D tuples used to construct adaptive planner test domains.
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RingDimensionSearchDomain {
@@ -245,20 +230,9 @@ impl RingDimensionSearchDomain {
         Ok(Self { candidates })
     }
 
-    /// Construct the explicit singleton domain used by a uniform policy.
-    #[cfg(feature = "catalog-gen")]
-    pub(crate) fn uniform(ring_dimension: usize) -> Result<Self, AkitaError> {
-        Self::new([CommitmentRingDims::uniform(ring_dimension)])
-    }
-
     /// Canonically ordered admitted A/B/D tuples.
     pub(crate) fn candidates(&self) -> &[CommitmentRingDims] {
         &self.candidates
-    }
-
-    #[cfg(feature = "catalog-gen")]
-    pub(crate) fn validate_for_policy(&self, policy: &PlannerPolicy) -> Result<(), AkitaError> {
-        akita_schedules::planner_support::validate_policy(policy)
     }
 }
 
@@ -619,9 +593,7 @@ pub(crate) fn prune_locally_unprofitable_slices(
     opening_layout: &OpeningClaimsLayout,
     candidates: Vec<CommittedGroupParams>,
 ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
-    if policy.selection_policy == crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5
-        || candidates.len() <= 1
-    {
+    if candidates.len() <= 1 {
         return Ok(candidates);
     }
     let mut best_setup = None;
@@ -634,7 +606,6 @@ pub(crate) fn prune_locally_unprofitable_slices(
             crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
                 padded_setup_prefix_len(level_setup_field_elements(&params)?)
             }
-            crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5 => unreachable!(),
         };
         match best_setup.map(|best| setup_score.cmp(&best)) {
             None | Some(std::cmp::Ordering::Less) => {

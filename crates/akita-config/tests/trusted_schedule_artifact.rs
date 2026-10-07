@@ -23,8 +23,8 @@ impl CommitmentConfig for CountingDense {
         fp128::Dense::schedule_family_name()
     }
 
-    const RING_DIMENSION_SCHEDULE_MODE: akita_config::RingDimensionScheduleMode =
-        fp128::Dense::RING_DIMENSION_SCHEDULE_MODE;
+    const RING_DIMENSION_SCHEDULE: akita_config::RingDimensionSchedule =
+        fp128::Dense::RING_DIMENSION_SCHEDULE;
     const EXT_DEGREE: usize = fp128::Dense::EXT_DEGREE;
 
     fn decomposition() -> DecompositionParams {

@@ -22,7 +22,7 @@ impl IncomingWidthFixture {
         // A small root with many live blocks makes eight large, equal witness
         // bodies. The two consumers emit equal-length witnesses, but a wider
         // consumer adds enough producer padding to overturn its local dominance.
-        let mut policy = crate::policy::direct_only_policy(policy_of::<OneHot>());
+        let mut policy = policy_of::<OneHot>();
         policy.claim_ext_degree = 1;
         policy.opening_basis_range = (2, 2);
         policy.witness_chunk = akita_params::ChunkedWitnessCfg {
@@ -31,10 +31,14 @@ impl IncomingWidthFixture {
         };
         policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
         let dimensions = CommitmentRingDims::uniform(64);
-        policy.ring_dimension_schedule_mode =
-            crate::RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
-        policy.selection_policy =
-            crate::SelectionPolicyId::for_policy(false, policy.ring_dimension_schedule_mode);
+        policy.ring_dimension_schedule = crate::RingDimensionSchedule {
+            num_search_levels: 2,
+            suffix_dimensions: &[64],
+            potential_a_dimensions: &[64],
+            potential_b_dimensions: &[64],
+            potential_d_dimensions: &[64],
+        };
+        policy.selection_policy = crate::SelectionPolicyId::for_policy(false);
         akita_schedules::planner_support::validate_policy(&policy).unwrap();
         let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
         let opening_layout = key.opening_layout().unwrap();
@@ -526,13 +530,15 @@ fn contracting_chunk_search_matches_unpruned_complete_objective() {
             num_chunks,
             num_activated_levels: 1,
         };
-        policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
-            ring_dimension: 256,
+        policy.ring_dimension_schedule = crate::RingDimensionSchedule {
+            num_search_levels: 2,
+            suffix_dimensions: &[256],
+            potential_a_dimensions: &[256],
+            potential_b_dimensions: &[256],
+            potential_d_dimensions: &[256],
         };
-        policy.selection_policy = crate::SelectionPolicyId::for_policy(
-            policy.recursive_setup_planning,
-            policy.ring_dimension_schedule_mode,
-        );
+        policy.selection_policy =
+            crate::SelectionPolicyId::for_policy(policy.recursive_setup_planning);
         policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
         policy.inner_basis_range.1 = policy.inner_basis_range.0;
         let key = PolynomialGroupLayout::singleton(20);
@@ -585,13 +591,15 @@ fn contracting_chunk_pruning_preserves_consumer_widths_in_both_orders() {
             num_chunks,
             num_activated_levels: 1,
         };
-        policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
-            ring_dimension: 256,
+        policy.ring_dimension_schedule = crate::RingDimensionSchedule {
+            num_search_levels: 2,
+            suffix_dimensions: &[256],
+            potential_a_dimensions: &[256],
+            potential_b_dimensions: &[256],
+            potential_d_dimensions: &[256],
         };
-        policy.selection_policy = crate::SelectionPolicyId::for_policy(
-            policy.recursive_setup_planning,
-            policy.ring_dimension_schedule_mode,
-        );
+        policy.selection_policy =
+            crate::SelectionPolicyId::for_policy(policy.recursive_setup_planning);
         policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
         policy.inner_basis_range.1 = policy.inner_basis_range.0;
         let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(20));

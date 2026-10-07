@@ -11,8 +11,8 @@ const SUFFIX_RING_DIMENSIONS: &[usize] = &[64, 128];
 const A_RING_DIMENSIONS: &[usize] = &[64, 128, 256, 512, 1024, 2048];
 const B_RING_DIMENSIONS: &[usize] = &[64, 128, 256];
 const D_RING_DIMENSIONS: &[usize] = &[64, 128, 256];
-const ADAPTIVE_RING_DIMENSION_MODE: akita_schedules::RingDimensionScheduleMode =
-    akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+const ADAPTIVE_RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
+    akita_schedules::RingDimensionSchedule {
         num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
         suffix_dimensions: SUFFIX_RING_DIMENSIONS,
         potential_a_dimensions: A_RING_DIMENSIONS,
@@ -37,7 +37,7 @@ impl_proof_optimized_preset!(
     32,
     source = balanced_digits,
     schedule_family = "fp32_dense",
-    ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE
+    ring_dimension_schedule = ADAPTIVE_RING_DIMENSION_SCHEDULE
 );
 impl_proof_optimized_preset!(
     OneHot,
@@ -48,7 +48,7 @@ impl_proof_optimized_preset!(
     1,
     source = unit_one_hot,
     schedule_family = "fp32_onehot",
-    ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE
+    ring_dimension_schedule = ADAPTIVE_RING_DIMENSION_SCHEDULE
 );
 
 impl crate::recursive_commitment::RecursiveScheduleConfig for Dense {

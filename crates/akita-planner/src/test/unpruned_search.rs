@@ -283,15 +283,8 @@ pub(super) fn find_schedule(
             "unpruned traversal found no complete schedule".into(),
         ));
     };
-    let cached_first_direct_setup_field_len = if matches!(
-        policy.selection_policy,
-        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-    ) {
-        selected.first_direct_setup_field_len.map(NonZeroUsize::get)
-    } else {
-        None
-    };
+    let cached_first_direct_setup_field_len =
+        selected.first_direct_setup_field_len.map(NonZeroUsize::get);
     let selected_descriptor = schedule_descriptor_bytes(&selected)?;
     let planned = materialize_candidate_schedule(
         CandidateMaterializationCost {

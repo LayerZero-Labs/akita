@@ -347,7 +347,7 @@ struct PlannedFoldCandidate {
 
 struct GuidedLevelCandidate {
     lower_bound: CompleteObjectiveBound,
-    natural_len: Option<usize>,
+    natural_len: usize,
     candidate: PlannedFoldCandidate,
 }
 
@@ -363,20 +363,10 @@ enum GuideScope {
 }
 
 impl GuideScope {
-    fn for_state(
-        policy: &PlannerPolicy,
-        is_complete_root: bool,
-        incoming_setup_prefix: Option<usize>,
-    ) -> Option<Self> {
+    fn for_state(is_complete_root: bool, incoming_setup_prefix: Option<usize>) -> Option<Self> {
         if is_complete_root {
             Some(Self::CompleteRoot)
-        } else if incoming_setup_prefix.is_some()
-            && matches!(
-                policy.selection_policy,
-                crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
-                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-            )
-        {
+        } else if incoming_setup_prefix.is_some() {
             Some(Self::RecursivePrefix)
         } else {
             None
@@ -386,7 +376,7 @@ impl GuideScope {
 
 impl Iterator for CandidateTraversal {
     type Item = (
-        Option<(CompleteObjectiveBound, Option<usize>)>,
+        Option<(CompleteObjectiveBound, usize)>,
         PlannedFoldCandidate,
     );
 
@@ -609,29 +599,14 @@ fn direct_edge_lower_bound(
 }
 
 fn complete_root_bound_is_strictly_worse(
-    policy: &PlannerPolicy,
     lower_bound: CompleteObjectiveBound,
     frontier: &ProjectedFrontier,
 ) -> bool {
-    match policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5 => frontier
-            .by_parent_cost
-            .values()
-            .flat_map(frontier::ProjectedObjectiveChoices::payload_candidates)
-            .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
-        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => frontier
-            .by_parent_cost
-            .values()
-            .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
-            .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
-            frontier
-                .by_parent_cost
-                .values()
-                .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
-                .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics()))
-        }
-    }
+    frontier
+        .by_parent_cost
+        .values()
+        .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
+        .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics()))
 }
 
 fn complete_root_setup_bound_is_strictly_worse(
@@ -654,11 +629,9 @@ fn direct_edge_bound_is_strictly_worse(
     frontier: &ProjectedFrontier,
 ) -> Result<bool, AkitaError> {
     match guide_scope {
-        GuideScope::CompleteRoot => Ok(complete_root_bound_is_strictly_worse(
-            policy,
-            lower_bound,
-            frontier,
-        )),
+        GuideScope::CompleteRoot => {
+            Ok(complete_root_bound_is_strictly_worse(lower_bound, frontier))
+        }
         GuideScope::RecursivePrefix => {
             let parent_cost = ParentObservableKey::new(policy, Some(params), None)?;
             Ok(frontier.recursive_direct_bound_is_strictly_worse(
@@ -682,19 +655,13 @@ fn candidate_traversal(
     let mut guided = candidates
         .into_iter()
         .map(|candidate| {
-            let natural_len = (matches!(
-                policy.selection_policy,
-                crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
-                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-            ))
-            .then(|| active_setup_field_len(&candidate.params, opening_layout))
-            .transpose()?;
+            let natural_len = active_setup_field_len(&candidate.params, opening_layout)?;
             let lower_bound = direct_edge_lower_bound(
                 policy,
                 &candidate.params,
                 opening_layout,
                 candidate.next_witness_len,
-                natural_len.unwrap_or_default(),
+                natural_len,
             )?;
             Ok(GuidedLevelCandidate {
                 lower_bound,
