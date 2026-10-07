@@ -63,9 +63,6 @@ impl PlannerCostModelId {
 /// Deterministic schedule-selection policy bound into trusted catalog artifacts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionPolicyId {
-    /// Pick exact additive proof-and-work cost, proof bytes, physical setup,
-    /// root output witness, then descriptor.
-    MinEstimatedExactProofAndWorkV5,
     /// Pick first direct setup, exact additive cost, proof bytes, total setup,
     /// root output witness, then descriptor.
     MinFirstDirectSetupThenExactProofAndWorkV5,
@@ -76,32 +73,24 @@ pub enum SelectionPolicyId {
 
 impl SelectionPolicyId {
     /// Canonical selection objective for one schedule policy shape.
-    pub fn for_policy(
-        recursive_setup_planning: bool,
-        ring_dimension_schedule_mode: RingDimensionScheduleMode,
-    ) -> Self {
+    pub fn for_policy(recursive_setup_planning: bool) -> Self {
         if recursive_setup_planning {
             Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-        } else if matches!(
-            ring_dimension_schedule_mode,
-            RingDimensionScheduleMode::AdaptiveDimension { .. }
-        ) {
-            Self::MinFirstDirectSetupThenExactProofAndWorkV5
         } else {
-            Self::MinEstimatedExactProofAndWorkV5
+            Self::MinFirstDirectSetupThenExactProofAndWorkV5
         }
     }
 
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
-            Self::MinEstimatedExactProofAndWorkV5 => 13,
             Self::MinFirstDirectSetupThenExactProofAndWorkV5 => 14,
             Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => 15,
             // Tags 1 and 2 belong to the descriptor-only predecessors. Tag 3
             // belonged to the retired setup-envelope-first policy. Tags 4--6
             // selected proof bytes; tags 7--9 used rounded work cost,
             // and tags 10--12 did not price direct verifier setup scans.
+            // Tag 13 belonged to the retired proof-and-work-first objective.
             // Never reuse an objective tag: trusted catalog admission depends on it.
         }
     }
@@ -109,7 +98,6 @@ impl SelectionPolicyId {
     /// Stable identity name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::MinEstimatedExactProofAndWorkV5 => "MinEstimatedExactProofAndWorkV5",
             Self::MinFirstDirectSetupThenExactProofAndWorkV5 => {
                 "MinFirstDirectSetupThenExactProofAndWorkV5"
             }
@@ -310,10 +298,7 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
         )));
     }
     validate_ring_dimension_schedule_mode(policy)?;
-    let expected_selection_policy = SelectionPolicyId::for_policy(
-        policy.recursive_setup_planning,
-        policy.ring_dimension_schedule_mode,
-    );
+    let expected_selection_policy = SelectionPolicyId::for_policy(policy.recursive_setup_planning);
     if policy.selection_policy != expected_selection_policy {
         return Err(AkitaError::InvalidSetup(
             "schedule selection policy disagrees with the schedule mode".to_string(),
@@ -806,24 +791,14 @@ pub fn materialize_candidate_schedule(
             "cached schedule cost {cached_total} disagrees with materialized estimate {recomputed}"
         )));
     }
-    let first_direct_setup_field_len = match policy.selection_policy {
-        SelectionPolicyId::MinEstimatedExactProofAndWorkV5 => None,
-        SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
-        | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => Some(
-            first_direct_setup_field_len_for_schedule(&schedule, root_layout)?,
-        ),
-    };
+    let first_direct_setup_field_len =
+        first_direct_setup_field_len_for_schedule(&schedule, root_layout)?;
     if let Some(cached) = cached_first_direct_setup_field_len {
-        if first_direct_setup_field_len != Some(cached) {
+        if first_direct_setup_field_len != cached {
             return Err(AkitaError::InvalidSetup(format!(
-                "cached first direct setup length {cached} disagrees with materialized length {}",
-                first_direct_setup_field_len
-                    .map_or_else(|| "none".to_string(), |value| value.to_string())
+                "cached first direct setup length {cached} disagrees with materialized length {first_direct_setup_field_len}"
             )));
         }
-    }
-    if first_direct_setup_field_len.is_none() {
-        schedule.validate_structure()?;
     }
     let recomputed_num_setup_field_elements =
         akita_params::setup_matrix_capacity_for_schedule(&schedule)?.num_field_elements;
@@ -837,7 +812,7 @@ pub fn materialize_candidate_schedule(
         .iter()
         .filter(|fold| fold.params.setup_prefix().is_some())
         .count();
-    estimate.first_direct_setup_field_len = first_direct_setup_field_len;
+    estimate.first_direct_setup_field_len = Some(first_direct_setup_field_len);
     Ok(PlannedFoldSchedule { schedule, estimate })
 }
 
@@ -985,16 +960,39 @@ mod tests {
     }
 
     #[test]
-    fn recursive_and_adaptive_direct_policies_use_distinct_setup_objectives() {
-        let adaptive = adaptive_policy().ring_dimension_schedule_mode;
+    fn recursive_and_direct_policies_use_distinct_setup_objectives() {
         assert_eq!(
-            SelectionPolicyId::for_policy(false, adaptive),
+            SelectionPolicyId::for_policy(false),
             SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
         );
         assert_eq!(
-            SelectionPolicyId::for_policy(true, adaptive),
+            SelectionPolicyId::for_policy(true),
             SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
         );
+    }
+
+    #[test]
+    fn setup_objective_admission_is_independent_of_ring_dimension_mode() {
+        let adaptive = adaptive_policy();
+        for mode in [
+            RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 },
+            adaptive.ring_dimension_schedule_mode,
+        ] {
+            for recursive_setup_planning in [false, true] {
+                let mut policy = PlannerPolicy {
+                    ring_dimension_schedule_mode: mode,
+                    recursive_setup_planning,
+                    selection_policy: SelectionPolicyId::for_policy(recursive_setup_planning),
+                    ..adaptive
+                };
+                validate_policy(&policy).expect("matching setup objective");
+                policy.selection_policy = SelectionPolicyId::for_policy(!recursive_setup_planning);
+                assert!(matches!(
+                    validate_policy(&policy),
+                    Err(AkitaError::InvalidSetup(_))
+                ));
+            }
+        }
     }
 
     #[test]

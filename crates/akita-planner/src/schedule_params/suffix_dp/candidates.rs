@@ -555,7 +555,6 @@ impl<'a> CandidateDomain<'a> {
             opening_shape,
         )?;
         let retain_split_frontier = state.topology.incoming_setup_prefix().is_some()
-            || policy.selection_policy == crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5
             || matches!(
                 policy.ring_dimension_schedule_mode,
                 crate::RingDimensionScheduleMode::AdaptiveDimension {

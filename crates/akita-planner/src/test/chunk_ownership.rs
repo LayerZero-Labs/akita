@@ -33,8 +33,7 @@ impl IncomingWidthFixture {
         let dimensions = CommitmentRingDims::uniform(64);
         policy.ring_dimension_schedule_mode =
             crate::RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
-        policy.selection_policy =
-            crate::SelectionPolicyId::for_policy(false, policy.ring_dimension_schedule_mode);
+        policy.selection_policy = crate::SelectionPolicyId::for_policy(false);
         akita_schedules::planner_support::validate_policy(&policy).unwrap();
         let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
         let opening_layout = key.opening_layout().unwrap();
@@ -529,10 +528,8 @@ fn contracting_chunk_search_matches_unpruned_complete_objective() {
         policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
             ring_dimension: 256,
         };
-        policy.selection_policy = crate::SelectionPolicyId::for_policy(
-            policy.recursive_setup_planning,
-            policy.ring_dimension_schedule_mode,
-        );
+        policy.selection_policy =
+            crate::SelectionPolicyId::for_policy(policy.recursive_setup_planning);
         policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
         policy.inner_basis_range.1 = policy.inner_basis_range.0;
         let key = PolynomialGroupLayout::singleton(20);
@@ -588,10 +585,8 @@ fn contracting_chunk_pruning_preserves_consumer_widths_in_both_orders() {
         policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
             ring_dimension: 256,
         };
-        policy.selection_policy = crate::SelectionPolicyId::for_policy(
-            policy.recursive_setup_planning,
-            policy.ring_dimension_schedule_mode,
-        );
+        policy.selection_policy =
+            crate::SelectionPolicyId::for_policy(policy.recursive_setup_planning);
         policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
         policy.inner_basis_range.1 = policy.inner_basis_range.0;
         let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(20));

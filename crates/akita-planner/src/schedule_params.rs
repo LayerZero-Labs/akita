@@ -619,9 +619,7 @@ pub(crate) fn prune_locally_unprofitable_slices(
     opening_layout: &OpeningClaimsLayout,
     candidates: Vec<CommittedGroupParams>,
 ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
-    if policy.selection_policy == crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5
-        || candidates.len() <= 1
-    {
+    if candidates.len() <= 1 {
         return Ok(candidates);
     }
     let mut best_setup = None;
@@ -634,7 +632,6 @@ pub(crate) fn prune_locally_unprofitable_slices(
             crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
                 padded_setup_prefix_len(level_setup_field_elements(&params)?)
             }
-            crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5 => unreachable!(),
         };
         match best_setup.map(|best| setup_score.cmp(&best)) {
             None | Some(std::cmp::Ordering::Less) => {

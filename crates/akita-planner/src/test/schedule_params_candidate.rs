@@ -1030,10 +1030,7 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 256,
     };
-    policy.selection_policy = crate::SelectionPolicyId::for_policy(
-        policy.recursive_setup_planning,
-        policy.ring_dimension_schedule_mode,
-    );
+    policy.selection_policy = crate::SelectionPolicyId::for_policy(policy.recursive_setup_planning);
     let pre_group = PolynomialGroupLayout::new(14, 1);
     let pre_key = ScheduleLookupKey::single(pre_group);
     let pre_candidates = crate::planner::root_level_candidates_with_fresh_preparation(

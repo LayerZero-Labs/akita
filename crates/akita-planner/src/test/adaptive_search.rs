@@ -178,10 +178,7 @@ fn policy_for_domain(
             potential_d_dimensions: Box::leak(d.into_boxed_slice()),
         }
     };
-    policy.selection_policy = crate::SelectionPolicyId::for_policy(
-        policy.recursive_setup_planning,
-        policy.ring_dimension_schedule_mode,
-    );
+    policy.selection_policy = crate::SelectionPolicyId::for_policy(policy.recursive_setup_planning);
     policy
 }
 
@@ -226,10 +223,8 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
             potential_b_dimensions: &[64],
             potential_d_dimensions: &[64],
         };
-    uniform_policy.selection_policy = crate::SelectionPolicyId::for_policy(
-        uniform_policy.recursive_setup_planning,
-        uniform_policy.ring_dimension_schedule_mode,
-    );
+    uniform_policy.selection_policy =
+        crate::SelectionPolicyId::for_policy(uniform_policy.recursive_setup_planning);
     let candidate = find_schedule(
         key,
         &uniform_policy,
@@ -274,7 +269,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
+fn setup_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
 
     // fp32 has extension degree four, so production s >= 64 requires d_A >= 256.
@@ -283,7 +278,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 256,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let selected = find_schedule(
         onehot_group(14, 1),
@@ -315,7 +310,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
         selected.estimate.first_direct_setup_field_len,
         unpruned.estimate.first_direct_setup_field_len,
     );
-    assert_eq!(selected.estimate.first_direct_setup_field_len, None);
+    assert!(selected.estimate.first_direct_setup_field_len.is_some());
     assert_eq!(
         selected.estimate.estimated_num_setup_field_elements,
         unpruned.estimate.estimated_num_setup_field_elements,
@@ -393,7 +388,7 @@ fn statically_infeasible_early_packing_domain_is_unsupported() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 128,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let error = find_schedule(
         onehot_group(14, 1),

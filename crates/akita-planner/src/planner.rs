@@ -899,17 +899,7 @@ pub(crate) fn find_schedule_in_relation_order(
         diagnostics.record_setup_prefix_cache(hits, misses);
     }
     let suffix = suffix?;
-    let best = match active_policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5 => {
-            select_complete_candidate(active_policy, suffix.payload_candidates(), diagnostics)?
-        }
-        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => {
-            select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
-        }
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
-            select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
-        }
-    };
+    let best = select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?;
 
     let Some(best) = best.cloned() else {
         if key.precommitteds.is_empty()

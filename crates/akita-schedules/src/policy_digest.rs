@@ -127,7 +127,6 @@ mod tests {
 
     #[test]
     fn current_selection_objectives_do_not_reuse_retired_identity_tags() {
-        assert_eq!(SelectionPolicyId::MinEstimatedExactProofAndWorkV5.tag(), 13);
         assert_eq!(
             SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5.tag(),
             14
@@ -136,10 +135,9 @@ mod tests {
             SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6.tag(),
             15
         );
-        assert!(!(1..=12).contains(&SelectionPolicyId::MinEstimatedExactProofAndWorkV5.tag()));
-        assert!(!(1..=12)
+        assert!(!(1..=13)
             .contains(&SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5.tag()));
-        assert!(!(1..=12).contains(
+        assert!(!(1..=13).contains(
             &SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6.tag()
         ));
     }

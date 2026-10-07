@@ -455,14 +455,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Catalog-bound schedule selection objective.
     ///
-    /// Uniform/direct presets minimize proof payload. Adaptive-dimension and
-    /// recursive setup presets minimize the first remaining direct setup
-    /// footprint before payload. The policy is part of catalog identity.
+    /// Direct presets minimize first-direct setup capacity before proof and work,
+    /// whether ring dimensions are uniform or adaptive. Recursive setup presets
+    /// first minimize the padded total setup envelope. The policy is part of
+    /// catalog identity.
     fn selection_policy() -> akita_schedules::SelectionPolicyId {
-        akita_schedules::SelectionPolicyId::for_policy(
-            Self::recursive_setup_planning(),
-            Self::RING_DIMENSION_SCHEDULE_MODE,
-        )
+        akita_schedules::SelectionPolicyId::for_policy(Self::recursive_setup_planning())
     }
 
     /// Stable trusted schedule family identity for external artifact loading.

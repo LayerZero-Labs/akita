@@ -24,6 +24,14 @@ The resolved schedule owns every dimension used by setup preparation,
 commitment, proving, and verification. Setup-prefix slots also record the
 dimension selected by the fold that consumes the prefix.
 
+Uniform and adaptive direct schedules use the same setup-first selection
+objective: first-direct padded setup capacity, exact additive proof-and-work
+score, proof bytes, total setup, root output-witness length, and canonical
+descriptor. Enabling setup offloading instead gives padded total setup capacity
+priority, followed by first-direct capacity, proof-and-work score, proof bytes,
+first-direct output-witness length, and descriptor. Ring dimensions constrain
+the search domain; they do not select a separate proof-first objective.
+
 **Implementation map**
 
 - `crates/akita-config/src/lib.rs:54-120`.
@@ -273,10 +281,13 @@ invalid D divisibility before it constructs matrices.
 
 The planner does not minimize `s`, `h`, or `d_A` directly. It keeps the same
 complete-schedule objective as other candidates. Depending on the catalog
-policy, the numeric prefix is either proof payload then total setup, or first
-direct-setup capacity then proof payload then total setup. Exact numeric ties
-prefer the smaller root output witness before the canonical descriptor breaks
-the final tie. This allows a larger A ring to win when its lower module rank
+policy, the numeric prefix starts with first-direct setup capacity for direct
+planning, or padded total setup capacity followed by first-direct capacity
+when setup offloading is enabled. The exact additive proof-and-work score and
+proof bytes follow those setup priorities. Direct planning then compares total
+setup and root output-witness length; setup-offloading planning compares
+first-direct output-witness length. The canonical descriptor breaks the final
+tie. This allows a larger A ring to win when its lower module rank
 reduces the complete setup or proof suffix.
 
 Nonterminal folds at levels 0 and 1 require coefficient packing. A state with

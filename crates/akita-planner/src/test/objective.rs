@@ -11,21 +11,6 @@ fn score(objective: CompleteObjectiveBound, descriptor: u8) -> CompleteScheduleS
     }
 }
 
-fn direct(
-    proof_bytes: usize,
-    setup_field_elements: usize,
-    descriptor: u8,
-) -> CompleteScheduleScore {
-    score(
-        CompleteObjectiveBound::Direct {
-            exact_score: (proof_bytes as u128) * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
-            proof_bytes,
-            setup_field_elements,
-        },
-        descriptor,
-    )
-}
-
 fn setup_first(
     first_direct_setup_capacity: usize,
     proof_bytes: usize,
@@ -61,19 +46,6 @@ fn padded_setup_envelope_first(
         legacy_root_output_witness_len: None,
         descriptor: vec![descriptor],
     }
-}
-
-#[test]
-fn direct_score_prefers_setup_only_after_proof_ties() {
-    let smaller_proof = direct(99, 1_000, 2);
-    let smaller_setup = direct(100, 1, 1);
-    assert!(smaller_proof < smaller_setup);
-
-    let same_proof_smaller_setup = direct(99, 999, 3);
-    assert!(same_proof_smaller_setup < smaller_proof);
-
-    let complete_tie_smaller_descriptor = direct(99, 999, 1);
-    assert!(complete_tie_smaller_descriptor < same_proof_smaller_setup);
 }
 
 #[test]
@@ -117,7 +89,8 @@ fn padded_setup_envelope_uses_descriptor_after_output() {
 
 #[test]
 fn output_witness_precedes_the_canonical_descriptor() {
-    let objective = CompleteObjectiveBound::Direct {
+    let objective = CompleteObjectiveBound::SetupFirst {
+        first_direct_setup_capacity: 16,
         exact_score: 100 * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: 100,
         setup_field_elements: 1_000,
@@ -279,8 +252,7 @@ fn complete_candidate(
 
 #[test]
 fn actual_policy_can_select_a_noncontractive_complete_candidate() {
-    let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
+    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
     let contractive = complete_candidate(101, 64, 1_000);
     let noncontractive = complete_candidate(100, 64, 12_000);
     let input_bits = 256 * policy.decomposition.field_bits() as usize;
@@ -317,8 +289,7 @@ fn exact_work_score_can_outweigh_one_modeled_proof_byte() {
 
 #[test]
 fn exact_proof_tie_selects_the_smaller_setup_envelope() {
-    let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
+    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
     let larger_setup = complete_candidate(100, 65, 1_000);
     let smaller_setup = complete_candidate(100, 64, 1_000);
 
@@ -335,8 +306,7 @@ fn exact_proof_tie_selects_the_smaller_setup_envelope() {
 
 #[test]
 fn exact_numeric_tie_selects_the_smaller_root_output_witness() {
-    let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
+    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
     let larger_output = complete_candidate(100, 64, 1_001);
     let smaller_output = complete_candidate(100, 64, 1_000);
 

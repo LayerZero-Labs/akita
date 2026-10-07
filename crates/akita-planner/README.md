@@ -28,9 +28,7 @@ best complete schedule under the configured selection policy.
 The complete schedule orders are:
 
 ```text
-uniform direct:  (proof-and-work score, proof bytes, total setup,
-                  root output witness, descriptor)
-adaptive direct: (first-direct padded capacity, proof-and-work score, proof bytes,
+direct:          (first-direct padded capacity, proof-and-work score, proof bytes,
                   total setup, root output witness, descriptor)
 recursive:       (padded total-setup capacity, first-direct padded capacity,
                   proof-and-work score, proof bytes, first-direct output witness,
@@ -168,7 +166,7 @@ Recursive levels do not enumerate the full exponential tree of all possible `(lo
 Instead, `derive_fold_candidates` scans the valid `block_index_bits` choices for
 each recursive `log_basis`. `FoldCandidatePolicy::Best` keeps the best
 contracting candidate under the local layout score. `Frontier` retains every
-contracting split candidate needed by proof-first, adaptive-dimension, or
+contracting split candidate needed by adaptive-dimension or
 setup-offloading search.
 
 After that candidate is chosen, the suffix DP still performs the important global comparison:
@@ -177,10 +175,9 @@ After that candidate is chosen, the suffix DP still performs the important globa
 - Fold once more and pay the current level proof bytes plus the best suffix below it.
 
 The memoized suffix state tracks the level, current witness length, active
-basis choices, and parent-visible geometry. Uniform direct search keeps its
-proof-first frontier. Adaptive direct and recursive search share one projected
-frontier: a setup-aware first-direct projection and a setup-aware proof-payload
-projection. A candidate is pruned only when both projections make it irrelevant
+basis choices, and parent-visible geometry. Direct and recursive search share
+one projected frontier: a setup-aware first-direct projection and a setup-aware
+proof-payload projection. A candidate is pruned only when both projections make it irrelevant
 to every parent transition. At a complete root, a level setup bound larger than
 the best complete envelope rejects both its direct and offloaded branches.
 Ordinary recursive folds construct the single canonical
