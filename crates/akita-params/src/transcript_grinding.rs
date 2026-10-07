@@ -22,11 +22,11 @@ pub const FOLD_RESPONSE_NONCE_BITS: u8 = 12;
 /// Exclusive upper bound for the existing fold-response search.
 pub const FOLD_RESPONSE_ATTEMPTS: u32 = 1 << FOLD_RESPONSE_NONCE_BITS;
 /// Transcript-grinding binding encoding revision.
-pub const GRINDING_ENCODING_VERSION: u16 = 3;
+pub const GRINDING_ENCODING_VERSION: u16 = 4;
 /// Query catalog and loss-policy revision.
 pub const GRINDING_QUERY_POLICY_REVISION: u16 = 4;
 /// Indexed fold-coordinate oracle revision.
-pub const FOLD_COORDINATE_ORACLE_REVISION: u16 = 1;
+pub const FOLD_COORDINATE_ORACLE_REVISION: u16 = 2;
 /// Exclusive upper bound on expanded transcript queries in a complete plan.
 ///
 /// This preserves the existing accepted set: a plan must contain fewer than
