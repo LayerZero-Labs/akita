@@ -1,4 +1,4 @@
-//! Fold-l∞ Fiat–Shamir grind: preview off-sponge clones, commit the winning nonce.
+//! Fold-l∞ Fiat–Shamir grind: search counters on fold-response forks, send the winning one.
 
 #[cfg(feature = "response-model-diagnostics")]
 use crate::backend::AcceptedFoldHandle;
@@ -111,8 +111,8 @@ where
     let (nonce, (fold_handle, encoding, diagnostics)) =
         first_jointly_accepted_nonce(FOLD_RESPONSE_ATTEMPTS, |nonce| {
             let mut fork = grinding.fold_response_fork(site, nonce)?;
-            let mut preview = ForkFoldDraw::new(&mut fork);
-            let challenges = preview.draw_folding_challenges_with_rejection(
+            let mut draw = ForkFoldDraw::new(&mut fork);
+            let challenges = draw.draw_folding_challenges_with_rejection(
                 akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
                 params.d_a(),
                 0,
@@ -239,11 +239,11 @@ where
             let mut candidate_outputs = Vec::with_capacity(groups.len());
             {
                 let mut fork = grinding.fold_response_fork(site, nonce)?;
-                let mut preview = ForkFoldDraw::new(&mut fork);
+                let mut draw = ForkFoldDraw::new(&mut fork);
                 for prepared_group in groups {
                     let group = &prepared_group.input;
                     let challenges = draw_group_fold_challenges::<F, E, _>(
-                        &mut preview,
+                        &mut draw,
                         &group.params,
                         group.group_index,
                         group.num_polynomials,
@@ -464,9 +464,9 @@ mod tests {
     }
 
     impl FoldDraw for FixedDraw {
-        fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> Result<[u8; 32], AkitaError> {
+        fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> [u8; 32] {
             self.draws += 1;
-            Ok([11; akita_challenges::FOLD_CHALLENGE_SEED_LEN])
+            [11; akita_challenges::FOLD_CHALLENGE_SEED_LEN]
         }
     }
 

@@ -1,4 +1,4 @@
-//! Fold-challenge preview drawing for prover-side Fiat–Shamir grinding.
+//! Fold-challenge draws from a fold-response fork, shared by both roles.
 
 use crate::sampler::MAX_STACK_RING_DIM;
 use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig};
@@ -55,11 +55,11 @@ pub fn fold_challenge_sample_label(
     Ok(label)
 }
 
+/// A source of fold-challenge seeds: absorbs a draw's public context, then
+/// squeezes its seed. [`ForkFoldDraw`] is the protocol's; tests capture the
+/// context through it.
 pub trait FoldDraw {
-    fn absorb_and_squeeze(
-        &mut self,
-        payload: &[u8],
-    ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError>;
+    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN];
 
     #[allow(clippy::too_many_arguments)]
     fn draw_folding_challenges_with_rejection(
@@ -125,7 +125,7 @@ pub trait FoldDraw {
         if let Some(rejection) = rejection {
             absorb_buf.extend_from_slice(&rejection.domain_separator_bytes());
         }
-        let seed = self.absorb_and_squeeze(&absorb_buf)?;
+        let seed = self.absorb_and_squeeze(&absorb_buf);
         let challenges = crate::sampler::sample_indexed_challenges_from_seed(
             &seed, ring_d, total, cfg, rejection,
         )?;
@@ -152,12 +152,9 @@ impl<'a, H> ForkFoldDraw<'a, H> {
 }
 
 impl<H: Sponge> FoldDraw for ForkFoldDraw<'_, H> {
-    fn absorb_and_squeeze(
-        &mut self,
-        payload: &[u8],
-    ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
+    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
         self.fork.absorb(payload);
-        Ok(self.fork.squeeze())
+        self.fork.squeeze()
     }
 }
 
@@ -171,12 +168,9 @@ mod tests {
     }
 
     impl FoldDraw for CapturingDraw {
-        fn absorb_and_squeeze(
-            &mut self,
-            payload: &[u8],
-        ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
+        fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
             self.payloads.push(payload.to_vec());
-            Ok([7; FOLD_CHALLENGE_SEED_LEN])
+            [7; FOLD_CHALLENGE_SEED_LEN]
         }
     }
 
