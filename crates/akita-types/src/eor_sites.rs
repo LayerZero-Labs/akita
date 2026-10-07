@@ -1,8 +1,9 @@
 //! Canonical proof-stream grammar for extension-opening reduction.
 
-use crate::transcript::{ProtocolSiteId, SITE_FAMILY_EXTENSION_OPENING_REDUCTION};
-use crate::{tensor_opening_split, GrindingReplay, GrindingSite, OpeningClaimsLayout};
+use crate::{tensor_opening_split, GrindingReplay};
 use akita_error::{checked, AkitaError};
+use akita_params::transcript_site::{ProtocolSiteId, SITE_FAMILY_EXTENSION_OPENING_REDUCTION};
+use akita_params::{GrindingSite, OpeningClaimsLayout};
 use jolt_field::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
 use jolt_transcript::Channel;
 
@@ -45,13 +46,19 @@ where
     opening_batch.check()?;
     let num_claims = opening_batch.num_total_polynomials();
     if openings.len() != num_claims {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidSize {
+            expected: num_claims,
+            actual: openings.len(),
+        });
     }
     let (split_bits, width) = tensor_opening_split::<F, E>()?;
-    let expected_partials =
-        checked::product([width, num_claims]).ok_or(AkitaError::InvalidProof)?;
+    let expected_partials = checked::product([width, num_claims])
+        .ok_or_else(|| AkitaError::InvalidInput("eor partial count overflows usize".into()))?;
     if partial_count != expected_partials {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidSize {
+            expected: expected_partials,
+            actual: partial_count,
+        });
     }
     Ok((split_bits, num_claims))
 }
@@ -123,7 +130,10 @@ where
     G: GrindingReplay,
 {
     if final_claims.len() != opening_batch.num_total_polynomials() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidSize {
+            expected: opening_batch.num_total_polynomials(),
+            actual: final_claims.len(),
+        });
     }
     let state = grinding.state_mut();
     state.site(eor_site(level, STAGE_FINAL_CLAIMS).into());
@@ -134,10 +144,8 @@ where
 mod tests {
     use super::*;
     use crate::transcript::test_transcripts::{prover as new_prover, verifier as new_verifier};
-    use crate::{
-        ChallengeFieldOrder, GrindingPlan, GrindingRun, PolynomialGroupLayout, ProverGrinding,
-        VerifierGrinding,
-    };
+    use crate::{ProverGrinding, VerifierGrinding};
+    use akita_params::{ChallengeFieldOrder, GrindingPlan, GrindingRun, PolynomialGroupLayout};
     use jolt_field::{FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
@@ -179,6 +187,32 @@ mod tests {
             .map(|value| E::from_u64((value + 100) as u64))
             .collect::<Vec<_>>();
         (plan, layout, openings, partials, final_claims)
+    }
+
+    #[test]
+    fn eor_rejects_argument_lengths_before_reading_proof_atoms() {
+        let (plan, layout, openings, partials, _) = fixture();
+        let mut transcript = new_verifier(b"native-eor", &[]);
+        let mut verifier = VerifierGrinding::new(&mut transcript, &plan);
+        assert!(matches!(
+            eor_prefix::<F, E, _>(&mut verifier, &layout, &[], partials.clone(), 3),
+            Err(AkitaError::InvalidSize {
+                expected: 3,
+                actual: 0
+            })
+        ));
+        let expected = partials.len();
+        assert!(matches!(
+            eor_prefix::<F, E, _>(&mut verifier, &layout, &openings, vec![], 3),
+            Err(AkitaError::InvalidSize { expected: count, actual: 0 }) if count == expected
+        ));
+        assert!(matches!(
+            eor_final_claims::<F, E, _>(&mut verifier, &layout, &mut [], 3),
+            Err(AkitaError::InvalidSize {
+                expected: 3,
+                actual: 0
+            })
+        ));
     }
 
     #[test]

@@ -74,10 +74,9 @@ pub fn eval_boolean_pair_tensor_families<
             let recurrence_geometry = recurrence_axes
                 .iter()
                 .map(|&axis_index| {
-                    let axis = family
-                        .axes
-                        .get(axis_index)
-                        .ok_or(AkitaError::InvalidProof)?;
+                    let axis = family.axes.get(axis_index).ok_or_else(|| {
+                        AkitaError::Internal("selected tensor recurrence axis is absent".into())
+                    })?;
                     Ok((axis_index, axis.len, axis.left_stride, axis.right_stride))
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
@@ -211,7 +210,9 @@ fn try_eval_aligned_family<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONO
                 Some(challenge),
                 (family.left_offset >> bit) & 1,
             )
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("aligned left offset bit factor is absent".into())
+            })?;
         }
     }
     charge_work(work, right_challenges.len())?;
@@ -221,7 +222,9 @@ fn try_eval_aligned_family<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONO
                 Some(challenge),
                 (family.right_offset >> bit) & 1,
             )
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("aligned right offset bit factor is absent".into())
+            })?;
         }
     }
 
@@ -232,9 +235,11 @@ fn try_eval_aligned_family<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONO
             EqPairTensorWeights::Unit | EqPairTensorWeights::BitProduct(_) => {
                 for coordinate_bit in 0..axis_bits {
                     charge_work(work, 2)?;
-                    let factors = axis
-                        .bit_factors(coordinate_bit)
-                        .ok_or(AkitaError::InvalidProof)?;
+                    let factors = axis.bit_factors(coordinate_bit).ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "aligned tensor axis bit factors are absent".into(),
+                        )
+                    })?;
                     let mut bit_sum = F::zero();
                     for (coordinate, weight) in factors.into_iter().enumerate() {
                         let mut term = weight;
@@ -244,7 +249,11 @@ fn try_eval_aligned_family<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONO
                                 left_challenges.get(bit).copied(),
                                 coordinate,
                             )
-                            .ok_or(AkitaError::InvalidProof)?;
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "aligned left factored-axis bit exceeds equality arity".into(),
+                                )
+                            })?;
                         }
                         if axis.right_stride != 0 {
                             let bit = axis.right_stride.trailing_zeros() as usize + coordinate_bit;
@@ -252,7 +261,11 @@ fn try_eval_aligned_family<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONO
                                 right_challenges.get(bit).copied(),
                                 coordinate,
                             )
-                            .ok_or(AkitaError::InvalidProof)?;
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "aligned right factored-axis bit exceeds equality arity".into(),
+                                )
+                            })?;
                         }
                         bit_sum += term;
                     }
@@ -272,7 +285,11 @@ fn try_eval_aligned_family<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONO
                                 left_challenges.get(bit).copied(),
                                 coordinate_value,
                             )
-                            .ok_or(AkitaError::InvalidProof)?;
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "aligned left dense-axis bit exceeds equality arity".into(),
+                                )
+                            })?;
                         }
                         if axis.right_stride != 0 {
                             let bit = axis.right_stride.trailing_zeros() as usize + coordinate_bit;
@@ -280,7 +297,11 @@ fn try_eval_aligned_family<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONO
                                 right_challenges.get(bit).copied(),
                                 coordinate_value,
                             )
-                            .ok_or(AkitaError::InvalidProof)?;
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "aligned right dense-axis bit exceeds equality arity".into(),
+                                )
+                            })?;
                         }
                     }
                     axis_value += term;
@@ -319,12 +340,14 @@ fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MON
     let bit_count = left_challenges.len().max(right_challenges.len());
     let mut introductions = vec![Vec::<BitIntroduction<F>>::new(); bit_count];
     let mut forced_zero_weight = F::one();
-    let first_family = families.first().ok_or(AkitaError::InvalidProof)?;
+    let first_family = families.first().ok_or_else(|| {
+        AkitaError::Internal("tensor recurrence batch has no first family".into())
+    })?;
     for &(axis_index, axis_len, left_stride, right_stride) in recurrence_geometry {
         let axis = first_family
             .axes
             .get(axis_index)
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| AkitaError::Internal("first recurrence family axis is absent".into()))?;
         if axis.len != axis_len
             || axis.left_stride != left_stride
             || axis.right_stride != right_stride
@@ -335,7 +358,9 @@ fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MON
                     .is_none_or(|candidate| candidate != axis)
             })
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "tensor recurrence batch axes differ from their grouped geometry".into(),
+            ));
         }
         for coordinate_bit in 0..axis_len.trailing_zeros() as usize {
             let coordinate = checked::pow2(coordinate_bit).ok_or_else(|| {
@@ -355,9 +380,9 @@ fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MON
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("paired tensor unit axis is constant".into())
                 })?;
-            let factors = axis
-                .bit_factors(coordinate_bit)
-                .ok_or(AkitaError::InvalidProof)?;
+            let factors = axis.bit_factors(coordinate_bit).ok_or_else(|| {
+                AkitaError::InvalidInput("tensor recurrence axis bit factors are absent".into())
+            })?;
             if let Some(at_bit) = introductions.get_mut(start_bit) {
                 at_bit.push(BitIntroduction {
                     left: left >> start_bit,
@@ -393,7 +418,9 @@ fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MON
     )?;
     for bit in 0..bit_count {
         let choices = bit_axis_choices::<F>(
-            introductions.get(bit).ok_or(AkitaError::InvalidProof)?,
+            introductions.get(bit).ok_or_else(|| {
+                AkitaError::Internal("tensor bit introduction bucket is absent".into())
+            })?,
             work,
         )?;
         charge_work(
@@ -508,11 +535,11 @@ fn collect_residual_seeds<F: Field>(
     let axis = family
         .axes
         .get(axis_index)
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| AkitaError::Internal("residual seed recursion axis is absent".into()))?;
     for coordinate in 0..axis.len {
-        let axis_weight = axis
-            .coordinate_weight(coordinate)
-            .ok_or(AkitaError::InvalidProof)?;
+        let axis_weight = axis.coordinate_weight(coordinate).ok_or_else(|| {
+            AkitaError::InvalidInput("residual seed axis coordinate weight is absent".into())
+        })?;
         if axis_weight.is_zero() {
             continue;
         }
@@ -624,10 +651,9 @@ fn collect_tensor_family_seeds<F: Field>(
             weight,
         };
         if let Some(stream_axis) = stream_axis {
-            let axis = family
-                .axes
-                .get(stream_axis)
-                .ok_or(AkitaError::InvalidProof)?;
+            let axis = family.axes.get(stream_axis).ok_or_else(|| {
+                AkitaError::Internal("selected tensor seed stream axis is absent".into())
+            })?;
             batches
                 .entry((axis.left_stride, axis.right_stride, axis.len))
                 .or_default()
@@ -654,11 +680,11 @@ fn collect_tensor_family_seeds<F: Field>(
     let axis = family
         .axes
         .get(axis_index)
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| AkitaError::Internal("tensor seed recursion axis is absent".into()))?;
     for coordinate in 0..axis.len {
-        let axis_weight = axis
-            .coordinate_weight(coordinate)
-            .ok_or(AkitaError::InvalidProof)?;
+        let axis_weight = axis.coordinate_weight(coordinate).ok_or_else(|| {
+            AkitaError::InvalidInput("tensor seed axis coordinate weight is absent".into())
+        })?;
         if axis_weight.is_zero() {
             continue;
         }
@@ -740,7 +766,7 @@ fn eval_tensor_seed_batch<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOM
                 checked_axis_offset(seed.right_offset, right_stride, block_base, "right")?;
             blocks
                 .get_mut(block_index_bits)
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| AkitaError::Internal("tensor seed block bucket is absent".into()))?
                 .push(((left_carry, right_carry), seed.weight));
             block_base = block_base.checked_add(block_size).ok_or_else(|| {
                 AkitaError::InvalidInput("paired tensor block coverage overflow".into())
@@ -766,8 +792,16 @@ fn eval_tensor_seed_batch<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOM
                     AkitaError::InvalidInput("paired tensor work overflow".into())
                 })?,
             )?;
-            let left_challenge = *left_challenges.get(bit).ok_or(AkitaError::InvalidProof)?;
-            let right_challenge = *right_challenges.get(bit).ok_or(AkitaError::InvalidProof)?;
+            let left_challenge = *left_challenges.get(bit).ok_or_else(|| {
+                AkitaError::Internal(
+                    "tensor seed left challenge bit exceeds validated arity".into(),
+                )
+            })?;
+            let right_challenge = *right_challenges.get(bit).ok_or_else(|| {
+                AkitaError::Internal(
+                    "tensor seed right challenge bit exceeds validated arity".into(),
+                )
+            })?;
             let next_capacity = states.len().checked_mul(2).ok_or_else(|| {
                 AkitaError::InvalidInput("paired tensor state count overflow".into())
             })?;
@@ -793,10 +827,18 @@ fn eval_tensor_seed_batch<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOM
                     };
                     let left_factor =
                         basis_bit_factor::<F, LEFT_MONOMIAL>(Some(left_challenge), left_sum & 1)
-                            .ok_or(AkitaError::InvalidProof)?;
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "tensor seed left binary factor is absent".into(),
+                                )
+                            })?;
                     let right_factor =
                         basis_bit_factor::<F, RIGHT_MONOMIAL>(Some(right_challenge), right_sum & 1)
-                            .ok_or(AkitaError::InvalidProof)?;
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "tensor seed right binary factor is absent".into(),
+                                )
+                            })?;
                     next.push((
                         (left_sum >> 1, right_sum >> 1),
                         state_weight * left_factor * right_factor,

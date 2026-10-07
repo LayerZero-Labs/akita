@@ -1,7 +1,8 @@
 use super::*;
 
 use akita_config::proof_optimized::fp32;
-use akita_types::{basis_weights, OpeningMethod, PolynomialGroupLayout, ScheduleLookupKey};
+use akita_params::ScheduleLookupKey;
+use akita_params::{basis_weights, OpeningMethod, PolynomialGroupLayout};
 use jolt_field::ExtField;
 
 type PackingCfg = crate::test_support::RootCoefficientPackingConfig<fp32::Dense>;
@@ -34,7 +35,7 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
         panic!("synthetic root must use coefficient packing");
     };
     assert_eq!(challenge_subring_dimension, 64);
-    let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(
+    let geometry = akita_params::SubringCoefficientPackingGeometry::try_new(
         PackingCfg::EXT_DEGREE,
         root.d_a(),
         challenge_subring_dimension,
@@ -56,7 +57,7 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
     );
     assert_eq!(
         root.source_encoding,
-        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
+        akita_params::CommittedSourceEncoding::CanonicalCoefficientTable,
     );
 
     let successor = &schedule.recursive_folds[0];
@@ -72,7 +73,7 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
     ));
     assert_eq!(
         successor.params.source_encoding,
-        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
+        akita_params::CommittedSourceEncoding::CanonicalCoefficientTable,
     );
     let prefix = successor
         .params
@@ -110,8 +111,8 @@ fn fixed_root_packing_rejects_a_stale_successor_length() {
 
 #[test]
 fn packing_setup_prefix_dispatch_rejects_an_unsupported_dimension() {
-    let result = akita_types::dispatch_for_field!(
-        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+    let result = akita_params::dispatch_for_field!(
+        akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
         PackingField,
         96,
         |D_SETUP| Ok::<usize, akita_error::AkitaError>(D_SETUP)

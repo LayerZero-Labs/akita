@@ -8,14 +8,16 @@ use crate::backend::{
 };
 use akita_challenges::{FoldDraw, ForkFoldDraw};
 use akita_error::AkitaError;
-use akita_types::GroupFoldChallenges;
-use akita_types::{
-    draw_group_fold_challenges, dyadic_block_ranges, CommittedGroupParams,
-    InnerCommitSecurityRoute, OpeningClaimsLayout, TerminalFoldParams, TerminalResponseShape,
-    FOLD_RESPONSE_ATTEMPTS,
-};
 #[cfg(test)]
-use akita_types::{OpeningFamily, OpeningMethod};
+use akita_params::OpeningMethod;
+use akita_params::{
+    dyadic_block_ranges, CommittedGroupParams, InnerCommitSecurityRoute, OpeningClaimsLayout,
+    TerminalFoldParams, TerminalResponseShape, FOLD_RESPONSE_ATTEMPTS,
+};
+use akita_types::draw_group_fold_challenges;
+use akita_types::GroupFoldChallenges;
+#[cfg(test)]
+use akita_types::OpeningFamily;
 use jolt_field::Unreduced;
 use jolt_field::{CanonicalEncoding, Field, Ring};
 use jolt_transcript::Sponge;
@@ -33,7 +35,7 @@ pub(crate) struct FoldGrindGroup<'group, G: ?Sized> {
     pub(crate) group_index: usize,
     pub(crate) opening: &'group G,
     pub(crate) num_polynomials: usize,
-    pub(crate) params: akita_types::GroupOpenPhaseParams,
+    pub(crate) params: akita_params::GroupOpenPhaseParams,
 }
 
 impl<G: ?Sized> Copy for FoldGrindGroup<'_, G> {}
@@ -74,18 +76,19 @@ where
     H: crate::backend::RecursiveWitnessHandle,
     B: crate::backend::OpaqueTerminalFoldKernel<F, E, WitnessHandle = H>,
 {
-    let expected_group =
-        shape.layout.groups.first().ok_or_else(|| {
-            AkitaError::InvalidSetup("terminal response shape has no group".into())
-        })?;
+    let expected_group = shape
+        .layout
+        .groups
+        .first()
+        .ok_or_else(|| AkitaError::Internal("terminal response shape has no group".into()))?;
     if shape.layout.groups.len() != 1
         || expected_group.z_coords
             != params
                 .inner_width()
                 .checked_mul(params.d_a())
-                .ok_or_else(|| AkitaError::InvalidSetup("terminal z width overflow".into()))?
+                .ok_or_else(|| AkitaError::Internal("terminal z width overflow".into()))?
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "terminal response shape does not match terminal A width".into(),
         ));
     }
@@ -103,7 +106,7 @@ where
         None
     };
     let point_indices = [0usize];
-    let site = akita_types::GrindingSite::FoldResponse { level };
+    let site = akita_params::GrindingSite::FoldResponse { level };
     grinding.begin_fold_response(site)?;
     let (nonce, (fold_handle, encoding, diagnostics)) =
         first_jointly_accepted_nonce(FOLD_RESPONSE_ATTEMPTS, |nonce| {
@@ -225,11 +228,11 @@ where
     B: crate::backend::OpaqueOpeningKernel<F, E>,
 {
     if groups.is_empty() {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "fold grind batch has no groups".to_string(),
         ));
     }
-    let site = akita_types::GrindingSite::FoldResponse { level };
+    let site = akita_params::GrindingSite::FoldResponse { level };
     grinding.begin_fold_response(site)?;
     let (nonce, mut candidate_outputs) =
         first_jointly_accepted_nonce(max_grind_attempts, |nonce| {
@@ -259,7 +262,7 @@ where
                             FoldProbeGeometry::SparseChunked { chunk_ranges }
                         });
                     let context = opening_ctx.for_group(group.group_index);
-                    let outcome = akita_types::dispatch_for_field!(
+                    let outcome = akita_params::dispatch_for_field!(
                         ProtocolDispatchSlot::Role(RingRole::Inner),
                         F,
                         group.params.inner_commit_matrix_params().ring_dimension(),
@@ -306,12 +309,12 @@ where
         for (prepared_group, output) in groups.iter().zip(candidate_outputs.iter_mut()) {
             let group = &prepared_group.input;
             let group_index = u32::try_from(group.group_index)
-                .map_err(|_| AkitaError::InvalidSetup("fold group index exceeds u32".into()))?;
+                .map_err(|_| AkitaError::Internal("fold group index exceeds u32".into()))?;
             let coordinate_count = group
                 .params
                 .num_live_blocks()
                 .checked_mul(group.num_polynomials)
-                .ok_or_else(|| AkitaError::InvalidSetup("fold coordinate count overflow".into()))?;
+                .ok_or_else(|| AkitaError::Internal("fold coordinate count overflow".into()))?;
             grinding.record_fold_challenges(level, group_index, coordinate_count)?;
             tracing::info!(
                 group_index = group.group_index,
@@ -334,9 +337,7 @@ where
                         .response_coordinate_count()
                         .checked_mul(metadata.num_chunks())
                         .ok_or_else(|| {
-                            AkitaError::InvalidInput(
-                                "fold diagnostic response size overflow".into(),
-                            )
+                            AkitaError::Internal("fold diagnostic response size overflow".into())
                         })?;
                     tracing::info!(
                         target: "akita_prover::protocol::fold_response_model",
@@ -394,7 +395,7 @@ where
     B: crate::backend::OpaqueOpeningKernel<F, E>,
 {
     if groups.len() != opening_batch.num_groups() {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "fold grind groups do not match the opening batch".to_string(),
         ));
     }
@@ -407,13 +408,13 @@ where
             || group.num_polynomials == 0
             || group.num_polynomials != expected_claims
         {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "fold grind group descriptor is malformed".to_string(),
             ));
         }
         let delta_fold = group.params.num_digits_fold();
         let (digit_negative_abs_bound, digit_positive_bound) =
-            akita_types::sis::balanced_digit_representable_bounds(
+            akita_params::sis::balanced_digit_representable_bounds(
                 group.params.log_basis_open(),
                 delta_fold,
             );
@@ -453,7 +454,7 @@ where
 mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
-    use akita_types::SisModulusProfileId;
+    use akita_params::SisModulusProfileId;
 
     type F = jolt_field::Prime128Offset275;
 

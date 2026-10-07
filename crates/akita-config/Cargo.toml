@@ -22,6 +22,7 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 
 [dev-dependencies]
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [

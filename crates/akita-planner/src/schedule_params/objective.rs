@@ -60,7 +60,7 @@ impl CompleteObjectiveBound {
             },
             SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
                 Self::PaddedSetupEnvelopeFirst {
-                    setup_envelope_capacity: akita_types::padded_setup_prefix_len(
+                    setup_envelope_capacity: akita_params::padded_setup_prefix_len(
                         setup_field_elements,
                     ),
                     first_direct_setup_capacity,
@@ -129,7 +129,7 @@ impl CompleteObjectiveBound {
                     proof_bytes,
                     first_direct_output_witness_len,
                 ) > (
-                    akita_types::padded_setup_prefix_len(incumbent.setup_field_elements),
+                    akita_params::padded_setup_prefix_len(incumbent.setup_field_elements),
                     incumbent.first_direct_setup_capacity.field_elements(),
                     incumbent.cost.exact_score(),
                     incumbent.proof_bytes(),
@@ -169,7 +169,7 @@ impl CompleteObjectiveBound {
                 first_direct_output_witness_len,
             } => {
                 setup_envelope_capacity
-                    >= akita_types::padded_setup_prefix_len(incumbent.setup_field_elements)
+                    >= akita_params::padded_setup_prefix_len(incumbent.setup_field_elements)
                     && (
                         first_direct_setup_capacity,
                         exact_score,
@@ -210,7 +210,7 @@ impl CompleteObjectiveBound {
                 ..
             } => {
                 setup_envelope_capacity
-                    >= akita_types::padded_setup_prefix_len(incumbent.setup_field_elements)
+                    >= akita_params::padded_setup_prefix_len(incumbent.setup_field_elements)
                     && (exact_score, proof_bytes)
                         > (incumbent.cost.exact_score(), incumbent.proof_bytes())
             }
@@ -225,7 +225,7 @@ impl CompleteObjectiveBound {
                 ..
             } => {
                 setup_envelope_capacity
-                    > akita_types::padded_setup_prefix_len(incumbent.setup_field_elements)
+                    > akita_params::padded_setup_prefix_len(incumbent.setup_field_elements)
             }
             Self::Direct { .. } | Self::SetupFirst { .. } => false,
         }

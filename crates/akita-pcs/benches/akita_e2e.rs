@@ -9,11 +9,9 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::CommitmentHandle;
 use akita_cpu_backend::{CpuBackend, DensePoly, OneHotPoly};
+use akita_params::{BasisMode, CommittedGroupBatchProfile, OpeningScheduleSelection};
 use akita_prover::SelectedProverOpeningData;
-use akita_types::{
-    BasisMode, CommittedGroup, CommittedGroupBatchProfile, GroupBatchStatement, OpeningClaims,
-    OpeningScheduleSelection, PolynomialGroupClaims,
-};
+use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use std::hint::black_box;
 
 use criterion::measurement::WallTime;
@@ -307,10 +305,10 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     }
     let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     let opening_layout =
-        akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
+        akita_params::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
     let layout = scheme
         .schedules()
-        .resolve_key(&akita_types::ScheduleLookupKey::single(
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
             opening_layout
                 .root_final_group_layout()
                 .expect("root group"),
@@ -499,7 +497,7 @@ fn bench_dense_nv14(c: &mut Criterion) {
 }
 fn bench_dense_nv14_quotient(c: &mut Criterion) {
     let key =
-        akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
+        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::new(14, 1));
     let catalogs = cross_mode_catalogs::<fp128::Dense>(&key).expect("cross-mode catalogs");
     assert_eq!(
         catalogs
@@ -514,7 +512,7 @@ fn bench_dense_nv14_quotient(c: &mut Criterion) {
 }
 fn bench_dense_nv14_reduced(c: &mut Criterion) {
     let key =
-        akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
+        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::new(14, 1));
     let catalogs = cross_mode_catalogs::<fp128::Dense>(&key).expect("cross-mode catalogs");
     assert_eq!(
         catalogs

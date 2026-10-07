@@ -3,8 +3,8 @@ use akita_algebra::CyclotomicRing;
 use core::mem::size_of;
 use jolt_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59, Ring};
 
-fn flat_zeros<F: Field, const D: usize>(len: usize) -> crate::FlatMatrix<F> {
-    crate::FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<F, D>::zero(); len])
+fn flat_zeros<F: Field, const D: usize>(len: usize) -> akita_params::FlatMatrix<F> {
+    akita_params::FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<F, D>::zero(); len])
 }
 
 #[test]
@@ -290,7 +290,7 @@ fn assert_q32_exact_cache_matches_ring_arithmetic<const D: usize>() {
             }))
         })
         .collect::<Vec<_>>();
-    let flat = crate::FlatMatrix::from_ring_slice(&matrix);
+    let flat = akita_params::FlatMatrix::from_ring_slice(&matrix);
     let cache = prepare_ntt_cache(
         flat.ring_view::<D>(ROWS, COLS).expect("matrix view"),
         NttCacheMode::ExactNegacyclic {
@@ -369,7 +369,7 @@ fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
             }))
         })
         .collect::<Vec<_>>();
-    let flat = crate::FlatMatrix::from_ring_slice(&matrix);
+    let flat = akita_params::FlatMatrix::from_ring_slice(&matrix);
     let view = || flat.ring_view::<D>(ROWS, COLS).expect("matrix view");
     let cache = prepare_ntt_cache(
         view(),
@@ -490,12 +490,20 @@ fn signed_i16_cache_checks_shape_and_digit_class() {
         },
     )
     .expect("cache");
+    assert!(matches!(
+        cache.mat_vec_i16::<Prime32Offset99>(0, 1, &[[0; D]]),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        cache.mat_vec_i16::<Prime32Offset99>(10, 1, &[]),
+        Err(AkitaError::InvalidInput(_))
+    ));
     assert!(cache
         .mat_vec_i16::<Prime32Offset99>(10, 1, &[[511; D], [-512; D]])
         .is_ok());
     assert!(matches!(
         cache.mat_vec_i16::<Prime32Offset99>(10, 1, &[[512; D], [0; D]]),
-        Err(AkitaError::InvalidProof)
+        Err(AkitaError::InvalidInput(_))
     ));
     assert!(cache
         .mat_vec_i16::<Prime32Offset99>(10, 1, &[[0; D]])

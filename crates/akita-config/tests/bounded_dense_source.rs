@@ -12,7 +12,8 @@
 #![allow(missing_docs)]
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
-use akita_types::{PolynomialGroupLayout, ScheduleLookupKey};
+use akita_params::PolynomialGroupLayout;
+use akita_params::ScheduleLookupKey;
 
 fn catalog<Cfg: CommitmentConfig>() -> akita_config::TrustedScheduleCatalog<Cfg> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -99,16 +100,16 @@ fn bound_is_the_only_declared_difference_from_full_width_dense() {
     // class.
     assert!(matches!(
         akita_config::honest_fold_policy_of::<fp128::DenseBounded>(),
-        akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_)
+        akita_params::sis::HonestFoldPolicySpec::BalancedSignedDigit(_)
     ));
     assert_eq!(
         fp128::DenseBounded::committed_source_class(),
-        akita_types::sis::CommittedSourceClass::BalancedSignedDigit,
+        akita_params::sis::CommittedSourceClass::BalancedSignedDigit,
     );
     assert_eq!(
         fp128::OneHot::committed_source_class(),
-        akita_types::sis::CommittedSourceClass::UnitOneHot {
-            source_chunk_size: akita_types::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
+        akita_params::sis::CommittedSourceClass::UnitOneHot {
+            source_chunk_size: akita_params::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
         },
     );
 }
@@ -168,7 +169,7 @@ fn the_bound_shrinks_same_basis_digit_depth_and_next_witness() {
         let bounded = root_shape::<fp128::DenseBounded>(num_vars);
         let full = root_shape::<fp128::Dense>(num_vars);
         let full_width_digits_at_bounded_basis =
-            akita_types::sis::compute_num_digits_field_width(128, bounded.inner_basis);
+            akita_params::sis::compute_num_digits_field_width(128, bounded.inner_basis);
 
         assert!(
             bounded.inner_digits < full_width_digits_at_bounded_basis,
@@ -197,8 +198,8 @@ fn generated_root_digit_depth_matches_the_declared_bound() {
         let catalog = catalog::<Cfg>();
         for row in catalog.rows() {
             let root = &row.schedule().root.params;
-            let expected = akita_types::sis::num_digits_inner_for_bound(
-                akita_types::DecompositionParams {
+            let expected = akita_params::sis::num_digits_inner_for_bound(
+                akita_params::DecompositionParams {
                     log_basis: root.inner().digits.log_basis,
                     ..family_decomposition
                 },

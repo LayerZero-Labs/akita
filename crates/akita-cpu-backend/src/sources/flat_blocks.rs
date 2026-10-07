@@ -34,11 +34,8 @@ impl<E> FlatBlocks<E> {
         );
         let lo = self.offsets[i] as usize;
         let hi = self.offsets[i + 1] as usize;
-        assert!(
-            lo <= hi && hi <= self.entries.len(),
-            "FlatBlocks::block: malformed offsets for block {i}: {lo}..{hi} over {} entries",
-            self.entries.len()
-        );
+        // Private offsets start at zero and only append the current entry
+        // count in advance_to_block. Entries only grow, so lo <= hi <= len.
         &self.entries[lo..hi]
     }
 
@@ -115,7 +112,25 @@ mod tests {
     fn push_entry_rejects_out_of_range_block_in_release_builds() {
         let mut blocks = FlatBlocks::with_capacity(1, 1);
         let mut current = 0;
-        assert!(blocks.push_entry(&mut current, 1, 1, 7u8).is_err());
+        assert!(matches!(
+            blocks.push_entry(&mut current, 1, 1, 7u8),
+            Err(akita_error::AkitaError::InvalidInput(message))
+                if message == "flat block index 1 is out of range for 1 live blocks"
+        ));
         assert_eq!(blocks.num_live_blocks(), 0);
+    }
+}
+
+#[cfg(test)]
+mod offset_tests {
+    use super::FlatBlocks;
+
+    #[test]
+    fn empty_and_nonempty_buckets_preserve_monotonic_offsets() {
+        let blocks =
+            FlatBlocks::from_buckets(vec![vec![], vec![3, 4], vec![], vec![5], vec![]]).unwrap();
+        for (index, expected) in [&[][..], &[3, 4], &[], &[5], &[]].iter().enumerate() {
+            assert_eq!(blocks.block(index), *expected);
+        }
     }
 }

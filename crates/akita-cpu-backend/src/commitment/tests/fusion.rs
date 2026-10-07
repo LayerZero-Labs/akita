@@ -19,9 +19,10 @@ use crate::opaque::{
 use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::{
-    CommittedGroupParams, RingVec, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
+use akita_params::{
+    CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
 };
+use akita_types::RingVec;
 use jolt_field::Prime64Offset59;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -129,7 +130,7 @@ impl InnerImageExportOperation<F> for RecordingInnerConsumer {
     ) -> Result<Vec<RingVec<F>>, AkitaError> {
         self.events
             .lock()
-            .map_err(|_| AkitaError::InvalidInput("fused event recorder is poisoned".into()))?
+            .map_err(|_| AkitaError::Internal("fused event recorder is poisoned".into()))?
             .push(FusedEvent::InnerStateConsumed);
         self.inner.export_inner_rows(plan, image)
     }
@@ -147,7 +148,7 @@ impl PortableCompressionStateExport<F> for RecordingCompressionConsumer {
     ) -> Result<PortableCompressionState<F>, AkitaError> {
         self.events
             .lock()
-            .map_err(|_| AkitaError::InvalidInput("fused event recorder is poisoned".into()))?
+            .map_err(|_| AkitaError::Internal("fused event recorder is poisoned".into()))?
             .push(FusedEvent::CompressionStateConsumed);
         self.inner.export_compression_state(state)
     }
@@ -157,7 +158,7 @@ impl RecordingFused<'_> {
     fn record(&self, event: FusedEvent) -> Result<(), AkitaError> {
         self.events
             .lock()
-            .map_err(|_| AkitaError::InvalidInput("fused event recorder is poisoned".into()))?
+            .map_err(|_| AkitaError::Internal("fused event recorder is poisoned".into()))?
             .push(event);
         Ok(())
     }
@@ -310,7 +311,7 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
                     BackendKindId::of::<SplitBackend>("split-cpu").unwrap(),
                     standard_types.clone(),
                 ),
-                StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
+                StageDimensionCapabilities::cpu_role::<F>(akita_params::RingRole::Inner),
                 Some(inner.portable_exporter()),
             )
             .unwrap(),
@@ -665,7 +666,7 @@ fn fused_only_executor_needs_no_split_registration_or_inner_exporter() {
                     BackendKindId::of::<CpuBackend<F, F>>("inner-only").unwrap(),
                     vec![PolynomialType::Dense(DenseType::Coefficients)],
                 ),
-                StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
+                StageDimensionCapabilities::cpu_role::<F>(akita_params::RingRole::Inner),
                 None,
             )
             .unwrap(),

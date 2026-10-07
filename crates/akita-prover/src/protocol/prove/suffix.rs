@@ -49,17 +49,19 @@ where
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
         let level = index + 1;
         if current_state.witness_handle.manifest().logical_len() != step.input_witness_len {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "recursive suffix witness length differs from scheduled input".into(),
+            ));
         }
         let (next_params, next_binding) = schedule.recursive_folds.get(index + 1).map_or(
             (
                 fold::FoldSuccessorParams::Terminal(&schedule.terminal),
-                akita_types::NextWitnessBindingPolicy::TerminalInnerState,
+                akita_params::NextWitnessBindingPolicy::TerminalInnerState,
             ),
             |next| {
                 (
                     fold::FoldSuccessorParams::Recursive(next),
-                    akita_types::NextWitnessBindingPolicy::OuterPayload,
+                    akita_params::NextWitnessBindingPolicy::OuterPayload,
                 )
             },
         );
@@ -91,7 +93,9 @@ where
     }
     if current_state.witness_handle.manifest().logical_len() != schedule.terminal.input_witness_len
     {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "terminal suffix witness length differs from scheduled input".into(),
+        ));
     }
     prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, B, _>(
         backend,
@@ -138,20 +142,24 @@ where
         ..
     } = current_state;
     if setup_prefix_opening.is_some() {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "terminal fold cannot receive a setup-prefix opening".into(),
         ));
     }
     match binding {
         NextWitnessState::TerminalInnerState => {}
-        NextWitnessState::OuterPayload(_) => return Err(AkitaError::InvalidProof),
+        NextWitnessState::OuterPayload(_) => {
+            return Err(AkitaError::Internal(
+                "terminal suffix received an outer-payload binding".into(),
+            ))
+        }
     }
     let metadata = crate::backend::CommitmentRelationMaterial::metadata(&commitment_material);
     if metadata.ring_dimension() != scheduled.d_a()
         || metadata.source_count() != 1
         || metadata.has_compression()
     {
-        return Err(AkitaError::InvalidInput(
+        return Err(AkitaError::Internal(
             "terminal commitment material disagrees with the terminal plan".into(),
         ));
     }
@@ -159,8 +167,8 @@ where
         backend,
         &commitment_material,
     )?;
-    let fold_level = u32::try_from(level)
-        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
+    let fold_level =
+        u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
     grinding.state_mut().site(
         akita_types::FoldSite::TerminalTFields { level: fold_level }
             .id()?
@@ -181,10 +189,10 @@ where
         let alpha_bits = params.d_a().trailing_zeros() as usize;
         let recursive_num_vars = params.recursive_opening_num_vars()?;
         if sumcheck_challenges.len() > recursive_num_vars {
-            return Err(AkitaError::InvalidPointDimension {
-                expected: recursive_num_vars,
-                actual: sumcheck_challenges.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "terminal sumcheck point dimension: expected {recursive_num_vars}, actual {}",
+                sumcheck_challenges.len(),
+            )));
         }
         let opening_batch = OpeningClaimsLayout::new(sumcheck_challenges.len(), 1)?;
         let needs_reduction = E::DEGREE > 1;
@@ -205,11 +213,9 @@ where
                 &[opening],
             )?;
             (
-                proved
-                    .protocol_points
-                    .into_iter()
-                    .next()
-                    .ok_or(AkitaError::InvalidProof)?,
+                proved.protocol_points.into_iter().next().ok_or_else(|| {
+                    AkitaError::Internal("terminal EOR returned no protocol point".into())
+                })?,
                 Some(proved.reduction),
             )
         } else {
@@ -233,7 +239,7 @@ where
                     params.blocks.positions_per_block,
                     params.blocks.live_blocks,
                     alpha_bits,
-                    akita_types::OpeningMethod::EvaluationTrace,
+                    akita_params::OpeningMethod::EvaluationTrace,
                     witness_source.manifest().logical_len(),
                 );
                 let prepared =
@@ -244,7 +250,9 @@ where
                     )?;
                 let (scalar_openings, opening_handle) = prepared.into_parts();
                 if scalar_openings.len() != 1 {
-                    return Err(AkitaError::InvalidProof);
+                    return Err(AkitaError::Internal(
+                        "terminal backend scalar opening count differs from one".into(),
+                    ));
                 }
                 let folded_by_claim =
                     crate::backend::OpaqueWitnessOpeningKernel::terminal_native_witness_opening(
@@ -271,17 +279,18 @@ where
                 // reduced final claim. Only a degree-one opening can be compared
                 // here verbatim.
                 if reduction.is_none() && trace.claimed_evaluation != opening {
-                    return Err(AkitaError::InvalidInput(
+                    return Err(AkitaError::Internal(
                         "terminal folded opening does not match the carried claim".into(),
                     ));
                 }
                 if folded_by_claim.len() != 1 {
-                    return Err(AkitaError::InvalidProof);
+                    return Err(AkitaError::Internal(
+                        "terminal backend folded opening count differs from one".into(),
+                    ));
                 }
-                let e_folded = folded_by_claim
-                    .into_iter()
-                    .next()
-                    .ok_or(AkitaError::InvalidProof)?;
+                let e_folded = folded_by_claim.into_iter().next().ok_or_else(|| {
+                    AkitaError::Internal("terminal backend returned no folded opening".into())
+                })?;
                 grinding.state_mut().site(
                     akita_types::FoldSite::TerminalEFields { level: fold_level }
                         .id()?
@@ -321,11 +330,11 @@ where
         .layout
         .groups
         .first()
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| AkitaError::Internal("terminal response shape has no group".into()))?;
     let z_payload = terminal_response
         .z_payloads
         .first()
-        .ok_or(AkitaError::InvalidProof)?;
+        .ok_or_else(|| AkitaError::Internal("terminal response has no z payload".into()))?;
     tracing::info!(
         native_terminal_z_bytes = z_payload.len(),
         native_terminal_e_field_elements = terminal_response.e_fields.coeff_len(),
@@ -338,7 +347,11 @@ where
             .id()?
             .into(),
     );
-    Ok(state.send_bounded_bytes(z_payload, group.z_payload_bytes)?)
+    state
+        .send_bounded_bytes(z_payload, group.z_payload_bytes)
+        .map_err(|_| {
+            AkitaError::InvalidInput("terminal z payload exceeds its scheduled bound".into())
+        })
 }
 #[allow(clippy::too_many_arguments)]
 fn prepare_suffix<F, E, B, H: Sponge>(
@@ -380,9 +393,14 @@ where
         {
             Commitment::new(rows)
         }
-        _ => return Err(AkitaError::InvalidProof),
+        _ => {
+            return Err(AkitaError::Internal(
+                "recursive suffix binding differs from scheduled outer payload".into(),
+            ))
+        }
     };
-    let fold_level = u32::try_from(level).map_err(|_| AkitaError::InvalidProof)?;
+    let fold_level = u32::try_from(level)
+        .map_err(|_| AkitaError::Internal("recursive suffix fold level exceeds u32".into()))?;
     let context = backend.proof_context(session, fold_level)?;
     let mut groups = Vec::new();
     let mut claims = Vec::new();
@@ -402,7 +420,11 @@ where
                 .rows
                 .first()
                 .cloned()
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "recursive suffix setup-prefix commitment has no row".into(),
+                    )
+                })?;
             let commitment = Commitment::new(rows);
             groups.push(OpeningSource::Commitment(&slot.commitment_handle));
             layouts.push(PolynomialGroupLayout::new(point.len(), 1));
@@ -413,7 +435,12 @@ where
             )?);
         }
         (None, None) => {}
-        _ => return Err(AkitaError::InvalidProof),
+        _ => {
+            return Err(AkitaError::Internal(
+                "recursive suffix setup-prefix opening differs from scheduled prefix presence"
+                    .into(),
+            ))
+        }
     }
     let witness_index = groups.len();
     groups.push(OpeningSource::Witness(&witness_handle));
@@ -434,7 +461,9 @@ where
     )?;
     if witness_index > 0 {
         let OpeningSource::Commitment(handle) = *claims.group(0)? else {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "recursive suffix setup-prefix source is not a commitment".into(),
+            ));
         };
         let params = level_params.group_params(claims.opening_layout(), 0)?;
         materials.push(backend.validate_commitment(
@@ -486,16 +515,16 @@ mod tests {
     use super::*;
     use crate::protocol::prove::fold_kernels::prepare_evaluation_trace_claim;
     use akita_types::PROOF_STREAM_PROTOCOL;
-    use jolt_field::{Fp32, One, Zero};
+    use jolt_field::{One, Prime32Offset99, Zero};
     use jolt_transcript::ProverTranscript;
 
-    type TestF = Fp32<251>;
+    type TestF = Prime32Offset99;
 
-    fn evaluation_batch_plan() -> akita_types::GrindingPlan {
-        let challenge_order = akita_types::ChallengeFieldOrder::from_full_capacity(128).unwrap();
-        akita_types::GrindingPlan::new(
-            vec![akita_types::GrindingRun::proof_of_work(
-                akita_types::GrindingSite::EvaluationBatch { level: 0 },
+    fn evaluation_batch_plan() -> akita_params::GrindingPlan {
+        let challenge_order = akita_params::ChallengeFieldOrder::from_full_capacity(128).unwrap();
+        akita_params::GrindingPlan::new(
+            vec![akita_params::GrindingRun::proof_of_work(
+                akita_params::GrindingSite::EvaluationBatch { level: 0 },
                 1,
                 challenge_order,
             )
@@ -532,7 +561,7 @@ mod tests {
         };
 
         assert!(
-            matches!(err, AkitaError::InvalidProof),
+            matches!(err, AkitaError::Internal(_)),
             "unexpected error: {err:?}"
         );
     }
@@ -562,6 +591,10 @@ mod tests {
             0,
         );
 
-        assert!(matches!(result, Err(AkitaError::InvalidProof)));
+        assert!(
+            matches!(result, Err(AkitaError::Internal(_))),
+            "unexpected error: {:?}",
+            result.err()
+        );
     }
 }

@@ -9,9 +9,11 @@
 
 use crate::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_error::AkitaError;
+use akita_params::{
+    BasisMode, FoldSchedule, GrindingPlan, OpeningClaimsLayout, OpeningScheduleSelection,
+};
 use akita_types::{
-    AkitaInstanceDescriptor, AkitaSetupDescriptor, AlgebraSection, BasisMode, CallSection,
-    FoldSchedule, FpExtEncoding, GrindingPlan, OpeningClaimsLayout, OpeningScheduleSelection,
+    AkitaInstanceDescriptor, AkitaSetupDescriptor, AlgebraSection, CallSection, FpExtEncoding,
     PlanSection, SetupSection, TranscriptGrindingBinding,
 };
 use jolt_field::{CanonicalEncoding, Field};

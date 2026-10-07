@@ -392,10 +392,11 @@ nonce encoding are documented in
   shared descriptor and grinding plan.
 - `crates/akita-types/src/instance_descriptor/mod.rs` owns descriptor fields,
   canonical serialization, and version validation.
-- `crates/akita-types/src/transcript.rs` owns the standalone protocol identity,
-  default sponge, and diagnostic site coordinates; `jolt-transcript` owns
-  framing, atom codecs, bounded bytes, nonces, and grinding.
-- `crates/akita-types/src/transcript_grinding/plan.rs` defines the ordered
+- `crates/akita-types/src/transcript.rs` owns the standalone protocol identity
+  and default sponge, and `crates/akita-params/src/transcript_site.rs` owns the
+  diagnostic site coordinates; `jolt-transcript` owns framing, atom codecs,
+  bounded bytes, nonces, and grinding.
+- `crates/akita-params/src/transcript_grinding/plan.rs` defines the ordered
   plan; `crates/akita-types/src/transcript_grinding/replay.rs` couples
   nonce transport, predicate checks, challenges, and plan progress.
 - `crates/akita-challenges/src/sampler/xof.rs` derives the indexed sparse

@@ -17,7 +17,11 @@ impl<F: Field> SetupRows<'_, F> {
         self.rows
             .get(row)
             .and_then(|row| row.get(col * self.ring_d..(col + 1) * self.ring_d))
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::Internal(
+                    "setup family row or ring column is outside its compiled storage".into(),
+                )
+            })
     }
 }
 
@@ -39,7 +43,7 @@ where
             .iter()
             .any(|(_, weights)| weights.len() != batch_count)
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "setup column weight batches are malformed".into(),
         ));
     }
@@ -47,19 +51,20 @@ where
     let output_len = column_count
         .checked_mul(batch_count)
         .and_then(|len| len.checked_mul(value_width))
-        .ok_or_else(|| AkitaError::InvalidSetup("setup column batch size overflow".into()))?;
+        .ok_or_else(|| {
+            AkitaError::Internal("contracted setup column batch size overflow".into())
+        })?;
     let mut values = vec![E::zero(); output_len];
     cfg_chunks_mut!(&mut values, batch_count * value_width)
         .enumerate()
         .try_for_each(|(column_offset, output)| -> Result<(), AkitaError> {
-            let column = columns
-                .start
-                .checked_add(column_offset)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup column offset overflow".into()))?;
+            let column = columns.start.checked_add(column_offset).ok_or_else(|| {
+                AkitaError::Internal("contracted setup column offset overflow".into())
+            })?;
             for (row, weights) in row_weights {
                 let contracted = contract(family.ring_slice(*row, column)?)?;
                 if contracted.len() != value_width {
-                    return Err(AkitaError::InvalidSetup(
+                    return Err(AkitaError::Internal(
                         "setup column contraction width mismatch".into(),
                     ));
                 }
@@ -69,7 +74,11 @@ where
                     }
                     let destination = output
                         .get_mut(batch * value_width..(batch + 1) * value_width)
-                        .ok_or(AkitaError::InvalidProof)?;
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "setup contraction batch has no output destination".into(),
+                            )
+                        })?;
                     for (accumulator, &value) in destination.iter_mut().zip(&contracted) {
                         *accumulator += weight * value;
                     }
@@ -191,25 +200,24 @@ where
             .iter()
             .any(|(_, weights)| weights.len() != batch_count)
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "setup residue-column weight batches are malformed".into(),
         ));
     }
     let column_count = columns.len();
     let column_width = batch_count
         .checked_mul(family.ring_d)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup column batch size overflow".into()))?;
+        .ok_or_else(|| AkitaError::Internal("setup residue-column width overflow".into()))?;
     let output_len = column_count
         .checked_mul(column_width)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup column batch size overflow".into()))?;
+        .ok_or_else(|| AkitaError::Internal("setup residue-column batch size overflow".into()))?;
     let mut values = vec![E::zero(); output_len];
     cfg_chunks_mut!(&mut values, column_width)
         .enumerate()
         .try_for_each(|(column_offset, output)| -> Result<(), AkitaError> {
-            let column = columns
-                .start
-                .checked_add(column_offset)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup column offset overflow".into()))?;
+            let column = columns.start.checked_add(column_offset).ok_or_else(|| {
+                AkitaError::Internal("setup residue-column offset overflow".into())
+            })?;
             let mut coefficient_sums = (0..column_width).map(|_| A::zero()).collect::<Vec<_>>();
             for (row, weights) in row_weights {
                 let coefficients = family.ring_slice(*row, column)?;
@@ -219,7 +227,11 @@ where
                     }
                     let destination = coefficient_sums
                         .get_mut(batch * family.ring_d..(batch + 1) * family.ring_d)
-                        .ok_or(AkitaError::InvalidProof)?;
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "setup contraction batch has no coefficient-sum destination".into(),
+                            )
+                        })?;
                     for (accumulator, &coefficient) in destination.iter_mut().zip(coefficients) {
                         accumulator.add_product(weight, coefficient);
                     }
@@ -256,17 +268,21 @@ pub(super) struct SetupColumnValues<E> {
 impl<E> SetupColumnValues<E> {
     pub(super) fn get(&self, batch: usize, column: usize) -> Result<&[E], AkitaError> {
         if batch >= self.batch_count || column >= self.column_count {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "contracted setup batch or column is outside its compiled dimensions".into(),
+            ));
         }
         let start = column
             .checked_mul(self.batch_count)
             .and_then(|offset| offset.checked_add(batch))
             .and_then(|index| index.checked_mul(self.value_width))
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| AkitaError::Internal("contracted setup column start overflow".into()))?;
         let end = start
             .checked_add(self.value_width)
-            .ok_or(AkitaError::InvalidProof)?;
-        self.values.get(start..end).ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| AkitaError::Internal("contracted setup column end overflow".into()))?;
+        self.values.get(start..end).ok_or_else(|| {
+            AkitaError::Internal("contracted setup column range is outside its values".into())
+        })
     }
 
     pub(super) fn get_scalar(&self, batch: usize, column: usize) -> Result<E, AkitaError>
@@ -274,7 +290,9 @@ impl<E> SetupColumnValues<E> {
         E: Copy,
     {
         let [value] = self.get(batch, column)? else {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "contracted scalar setup column is not a singleton".into(),
+            ));
         };
         Ok(*value)
     }

@@ -4,10 +4,10 @@ use crate::backend::{EvaluationTraceDescription, Stage2OpeningDescription};
 use akita_types::GrindingReplay;
 use jolt_field::AdditiveGroup;
 
+use akita_params::{InnerCommitSecurityRoute, OpeningClaimsLayout};
 use akita_types::{
     batch_l2_virtual_evaluations, CoefficientPackingBatchSemantics, DigitRangeEqualityPoint,
-    InnerCommitSecurityRoute, OpeningClaimsLayout, OpeningFamily, PhysicalResponsePlan,
-    RelationRangeImagePlan,
+    OpeningFamily, PhysicalResponsePlan, RelationRangeImagePlan,
 };
 
 pub(in crate::protocol::prove) struct PhysicalL2ProverReplay<E: Field> {
@@ -133,50 +133,50 @@ where
     // only through D-free `PreparedOpeningPoint` / `RingVec` carriers.
     let opening_batch = trace_opening_batch.clone();
     let opening_method = level_params.opening_method();
-    if !matches!(opening_method, akita_types::OpeningMethod::EvaluationTrace) && reduction.is_some()
+    if !matches!(opening_method, akita_params::OpeningMethod::EvaluationTrace)
+        && reduction.is_some()
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "coefficient packing cannot consume an extension-opening reduction".into(),
         ));
     }
     let final_group_index = level_params.validate_opening_batch(&opening_batch)?;
-    let mut prepared_group_openings = Vec::with_capacity(opening_batch.num_groups());
-    let mut scalar_openings = Vec::with_capacity(opening_batch.num_total_polynomials());
+    let mut requests = Vec::with_capacity(opening_batch.num_groups());
     for (group_index, group_lp) in level_params.groups().iter().enumerate() {
         let ring_dimension = group_lp.inner_commit_matrix_params().ring_dimension();
         let group_alpha_bits = ring_dimension.trailing_zeros() as usize;
-        let group_protocol_point = protocol_points
-            .get(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let group_protocol_point = protocol_points.get(group_index).ok_or_else(|| {
+            AkitaError::Internal("fold protocol point is missing for opening group".into())
+        })?;
         if matches!(
             group_lp.opening_method(),
-            akita_types::OpeningMethod::EvaluationTrace
+            akita_params::OpeningMethod::EvaluationTrace
         ) {
             let target_len = akita_error::checked::sum([
                 group_alpha_bits,
                 group_lp.position_index_bits(),
                 group_lp.block_index_bits(),
             ])
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("group opening point length overflow".into())
-            })?;
+            .ok_or_else(|| AkitaError::Internal("group opening point length overflow".into()))?;
             let allow_short_point = pad_base_evals && group_index == final_group_index;
             if group_protocol_point.len() > target_len
                 || (!allow_short_point && group_protocol_point.len() != target_len)
             {
-                return Err(AkitaError::InvalidPointDimension {
-                    expected: target_len,
-                    actual: group_protocol_point.len(),
-                });
+                return Err(AkitaError::Internal(format!(
+                    "fold protocol point dimension mismatch: expected {target_len}, actual {}",
+                    group_protocol_point.len(),
+                )));
             }
         }
         let source = *block_claims.group(group_index)?;
         let logical_len = match source {
             OpeningSource::Commitment(h) => 1usize
-                .checked_shl(
-                    u32::try_from(h.metadata().num_vars()).map_err(|_| AkitaError::InvalidProof)?,
-                )
-                .ok_or(AkitaError::InvalidProof)?,
+                .checked_shl(u32::try_from(h.metadata().num_vars()).map_err(|_| {
+                    AkitaError::Internal("commitment handle variable count exceeds u32".into())
+                })?)
+                .ok_or_else(|| {
+                    AkitaError::Internal("commitment handle logical length overflow".into())
+                })?,
             OpeningSource::Witness(h) => h.manifest().logical_len(),
         };
         let plan = crate::backend::ValidatedRecursiveGroupOpeningPlan::new(
@@ -189,24 +189,48 @@ where
             group_lp.opening_method(),
             logical_len,
         );
-        let prepared = backend.prepare_opening(
-            opening.proof_session(),
-            opening.for_group(group_index).proof_context(),
+        requests.push(crate::backend::GroupOpeningRequest {
+            context: context.for_group(group_index),
             source,
-            &plan,
-        )?;
+            plan,
+        });
+    }
+    let prepared_group_openings = backend.prepare_openings(session, &requests)?;
+    if prepared_group_openings.len() != requests.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: requests.len(),
+            actual: prepared_group_openings.len(),
+        });
+    }
+    let mut scalar_openings = Vec::with_capacity(opening_batch.num_total_polynomials());
+    for (group_index, prepared) in prepared_group_openings.iter().enumerate() {
         if prepared.scalar_openings().len()
             != opening_batch.group_layout(group_index)?.num_polynomials()
-            || (reduction.is_none()
-                && prepared.scalar_openings()
-                    != block_claims
-                        .opening_claims()
-                        .groups()
-                        .get(group_index)
-                        .ok_or(AkitaError::InvalidProof)?
-                        .evaluations())
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "fold backend scalar opening count differs from group layout".into(),
+            ));
+        }
+        if reduction.is_none() {
+            let claims = block_claims
+                .opening_claims()
+                .groups()
+                .get(group_index)
+                .ok_or_else(|| {
+                    AkitaError::Internal("fold opening claim group is missing".into())
+                })?;
+            if prepared.scalar_openings() != claims.evaluations() {
+                // Level 0 carries caller claims; later levels carry prover-generated claims.
+                return Err(if level == 0 {
+                    AkitaError::InvalidInput(
+                        "claimed evaluation differs from the committed polynomial opening".into(),
+                    )
+                } else {
+                    AkitaError::Internal(
+                        "fold scalar opening differs from the generated recursive claim".into(),
+                    )
+                });
+            }
         }
         if pad_base_evals {
             grinding.state_mut().site(
@@ -217,10 +241,11 @@ where
                 .id()?
                 .into(),
             );
-            grinding.state_mut().public_all(group_protocol_point);
+            grinding
+                .state_mut()
+                .public_all(requests[group_index].plan.point());
         }
         scalar_openings.extend_from_slice(prepared.scalar_openings());
-        prepared_group_openings.push(prepared);
     }
     if reduction.is_none() {
         grinding
@@ -250,10 +275,7 @@ where
         trace_opening_batch,
         expected_witness_len,
         commitment_ring_dimension,
-    )
-    .map_err(|err| {
-        AkitaError::InvalidInput(format!("ring relation preparation failed: {err:?}"))
-    })?;
+    )?;
     let evaluation_trace_claim_coefficients = trace_claim.claim_coefficients;
     // Recursive suffixes still omit the public row coefficients from ring-switch
     // finalization. Evaluation-trace coefficients are normalized independently and
@@ -325,10 +347,10 @@ where
     let Some(mut replay) = physical_l2 else {
         return Ok(None);
     };
-    let level = u32::try_from(level)
-        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
+    let level =
+        u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
     let eta = grinding
-        .grinded_ext_challenge::<F, E>(akita_types::GrindingSite::L2VirtualBatch { level })?;
+        .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::L2VirtualBatch { level })?;
     (replay.claim, replay.batching) =
         batch_l2_virtual_evaluations(eta, &replay.virtual_evaluations);
     Ok(Some(replay))
@@ -346,9 +368,9 @@ where
     if !rs.compressed {
         return Ok(E::zero());
     }
-    let level = u32::try_from(level)
-        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
-    grinding.grinded_ext_challenge::<F, E>(akita_types::GrindingSite::CompressionBinary { level })
+    let level =
+        u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
+    grinding.grinded_ext_challenge::<F, E>(akita_params::GrindingSite::CompressionBinary { level })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -384,15 +406,21 @@ where
             for semantics in batch.groups() {
                 let group_index = semantics.group_index();
                 let claim_range = semantics.group_claim_range();
-                let group = relation_groups
-                    .get(group_index)
-                    .ok_or(AkitaError::InvalidProof)?;
+                let group = relation_groups.get(group_index).ok_or_else(|| {
+                    AkitaError::Internal("coefficient-packing relation group is missing".into())
+                })?;
                 let group_openings = group.scalar_openings();
                 let claim_coefficients = evaluation_trace_claim_coefficients
                     .get(claim_range.clone())
-                    .ok_or(AkitaError::InvalidProof)?;
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "coefficient-packing claim coefficient range is missing".into(),
+                        )
+                    })?;
                 if group_openings.len() != claim_range.len() {
-                    return Err(AkitaError::InvalidProof);
+                    return Err(AkitaError::Internal(
+                        "coefficient-packing scalar opening count differs from claim range".into(),
+                    ));
                 }
                 let group_opening = group_openings
                     .iter()
@@ -404,7 +432,10 @@ where
                 weighted_opening_claim += semantics.scalar_claim_weight() * group_opening;
             }
             if authenticated_opening != evaluation_trace_claim {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "coefficient-packing authenticated opening differs from evaluation-trace claim"
+                        .into(),
+                ));
             }
             Ok((
                 Stage2OpeningDescription::CoefficientPacking(batch),
@@ -419,7 +450,9 @@ where
                 .iter()
                 .map(|group| match group.kind() {
                     OpeningFamily::EvaluationTrace(point) => Ok(point.clone()),
-                    OpeningFamily::SubringCoefficientPacking(_) => Err(AkitaError::InvalidProof),
+                    OpeningFamily::SubringCoefficientPacking(_) => Err(AkitaError::Internal(
+                        "evaluation-trace relation contains a coefficient-packing group".into(),
+                    )),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let semantic_trace = EvaluationTraceDescription::try_new(
@@ -453,7 +486,7 @@ fn commit_next_witness<F, E, B, H: Sponge>(
     level: u32,
     next_params: FoldSuccessorParams<'_>,
     expected_output_witness_len: usize,
-    next_witness_binding: akita_types::NextWitnessBindingPolicy,
+    next_witness_binding: akita_params::NextWitnessBindingPolicy,
     witness_handle: B::WitnessHandle,
 ) -> Result<CommittedNextWitness<F, B::WitnessHandle, B::CommitmentMaterialHandle>, AkitaError>
 where
@@ -462,12 +495,12 @@ where
     B: ProverBackend<F, E>,
 {
     let next_opening_ring_dim = next_params.inner_ring_dimension();
-    let committed_witness_len = akita_types::witness_commitment_domain_len(
+    let committed_witness_len = akita_params::witness_commitment_domain_len(
         witness_handle.manifest().logical_len(),
         next_opening_ring_dim,
     )?;
     if witness_handle.manifest().logical_len() != expected_output_witness_len {
-        return Err(AkitaError::InvalidSetup(format!(
+        return Err(AkitaError::Internal(format!(
             "scheduled fold level {level} produced unexpected next-w length: expected={expected_output_witness_len}, actual={}",
             witness_handle.manifest().logical_len()
         )));
@@ -498,7 +531,7 @@ where
     let binding = match (message, next_witness_binding) {
         (
             crate::backend::NextWitnessBindingMessage::OuterPayload(public_commitment),
-            akita_types::NextWitnessBindingPolicy::OuterPayload,
+            akita_params::NextWitnessBindingPolicy::OuterPayload,
         ) => {
             grinding.state_mut().site(
                 akita_types::FoldSite::NextWitnessPayload { level }
@@ -510,7 +543,7 @@ where
         }
         (
             crate::backend::NextWitnessBindingMessage::TerminalInnerState(message),
-            akita_types::NextWitnessBindingPolicy::TerminalInnerState,
+            akita_params::NextWitnessBindingPolicy::TerminalInnerState,
         ) => {
             grinding.state_mut().site(
                 akita_types::FoldSite::NextWitnessInnerState { level }
@@ -520,7 +553,11 @@ where
             grinding.state_mut().send_all(message.fields());
             NextWitnessState::TerminalInnerState
         }
-        _ => return Err(AkitaError::InvalidProof),
+        _ => {
+            return Err(AkitaError::Internal(
+                "next witness binding message differs from scheduled binding policy".into(),
+            ))
+        }
     };
     Ok(CommittedNextWitness {
         committed_witness_len,
@@ -553,7 +590,7 @@ pub(in crate::protocol::prove) fn prove_fold<F, E, B, H: Sponge>(
     lp: &CommittedGroupParams,
     next_params: FoldSuccessorParams<'_>,
     expected_output_witness_len: usize,
-    next_witness_binding: akita_types::NextWitnessBindingPolicy,
+    next_witness_binding: akita_params::NextWitnessBindingPolicy,
     prepared_fold: PreparedFold<F, E, B::WitnessHandle>,
 ) -> Result<ProveLevelOutput<F, E, B::CommitmentMaterialHandle, B::WitnessHandle>, AkitaError>
 where
@@ -571,15 +608,18 @@ where
 {
     let opening_batch = prepared_fold.instance.opening_batch().clone();
     let challenge_field_bits = F::MODULUS_BITS
-        .checked_mul(u32::try_from(E::DEGREE).map_err(|_| AkitaError::InvalidProof)?)
-        .ok_or(AkitaError::InvalidProof)?;
+        .checked_mul(
+            u32::try_from(E::DEGREE)
+                .map_err(|_| AkitaError::Internal("extension degree exceeds u32".into()))?,
+        )
+        .ok_or_else(|| AkitaError::Internal("challenge field bit width overflow".into()))?;
     let relation_geometry = lp.relation_address_geometry(
         &opening_batch,
         E::DEGREE,
         next_params.inner_ring_dimension(),
         expected_output_witness_len,
     )?;
-    let level_layout = akita_types::nonterminal_level_layout(
+    let level_layout = akita_params::nonterminal_level_layout(
         F::MODULUS_BITS,
         challenge_field_bits,
         lp,
@@ -596,8 +636,8 @@ where
         row_coefficients,
     } = prepared_fold;
     let next_opening_ring_dim = next_params.inner_ring_dimension();
-    let fold_level = u32::try_from(level)
-        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
+    let fold_level =
+        u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
     let CommittedNextWitness {
         committed_witness_len,
         witness_handle: mut next_witness,
@@ -631,10 +671,9 @@ where
         row_coefficients.as_deref(),
         &evaluation_trace_claim_coefficients,
         &relation_groups,
-    )
-    .map_err(|err| AkitaError::InvalidInput(format!("ring-switch finalize failed: {err:?}")))?;
+    )?;
     let mut rs = ring_switch.output;
-    let (stage1_stages, stage1_norm) = akita_types::DigitRangePlan::new(rs.b)?
+    let (stage1_stages, stage1_norm) = akita_params::DigitRangePlan::new(rs.b)?
         .proof_shapes_for_route(
             relation_geometry.relation_point_variable_count(),
             lp.inner().matrix.security_route(),
@@ -650,7 +689,7 @@ where
                 3,
             )?
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "native level grammar disagrees with fold plan".into(),
         ));
     }
@@ -681,7 +720,7 @@ where
     let physical_l2 = prepare_physical_l2_batch::<F, E, _>(grinding, level, physical_l2)?;
     let compression = prepare_stage2_compression::<F, E, _, _>(grinding, level, &mut rs)?;
     let batching_coeff =
-        grinding.grinded_ext_challenge::<F, E>(akita_types::GrindingSite::Stage2Batch {
+        grinding.grinded_ext_challenge::<F, E>(akita_params::GrindingSite::Stage2Batch {
             level: fold_level,
         })?;
     let (linear_terms, scalar_opening_claim) = prepare_relation_sumcheck::<F, E, _>(
@@ -700,7 +739,7 @@ where
     let alpha = rs.alpha;
     let relation_coefficients = match relation_groups
         .first()
-        .ok_or(AkitaError::InvalidProof)?
+        .ok_or_else(|| AkitaError::Internal("stage 2 relation has no opening group".into()))?
         .kind()
     {
         OpeningFamily::SubringCoefficientPacking(_) => evaluation_trace_claim_coefficients.clone(),
@@ -736,8 +775,7 @@ where
             relation_plan: &relation_range_image_plan,
             groups: &relation_groups,
         },
-    )
-    .map_err(|err| AkitaError::InvalidInput(format!("stage-2 proving failed: {err:?}")))?;
+    )?;
     akita_types::stage2_w_eval::<F, E, _>(grinding, fold_level, w_eval)?;
     let stage3_sumcheck_proof = match next_params.recursive() {
         Some(next_fold_params) => prove_stage3::<F, E, _, _>(

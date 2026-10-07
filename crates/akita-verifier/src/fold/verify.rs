@@ -7,9 +7,11 @@ use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Valid};
 use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
+use akita_params::{
+    validate_schedule_ring_dims, BasisMode, CommittedGroupBatchProfile, ProtocolSiteId,
+};
 use akita_types::{
-    validate_schedule_ring_dims, AkitaSponge, BasisMode, CommittedGroupBatchProfile, FpExtEncoding,
-    GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, ProtocolSiteId,
+    AkitaSponge, FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
     PROOF_STREAM_PROTOCOL,
 };
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
@@ -78,7 +80,7 @@ where
                 descriptor.outer.matrix.output_rank(),
                 descriptor.outer.matrix.ring_dimension(),
             )?;
-            let plan = akita_types::CompressionChainPlan::for_complete_source(
+            let plan = akita_params::CompressionChainPlan::for_complete_source(
                 descriptor.outer.matrix.sis_table_key().modulus_profile,
                 source_coefficients,
             )?;
@@ -105,7 +107,7 @@ where
         }
         let schedule = resolved.schedule();
         let root_params = &schedule.root_fold().params;
-        let expected_final_descriptor = akita_types::GroupCommitPhaseParams::try_from_params(
+        let expected_final_descriptor = akita_params::GroupCommitPhaseParams::try_from_params(
             final_descriptor.group,
             root_params,
         )?;
@@ -138,7 +140,7 @@ where
         )?;
         transcript.site(
             ProtocolSiteId {
-                family: akita_types::transcript::SITE_FAMILY_ROOT_STATEMENT,
+                family: akita_params::transcript_site::SITE_FAMILY_ROOT_STATEMENT,
                 ..ProtocolSiteId::default()
             }
             .into(),

@@ -332,7 +332,10 @@ fn common_coordinate_factorization_matches_flattened_rounds() {
         flattened.ingest_challenge(round, challenge);
     }
     assert_eq!(factorized_claim, flattened_claim);
-    assert_eq!(factorized.final_w_eval(), flattened.final_w_eval());
+    assert_eq!(
+        factorized.final_w_eval().unwrap(),
+        flattened.final_w_eval().unwrap()
+    );
 }
 
 fn relation_round_reference(
@@ -404,9 +407,9 @@ fn stage2_compact_fold_lookup_matches_direct_formula() {
 
     let w_dense = vec![1, 2, 3, 1, 2, 3];
     let packed_dense = packed(&w_dense);
-    let dense_lut = RelationRangeImageProver::<F>::build_compact_w_fold_lut(packed_dense.view(), r);
+    let dense_lut = RelationRoundState::<F>::build_compact_w_fold_lut(packed_dense.view(), r);
     assert_eq!(
-        RelationRangeImageProver::<F>::materialize_compact_witness(packed_dense.view(), &dense_lut),
+        RelationRoundState::<F>::materialize_compact_witness(packed_dense.view(), &dense_lut),
         materialize_compact_witness_reference(&w_dense, r)
     );
 }
@@ -445,7 +448,7 @@ fn stage2_compact_round0_matches_unfused_reference() {
         let packed_witness = packed(&compact_witness);
         let (virt_poly, relation_poly) =
             prover.compute_round_compact_dense_polys(packed_witness.view());
-        let virt_ref = virtual_round_reference(&prover.split_eq, &compact_witness);
+        let virt_ref = virtual_round_reference(&prover.state.split_eq, &compact_witness);
         let relation_ref = relation_round_reference(
             &compact_witness,
             &common_alpha_factor,
@@ -532,7 +535,10 @@ fn stage2_prefix_aware_rounds_match_explicit_relation_lane_table() {
                 padded_prover.ingest_challenge(round, challenge);
             }
 
-            assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+            assert_eq!(
+                prefix_prover.final_w_eval().unwrap(),
+                padded_prover.final_w_eval().unwrap()
+            );
             assert_eq!(prefix_claim, padded_claim);
         }
     }
@@ -571,7 +577,7 @@ fn stage2_zero_gated_round0_matches_reference() {
         prover.compute_round_compact_dense_polys(packed_witness.view());
     assert_eq!(
         virt_poly,
-        virtual_round_reference(&prover.split_eq, &compact_witness)
+        virtual_round_reference(&prover.state.split_eq, &compact_witness)
     );
     assert_eq!(
         relation_poly,
@@ -646,7 +652,10 @@ fn stage2_large_odd_sparse_boolean_deferred_compact_prefix_matches_direct_path()
     }
 
     assert_eq!(prover_claim, direct_claim);
-    assert_eq!(prover.final_w_eval(), direct.final_w_eval());
+    assert_eq!(
+        prover.final_w_eval().unwrap(),
+        direct.final_w_eval().unwrap()
+    );
 }
 
 #[test]
@@ -716,20 +725,77 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
     }
 
     assert_eq!(prefix_claim, padded_claim);
-    assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+    assert_eq!(
+        prefix_prover.final_w_eval().unwrap(),
+        padded_prover.final_w_eval().unwrap()
+    );
 }
 
 #[test]
 fn stage2_large_odd_dense_deferred_compact_prefix_matches_direct_path() {
-    let lane_bits = 16usize;
-    let coefficient_bits = 6usize;
-    let live_lane_count = 34_519usize;
-    let b = 8usize;
+    for b in [8, 16] {
+        dense_compact_prefix_matches_direct_path(b, 16, 6, 34_519);
+        // Prefixes that end at rounds 1, 2 and 3.
+        for coefficient_bits in [2, 3, 4] {
+            dense_compact_prefix_matches_direct_path(b, 7, coefficient_bits, 77);
+        }
+    }
+}
+
+/// The periodic witness of the test above repeats a handful of digit classes.
+/// Here every lane has its own digits and both ends of the digit range occur,
+/// so the later coefficient rounds still see many classes.
+#[test]
+fn stage2_pseudorandom_dense_compact_prefix_matches_direct_path() {
+    for b in [8, 16] {
+        for (lane_bits, coefficient_bits, live_lane_count) in [(7, 6, 77), (10, 7, 777)] {
+            let half = (b / 2) as i8;
+            let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ (b * live_lane_count) as u64;
+            let mut w_prefix: Vec<i8> = (0..(live_lane_count << coefficient_bits))
+                .map(|_| {
+                    state = state
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    ((state >> 33) % b as u64) as i8 - half
+                })
+                .collect();
+            w_prefix[0] = -half;
+            w_prefix[1] = half - 1;
+            let last = w_prefix.len() - 1;
+            w_prefix[last - 1] = half - 1;
+            w_prefix[last] = -half;
+            compact_prefix_matches_direct_path(
+                b,
+                lane_bits,
+                coefficient_bits,
+                live_lane_count,
+                w_prefix,
+            );
+        }
+    }
+}
+
+fn dense_compact_prefix_matches_direct_path(
+    b: usize,
+    lane_bits: usize,
+    coefficient_bits: usize,
+    live_lane_count: usize,
+) {
     let half = (b / 2) as i8;
-    let coeff_count = 1usize << coefficient_bits;
-    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
+    let w_prefix: Vec<i8> = (0..(live_lane_count << coefficient_bits))
         .map(|i| ((i * 29 + 17) % b) as i8 - half)
         .collect();
+    compact_prefix_matches_direct_path(b, lane_bits, coefficient_bits, live_lane_count, w_prefix);
+}
+
+fn compact_prefix_matches_direct_path(
+    b: usize,
+    lane_bits: usize,
+    coefficient_bits: usize,
+    live_lane_count: usize,
+    w_prefix: Vec<i8>,
+) {
+    let coeff_count = 1usize << coefficient_bits;
     let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
         .map(|i| F::from_u64((17 * i as u64) + 241))
         .collect();
@@ -761,6 +827,7 @@ fn stage2_large_odd_dense_deferred_compact_prefix_matches_direct_path() {
         relation_lane_weights,
         params,
     );
+    assert!(prover.compact_quotient_prefix().is_some());
     direct.disable_compact_quotient_prefix();
 
     let mut prover_claim = prover.input_claim();
@@ -781,7 +848,7 @@ fn stage2_large_odd_dense_deferred_compact_prefix_matches_direct_path() {
         );
         assert_eq!(
             prover_poly, direct_poly,
-            "round {round} polynomial mismatch for large odd dense witness"
+            "round {round} polynomial mismatch for dense witness, b={b}"
         );
 
         let challenge = F::from_u64((29 * round as u64) + 269);
@@ -792,7 +859,10 @@ fn stage2_large_odd_dense_deferred_compact_prefix_matches_direct_path() {
     }
 
     assert_eq!(prover_claim, direct_claim);
-    assert_eq!(prover.final_w_eval(), direct.final_w_eval());
+    assert_eq!(
+        prover.final_w_eval().unwrap(),
+        direct.final_w_eval().unwrap()
+    );
 }
 
 #[test]
@@ -863,5 +933,8 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
     }
 
     assert_eq!(prefix_claim, padded_claim);
-    assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+    assert_eq!(
+        prefix_prover.final_w_eval().unwrap(),
+        padded_prover.final_w_eval().unwrap()
+    );
 }

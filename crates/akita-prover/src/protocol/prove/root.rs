@@ -59,9 +59,9 @@ where
         Cfg,
     >(expanded, layout, selection, schedule, basis)?;
     transcript.site(
-        akita_types::ProtocolSiteId {
-            family: akita_types::transcript::SITE_FAMILY_ROOT_STATEMENT,
-            ..akita_types::ProtocolSiteId::default()
+        akita_params::ProtocolSiteId {
+            family: akita_params::transcript_site::SITE_FAMILY_ROOT_STATEMENT,
+            ..akita_params::ProtocolSiteId::default()
         }
         .into(),
     );
@@ -72,12 +72,12 @@ where
     let (next_params, next_binding) = schedule.recursive_folds.first().map_or(
         (
             fold::FoldSuccessorParams::Terminal(&schedule.terminal),
-            akita_types::NextWitnessBindingPolicy::TerminalInnerState,
+            akita_params::NextWitnessBindingPolicy::TerminalInnerState,
         ),
         |next| {
             (
                 fold::FoldSuccessorParams::Recursive(next),
-                akita_types::NextWitnessBindingPolicy::OuterPayload,
+                akita_params::NextWitnessBindingPolicy::OuterPayload,
             )
         },
     );
@@ -118,7 +118,9 @@ where
         proof_session,
     )?;
     if suffix.num_levels != schedule.num_fold_levels() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::Internal(
+            "proved suffix fold count differs from schedule".into(),
+        ));
     }
     guard.finish()?;
     grinding.finish()

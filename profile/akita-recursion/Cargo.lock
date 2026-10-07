@@ -103,6 +103,7 @@ version = "0.1.0"
 dependencies = [
  "akita-challenges 0.1.0",
  "akita-error 0.1.0",
+ "akita-params",
  "akita-schedules 0.1.0",
  "akita-serialization 0.1.0",
  "akita-types 0.1.0",
@@ -131,6 +132,7 @@ dependencies = [
  "akita-challenges 0.1.0",
  "akita-config 0.1.0",
  "akita-error 0.1.0",
+ "akita-params",
  "akita-prover 0.1.0",
  "akita-serialization 0.1.0",
  "akita-sumcheck 0.1.0",
@@ -178,6 +180,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-params"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra 0.1.0",
+ "akita-challenges 0.1.0",
+ "akita-error 0.1.0",
+ "akita-serialization 0.1.0",
+ "akita-sumcheck 0.1.0",
+ "blake2 0.11.0",
+ "jolt-field 0.1.0 (git+https://github.com/a16z/jolt?rev=c93d6f0899661b9f1ff907bf3dea30386aaf59b6)",
+ "jolt-transcript",
+ "serde",
+ "sha3 0.12.0",
+]
+
+[[package]]
 name = "akita-pcs"
 version = "0.1.0"
 dependencies = [
@@ -186,6 +204,7 @@ dependencies = [
  "akita-config 0.1.0",
  "akita-cpu-backend 0.1.0",
  "akita-error 0.1.0",
+ "akita-params",
  "akita-prover 0.1.0",
  "akita-serialization 0.1.0",
  "akita-setup 0.1.0",
@@ -238,6 +257,7 @@ dependencies = [
  "akita-challenges 0.1.0",
  "akita-config 0.1.0",
  "akita-error 0.1.0",
+ "akita-params",
  "akita-serialization 0.1.0",
  "akita-sumcheck 0.1.0",
  "akita-types 0.1.0",
@@ -272,6 +292,7 @@ dependencies = [
  "akita-config 0.1.0",
  "akita-cpu-backend 0.1.0",
  "akita-error 0.1.0",
+ "akita-params",
  "akita-pcs 0.1.0",
  "akita-prover 0.1.0",
  "akita-recursion-glue",
@@ -294,6 +315,7 @@ dependencies = [
  "akita-challenges 0.1.0",
  "akita-config 0.1.0",
  "akita-error 0.1.0",
+ "akita-params",
  "akita-schedules 0.1.0",
  "akita-serialization 0.1.0",
  "akita-types 0.1.0",
@@ -306,6 +328,7 @@ version = "0.1.0"
 dependencies = [
  "akita-config 0.1.0",
  "akita-error 0.1.0",
+ "akita-params",
  "akita-recursion-glue",
  "akita-serialization 0.1.0",
  "akita-types 0.1.0",
@@ -319,6 +342,7 @@ name = "akita-recursion-host"
 version = "0.1.0"
 dependencies = [
  "akita-config 0.1.0",
+ "akita-params",
  "akita-recursion-glue",
  "akita-recursion-guest",
  "akita-types 0.1.0",
@@ -336,7 +360,7 @@ version = "0.1.0"
 dependencies = [
  "akita-challenges 0.1.0",
  "akita-error 0.1.0",
- "akita-types 0.1.0",
+ "akita-params",
  "serde",
  "serde_json",
 ]
@@ -379,6 +403,7 @@ dependencies = [
  "akita-config 0.1.0",
  "akita-cpu-backend 0.1.0",
  "akita-error 0.1.0",
+ "akita-params",
  "akita-serialization 0.1.0",
  "akita-types 0.1.0",
  "jolt-field 0.1.0 (git+https://github.com/a16z/jolt?rev=c93d6f0899661b9f1ff907bf3dea30386aaf59b6)",
@@ -439,6 +464,7 @@ dependencies = [
  "akita-algebra 0.1.0",
  "akita-challenges 0.1.0",
  "akita-error 0.1.0",
+ "akita-params",
  "akita-serialization 0.1.0",
  "akita-sumcheck 0.1.0",
  "blake2 0.11.0",
@@ -447,7 +473,6 @@ dependencies = [
  "jolt-transcript",
  "rand_core 0.6.4",
  "serde",
- "sha3 0.12.0",
  "shake",
  "tracing",
 ]
@@ -481,6 +506,7 @@ dependencies = [
  "akita-challenges 0.1.0",
  "akita-config 0.1.0",
  "akita-error 0.1.0",
+ "akita-params",
  "akita-serialization 0.1.0",
  "akita-sumcheck 0.1.0",
  "akita-types 0.1.0",

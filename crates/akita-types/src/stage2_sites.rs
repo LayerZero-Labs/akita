@@ -1,8 +1,8 @@
 //! Proof-stream atoms emitted after stage-2 sumcheck challenges.
 
-use crate::transcript::{ProtocolSiteId, SITE_FAMILY_STAGE2};
 use crate::GrindingReplay;
 use akita_error::AkitaError;
+use akita_params::transcript_site::{ProtocolSiteId, SITE_FAMILY_STAGE2};
 use jolt_field::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
 use jolt_transcript::Channel;
 
@@ -39,7 +39,8 @@ where
 mod tests {
     use super::*;
     use crate::transcript::test_transcripts::{prover as new_prover, verifier as new_verifier};
-    use crate::{ChallengeFieldOrder, GrindingPlan, ProverGrinding, VerifierGrinding};
+    use crate::{ProverGrinding, VerifierGrinding};
+    use akita_params::{ChallengeFieldOrder, GrindingPlan};
     use jolt_field::{CanonicalBytes, FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;

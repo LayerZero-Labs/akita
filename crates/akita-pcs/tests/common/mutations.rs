@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
-use akita_types::transcript::SITE_FAMILY_SUMCHECK;
-use akita_types::{ProtocolSiteId, SumcheckProtocol};
+use akita_params::transcript_site::SITE_FAMILY_SUMCHECK;
+use akita_params::{ProtocolSiteId, SumcheckProtocol};
 use jolt_transcript::{TranscriptEvent, TranscriptOp};
 
 /// One recorded prover message: its site, its position among consecutive

@@ -22,10 +22,14 @@ jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
 [dev-dependencies]
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false, features = [
+  "test-support",
+] }
 criterion = { version = "0.8", features = ["html_reports"] }
 jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c93d6f0899661b9f1ff907bf3dea30386aaf59b6", default-features = false, features = [
   "transcript-blake2b",
@@ -52,6 +56,7 @@ parallel = [
   "jolt-field/parallel",
   "akita-sumcheck/parallel",
   "akita-types/parallel",
+  "akita-params/parallel",
   "akita-verifier/parallel",
 ]
 

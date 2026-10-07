@@ -6,11 +6,10 @@ use crate::prepared_cache::TerminalNttCache;
 use crate::stages::opening_claims::verify_extension_claim_terminal_suffix;
 use akita_challenges::FoldDraw;
 use akita_error::AkitaError;
+use akita_params::{OpeningClaimsLayout, TerminalFoldParams};
 use akita_serialization::AkitaSerialize;
 use akita_types::GrindingReplay;
-use akita_types::{
-    prepare_opening_point, FpExtEncoding, OpeningClaimsLayout, RingVec, TerminalFoldParams,
-};
+use akita_types::{prepare_opening_point, FpExtEncoding, RingVec};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 use jolt_transcript::{Channel, Sponge};
 
@@ -57,7 +56,7 @@ where
     let opening_batch = OpeningClaimsLayout::new(current_state.opening_point.len(), 1)?;
     let (prepared_point, protocol_point, final_relation) = if const { <E as ExtField<F>>::DEGREE == 1 }
     {
-        let prepared = akita_types::dispatch_for_field!(
+        let prepared = akita_params::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
             scheduled.d_a(),
@@ -103,7 +102,7 @@ where
     }
     let row_coefficients = akita_types::row_coefficients::<F, E, _>(
         &opening_batch,
-        akita_types::GrindingSite::EvaluationBatch { level },
+        akita_params::GrindingSite::EvaluationBatch { level },
         grinding,
     )?;
     if row_coefficients.as_slice() != [E::one()] {
@@ -120,7 +119,7 @@ where
     }
     .map(RingVec::from_coeffs)?;
     let mut fork =
-        grinding.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
+        grinding.read_fold_response(akita_params::GrindingSite::FoldResponse { level })?;
     let operator_rejection = if scheduled.response_l2_sq_cap().is_some() {
         Some(
             akita_challenges::selective_l2_operator_norm_rejection(

@@ -279,8 +279,8 @@ Risks to resolve before treating this as a final public ZK surface:
 - `crates/akita-prover/src/protocol/quadratic_equation.rs`
 - `crates/akita-prover/src/protocol/ring_switch.rs`
 - `crates/akita-verifier/src/protocol/ring_switch.rs`
-- `crates/akita-types/src/schedule.rs`
-- `crates/akita-types/src/layout/proof_size.rs`
+- `crates/akita-params/src/schedule.rs`
+- `crates/akita-params/src/layout/proof_size.rs`
 - `crates/akita-config/src/proof_optimized.rs`
 - `crates/akita-planner/src/schedule_params.rs`
 - `crates/akita-planner/src/search.rs`

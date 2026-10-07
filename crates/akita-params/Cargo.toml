@@ -1,0 +1,37 @@
+[package]
+name = "akita-params"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "Apache-2.0 OR MIT"
+description = "Parameter geometry and schedules for the Akita polynomial commitment scheme"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+
+[dependencies]
+akita-error = { version = "0.1.0", path = "../akita-error" }
+akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c93d6f0899661b9f1ff907bf3dea30386aaf59b6", default-features = false, features = [
+  "asm",
+  "solinas",
+] }
+akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
+akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c93d6f0899661b9f1ff907bf3dea30386aaf59b6", default-features = false, features = [
+  "transcript-blake2b",
+] }
+serde = { version = "1", features = ["derive"] }
+blake2 = "0.11.0"
+sha3 = "0.12.0"
+
+[features]
+test-support = []
+parallel = ["akita-algebra/parallel", "jolt-field/parallel"]
+
+[dev-dependencies]
+num-bigint = "0.5.1"
+rand = "0.8"
+
+[lints]
+workspace = true

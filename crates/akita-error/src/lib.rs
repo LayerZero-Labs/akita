@@ -56,13 +56,20 @@ pub enum AkitaError {
     /// rejection. A check on a proof, a commitment, or any other untrusted
     /// value returns [`AkitaError::InvalidProof`], even when only a bug in an
     /// honest prover could make it fail.
+    /// Code shared by the prover and verifier also returns this variant for
+    /// checks proof bytes cannot make fail, such as a lookup into a table built
+    /// from the admitted schedule; checks a proof can reach still return
+    /// [`AkitaError::InvalidProof`].
     #[error("Internal error: {0}")]
     Internal(String),
 }
 
-/// Every transcript failure rejects the proof: a verifier transcript fails
-/// only on malformed or missing proof bytes, and a prover transcript only on
-/// a message outside its public bound.
+/// A transcript failure on the verifier side rejects the proof: a verifier
+/// transcript fails only on malformed, missing, or out-of-range proof bytes.
+///
+/// Prover-only transcript failures (grinding exhaustion, an over-bound
+/// message) are classified at their call sites instead, since they are input
+/// or setup errors rather than rejections.
 impl From<jolt_transcript::TranscriptError> for AkitaError {
     fn from(_: jolt_transcript::TranscriptError) -> Self {
         Self::InvalidProof

@@ -6,12 +6,14 @@ use crate::stages::opening_claims::{
     verify_extension_claim_suffix_prefix, FoldClaimMaterial, PreparedFoldOpeningPoint,
 };
 use akita_error::AkitaError;
+use akita_params::{
+    BasisMode, CommittedGroupParams, FoldParams, FoldSchedule, OpeningClaimsLayout,
+    RelationWitnessGeometry, SetupContributionMode, TerminalFoldParams,
+};
 use akita_serialization::AkitaSerialize;
 use akita_types::GrindingReplay;
 use akita_types::{
-    AkitaVerifierSetup, BasisMode, CommittedGroupParams, FoldParams, FoldSchedule, FpExtEncoding,
-    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, RelationWitnessGeometry, RingVec,
-    SetupContributionMode, TerminalFoldParams,
+    AkitaVerifierSetup, FpExtEncoding, OpeningClaims, PolynomialGroupClaims, RingVec,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 use jolt_transcript::{Channel, Sponge};
@@ -141,7 +143,7 @@ where
         .collect::<Result<Vec<_>, _>>()?;
     let material = if matches!(
         lp.opening_method(),
-        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+        akita_params::OpeningMethod::SubringCoefficientPacking { .. }
     ) {
         verify_coefficient_packing_suffix_prefix::<F, E, _>(
             &block_claims,
@@ -216,7 +218,7 @@ where
                 .outer_payload_geometry()?
                 .transmitted_coefficients();
             let committed_len =
-                akita_types::witness_commitment_domain_len(output_witness_len, ring_dim)?;
+                akita_params::witness_commitment_domain_len(output_witness_len, ring_dim)?;
             (
                 NextWitnessPlan::OuterPayload { coefficient_count },
                 ring_dim,
@@ -237,7 +239,7 @@ where
                 .ok_or(AkitaError::InvalidProof)?
                 .t_field_elems;
             let committed_len =
-                akita_types::witness_commitment_domain_len(output_witness_len, ring_dim)?;
+                akita_params::witness_commitment_domain_len(output_witness_len, ring_dim)?;
             (
                 NextWitnessPlan::TerminalT { coefficient_count },
                 ring_dim,
@@ -251,7 +253,7 @@ where
                 .map_err(|_| AkitaError::InvalidSetup("extension degree overflow".into()))?,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("challenge field width overflow".into()))?;
-    let level_layout = akita_types::nonterminal_level_layout(
+    let level_layout = akita_params::nonterminal_level_layout(
         F::MODULUS_BITS,
         challenge_field_bits,
         lp,

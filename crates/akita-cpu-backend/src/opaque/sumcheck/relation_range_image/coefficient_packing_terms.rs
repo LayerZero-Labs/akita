@@ -105,9 +105,11 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
         for (low_index, &packing_weight) in prepared_point.packing_weights().iter().enumerate() {
             for (subring_index, &alpha_power) in semantics.alpha_powers().iter().enumerate() {
                 let physical = geometry.a_ring_coefficient_index(low_index, subring_index)?;
-                *packing_z_source
-                    .get_mut(physical)
-                    .ok_or(AkitaError::InvalidProof)? = packing_weight * alpha_power;
+                *packing_z_source.get_mut(physical).ok_or_else(|| {
+                    AkitaError::Internal(
+                        "packing Z source coordinate is outside its geometry".into(),
+                    )
+                })? = packing_weight * alpha_power;
             }
         }
 
@@ -117,19 +119,17 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
             opening_gadget.len(),
         ])
         .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "coefficient-packing direct-opening term count overflow".into(),
-            )
+            AkitaError::Internal("coefficient-packing direct-opening term count overflow".into())
         })?;
         let segments_per_direct_term = geometry.partial_base_field_width() / d_d;
         let direct_segment_capacity = direct_term_capacity
             .checked_mul(segments_per_direct_term)
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("direct-opening segment count overflow".into())
+                AkitaError::Internal("direct-opening total segment count overflow".into())
             })?;
         let terms_per_z_position = checked::product([witness_gadget.len(), fold_gadget.len()])
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("coefficient-packing packing-Z term count overflow".into())
+                AkitaError::Internal("coefficient-packing terms per Z position overflow".into())
             })?;
         let z_term_capacity = checked::product([
             witness_units.len(),
@@ -137,14 +137,14 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
             terms_per_z_position,
         ])
         .ok_or_else(|| {
-            AkitaError::InvalidSetup("coefficient-packing packing-Z term count overflow".into())
+            AkitaError::Internal("coefficient-packing total Z term count overflow".into())
         })?;
         let segment_capacity = direct_segment_capacity
             .checked_add(z_term_capacity)
-            .ok_or_else(|| AkitaError::InvalidSetup("packing segment count overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("packing segment count overflow".into()))?;
         let term_capacity = direct_term_capacity
             .checked_add(z_term_capacity)
-            .ok_or_else(|| AkitaError::InvalidSetup("packing term count overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("packing term count overflow".into()))?;
         let mut segments = Vec::new();
         Self::reserve(&mut segments, segment_capacity, "packing segment")?;
         let mut terms = Vec::new();
@@ -155,23 +155,29 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
                 let first_segment = segments.len();
                 let block_terms = cfg_into_iter!(unit.global_block_range())
                     .map(|global_block| {
-                        let block_weight = *prepared_point
+                        let block_weight = *(prepared_point
                             .live_block_weights()
                             .get(global_block)
-                            .ok_or(AkitaError::InvalidProof)?;
+                            .ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "packing opening block has no prepared weight".into(),
+                                )
+                            })?);
                         let block_segment_start = (global_block - unit.global_block_start())
                             .checked_mul(opening_gadget.len())
                             .and_then(|term| term.checked_mul(segments_per_direct_term))
                             .and_then(|offset| offset.checked_add(first_segment))
                             .ok_or_else(|| {
-                                AkitaError::InvalidSetup("direct-opening segment overflow".into())
+                                AkitaError::Internal(
+                                    "direct-opening block segment offset overflow".into(),
+                                )
                             })?;
                         let block_segment_capacity = opening_gadget
                             .len()
                             .checked_mul(segments_per_direct_term)
                             .ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "direct-opening segment count overflow".into(),
+                                AkitaError::Internal(
+                                    "direct-opening block segment count overflow".into(),
                                 )
                             })?;
                         let mut block_segments = Vec::new();
@@ -190,8 +196,8 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
                             let segment_start = block_segment_start
                                 .checked_add(block_segments.len())
                                 .ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "direct-opening segment overflow".into(),
+                                    AkitaError::Internal(
+                                        "direct-opening segment start offset overflow".into(),
                                     )
                                 })?;
                             for role_subcolumn in 0..segments_per_direct_term {
@@ -207,20 +213,20 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
                                 )?;
                                 let source_start =
                                     role_subcolumn.checked_mul(d_d).ok_or_else(|| {
-                                        AkitaError::InvalidSetup(
-                                            "direct-opening source overflow".into(),
+                                        AkitaError::Internal(
+                                            "direct-opening source start offset overflow".into(),
                                         )
                                     })?;
                                 let physical_end =
                                     physical_start.checked_add(d_d).ok_or_else(|| {
-                                        AkitaError::InvalidSetup(
-                                            "direct-opening segment overflow".into(),
+                                        AkitaError::Internal(
+                                            "direct-opening physical segment end overflow".into(),
                                         )
                                     })?;
                                 let source_end =
                                     source_start.checked_add(d_d).ok_or_else(|| {
-                                        AkitaError::InvalidSetup(
-                                            "direct-opening source overflow".into(),
+                                        AkitaError::Internal(
+                                            "direct-opening source end offset overflow".into(),
                                         )
                                     })?;
                                 block_segments.push(CpuCoefficientPackingSegment {
@@ -233,8 +239,8 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
                                     block_segments.len() - (digit * segments_per_direct_term),
                                 )
                                 .ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "direct-opening segment overflow".into(),
+                                    AkitaError::Internal(
+                                        "direct-opening term segment end overflow".into(),
                                     )
                                 })?;
                             block_terms.push(CpuCoefficientPackingTerm {
@@ -268,7 +274,7 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
                 let first_position =
                     task.checked_mul(PACKING_Z_POSITIONS_PER_TASK)
                         .ok_or_else(|| {
-                            AkitaError::InvalidSetup("packing-Z task position overflow".into())
+                            AkitaError::Internal("packing-Z task position overflow".into())
                         })?;
                 let end_position = first_position
                     .saturating_add(PACKING_Z_POSITIONS_PER_TASK)
@@ -277,9 +283,7 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
                 let task_len = positions
                     .len()
                     .checked_mul(terms_per_z_position)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("packing-Z task size overflow".into())
-                    })?;
+                    .ok_or_else(|| AkitaError::Internal("packing-Z task size overflow".into()))?;
                 let mut task_segments = Vec::new();
                 Self::reserve(&mut task_segments, task_len, "packing-Z task segment")?;
                 let mut task_terms = Vec::new();
@@ -303,24 +307,26 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
                                     first_position
                                         .checked_mul(terms_per_z_position)
                                         .ok_or_else(|| {
-                                            AkitaError::InvalidSetup(
-                                                "packing-Z segment overflow".into(),
+                                            AkitaError::Internal(
+                                                "packing-Z task segment offset overflow".into(),
                                             )
                                         })?,
                                 )
                                 .and_then(|start| start.checked_add(task_segments.len()))
                                 .ok_or_else(|| {
-                                    AkitaError::InvalidSetup("packing-Z segment overflow".into())
+                                    AkitaError::Internal("packing-Z segment index overflow".into())
                                 })?;
                             let segment_end = physical_start.checked_add(d_a).ok_or_else(|| {
-                                AkitaError::InvalidSetup("packing-Z segment overflow".into())
+                                AkitaError::Internal(
+                                    "packing-Z physical segment end overflow".into(),
+                                )
                             })?;
                             task_segments.push(CpuCoefficientPackingSegment {
                                 physical_coefficients: physical_start..segment_end,
                                 source_coefficients: 0..d_a,
                             });
                             let term_end = segment.checked_add(1).ok_or_else(|| {
-                                AkitaError::InvalidSetup("packing-Z term segment overflow".into())
+                                AkitaError::Internal("packing-Z term segment overflow".into())
                             })?;
                             task_terms.push(CpuCoefficientPackingTerm {
                                 source: CpuCoefficientPackingSource::PackingZ,

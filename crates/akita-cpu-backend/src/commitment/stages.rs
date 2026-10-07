@@ -4,7 +4,8 @@ use super::{
 };
 use crate::opaque::CommitInnerPlan;
 use akita_error::AkitaError;
-use akita_types::{CompressionChainPlan, RingRelationMode, RingVec};
+use akita_params::{CompressionChainPlan, RingRelationMode};
+use akita_types::RingVec;
 use jolt_field::Field;
 
 /// State output of one inner commitment stage.
@@ -54,7 +55,7 @@ impl<F: Field> UncompressedCommitmentOutput<F> {
             || u.ring_dim() != plan.outer().ring_dimension()
             || u.coeff_len() != plan.outer().output_coefficient_len()?
         {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "uncompressed commitment output disagrees with its checked plan".into(),
             ));
         }
@@ -97,7 +98,7 @@ impl<F: Field> FullCommitmentOutput<F> {
         compression: CompressionStageOutput<F>,
     ) -> Result<Self, AkitaError> {
         if image.binding() != compression.state().binding() {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "complete commitment stage outputs belong to different requests".into(),
             ));
         }
@@ -119,14 +120,15 @@ impl<F: Field> CompressionStageOutput<F> {
         plan: &CompressionChainPlan,
         relation_mode: RingRelationMode,
     ) -> Result<Self, AkitaError> {
-        let terminal_map = plan.maps().last().ok_or_else(|| {
-            AkitaError::InvalidSetup("compression chain has no terminal map".into())
-        })?;
+        let terminal_map = plan
+            .maps()
+            .last()
+            .ok_or_else(|| AkitaError::Internal("compression chain has no terminal map".into()))?;
         if state.binding().relation_mode() != Some(relation_mode)
             || terminal_payload.ring_dim() != terminal_map.ring_dimension()
             || terminal_payload.coeff_len() != plan.terminal_coefficients()
         {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "compression stage output disagrees with its checked plan or state binding".into(),
             ));
         }
@@ -214,7 +216,8 @@ pub(crate) trait InnerImageExportOperation<F: Field>: Send + Sync {
 mod tests {
     use super::*;
     use crate::commitment::{CommitmentStateBinding, StateOwnerCapability};
-    use akita_types::{AkitaSetupDescriptor, AkitaSetupSeed, SisModulusProfileId};
+    use akita_params::SisModulusProfileId;
+    use akita_types::{AkitaSetupDescriptor, AkitaSetupSeed};
     use jolt_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;

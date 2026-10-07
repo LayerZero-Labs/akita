@@ -6,7 +6,7 @@ fn profile_commit_group_returns_exact_frozen_layout() {
     const GROUP_SIZE: usize = 1;
 
     let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
-    let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
+    let key = akita_params::PolynomialGroupLayout::new(NV, GROUP_SIZE);
     let profile = catalog_profile(&scheme, key);
     let total_field = (profile.blocks.live_blocks * profile.blocks.positions_per_block)
         .checked_mul(ONEHOT_D)
@@ -52,7 +52,7 @@ fn profile_commit_group_returns_exact_frozen_layout() {
     );
 }
 
-fn multi_group_root_params(schedule: &akita_types::FoldSchedule) -> &CommittedGroupParams {
+fn multi_group_root_params(schedule: &akita_params::FoldSchedule) -> &CommittedGroupParams {
     &schedule.root.params
 }
 
@@ -79,8 +79,8 @@ fn profile_commit_group_allows_independent_groups() {
     const SETUP_CAPACITY_SIZE: usize = PRE_B_SIZE;
 
     let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
-    let pre_a_key = akita_types::PolynomialGroupLayout::new(NV, PRE_A_SIZE);
-    let pre_b_key = akita_types::PolynomialGroupLayout::new(NV, PRE_B_SIZE);
+    let pre_a_key = akita_params::PolynomialGroupLayout::new(NV, PRE_A_SIZE);
+    let pre_b_key = akita_params::PolynomialGroupLayout::new(NV, PRE_B_SIZE);
     let pre_a_profile = catalog_profile(&scheme, pre_a_key);
     let pre_b_profile = catalog_profile(&scheme, pre_b_key);
     let pre_a_polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_1001)];
@@ -139,14 +139,14 @@ fn group_batch_schedule_preserves_precommitted_order() {
     const MAIN_SIZE: usize = 4;
 
     let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
-    let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_A_SIZE);
-    let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_B_SIZE);
-    let pre_c_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_C_SIZE);
+    let pre_a_key = akita_params::PolynomialGroupLayout::new(PRE_NV, PRE_A_SIZE);
+    let pre_b_key = akita_params::PolynomialGroupLayout::new(PRE_NV, PRE_B_SIZE);
+    let pre_c_key = akita_params::PolynomialGroupLayout::new(PRE_NV, PRE_C_SIZE);
     let pre_a_frozen = catalog_profile(&scheme, pre_a_key);
     let pre_b_frozen = catalog_profile(&scheme, pre_b_key);
     let pre_c_frozen = catalog_profile(&scheme, pre_c_key);
-    let multi_group_key = akita_types::ScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
+    let multi_group_key = akita_params::ScheduleLookupKey {
+        final_group: akita_params::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
         precommitteds: vec![pre_a_frozen, pre_b_frozen, pre_c_frozen],
     };
 
@@ -191,8 +191,8 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     const SETUP_CAPACITY_SIZE: usize = FINAL_SIZE + 2 * GROUP_SIZE;
 
     let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
-    let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
-    let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
+    let pre_a_key = akita_params::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
+    let pre_b_key = akita_params::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
     let pre_a_frozen = catalog_profile(&scheme, pre_a_key);
     let pre_b_frozen = catalog_profile(&scheme, pre_b_key);
     let pre_a_polys = [debug_make_onehot_poly(
@@ -230,8 +230,8 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit B");
-    let multi_group_key = akita_types::ScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
+    let multi_group_key = akita_params::ScheduleLookupKey {
+        final_group: akita_params::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
         precommitteds: vec![pre_a_frozen, pre_b_frozen],
     };
     assert!(multi_group_key
@@ -251,7 +251,7 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         debug_make_onehot_poly(FINAL_NV, main_params.d_a(), 0x0bee_fcaf_9a77_7003),
         debug_make_onehot_poly(FINAL_NV, main_params.d_a(), 0x0bee_fcaf_9a77_7004),
     ];
-    let precommitteds = akita_types::PrecommittedGroupProfiles::from_profiles(vec![
+    let precommitteds = akita_params::PrecommittedGroupProfiles::from_profiles(vec![
         pre_a_commitment.profile,
         pre_b_commitment.profile,
     ])
@@ -318,7 +318,7 @@ fn commit_group_returns_frozen_exact_layout() {
     const GROUP_SIZE: usize = 1;
 
     let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
-    let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
+    let key = akita_params::PolynomialGroupLayout::new(NV, GROUP_SIZE);
     let profile = catalog_profile(&scheme, key);
     let total_field = (profile.blocks.live_blocks * profile.blocks.positions_per_block)
         .checked_mul(ONEHOT_D)

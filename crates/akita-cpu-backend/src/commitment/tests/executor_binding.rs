@@ -5,9 +5,10 @@ use crate::commitment::{
 };
 use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;
-use akita_types::{
-    CommittedGroupParams, RingVec, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
+use akita_params::{
+    CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
 };
+use akita_types::RingVec;
 use jolt_field::{Prime64Offset59, Ring};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -260,7 +261,7 @@ fn executor_rejects_same_shape_rebinding_and_foreign_state_owners() {
     assert!(
         matches!(
             &error,
-            AkitaError::InvalidInput(message) if message.contains("different commitment request")
+            AkitaError::Internal(message) if message.contains("different commitment request")
         ),
         "unexpected error: {error:?}"
     );
@@ -301,6 +302,6 @@ fn executor_rejects_same_shape_rebinding_and_foreign_state_owners() {
     };
     assert!(matches!(
         error,
-        AkitaError::InvalidInput(message) if message.contains("different prepared implementation")
+        AkitaError::Internal(message) if message.contains("different prepared implementation")
     ));
 }

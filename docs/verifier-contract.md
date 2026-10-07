@@ -5,6 +5,8 @@ Agent hot-path summary: [`AGENTS.md`](../AGENTS.md).
 
 Verifier-reachable execution is a **no-panic boundary**.
 Any malformed verifier-facing proof, setup, schedule, public claim, opening point, commitment, direct witness, or transcript input must be rejected with `AkitaError` or `SerializationError`, not by panicking.
+`InvalidProof` is for checks on proof bytes; statement, setup, and
+internal-consistency failures use their own error variants.
 `AkitaError` has one canonical definition in `akita-error`.
 
 ## In scope

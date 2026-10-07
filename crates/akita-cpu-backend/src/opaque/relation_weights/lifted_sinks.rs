@@ -34,7 +34,7 @@ pub(super) fn split_disjoint_mut<'a, T>(
                 window
             })
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("relation windows overlap or exceed their domain".into())
+                AkitaError::Internal("relation windows overlap or exceed their domain".into())
             })?;
         windows[index] = Some(window);
         consumed = range.end;
@@ -52,16 +52,22 @@ fn add_address_lanes<E: Field>(
 ) -> Result<(), AkitaError> {
     if let Some((values, scale)) = lane_values {
         if values.len() != lanes.len() {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::Internal(
+                "lifted relation lane values differ from the destination width".into(),
+            ));
         }
         for (lane, &value) in lanes.iter_mut().zip(values) {
             *lane += value * scale;
         }
     }
-    let powers = lane_alpha_powers
-        .get(1..lanes.len())
-        .ok_or(AkitaError::InvalidProof)?;
-    let (first, rest) = lanes.split_first_mut().ok_or(AkitaError::InvalidProof)?;
+    let powers = lane_alpha_powers.get(1..lanes.len()).ok_or_else(|| {
+        AkitaError::Internal(
+            "lifted relation lane alpha powers do not cover the destination".into(),
+        )
+    })?;
+    let (first, rest) = lanes
+        .split_first_mut()
+        .ok_or_else(|| AkitaError::Internal("lifted relation address has no first lane".into()))?;
     *first += native;
     for (lane, &power) in rest.iter_mut().zip(powers) {
         *lane += native * power;
@@ -95,14 +101,24 @@ impl<'a, E: Field> LiftedEtSink<'_, 'a, E> {
         let offset = role_subcolumn
             .checked_mul(lanes)
             .filter(|offset| offset.checked_add(lanes).is_some_and(|end| end <= width))
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal(
+                    "lifted relation subcolumn lane offset exceeds its width".into(),
+                )
+            })?;
         let start = challenge_index
             .checked_mul(width)
             .and_then(|base| base.checked_add(offset))
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("lifted relation challenge lane start overflow".into())
+            })?;
         self.challenge_lanes
             .get(start..start + lanes)
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::Internal(
+                    "lifted relation challenge lanes do not cover the scheduled subcolumn".into(),
+                )
+            })
     }
 }
 
@@ -191,7 +207,11 @@ impl<E: Field> ZWeightSink<E> for LiftedZSink<'_, '_, E> {
                 .opening_evaluations
                 .get(position)
                 .copied()
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "lifted relation opening position has no evaluation".into(),
+                    )
+                })?
                 * constraint_scale;
         }
         let lanes = self.lanes.lanes_mut(physical_start, self.plan.roles.d_a)?;
@@ -202,7 +222,7 @@ impl<E: Field> ZWeightSink<E> for LiftedZSink<'_, '_, E> {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn scatter_et<E: Field>(
     group_plan: &compiler::RelationWeightGroupPlan<E>,
-    witness_layout: &akita_types::WitnessLayout,
+    witness_layout: &akita_params::WitnessLayout,
     lanes: &mut [E],
     relation_coefficient_block_len: usize,
     challenge_lanes: &[E],
@@ -214,7 +234,7 @@ pub(super) fn scatter_et<E: Field>(
         (Some(d), Some(b)) => LiftedEtSetup::Matrix { d, b },
         (None, None) => LiftedEtSetup::Deferred,
         _ => {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "lifted E/T setup phases disagree".into(),
             ));
         }
@@ -244,7 +264,7 @@ pub(super) fn scatter_et<E: Field>(
 
 pub(super) fn scatter_z<E: Field>(
     group_plan: &compiler::RelationWeightGroupPlan<E>,
-    witness_layout: &akita_types::WitnessLayout,
+    witness_layout: &akita_params::WitnessLayout,
     lanes: &mut [E],
     relation_coefficient_block_len: usize,
     opening_evaluations: &[E],

@@ -6,8 +6,9 @@ use workspace_schedules::load_workspace_scheme;
 
 use akita_config::proof_optimized::fp128;
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
+use akita_params::BasisMode;
 use akita_prover::SelectedProverOpeningData;
-use akita_types::{BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::CanonicalEncoding;
 use std::sync::Arc;
 

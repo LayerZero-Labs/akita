@@ -6,13 +6,13 @@ mod catalog_events;
 mod common;
 
 use akita_cpu_backend::CpuBackend;
-use akita_pcs::{AkitaSponge, PROOF_STREAM_PROTOCOL};
 #[cfg(feature = "logging")]
-use akita_types::transcript::{
+use akita_params::transcript_site::{
     SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_PHYSICAL_L2,
     SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_STAGE3, SITE_FAMILY_SUMCHECK,
     SITE_FAMILY_TERMINAL,
 };
+use akita_pcs::{AkitaSponge, PROOF_STREAM_PROTOCOL};
 #[cfg(feature = "logging")]
 use common::mutations::{
     assert_messages_cover, message_ranges, representative_mutation_ranges,
@@ -32,8 +32,8 @@ fn stream_binds_session_statement_basis_and_eof() {
         let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
         let layout = scheme
             .schedules()
-            .resolve_key(&akita_types::ScheduleLookupKey::single(
-                akita_types::PolynomialGroupLayout::singleton(NUM_VARS),
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::singleton(NUM_VARS),
             ))
             .expect("layout")
             .schedule()
@@ -129,8 +129,8 @@ fn stream_binds_session_statement_basis_and_eof() {
             }
             let sumcheck_protocols = selected_sumcheck_protocols(&role_ranges);
             for protocol in [
-                akita_types::SumcheckProtocol::Stage1,
-                akita_types::SumcheckProtocol::Stage2,
+                akita_params::SumcheckProtocol::Stage1,
+                akita_params::SumcheckProtocol::Stage2,
             ] {
                 assert!(
                     sumcheck_protocols.contains(&protocol),
@@ -140,9 +140,9 @@ fn stream_binds_session_statement_basis_and_eof() {
             for (family, protocol) in [
                 (
                     SITE_FAMILY_PHYSICAL_L2,
-                    akita_types::SumcheckProtocol::PhysicalL2,
+                    akita_params::SumcheckProtocol::PhysicalL2,
                 ),
-                (SITE_FAMILY_STAGE3, akita_types::SumcheckProtocol::Stage3),
+                (SITE_FAMILY_STAGE3, akita_params::SumcheckProtocol::Stage3),
             ] {
                 if role_ranges
                     .iter()
@@ -204,8 +204,8 @@ fn stream_mutations_reject_without_panicking() {
         let point = random_point(NUM_VARS, 0x8181);
         let row = scheme
             .schedules()
-            .resolve_key(&akita_types::ScheduleLookupKey::single(
-                akita_types::PolynomialGroupLayout::singleton(NUM_VARS),
+            .resolve_key(&akita_params::ScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::singleton(NUM_VARS),
             ))
             .expect("layout");
         let opening = opening_from_poly_for_layout(

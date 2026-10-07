@@ -8,7 +8,7 @@ use crate::sources::poly_helpers::packed_tight_digit_fold_partitioned;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
-use akita_types::WitnessLayout;
+use akita_params::WitnessLayout;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
@@ -39,7 +39,7 @@ where
                 "recursive witness opening plan disagrees with its witness length".into(),
             ));
         }
-        let (partials, tensor_evals) = akita_types::dispatch_for_field!(
+        let (partials, tensor_evals) = akita_params::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
             plan.ring_dimension(),
@@ -125,13 +125,13 @@ impl RecursiveWitnessFlat {
     ) -> Result<Self, AkitaError> {
         let expected = layout.live_coeff_len();
         if digits.len() != expected {
-            return Err(AkitaError::InvalidSize {
-                expected,
-                actual: digits.len(),
-            });
+            return Err(AkitaError::Internal(format!(
+                "generated recursive witness length mismatch: expected {expected}, actual {}",
+                digits.len(),
+            )));
         }
         if !digits.bounds().fits_balanced_log_basis(log_basis) {
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "recursive witness contains digits outside its declared balanced basis".into(),
             ));
         }
@@ -171,7 +171,7 @@ impl RecursiveWitnessFlat {
             ));
         }
         let committed_len =
-            akita_types::witness_commitment_domain_len(self.digits.len(), ring_dim)?;
+            akita_params::witness_commitment_domain_len(self.digits.len(), ring_dim)?;
         self.committed_coeff_len = Some(committed_len);
         self.commitment_ring_dim = Some(ring_dim);
         Ok(self)
@@ -188,7 +188,7 @@ impl RecursiveWitnessFlat {
 
     #[cfg(feature = "response-model-diagnostics")]
     pub(crate) fn digit(&self, index: usize) -> Option<i8> {
-        self.digits.get(index)
+        self.digits.view().get(index)
     }
 
     pub(crate) fn digits(&self) -> impl ExactSizeIterator<Item = i8> + '_ {
@@ -208,7 +208,7 @@ impl RecursiveWitnessFlat {
                 .max(1)
                 .checked_next_power_of_two()
                 .ok_or_else(|| {
-                    AkitaError::InvalidInput(
+                    AkitaError::Internal(
                         "recursive witness commitment extent overflows usize".into(),
                     )
                 }),
@@ -237,9 +237,16 @@ impl RecursiveWitnessFlat {
     ) -> Result<SuffixWitnessView<'_, F, D>, AkitaError> {
         let physical_len = match (self.committed_coeff_len, self.commitment_ring_dim) {
             (Some(committed_len), Some(ring_dim)) if ring_dim == D => committed_len,
-            (Some(_), Some(_)) => return Err(AkitaError::InvalidProof),
+            (Some(_), Some(_)) => return Err(AkitaError::Internal(
+                "aligned witness view ring dimension differs from its commitment ring dimension"
+                    .into(),
+            )),
             (None, None) => self.digits.len(),
-            _ => return Err(AkitaError::InvalidProof),
+            _ => {
+                return Err(AkitaError::Internal(
+                    "witness commitment extent and ring dimension are not both present".into(),
+                ))
+            }
         };
         if !physical_len.is_multiple_of(D) {
             return Err(AkitaError::InvalidSize {
@@ -261,6 +268,7 @@ pub(crate) struct SuffixWitnessView<'a, F: Field, const D: usize> {
     pub(super) live_coeff_len: usize,
     pub(super) live_ring_elems: usize,
     pub(super) padded_ring_elems: usize,
+    num_vars: usize,
     pub(super) _marker: PhantomData<F>,
 }
 
@@ -276,11 +284,21 @@ impl<'a, F: Field, const D: usize> SuffixWitnessView<'a, F, D> {
             });
         }
 
+        let padded_ring_elems = (digits.len() / D)
+            .checked_next_power_of_two()
+            .ok_or_else(|| {
+                AkitaError::Internal("recursive witness ring extent overflows usize".into())
+            })?
+            .max(1);
+        let total = akita_error::checked::product([padded_ring_elems, D]).ok_or_else(|| {
+            AkitaError::Internal("recursive witness ring elems times D overflow".into())
+        })?;
         Ok(Self {
             digits,
             live_coeff_len,
             live_ring_elems: live_coeff_len.div_ceil(D),
-            padded_ring_elems: (digits.len() / D).next_power_of_two().max(1),
+            padded_ring_elems,
+            num_vars: total.trailing_zeros() as usize,
             _marker: PhantomData,
         })
     }
@@ -325,11 +343,7 @@ impl<'a, F: Field, const D: usize> SuffixWitnessView<'a, F, D> {
 
     #[inline]
     pub(crate) fn num_vars(&self) -> usize {
-        let total = self
-            .padded_ring_elems
-            .checked_mul(D)
-            .expect("recursive witness ring elems * D overflow");
-        total.trailing_zeros() as usize
+        self.num_vars
     }
 }
 
@@ -497,7 +511,7 @@ where
             self.live_ring_elems,
             challenges,
             num_positions_per_block,
-        );
+        )?;
         Ok(DecomposeFoldWitness::from_centered_rows(coeff_accum))
     }
 
@@ -521,23 +535,33 @@ where
                 let ring_start = range
                     .start
                     .checked_mul(num_positions_per_block)
-                    .ok_or(AkitaError::InvalidProof)?
+                    .ok_or_else(|| {
+                        AkitaError::Internal("witness fold chunk ring start overflow".into())
+                    })?
                     .min(self.live_ring_elems);
                 let ring_end = range
                     .end
                     .checked_mul(num_positions_per_block)
-                    .ok_or(AkitaError::InvalidProof)?
+                    .ok_or_else(|| {
+                        AkitaError::Internal("witness fold chunk ring end overflow".into())
+                    })?
                     .min(self.live_ring_elems);
-                let digit_start = ring_start.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
-                let digit_end = ring_end.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
+                let digit_start = ring_start.checked_mul(D).ok_or_else(|| {
+                    AkitaError::Internal("witness fold chunk digit start overflow".into())
+                })?;
+                let digit_end = ring_end.checked_mul(D).ok_or_else(|| {
+                    AkitaError::Internal("witness fold chunk digit end overflow".into())
+                })?;
                 let coefficients = packed_tight_digit_fold_partitioned::<D>(
                     self.digits.slice(digit_start..digit_end)?,
                     ring_end - ring_start,
-                    challenges
-                        .get(range.clone())
-                        .ok_or(AkitaError::InvalidProof)?,
+                    challenges.get(range.clone()).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "witness fold chunk challenge range is out of bounds".into(),
+                        )
+                    })?,
                     num_positions_per_block,
-                );
+                )?;
                 Ok(DecomposeFoldWitness::from_centered_rows(coefficients))
             })
             .collect()
@@ -726,6 +750,25 @@ impl<F, E, const D: usize> OpeningBatchKernel<SuffixWitnessBatchView<'_, F, D>, 
 where
     F: Field + CanonicalEncoding,
 {
+    fn evaluate_and_fold_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: SuffixWitnessBatchView<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
+    ) -> Result<Vec<OpeningFoldOutput<F, D>>, AkitaError> {
+        source
+            .polys
+            .iter()
+            .map(|poly| {
+                self.evaluate_and_fold(
+                    prepared,
+                    <RecursiveWitnessFlat as RootOpeningSource<F, D>>::opening_view(*poly)?,
+                    plan,
+                )
+            })
+            .collect()
+    }
+
     fn decompose_fold_batch(
         &self,
         prepared: Option<&Self::PreparedSetup>,
@@ -793,5 +836,33 @@ where
                 )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod shape_tests {
+    use super::*;
+    use jolt_field::Prime128OffsetA7F7;
+
+    #[test]
+    fn view_constructor_rejects_rounded_ring_extent_overflow() {
+        let digits = PackedSignedDigits::default();
+        let view = digits.zero_padded(usize::MAX).unwrap();
+        let error = SuffixWitnessView::<Prime128OffsetA7F7, 1>::from_recursive_witness(view, 0)
+            .err()
+            .unwrap();
+        assert!(matches!(error, AkitaError::Internal(message)
+            if message == "recursive witness ring extent overflows usize"));
+    }
+
+    #[test]
+    fn view_constructor_rejects_ring_times_dimension_overflow() {
+        let digits = PackedSignedDigits::default();
+        let view = digits.zero_padded(usize::MAX - 1).unwrap();
+        let error = SuffixWitnessView::<Prime128OffsetA7F7, 2>::from_recursive_witness(view, 0)
+            .err()
+            .unwrap();
+        assert!(matches!(error, AkitaError::Internal(message)
+            if message == "recursive witness ring elems times D overflow"));
     }
 }

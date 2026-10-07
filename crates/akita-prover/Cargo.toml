@@ -24,6 +24,7 @@ jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", re
   "transcript-blake2b",
 ] }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 tracing = "0.1"
 
 [dev-dependencies]
@@ -41,6 +42,7 @@ parallel = [
   "jolt-field/parallel",
   "akita-sumcheck/parallel",
   "akita-types/parallel",
+  "akita-params/parallel",
 ]
 
 [lints]

@@ -46,7 +46,7 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
             .find(|step| {
                 matches!(
                     step.params.inner().matrix.security_route(),
-                    akita_types::InnerCommitSecurityRoute::L2 { .. }
+                    akita_params::InnerCommitSecurityRoute::L2 { .. }
                 )
             })
             .expect("schedule-selected small-field L2 fold");
@@ -62,7 +62,7 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
             ),
             Some(akita_challenges::OperatorNormRejection::D128_SELECTIVE_L2),
         );
-        let akita_types::InnerCommitSecurityRoute::L2 {
+        let akita_params::InnerCommitSecurityRoute::L2 {
             norm_proof_shape, ..
         } = l2_step.params.inner().matrix.security_route()
         else {

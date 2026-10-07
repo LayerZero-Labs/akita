@@ -9,7 +9,8 @@ use akita_algebra::{
     balanced_decompose_coefficients_pow2_i8_into, mat_vec_i16_with_tail, CrtNttParamSet,
     CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams, MontCoeff, NttKernelPlan,
 };
-use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode};
+use akita_params::FlatMatrix;
+use akita_types::{prepare_ntt_cache, NttCacheMode};
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion};

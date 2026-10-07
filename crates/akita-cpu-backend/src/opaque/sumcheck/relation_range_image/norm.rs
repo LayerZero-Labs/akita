@@ -32,11 +32,6 @@ impl<E: Field, const SKIP_LINEAR: bool> FieldNorm<E, SKIP_LINEAR> {
     pub(super) fn totals(self) -> [E; 3] {
         self.0
     }
-
-    #[inline(always)]
-    pub(super) fn into_terms(self) -> NormRoundTerms<E> {
-        NormRoundTerms::from_totals::<SKIP_LINEAR>(self.0)
-    }
 }
 
 /// Signed-digit norm products kept unreduced until the equality block ends.

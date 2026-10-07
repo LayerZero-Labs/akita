@@ -21,11 +21,15 @@ fn chunked_fold_matches_windowed_reference_and_global() {
             coeffs: vec![1, -1].into(),
         })
         .collect::<Vec<_>>();
-    let global = poly.decompose_fold::<D>(&challenges, POSITIONS, 2, 4);
+    let global = poly
+        .decompose_fold::<D>(&challenges, POSITIONS, 2, 4)
+        .unwrap();
 
     for chunk_count in [2, 4, 8] {
-        let ranges = akita_types::dyadic_block_ranges(challenges.len(), chunk_count).unwrap();
-        let chunks = poly.decompose_fold_chunked::<D>(&challenges, &ranges, POSITIONS, 2, 4);
+        let ranges = akita_params::dyadic_block_ranges(challenges.len(), chunk_count).unwrap();
+        let chunks = poly
+            .decompose_fold_chunked::<D>(&challenges, &ranges, POSITIONS, 2, 4)
+            .unwrap();
         assert_eq!(chunks.len(), chunk_count);
         for (range, chunk) in ranges.iter().zip(&chunks) {
             let window = challenges
@@ -42,7 +46,7 @@ fn chunked_fold_matches_windowed_reference_and_global() {
                     }
                 })
                 .collect::<Vec<_>>();
-            let expected = poly.decompose_fold::<D>(&window, POSITIONS, 2, 4);
+            let expected = poly.decompose_fold::<D>(&window, POSITIONS, 2, 4).unwrap();
             assert_eq!(
                 chunk.centered_coeffs_flat(),
                 expected.centered_coeffs_flat()
@@ -78,7 +82,7 @@ fn ring_fold_matches_dense_multiplication_reference() {
         ring::<D>(300),
         ring::<D>(400),
     ];
-    let got = poly.fold_blocks_ring(&scalars, 4);
+    let got = poly.fold_blocks_ring(&scalars, 4).unwrap();
     let expected = coeffs
         .chunks(4)
         .map(|block| {
@@ -279,6 +283,66 @@ fn scalar_fold_rejects_short_and_excess_challenges() {
     }
 }
 
+// An unsupported basis or a zero digit count must be rejected before the
+// digit cache build or the decomposition setup, with a cold or a populated cache.
+#[test]
+fn fold_rejects_unsupported_digit_shapes_with_cold_and_populated_caches() {
+    use crate::opaque::{CpuBackend, DecomposeFoldPlan, OpeningFoldKernel, RootOpeningSource};
+    use akita_challenges::SparseChallenge;
+
+    const D: usize = 8;
+    let challenges = vec![
+        SparseChallenge {
+            positions: vec![0].into(),
+            coeffs: vec![1].into(),
+        };
+        2
+    ];
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
+    let run = |poly: &DensePoly<F>, num_digits: usize, log_basis: u32| {
+        OpeningFoldKernel::decompose_fold(
+            &backend,
+            None,
+            <DensePoly<F> as RootOpeningSource<F, D>>::opening_view(poly).unwrap(),
+            DecomposeFoldPlan {
+                challenges: &challenges,
+                num_positions_per_block: 1,
+                num_digits,
+                log_basis,
+            },
+        )
+    };
+
+    for populate in [false, true] {
+        for (num_digits, log_basis) in [(1, 0), (0, 4), (1, 17)] {
+            let poly = DensePoly::from_ring_coeffs(vec![ring::<D>(0), ring::<D>(10)]).unwrap();
+            if populate {
+                run(&poly, 2, 4).unwrap();
+            }
+            assert!(
+                matches!(
+                    run(&poly, num_digits, log_basis),
+                    Err(AkitaError::InvalidInput(_))
+                ),
+                "({num_digits}, {log_basis}) with populated cache = {populate}"
+            );
+            assert!(
+                matches!(
+                    poly.decompose_fold_chunked::<D>(
+                        &challenges,
+                        &[0..1, 1..2],
+                        1,
+                        num_digits,
+                        log_basis
+                    ),
+                    Err(AkitaError::InvalidInput(_))
+                ),
+                "chunked ({num_digits}, {log_basis}) with populated cache = {populate}"
+            );
+        }
+    }
+}
+
 // A +1 monomial challenge must leave every single balanced digit unchanged.
 // The expectation is the input integer itself, independent of decomposition.
 #[test]
@@ -300,8 +364,9 @@ fn single_digit_fold_preserves_signed_i8_i16_boundaries() {
             let mut coefficients = vec![Prime64Offset59::zero(); D];
             coefficients[0] = Prime64Offset59::from_i64(value);
             let poly = DensePoly::from_field_evals(7, coefficients).unwrap();
-            let actual =
-                poly.decompose_fold::<D>(std::slice::from_ref(&challenge), 1, 1, log_basis);
+            let actual = poly
+                .decompose_fold::<D>(std::slice::from_ref(&challenge), 1, 1, log_basis)
+                .unwrap();
             let mut expected = vec![0_i32; D];
             expected[0] = value as i32;
             if actual.centered_coeffs_flat() != expected {
@@ -313,4 +378,201 @@ fn single_digit_fold_preserves_signed_i8_i16_boundaries() {
         mismatches.is_empty(),
         "(basis, expected, actual): {mismatches:?}"
     );
+}
+
+#[test]
+fn fold_operations_reject_invalid_ring_views() {
+    let poly = DensePoly::<F>::from_field_evals(0, vec![F::zero()]).unwrap();
+    assert!(matches!(
+        poly.fold_blocks::<0>(&[], 1),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        poly.fold_blocks_ring::<0>(&[], 1),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        poly.decompose_fold::<0>(&[], 1, 1, 1),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        poly.decompose_fold_chunked::<0>(&[], &[], 1, 1, 1),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn single_digit_fold_validates_challenges_before_both_dense_row_loops() {
+    use akita_challenges::SparseChallenge;
+
+    for value in [1, 256] {
+        let poly = DensePoly::<F>::from_field_evals(6, vec![F::from_u64(value); 64]).unwrap();
+        // Fix the digit cache at another dimension, exercising the two
+        // single-digit fallback loops (small-i8 mirror and live field rows).
+        assert!(poly.digit_planes_for::<64>(1, 4).is_some());
+        assert_eq!(poly.small_i8_coeffs.is_some(), value == 1);
+        let challenges = [SparseChallenge {
+            positions: vec![128].into(),
+            coeffs: vec![1].into(),
+        }];
+        assert_eq!(
+            poly.decompose_fold::<128>(&challenges, 1, 1, 4)
+                .unwrap_err(),
+            AkitaError::InvalidInput(
+                "sparse fold challenge position exceeds the ring dimension".into()
+            ),
+        );
+    }
+}
+
+#[test]
+fn dense_single_digit_fold_preserves_unused_challenges_and_empty_positions() {
+    use akita_challenges::SparseChallenge;
+
+    let poly = DensePoly::<F>::from_field_evals(6, vec![F::from_u64(1); 64]).unwrap();
+    assert!(poly.digit_planes_for::<64>(1, 4).is_some());
+    let valid = SparseChallenge {
+        positions: vec![0].into(),
+        coeffs: vec![1].into(),
+    };
+    let invalid = SparseChallenge {
+        positions: vec![128].into(),
+        coeffs: vec![1].into(),
+    };
+    let expected = poly
+        .decompose_fold::<128>(std::slice::from_ref(&valid), 1, 1, 4)
+        .unwrap();
+    let actual = poly
+        .decompose_fold::<128>(&[valid, invalid.clone()], 1, 1, 4)
+        .unwrap();
+    assert_eq!(
+        actual.centered_coeffs_flat(),
+        expected.centered_coeffs_flat()
+    );
+    assert!(poly
+        .decompose_fold::<128>(&[invalid], 0, 1, 4)
+        .unwrap()
+        .centered_coeffs_flat()
+        .is_empty());
+}
+
+mod batch_only {
+    use super::*;
+    use crate::commitment::{
+        AvailablePolynomialTypes, CommitSourceDescriptor, PolynomialRepresentation,
+        PolynomialTypeSelection,
+    };
+    use crate::opaque::*;
+    use crate::sources::poly::SourceCoefficients;
+
+    struct BatchOnlySource(DensePoly<F>);
+
+    impl RootPolyMeta<F> for BatchOnlySource {
+        fn num_vars(&self) -> usize {
+            RootPolyMeta::num_vars(&self.0)
+        }
+    }
+    impl<const D: usize> RootPolyShape<F, D> for BatchOnlySource {
+        fn num_ring_elems(&self) -> usize {
+            RootPolyShape::<F, D>::num_ring_elems(&self.0)
+        }
+    }
+    impl<const D: usize> RootOpeningSource<F, D> for BatchOnlySource {
+        type OpeningView<'a> = ();
+        type OpeningBatchView<'a> = Vec<&'a DensePoly<F>>;
+        fn opening_view(&self) -> Result<(), AkitaError> {
+            Err(AkitaError::InvalidInput("batch-only source".into()))
+        }
+        fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Vec<&'a DensePoly<F>>, AkitaError> {
+            Ok(polys.iter().map(|poly| &poly.0).collect())
+        }
+    }
+    impl SourceCoefficients<F> for BatchOnlySource {
+        fn source_coefficients(&self) -> Result<std::borrow::Cow<'_, [F]>, AkitaError> {
+            self.0.source_coefficients()
+        }
+    }
+    impl CommitmentSource<F> for BatchOnlySource {
+        fn descriptor(&self) -> Result<CommitSourceDescriptor, AkitaError> {
+            self.0.descriptor()
+        }
+        fn committed_centered_reach(
+            &self,
+            modulus: u128,
+            threshold: u128,
+        ) -> Result<(u128, u128), AkitaError> {
+            self.0.committed_centered_reach(modulus, threshold)
+        }
+        fn available_polynomial_types(
+            &self,
+            plan: &CommitInnerPlan,
+        ) -> Result<AvailablePolynomialTypes, AkitaError> {
+            self.0.available_polynomial_types(plan)
+        }
+        fn represent_as(
+            &self,
+            selected: PolynomialTypeSelection,
+            plan: &CommitInnerPlan,
+        ) -> Result<PolynomialRepresentation<'_, F>, AkitaError> {
+            self.0.represent_as(selected, plan)
+        }
+    }
+    impl<const D: usize> OpeningBatchKernel<Vec<&DensePoly<F>>, F, D> for CpuBackend<F, F> {
+        fn evaluate_and_fold_batch(
+            &self,
+            prepared: Option<&Self::PreparedSetup>,
+            source: Vec<&DensePoly<F>>,
+            plan: OpeningFoldPlan<'_, F>,
+        ) -> Result<Vec<OpeningFoldOutput<F, D>>, AkitaError> {
+            self.evaluate_and_fold_batch(
+                prepared,
+                <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&source)?,
+                plan,
+            )
+        }
+        fn decompose_fold_batch(
+            &self,
+            prepared: Option<&Self::PreparedSetup>,
+            source: Vec<&DensePoly<F>>,
+            plan: DecomposeFoldBatchPlan<'_>,
+        ) -> Result<CpuFoldResponses, AkitaError> {
+            self.decompose_fold_batch(
+                prepared,
+                <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&source)?,
+                plan,
+            )
+        }
+    }
+    impl<const D: usize> SubringCoefficientPackingBatchKernel<Vec<&DensePoly<F>>, F, F, D>
+        for CpuBackend<F, F>
+    {
+        fn coefficient_packing_partials_batch(
+            &self,
+            prepared: Option<&Self::PreparedSetup>,
+            source: Vec<&DensePoly<F>>,
+            plan: SubringCoefficientPackingPlan<'_, F>,
+        ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+            self.coefficient_packing_partials_batch(
+                prepared,
+                <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&source)?,
+                plan,
+            )
+        }
+    }
+
+    #[test]
+    fn import_source_admits_batch_only_opening_kernels() {
+        let setup = crate::AkitaProverSetup::<F>::generate_with_capacity(
+            9,
+            1,
+            akita_params::SetupMatrixCapacity {
+                num_field_elements: 4096,
+            },
+        )
+        .unwrap();
+        let backend = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
+        let poly = DensePoly::from_field_evals(9, vec![F::from_u64(1); 512]).unwrap();
+        // No OpeningFoldKernel<()> implementation exists for this source's singleton view.
+        assert!(backend.import_source(vec![BatchOnlySource(poly)]).is_ok());
+    }
 }

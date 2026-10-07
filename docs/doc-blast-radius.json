@@ -18,10 +18,10 @@
         "crates/akita-planner/**",
         "crates/akita-config/**",
         "crates/akita-schedules/**",
-        "crates/akita-types/src/schedule*",
-        "crates/akita-types/src/**/schedule*",
-        "crates/akita-types/src/proof_size.rs",
-        "crates/akita-types/src/**/proof_size*"
+        "crates/akita-params/src/schedule*",
+        "crates/akita-params/src/**/schedule*",
+        "crates/akita-params/src/proof_size.rs",
+        "crates/akita-params/src/**/proof_size*"
       ],
       "consider_updating": [
         "book/src/how/configuration.md",
@@ -35,7 +35,7 @@
       "description": "Single-point opening batch descriptor and layout",
       "code": [
         "crates/akita-types/src/proof/opening_batch.rs",
-        "crates/akita-types/src/layout/opening_point.rs"
+        "crates/akita-params/src/layout/opening_point.rs"
       ],
       "consider_updating": [
         "book/src/how/proving/opening-points-layout.md",
@@ -47,7 +47,7 @@
     {
       "id": "sis-security",
       "description": "SIS floors, norm bounds, challenge sampling",
-      "code": ["crates/akita-types/src/sis/**", "crates/akita-challenges/**"],
+      "code": ["crates/akita-params/src/sis/**", "crates/akita-challenges/**"],
       "consider_updating": [
         "book/src/how/security.md",
         "book/src/foundations/lattices-sis.md",

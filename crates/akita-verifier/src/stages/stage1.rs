@@ -9,13 +9,14 @@ use crate::stages::ring_switch::{PreparedStage2Compression, RingSwitchVerifyOutp
 use crate::stages::stage2::Stage2CompressionOracle;
 use akita_algebra::offset_eq::EqPairTensorFamily;
 use akita_error::AkitaError;
+use akita_params::InnerCommitSecurityRoute;
+use akita_params::{CommittedGroupParams, DigitRangePlan};
 use akita_serialization::AkitaSerialize;
+use akita_types::DigitRangeEqualityPoint;
 use akita_types::GrindingReplay;
 use akita_types::{
-    batch_l2_virtual_evaluations, CommittedGroupParams, FpExtEncoding, InnerCommitSecurityRoute,
-    PhysicalResponsePlan, RelationRangeImagePlan,
+    batch_l2_virtual_evaluations, FpExtEncoding, PhysicalResponsePlan, RelationRangeImagePlan,
 };
-use akita_types::{DigitRangeEqualityPoint, DigitRangePlan};
 use jolt_field::{CanonicalDecode, CanonicalEncoding, ExtField, Field, Ring};
 use jolt_transcript::Sponge;
 pub(crate) struct Stage1VerifyOutput<E: Field> {
@@ -70,7 +71,7 @@ impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
             let stage = u32::try_from(stage_index).map_err(|_| AkitaError::InvalidProof)?;
             let mut channel = akita_types::GrindingSumcheckVerifier::<F, E, _>::new(
                 grinding,
-                akita_types::SumcheckProtocol::Stage1,
+                akita_params::SumcheckProtocol::Stage1,
                 level,
                 stage,
             );
@@ -97,7 +98,7 @@ impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
                 return Err(AkitaError::InvalidProof);
             }
             let gamma = grinding.grinded_ext_challenge::<F, E>(
-                akita_types::GrindingSite::Stage1InterstageBatch { level, stage },
+                akita_params::GrindingSite::Stage1InterstageBatch { level, stage },
             )?;
             current_weights = self
                 .plan
@@ -120,7 +121,7 @@ impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
         grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
         physical_l2: Option<(
             &akita_types::PhysicalResponsePlan,
-            akita_types::SisModulusProfileId,
+            akita_params::SisModulusProfileId,
             u128,
         )>,
         level: u32,
@@ -155,7 +156,7 @@ impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
         let degree_bound = leaf.polynomial_coefficients.len().saturating_sub(1);
         let mut channel = akita_types::GrindingSumcheckVerifier::<F, E, _>::new(
             grinding,
-            akita_types::SumcheckProtocol::Stage1,
+            akita_params::SumcheckProtocol::Stage1,
             level,
             stage,
         );
@@ -197,7 +198,7 @@ pub(crate) fn verify_stage1<'a, F, E, H: Sponge>(
     relation_plan: &RelationRangeImagePlan,
     grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
     level: u32,
-    layout: &akita_types::NonterminalLevelLayout,
+    layout: &akita_params::NonterminalLevelLayout,
 ) -> Result<Stage1Replay<'a, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
@@ -256,7 +257,7 @@ where
     ) {
         (Some(evaluations), Some(plan)) => {
             let eta = grinding.grinded_ext_challenge::<F, E>(
-                akita_types::GrindingSite::L2VirtualBatch { level },
+                akita_params::GrindingSite::L2VirtualBatch { level },
             )?;
             let (claim, batching) = batch_l2_virtual_evaluations(eta, &evaluations);
             (claim, plan.virtualization_families(&batching)?)
@@ -271,7 +272,7 @@ where
                 weights,
                 support,
                 binary_batching: grinding.grinded_ext_challenge::<F, E>(
-                    akita_types::GrindingSite::CompressionBinary { level },
+                    akita_params::GrindingSite::CompressionBinary { level },
                 )?,
             }
         }
@@ -280,13 +281,13 @@ where
                 weights,
                 support,
                 binary_batching: grinding.grinded_ext_challenge::<F, E>(
-                    akita_types::GrindingSite::CompressionBinary { level },
+                    akita_params::GrindingSite::CompressionBinary { level },
                 )?,
             }
         }
     };
-    let batching_coeff =
-        grinding.grinded_ext_challenge::<F, E>(akita_types::GrindingSite::Stage2Batch { level })?;
+    let batching_coeff = grinding
+        .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::Stage2Batch { level })?;
     Ok(Stage1Replay {
         batching_coeff,
         compression,

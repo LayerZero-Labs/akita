@@ -2,6 +2,7 @@ use super::*;
 use crate::opaque::CpuBackend;
 use crate::opaque::OpeningBatchKernel;
 use akita_challenges::{Challenges, SparseChallenge};
+use jolt_field::{One, Ring};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -16,6 +17,30 @@ struct RecordingBatch {
 }
 
 impl OpeningBatchKernel<RecordingBatch, F, D> for CpuBackend<F, F> {
+    fn evaluate_and_fold_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: RecordingBatch,
+        plan: OpeningFoldPlan<'_, F>,
+    ) -> Result<Vec<OpeningFoldOutput<F, D>>, AkitaError> {
+        BATCH_CALLS.fetch_add(1, Ordering::Relaxed);
+        SOURCE_TRAVERSALS.fetch_add(1, Ordering::Relaxed);
+        plan.validate::<D>(2)?;
+        Ok(source
+            .centered
+            .iter()
+            .map(|row| {
+                let eval = akita_algebra::CyclotomicRing::from_coefficients(
+                    [F::from_u64(row[0] as u64); D],
+                );
+                OpeningFoldOutput {
+                    eval,
+                    folded: vec![eval; row[1] as usize],
+                }
+            })
+            .collect())
+    }
+
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,
@@ -67,7 +92,7 @@ fn fold_endpoint_probe(
         1,
     )
     .unwrap();
-    let ranges = akita_types::dyadic_block_ranges(blocks, blocks).unwrap();
+    let ranges = akita_params::dyadic_block_ranges(blocks, blocks).unwrap();
     let geometry = if chunked {
         FoldProbeGeometry::SparseChunked {
             chunk_ranges: &ranges,
@@ -83,7 +108,7 @@ fn fold_endpoint_probe(
         1,
         1,
         1,
-        akita_types::OpeningMethod::EvaluationTrace,
+        akita_params::OpeningMethod::EvaluationTrace,
         ValidatedFoldAcceptancePlan::new(128, 127, None),
     )
     .unwrap();
@@ -137,7 +162,7 @@ fn chunked_probe_dispatches_and_traverses_once() {
             1,
         )
         .unwrap();
-        let ranges = akita_types::dyadic_block_ranges(blocks, chunks).unwrap();
+        let ranges = akita_params::dyadic_block_ranges(blocks, chunks).unwrap();
         let plan = ValidatedFoldProbePlan::new::<D>(
             &challenges,
             1,
@@ -148,7 +173,7 @@ fn chunked_probe_dispatches_and_traverses_once() {
             1,
             1,
             1,
-            akita_types::OpeningMethod::EvaluationTrace,
+            akita_params::OpeningMethod::EvaluationTrace,
             crate::opaque::ValidatedFoldAcceptancePlan::new(u128::MAX, u128::MAX, None),
         )
         .unwrap();
@@ -192,7 +217,7 @@ fn chunk_admission_precedes_cancelling_aggregation() {
         1,
     )
     .unwrap();
-    let ranges = akita_types::dyadic_block_ranges(2, 2).unwrap();
+    let ranges = akita_params::dyadic_block_ranges(2, 2).unwrap();
     let plan = ValidatedFoldProbePlan::new::<D>(
         &challenges,
         1,
@@ -203,7 +228,7 @@ fn chunk_admission_precedes_cancelling_aggregation() {
         1,
         1,
         1,
-        akita_types::OpeningMethod::EvaluationTrace,
+        akita_params::OpeningMethod::EvaluationTrace,
         crate::opaque::ValidatedFoldAcceptancePlan::new(10, 10, None),
     )
     .unwrap();
@@ -306,7 +331,7 @@ fn accepted_fold_rejects_substituted_challenges_and_opening_computation() {
         1,
     )
     .unwrap();
-    let ranges = akita_types::dyadic_block_ranges(2, 2).unwrap();
+    let ranges = akita_params::dyadic_block_ranges(2, 2).unwrap();
     let plan = ValidatedFoldProbePlan::new::<D>(
         &challenges,
         1,
@@ -317,7 +342,7 @@ fn accepted_fold_rejects_substituted_challenges_and_opening_computation() {
         1,
         1,
         1,
-        akita_types::OpeningMethod::EvaluationTrace,
+        akita_params::OpeningMethod::EvaluationTrace,
         ValidatedFoldAcceptancePlan::new(u128::MAX, u128::MAX, None),
     )
     .unwrap();
@@ -361,4 +386,77 @@ fn accepted_fold_rejects_substituted_challenges_and_opening_computation() {
     assert!(fold_handle.validate_challenges(&substituted).is_err());
     backend.finish_scope(&session).unwrap();
     assert!(backend.validate_binding(&fold_handle.binding()).is_err());
+}
+
+impl RootPolyShape<F, D> for RecordingBatch {
+    fn num_ring_elems(&self) -> usize {
+        2
+    }
+}
+impl RootOpeningSource<F, D> for RecordingBatch {
+    type OpeningView<'a> = ();
+    type OpeningBatchView<'a> = Self;
+    fn opening_view(&self) -> Result<(), AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "singleton evaluation must not be called".into(),
+        ))
+    }
+    fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self, AkitaError> {
+        Ok(Self {
+            centered: polys
+                .iter()
+                .flat_map(|poly| poly.centered.iter().copied())
+                .collect(),
+        })
+    }
+}
+
+#[test]
+fn opening_evaluation_batches_once_in_source_order_and_rejects_bad_shapes() {
+    let _guard = RECORDING_LOCK.lock().unwrap();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
+    let first = RecordingBatch {
+        centered: vec![[10, 2, 0, 0]],
+    };
+    let second = RecordingBatch {
+        centered: vec![[20, 2, 0, 0]],
+    };
+    let missing = RecordingBatch {
+        centered: Vec::new(),
+    };
+    let short = RecordingBatch {
+        centered: vec![[30, 1, 0, 0]],
+    };
+    let extra = RecordingBatch {
+        centered: vec![[40, 2, 0, 0]; 2],
+    };
+    for (polys, valid) in [
+        ([&second, &first], true),
+        ([&first, &missing], false),
+        ([&first, &short], false),
+        ([&extra, &first], false),
+    ] {
+        BATCH_CALLS.store(0, Ordering::Relaxed);
+        SOURCE_TRAVERSALS.store(0, Ordering::Relaxed);
+        let result = super::source::prepare_and_evaluate_opening_group::<F, F, RecordingBatch, _, D>(
+            &backend,
+            None,
+            &polys,
+            &[F::one(); 3],
+            akita_params::BasisMode::Lagrange,
+            1,
+            2,
+            2,
+        );
+        assert_eq!(result.is_ok(), valid);
+        if let Ok((_, (evals, folded))) = result {
+            let expected = [20, 10].map(|value| {
+                akita_algebra::CyclotomicRing::from_coefficients([F::from_u64(value); D])
+            });
+            assert_eq!(evals, expected);
+            assert_eq!(folded, expected.map(|eval| vec![eval; 2]));
+        }
+        assert_eq!(BATCH_CALLS.load(Ordering::Relaxed), 1);
+        assert_eq!(SOURCE_TRAVERSALS.load(Ordering::Relaxed), 1);
+    }
 }

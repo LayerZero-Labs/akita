@@ -7,7 +7,7 @@ use crate::opaque::{
 use crate::opaque::{CpuFoldResponses, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_types::RelationRowGeometry;
+use akita_params::RelationRowGeometry;
 use jolt_field::{CanonicalEncoding, Field};
 
 /// Opening fold / decompose-fold kernel over a borrowed opening view `S`.
@@ -35,16 +35,20 @@ where
     ) -> Result<DecomposeFoldWitness, AkitaError>;
 }
 
-/// Batched decompose-fold kernel over a borrowed opening-batch view `S`.
-///
-/// Implementations return the final aggregate witness. A backend without a
-/// fused path is responsible for folding its source polynomials individually
-/// and aggregating them before returning.
+/// Same-point evaluation and decompose-fold kernels over an opening-batch view `S`.
 pub trait OpeningBatchKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
     F: Field + CanonicalEncoding,
 {
-    /// Batched decompose-fold at one opening point.
+    /// Evaluate and fold once per polynomial, returning results in source order.
+    fn evaluate_and_fold_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: S,
+        plan: OpeningFoldPlan<'_, F>,
+    ) -> Result<Vec<OpeningFoldOutput<F, D>>, AkitaError>;
+
+    /// Batched decompose-fold at one opening point, returning the aggregate witness.
     fn decompose_fold_batch(
         &self,
         prepared: Option<&Self::PreparedSetup>,
