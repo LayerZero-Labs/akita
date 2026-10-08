@@ -1,15 +1,13 @@
 //! Shared public statement for the per-fold negacyclic-ring relation `M * z = y + (X^D + 1) * r`.
 
-use crate::layout::opening_layout::OpeningClaimsLayout;
-use crate::layout::CommitmentRingDims;
-use crate::witness::WitnessLayout;
 use crate::FpExtEncoding;
-use crate::{
-    embed_ring_subfield_scalar, CommittedGroupParams, OpeningFamily, RingMultiplierOpeningPoint,
-    RingVec, SubringCoefficientPackingGeometry,
-};
+use crate::{embed_ring_subfield_scalar, OpeningFamily, RingMultiplierOpeningPoint, RingVec};
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
+use akita_params::layout::opening_layout::OpeningClaimsLayout;
+use akita_params::layout::CommitmentRingDims;
+use akita_params::witness::WitnessLayout;
+use akita_params::{CommittedGroupParams, SubringCoefficientPackingGeometry};
 use challenge_validation::validate_packing_challenge_weights;
 use jolt_field::Field;
 use jolt_field::{CanonicalEncoding, ExtField, Ring};
@@ -316,7 +314,9 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
         self.group_openings
             .get(group)
             .map(RingRelationGroupOpening::ambient_a_challenges)
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("ambient A challenges group index is out of range".into())
+            })
     }
 
     pub fn group_ring_multiplier_point(
@@ -385,8 +385,15 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
         let mut gamma = Vec::with_capacity(row_coefficients.len());
         let mut row_coefficient_rings = Vec::with_capacity(row_coefficients.len());
         for &coefficient in row_coefficients {
-            let ring =
-                embed_ring_subfield_scalar::<F, E, D>(coefficient, AkitaError::InvalidProof)?;
+            // The helper takes its error by value; a String variant would allocate per coefficient.
+            // This unit variant is translated only on failure and never escapes.
+            let ring = embed_ring_subfield_scalar::<F, E, D>(coefficient, AkitaError::InvalidProof)
+                .map_err(|error| match error {
+                    AkitaError::InvalidProof => AkitaError::InvalidSetup(
+                        "relation row coefficient is incompatible with the ring subfield".into(),
+                    ),
+                    error => error,
+                })?;
             gamma.push(ring.coefficients()[0]);
             row_coefficient_rings.push(ring);
         }
@@ -417,7 +424,7 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
     ) -> Result<WitnessLayout, AkitaError> {
         lp.witness_chunk.validate()?;
         let num_chunks = lp.witness_chunk.num_chunks;
-        let relation_geometry = crate::RelationWitnessGeometry::for_level(
+        let relation_geometry = akita_params::RelationWitnessGeometry::for_level(
             lp,
             &self.opening_batch,
             self.extension_degree,
@@ -432,9 +439,9 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
                 ));
             }
             match (expected_method, opening.coefficient_packing_geometry()) {
-                (crate::OpeningMethod::EvaluationTrace, None) => {}
+                (akita_params::OpeningMethod::EvaluationTrace, None) => {}
                 (
-                    crate::OpeningMethod::SubringCoefficientPacking {
+                    akita_params::OpeningMethod::SubringCoefficientPacking {
                         challenge_subring_dimension,
                     },
                     Some(actual),
@@ -473,7 +480,7 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
             &self.opening_batch,
             &relation_geometry,
             num_chunks,
-            crate::RelationQuotientPlan::for_field_bits(lp, F::MODULUS_BITS)?,
+            akita_params::RelationQuotientPlan::for_field_bits(lp, F::MODULUS_BITS)?,
         )?;
         if let Some(capacity) = witness_coeff_len {
             if layout.live_coeff_len() > capacity {

@@ -45,7 +45,9 @@ For every chunk, the prover emits every group in authenticated relation order:
 
 ```text
 chunk 0: [group 0: Z | E | T] [group 1: Z | E | T] ...
+         [canonical body alignment, if required]
 chunk 1: [group 0: Z | E | T] [group 1: Z | E | T] ...
+         [canonical body alignment, if required]
 ...
 shared:  [native R rows]
 suffix:  [zeros, if required by the successor Boolean domain]
@@ -201,21 +203,40 @@ conversion boundary.
 
 ## Chunk partition
 
-Every group is partitioned into the same positive `W` chunk indices. For group
-`g`, define
+Every group is partitioned into the same positive `W` chunk indices. Root
+sources and frozen commitment groups use proportional boundaries:
 
 \[
-S_{g,c}=\left\lfloor\frac{cF_g}{W}\right\rfloor,
-\qquad
+S_{g,c}=\left\lfloor\frac{cF_g}{W}\right\rfloor.
+\]
+
+Recursive witness sources instead inherit the producer's aligned body
+boundaries. `WitnessChunkShape::align` pads each multi-chunk producer body to
+the consumer's source-block coefficient width, merges adjacent owners when
+chunking contracts, and assigns the complete shared tail and final padding to
+the last owner. Producer body alignment still applies when the consumer
+contracts to one chunk. Single-chunk producers retain contiguous bodies without
+body alignment padding.
+
+For either partition, let `S_{g,0} = 0` and define
+
+\[
 F_{g,c}=S_{g,c+1}-S_{g,c}.
 \]
 
 Chunk `c` owns `[S_{g,c},S_{g,c+1})`. The intervals **MUST** be adjacent, and
-their union **MUST** be `[0,F_g)`. When `W > F_g`, repeated boundaries produce
-empty intervals. The layout still retains all `W` chunk indices.
+their union **MUST** be `[0,F_g)`. Repeated boundaries produce empty intervals;
+the layout still retains all `W` chunk indices. Inherited ranges need not be
+balanced. For example, the 16:1 `fp128_onehot_multi_chunk` schedule has recursive
+block ends `[4, 8, 12, 16, 20, 24, 28, 36]`; proportional splitting of the same
+36 blocks into eight chunks would give `[4, 9, 13, 18, 22, 27, 31, 36]`.
 
 `ChunkedWitnessCfg` chooses `W`; it is not resolved address geometry.
-`WitnessLayout` owns the resolved block intervals and coefficient ranges.
+`CommittedGroupParams::witness_block_ranges()` resolves the schedule-owned
+partition for each group, including inherited recursive endpoints.
+`WitnessLayout` consumes those block intervals and owns the coefficient ranges.
+See [Chunks and fold challenges](../book/src/how/proving/opening-points-layout.md#chunks-and-fold-challenges)
+for the complete ownership contract.
 
 ## Physical unit order
 
@@ -257,14 +278,29 @@ L_T(g,c) &= H_gF_{g,c}n_{A,g}q_{B,g}\delta_{B,g}b_g
 \end{aligned}
 \]
 
-Starting from `cursor = 0`, each physical unit receives adjacent ranges:
+Starting from `cursor = 0`, each physical unit receives adjacent Z/E/T ranges.
+Let `body_alignment` be the successor's source-block coefficient width when
+this producer has `W > 1` and a successor width is configured, and `1` otherwise.
+Alignment occurs after all groups in each chunk, including the final chunk
+before the shared tail:
 
 ```text
-z_range = cursor .. cursor + L_Z(g)
-e_range = z_range.end .. z_range.end + L_E(g,c)
-t_range = e_range.end .. e_range.end + L_T(g,c)
-cursor  = t_range.end
+for chunk c in 0..W:
+    for relation-order position p in 0..G:
+        g = g(p)
+        z_range = cursor .. cursor + L_Z(g)
+        e_range = z_range.end .. z_range.end + L_E(g,c)
+        t_range = e_range.end .. e_range.end + L_T(g,c)
+        cursor  = t_range.end
+
+    aligned = align_up(cursor, body_alignment)
+    if aligned != cursor:
+        record alignment range cursor .. aligned
+    cursor = aligned
 ```
+
+Alignment ranges do not extend the semantic Z/E/T ranges. Their filler follows
+the constraints in [Complete live length and zero suffix](#complete-live-length-and-zero-suffix).
 
 Every chunk contains a complete copy of group `g`'s Z segment. E and T contain
 only the source blocks owned by that chunk. An empty chunk therefore has an
@@ -324,8 +360,8 @@ The valid subcolumns are exactly `0 <= s < q_B,g`. No other subcolumns exist.
 
 ## Native quotient tail
 
-After the final Z/E/T unit, the witness contains one shared R tail. Relation
-rows use the canonical order
+After the final Z/E/T unit and its alignment gap, the witness contains one shared
+R tail. Relation rows use the canonical order
 
 ```text
 [consistency_g | A_g | B_g] for each relation-order group, with B rows in
@@ -362,8 +398,14 @@ The exact live coefficient length is
 
 \[
 L=\sum_{c=0}^{W-1}\sum_{p=0}^{G-1}
-(L_Z(g(p))+L_E(g(p),c)+L_T(g(p),c))+L_R.
+(L_Z(g(p))+L_E(g(p),c)+L_T(g(p),c))+L_R+L_{\mathrm{align}}.
 \]
+
+Here $L_{\mathrm{align}}$ counts only the alignment ranges defined by
+`WitnessLayout`, including successor source-block alignment between chunk
+bodies. Compressed layouts additionally include their F/H and quotient spans;
+`WitnessLayout::live_coeff_len()` is the canonical physical end in every mode.
+Alignment ranges do not extend any semantic Z/E/T or quotient segment.
 
 Let `d_next` be the successor commitment's A ring dimension. Define
 
@@ -378,7 +420,15 @@ P=N_{cube}d_{next}.
 The committed and Stage-2 multilinear source is the coefficient vector of
 length `P` formed by the exact live prefix `[0,L)` followed by one zero suffix
 `[L,P)`. This suffix simultaneously supplies any partial successor ring and
-the Boolean-domain padding. There **MUST NOT** be zero gaps inside `[0,L)`.
+the Boolean-domain padding. Internal gaps inside `[0,L)` **MUST** be exactly
+the canonical alignment ranges; arbitrary per-role or per-group carrier padding
+is forbidden. Alignment coordinates are committed and obey the ordinary digit
+range constraints, but carry no relation equations. The canonical prover
+**MUST** initialize them to zero. Verification **MUST NOT** require zero solely
+because a coordinate is an alignment gap. A successor consumes the complete
+source, including filler, and **MUST** enforce its scheduled response bounds.
+The zero contribution of alignment to the honest source-energy estimate is
+not a soundness assumption.
 
 The prover **SHOULD** avoid materializing the suffix when a downstream kernel
 accepts an exact live prefix plus an implicit-zero domain. Serialization and
@@ -508,7 +558,7 @@ At a trusted schedule or verifier boundary, construction **MUST** reject:
 - chunk block ranges that overlap, gap, reorder, or fail to cover `[0,F_g)`;
 - a Z/E/T range whose length differs from the formulas above;
 - an R row range whose length differs from `delta_R * r_rho`;
-- any internal range gap or overlap;
+- any internal range overlap or gap outside the canonical alignment ranges;
 - a live length, padding length, or address computation that overflows;
 - a committed domain shorter than `L`, not divisible by `d_next`, or not a
   power-of-two number of successor rings; and
@@ -524,7 +574,8 @@ The compact representation is an optimization contract, not only a byte
 contract.
 
 - Witness emission **MUST** copy native contiguous coefficient runs directly.
-- No Z/E/T emitter may zero-fill per-role or per-group padding.
+- No Z/E/T emitter may zero-fill arbitrary per-role or per-group carrier
+  padding. Canonical inter-chunk alignment gaps remain zero initialized.
 - No relation, setup, trace, or commitment consumer may transpose an entire
   projected segment.
 - Mixed dimensions **SHOULD** use common-block tensors and batched affine

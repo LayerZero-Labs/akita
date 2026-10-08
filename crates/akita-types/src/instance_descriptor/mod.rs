@@ -17,17 +17,18 @@ mod transcript_grinding_binding;
 
 pub use transcript_grinding_binding::TranscriptGrindingBinding;
 
-use crate::descriptor_bytes::{
-    digest_descriptor_bytes, sis_modulus_profile_tag, DescriptorDigest,
-    AKITA_INSTANCE_DESCRIPTOR_VERSION,
-};
-use crate::{
-    AkitaSetupSeed, BasisMode, CompressionPolicyId, DecompositionParams, FoldSchedule,
-    OpeningClaimsLayout, SisModulusProfileId, COMPRESSION_POLICY,
-};
+use crate::AkitaSetupSeed;
 use akita_error::{
     narrowing::{usize_to_u32, usize_to_u8},
     AkitaError,
+};
+use akita_params::descriptor_bytes::{
+    digest_descriptor_bytes, sis_modulus_profile_tag, DescriptorDigest,
+    AKITA_INSTANCE_DESCRIPTOR_VERSION,
+};
+use akita_params::{
+    BasisMode, CompressionPolicyId, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
+    SisModulusProfileId, COMPRESSION_POLICY,
 };
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -194,7 +195,7 @@ impl SetupSection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanSection {
     /// Explicit v1 catalog and row identity selected by the public statement.
-    pub schedule_selection: crate::OpeningScheduleSelection,
+    pub schedule_selection: akita_params::OpeningScheduleSelection,
     /// Digest of the final effective verifier schedule.
     pub effective_schedule_digest: DescriptorDigest,
 }
@@ -202,7 +203,7 @@ pub struct PlanSection {
 impl PlanSection {
     /// Build a plan section from the runtime schedule the verifier will replay.
     pub fn from_schedule(
-        schedule_selection: crate::OpeningScheduleSelection,
+        schedule_selection: akita_params::OpeningScheduleSelection,
         schedule: &FoldSchedule,
     ) -> Self {
         Self {
@@ -566,7 +567,7 @@ impl AkitaDeserialize for PlanSection {
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
         let out = Self {
-            schedule_selection: crate::OpeningScheduleSelection::deserialize_with_mode(
+            schedule_selection: akita_params::OpeningScheduleSelection::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
@@ -739,7 +740,7 @@ impl AkitaDeserialize for CallSection {
 }
 
 fn modulus_be_32<F: Field + CanonicalEncoding>() -> Result<[u8; 32], AkitaError> {
-    crate::field_modulus_be_bytes::<F>()
+    akita_params::field_modulus_be_bytes::<F>()
 }
 
 fn read_digest<R: Read>(mut reader: R) -> Result<DescriptorDigest, SerializationError> {

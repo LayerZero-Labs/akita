@@ -28,9 +28,7 @@ best complete schedule under the configured selection policy.
 The complete schedule orders are:
 
 ```text
-uniform direct:  (proof-and-work score, proof bytes, total setup,
-                  root output witness, descriptor)
-adaptive direct: (first-direct padded capacity, proof-and-work score, proof bytes,
+direct:          (first-direct padded capacity, proof-and-work score, proof bytes,
                   total setup, root output witness, descriptor)
 recursive:       (padded total-setup capacity, first-direct padded capacity,
                   proof-and-work score, proof bytes, first-direct output witness,
@@ -56,7 +54,7 @@ proof-and-work score, proof bytes, and first-direct output witness. The
 [recursive-objective rationale](../../specs/setup-offloading-planner.md#why-recursive-planning-starts-with-padded-total-setup-capacity)
 explains why exact setup inside the winning bucket is not another tie-break.
 
-The output is an `akita_types::PlannedFoldSchedule`. Its protocol value is a
+The output is an `akita_params::PlannedFoldSchedule`. Its protocol value is a
 typed `FoldSchedule { root, recursive_folds, terminal }`; its non-protocol
 `FoldScheduleEstimate` stores the modeled byte costs used for selection.
 Estimates are neither serialized nor Fiat–Shamir bound.
@@ -96,10 +94,10 @@ geometry.
 
 The `ring_challenge_config` closure supplies the sparse challenge configuration for an A-role dimension. It is a closure instead of a config method so the planner stays independent of `CommitmentConfig`.
 
-`PlannerPolicy::ring_dimension_schedule_mode` is the only dimension-domain
-authority. Uniform policies carry one A, B, and D value in that mode. Adaptive
-policies carry separate bounded domains. The selected schedule records the
-exact dimensions used at each level.
+`PlannerPolicy::ring_dimension_schedule` is the dimension-domain authority.
+The planner searches separate bounded A, B, and D domains over the adaptive
+prefix, then a monotone suffix domain. The selected schedule records the exact
+dimensions used at each level.
 
 ## Resolution Flow
 
@@ -125,7 +123,7 @@ For a fixed field, ring dimension, decomposition policy, and opening shape, the 
 - `block_index_bits`: the number `r_blk = ceil(log2 B)` of Boolean block-index variables.
 - `position_index_bits`: the number of variables inside each block.
 
-Once those values are chosen, the rest of the level is derived rather than independently searched. Digit counts, coefficient-`L∞` bounds, matrix widths, and SIS-secure ranks come from the shared `akita_types::sis` helpers. The planner builds the A, B, and D Ajtai key parameters from those derived values and then scores the resulting proof size.
+Once those values are chosen, the rest of the level is derived rather than independently searched. Digit counts, coefficient-`L∞` bounds, matrix widths, and SIS-secure ranks come from the shared `akita_params::sis` helpers. The planner builds the A, B, and D Ajtai key parameters from those derived values and then scores the resulting proof size.
 
 Conceptually, a candidate level answers three questions:
 
@@ -168,7 +166,7 @@ Recursive levels do not enumerate the full exponential tree of all possible `(lo
 Instead, `derive_fold_candidates` scans the valid `block_index_bits` choices for
 each recursive `log_basis`. `FoldCandidatePolicy::Best` keeps the best
 contracting candidate under the local layout score. `Frontier` retains every
-contracting split candidate needed by proof-first, adaptive-dimension, or
+contracting split candidate needed by adaptive-dimension or
 setup-offloading search.
 
 After that candidate is chosen, the suffix DP still performs the important global comparison:
@@ -177,10 +175,9 @@ After that candidate is chosen, the suffix DP still performs the important globa
 - Fold once more and pay the current level proof bytes plus the best suffix below it.
 
 The memoized suffix state tracks the level, current witness length, active
-basis choices, and parent-visible geometry. Uniform direct search keeps its
-proof-first frontier. Adaptive direct and recursive search share one projected
-frontier: a setup-aware first-direct projection and a setup-aware proof-payload
-projection. A candidate is pruned only when both projections make it irrelevant
+basis choices, and parent-visible geometry. Direct and recursive search share
+one projected frontier: a setup-aware first-direct projection and a setup-aware
+proof-payload projection. A candidate is pruned only when both projections make it irrelevant
 to every parent transition. At a complete root, a level setup bound larger than
 the best complete envelope rejects both its direct and offloaded branches.
 Ordinary recursive folds construct the single canonical

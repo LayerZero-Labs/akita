@@ -1,8 +1,8 @@
 //! Stable policy identity shared by trusted artifacts and offline generation.
 
-use akita_types::digest_descriptor_bytes;
+use akita_params::digest_descriptor_bytes;
 
-use crate::{PlannerPolicy, RingDimensionScheduleMode};
+use crate::{PlannerPolicy, RingDimensionSchedule};
 
 /// Fixed-width digest of every planner-policy field that affects an admitted row.
 pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
@@ -14,7 +14,7 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
         recursive_setup_search_policy,
         setup_field_budget,
         min_offloaded_witness_contraction,
-        ring_dimension_schedule_mode,
+        ring_dimension_schedule,
         decomposition,
         sis_modulus_profile,
         sis_security_policy,
@@ -34,7 +34,7 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     bytes.extend_from_slice(&sis_table_digest.0);
     bytes.extend_from_slice(&sis_l2_table_digest.0);
     write_u64(&mut bytes, u64::from(selective_l2_response_model.tag()));
-    write_ring_dimension_schedule_mode(&mut bytes, ring_dimension_schedule_mode);
+    write_ring_dimension_schedule(&mut bytes, ring_dimension_schedule);
     write_decomposition(&mut bytes, decomposition);
     write_u64(&mut bytes, claim_ext_degree as u64);
     write_u64(&mut bytes, chal_ext_degree as u64);
@@ -54,48 +54,42 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     digest_descriptor_bytes(&bytes)
 }
 
-fn sis_modulus_profile_tag(family: akita_types::SisModulusProfileId) -> u64 {
+fn sis_modulus_profile_tag(family: akita_params::SisModulusProfileId) -> u64 {
     match family {
-        akita_types::SisModulusProfileId::Q32Offset99 => 0,
-        akita_types::SisModulusProfileId::Q64Offset59 => 1,
-        akita_types::SisModulusProfileId::Q128OffsetA7F7 => 2,
+        akita_params::SisModulusProfileId::Q32Offset99 => 0,
+        akita_params::SisModulusProfileId::Q64Offset59 => 1,
+        akita_params::SisModulusProfileId::Q128OffsetA7F7 => 2,
     }
 }
 
-fn write_ring_dimension_schedule_mode(bytes: &mut Vec<u8>, mode: RingDimensionScheduleMode) {
-    match mode {
-        RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-            write_u64(bytes, 0);
-            write_u64(bytes, ring_dimension as u64);
-        }
-        RingDimensionScheduleMode::AdaptiveDimension {
-            num_search_levels,
-            suffix_dimensions,
-            potential_a_dimensions,
-            potential_b_dimensions,
-            potential_d_dimensions,
-        } => {
-            write_u64(bytes, 1);
-            write_u64(bytes, num_search_levels as u64);
-            write_u64(bytes, suffix_dimensions.len() as u64);
-            for &dimension in suffix_dimensions {
-                write_u64(bytes, dimension as u64);
-            }
-            for dimensions in [
-                potential_a_dimensions,
-                potential_b_dimensions,
-                potential_d_dimensions,
-            ] {
-                write_u64(bytes, dimensions.len() as u64);
-                for &dimension in dimensions {
-                    write_u64(bytes, dimension as u64);
-                }
-            }
+fn write_ring_dimension_schedule(bytes: &mut Vec<u8>, schedule: RingDimensionSchedule) {
+    let RingDimensionSchedule {
+        num_search_levels,
+        suffix_dimensions,
+        potential_a_dimensions,
+        potential_b_dimensions,
+        potential_d_dimensions,
+    } = schedule;
+    // Preserve the adaptive domain identity; the former fixed-domain tag is retired.
+    write_u64(bytes, 1);
+    write_u64(bytes, num_search_levels as u64);
+    write_u64(bytes, suffix_dimensions.len() as u64);
+    for &dimension in suffix_dimensions {
+        write_u64(bytes, dimension as u64);
+    }
+    for dimensions in [
+        potential_a_dimensions,
+        potential_b_dimensions,
+        potential_d_dimensions,
+    ] {
+        write_u64(bytes, dimensions.len() as u64);
+        for &dimension in dimensions {
+            write_u64(bytes, dimension as u64);
         }
     }
 }
 
-fn write_decomposition(bytes: &mut Vec<u8>, decomposition: akita_types::DecompositionParams) {
+fn write_decomposition(bytes: &mut Vec<u8>, decomposition: akita_params::DecompositionParams) {
     write_u64(bytes, u64::from(decomposition.log_basis));
     write_u64(bytes, u64::from(decomposition.log_commit_bound));
     match decomposition.log_open_bound {
@@ -127,7 +121,6 @@ mod tests {
 
     #[test]
     fn current_selection_objectives_do_not_reuse_retired_identity_tags() {
-        assert_eq!(SelectionPolicyId::MinEstimatedExactProofAndWorkV5.tag(), 13);
         assert_eq!(
             SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5.tag(),
             14
@@ -136,10 +129,9 @@ mod tests {
             SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6.tag(),
             15
         );
-        assert!(!(1..=12).contains(&SelectionPolicyId::MinEstimatedExactProofAndWorkV5.tag()));
-        assert!(!(1..=12)
+        assert!(!(1..=13)
             .contains(&SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5.tag()));
-        assert!(!(1..=12).contains(
+        assert!(!(1..=13).contains(
             &SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6.tag()
         ));
     }

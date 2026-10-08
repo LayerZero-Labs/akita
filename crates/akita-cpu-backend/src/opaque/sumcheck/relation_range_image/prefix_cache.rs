@@ -1,14 +1,32 @@
 //! Two-round prefix cache for the Stage 2 range-image norm term.
 //!
-//! Stage 2 (`b = 4` or `8`): domain `{0, 1, Infinity}^2`, 9-point range-image
+//! Stage 2 (`b = 4`, `8` or `16`): domain `{0, 1, Infinity}^2`, 9-point range-image
 //! grid built from an equality-weighted histogram of witness quad digit
 //! classes. The relation term is linear in the witness and does not use the
 //! grid.
 
 use crate::opaque::sumcheck::prefix_lookup::*;
+use akita_error::AkitaError;
 use akita_sumcheck::reduce_signed_accum;
 use jolt_field::{Field, Ring, Unreduced, Zero};
 use jolt_poly::UnivariatePoly;
+
+/// The bases admitted by the compact-prefix constructor.
+#[derive(Clone, Copy)]
+pub(super) enum PrefixBasis {
+    B4,
+    B8,
+    B16,
+}
+
+/// Range-image grid values of one basis-16 quad class.
+///
+/// Basis 16 has `2^16` classes, so its rows are computed during the single
+/// histogram pass instead of being stored in a static table.
+fn stage2_b16_norm_lookup_row(class: usize) -> [i64; STAGE2_PREFIX_POINT_COUNT] {
+    let quad = std::array::from_fn(|digit| ((class >> (4 * digit)) & 15) as i64 - 8);
+    STAGE2_PREFIX_LOOKUP_POINTS_I64.map(|(x, y)| stage2_local_norm_raw_eval_i64(quad, x, y))
+}
 
 /// Range-image grid of the first two stage-2 rounds.
 ///
@@ -32,40 +50,47 @@ impl<E: Field + Unreduced> Stage2PrefixCache<E> {
     /// Class `d0 | d1 << bits | d2 << 2 bits | d3 << 3 bits` holds quads whose
     /// digits are `d_i - b / 2`, with `bits = log2(b)`.
     ///
-    /// # Panics
-    ///
-    /// Panics if `b` is not 4 or 8, or if `histogram` does not have one entry
-    /// per class.
+    /// Returns an internal error if `histogram` does not have one entry per class.
     pub(super) fn from_norm_histogram(
         histogram: &[E],
-        b: usize,
+        basis: PrefixBasis,
         tau0: E,
         tau1: E,
         batching_coeff: E,
-    ) -> Self {
-        let table: &[[i64; STAGE2_PREFIX_POINT_COUNT]] = match b {
-            4 => &STAGE2_B4_NORM_LOOKUP_TABLE,
-            8 => &STAGE2_B8_NORM_LOOKUP_TABLE,
-            _ => unreachable!("unsupported stage-2 prefix basis"),
+    ) -> Result<Self, AkitaError> {
+        let table: Option<&[[i64; STAGE2_PREFIX_POINT_COUNT]]> = match basis {
+            PrefixBasis::B4 => Some(&STAGE2_B4_NORM_LOOKUP_TABLE),
+            PrefixBasis::B8 => Some(&STAGE2_B8_NORM_LOOKUP_TABLE),
+            PrefixBasis::B16 => None,
         };
-        assert_eq!(histogram.len(), table.len());
+        let class_count = table.map_or(1 << 16, <[_]>::len);
+        if histogram.len() != class_count {
+            return Err(AkitaError::Internal(format!(
+                "stage-2 norm histogram length: expected {class_count}, actual {}",
+                histogram.len(),
+            )));
+        }
         let mut pos = [E::SmallProduct::zero(); STAGE2_PREFIX_POINT_COUNT];
         let mut neg = [E::SmallProduct::zero(); STAGE2_PREFIX_POINT_COUNT];
-        for (&weight, values) in histogram.iter().zip(table) {
+        for (class, &weight) in histogram.iter().enumerate() {
             if !weight.is_zero() {
-                accum_lookup_vector_signed(&mut pos, &mut neg, weight, values);
+                let values = match table {
+                    Some(table) => table[class],
+                    None => stage2_b16_norm_lookup_row(class),
+                };
+                accum_lookup_vector_signed(&mut pos, &mut neg, weight, &values);
             }
         }
         let grid: [E; STAGE2_PREFIX_POINT_COUNT] =
             std::array::from_fn(|point| reduce_signed_accum::<E>(pos[point], neg[point]));
-        Self {
+        Ok(Self {
             norm_x_row_coeffs: std::array::from_fn(|y| {
                 quadratic_coeffs_from_01_inf(grid[y], grid[3 + y], grid[6 + y])
             }),
             tau0,
             tau1,
             batching_coeff,
-        }
+        })
     }
 }
 

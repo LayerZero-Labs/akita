@@ -159,10 +159,10 @@ implementation acceptance criteria live in
 
 **Implementation map**
 
-- `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `l2_table.rs`,
+- `crates/akita-params/src/sis/mod.rs`, `ajtai_key.rs`, `l2_table.rs`,
   `physical_l2.rs`, `generated_sis_table/`, and `norm_bound.rs`.
 - `docs/security-posture.md`, `specs/sis-quantum128-scalar-n-table.md`.
-- `crates/akita-types/src/sis/generated_sis_table/policy_audit.csv` (canonical
+- `crates/akita-params/src/sis/generated_sis_table/policy_audit.csv` (canonical
   production table certificate).
 
 ## Norm bounds and weak binding
@@ -253,6 +253,29 @@ distribution-free grinding bound if the 3 percent envelope covers the source
 model error. The planner freezes the resulting cap into the schedule. The
 verifier enforces that exact cap. A model error can make proving fail more
 often, but it cannot make the verifier accept a response above the cap.
+
+### Alignment coordinates
+
+Witness alignment gaps are physical committed coordinates outside the semantic
+Z/E/T, quotient, and compression spans. Stage 1 range-checks these coordinates
+with the ordinary balanced digit range. They have no direct relation equations
+and no negative-binary constraint. The canonical prover initializes them to
+zero, but verification does not require zero.
+
+The successor commitment consumes the complete physical witness, including
+alignment coordinates. Its block geometry and matrix input widths cover this
+source; SIS rank admission uses those widths and the accepted digit or response
+bounds, without assuming the filler is zero. The current fold's A-role response
+norm covers its semantic Z ranges, so changing its alignment coordinates does
+not directly change that norm. Once the successor consumes the witness, filler
+can change its response. That response must satisfy the successor's scheduled
+coefficient bound or its proved physical squared L2 cap, including the direct
+terminal norm check when applicable.
+
+Zero filler contributes no energy to the honest source model. This convention
+can be used to select a cap, but the security calculation uses the cap enforced
+by verification. Nonzero filler need not produce a response below that cap:
+range membership alone does not guarantee acceptance of every later fold.
 
 ### The accepted committed-source space
 
@@ -382,7 +405,7 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
 
 **Implementation map**
 
-- `crates/akita-types/src/sis/norm_bound.rs` owns the two physical collision
+- `crates/akita-params/src/sis/norm_bound.rs` owns the two physical collision
   formulas. `crates/akita-types/src/proof/relation_range_image.rs` owns the
   physical response map. `crates/akita-cpu-backend/src/opaque/sumcheck/physical_l2_norm.rs`
   and `crates/akita-verifier/src/stages/physical_l2_norm.rs` own proof and replay.
@@ -390,7 +413,7 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
 - `specs/fold-linf-rejection.md` (fold digit-count tightening).
 - `specs/selective-l2-fold-security-sizing.md` (implemented physical norm correction
   and optional L2 route).
-- `crates/akita-types/src/config.rs` (`DecompositionParams::log_commit_bound`) and
+- `crates/akita-params/src/config.rs` (`DecompositionParams::log_commit_bound`) and
   `crates/akita-cpu-backend/src/commitment/api.rs`
   (`ensure_sources_fit_accepted_interval`) own the declared
   committed-source bound and the producer-side range check.

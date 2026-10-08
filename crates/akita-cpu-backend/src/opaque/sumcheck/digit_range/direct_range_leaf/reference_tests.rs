@@ -1,6 +1,6 @@
 use super::{LowBasisRangeCheckProver, PackedSignedDigits};
+use akita_params::DigitRangePlan;
 use akita_sumcheck::EqFactoredSumcheckInstanceProver;
-use akita_types::DigitRangePlan;
 use jolt_field::{One, Prime128Offset275, Ring, Zero};
 
 type F = Prime128Offset275;
@@ -117,7 +117,11 @@ fn assert_independent_rounds(
         prover.ingest_challenge(round, r);
     }
     assert_eq!(table.len(), 1);
-    assert_eq!(prover.final_range_image_eval(), table[0], "{shape}");
+    assert_eq!(
+        prover.final_range_image_eval().unwrap(),
+        table[0],
+        "{shape}"
+    );
     assert_eq!(
         normalized_claim,
         root_product(table[0], &roots),

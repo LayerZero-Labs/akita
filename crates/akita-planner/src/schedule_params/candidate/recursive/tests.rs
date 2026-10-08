@@ -5,7 +5,7 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
     use akita_config::{
         policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
-    use akita_types::InnerCommitSecurityRoute;
+    use akita_params::InnerCommitSecurityRoute;
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
     let policy = policy_of::<Recursive>();
@@ -17,8 +17,9 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
     let source_moment = crate::response_model::SourceMomentEstimate::new(1_000_000);
     for retain_split_frontier in [false, true] {
         let request = RecursiveCandidateRequest {
+            input_chunks: None,
             policy: &policy,
-            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+            payload_mode: akita_params::CommitmentPayloadMode::Compressed,
             opening,
             dimensions,
             current_witness_len: 948_672,
@@ -67,8 +68,9 @@ fn guided_search_forces_a_split_outside_the_bounded_domain() {
     type Recursive = RecursiveCommitmentConfig<OneHot>;
     let policy = policy_of::<Recursive>();
     let base_request = RecursiveCandidateRequest {
+        input_chunks: None,
         policy: &policy,
-        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+        payload_mode: akita_params::CommitmentPayloadMode::Compressed,
         opening: PlannerOpeningCandidate::evaluation_trace(
             Recursive::ring_challenge_config(64).expect("challenge config"),
         ),
@@ -107,7 +109,7 @@ fn guided_search_forces_a_split_outside_the_bounded_domain() {
     let request = RecursiveCandidateRequest {
         guide: Some(CandidateLayoutGuide {
             position_index_bits: search.reduced_vars - guided_split,
-            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
+            outer_slice_count: akita_params::CommitmentSliceCount::ONE,
             inner_route: CandidateInnerRoute::Linf,
             setup_prefix: None,
         }),
@@ -138,7 +140,7 @@ fn guided_recursive_l2_survives_the_profitability_filter() {
     use akita_config::{
         policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
-    use akita_types::InnerCommitSecurityRoute;
+    use akita_params::InnerCommitSecurityRoute;
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
     let policy = policy_of::<Recursive>();
@@ -156,8 +158,9 @@ fn guided_recursive_l2_survives_the_profitability_filter() {
     ] {
         for log_basis in 2..=8 {
             let request = RecursiveCandidateRequest {
+                input_chunks: None,
                 policy: &policy,
-                payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+                payload_mode: akita_params::CommitmentPayloadMode::Compressed,
                 opening: PlannerOpeningCandidate::evaluation_trace(
                     Recursive::ring_challenge_config(64).expect("challenge config"),
                 ),
@@ -228,13 +231,14 @@ fn combined_relation_views_match_mode_specific_searches() {
     use akita_config::{
         policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
-    use akita_types::RingRelationMode::{QuotientLift, ReducedEvaluation};
+    use akita_params::RingRelationMode::{QuotientLift, ReducedEvaluation};
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
     let policy = policy_of::<Recursive>();
     let request = RecursiveCandidateRequest {
+        input_chunks: None,
         policy: &policy,
-        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+        payload_mode: akita_params::CommitmentPayloadMode::Compressed,
         opening: PlannerOpeningCandidate::evaluation_trace(
             Recursive::ring_challenge_config(64).expect("challenge config"),
         ),
@@ -288,13 +292,14 @@ fn reduced_only_views_keep_quotient_terminal_and_exclusively_reduced_folds() {
     use akita_config::{
         policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
-    use akita_types::RingRelationMode::{QuotientLift, ReducedEvaluation};
+    use akita_params::RingRelationMode::{QuotientLift, ReducedEvaluation};
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
     let policy = policy_of::<Recursive>();
     let request = RecursiveCandidateRequest {
+        input_chunks: None,
         policy: &policy,
-        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+        payload_mode: akita_params::CommitmentPayloadMode::Compressed,
         opening: PlannerOpeningCandidate::evaluation_trace(
             Recursive::ring_challenge_config(64).expect("challenge config"),
         ),
@@ -344,8 +349,9 @@ fn combined_views_keep_a_noncontracting_terminal_candidate() {
     for current_witness_len in [1 << 12, 1 << 13, 1 << 14, 1 << 15, 1 << 16] {
         let views = derive_recursive_candidate_views(
             RecursiveCandidateRequest {
+                input_chunks: None,
                 policy: &policy,
-                payload_mode: akita_types::CommitmentPayloadMode::Raw,
+                payload_mode: akita_params::CommitmentPayloadMode::Raw,
                 opening,
                 dimensions: CommitmentRingDims::uniform(64),
                 current_witness_len,
@@ -383,8 +389,9 @@ fn late_consumer_keeps_setup_prefix_slices_eligible() {
     let challenge = Recursive::ring_challenge_config(64).expect("challenge config");
     let mut cache = SetupPrefixSearchCache::default();
     let request = RecursiveCandidateRequest {
+        input_chunks: None,
         policy: &policy,
-        payload_mode: akita_types::CommitmentPayloadMode::Raw,
+        payload_mode: akita_params::CommitmentPayloadMode::Raw,
         opening: PlannerOpeningCandidate::evaluation_trace(challenge),
         dimensions: CommitmentRingDims::uniform(64),
         current_witness_len: 1 << 16,
@@ -410,5 +417,5 @@ fn late_consumer_keeps_setup_prefix_slices_eligible() {
         .setup_prefixes
         .iter()
         .flatten()
-        .any(|slot| { slot.profile.outer_slice_count > akita_types::CommitmentSliceCount::ONE }));
+        .any(|slot| { slot.profile.outer_slice_count > akita_params::CommitmentSliceCount::ONE }));
 }

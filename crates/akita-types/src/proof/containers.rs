@@ -1,6 +1,6 @@
 use super::*;
-use crate::wire_limits::reserve_shape_len;
 use akita_error::checked;
+use akita_params::wire_limits::reserve_shape_len;
 
 /// D-erased storage for a sequence of ring elements as raw field-element
 /// coefficients.

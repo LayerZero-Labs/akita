@@ -31,12 +31,16 @@ impl<E: Field> SetupContributionPlan<E> {
         if role_tensors_are_aligned(tensors, ratio) {
             let low_variable_count = ratio.trailing_zeros() as usize;
             let point = self.relation_address.point();
-            let low_point = point
-                .get(..low_variable_count)
-                .ok_or(AkitaError::InvalidProof)?;
-            let high_point = point
-                .get(low_variable_count..)
-                .ok_or(AkitaError::InvalidProof)?;
+            let low_point = point.get(..low_variable_count).ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "setup role lane ratio exceeds the relation address dimension".into(),
+                )
+            })?;
+            let high_point = point.get(low_variable_count..).ok_or_else(|| {
+                AkitaError::Internal(
+                    "setup role high point split failed after low point validation".into(),
+                )
+            })?;
             let mut factored = tensors.to_vec();
             factor_aligned_role_tensors(&mut factored, ratio)?;
             let equality = OffsetEqWindow::new(high_point)?;
@@ -168,9 +172,11 @@ impl<E: Field> SetupContributionPlan<E> {
                 let d_row = d_idx / self.d_physical_cols;
                 if group.d_col_range.contains(&d_col) {
                     let term = self.d_weights[d_row]
-                        * *e_eq
-                            .get(d_col - group.d_col_range.start)
-                            .ok_or(AkitaError::InvalidProof)?;
+                        * *e_eq.get(d_col - group.d_col_range.start).ok_or_else(|| {
+                            AkitaError::Internal(
+                                "setup D column exceeds the E column weight table".into(),
+                            )
+                        })?;
                     weight += scales[2]
                         .as_ref()
                         .map_or(term, |scale| scale[setup_idx % group.d_ratio] * term);
@@ -180,10 +186,9 @@ impl<E: Field> SetupContributionPlan<E> {
             let b_idx = setup_idx / group.b_ratio;
             let b_footprint = group.physical_b.physical_footprint()?;
             if b_idx < b_footprint {
-                let term = *weights
-                    .physical_b_weights
-                    .get(b_idx)
-                    .ok_or(AkitaError::InvalidProof)?;
+                let term = *weights.physical_b_weights.get(b_idx).ok_or_else(|| {
+                    AkitaError::Internal("setup B index exceeds the physical B weight table".into())
+                })?;
                 weight += scales[1]
                     .as_ref()
                     .map_or(term, |scale| scale[setup_idx % group.b_ratio] * term);
@@ -198,7 +203,11 @@ impl<E: Field> SetupContributionPlan<E> {
                 let a_col = a_idx % group.z_cols;
                 let a_row = a_idx / group.z_cols;
                 let term = group.a_row_weights[a_row]
-                    * *z_eq.get(a_col).ok_or(AkitaError::InvalidProof)?;
+                    * *z_eq.get(a_col).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "setup A column exceeds the Z column weight table".into(),
+                        )
+                    })?;
                 weight += scales[0]
                     .as_ref()
                     .map_or(term, |scale| scale[setup_idx % group.a_ratio] * term);
@@ -214,7 +223,11 @@ impl<E: Field> SetupContributionPlan<E> {
         self.relation_address
             .point()
             .split_at_checked(bridge_bits)
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "setup base bridge exceeds the relation address dimension".into(),
+                )
+            })
     }
 
     /// Number of relation-base coefficient blocks in one setup base ring.
@@ -506,6 +519,21 @@ mod projection_tests {
     use jolt_field::{One, Prime128OffsetA7F7, Ring};
 
     type F = Prime128OffsetA7F7;
+
+    #[test]
+    fn role_materialization_rejects_ratio_beyond_relation_address() {
+        let plan = SetupContributionPlan::<F>::from_test_groups(
+            1,
+            vec![F::one()].into(),
+            Vec::new(),
+            akita_params::CommitmentRingDims::uniform(64),
+        )
+        .unwrap();
+        assert!(matches!(
+            plan.materialize_role_tensor_weights(2, &[], 0, F::one()),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
 
     #[test]
     fn role_projection_preserves_unaligned_global_relation_lanes() {

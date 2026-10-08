@@ -11,7 +11,8 @@ mod score;
 #[path = "unpruned_search/suffix.rs"]
 mod suffix;
 
-use candidate::{prepend_fold, prepend_root, terminal};
+use candidate::terminal;
+pub(super) use candidate::{prepend_fold, prepend_root};
 use frontier::{retain as retain_frontier_candidate, OracleFrontier};
 use relation::OracleRelationState;
 use score::{schedule_descriptor_bytes, score, OracleScore};
@@ -26,10 +27,11 @@ struct UnprunedCtx<'a> {
 struct UnprunedState {
     level: usize,
     input_witness_len: usize,
+    input_chunks: akita_params::WitnessChunkShape,
     current_log_basis: u32,
     source_moment: Option<crate::response_model::SourceMomentEstimate>,
     dimension_ceiling: CommitmentRingDims,
-    payload_phase: akita_types::CommitmentPayloadPhase,
+    payload_phase: akita_params::CommitmentPayloadPhase,
     relation_state: OracleRelationState,
 }
 
@@ -37,6 +39,7 @@ impl std::hash::Hash for UnprunedState {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.level.hash(state);
         self.input_witness_len.hash(state);
+        self.input_chunks.hash(state);
         self.current_log_basis.hash(state);
         self.source_moment.hash(state);
         self.dimension_ceiling.d_a().hash(state);
@@ -86,8 +89,8 @@ impl OracleWork {
 
     fn record_candidate_route(&mut self, params: &CommittedGroupParams) -> Result<(), AkitaError> {
         let counter = match params.inner().matrix.security_route() {
-            akita_types::InnerCommitSecurityRoute::Linf(_) => &mut self.linf_candidates,
-            akita_types::InnerCommitSecurityRoute::L2 { .. } => &mut self.l2_candidates,
+            akita_params::InnerCommitSecurityRoute::Linf(_) => &mut self.linf_candidates,
+            akita_params::InnerCommitSecurityRoute::L2 { .. } => &mut self.l2_candidates,
         };
         *counter = counter.checked_add(1).ok_or_else(|| {
             AkitaError::InvalidSetup("unpruned candidate-route counter overflow".into())
@@ -109,12 +112,11 @@ pub(super) struct OracleSearchResult {
 struct RootCandidate<'a> {
     params: &'a CommittedGroupParams,
     input_witness_len: usize,
-    output_witness_len: usize,
 }
 
 fn consider_complete_schedule(
     policy: &PlannerPolicy,
-    schedule_key: &akita_types::ScheduleLookupKey,
+    schedule_key: &akita_params::ScheduleLookupKey,
     root: RootCandidate<'_>,
     suffix: &ScheduleCandidate,
     complete_schedules: &std::cell::Cell<usize>,
@@ -134,7 +136,6 @@ fn consider_complete_schedule(
         schedule_key,
         root.input_witness_len,
         root.params,
-        root.output_witness_len,
         suffix,
     )?
     else {
@@ -159,7 +160,7 @@ fn consider_complete_schedule(
 pub(super) fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
-    source_contract: akita_types::sis::CommittedSourceContract,
+    source_contract: akita_params::sis::CommittedSourceContract,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
 ) -> Result<OracleSearchResult, AkitaError> {
     key.validate()?;
@@ -174,7 +175,7 @@ pub(super) fn find_schedule(
     let mut work = OracleWork::default();
     let mut memo = OracleMemo::new();
     let complete_schedules = std::cell::Cell::new(0usize);
-    let schedule_key = akita_types::ScheduleLookupKey::single(key);
+    let schedule_key = akita_params::ScheduleLookupKey::single(key);
     let ctx = UnprunedCtx {
         policy,
         ring_challenge_config: &ring_challenge_config,
@@ -231,13 +232,28 @@ pub(super) fn find_schedule(
                         visit_suffixes(
                             &ctx,
                             UnprunedState {
+                                input_chunks: akita_params::WitnessLayout::new(
+                                    &root_params,
+                                    &schedule_key.opening_layout()?,
+                                    &akita_params::RelationWitnessGeometry::for_level(
+                                        &root_params,
+                                        &schedule_key.opening_layout()?,
+                                        policy.claim_ext_degree,
+                                    )?,
+                                    root_params.witness_chunk.num_chunks,
+                                    akita_params::RelationQuotientPlan::for_field_bits(
+                                        &root_params,
+                                        field_bits,
+                                    )?,
+                                )?
+                                .chunk_shape()?,
                                 level: 1,
                                 input_witness_len: output_witness_len,
                                 current_log_basis: log_basis,
                                 source_moment: next_source_moment,
                                 dimension_ceiling: root_dimensions,
                                 payload_phase:
-                                    akita_types::CommitmentPayloadPhase::CompressedPrefix,
+                                    akita_params::CommitmentPayloadPhase::CompressedPrefix,
                                 relation_state,
                             },
                             &mut memo,
@@ -249,7 +265,6 @@ pub(super) fn find_schedule(
                                     RootCandidate {
                                         params: &root_params,
                                         input_witness_len,
-                                        output_witness_len,
                                     },
                                     &suffix,
                                     &complete_schedules,
@@ -268,15 +283,8 @@ pub(super) fn find_schedule(
             "unpruned traversal found no complete schedule".into(),
         ));
     };
-    let cached_first_direct_setup_field_len = if matches!(
-        policy.selection_policy,
-        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-    ) {
-        selected.first_direct_setup_field_len.map(NonZeroUsize::get)
-    } else {
-        None
-    };
+    let cached_first_direct_setup_field_len =
+        selected.first_direct_setup_field_len.map(NonZeroUsize::get);
     let selected_descriptor = schedule_descriptor_bytes(&selected)?;
     let planned = materialize_candidate_schedule(
         CandidateMaterializationCost {

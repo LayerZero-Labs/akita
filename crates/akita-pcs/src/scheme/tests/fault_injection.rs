@@ -72,9 +72,9 @@ fn prove_and_verify_with_fault(fault: Fault) -> (FaultOutcome, FaultReport) {
         .expect("fault-injection test thread panicked")
 }
 
-fn schedule() -> akita_types::FoldSchedule {
+fn schedule() -> akita_params::FoldSchedule {
     let scheme = workspace_scheme::<Cfg>().expect("workspace schedule artifact");
-    let key = akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(
+    let key = akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::new(
         NUM_VARS, 1,
     ));
     let selection = scheme.schedules().resolve_key(&key).expect("schedule row");
@@ -93,7 +93,7 @@ fn l2_route_level() -> Option<u32> {
         .position(|params| {
             matches!(
                 params.inner().matrix.security_route(),
-                akita_types::InnerCommitSecurityRoute::L2 { .. }
+                akita_params::InnerCommitSecurityRoute::L2 { .. }
             )
         })
         .map(|level| u32::try_from(level).unwrap())

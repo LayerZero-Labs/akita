@@ -485,7 +485,7 @@ where
 mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
-    use akita_types::{CommittedGroupParams, SisModulusProfileId};
+    use akita_params::{CommittedGroupParams, SisModulusProfileId};
 
     fn full_plan() -> CommitmentExecutionPlan {
         let params = CommittedGroupParams::params_only(
@@ -581,7 +581,7 @@ mod tests {
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
         let terminal = CommitmentExecutionPlan::for_terminal(
-            &akita_types::TerminalFoldParams::from_expanded_group(params),
+            &akita_params::TerminalFoldParams::from_expanded_group(params),
             9,
         )
         .unwrap();

@@ -3,9 +3,46 @@
 import copy
 import json
 from pathlib import Path
+import time
 
 from common import ReviewError, request
 from publish import prepare_review
+
+
+MAX_HISTORY_CHARS = 2_000_000
+# Measured reviews take about 26 turns; this leaves room within MAX_HISTORY_CHARS.
+MAX_TURNS = 48
+
+
+def history_sizes(history):
+    """Partition serialized history size without exposing or modifying evidence."""
+    sizes = {"history_chars": len(json.dumps(history)), "evidence_chars": 0,
+             "tool_results_chars": 0, "encrypted_reasoning_chars": 0}
+    for item in history:
+        if item.get("role") == "user":
+            sizes["evidence_chars"] += len(json.dumps(item))
+        elif item.get("type") == "function_call_output":
+            sizes["tool_results_chars"] += len(json.dumps(item))
+        elif item.get("type") == "reasoning" and isinstance(item.get("encrypted_content"), str):
+            # Count escaped payload characters; field names and quotes are overhead.
+            sizes["encrypted_reasoning_chars"] += len(json.dumps(item["encrypted_content"])) - 2
+    sizes["other_chars"] = sizes["history_chars"] - sum(
+        sizes[key] for key in ("evidence_chars", "tool_results_chars", "encrypted_reasoning_chars"))
+    return sizes
+
+
+def usage_counts(usage):
+    """Log only nonnegative integer counters, never raw remote response fields."""
+    counts = {}
+    for name, path in (("input_tokens", ("input_tokens",)),
+                       ("cached_input_tokens", ("input_tokens_details", "cached_tokens")),
+                       ("output_tokens", ("output_tokens",)),
+                       ("reasoning_tokens", ("output_tokens_details", "reasoning_tokens"))):
+        value = usage
+        for key in path:
+            value = value.get(key) if isinstance(value, dict) else None
+        counts[name] = value if type(value) is int and value >= 0 else None
+    return counts
 
 
 def object_schema(properties):
@@ -18,6 +55,11 @@ INTEGER = {"type": "integer"}
 RESULT_SCHEMA = object_schema({
     "complete": {"type": "boolean"},
     "limitations": STRING,
+    "usefulness": object_schema({
+        "motivation": {"type": "string", "enum": ["provided", "missing"]},
+        "verdict": {"type": "string", "enum": ["beneficial", "unclear", "not_beneficial"]},
+        "assessment": {"type": "string", "description": "Evaluate the PR's net repository benefit, separately from correctness or description alignment. Cite concrete evidence, costs, and any missing justification."},
+    }),
     "discussion_blockers": {"type": "array", "items": STRING,
                             "description": "Unresolved non-nit findings already raised in eligible human or allowlisted bot discussion, with source evidence. Do not duplicate them inline."},
     "coverage": {"type": "array", "items": STRING},
@@ -76,6 +118,7 @@ def source_tool(snapshot, name, args, reads):
 
 
 def review(snapshot, api_key, model, api=request):
+    started = time.monotonic()
     skill = Path(__file__).resolve().parents[2] / ".github/skills/ai-pr-review"
     instructions = (skill / "SKILL.md").read_text() + "\n" + (skill / "references/review-rubric.md").read_text()
     # This trusted automation contract overrides the manual skill's tools/publication mechanics.
@@ -92,9 +135,13 @@ def review(snapshot, api_key, model, api=request):
         "minItems": len(snapshot["changed"]), "maxItems": len(snapshot["changed"]),
     }
     corrections = 0
-    for _ in range(32):
-        if len(json.dumps(history)) > 900_000:
-            raise ReviewError("Review context budget exhausted")
+    for turn in range(1, MAX_TURNS + 1):
+        sizes = history_sizes(history)
+        print("AI review context: " + json.dumps({"turn": turn,
+              "elapsed_seconds": round(time.monotonic() - started, 3), **sizes}), flush=True)
+        if sizes["history_chars"] > MAX_HISTORY_CHARS:
+            raise ReviewError(f"Local review context budget exhausted: {sizes['history_chars']} > "
+                              f"{MAX_HISTORY_CHARS} characters")
         result = api("https://api.openai.com", "/v1/responses", api_key, {
             "model": model, "store": False, "instructions": instructions, "input": history,
             "include": ["reasoning.encrypted_content"],
@@ -103,6 +150,9 @@ def review(snapshot, api_key, model, api=request):
             "text": {"format": {"type": "json_schema", "name": "review", "strict": True,
                                 "schema": schema}},
         })
+        print("AI review usage: " + json.dumps({"turn": turn,
+              "elapsed_seconds": round(time.monotonic() - started, 3),
+              **usage_counts(result.get("usage"))}), flush=True)
         if result.get("status") != "completed":
             raise ReviewError("Model review incomplete or refused")
         output = result.get("output", [])
@@ -135,4 +185,4 @@ def review(snapshot, api_key, model, api=request):
                             "Correct the structured result, using source tools if needed."})
             continue
         return proposal
-    raise ReviewError("Review step budget exhausted; no result published")
+    raise ReviewError(f"Review step budget exhausted ({MAX_TURNS} model turns); no result published")

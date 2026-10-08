@@ -3,11 +3,11 @@
 use super::{ComputeBackendSetup, CpuBackend, CpuPreparedSetup};
 use crate::commitment::{CommitmentNttRoute, CommitmentNttStage};
 use akita_error::AkitaError;
-use akita_types::{
-    centered_quotient_requires_i16_tail, CommittedGroupParams, FoldSchedule, GroupOpenPhaseParams,
-    NttCacheKey, NttTransformDomain, RingRelationMode, SetupPrefixSlotId, SisModulusProfileId,
-    TerminalFoldParams,
+use akita_params::{
+    CommittedGroupParams, FoldSchedule, GroupOpenPhaseParams, RingRelationMode, SetupPrefixSlotId,
+    SisModulusProfileId, TerminalFoldParams,
 };
+use akita_types::{centered_quotient_requires_i16_tail, NttCacheKey, NttTransformDomain};
 
 /// Compute cluster that owns one public-matrix transform request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -92,7 +92,9 @@ impl NttExecutionRequirements {
             if let Some(prefix) = &step.params.setup_prefix() {
                 requirements.add_setup_prefix_commitment(
                     level,
-                    &prefix.slot_id().expect("setup prefix group"),
+                    &prefix.slot_id().ok_or_else(|| {
+                        AkitaError::Internal("setup prefix group has no slot identity".into())
+                    })?,
                 )?;
                 requirements.add_precommitted_relation(level, prefix, num_chunks)?;
             }
@@ -164,7 +166,7 @@ impl NttExecutionRequirements {
         routing_extent: usize,
     ) -> Result<(), AkitaError> {
         if cluster == NttOperationCluster::Commit {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "commitment NTT requirements require an inner/outer stage discriminator".into(),
             ));
         }
@@ -200,7 +202,7 @@ impl NttExecutionRequirements {
         routing_extent: usize,
     ) -> Result<(), AkitaError> {
         if routing_extent < key.num_ring_elements {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "NTT routing extent is smaller than its cache prefix".into(),
             ));
         }
@@ -447,7 +449,7 @@ impl NttExecutionRequirements {
             matrix_extent(n_b, width_b)?,
         )?;
         let (negative, positive) =
-            akita_types::sis::balanced_digit_representable_bounds(log_basis_open, num_digits_fold);
+            akita_params::sis::balanced_digit_representable_bounds(log_basis_open, num_digits_fold);
         let rhs_abs_bound = negative
             .max(positive)
             .checked_mul(num_chunks as u128)
@@ -576,10 +578,10 @@ pub(crate) fn signed_commit_domain(
     log_basis: u32,
     source: SignedCommitSource,
 ) -> Result<NttTransformDomain, AkitaError> {
-    let rhs_abs_bound = akita_types::balanced_signed_digit_abs_bound(log_basis)
+    let rhs_abs_bound = akita_params::balanced_signed_digit_abs_bound(log_basis)
         .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
     match crate::validation::signed_digit_kernel_for_setup(log_basis, "for NTT cache planning")? {
-        akita_types::SignedDigitKernel::I8
+        akita_params::SignedDigitKernel::I8
             if source == SignedCommitSource::RecursiveWitness
                 || !akita_types::dense_i8_commit_prefers_exact_ifma52(
                     modulus_profile.modulus(),
@@ -590,7 +592,7 @@ pub(crate) fn signed_commit_domain(
         {
             Ok(NttTransformDomain::Negacyclic)
         }
-        akita_types::SignedDigitKernel::I8 | akita_types::SignedDigitKernel::I16 => {
+        akita_params::SignedDigitKernel::I8 | akita_params::SignedDigitKernel::I16 => {
             Ok(NttTransformDomain::ExactNegacyclicI16 {
                 width,
                 rhs_abs_bound,
@@ -619,7 +621,8 @@ const fn domain_order(domain: NttTransformDomain) -> u8 {
 mod tests {
     use super::*;
     use akita_config::proof_optimized::{fp128, fp32, fp64};
-    use akita_types::{PolynomialGroupLayout, ScheduleLookupKey};
+    use akita_params::PolynomialGroupLayout;
+    use akita_params::ScheduleLookupKey;
 
     #[test]
     fn recursive_signed_commit_domains_match_runtime_kernels() {
@@ -972,7 +975,7 @@ mod tests {
         let requirements =
             NttExecutionRequirements::from_prove_schedule(&schedule).expect("compile requirements");
         let root = &schedule.root.params;
-        let (negative, positive) = akita_types::sis::balanced_digit_representable_bounds(
+        let (negative, positive) = akita_params::sis::balanced_digit_representable_bounds(
             root.open().digits.log_basis,
             root.num_digits_fold(),
         );
@@ -1063,11 +1066,11 @@ mod tests {
             let root = &schedule.root.params;
             assert!(matches!(
                 root.opening_method(),
-                akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+                akita_params::OpeningMethod::SubringCoefficientPacking { .. }
             ));
             assert_eq!(
                 root.source_encoding,
-                akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
+                akita_params::CommittedSourceEncoding::CanonicalCoefficientTable,
             );
 
             let expected_commit_domain = signed_commit_domain(

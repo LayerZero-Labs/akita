@@ -6,7 +6,7 @@ use crate::commitment::{
 use crate::opaque::NttCacheOwnerId;
 use crate::AkitaProverSetup;
 use akita_challenges::SparseChallengeConfig;
-use akita_types::{CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId};
+use akita_params::{CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId};
 use jolt_field::Prime64Offset59;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -65,7 +65,7 @@ fn stage_registration_skips_streamed_slots() {
     )
     .with_decomp(4, 8, 1, 2, 2)
     .unwrap();
-    let terminal = akita_types::TerminalFoldParams::from_expanded_group(params);
+    let terminal = akita_params::TerminalFoldParams::from_expanded_group(params);
     let plan = CommitmentExecutionPlan::for_terminal(&terminal, 0).unwrap();
     let requirement = plan
         .inner_ntt_requirement(PolynomialType::Dense(DenseType::Coefficients))

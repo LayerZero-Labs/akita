@@ -1,14 +1,14 @@
 //! Canonical security audit for one fully expanded schedule row.
 
 use akita_error::AkitaError;
-use akita_types::sis::{
+use akita_params::sis::{
     num_digits_inner, num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
     InnerCommitMatrixParams, InnerCommitSecurityRoute, OpenCommitMatrixParams,
     OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
 };
 #[cfg(test)]
-use akita_types::TerminalResponseShape;
-use akita_types::{
+use akita_params::TerminalResponseShape;
+use akita_params::{
     shared_d_digit_log_basis, validate_role_dims, CommitmentSliceGeometry,
     CommittedGroupBatchProfile, CommittedGroupParams, DecompositionParams, FoldSchedule,
     GadgetDigits, GroupOpenPhaseParams, TerminalFoldParams,
@@ -202,7 +202,7 @@ fn expected_d_width(
     extension_degree: usize,
 ) -> Result<usize, AkitaError> {
     let dims = params.role_dims();
-    let mut width = akita_types::opening_d_segment_width(
+    let mut width = akita_params::opening_d_segment_width(
         params.opening_method(),
         extension_degree,
         dims.d_a(),
@@ -456,7 +456,7 @@ fn audit_terminal(
         .ok_or_else(|| invalid(label, "terminal response coordinates overflow"))?;
     if matches!(
         params.inner.matrix.security_route(),
-        akita_types::InnerCommitSecurityRoute::L2 { .. }
+        akita_params::InnerCommitSecurityRoute::L2 { .. }
     ) {
         if akita_challenges::selective_l2_operator_norm_rejection(d, sparse).is_none() {
             return Err(invalid(label, "terminal L2 challenge is not certified"));
@@ -476,7 +476,7 @@ fn audit_terminal(
                 fold_digit_count: params.fold.num_digits,
                 fold_challenge_config: sparse,
                 response_l2_sq_cap: params.response_l2_sq_cap(),
-                norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
+                norm_proof_shape: Some(akita_params::PhysicalL2NormProofShape::Direct {
                     physical_response_len: expected_z_coords,
                 }),
             },
@@ -593,8 +593,8 @@ pub(crate) fn audit_resolved_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PlannerCostModelId, RingDimensionScheduleMode, SelectionPolicyId};
-    use akita_types::{
+    use crate::{PlannerCostModelId, RingDimensionSchedule, SelectionPolicyId};
+    use akita_params::{
         ChunkedWitnessCfg, InnerRoleParams, SisL2TableDigest, SisModulusProfileId,
         SisSecurityPolicyId, SisTableDigest, TailSegmentLayout,
     };
@@ -606,13 +606,17 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
-            selection_policy: SelectionPolicyId::MinEstimatedExactProofAndWorkV5,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 3,
-            ring_dimension_schedule_mode: RingDimensionScheduleMode::UniformDimension {
-                ring_dimension: 64,
+            ring_dimension_schedule: RingDimensionSchedule {
+                num_search_levels: 2,
+                suffix_dimensions: &[64],
+                potential_a_dimensions: &[64],
+                potential_b_dimensions: &[64],
+                potential_d_dimensions: &[64],
             },
             decomposition: DecompositionParams {
                 log_basis: 4,
@@ -649,7 +653,7 @@ mod tests {
                 fold_digit_count: 3,
                 fold_challenge_config: &sparse,
                 response_l2_sq_cap: Some(RESPONSE_CAP),
-                norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
+                norm_proof_shape: Some(akita_params::PhysicalL2NormProofShape::Direct {
                     physical_response_len: INNER_WIDTH * 64,
                 }),
             },
@@ -657,7 +661,7 @@ mod tests {
         .expect("candidate construction")
         .expect("exact terminal calibration");
         let mut terminal = TerminalFoldParams {
-            blocks: akita_types::BlockGeometry::new(16, 16, 1),
+            blocks: akita_params::BlockGeometry::new(16, 16, 1),
             inner: InnerRoleParams::new(GadgetDigits::new(4, 1), expected),
             fold: GadgetDigits::new(4, 3),
             fold_challenge_config: sparse,

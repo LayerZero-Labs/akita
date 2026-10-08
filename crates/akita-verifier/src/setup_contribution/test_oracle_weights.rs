@@ -5,7 +5,7 @@ use akita_error::{checked, AkitaError};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{ExtField, Field};
 
-use akita_types::WitnessLayout;
+use akita_params::WitnessLayout;
 
 /// Per-role relation lane geometry for building canonical setup column weights.
 ///
@@ -410,7 +410,7 @@ where
                         0,
                     )? / base_ring_dimension;
                     if spec.is_uniform() {
-                        let opening_index = akita_types::checked_opening_source_index(
+                        let opening_index = akita_params::checked_opening_source_index(
                             opening_source_len,
                             first_lane,
                         )?;

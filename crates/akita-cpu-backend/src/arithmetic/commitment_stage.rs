@@ -8,7 +8,8 @@ use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::opaque::{CommitInnerPlan, DigitRowsComputeBackend};
 use akita_algebra::ring::CyclotomicRing;
 use akita_error::{checked, AkitaError};
-use akita_types::{dispatch_for_field, DigitBlocks, RingVec};
+use akita_params::dispatch_for_field;
+use akita_types::{DigitBlocks, RingVec};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::mem::size_of;
@@ -26,12 +27,12 @@ where
     B: DigitRowsComputeBackend<F>,
 {
     if inner_plan.ring_dimension != D_A || outer_plan.ring_dimension() != D_B {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "commitment stage plan ring dimensions disagree with dispatch".into(),
         ));
     }
     if outer_plan.geometry().num_polynomials() != inner_rows.len() {
-        return Err(AkitaError::InvalidSetup(format!(
+        return Err(AkitaError::Internal(format!(
             "backend returned {} inner commitments for {} sources",
             inner_rows.len(),
             outer_plan.geometry().num_polynomials()
@@ -40,20 +41,20 @@ where
     let expected_rows = inner_plan
         .num_live_blocks
         .checked_mul(inner_plan.n_a)
-        .ok_or_else(|| AkitaError::InvalidSetup("inner commitment row count overflow".into()))?;
+        .ok_or_else(|| AkitaError::Internal("inner commitment row count overflow".into()))?;
     let prepared_polynomials = cfg_into_iter!(inner_rows)
         .map(|rows| -> Result<DigitBlocks, AkitaError> {
             if rows.ring_dim() != D_A || rows.count() != expected_rows {
-                return Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::Internal(
                     "resident inner commitment row shape is invalid".into(),
                 ));
             }
             let typed = rows.as_ring_slice::<D_A>().map_err(|_| {
-                AkitaError::InvalidSetup("resident inner commitment ring storage is invalid".into())
+                AkitaError::Internal("resident inner commitment ring storage is invalid".into())
             })?;
             let blocks = typed.chunks_exact(inner_plan.n_a).collect::<Vec<_>>();
             if blocks.len() != inner_plan.num_live_blocks {
-                return Err(AkitaError::InvalidSetup(
+                return Err(AkitaError::Internal(
                     "resident inner commitment block geometry is invalid".into(),
                 ));
             }
@@ -75,7 +76,7 @@ where
     let u = RingVec::from_ring_elems(&typed_u);
     let expected_coefficients = outer_plan.output_coefficient_len()?;
     if u.coeff_len() != expected_coefficients {
-        return Err(AkitaError::InvalidSetup(format!(
+        return Err(AkitaError::Internal(format!(
             "backend returned {} outer commitment coefficients, expected {expected_coefficients}",
             u.coeff_len()
         )));
@@ -88,7 +89,7 @@ fn commit_outer_slices<'a, F, B, const D_B: usize>(
     prepared: &B::PreparedSetup,
     n_b: usize,
     polynomial_digits: impl IntoIterator<Item = &'a DigitBlocks>,
-    geometry: &akita_types::CommitmentSliceGeometry,
+    geometry: &akita_params::CommitmentSliceGeometry,
     log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D_B>>, AkitaError>
 where
@@ -100,15 +101,15 @@ where
         .block_ranges()
         .last()
         .map(|range| range.end)
-        .ok_or_else(|| AkitaError::InvalidSetup("B commitment has no slices".into()))?;
+        .ok_or_else(|| AkitaError::Internal("outer commitment stage has no B slices".into()))?;
     let polynomial_planes = polynomial_digits
         .into_iter()
         .map(|digits| {
             if digits.block_count() != num_live_blocks
                 || digits.block_sizes().iter().any(|&size| size != per_block)
             {
-                return Err(AkitaError::InvalidSetup(
-                    "B slice input does not match the frozen block geometry".into(),
+                return Err(AkitaError::Internal(
+                    "outer commitment digits disagree with frozen block geometry".into(),
                 ));
             }
             digits.typed_planes::<D_B>()
@@ -122,7 +123,7 @@ where
     let input_refs = inputs.iter().map(Vec::as_slice).collect::<Vec<_>>();
     let row_batches = backend.digit_rows::<D_B>(prepared, n_b, &input_refs, log_basis)?;
     if row_batches.len() != input_refs.len() || row_batches.iter().any(|rows| rows.len() != n_b) {
-        return Err(AkitaError::InvalidSetup(format!(
+        return Err(AkitaError::Internal(format!(
             "backend returned B commitment row shape {:?}, expected {} batches of {n_b} rows",
             row_batches.iter().map(Vec::len).collect::<Vec<_>>(),
             input_refs.len(),
@@ -167,13 +168,12 @@ impl<F: Field + 'static> CpuInnerImageStore<F> {
             ));
         }
         let expected_coefficients =
-            checked::product([plan.num_live_blocks, plan.n_a, plan.ring_dimension]).ok_or_else(
-                || AkitaError::InvalidInput("CPU inner export extent overflow".into()),
-            )?;
+            checked::product([plan.num_live_blocks, plan.n_a, plan.ring_dimension])
+                .ok_or_else(|| AkitaError::Internal("CPU inner export extent overflow".into()))?;
         self.with_witnesses(image, |witnesses| {
             if witnesses.len() != image.binding().source_count() {
-                return Err(AkitaError::InvalidInput(
-                    "CPU inner resident source count is invalid".into(),
+                return Err(AkitaError::Internal(
+                    "CPU inner export source count is invalid".into(),
                 ));
             }
             witnesses
@@ -182,8 +182,8 @@ impl<F: Field + 'static> CpuInnerImageStore<F> {
                     if witness.ring_dim() != plan.ring_dimension
                         || witness.coeff_len() != expected_coefficients
                     {
-                        return Err(AkitaError::InvalidInput(
-                            "CPU inner resident row shape is invalid".into(),
+                        return Err(AkitaError::Internal(
+                            "CPU inner export row shape is invalid".into(),
                         ));
                     }
                     Ok(witness.clone())
@@ -204,14 +204,13 @@ impl<F: Field + 'static> CpuInnerImageStore<F> {
         }
         let source_count = image.binding().source_count();
         let expected_coefficients =
-            checked::product([plan.num_live_blocks, plan.n_a, plan.ring_dimension]).ok_or_else(
-                || AkitaError::InvalidInput("CPU inner export extent overflow".into()),
-            )?;
+            checked::product([plan.num_live_blocks, plan.n_a, plan.ring_dimension])
+                .ok_or_else(|| AkitaError::Internal("CPU inner consume extent overflow".into()))?;
         match self.owner.try_unwrap::<Vec<RingVec<F>>>(image)? {
             Ok(witnesses) => {
                 if witnesses.len() != source_count {
-                    return Err(AkitaError::InvalidInput(
-                        "CPU inner resident source count is invalid".into(),
+                    return Err(AkitaError::Internal(
+                        "CPU inner consume source count is invalid".into(),
                     ));
                 }
                 witnesses
@@ -220,8 +219,8 @@ impl<F: Field + 'static> CpuInnerImageStore<F> {
                         if witness.ring_dim() != plan.ring_dimension
                             || witness.coeff_len() != expected_coefficients
                         {
-                            return Err(AkitaError::InvalidInput(
-                                "CPU inner resident row shape is invalid".into(),
+                            return Err(AkitaError::Internal(
+                                "CPU inner consume row shape is invalid".into(),
                             ));
                         }
                         Ok(witness)
@@ -348,7 +347,7 @@ where
                 ));
             }
             dispatch_for_field!(
-                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+                akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
                 F,
                 plan.ring_dimension,
                 |D| self
@@ -423,11 +422,11 @@ impl<'a, F: Field, E> CpuOuterCommitOperation<'a, F, E> {
         F: CanonicalEncoding,
     {
         dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+            akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
             F,
             inner_plan.ring_dimension,
             |D_A| dispatch_for_field!(
-                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
+                akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Outer),
                 F,
                 outer_plan.ring_dimension(),
                 |D_B| compute_outer_commitment_from_rows::<F, CpuBackend<F, E>, D_A, D_B>(
@@ -484,7 +483,7 @@ mod tests {
     };
     use crate::opaque::ComputeBackendSetup;
     use crate::{AkitaProverSetup, DensePoly};
-    use akita_types::SetupMatrixCapacity;
+    use akita_params::SetupMatrixCapacity;
     use jolt_field::{Prime128Offset275, Ring};
 
     type F = Prime128Offset275;

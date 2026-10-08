@@ -1,7 +1,7 @@
 //! Canonical external schedule-artifact rendering.
 
 use super::*;
-use akita_types::{CommittedGroupBatchProfile, GroupCommitPhaseParams};
+use akita_params::{CommittedGroupBatchProfile, GroupCommitPhaseParams};
 use std::time::Instant;
 
 /// One fully rendered artifact awaiting publication.

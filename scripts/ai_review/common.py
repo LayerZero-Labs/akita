@@ -1,16 +1,21 @@
 """Fixed-origin HTTP and bounded review data. Never log remote bodies or tokens."""
 
+import base64
 import hashlib
 import json
 import os
 import re
 import urllib.error
 import urllib.request
+import zlib
 
 REPOSITORY = "LayerZero-Labs/akita"
 WORKFLOW = ".github/workflows/ai-review.yml"
 MAX_BYTES = 32 * 1024 * 1024
-MARKER = "<!-- akita-ai-review:v1 "
+# Every review-state marker starts with this. v1 holds base64 JSON (the first
+# release); v2 holds base64 zlib-compressed JSON, so the carried-over finding
+# history fits GitHub's comment limit.
+MARKER = "<!-- akita-ai-review:v"
 
 
 class ReviewError(Exception):
@@ -22,7 +27,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise ReviewError("HTTP redirect refused")
 
 
-def request(origin, path, token, payload=None):
+def request(origin, path, token, payload=None, method=None):
     if origin not in ("https://api.github.com", "https://api.openai.com"):
         raise ReviewError("Unknown API origin")
     if not path.startswith("/") or path.startswith("//"):
@@ -30,7 +35,7 @@ def request(origin, path, token, payload=None):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     if origin == "https://api.github.com":
         headers.update({"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"})
-    req = urllib.request.Request(origin + path, headers=headers,
+    req = urllib.request.Request(origin + path, headers=headers, method=method,
                                  data=None if payload is None else json.dumps(payload).encode())
     try:
         with urllib.request.build_opener(NoRedirect).open(req, timeout=180) as response:
@@ -48,8 +53,8 @@ class GitHub:
     def __init__(self, token):
         self.token = token
 
-    def get(self, path, payload=None):
-        return request("https://api.github.com", f"/repos/{REPOSITORY}/{path}", self.token, payload)
+    def get(self, path, payload=None, method=None):
+        return request("https://api.github.com", f"/repos/{REPOSITORY}/{path}", self.token, payload, method)
 
     def pages(self, path):
         items = []
@@ -78,6 +83,32 @@ def sha(value):
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value):
         raise ReviewError("Invalid commit SHA")
     return value
+
+
+def encode_state(state):
+    encoded = base64.b64encode(zlib.compress(json.dumps(state).encode(), 9)).decode()
+    return f"{MARKER}2 {encoded} -->"
+
+
+def decode_state(body):
+    """Return (marker, state) from the start of a review body.
+
+    Callers compare the marker as published rather than re-encoding the state,
+    because zlib output can change between library versions.
+    """
+    match = re.match(re.escape(MARKER) + r"([12]) ([A-Za-z0-9+/=]+) -->(?:\n|$)", body)
+    if not match:
+        raise ReviewError("Malformed review state")
+    try:
+        data = base64.b64decode(match[2], validate=True)
+        if match[1] == "2":
+            inflater = zlib.decompressobj()
+            data = inflater.decompress(data, MAX_BYTES)
+            if inflater.unconsumed_tail or not inflater.eof:
+                raise ValueError()
+        return match[0].rstrip("\n"), json.loads(data)
+    except (ValueError, zlib.error):
+        raise ReviewError("Malformed review state") from None
 
 
 def load_json(path):
@@ -109,6 +140,7 @@ def authorize(github, event):
     pr = github.get(f"pulls/{number}")
     comment = github.get(f"issues/comments/{comment_id}")
     if (comment.get("body", "") != "/ai-review"
+            or comment.get("user", {}).get("type") != "User"
             or comment.get("issue_url") != f"https://api.github.com/repos/{REPOSITORY}/issues/{number}"
             or comment.get("user", {}).get("id") != pr.get("user", {}).get("id")
             or comment.get("user", {}).get("id") != event["comment"].get("user", {}).get("id")
@@ -124,3 +156,12 @@ def authorize(github, event):
 def revision(pr):
     return {"head": sha(pr["head"]["sha"]), "base": sha(pr["base"]["sha"]),
             "base_ref": pr["base"]["ref"], "head_ref": pr["head"]["ref"]}
+
+
+def reopen_epoch(github, number):
+    """Use durable GitHub event IDs; identical code can still have been reopened."""
+    ids = [event["id"] for event in github.pages(f"issues/{number}/events")
+           if event.get("event") == "reopened"]
+    if any(type(value) is not int or value <= 0 for value in ids):
+        raise ReviewError("Invalid PR lifecycle event")
+    return max(ids, default=0)

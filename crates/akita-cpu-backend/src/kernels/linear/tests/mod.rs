@@ -12,7 +12,7 @@ use akita_algebra::ntt::{
     PrimeWidth,
 };
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
-use akita_types::layout::{FlatMatrix, RingMatrixView};
+use akita_params::layout::{FlatMatrix, RingMatrixView};
 use akita_types::{
     prepare_ntt_cache, select_crt_ntt_params, NttCacheMode, PreparedNttCache, ProtocolCrtNttParams,
 };
@@ -72,7 +72,7 @@ fn mat_vec_mul_i8_with_params_for_log_basis<
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    mat_vec_mul_i8_with_params(ntt_mat, blocks, num_digits, log_basis, params)
+    mat_vec_mul_i8_with_params(ntt_mat, blocks, num_digits, log_basis, params).unwrap()
 }
 
 fn mat_vec_mul_i8_dense_with_params_for_log_basis<
@@ -87,7 +87,7 @@ fn mat_vec_mul_i8_dense_with_params_for_log_basis<
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    mat_vec_mul_i8_dense_with_params(ntt_mat, blocks, num_digits, log_basis, params)
+    mat_vec_mul_i8_dense_with_params(ntt_mat, blocks, num_digits, log_basis, params).unwrap()
 }
 
 fn mat_vec_mul_digits_i8_with_params_for_log_basis<
@@ -101,7 +101,7 @@ fn mat_vec_mul_digits_i8_with_params_for_log_basis<
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    mat_vec_mul_digits_i8_with_params(ntt_mat, blocks, log_basis, params)
+    mat_vec_mul_digits_i8_with_params(ntt_mat, blocks, log_basis, params).unwrap()
 }
 
 fn quotient_from_cyclic_and_negacyclic<F: jolt_field::Field, const D: usize>(

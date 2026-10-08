@@ -6,7 +6,7 @@ use akita_types::DigitBlocks;
 /// canonical B slices through one reusable physical-width buffer.
 pub(crate) fn for_each_outer_slice_input<'a, const D_B: usize>(
     polynomial_planes: impl IntoIterator<Item = &'a [[i8; D_B]]>,
-    geometry: &akita_types::CommitmentSliceGeometry,
+    geometry: &akita_params::CommitmentSliceGeometry,
     mut consume: impl FnMut(&[[i8; D_B]]) -> Result<(), AkitaError>,
 ) -> Result<(), AkitaError> {
     let per_block = geometry.ring_elements_per_block_per_polynomial();
@@ -14,18 +14,18 @@ pub(crate) fn for_each_outer_slice_input<'a, const D_B: usize>(
         .block_ranges()
         .last()
         .map(|range| range.end)
-        .ok_or_else(|| AkitaError::InvalidSetup("B commitment has no slices".into()))?;
+        .ok_or_else(|| AkitaError::Internal("B commitment has no slices".into()))?;
     let expected_planes = num_live_blocks
         .checked_mul(per_block)
-        .ok_or_else(|| AkitaError::InvalidSetup("B slice plane count overflow".into()))?;
+        .ok_or_else(|| AkitaError::Internal("B slice plane count overflow".into()))?;
     let polynomial_planes = polynomial_planes.into_iter().collect::<Vec<_>>();
     if polynomial_planes.is_empty()
         || polynomial_planes
             .iter()
             .any(|planes| planes.len() != expected_planes)
     {
-        return Err(AkitaError::InvalidSetup(
-            "B slice input does not match the frozen block geometry".into(),
+        return Err(AkitaError::Internal(
+            "B slice digit planes disagree with frozen block geometry".into(),
         ));
     }
 
@@ -37,34 +37,32 @@ pub(crate) fn for_each_outer_slice_input<'a, const D_B: usize>(
         let plane_start = range
             .start
             .checked_mul(per_block)
-            .ok_or_else(|| AkitaError::InvalidSetup("B slice input offset overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("B slice input start offset overflow".into()))?;
         let plane_end = range
             .end
             .checked_mul(per_block)
-            .ok_or_else(|| AkitaError::InvalidSetup("B slice input offset overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("B slice input end offset overflow".into()))?;
         for planes in &polynomial_planes {
             input.extend_from_slice(planes.get(plane_start..plane_end).ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "B slice input does not match the frozen block geometry".into(),
-                )
+                AkitaError::Internal("B slice plane range exceeds frozen digit storage".into())
             })?);
             let padding = (max_blocks - range.len())
                 .checked_mul(per_block)
-                .ok_or_else(|| AkitaError::InvalidSetup("B slice padding overflow".into()))?;
+                .ok_or_else(|| AkitaError::Internal("B slice padding overflow".into()))?;
             let padded_len = input
                 .len()
                 .checked_add(padding)
                 .filter(|len| *len <= expected_width)
                 .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "B slice input width does not match the physical matrix".into(),
+                    AkitaError::Internal(
+                        "padded B slice input exceeds physical matrix width".into(),
                     )
                 })?;
             input.resize(padded_len, [0i8; D_B]);
         }
         if input.len() != expected_width {
-            return Err(AkitaError::InvalidSetup(
-                "B slice input width does not match the physical matrix".into(),
+            return Err(AkitaError::Internal(
+                "assembled B slice input width differs from physical matrix width".into(),
             ));
         }
         consume(&input)?;
@@ -75,7 +73,7 @@ pub(crate) fn for_each_outer_slice_input<'a, const D_B: usize>(
 #[cfg(test)]
 fn validate_outer_slice_digits<'a, const D_B: usize>(
     polynomial_digits: impl IntoIterator<Item = &'a DigitBlocks>,
-    geometry: &akita_types::CommitmentSliceGeometry,
+    geometry: &akita_params::CommitmentSliceGeometry,
 ) -> Result<Vec<&'a [[i8; D_B]]>, AkitaError> {
     let per_block = geometry.ring_elements_per_block_per_polynomial();
     let num_live_blocks = geometry
@@ -101,7 +99,7 @@ fn validate_outer_slice_digits<'a, const D_B: usize>(
 #[cfg(test)]
 fn outer_slice_inputs<const D_B: usize>(
     polynomial_digits: &[&DigitBlocks],
-    geometry: &akita_types::CommitmentSliceGeometry,
+    geometry: &akita_params::CommitmentSliceGeometry,
 ) -> Result<Vec<Vec<[i8; D_B]>>, AkitaError> {
     let mut inputs = Vec::with_capacity(geometry.slice_count().get());
     let polynomial_planes =
@@ -116,7 +114,7 @@ fn outer_slice_inputs<const D_B: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::CommitmentSliceGeometry;
+    use akita_params::CommitmentSliceGeometry;
 
     #[test]
     fn outer_slice_inputs_are_polynomial_major_and_zero_padded() {
@@ -125,7 +123,7 @@ mod tests {
         let second =
             DigitBlocks::new(vec![20, 21, 22, 23, 24], vec![1; 5], 1).expect("second digit blocks");
         let geometry = CommitmentSliceGeometry::try_new(
-            akita_types::CommitmentSliceCount::TWO,
+            akita_params::CommitmentSliceCount::TWO,
             5,
             2,
             1,
@@ -149,7 +147,7 @@ mod tests {
     fn outer_slice_stream_reuses_one_physical_width_buffer() {
         let digits = DigitBlocks::new((0..13).collect(), vec![1; 13], 1).expect("digit blocks");
         let geometry = CommitmentSliceGeometry::try_new(
-            akita_types::CommitmentSliceCount::FOUR,
+            akita_params::CommitmentSliceCount::FOUR,
             13,
             1,
             1,
@@ -188,7 +186,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        for slice_count in akita_types::CommitmentSliceCount::ALL {
+        for slice_count in akita_params::CommitmentSliceCount::ALL {
             let geometry =
                 CommitmentSliceGeometry::try_new(slice_count, BLOCKS, POLYS, PER_BLOCK, 1, 1, 1)
                     .unwrap();

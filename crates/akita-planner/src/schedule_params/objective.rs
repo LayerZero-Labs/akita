@@ -17,11 +17,6 @@ pub(crate) struct CompleteScheduleScore {
 /// worse than an already completed candidate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CompleteObjectiveBound {
-    Direct {
-        exact_score: u128,
-        proof_bytes: usize,
-        setup_field_elements: usize,
-    },
     SetupFirst {
         first_direct_setup_capacity: usize,
         exact_score: u128,
@@ -47,11 +42,6 @@ impl CompleteObjectiveBound {
         setup_field_elements: usize,
     ) -> Self {
         match policy.selection_policy {
-            SelectionPolicyId::MinEstimatedExactProofAndWorkV5 => Self::Direct {
-                exact_score,
-                proof_bytes,
-                setup_field_elements,
-            },
             SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => Self::SetupFirst {
                 first_direct_setup_capacity,
                 exact_score,
@@ -60,7 +50,7 @@ impl CompleteObjectiveBound {
             },
             SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
                 Self::PaddedSetupEnvelopeFirst {
-                    setup_envelope_capacity: akita_types::padded_setup_prefix_len(
+                    setup_envelope_capacity: akita_params::padded_setup_prefix_len(
                         setup_field_elements,
                     ),
                     first_direct_setup_capacity,
@@ -85,18 +75,6 @@ impl CompleteObjectiveBound {
 
     pub(crate) fn is_strictly_worse_than(self, incumbent: CandidateMetrics) -> bool {
         match self {
-            Self::Direct {
-                exact_score,
-                proof_bytes,
-                setup_field_elements,
-            } => {
-                (exact_score, proof_bytes, setup_field_elements)
-                    > (
-                        incumbent.cost.exact_score(),
-                        incumbent.proof_bytes(),
-                        incumbent.setup_field_elements,
-                    )
-            }
             Self::SetupFirst {
                 first_direct_setup_capacity,
                 exact_score,
@@ -129,7 +107,7 @@ impl CompleteObjectiveBound {
                     proof_bytes,
                     first_direct_output_witness_len,
                 ) > (
-                    akita_types::padded_setup_prefix_len(incumbent.setup_field_elements),
+                    akita_params::padded_setup_prefix_len(incumbent.setup_field_elements),
                     incumbent.first_direct_setup_capacity.field_elements(),
                     incumbent.cost.exact_score(),
                     incumbent.proof_bytes(),
@@ -169,7 +147,7 @@ impl CompleteObjectiveBound {
                 first_direct_output_witness_len,
             } => {
                 setup_envelope_capacity
-                    >= akita_types::padded_setup_prefix_len(incumbent.setup_field_elements)
+                    >= akita_params::padded_setup_prefix_len(incumbent.setup_field_elements)
                     && (
                         first_direct_setup_capacity,
                         exact_score,
@@ -182,7 +160,6 @@ impl CompleteObjectiveBound {
                         incumbent.first_direct_output_witness_len,
                     )
             }
-            Self::Direct { .. } => false,
         }
     }
 
@@ -210,11 +187,10 @@ impl CompleteObjectiveBound {
                 ..
             } => {
                 setup_envelope_capacity
-                    >= akita_types::padded_setup_prefix_len(incumbent.setup_field_elements)
+                    >= akita_params::padded_setup_prefix_len(incumbent.setup_field_elements)
                     && (exact_score, proof_bytes)
                         > (incumbent.cost.exact_score(), incumbent.proof_bytes())
             }
-            Self::Direct { .. } => false,
         }
     }
 
@@ -225,9 +201,9 @@ impl CompleteObjectiveBound {
                 ..
             } => {
                 setup_envelope_capacity
-                    > akita_types::padded_setup_prefix_len(incumbent.setup_field_elements)
+                    > akita_params::padded_setup_prefix_len(incumbent.setup_field_elements)
             }
-            Self::Direct { .. } | Self::SetupFirst { .. } => false,
+            Self::SetupFirst { .. } => false,
         }
     }
 }
@@ -251,12 +227,7 @@ pub(crate) fn complete_schedule_score(
         diagnostics,
     )?;
     let metrics = candidate.metrics();
-    if matches!(
-        policy.selection_policy,
-        SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
-            | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-    ) && candidate.first_direct_setup_field_len.is_none()
-    {
+    if candidate.first_direct_setup_field_len.is_none() {
         return Err(AkitaError::InvalidSetup(
             "setup-first candidate is missing its first direct setup size".into(),
         ));

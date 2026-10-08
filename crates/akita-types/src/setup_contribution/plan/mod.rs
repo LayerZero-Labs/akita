@@ -26,9 +26,11 @@ pub use types::{
 };
 
 use super::checked_slice;
-use crate::layout::setup_projection::{SetupProjectionGeometry, SetupProjectionGroupGeometry};
-use crate::layout::CommittedGroupParams;
-use crate::{OpeningClaimsLayout, RelationAddressGeometry, WitnessLayout};
 use akita_error::{checked, AkitaError};
+use akita_params::layout::setup_projection::{
+    SetupProjectionGeometry, SetupProjectionGroupGeometry,
+};
+use akita_params::layout::CommittedGroupParams;
+use akita_params::{OpeningClaimsLayout, RelationAddressGeometry, WitnessLayout};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
