@@ -54,8 +54,8 @@ caches remain local memory state and rebuild from the public setup.
 Backend routing is always available through `batched_prove`; it requires no
 Cargo feature. A fold reduces a private witness to a smaller successor witness.
 Its producer commits that successor once, then a caller-defined route chooses
-its next owner. On a switch, the source exports an opaque capability and the
-destination adopts the complete witness and commitment material synchronously.
+its next owner. On a switch, the source exports a typed packet, a registered
+bridge converts it, and the destination imports local handles synchronously.
 The source finishes its sumchecks before the destination executes its fold.
 The terminal fold can have its own owner as well.
 
@@ -103,10 +103,12 @@ does not require a backend to execute unassigned levels. All prepared sessions
 finish on success or abort on failure, including those on unselected backends.
 A registry supports repeated proofs, with one active proof at a time.
 
-Implementation: `crates/akita-prover/src/protocol/prove/execution.rs`,
+Implementation: `crates/akita-prover/src/protocol/prove/registry.rs`,
+`crates/akita-prover/src/protocol/prove/execution.rs`,
 `crates/akita-prover/src/backend/transfer.rs`,
 and
 `crates/akita-cpu-backend/src/opaque/transfer.rs`.
+Design record: `specs/dynamic-backend-bridges.md`.
 Regression coverage: `crates/akita-pcs/tests/dynamic_backends.rs`.
 
 ## Transcript backends
