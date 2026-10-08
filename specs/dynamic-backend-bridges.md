@@ -5,7 +5,7 @@
 | Author(s)     | Amir Kh                                          |
 | Created       | 2026-10-07                                       |
 | Status        | implemented                                      |
-| PR            |                                                  |
+| PR            | [#193](https://github.com/LayerZero-Labs/akita/pull/193) |
 | Supersedes    | opaque endpoint-id successor handoff             |
 | Superseded-by |                                                  |
 | Book-chapter  | book/src/usage/feature-flags.md                  |
