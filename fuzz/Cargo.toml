@@ -40,7 +40,9 @@ akita-cpu-backend = { path = "../crates/akita-cpu-backend", default-features = f
   "transcript-blake2b",
 ] }
 akita-error = { path = "../crates/akita-error" }
-akita-params = { path = "../crates/akita-params", default-features = false, features = ["transcript-blake2b"] }
+akita-params = { path = "../crates/akita-params", default-features = false, features = [
+  "transcript-blake2b",
+] }
 akita-pcs = { path = "../crates/akita-pcs", default-features = false, features = [
   "transcript-blake2b",
   "response-model-diagnostics",
