@@ -12,8 +12,9 @@ from common import MARKER, REPOSITORY, ReviewError, authorize, decode_state, dig
 # Keep this allowlist in trusted workflow code, never in PR-controlled config.
 REVIEW_BOTS = {"cursor[bot]": (206951365, 1210556, "cursor")}
 
-# Local input budget, not an API context limit.
-MAX_DIFF_CHARS = 300_000
+# Local input budget, not an API context limit. The diff is part of the first
+# model message, so it also counts against model.MAX_HISTORY_CHARS.
+MAX_DIFF_CHARS = 2_000_000
 
 
 def is_akita_artifact(path):
