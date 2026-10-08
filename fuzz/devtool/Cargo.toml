@@ -1,0 +1,19 @@
+[package]
+name = "akita-fuzz-dev"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Uninstrumented developer tool over the harness library: seed generation,
+# case listing, and smoke/replay runs without libFuzzer. `akita-fuzz prepare`
+# uses it to generate seeds; it is not part of the shipped distribution.
+[[bin]]
+name = "akita-fuzz-dev"
+path = "src/main.rs"
+
+[dependencies]
+akita-fuzz = { path = "..", default-features = false }
+
+[features]
+default = ["parallel"]
+parallel = ["akita-fuzz/parallel"]
