@@ -103,7 +103,7 @@ pub(super) struct ProofRequest<'p, Cfg: CommitmentConfig> {
     pub(super) schedules: &'p TrustedScheduleCatalog<Cfg>,
     pub(super) schedule: &'p FoldSchedule,
     pub(super) layout: &'p OpeningClaimsLayout,
-    pub(super) prefixes: BTreeMap<SetupPrefixSlotId, &'p SetupPrefixVerifierSlot<Cfg::Field>>,
+    pub(super) prefixes: &'p BTreeMap<SetupPrefixSlotId, &'p SetupPrefixVerifierSlot<Cfg::Field>>,
     pub(super) identity: u64,
 }
 
@@ -115,7 +115,6 @@ pub(super) type ExecutionContinuation<Cfg> = (
 pub(super) trait Executor<Cfg: CommitmentConfig> {
     fn identity(&self) -> BackendInstanceIdentity;
     fn backend_type_id(&self) -> TypeId;
-    fn public_prefixes(&self) -> BTreeMap<SetupPrefixSlotId, &SetupPrefixVerifierSlot<Cfg::Field>>;
     #[allow(clippy::too_many_arguments)]
     fn root(
         &self,
@@ -193,7 +192,9 @@ pub(super) struct TypedExecutor<
 pub struct BackendRegistry<'a, Cfg: CommitmentConfig> {
     identity: u64,
     pub(super) slots: Vec<Box<dyn Executor<Cfg> + 'a>>,
-    bridges: HashMap<(TypeId, TypeId), Box<dyn ErasedBridge<Cfg>>>,
+    bridges: HashMap<(TypeId, TypeId), Box<ErasedBridge<Cfg>>>,
+    pub(super) public_prefixes:
+        BTreeMap<SetupPrefixSlotId, &'a SetupPrefixVerifierSlot<Cfg::Field>>,
     pub(super) active: std::cell::Cell<bool>,
 }
 
@@ -219,6 +220,7 @@ where
             identity,
             slots: Vec::new(),
             bridges: HashMap::new(),
+            public_prefixes: BTreeMap::new(),
             active: std::cell::Cell::new(false),
         })
     }
@@ -229,15 +231,42 @@ where
         B: SuccessorImportKernel<Cfg::Field, Cfg::ExtField> + 'static,
         Edge<A, B>: SuccessorBridge<A, B, Cfg::Field, Cfg::ExtField>,
     {
+        self.register_bridge_with::<A, B>(Edge::<A, B>::convert)
+    }
+    /// Register an application-owned conversion, including between foreign backend types.
+    /// Functions and closures share the built-in bridge's validation and import path.
+    /// Registering the same directed type pair through either API twice is an error.
+    pub fn register_bridge_with<A, B>(
+        &mut self,
+        convert: impl Fn(
+                A::ExportPacket,
+                &ValidatedSuccessorHandoffPlan<'_, Cfg::Field>,
+            ) -> Result<B::ImportPacket, AkitaError>
+            + 'static,
+    ) -> Result<(), AkitaError>
+    where
+        A: SuccessorExportKernel<Cfg::Field, Cfg::ExtField> + 'static,
+        B: SuccessorImportKernel<Cfg::Field, Cfg::ExtField> + 'static,
+    {
         let key = (TypeId::of::<A>(), TypeId::of::<B>());
         if self.bridges.contains_key(&key) {
             return Err(AkitaError::InvalidInput(
                 "backend bridge is already registered".into(),
             ));
         }
-        self.bridges.insert(key, Box::new(Edge::<A, B>::default()));
+        self.bridges.insert(
+            key,
+            Box::new(move |src, dst, id, plan| {
+                let export = src.export_as::<A>(plan)?;
+                let packet = convert(export, plan)?;
+                plan.validate_export(packet.descriptor())?;
+                dst.import_as::<B>(id, plan, packet)
+            }),
+        );
         Ok(())
     }
+    /// Register an instance and merge its public prefix slots into the checked union.
+    /// Conflicting public slots reject registration without changing the registry.
     pub fn register<B>(
         &mut self,
         backend: &'a B,
@@ -254,6 +283,22 @@ where
             return Err(AkitaError::InvalidInput(
                 "backend instance is already registered".into(),
             ));
+        }
+        for public in prefixes.public_slots() {
+            if self
+                .public_prefixes
+                .get(&public.id)
+                .is_some_and(|existing| *existing != public)
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "registered backends disagree on a setup-prefix slot".into(),
+                ));
+            }
+        }
+        for public in prefixes.public_slots() {
+            self.public_prefixes
+                .entry(public.id.clone())
+                .or_insert(public);
         }
         let id = BackendId {
             registry: self.identity,
@@ -336,37 +381,12 @@ where
     }
 }
 
-trait ErasedBridge<Cfg: CommitmentConfig> {
-    fn transfer(
-        &self,
-        src: &dyn ErasedExporter<Cfg>,
-        dst: &dyn Executor<Cfg>,
-        id: BackendId,
-        plan: &ValidatedSuccessorHandoffPlan<'_, Cfg::Field>,
-    ) -> Result<ResidentSuccessor, AkitaError>;
-}
-
-impl<Cfg, A, B> ErasedBridge<Cfg> for Edge<A, B>
-where
-    Cfg: CommitmentConfig,
-    Cfg::Field: CanonicalEncoding,
-    A: SuccessorExportKernel<Cfg::Field, Cfg::ExtField>,
-    B: SuccessorImportKernel<Cfg::Field, Cfg::ExtField>,
-    Self: SuccessorBridge<A, B, Cfg::Field, Cfg::ExtField>,
-{
-    fn transfer(
-        &self,
-        src: &dyn ErasedExporter<Cfg>,
-        dst: &dyn Executor<Cfg>,
-        id: BackendId,
-        plan: &ValidatedSuccessorHandoffPlan<'_, Cfg::Field>,
-    ) -> Result<ResidentSuccessor, AkitaError> {
-        let export = src.export_as::<A>(plan)?;
-        let packet = Self::convert(export, plan)?;
-        plan.validate_export(packet.descriptor())?;
-        dst.import_as::<B>(id, plan, packet)
-    }
-}
+type ErasedBridge<Cfg> = dyn Fn(
+    &dyn ErasedExporter<Cfg>,
+    &dyn Executor<Cfg>,
+    BackendId,
+    &ValidatedSuccessorHandoffPlan<'_, <Cfg as CommitmentConfig>::Field>,
+) -> Result<ResidentSuccessor, AkitaError>;
 
 pub(super) struct FoldHandoff<'r, 'a, 'p, Cfg: CommitmentConfig> {
     pub(super) registry: &'r BackendRegistry<'a, Cfg>,
@@ -479,7 +499,7 @@ impl<Cfg: CommitmentConfig> FoldHandoff<'_, '_, '_, Cfg> {
             witness,
             material,
         };
-        self.adopted = Some(bridge.transfer(&src, destination, selected, &plan)?);
+        self.adopted = Some(bridge(&src, destination, selected, &plan)?);
         Ok(())
     }
 }

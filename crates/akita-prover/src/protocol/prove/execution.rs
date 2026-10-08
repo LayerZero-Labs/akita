@@ -7,19 +7,14 @@ use crate::SelectedProverOpeningData;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_params::BasisMode;
-use akita_params::SetupPrefixSlotId;
 use akita_serialization::AkitaSerialize;
-use akita_types::SetupPrefixVerifierSlot;
 use akita_types::{AkitaSetupDescriptor, Commitment, FpExtEncoding, OpeningClaims, ProverGrinding};
 use jolt_field::{
     AdditiveGroup, CanonicalEncoding, ExtField, Fold, MulBaseUnreduced, PseudoMersenne, Ring,
     Unreduced,
 };
+use std::any::{Any, TypeId};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::{
-    any::{Any, TypeId},
-    collections::BTreeMap,
-};
 
 static NEXT_PROOF: AtomicU64 = AtomicU64::new(1);
 
@@ -43,12 +38,6 @@ where
     }
     fn backend_type_id(&self) -> TypeId {
         TypeId::of::<B>()
-    }
-    fn public_prefixes(&self) -> BTreeMap<SetupPrefixSlotId, &SetupPrefixVerifierSlot<Cfg::Field>> {
-        self.prefixes
-            .public_slots()
-            .map(|slot| (slot.id.clone(), slot))
-            .collect()
     }
     fn root(
         &self,
@@ -314,7 +303,7 @@ where
         schedules,
         schedule: resolved.schedule(),
         layout: claims.opening_layout(),
-        prefixes: root_executor.public_prefixes(),
+        prefixes: &registry.public_prefixes,
         identity,
     };
     for executor in &registry.slots {

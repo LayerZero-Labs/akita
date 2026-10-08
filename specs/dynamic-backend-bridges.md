@@ -46,7 +46,7 @@ Allow one `batched_prove` call to execute successive folds on different
 | `FoldExecutionPolicy` | Chooses the next `BackendId` (e.g. `FixedFoldRoute`) |
 | `SuccessorExportKernel` | Source backend → owned `ExportPacket` |
 | `SuccessorImportKernel` | Destination backend ← `ImportPacket` → local handles |
-| `SuccessorBridge` on `Edge<A, B>` | `A::ExportPacket` → `B::ImportPacket` |
+| `SuccessorBridge` on `Edge<A, B>` or application converter | `A::ExportPacket` → `B::ImportPacket` |
 | `FoldHandoff` | After successor commit, same-id `begin_fold` or export→convert→import |
 | `CpuExportPacket` / `CpuImportPacket` | Public CPU sectioned IR |
 
@@ -65,6 +65,9 @@ Allow one `batched_prove` call to execute successive folds on different
    one directed conversion for all instances of those types. Distinct instances
    of the same type (two `CpuBackend`s) still NEED
    `register_bridge::<CpuBackend<F, E>, CpuBackend<F, E>>()`.
+   Applications MAY instead register a typed function or closure through
+   `register_bridge_with::<A, B>(convert)`, including when both backend types
+   come from dependencies. Both APIs share the same key and reject duplicates.
 4. **Handoff precedes producer sumchecks.** After the producer commits the
    successor witness, `FoldHandoff::handoff_successor` MUST run before that
    producer's stage-1/2/3 work. The destination MAY begin its fold during
@@ -76,10 +79,16 @@ Allow one `batched_prove` call to execute successive folds on different
 6. **Public CPU adopt IR.** External bridges to CPU MUST be able to build
    `CpuImportPacket` through `CpuImportPacket::new(descriptor, sections)`
    without naming private CPU handles. CPU import MUST validate plan shape,
-   encodings, and digit bounds.
+   encodings, and digit bounds. Portable digit payloads MUST contain only logical
+   witness digits; CPU import MUST derive any tensor representation locally.
+   Native CPU self-edges MAY share the private CPU-produced transformed cache.
 7. **Session isolation.** Export borrows the live producer session; import runs
    on the destination executor's prepared session. The coordinator MUST NOT
    re-enter the producer's executor slot for export.
+8. **Public prefix union.** Registration MUST merge public prefix slots from all
+   registered instances and reject conflicting values for the same slot ID
+   without changing the registry. Proofs MUST borrow this union; selected
+   executors MUST retain local handles for their fold and successor-commit work.
 
 ### Non-Goals
 
@@ -97,8 +106,8 @@ Allow one `batched_prove` call to execute successive folds on different
   removed from the successor path.
 - [x] Backends implement `SuccessorExportKernel` and `SuccessorImportKernel`
   instead of a combined opaque transfer kernel.
-- [x] `Edge<A, B>: SuccessorBridge` supplies `convert`; the framework
-  `ErasedBridge::transfer` is fixed for all edges
+- [x] `Edge<A, B>: SuccessorBridge` or an application callback supplies `convert`;
+  both registration APIs use the same coordinator path
   (`export_as` → `convert` → `import_as`).
 - [x] `BackendRegistry::register_bridge::<A, B>()` keys by `(TypeId<A>, TypeId<B>)`.
 - [x] Same `BackendId` skips transfer; different ids of the same type still
@@ -167,7 +176,8 @@ the coordinator. Packets are the shared IR; bridges are the typed adapters.
    inside CPU import, forcing every source to implement the pull API.
 2. **Exporter builds destination handles (`ExportToward<B>`).** Rejected:
    sources would depend on every destination type (orphan-rule and N×M
-   coupling). Bridges invert that: apps that compose A and B own `Edge<A, B>`.
+   coupling). Applications instead register a backend-provided `Edge<A, B>`
+   bridge or supply their own typed converter without implementing a foreign trait.
 3. **`SuccessorHandoff` trait seam for fold.** Removed; only `FoldHandoff`
    existed. Fold now takes `&mut FoldHandoff` from `registry.rs`.
 

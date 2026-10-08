@@ -67,18 +67,25 @@ entries. Custom `FoldExecutionPolicy` implementations select every level through
 `choose_backend`; its current owner is absent at level 0. The registry dispatches
 the root to the selected executor, checks its commitment handle family, and
 validates that the handles belong to that instance. The route stores only IDs.
-Prefix handles must belong to each
-local instance and have identical public commitments. Registration rejects
-duplicate instances; IDs from another registry reject. Route implementations
+Each instance supplies the prefix handles needed by its folds and successor
+commitments. Registration builds a union of public prefix slots and rejects
+conflicting public values for a shared slot ID. Proofs borrow this union, while
+each selected executor must still have its required local handles. Registration
+also rejects duplicate instances; IDs from another registry reject. Route implementations
 own any cost model; Akita does not request or compare cost estimates.
 
 Backends implement `SuccessorExportKernel` and `SuccessorImportKernel` alongside
-ordinary typed kernels. Each directed type pair implements `SuccessorBridge`
+ordinary typed kernels. Backend-provided conversions implement `SuccessorBridge`
 on `Edge<A, B>`. Register the bridge explicitly with
 `registry.register_bridge::<A, B>()?` before selecting a switch. Same-type
 instance switches (two `CpuBackend`s) still need
 `register_bridge::<CpuBackend<F, E>, CpuBackend<F, E>>()?`. Heterogeneous
 routes register each directed edge (for example `PrivateCpu` ↔ `CpuBackend`).
+For an application-owned converter, use
+`registry.register_bridge_with::<A, B>(convert)?`. It accepts a function or
+closure from `A::ExportPacket` and the handoff plan to `B::ImportPacket`, allowing
+applications to connect dependency-owned backends without implementing a foreign
+trait. Both registration APIs share the same type-pair key and reject duplicates.
 A missing bridge rejects the selected route; Akita never silently reroutes it.
 A single instance needs no bridge: same-ID choices retain native handles without
 export, conversion, or import.
@@ -91,6 +98,9 @@ can construct `CpuImportPacket::new(descriptor, sections)` with packed or signed
 digits, canonical field coefficients, and compression sections. CPU exports
 provide `into_sections()` for conversion to another representation. Import checks
 section lengths, the admitted handoff, digit bounds, and canonical encodings.
+Portable packets carry logical witness digits only; CPU import derives the tensor
+representation when needed. Native CPU self-edges retain the private transformed
+cache through shared storage.
 Switching retains the producer's handles until its sumchecks complete.
 The CPU scheme method uses this same prover with every level assigned to its
 supplied backend. Routing does not change the setup, commitment, transcript, or

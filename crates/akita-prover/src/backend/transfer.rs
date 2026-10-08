@@ -23,7 +23,6 @@ impl BackendInstanceIdentity {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SuccessorSection {
     LogicalDigits,
-    CommittedDigits,
     InnerRows,
     CompressionDigits(usize),
     CompressionQuotient(usize),

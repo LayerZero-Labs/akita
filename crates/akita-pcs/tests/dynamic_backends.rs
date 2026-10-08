@@ -5,7 +5,7 @@ mod common;
 mod private_cpu;
 
 use akita_config::proof_optimized::fp128;
-use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
+use akita_cpu_backend::{CpuBackend, CpuImportPacket, DensePoly, GroupContext};
 use akita_params::{BasisMode, PolynomialGroupLayout, ScheduleLookupKey};
 use akita_prover::{batched_prove, BackendRegistry, FixedFoldRoute, SelectedProverOpeningData};
 use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
@@ -138,9 +138,27 @@ fn heterogeneous_routes_and_failure_cleanup() {
         registry
             .register_bridge::<CpuBackend<F, E>, PrivateCpu>()
             .unwrap();
+        let conversions = std::rc::Rc::new(std::cell::Cell::new(0));
+        let observed = conversions.clone();
+        // Both endpoint types are foreign to this application. A custom converter
+        // needs no local backend wrapper or foreign trait implementation.
         registry
-            .register_bridge::<CpuBackend<F, E>, CpuBackend<F, E>>()
+            .register_bridge_with::<CpuBackend<F, E>, CpuBackend<F, E>>(move |packet, _| {
+                observed.set(observed.get() + 1);
+                let (descriptor, sections) = packet.into_sections()?;
+                CpuImportPacket::new(descriptor, sections)
+            })
             .unwrap();
+        assert!(registry
+            .register_bridge::<CpuBackend<F, E>, CpuBackend<F, E>>()
+            .is_err());
+        assert!(registry
+            .register_bridge_with::<PrivateCpu, PrivateCpu>(|_, _| {
+                Err(akita_error::AkitaError::InvalidInput(
+                    "unused converter".into(),
+                ))
+            })
+            .is_err());
         assert!(registry
             .register_bridge::<PrivateCpu, PrivateCpu>()
             .is_err());
@@ -240,6 +258,7 @@ fn heterogeneous_routes_and_failure_cleanup() {
                 }
             }
         }
+        assert_eq!(conversions.get(), 2);
         a.portable.set(false);
         b.portable.set(false);
         // The route's root need not be the first registered instance.
@@ -462,6 +481,65 @@ macro_rules! dynamic_family {
                         &mut FixedFoldRoute::new(vec![ra; schedule.num_fold_levels()]),
                     )
                     .unwrap();
+                    if !ids.is_empty() {
+                        // Root owns only the prefixes used by its own fold and
+                        // successor commitment; B owns all later fold resources.
+                        let root_ids: Vec<_> = schedule
+                            .root
+                            .params
+                            .setup_prefix()
+                            .into_iter()
+                            .chain(schedule.recursive_folds.first().and_then(|fold| {
+                                fold.params.setup_prefix()
+                            }))
+                            .filter_map(|prefix| prefix.slot_id())
+                            .collect();
+                        assert!(root_ids.len() < ids.len());
+                        let root_prefixes = a.prefixes(&setup, &root_ids);
+                        let mut conflicting = akita_prover::SetupPrefixProverRegistry::default();
+                        for public in pb.public_slots() {
+                            let mut slot = pb.get(&public.id).unwrap().clone();
+                            let mut coefficients = slot.public.commitment.rows[0].coeffs().to_vec();
+                            coefficients[0] += F::one();
+                            slot.public.commitment.rows[0] =
+                                akita_types::RingVec::from_coeffs(coefficients);
+                            conflicting.insert(slot).unwrap();
+                        }
+                        let mut partial = BackendRegistry::<Cfg>::new().unwrap();
+                        let root = partial.register(&a, &root_prefixes).unwrap();
+                        assert!(matches!(
+                            partial.register(&b, &conflicting),
+                            Err(akita_error::AkitaError::InvalidSetup(message))
+                                if message.contains("disagree")
+                        ));
+                        // A rejected registration must not poison a subsequent
+                        // valid registration of the same instance and shared slots.
+                        let later = partial.register(&b, &pb).unwrap();
+                        partial
+                            .register_bridge::<private_cpu::PrivateCpu, private_cpu::PrivateCpu>()
+                            .unwrap();
+                        let prove_partial = |route| {
+                            akita_prover::batched_prove::<Cfg, _>(
+                                setup.expanded.descriptor(),
+                                scheme.schedules(),
+                                &partial,
+                                opening(),
+                                super::DOMAIN,
+                                BasisMode::Lagrange,
+                                &mut FixedFoldRoute::new(route),
+                            )
+                        };
+                        // Public union membership does not grant a local handle.
+                        assert!(matches!(
+                            prove_partial(vec![root; schedule.num_fold_levels()]),
+                            Err(akita_error::AkitaError::InvalidSetup(message))
+                                if message.contains("executor lacks")
+                        ));
+                        let route = std::iter::once(root)
+                            .chain(std::iter::repeat_n(later, schedule.num_fold_levels() - 1))
+                            .collect();
+                        assert_eq!(prove_partial(route).unwrap(), reference);
+                    }
                     for portable in [false, true] {
                         a.portable.set(portable);
                         b.portable.set(portable);
@@ -499,6 +577,41 @@ macro_rules! dynamic_family {
                                 BasisMode::Lagrange,
                             )
                             .unwrap();
+                    }
+                    if <E as jolt_field::ExtField<F>>::DEGREE != 1 {
+                        // Tensor import validates logical digits before deriving
+                        // the transformed source, with either public encoding.
+                        let route = || {
+                            std::iter::once(ra)
+                                .chain(std::iter::repeat_n(rb, schedule.num_fold_levels() - 1))
+                                .collect()
+                        };
+                        a.fault.set(private_cpu::Fault::InvalidDigits);
+                        assert!(akita_prover::batched_prove::<Cfg, _>(
+                            setup.expanded.descriptor(),
+                            scheme.schedules(),
+                            &registry,
+                            opening(),
+                            super::DOMAIN,
+                            BasisMode::Lagrange,
+                            &mut FixedFoldRoute::new(route()),
+                        )
+                        .is_err());
+                        a.fault.set(private_cpu::Fault::SignedDigits);
+                        assert_eq!(
+                            akita_prover::batched_prove::<Cfg, _>(
+                                setup.expanded.descriptor(),
+                                scheme.schedules(),
+                                &registry,
+                                opening(),
+                                super::DOMAIN,
+                                BasisMode::Lagrange,
+                                &mut FixedFoldRoute::new(route()),
+                            )
+                            .unwrap(),
+                            reference,
+                        );
+                        a.fault.set(private_cpu::Fault::None);
                     }
                 });
             }

@@ -34,13 +34,6 @@ impl<F: Field + CanonicalEncoding> CpuSuccessorStorage<F> {
             .ok_or_else(|| AkitaError::InvalidInput("successor section range overflow".into()))?;
         let bytes = match section {
             SuccessorSection::LogicalDigits => Some(self.logical.packed_digits().encoded_bytes()),
-            SuccessorSection::CommittedDigits => Some(
-                self.committed
-                    .as_ref()
-                    .ok_or_else(|| AkitaError::InvalidInput("committed section is absent".into()))?
-                    .packed_digits()
-                    .encoded_bytes(),
-            ),
             SuccessorSection::CompressionDigits(index) => Some(
                 self.compression
                     .as_ref()
@@ -93,6 +86,7 @@ impl<F: Field + CanonicalEncoding> CpuSuccessorStorage<F> {
 pub type CpuPacketSections = Vec<(SuccessorSection, Vec<u8>)>;
 
 /// An owned snapshot of a committed successor. Its native storage remains private.
+/// Portable sections carry logical digits; CPU import derives tensor packing locally.
 pub struct CpuExportPacket<F: Field> {
     descriptor: SuccessorExportDescriptor,
     storage: CpuSuccessorStorage<F>,
@@ -328,26 +322,15 @@ where
             compression,
             source: parent,
         };
-        let mut sections = Vec::new();
-        for (section, witness) in [
-            (SuccessorSection::LogicalDigits, Some(&storage.logical)),
-            (
-                SuccessorSection::CommittedDigits,
-                storage.committed.as_ref(),
-            ),
-        ] {
-            if let Some(witness) = witness {
-                let digits = witness.packed_digits();
-                sections.push(SuccessorSectionDescriptor {
-                    section,
-                    encoding: SuccessorEncoding::PackedSigned {
-                        bit_width: digits.bit_width(),
-                    },
-                    coefficients: digits.len(),
-                    bytes: digits.encoded_bytes().len(),
-                });
-            }
-        }
+        let digits = storage.logical.packed_digits();
+        let mut sections = vec![SuccessorSectionDescriptor {
+            section: SuccessorSection::LogicalDigits,
+            encoding: SuccessorEncoding::PackedSigned {
+                bit_width: digits.bit_width(),
+            },
+            coefficients: digits.len(),
+            bytes: digits.encoded_bytes().len(),
+        }];
         sections.push(SuccessorSectionDescriptor {
             section: SuccessorSection::InnerRows,
             encoding: SuccessorEncoding::CanonicalField,
@@ -439,7 +422,9 @@ where
                     native.compression,
                 )
             } else {
-                read_portable::<F>(plan, &packet.descriptor, &packet)?
+                let (logical, inner, compression) =
+                    read_portable::<F>(plan, &packet.descriptor, &packet)?;
+                (logical, None, inner, compression)
             };
         let tensor = matches!(
             plan.commitment().source_encoding(),
@@ -553,7 +538,6 @@ fn read_fields<F: Field + CanonicalEncoding>(
 
 type PortableParts<F> = (
     RecursiveWitnessFlat,
-    Option<RecursiveWitnessFlat>,
     InnerRelationStateMaterial<F>,
     Option<PortableCompressionState<F>>,
 );
@@ -611,19 +595,6 @@ fn read_portable<F: Field + CanonicalEncoding>(
     let logical =
         RecursiveWitnessFlat::from_witness_layout(digits, plan.witness_layout(), plan.log_basis())?
             .align_for_commitment_ring_dim(plan.commitment().ring_dimension())?;
-    let committed = descriptor
-        .sections
-        .iter()
-        .find(|s| s.section == SuccessorSection::CommittedDigits)
-        .map(|section| {
-            Ok::<_, AkitaError>(RecursiveWitnessFlat {
-                digits: read_digits(section, packet)?,
-                live_coeff_len: plan.commitment().logical_len(),
-                committed_coeff_len: Some(plan.commitment().padded_len()),
-                commitment_ring_dim: Some(plan.commitment().ring_dimension()),
-            })
-        })
-        .transpose()?;
     let execution = execution(plan)?;
     let inner = InnerRelationStateMaterial::new(
         execution.inner(),
@@ -664,5 +635,5 @@ fn read_portable<F: Field + CanonicalEncoding>(
             })
         }
     };
-    Ok((logical, committed, inner, compression))
+    Ok((logical, inner, compression))
 }

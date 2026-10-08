@@ -605,6 +605,19 @@ impl SuccessorExportKernel<F, E> for PrivateCpu {
             return Edge::<Cpu, Cpu>::convert(export, plan);
         }
         let (mut descriptor, mut sections) = export.into_sections()?;
+        // Tensor sources must expose only the logical digit payload. The
+        // destination reconstructs its transformed source from these digits.
+        assert_eq!(
+            descriptor
+                .sections
+                .iter()
+                .filter(|section| matches!(
+                    section.encoding,
+                    SuccessorEncoding::SignedI8 | SuccessorEncoding::PackedSigned { .. }
+                ))
+                .count(),
+            1,
+        );
         if self.fault.get() == Fault::Descriptor {
             for alteration in 0..5 {
                 let mut invalid = descriptor.clone();

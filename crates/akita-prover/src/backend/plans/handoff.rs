@@ -156,7 +156,7 @@ impl<F: Field + CanonicalEncoding> ValidatedSuccessorHandoffPlan<'_, F> {
         }
         let compression = self.compression()?;
         let maps = compression.as_ref().map_or(&[][..], |(p, _)| p.maps());
-        let max_sections = checked::sum([3, maps.len(), maps.len()])
+        let max_sections = checked::sum([2, maps.len(), maps.len()])
             .ok_or_else(|| AkitaError::InvalidInput("successor section count overflow".into()))?;
         if descriptor.sections.len() > max_sections {
             return Err(AkitaError::InvalidInput(
@@ -174,13 +174,6 @@ impl<F: Field + CanonicalEncoding> ValidatedSuccessorHandoffPlan<'_, F> {
             }
             let coefficients = match section.section {
                 SuccessorSection::LogicalDigits => self.commitment.logical_len(),
-                SuccessorSection::CommittedDigits => checked::align_up(
-                    self.commitment.logical_len(),
-                    self.commitment.ring_dimension(),
-                )
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("committed successor length overflow".into())
-                })?,
                 SuccessorSection::InnerRows => self.inner_coefficients()?,
                 SuccessorSection::CompressionDigits(i) => maps
                     .get(i)
@@ -198,12 +191,9 @@ impl<F: Field + CanonicalEncoding> ValidatedSuccessorHandoffPlan<'_, F> {
                 }
             };
             let bytes = match (section.section, section.encoding) {
+                (SuccessorSection::LogicalDigits, SuccessorEncoding::SignedI8) => coefficients,
                 (
-                    SuccessorSection::LogicalDigits | SuccessorSection::CommittedDigits,
-                    SuccessorEncoding::SignedI8,
-                ) => coefficients,
-                (
-                    SuccessorSection::LogicalDigits | SuccessorSection::CommittedDigits,
+                    SuccessorSection::LogicalDigits,
                     SuccessorEncoding::PackedSigned { bit_width },
                 ) if (1..=8).contains(&bit_width) => {
                     checked::product([coefficients, bit_width as usize])
