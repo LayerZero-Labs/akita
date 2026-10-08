@@ -1,8 +1,124 @@
 use std::ops::Range;
 
-use akita_error::AkitaError;
+use crate::CommittedGroupParams;
+use akita_error::{checked, AkitaError};
 
 use super::MAX_WITNESS_CHUNKS;
+
+/// Chunk-major body lengths and shared tail before successor alignment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WitnessChunkShape {
+    pub body_lengths: [usize; MAX_WITNESS_CHUNKS],
+    pub num_chunks: usize,
+    pub tail_prefix_len: usize,
+    pub tail_alignment: usize,
+    pub tail_len: usize,
+    pub tail_suffix_alignment: usize,
+}
+
+impl std::hash::Hash for WitnessChunkShape {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.num_chunks.hash(state);
+        self.body_lengths[..self.num_chunks.min(MAX_WITNESS_CHUNKS)].hash(state);
+        self.tail_prefix_len.hash(state);
+        self.tail_alignment.hash(state);
+        self.tail_len.hash(state);
+        self.tail_suffix_alignment.hash(state);
+    }
+}
+
+impl WitnessChunkShape {
+    /// Pad multi-chunk bodies to the consumer's block width; merge owners when
+    /// chunking contracts, retaining the complete shared tail in the last owner.
+    pub fn align(
+        self,
+        block_len: usize,
+        num_chunks: usize,
+    ) -> Result<(usize, Vec<usize>), AkitaError> {
+        if !self.tail_alignment.is_power_of_two()
+            || !self.tail_suffix_alignment.is_power_of_two()
+            || !block_len.is_power_of_two()
+            || num_chunks == 0
+            || !num_chunks.is_power_of_two()
+            || !self.num_chunks.is_power_of_two()
+            || self.num_chunks > MAX_WITNESS_CHUNKS
+            || !self.num_chunks.is_multiple_of(num_chunks)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "invalid inherited witness chunks".into(),
+            ));
+        }
+        let body_alignment = if self.num_chunks > 1 { block_len } else { 1 };
+        let mut cursor = 0usize;
+        let mut ends = Vec::with_capacity(num_chunks);
+        for (index, &len) in self.body_lengths[..self.num_chunks].iter().enumerate() {
+            let padded = checked::align_up(len, body_alignment)
+                .and_then(|len| cursor.checked_add(len))
+                .ok_or_else(|| AkitaError::InvalidSetup("witness chunk padding overflow".into()))?;
+            cursor = padded;
+            if (index + 1).is_multiple_of(self.num_chunks / num_chunks) {
+                ends.push(cursor / block_len);
+            }
+        }
+        let len = cursor
+            .checked_add(self.tail_prefix_len)
+            .and_then(|len| checked::align_up(len, self.tail_alignment))
+            .and_then(|len| len.checked_add(self.tail_len))
+            .and_then(|len| checked::align_up(len, self.tail_suffix_alignment))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness tail overflow".into()))?;
+        if let Some(last) = ends.last_mut() {
+            *last = len.div_ceil(block_len);
+        }
+        if num_chunks == 1 {
+            ends.clear();
+        }
+        Ok((len, ends))
+    }
+}
+
+impl CommittedGroupParams {
+    /// Schedule-owned partition of one source group. Frozen groups retain the
+    /// proportional root partition; a recursive witness inherits its owners.
+    pub fn witness_block_ranges(
+        &self,
+        group_index: usize,
+        num_chunks: usize,
+    ) -> Result<Vec<Range<usize>>, AkitaError> {
+        let params = if group_index == self.preceding_group_count() {
+            self.final_group()
+        } else {
+            *self
+                .preceding_group_params(group_index)
+                .ok_or(AkitaError::InvalidSetup("missing witness group".into()))?
+        };
+        if group_index != self.preceding_group_count() || self.witness_chunk_ends.is_empty() {
+            return dyadic_block_ranges(params.num_live_blocks(), num_chunks);
+        }
+        if self.witness_chunk_ends.len() != num_chunks
+            || !num_chunks.is_power_of_two()
+            || num_chunks > MAX_WITNESS_CHUNKS
+            || self.witness_chunk_ends.last() != Some(&params.num_live_blocks())
+        {
+            return Err(AkitaError::InvalidSetup(
+                "inherited witness partition has wrong extent".into(),
+            ));
+        }
+        let mut start = 0;
+        self.witness_chunk_ends
+            .iter()
+            .map(|&end| {
+                if end < start {
+                    return Err(AkitaError::InvalidSetup(
+                        "inherited witness partition is unordered".into(),
+                    ));
+                }
+                let range = start..end;
+                start = end;
+                Ok(range)
+            })
+            .collect()
+    }
+}
 
 /// Partition an exact live block prefix into canonical dyadic ranges.
 ///

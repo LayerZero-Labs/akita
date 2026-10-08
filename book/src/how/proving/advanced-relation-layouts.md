@@ -268,11 +268,23 @@ $$
 \frac{(j+1)N}{C}-1\right\}.
 $$
 
-These ranges partition the live blocks without padding. The production layout
-also supports unequal and empty ranges through the [canonical proportional
-partition](./opening-points-layout.md#chunks-and-fold-challenges); that physical
-generality does not change the relations below. The transcript still samples
-one challenge $c_b$ for every global live block; it does not sample an
+Root source chunks use the [canonical proportional
+partition](./opening-points-layout.md#chunks-and-fold-challenges), including
+unequal and empty ranges. When the producer has multiple chunks, each emitted
+Z/E/T body is aligned to a multiple of the next fold's source-block coefficient
+width. The canonical prover fills the alignment gaps with zero. The next fold
+inherits those bodies instead of repartitioning the witness equally; if its
+chunk count contracts, it merges adjacent owners. The last owner also receives
+the complete quotient and compression tail and the final power-of-two padding.
+T ranges end before the alignment gaps, which add no semantic Z/E/T coordinates.
+The gaps belong to the committed witness and obey the ordinary digit range
+constraints, but carry no relation equations. Verification does not require
+zero. Zero filling adds no energy to the honest prover's source model; nonzero
+filler becomes part of the next fold's source and can affect its responses,
+which must still meet that fold's enforced bounds. See
+[response security accounting](../security.md#alignment-coordinates).
+This ownership changes no relation below.
+The transcript still samples one challenge $c_b$ for every global live block; it does not sample an
 independent challenge family for each chunk.
 
 Before the opening query, the incoming commitment has already fixed the
@@ -475,9 +487,9 @@ $$
 $$
 
 Thus $\mathbf w$ is the complete chunk-major logical witness for those four
-families, not one separately proved witness per chunk. The physical
-realizations extend it with compression data when the payload is compressed
-and quotient digits when the relation mode uses quotient lifting. The
+families, not one separately proved witness per chunk. The physical witness
+aligns multi-chunk bodies with zeros, then appends quotient digits and compression
+data as required by the selected relation and payload modes. The
 [complete witness layouts](./ring-relation-checking.md#what-enters-the-next-witness)
 describe both choices.
 

@@ -744,11 +744,11 @@ uniform field element, including the residual top plane. This is a
 computational pseudorandomness model, not an information-theoretic statement
 about every seed. The recursive source keeps its propagated `M` and `P`.
 
-Adaptive direct profiles price first-direct padded setup capacity first, with
-proof bytes and total setup field elements as later tie-breakers. Recursive
-setup profiles first compare the power-of-two capacity covering total setup,
-then first-direct capacity, proof bytes, and first-direct output-witness length.
-Uniform direct profiles minimize estimated proof bytes first.
+Adaptive direct profiles price first-direct padded setup capacity
+first, then the exact additive proof-and-work score, proof bytes, total setup,
+and root output-witness length. Recursive setup profiles first compare the
+power-of-two capacity covering total setup, then first-direct capacity, the
+proof-and-work score, proof bytes, and first-direct output-witness length.
 
 ### Multi-group and multi-chunk states
 
@@ -990,11 +990,11 @@ the profile's declared objective, its comparison includes:
 * The root output-witness length.
 * A canonical descriptor tie-break.
 
-Uniform direct profiles minimize proof bytes, then total setup and root
-output-witness length. Adaptive direct profiles minimize first-direct padded
-setup capacity, then proof bytes, total setup, and root output-witness length.
-Recursive-setup profiles minimize padded total-setup capacity, then first-direct
-capacity, proof bytes, and first-direct output-witness length. Numeric ties go
+Adaptive direct profiles minimize first-direct padded setup
+capacity, then the exact additive proof-and-work score, proof bytes, total
+setup, and root output-witness length. Recursive-setup profiles minimize padded
+total-setup capacity, then first-direct capacity, the proof-and-work score,
+proof bytes, and first-direct output-witness length. Numeric ties go
 directly to the canonical descriptor. These are product objectives, not
 security rules.
 

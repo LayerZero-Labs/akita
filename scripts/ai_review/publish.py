@@ -1,13 +1,16 @@
 """Validate model output and publish an idempotent review with inline findings."""
 
-import base64
 import html
-import json
 import os
 import re
 
 from collect import discussions, previous_state
-from common import MARKER, REPOSITORY, ReviewError, authorize, digest, reopen_epoch, revision
+from common import (MARKER, REPOSITORY, ReviewError, authorize, decode_state, digest, encode_state, reopen_epoch,
+                    revision)
+
+PRIORITIES = ("P0", "P1", "P2", "P3", "nit")
+# The hidden state already uses most of GitHub's comment limit on long histories.
+MAX_LISTED_BLOCKERS = 10
 
 
 def bounded_text(value, limit):
@@ -88,7 +91,7 @@ def validate(snapshot, proposal):
         raise ReviewError("Complete review requires reading every changed file")
     for finding in result["findings"]:
         if (set(finding) != {"priority", "path", "revision", "line", "root_cause", "body"}
-                or finding["priority"] not in ("P0", "P1", "P2", "P3", "nit")
+                or finding["priority"] not in PRIORITIES
                 or finding["revision"] not in ("base", "head")):
             raise ReviewError("Invalid finding fields")
         path, rev, line = finding["path"], finding["revision"], finding["line"]
@@ -109,16 +112,43 @@ def validate(snapshot, proposal):
     return findings
 
 
+def blocking_earlier(state):
+    """Reassessed findings (they carry evidence) that still block approval."""
+    return sorted((f for f in state["findings"] if f["evidence"] and (
+        f["status"] == "uncertain" or (f["status"] == "open" and f["priority"] != "nit"))),
+        key=lambda f: (PRIORITIES.index(f["priority"]), f["path"], f["id"]))
+
+
+def approval_blockers(state):
+    blockers = []
+    if not state["complete"]:
+        blockers.append("coverage is incomplete")
+    if state["discussion_blockers"]:
+        blockers.append("unresolved feedback from existing discussion")
+    if state.get("usefulness", {}).get("verdict") != "beneficial":
+        blockers.append("usefulness is not established")
+    if blocking_earlier(state):
+        blockers.append("earlier findings remain unresolved")
+    if any(not f["evidence"] and f["status"] == "open" and f["priority"] != "nit" for f in state["findings"]):
+        blockers.append("new P0-P3 findings in this review")
+    return blockers
+
+
 def approval_recommended(state):
-    return (state["complete"] and not state["discussion_blockers"]
-            and state.get("usefulness", {}).get("verdict") == "beneficial"
-            and all(f["status"] == "fixed" or (f["status"] == "open" and f["priority"] == "nit")
-                    for f in state["findings"]))
+    return not approval_blockers(state)
 
 
-def review_body(state):
-    encoded = base64.b64encode(json.dumps(state).encode()).decode()
-    body = f"{MARKER}{encoded} -->"
+def summary(state):
+    """Render the visible summary from the state alone, so read-back can rebuild it exactly.
+
+    Published reviews keep the rendering of their body_version: version 1 (no
+    field) is the first release's summary; version 2 also explains every reason
+    an approval recommendation is withheld.
+    """
+    body_version = state.get("body_version", 1)
+    if type(body_version) is not int or body_version not in (1, 2):
+        raise ReviewError("Unsupported review body version")
+    body = ""
     if state.get("excluded_artifact_count"):
         body += (f"\n\nAkita artifacts excluded: {state['excluded_artifact_count']} changed files under `artifacts/`. "
                  "Their contents were not reviewed; validate them separately with the artifact checks and CI.")
@@ -134,8 +164,34 @@ def review_body(state):
         remaining = any(finding["status"] != "fixed" for finding in state["findings"])
         reason = "only optional nits remain" if remaining else "no unresolved findings"
         body += f"\n\nRecommended for approval: {reason} in this automated review."
+    elif body_version == 2:
+        body += f"\n\nApproval not recommended: {'; '.join(approval_blockers(state))}."
+        if not state["complete"]:
+            body += f"\n\nCoverage incomplete: {review_text(state['limitations'].strip() or 'no reason given')}"
+        if state["discussion_blockers"]:
+            body += "\n\nUnresolved feedback from existing discussion:\n"
+            body += "\n".join(f"- {review_text(blocker)}" for blocker in state["discussion_blockers"])
+        # Their inline comments may be outdated or collapsed, so name them.
+        blocking = blocking_earlier(state)
+        if blocking:
+            body += "\n\nEarlier findings still blocking approval:"
+        for finding in blocking[:MAX_LISTED_BLOCKERS]:
+            evidence = finding["evidence"]
+            if len(evidence) > 200:
+                evidence = evidence[:200] + "..."
+            status = "still open" if finding["status"] == "open" else "uncertain"
+            body += (f"\n- [{finding['priority']}] {review_text(finding['path'])}: "
+                     f"{review_text(finding['root_cause'])} ({status}). {review_text(evidence)}")
+        if len(blocking) > MAX_LISTED_BLOCKERS:
+            body += f"\n- and {len(blocking) - MAX_LISTED_BLOCKERS} more."
+    return body
+
+
+def review_body(state):
+    body = encode_state(state) + summary(state)
     if len(body.encode()) > 60_000:
-        raise ReviewError("Published review exceeds comment size limit")
+        raise ReviewError(f"Published review exceeds comment size limit: {len(body.encode())} > 60000 bytes; "
+                          "shorten evidence, discussion_blockers, limitations or new finding bodies")
     return body
 
 
@@ -177,7 +233,8 @@ def sync_labels(github, number, state):
 def prepare_review(snapshot, proposal):
     findings = validate(snapshot, proposal)
     result = proposal["result"]
-    state = {"repository": REPOSITORY, "number": snapshot["number"], "request": snapshot["request"],
+    state = {"body_version": 2,
+             "repository": REPOSITORY, "number": snapshot["number"], "request": snapshot["request"],
              "head": snapshot["revision"]["head"], "findings": findings,
              "reopen_epoch": snapshot["reopen_epoch"],
              "scope_digest": digest(approval_scope(snapshot["revision"], snapshot["title"], snapshot["description"])),
@@ -200,13 +257,14 @@ def prepare_review(snapshot, proposal):
 
 def verify_review(github, number, review_id, body):
     state = previous_state([{"id": review_id, "own": True, "body": body}], number)
+    marker, _ = decode_state(body)
     verified = github.get(f"pulls/{number}/reviews/{review_id}")
     # The review-specific comments endpoint returns legacy position-only data.
     # Replies do not belong to the original publication manifest.
     inline = [c for c in github.pages(f"pulls/{number}/comments")
               if c.get("pull_request_review_id") == review_id and not c.get("in_reply_to_id")]
     actual = sorted([c.get("path"), c.get("original_line"), c.get("side"), c.get("body")] for c in inline)
-    if (body != review_body(state) or verified.get("body") != body or verified.get("commit_id") != state["head"]
+    if (body != marker + summary(state) or verified.get("body") != body or verified.get("commit_id") != state["head"]
             or verified.get("state") != "COMMENTED"
             or verified.get("user", {}).get("login") != "github-actions[bot]"
             or verified.get("user", {}).get("type") != "Bot"

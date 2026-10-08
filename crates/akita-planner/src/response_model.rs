@@ -695,8 +695,10 @@ fn checked_add_component(
     Ok(())
 }
 
-/// Predict the recursive witness produced by one ring-switch level from its
-/// exact typed layout.
+/// Predict the honest recursive witness from its exact typed layout.
+/// Alignment filler is zero initialized by the canonical prover and contributes
+/// no modeled energy. This estimate selects a response cap; soundness uses the
+/// cap enforced by the verifier, including when a source has nonzero filler.
 pub(crate) fn next_source_moment(
     params: &CommittedGroupParams,
     opening_layout: &OpeningClaimsLayout,

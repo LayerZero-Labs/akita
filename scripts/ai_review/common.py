@@ -1,16 +1,21 @@
 """Fixed-origin HTTP and bounded review data. Never log remote bodies or tokens."""
 
+import base64
 import hashlib
 import json
 import os
 import re
 import urllib.error
 import urllib.request
+import zlib
 
 REPOSITORY = "LayerZero-Labs/akita"
 WORKFLOW = ".github/workflows/ai-review.yml"
 MAX_BYTES = 32 * 1024 * 1024
-MARKER = "<!-- akita-ai-review:v1 "
+# Every review-state marker starts with this. v1 holds base64 JSON (the first
+# release); v2 holds base64 zlib-compressed JSON, so the carried-over finding
+# history fits GitHub's comment limit.
+MARKER = "<!-- akita-ai-review:v"
 
 
 class ReviewError(Exception):
@@ -80,6 +85,32 @@ def sha(value):
     return value
 
 
+def encode_state(state):
+    encoded = base64.b64encode(zlib.compress(json.dumps(state).encode(), 9)).decode()
+    return f"{MARKER}2 {encoded} -->"
+
+
+def decode_state(body):
+    """Return (marker, state) from the start of a review body.
+
+    Callers compare the marker as published rather than re-encoding the state,
+    because zlib output can change between library versions.
+    """
+    match = re.match(re.escape(MARKER) + r"([12]) ([A-Za-z0-9+/=]+) -->(?:\n|$)", body)
+    if not match:
+        raise ReviewError("Malformed review state")
+    try:
+        data = base64.b64decode(match[2], validate=True)
+        if match[1] == "2":
+            inflater = zlib.decompressobj()
+            data = inflater.decompress(data, MAX_BYTES)
+            if inflater.unconsumed_tail or not inflater.eof:
+                raise ValueError()
+        return match[0].rstrip("\n"), json.loads(data)
+    except (ValueError, zlib.error):
+        raise ReviewError("Malformed review state") from None
+
+
 def load_json(path):
     with open(path, "rb") as handle:
         data = handle.read(MAX_BYTES + 1)
@@ -109,6 +140,7 @@ def authorize(github, event):
     pr = github.get(f"pulls/{number}")
     comment = github.get(f"issues/comments/{comment_id}")
     if (comment.get("body", "") != "/ai-review"
+            or comment.get("user", {}).get("type") != "User"
             or comment.get("issue_url") != f"https://api.github.com/repos/{REPOSITORY}/issues/{number}"
             or comment.get("user", {}).get("id") != pr.get("user", {}).get("id")
             or comment.get("user", {}).get("id") != event["comment"].get("user", {}).get("id")

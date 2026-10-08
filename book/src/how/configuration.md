@@ -18,8 +18,8 @@ claims live in a proper extension (`EXT_DEGREE > 1`, `fp32` / `fp64`), never
 on field bit-width. See
 [Fold path and field geometry](./proving/fold-path.md).
 
-`CommitmentConfig` selects either a uniform schedule mode or bounded adaptive
-A, B, and D domains. It does not carry a separate default ring dimension.
+`CommitmentConfig` selects bounded adaptive A, B, and D domains. It does not
+carry a separate default ring dimension.
 The resolved schedule owns every dimension used by setup preparation,
 commitment, proving, and verification. Setup-prefix slots also record the
 dimension selected by the fold that consumes the prefix.

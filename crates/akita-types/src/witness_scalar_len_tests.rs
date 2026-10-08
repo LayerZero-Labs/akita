@@ -84,6 +84,18 @@ mod tests {
                                     RelationQuotientPlan::ReducedEvaluation
                                 }
                             };
+                            let compact = WitnessLayout::new(
+                                &params,
+                                &opening_batch,
+                                &relation_geometry,
+                                num_chunks,
+                                quotient_plan,
+                            )
+                            .unwrap();
+                            let (predicted, ends) =
+                                compact.chunk_shape().unwrap().align(4096, 1).unwrap();
+                            assert!(ends.is_empty(), "first single-chunk consumer");
+                            params.successor_block_len = (num_chunks > 1).then_some(4096);
                             let materialized = WitnessLayout::new(
                                 &params,
                                 &opening_batch,
@@ -102,6 +114,7 @@ mod tests {
                             )
                             .expect("scalar witness sizing");
                             assert_eq!(scalar, materialized);
+                            assert_eq!(predicted, materialized);
                         }
                     }
                 }

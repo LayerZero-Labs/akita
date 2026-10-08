@@ -121,6 +121,10 @@ impl<F: Field> crate::commitment::CommitmentSource<F> for RecursiveCommitSource<
         selected: crate::commitment::PolynomialTypeSelection,
         plan: &crate::opaque::CommitInnerPlan,
     ) -> Result<crate::commitment::PolynomialRepresentation<'_, F>, AkitaError> {
+        #[cfg(test)]
+        crate::opaque::witness_build::alignment_gap_tests::observe_commitment_source(
+            self.0.committed.as_ref().unwrap_or(&self.0.logical),
+        );
         crate::commitment::CommitmentSource::<F>::represent_as(
             self.0.committed.as_ref().unwrap_or(&self.0.logical),
             selected,

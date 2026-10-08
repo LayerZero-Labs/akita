@@ -362,19 +362,14 @@ fn catalog_row_metrics(
     let setup_fields = akita_params::setup_matrix_capacity_for_schedule(schedule)
         .map_err(|error| format!("estimate setup capacity: {error}"))?
         .num_field_elements;
-    let first_direct_setup_capacity = (matches!(
-        spec.policy.selection_policy,
-        akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
-            | akita_schedules::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-    ))
-    .then(|| {
+    let first_direct_setup_capacity = Some(
         akita_schedules::planner_support::first_direct_setup_capacity_for_schedule(
             schedule,
-            &key.opening_layout()?,
+            &key.opening_layout()
+                .map_err(|error| format!("derive opening layout: {error}"))?,
         )
-    })
-    .transpose()
-    .map_err(|error| format!("estimate first direct setup capacity: {error}"))?;
+        .map_err(|error| format!("estimate first direct setup capacity: {error}"))?,
+    );
     Ok(CatalogRowMetrics {
         setup_fields,
         first_direct_setup_capacity,

@@ -733,15 +733,69 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
 
 #[test]
 fn stage2_large_odd_dense_deferred_compact_prefix_matches_direct_path() {
-    let lane_bits = 16usize;
-    let coefficient_bits = 6usize;
-    let live_lane_count = 34_519usize;
-    let b = 8usize;
+    for b in [8, 16] {
+        dense_compact_prefix_matches_direct_path(b, 16, 6, 34_519);
+        // Prefixes that end at rounds 1, 2 and 3.
+        for coefficient_bits in [2, 3, 4] {
+            dense_compact_prefix_matches_direct_path(b, 7, coefficient_bits, 77);
+        }
+    }
+}
+
+/// The periodic witness of the test above repeats a handful of digit classes.
+/// Here every lane has its own digits and both ends of the digit range occur,
+/// so the later coefficient rounds still see many classes.
+#[test]
+fn stage2_pseudorandom_dense_compact_prefix_matches_direct_path() {
+    for b in [8, 16] {
+        for (lane_bits, coefficient_bits, live_lane_count) in [(7, 6, 77), (10, 7, 777)] {
+            let half = (b / 2) as i8;
+            let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ (b * live_lane_count) as u64;
+            let mut w_prefix: Vec<i8> = (0..(live_lane_count << coefficient_bits))
+                .map(|_| {
+                    state = state
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    ((state >> 33) % b as u64) as i8 - half
+                })
+                .collect();
+            w_prefix[0] = -half;
+            w_prefix[1] = half - 1;
+            let last = w_prefix.len() - 1;
+            w_prefix[last - 1] = half - 1;
+            w_prefix[last] = -half;
+            compact_prefix_matches_direct_path(
+                b,
+                lane_bits,
+                coefficient_bits,
+                live_lane_count,
+                w_prefix,
+            );
+        }
+    }
+}
+
+fn dense_compact_prefix_matches_direct_path(
+    b: usize,
+    lane_bits: usize,
+    coefficient_bits: usize,
+    live_lane_count: usize,
+) {
     let half = (b / 2) as i8;
-    let coeff_count = 1usize << coefficient_bits;
-    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
+    let w_prefix: Vec<i8> = (0..(live_lane_count << coefficient_bits))
         .map(|i| ((i * 29 + 17) % b) as i8 - half)
         .collect();
+    compact_prefix_matches_direct_path(b, lane_bits, coefficient_bits, live_lane_count, w_prefix);
+}
+
+fn compact_prefix_matches_direct_path(
+    b: usize,
+    lane_bits: usize,
+    coefficient_bits: usize,
+    live_lane_count: usize,
+    w_prefix: Vec<i8>,
+) {
+    let coeff_count = 1usize << coefficient_bits;
     let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
         .map(|i| F::from_u64((17 * i as u64) + 241))
         .collect();
@@ -773,6 +827,7 @@ fn stage2_large_odd_dense_deferred_compact_prefix_matches_direct_path() {
         relation_lane_weights,
         params,
     );
+    assert!(prover.compact_quotient_prefix().is_some());
     direct.disable_compact_quotient_prefix();
 
     let mut prover_claim = prover.input_claim();
@@ -793,7 +848,7 @@ fn stage2_large_odd_dense_deferred_compact_prefix_matches_direct_path() {
         );
         assert_eq!(
             prover_poly, direct_poly,
-            "round {round} polynomial mismatch for large odd dense witness"
+            "round {round} polynomial mismatch for dense witness, b={b}"
         );
 
         let challenge = F::from_u64((29 * round as u64) + 269);

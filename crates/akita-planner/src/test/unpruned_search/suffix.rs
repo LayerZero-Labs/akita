@@ -36,11 +36,12 @@ fn retain_terminal_candidates(
     work: &mut OracleWork,
     frontier: &mut OracleFrontier,
 ) -> Result<(), AkitaError> {
-    let Some((opening, opening_reduction_bytes)) = trace_work else {
+    let Some((opening, _)) = trace_work else {
         return Ok(());
     };
     for &payload_mode in state.payload_phase.candidate_modes(state.level, false) {
         let request = RecursiveCandidateRequest {
+            input_chunks: Some(state.input_chunks),
             policy: ctx.policy,
             payload_mode,
             opening,
@@ -58,7 +59,7 @@ fn retain_terminal_candidates(
         };
         for params in derive_unpruned_terminal_candidates_for_oracle(request)? {
             work.record_candidate_route(&params)?;
-            if let Some(candidate) = terminal(ctx, state, opening_reduction_bytes, &params)? {
+            if let Some(candidate) = terminal(ctx, state, &params)? {
                 retain_frontier_candidate(frontier, candidate)?;
             }
         }
@@ -74,7 +75,7 @@ fn next_source_moment(
     if !policy.selective_l2_response_model_enabled() {
         return Ok(None);
     }
-    let opening_layout = suffix_opening_layout(state.input_witness_len, None)?;
+    let opening_layout = params.opening_layout_for_final_group(params.group())?;
     Ok(Some(crate::response_model::next_source_moment(
         params,
         &opening_layout,
@@ -90,7 +91,6 @@ struct FoldOpening {
     log_basis: u32,
     dimensions: CommitmentRingDims,
     opening: crate::schedule_params::PlannerOpeningCandidate,
-    reduction_bytes: usize,
 }
 
 fn visit_fold_opening(
@@ -105,6 +105,7 @@ fn visit_fold_opening(
     for &payload_mode in state.payload_phase.candidate_modes(state.level, false) {
         for relation_transition in relation::transitions(state.relation_state, state.level) {
             let request = RecursiveCandidateRequest {
+                input_chunks: Some(state.input_chunks),
                 policy,
                 payload_mode,
                 opening: fold_opening.opening,
@@ -136,7 +137,30 @@ fn visit_fold_opening(
                 }
                 let params = candidate;
                 work.record_candidate_route(&params)?;
+                let opening_layout = params.opening_layout_for_final_group(params.group())?;
+                let input_len = state
+                    .input_chunks
+                    .align(
+                        akita_params::FoldSuccessor::Recursive(&params).source_block_len()?,
+                        params.witness_chunk.num_chunks,
+                    )?
+                    .0;
                 let next_state = UnprunedState {
+                    input_chunks: akita_params::WitnessLayout::new(
+                        &params,
+                        &opening_layout,
+                        &akita_params::RelationWitnessGeometry::for_level(
+                            &params,
+                            &opening_layout,
+                            policy.claim_ext_degree,
+                        )?,
+                        params.witness_chunk.num_chunks,
+                        akita_params::RelationQuotientPlan::for_field_bits(
+                            &params,
+                            policy.decomposition.field_bits(),
+                        )?,
+                    )?
+                    .chunk_shape()?,
                     level: state.level + 1,
                     input_witness_len: output_witness_len,
                     current_log_basis: fold_opening.log_basis,
@@ -146,15 +170,9 @@ fn visit_fold_opening(
                     relation_state: relation_transition.next_state,
                 };
                 visit_suffixes(ctx, next_state, memo, work, &mut |child| {
-                    if let Some(candidate) = prepend_fold(
-                        policy,
-                        state.level,
-                        state.input_witness_len,
-                        output_witness_len,
-                        fold_opening.reduction_bytes,
-                        &params,
-                        &child,
-                    )? {
+                    if let Some(candidate) =
+                        prepend_fold(policy, state.level, input_len, &params, &child)?
+                    {
                         retain_frontier_candidate(frontier, candidate)?;
                     }
                     Ok(())
@@ -209,7 +227,7 @@ pub(super) fn visit_suffixes(
             } else {
                 trace_work.into_iter().collect()
             };
-            for (opening, reduction_bytes) in fold_work {
+            for (opening, _) in fold_work {
                 visit_fold_opening(
                     ctx,
                     state,
@@ -217,7 +235,6 @@ pub(super) fn visit_suffixes(
                         log_basis,
                         dimensions,
                         opening,
-                        reduction_bytes,
                     },
                     memo,
                     work,

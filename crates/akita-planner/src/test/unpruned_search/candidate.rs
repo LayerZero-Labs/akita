@@ -108,11 +108,22 @@ fn reference_level_proof_bytes(
 pub(super) fn terminal(
     ctx: &UnprunedCtx<'_>,
     state: UnprunedState,
-    opening_reduction_bytes: usize,
     params: &CommittedGroupParams,
 ) -> Result<Option<ScheduleCandidate>, AkitaError> {
+    let opening_reduction_bytes = akita_params::extension_opening_reduction_level_bytes(
+        ctx.policy.challenge_field_bits()?,
+        ctx.policy.claim_ext_degree,
+        params.group(),
+    )?;
+    let input_witness_len = state
+        .input_chunks
+        .align(
+            akita_params::FoldSuccessor::Recursive(params).source_block_len()?,
+            1,
+        )?
+        .0;
     if params.witness_chunk.num_chunks > 1
-        || !state.input_witness_len.is_multiple_of(params.d_a())
+        || !input_witness_len.is_multiple_of(params.d_a())
         || params.has_preceding_groups()
     {
         return Ok(None);
@@ -204,7 +215,7 @@ pub(super) fn terminal(
         first_direct_setup_field_len: std::num::NonZeroUsize::new(
             akita_params::active_setup_field_len(
                 params,
-                &suffix_opening_layout(state.input_witness_len, None)?,
+                &suffix_opening_layout(input_witness_len, None)?,
             )?,
         ),
         first_direct_output_witness_len: 0,
@@ -214,7 +225,7 @@ pub(super) fn terminal(
         terminal: Arc::new(CandidateTerminalResponse {
             params: terminal_params,
             sparse_challenge_config,
-            input_witness_len: state.input_witness_len,
+            input_witness_len,
             estimated_direct_payload_bytes: opening_reduction_bytes,
             response_shape,
             estimated_payload_bytes: terminal_bytes,
@@ -222,16 +233,44 @@ pub(super) fn terminal(
     }))
 }
 
-pub(super) fn prepend_fold(
+pub(in crate::schedule_params) fn prepend_fold(
     policy: &PlannerPolicy,
     level: usize,
     input_witness_len: usize,
-    output_witness_len: usize,
-    opening_reduction_bytes: usize,
     params: &CommittedGroupParams,
     child: &ScheduleCandidate,
 ) -> Result<Option<ScheduleCandidate>, AkitaError> {
+    let output_witness_len = child
+        .folds
+        .first()
+        .map_or(child.terminal.input_witness_len, |fold| {
+            fold.input_witness_len
+        });
+    let mut aligned_params = params.clone();
+    aligned_params.successor_block_len = (aligned_params.witness_chunk.num_chunks > 1).then_some(
+        child
+            .folds
+            .first()
+            .map_or(
+                akita_params::FoldSuccessor::Terminal(&child.terminal.params),
+                |fold| akita_params::FoldSuccessor::Recursive(&fold.params),
+            )
+            .source_block_len()?,
+    );
+    let params = &aligned_params;
     let opening_layout = suffix_opening_layout(input_witness_len, None)?;
+    let opening_reduction_bytes = if matches!(
+        params.opening_method(),
+        akita_params::OpeningMethod::EvaluationTrace
+    ) {
+        akita_params::extension_opening_reduction_level_bytes(
+            policy.challenge_field_bits()?,
+            policy.claim_ext_degree,
+            params.group(),
+        )?
+    } else {
+        0
+    };
     let direct_bytes = reference_level_proof_bytes(
         policy.decomposition.field_bits(),
         policy.challenge_field_bits()?,
@@ -298,14 +337,31 @@ pub(super) fn prepend_fold(
     }))
 }
 
-pub(super) fn prepend_root(
+pub(in crate::schedule_params) fn prepend_root(
     policy: &PlannerPolicy,
     schedule_key: &akita_params::ScheduleLookupKey,
     input_witness_len: usize,
     root_params: &CommittedGroupParams,
-    output_witness_len: usize,
     suffix: &ScheduleCandidate,
 ) -> Result<Option<ScheduleCandidate>, AkitaError> {
+    let output_witness_len = suffix
+        .folds
+        .first()
+        .map_or(suffix.terminal.input_witness_len, |fold| {
+            fold.input_witness_len
+        });
+    let mut aligned_root = root_params.clone();
+    aligned_root.successor_block_len = (aligned_root.witness_chunk.num_chunks > 1).then_some(
+        suffix
+            .folds
+            .first()
+            .map_or(
+                akita_params::FoldSuccessor::Terminal(&suffix.terminal.params),
+                |fold| akita_params::FoldSuccessor::Recursive(&fold.params),
+            )
+            .source_block_len()?,
+    );
+    let root_params = &aligned_root;
     let opening_layout = schedule_key.opening_layout()?;
     let first_direct_setup_field_len =
         std::num::NonZeroUsize::new(active_setup_field_len(root_params, &opening_layout)?)
