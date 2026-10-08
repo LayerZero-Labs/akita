@@ -124,7 +124,7 @@ pub fn run(options: Prepare) -> Result<(), String> {
         || !binaries.contains(crate::libfuzzer::BINARY)
     {
         return Err(format!(
-            "target sets disagree:\n  campaign/targets.toml: {registered:?}\n  akita_fuzz::targets::ALL: {library:?}\n  cargo fuzz list without fuzz_all: {per_target:?}"
+            "target sets disagree:\n  campaign/targets.toml: {registered:?}\n  akita_fuzz::targets::all(): {library:?}\n  cargo fuzz list without fuzz_all: {per_target:?}"
         ));
     }
 
@@ -144,7 +144,7 @@ pub fn run(options: Prepare) -> Result<(), String> {
         ])
         .current_dir(&fuzz);
     if options.sequential {
-        build.args(["--no-default-features"]);
+        build.args(["--no-default-features", "--features", "end-to-end"]);
     }
     if !options.skip_build {
         println!("+ {build:?}");

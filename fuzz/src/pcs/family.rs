@@ -889,8 +889,9 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
         let expect_invalid_proof = |result: Result<(), AkitaError>, what: &str| match result {
             Err(AkitaError::InvalidProof) => stats::count("rejected"),
             other => panic!(
-                "{}: {what} must be rejected as InvalidProof, got {other:?}",
-                self.name()
+                "{}: {what} must be rejected as InvalidProof, got {}",
+                self.name(),
+                super::outcome_class(&other)
             ),
         };
         let verify_with =
@@ -1074,8 +1075,9 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                         stats::count("rejected")
                     }
                     other => panic!(
-                        "{}: a proof under another catalog row must be rejected at the statement or proof boundary, got {other:?}",
-                        self.name()
+                        "{}: a proof under another catalog row must be rejected at the statement or proof boundary, got {}",
+                        self.name(),
+                        super::outcome_class(&other)
                     ),
                 }
             }

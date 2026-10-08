@@ -47,7 +47,8 @@ jobs:
           tool: cargo-fuzz
       # End-to-end and boundary targets need minutes of setup per process and
       # more memory than this runner has; they run in long campaigns
-      # (fuzz/README.md). CI fuzzes the primitive targets briefly.
+      # (fuzz/README.md). CI builds without the `end-to-end` feature and fuzzes
+      # the primitive targets briefly.
       - name: Fuzz primitive targets
         working-directory: fuzz
         run: |
@@ -59,5 +60,5 @@ jobs:
           fi
           for target in $targets; do
             echo "--- Fuzzing $target for ${FUZZ_DURATION}s ---"
-            cargo +nightly fuzz run --release --debug-assertions --target "${FUZZ_TARGET}" "$target" -- -max_total_time="${FUZZ_DURATION}"
+            cargo +nightly fuzz run --release --debug-assertions --no-default-features --features parallel --target "${FUZZ_TARGET}" "$target" -- -max_total_time="${FUZZ_DURATION}"
           done

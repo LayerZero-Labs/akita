@@ -155,7 +155,8 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
             let with_cache = verify(&verifier, &honest.proved.proof);
             assert!(
                 with_cache.is_ok(),
-                "{name}: honest proof rejected under the honest terminal cache: {with_cache:?}"
+                "{name}: honest proof rejected under the honest terminal cache: {}",
+                super::outcome_class(&with_cache)
             );
             let mut tampered = honest.proved.proof.clone();
             let offset = reader.u32() as usize % tampered.len();
@@ -166,8 +167,9 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
             );
             assert!(
                 same_outcome(&cached, &reference),
-                "{name}: cached and cache-free verifiers disagree on a tampered proof: \
-                 {cached:?} vs {reference:?}"
+                "{name}: cached and cache-free verifiers disagree on a tampered proof: {} vs {}",
+                super::outcome_class(&cached),
+                super::outcome_class(&reference)
             );
             stats::count("terminal_cache_honest");
             return;

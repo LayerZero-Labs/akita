@@ -120,14 +120,18 @@ pub fn run(data: &[u8]) {
         let cfg = selective_l2_challenge_config(ring_d).expect("selective family");
         let rejection = selective_l2_operator_norm_rejection(ring_d, &cfg);
         assert!(rejection.is_some(), "selective family without its policy");
-        (ring_d, cfg, rejection.filter(|_| reader.u8() % 4 != 0))
+        (
+            ring_d,
+            cfg,
+            rejection.filter(|_| !reader.u8().is_multiple_of(4)),
+        )
     } else {
         let ring_d = PRODUCTION_FOLD_CHALLENGE_RING_DIMS
             [reader.choose(PRODUCTION_FOLD_CHALLENGE_RING_DIMS.len())];
         let cfg = SparseChallengeConfig::production_for_ring_dim(ring_d).expect("ladder entry");
         (ring_d, cfg, None)
     };
-    let domain = if rejection.is_none() && reader.u8() % 4 == 0 {
+    let domain = if rejection.is_none() && reader.u8().is_multiple_of(4) {
         FoldChallengeDrawDomain::SubringCoefficientPacking {
             challenge_subring_dimension: ring_d,
         }

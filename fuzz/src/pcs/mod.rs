@@ -19,6 +19,7 @@ pub use family::{Check, Mutation};
 pub use registry::{registry, Limits, Registry, Selector};
 
 use crate::gen::Domain;
+use akita_error::AkitaError;
 use akita_params::GroupCommitPhaseParams;
 
 /// What a committed group's source must look like.
@@ -74,4 +75,27 @@ impl Case {
             .collect::<Vec<_>>()
             .join("+")
     }
+}
+
+/// Error class of an Akita error, for expectations and failure messages.
+/// Messages report only the class: error text can carry protocol values.
+pub(crate) fn error_class(error: &AkitaError) -> &'static str {
+    match error {
+        AkitaError::InvalidProof => "InvalidProof",
+        AkitaError::InvalidSize { .. } => "InvalidSize",
+        AkitaError::InvalidPointDimension { .. } => "InvalidPointDimension",
+        // Never an expected rejection: a prover retry loop ran out for an
+        // admissible statement (liveness), not a validation failure.
+        error if crate::liveness::is_liveness_exhaustion(error) => "LivenessExhausted",
+        AkitaError::InvalidInput(_) => "InvalidInput",
+        AkitaError::UnsupportedSchedule(_) => "UnsupportedSchedule",
+        AkitaError::InvalidSetup(_) => "InvalidSetup",
+        // A failed internal invariant: never an expected rejection.
+        AkitaError::Internal(_) => "Internal",
+    }
+}
+
+/// `Ok` or the error class of a result, for failure messages.
+pub(crate) fn outcome_class<T>(result: &Result<T, AkitaError>) -> &'static str {
+    result.as_ref().map_or_else(error_class, |_| "Ok")
 }

@@ -15,22 +15,6 @@ use akita_types::{OpeningClaims, PolynomialGroupClaims};
 use jolt_field::{CanonicalEncoding, Field, One, Zero};
 use std::sync::Arc;
 
-fn kind(error: &AkitaError) -> &'static str {
-    match error {
-        AkitaError::InvalidProof => "InvalidProof",
-        AkitaError::InvalidSize { .. } => "InvalidSize",
-        AkitaError::InvalidPointDimension { .. } => "InvalidPointDimension",
-        // Never an expected rejection: a prover retry loop ran out for an
-        // admissible statement (liveness), not a validation failure.
-        error if crate::liveness::is_liveness_exhaustion(error) => "LivenessExhausted",
-        AkitaError::InvalidInput(_) => "InvalidInput",
-        AkitaError::UnsupportedSchedule(_) => "UnsupportedSchedule",
-        AkitaError::InvalidSetup(_) => "InvalidSetup",
-        // A failed internal invariant: never an expected rejection.
-        AkitaError::Internal(_) => "Internal",
-    }
-}
-
 #[track_caller]
 fn expect_err<T: std::fmt::Debug>(
     family: &str,
@@ -39,8 +23,13 @@ fn expect_err<T: std::fmt::Debug>(
     allowed: &[&str],
 ) {
     match result {
-        Err(error) if allowed.contains(&kind(&error)) => stats::count("boundary_rejected"),
-        other => panic!("{family}: {what} must fail with one of {allowed:?}, got {other:?}"),
+        Err(error) if allowed.contains(&super::error_class(&error)) => {
+            stats::count("boundary_rejected")
+        }
+        other => panic!(
+            "{family}: {what} must fail with one of {allowed:?}, got {}",
+            super::outcome_class(&other)
+        ),
     }
 }
 

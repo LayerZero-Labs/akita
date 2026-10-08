@@ -96,11 +96,10 @@ pub fn sumcheck_rounds(data: &[u8]) {
         verify_sumcheck_rounds::<F, F, _>(&mut channel, 0, F::from_u64(u64::from(*claim)), shape);
     assert!(channel.challenges <= num_rounds);
     let round_bytes = degree_bound * F::NUM_BYTES;
-    let complete_input_rounds = if round_bytes == 0 {
-        0
-    } else {
-        (data.len() / round_bytes).min(num_rounds)
-    };
+    let complete_input_rounds = data
+        .len()
+        .checked_div(round_bytes)
+        .map_or(0, |rounds| rounds.min(num_rounds));
     assert!(channel.challenges <= complete_input_rounds);
     if let Ok(replay) = result {
         assert_eq!(replay.challenges.len(), num_rounds);

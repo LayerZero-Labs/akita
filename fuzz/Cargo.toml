@@ -14,7 +14,11 @@ members = [".", "runner", "devtool"]
 path = "src/lib.rs"
 
 [features]
-default = ["parallel"]
+default = ["parallel", "end-to-end"]
+# Commit/prove/verify harnesses over every catalog family (`pcs`, the boundary
+# targets, and `fuzz_all`). Without it only the primitive targets build, which
+# keeps CI builds small; campaigns and `akita-fuzz-dev` need it.
+end-to-end = []
 # Rayon-parallel production paths. Build with `--no-default-features` for the
 # sequential feature graph, which CI otherwise never executes.
 parallel = [
@@ -113,6 +117,7 @@ path = "fuzz_targets/pcs_dense.rs"
 test = false
 doc = false
 bench = false
+required-features = ["end-to-end"]
 
 [[bin]]
 name = "pcs_onehot"
@@ -120,6 +125,7 @@ path = "fuzz_targets/pcs_onehot.rs"
 test = false
 doc = false
 bench = false
+required-features = ["end-to-end"]
 
 [[bin]]
 name = "pcs_batch"
@@ -127,6 +133,7 @@ path = "fuzz_targets/pcs_batch.rs"
 test = false
 doc = false
 bench = false
+required-features = ["end-to-end"]
 
 [[bin]]
 name = "pcs_recursive"
@@ -134,6 +141,7 @@ path = "fuzz_targets/pcs_recursive.rs"
 test = false
 doc = false
 bench = false
+required-features = ["end-to-end"]
 
 [[bin]]
 name = "pcs_reject"
@@ -141,6 +149,7 @@ path = "fuzz_targets/pcs_reject.rs"
 test = false
 doc = false
 bench = false
+required-features = ["end-to-end"]
 
 [[bin]]
 name = "pcs_parallel"
@@ -148,6 +157,7 @@ path = "fuzz_targets/pcs_parallel.rs"
 test = false
 doc = false
 bench = false
+required-features = ["end-to-end"]
 
 [[bin]]
 name = "fold_challenges"
@@ -162,6 +172,7 @@ path = "fuzz_targets/terminal_cache.rs"
 test = false
 doc = false
 bench = false
+required-features = ["end-to-end"]
 
 [[bin]]
 name = "pcs_shared"
@@ -169,6 +180,7 @@ path = "fuzz_targets/pcs_shared.rs"
 test = false
 doc = false
 bench = false
+required-features = ["end-to-end"]
 
 [[bin]]
 name = "pcs_liveness"
@@ -176,6 +188,7 @@ path = "fuzz_targets/pcs_liveness.rs"
 test = false
 doc = false
 bench = false
+required-features = ["end-to-end"]
 
 [[bin]]
 name = "field_arith"
@@ -239,6 +252,7 @@ path = "fuzz_targets/verifier_boundary.rs"
 test = false
 doc = false
 bench = false
+required-features = ["end-to-end"]
 
 [[bin]]
 name = "prover_boundary"
@@ -246,6 +260,7 @@ path = "fuzz_targets/prover_boundary.rs"
 test = false
 doc = false
 bench = false
+required-features = ["end-to-end"]
 
 [[bin]]
 name = "fuzz_all"
@@ -253,3 +268,4 @@ path = "fuzz_targets/fuzz_all.rs"
 test = false
 doc = false
 bench = false
+required-features = ["end-to-end"]

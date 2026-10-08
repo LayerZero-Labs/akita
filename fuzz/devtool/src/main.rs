@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub fn list() {
-    for (name, _) in targets::ALL {
+    for (name, _) in targets::all() {
         println!("{name}");
     }
 }
@@ -133,7 +133,7 @@ fn random_bytes(seed: u64, len: usize) -> Vec<u8> {
 
 pub fn seeds(out: &Path) {
     // Primitive targets: zeros plus deterministic random inputs of mixed sizes.
-    for (name, _) in targets::ALL {
+    for (name, _) in targets::all() {
         let dir = out.join(name);
         write(&dir, "zeros", &[0u8; 512]);
         for index in 0..32u64 {
@@ -252,7 +252,7 @@ pub fn seeds(out: &Path) {
     // Regression inputs replay as seeds (`regressions/README.md`); inputs that
     // still fail live under `regressions/pending/` and are skipped.
     let regressions = Path::new(env!("CARGO_MANIFEST_DIR")).join("../regressions");
-    for (name, _) in targets::ALL {
+    for (name, _) in targets::all() {
         let Ok(entries) = std::fs::read_dir(regressions.join(name)) else {
             continue;
         };

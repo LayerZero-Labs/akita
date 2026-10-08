@@ -9,6 +9,7 @@ pub mod gen;
 pub mod input;
 pub mod liveness;
 pub mod oracle;
+#[cfg(feature = "end-to-end")]
 pub mod pcs;
 pub mod stats;
 pub mod targets;
