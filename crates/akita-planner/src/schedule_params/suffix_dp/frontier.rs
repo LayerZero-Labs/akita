@@ -56,7 +56,7 @@ impl ProjectionMask {
 #[derive(Clone, Copy)]
 pub(super) struct PricedChildEdge {
     edge_price: super::ChildEdgePrice,
-    edge_grinding_cost: akita_types::TranscriptGrindingCost,
+    edge_grinding_cost: akita_params::TranscriptGrindingCost,
 }
 
 pub(super) fn price_child_edge(
@@ -119,8 +119,8 @@ pub(super) fn consider_child_suffixes<'a>(
 
 fn parent_visible_cost(
     policy: &PlannerPolicy,
-    first: Option<&akita_types::CommittedGroupParams>,
-    terminal: Option<&akita_types::TerminalFoldParams>,
+    first: Option<&akita_params::CommittedGroupParams>,
+    terminal: Option<&akita_params::TerminalFoldParams>,
 ) -> Result<ParentObservableKey, AkitaError> {
     ParentObservableKey::new(policy, first, terminal)
 }
@@ -160,7 +160,7 @@ fn setup_envelope_score(
     if selection_policy
         == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
     {
-        akita_types::padded_setup_prefix_len(setup_field_elements)
+        akita_params::padded_setup_prefix_len(setup_field_elements)
     } else {
         setup_field_elements
     }
@@ -208,7 +208,7 @@ impl DescriptorOrderContext {
             fold_count: candidate.folds.len(),
             first_fold_descriptor: candidate
                 .first_fold_params()
-                .map(akita_types::CommittedGroupParams::canonical_descriptor_bytes)
+                .map(akita_params::CommittedGroupParams::canonical_descriptor_bytes)
                 .map(Arc::from),
         }
     }
@@ -303,6 +303,7 @@ impl ProjectedObjectiveChoices {
         self.setup.iter().map(|candidate| &candidate.schedule)
     }
 
+    #[cfg(all(test, feature = "catalog-gen"))]
     pub(super) fn payload_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
         self.payload.iter().map(|candidate| &candidate.schedule)
     }
@@ -432,25 +433,18 @@ impl ProjectedFrontier {
         projections: &[Projection],
     ) -> ProjectionMask {
         let choices = self.by_parent_cost.get(parent_cost);
-        let keep = |projection| {
-            match projection {
-            Projection::FirstDirectSetup => {
-                matches!(
-                policy.selection_policy,
-                crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
-                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-            ) && !choices.is_some_and(|choices| {
-                    choices.projected(projection).iter().any(|existing| {
-                        setup_primary_strictly_dominates(
-                            policy.selection_policy,
-                            setup_score(policy.selection_policy, existing.schedule.metrics()),
-                            existing.admission,
-                            setup_score(policy.selection_policy, metrics),
-                            admission,
-                        )
-                    })
+        let keep = |projection| match projection {
+            Projection::FirstDirectSetup => !choices.is_some_and(|choices| {
+                choices.projected(projection).iter().any(|existing| {
+                    setup_primary_strictly_dominates(
+                        policy.selection_policy,
+                        setup_score(policy.selection_policy, existing.schedule.metrics()),
+                        existing.admission,
+                        setup_score(policy.selection_policy, metrics),
+                        admission,
+                    )
                 })
-            }
+            }),
             Projection::Payload => !choices.is_some_and(|choices| {
                 choices.projected(projection).iter().any(|existing| {
                     payload_primary_strictly_dominates(
@@ -462,7 +456,6 @@ impl ProjectedFrontier {
                     )
                 })
             }),
-        }
         };
         let mut retained = ProjectionMask::default();
         for &projection in projections {

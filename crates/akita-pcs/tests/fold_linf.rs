@@ -3,8 +3,9 @@
 mod common;
 
 use akita_cpu_backend::CpuBackend;
+use akita_params::GrindingPlan;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_types::{AkitaVerifierSetup, CommittedGroup, GrindingPlan};
+use akita_types::{AkitaVerifierSetup, CommittedGroup};
 use common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
@@ -24,10 +25,10 @@ struct FoldLinfGrindFixture {
 fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfGrindFixture {
     let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
     let opening_layout =
-        akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
+        akita_params::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
     let row = scheme
         .schedules()
-        .resolve_key(&akita_types::ScheduleLookupKey::single(
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
             opening_layout
                 .root_final_group_layout()
                 .expect("singleton group layout"),

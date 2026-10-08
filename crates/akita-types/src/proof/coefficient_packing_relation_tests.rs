@@ -6,12 +6,12 @@ use jolt_field::{
     Prime64Offset59, Ring, Zero,
 };
 
-use crate::InnerCommitMatrixParams;
 use crate::{
-    relation_claim_from_compressed_rhs_extension, relation_rhs_coeff_len, BasisMode,
-    CommitmentRingDims, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening,
-    RingVec, SisModulusProfileId,
+    relation_claim_from_compressed_rhs_extension, relation_rhs_coeff_len,
+    RingMultiplierOpeningPoint, RingRelationGroupOpening, RingVec,
 };
+use akita_params::InnerCommitMatrixParams;
+use akita_params::{BasisMode, CommitmentRingDims, RingOpeningPoint, SisModulusProfileId};
 
 type F = Prime64Offset59;
 type E = Ext2<F>;
@@ -19,6 +19,73 @@ type E = Ext2<F>;
 use super::test_fixtures::{
     coefficient_packing_fixture as fixture, CoefficientPackingFixture as Fixture,
 };
+
+#[test]
+fn packing_batch_rejects_out_of_range_prepared_point_group() {
+    let fixture = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        64,
+        64,
+        4,
+        4,
+        10,
+        1,
+        1,
+    );
+    let points = [(fixture.opening_batch.num_groups(), &fixture.prepared_point)];
+    assert!(matches!(
+        prepare_coefficient_packing_batch_semantics(CoefficientPackingBatchSemanticInputs {
+            level_params: &fixture.params,
+            opening_batch: &fixture.opening_batch,
+            relation_plan: &fixture.relation_plan,
+            relation: &fixture.relation,
+            prepared_points: &points,
+            alpha: E::from_u64(3),
+            tau1: &fixture.tau1,
+            claim_coefficients: &fixture.claim_coefficients,
+        }),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn packing_batch_rejects_claim_range_from_a_different_opening_batch() {
+    let fixture = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        64,
+        64,
+        4,
+        4,
+        10,
+        1,
+        1,
+    );
+    let other_batch = OpeningClaimsLayout::new(10, 2).unwrap();
+    let other_plan = RelationRangeImagePlan::new(
+        fixture.relation_plan.relation_witness_geometry().clone(),
+        fixture.relation_plan.relation_address_geometry(),
+        fixture.relation_plan.digit_range_plan(),
+        fixture.relation_plan.witness_layout().clone(),
+        &other_batch,
+    )
+    .unwrap();
+    let points = [(0, &fixture.prepared_point)];
+    assert!(matches!(
+        prepare_coefficient_packing_batch_semantics(CoefficientPackingBatchSemanticInputs {
+            level_params: &fixture.params,
+            opening_batch: &fixture.opening_batch,
+            relation_plan: &other_plan,
+            relation: &fixture.relation,
+            prepared_points: &points,
+            alpha: E::from_u64(3),
+            tau1: &fixture.tau1,
+            claim_coefficients: &fixture.claim_coefficients,
+        }),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
 
 #[test]
 fn packing_rejects_tensor_projected_commitment_source() {
@@ -35,7 +102,7 @@ fn packing_rejects_tensor_projected_commitment_source() {
     );
     let extension_degree = <E as ExtField<F>>::DEGREE;
     fixture.params.source_encoding =
-        crate::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree };
+        akita_params::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree };
     assert!(matches!(
         RelationWitnessGeometry::for_level(
             &fixture.params,
@@ -558,7 +625,7 @@ fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
         })
         .is_err()
     );
-    assert!(
+    assert!(matches!(
         prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
             level_params: &fixture.params,
             opening_batch: &fixture.opening_batch,
@@ -569,9 +636,9 @@ fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
             alpha: E::from_u64(3),
             tau1: &fixture.tau1,
             claim_coefficients: &fixture.claim_coefficients,
-        })
-        .is_err()
-    );
+        }),
+        Err(AkitaError::Internal(_))
+    ));
     let wrong_arity_point = PreparedSubringCoefficientPackingPoint::new(
         fixture.prepared_point.geometry(),
         BasisMode::Lagrange,

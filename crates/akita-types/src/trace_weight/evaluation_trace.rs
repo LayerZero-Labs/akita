@@ -8,9 +8,10 @@ use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 use crate::field_reduction::trace_open_ring_row;
-use crate::{
+use crate::{FpExtEncoding, PreparedOpeningPoint};
+use akita_params::{
     dispatch_for_field, gadget_row_scalars, BasisMode, CommittedGroupParams, FlatBooleanDomain,
-    FpExtEncoding, OpeningClaimsLayout, PreparedOpeningPoint, WitnessLayout,
+    OpeningClaimsLayout, WitnessLayout,
 };
 
 /// Reject extension degrees with no evaluation-trace implementation.
@@ -144,7 +145,9 @@ where
     if inputs.prepared_points.len() != inputs.opening_batch.num_groups()
         || inputs.claim_coefficients.len() != inputs.opening_batch.num_total_polynomials()
     {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidInput(
+            "evaluation trace prepared-point or claim coefficient count mismatch".into(),
+        ));
     }
     if inputs.relation_coefficient_block_len == 0
         || !inputs.relation_coefficient_block_len.is_power_of_two()
@@ -199,12 +202,13 @@ where
                             })
                     })?;
             if covered_blocks != group_params.num_live_blocks() {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::InvalidSetup(
+                    "trace witness block coverage disagrees with the group parameters".into(),
+                ));
             }
-            let prepared = inputs
-                .prepared_points
-                .get(group_index)
-                .ok_or(AkitaError::InvalidProof)?;
+            let prepared = inputs.prepared_points.get(group_index).ok_or_else(|| {
+                AkitaError::Internal("validated trace group is missing its prepared point".into())
+            })?;
             let block_opening_point: Arc<[E]> = evaluation_trace_block_point(
                 &prepared.padded_point,
                 group_params.num_positions_per_block(),
@@ -236,7 +240,9 @@ where
                 }
             )?;
             if inner_trace.len() != group_dims.d_a() {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::Internal(
+                    "generated inner trace length disagrees with the group ring dimension".into(),
+                ));
             }
             let opening_digit_weights: Arc<[E]> = gadget_row_scalars::<F>(
                 group_params.num_digits_open(),
@@ -263,9 +269,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        basis_weights, basis_weights_prefix, embed_ring_subfield_scalar, embed_ring_subfield_vector,
-    };
+    use crate::{embed_ring_subfield_scalar, embed_ring_subfield_vector};
+    use akita_params::{basis_weights, basis_weights_prefix};
     use jolt_field::{Ext2, Field, Fp32, FpExt4, FpExt8};
     use rand::{rngs::StdRng, SeedableRng};
 

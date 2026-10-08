@@ -48,7 +48,7 @@ fn direct_setup_scan_work_prices_fields_and_ring_count() {
 
 #[test]
 fn proof_cost_tracks_query_budget_exhaustion() {
-    let limit = akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT;
+    let limit = akita_params::TRANSCRIPT_GRINDING_QUERY_LIMIT;
     let empty = ProofCost::new(0, 0, 0, 0).unwrap();
     assert!(!empty
         .checked_prepend(0, 0, 0, limit, 0)
@@ -74,7 +74,7 @@ fn proof_cost_tracks_query_budget_exhaustion() {
 
 #[test]
 fn oversized_candidate_is_skipped_while_valid_alternative_is_retained() {
-    let limit = akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT;
+    let limit = akita_params::TRANSCRIPT_GRINDING_QUERY_LIMIT;
     let suffix = ProofCost::new(0, 0, 0, 0).unwrap();
     let selected = [(10, limit), (20, 1)]
         .into_iter()
@@ -161,7 +161,7 @@ fn ring_dimension_domain_is_canonical_and_rejects_invalid_carriers() {
 #[test]
 fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
     use akita_config::{policy_of, proof_optimized::fp32::OneHot};
-    use akita_types::{CommitmentSliceCount, SisModulusProfileId};
+    use akita_params::{CommitmentSliceCount, SisModulusProfileId};
 
     let mut policy = policy_of::<OneHot>();
     policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;

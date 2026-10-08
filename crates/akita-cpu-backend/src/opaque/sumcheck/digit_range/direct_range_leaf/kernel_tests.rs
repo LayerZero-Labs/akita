@@ -25,7 +25,10 @@ fn kernel_sequences_and_lookahead_match_live_geometry() {
         )
         .unwrap();
         if let LowBasisRangeImageStorage::OctetPrefix(prefix) = &prover.range_image {
-            assert!(prefix.state.is_none());
+            assert!(matches!(
+                prefix.state,
+                DirectRangePrefixState::Round0 { .. }
+            ));
         }
         for (round, &kernel) in expected.iter().enumerate() {
             assert_eq!(prover.round_kernel(round), kernel);

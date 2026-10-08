@@ -45,7 +45,9 @@ pub(super) fn compile_et_block_range<E: Field>(
         let challenge_index = claim
             .checked_mul(plan.witness.num_live_blocks)
             .and_then(|base| base.checked_add(block))
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("relation scatter challenge index overflow".into())
+            })?;
         let (slice_index, slice_block) = plan.witness.slice_geometry.block_coordinates(block)?;
         for (digit, &gadget) in plan.gadgets.opening_gadget.iter().enumerate() {
             let constraint_scale = plan.rows.consistency_weight * gadget;
@@ -65,7 +67,9 @@ pub(super) fn compile_et_block_range<E: Field>(
                     .and_then(|base| base.checked_add(role_subcolumn))
                     .and_then(|base| base.checked_mul(plan.witness.depth_open))
                     .and_then(|base| base.checked_add(digit))
-                    .ok_or(AkitaError::InvalidProof)?;
+                    .ok_or_else(|| {
+                        AkitaError::Internal("relation E scatter setup column overflow".into())
+                    })?;
                 sink.add_e(
                     physical_start,
                     challenge_index,
@@ -81,14 +85,18 @@ pub(super) fn compile_et_block_range<E: Field>(
             .max_blocks_per_slice()
             .checked_mul(claim)
             .and_then(|base| base.checked_add(slice_block))
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("relation T scatter block claim index overflow".into())
+            })?;
         for (a_row, &a_row_weight) in plan.rows.a_row_weights.iter().enumerate() {
             let row_block_claim = plan
                 .witness
                 .n_a
                 .checked_mul(block_claim)
                 .and_then(|base| base.checked_add(a_row))
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal("relation T scatter row block claim index overflow".into())
+                })?;
             for (digit, &gadget) in plan.gadgets.commitment_gadget.iter().enumerate() {
                 let constraint_scale = a_row_weight * gadget;
                 for role_subcolumn in 0..plan.roles.b_subcolumns {
@@ -97,7 +105,9 @@ pub(super) fn compile_et_block_range<E: Field>(
                         .and_then(|base| base.checked_add(role_subcolumn))
                         .and_then(|base| base.checked_mul(plan.witness.depth_commit))
                         .and_then(|base| base.checked_add(digit))
-                        .ok_or(AkitaError::InvalidProof)?;
+                        .ok_or_else(|| {
+                            AkitaError::Internal("relation T scatter setup column overflow".into())
+                        })?;
                     let physical_start = unit.t_coefficient_index(
                         plan.roles.d_a,
                         plan.roles.d_b,
@@ -136,7 +146,9 @@ pub(super) fn compile_z_position_range<E: Field>(
             let setup_column = position
                 .checked_mul(plan.witness.depth_witness)
                 .and_then(|base| base.checked_add(witness_digit))
-                .ok_or(AkitaError::InvalidProof)?;
+                .ok_or_else(|| {
+                    AkitaError::Internal("relation Z scatter setup column overflow".into())
+                })?;
             for (fold_digit, &fold_scale) in plan.gadgets.fold_gadget.iter().enumerate() {
                 sink.add_z(
                     range.unit.z_coefficient_index(

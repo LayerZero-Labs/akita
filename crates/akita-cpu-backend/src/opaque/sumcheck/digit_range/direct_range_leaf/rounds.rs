@@ -22,7 +22,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         );
         let poly = match (&mut storage, kernel) {
             (LowBasisRangeImageStorage::OctetPrefix(prefix), _) => {
-                self.compute_octet_prefix_round(prefix)
+                self.compute_octet_prefix_round(&*prefix)
             }
             (LowBasisRangeImageStorage::Materialized(range_image), RoundKernel::LivePrefix) => {
                 let range_image = range_image.as_slice();
@@ -94,11 +94,8 @@ impl<E: Field + Ring + Unreduced + Fold> EqFactoredSumcheckInstanceProver<E>
             LowBasisRangeImageStorage::Materialized(Vec::new()),
         );
         self.range_image = match storage {
-            LowBasisRangeImageStorage::OctetPrefix(mut prefix) => {
-                match self.ingest_octet_prefix_challenge(&mut prefix, r) {
-                    Some(table) => LowBasisRangeImageStorage::Materialized(table),
-                    None => LowBasisRangeImageStorage::OctetPrefix(prefix),
-                }
+            LowBasisRangeImageStorage::OctetPrefix(prefix) => {
+                self.ingest_octet_prefix_challenge(prefix, r)
             }
             LowBasisRangeImageStorage::Materialized(table) => {
                 LowBasisRangeImageStorage::Materialized(self.ingest_generic_challenge(

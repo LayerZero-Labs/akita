@@ -7,11 +7,11 @@
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
+use akita_params::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
+#[cfg(test)]
+use akita_params::{OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey};
 use akita_schedules::PlannerPolicy;
 use akita_serialization::Valid;
-use akita_types::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
-#[cfg(test)]
-use akita_types::{OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::marker::PhantomData;
 use std::ops::Deref;
@@ -33,10 +33,10 @@ macro_rules! impl_multi_chunk_companion {
             fn schedule_family_name() -> &'static str {
                 $family
             }
-            const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
-                <$base as $crate::CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
+            const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
+                <$base as $crate::CommitmentConfig>::RING_DIMENSION_SCHEDULE;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
-            fn decomposition() -> akita_types::DecompositionParams {
+            fn decomposition() -> akita_params::DecompositionParams {
                 <$base as $crate::CommitmentConfig>::decomposition()
             }
             fn ring_challenge_config(
@@ -44,7 +44,7 @@ macro_rules! impl_multi_chunk_companion {
             ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
                 <$base as $crate::CommitmentConfig>::ring_challenge_config(d)
             }
-            fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+            fn sis_modulus_profile() -> akita_params::SisModulusProfileId {
                 <$base as $crate::CommitmentConfig>::sis_modulus_profile()
             }
             fn opening_basis_range() -> (u32, u32) {
@@ -53,13 +53,13 @@ macro_rules! impl_multi_chunk_companion {
             fn inner_basis_range() -> (u32, u32) {
                 <$base as $crate::CommitmentConfig>::inner_basis_range()
             }
-            fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+            fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
                 <$base as $crate::CommitmentConfig>::committed_source_class()
             }
             fn recursive_setup_planning() -> bool {
                 <$base as $crate::CommitmentConfig>::recursive_setup_planning()
             }
-            fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
+            fn chunked_witness_cfg() -> akita_params::ChunkedWitnessCfg {
                 $profile.cfg()
             }
         }
@@ -79,7 +79,7 @@ pub mod test_support;
 mod transcript_binding;
 mod transcript_grinding_plan;
 pub use akita_schedules::ResolvedScheduleRow;
-pub use akita_schedules::RingDimensionScheduleMode;
+pub use akita_schedules::RingDimensionSchedule;
 pub use akita_schedules::{
     ValidatedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
@@ -110,12 +110,12 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         },
         setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
-        ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,
+        ring_dimension_schedule: Cfg::RING_DIMENSION_SCHEDULE,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
-        sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
-        sis_table_digest: akita_types::sis::SisTableDigest::CURRENT,
-        sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
+        sis_security_policy: akita_params::DEFAULT_SIS_SECURITY_POLICY,
+        sis_table_digest: akita_params::sis::SisTableDigest::CURRENT,
+        sis_l2_table_digest: akita_params::SisL2TableDigest::CURRENT,
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         inner_basis_range: Cfg::inner_basis_range(),
@@ -278,7 +278,7 @@ fn row_fits_setup_capacity(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<bool, AkitaError> {
-    akita_types::ScheduleLookupKey {
+    akita_params::ScheduleLookupKey {
         final_group: row.profiles().final_group.group,
         precommitteds: row.profiles().precommitteds.clone(),
     }
@@ -321,7 +321,7 @@ pub fn validate_config_policy<Cfg: CommitmentConfig>() -> Result<(), AkitaError>
 }
 
 /// Root group's source-specific policy for offline schedule generation.
-pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::HonestFoldPolicySpec {
+pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_params::sis::HonestFoldPolicySpec {
     Cfg::committed_source_class()
         .honest_fold_policy(<Cfg::Field as CanonicalEncoding>::MODULUS_BITS)
 }
@@ -333,7 +333,7 @@ pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::Hones
 /// Returns [`AkitaError::InvalidSetup`] when `Cfg` does not declare a unit-one-hot source.
 pub fn unit_onehot_source_chunk_size<Cfg: CommitmentConfig>() -> Result<usize, AkitaError> {
     match Cfg::committed_source_class() {
-        akita_types::sis::CommittedSourceClass::UnitOneHot { source_chunk_size } => {
+        akita_params::sis::CommittedSourceClass::UnitOneHot { source_chunk_size } => {
             Ok(source_chunk_size)
         }
         source_class => Err(AkitaError::InvalidSetup(format!(
@@ -371,8 +371,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// [`field_reduction::embed_subfield`]: akita_types::field_reduction::embed_subfield
     const EXT_DEGREE: usize = <Self::ExtField as ExtField<Self::Field>>::DEGREE;
 
-    /// Uniform or bounded-adaptive ring-dimension schedule policy.
-    const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode;
+    /// Bounded adaptive ring-dimension search and suffix domains.
+    const RING_DIMENSION_SCHEDULE: RingDimensionSchedule;
 
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;
@@ -424,12 +424,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     }
 
     /// Declared committed-source class: the canonical source representation.
-    fn committed_source_class() -> akita_types::sis::CommittedSourceClass;
+    fn committed_source_class() -> akita_params::sis::CommittedSourceClass;
 
     /// This config's validated producer contract: declared class plus bound.
-    fn committed_source_contract() -> Result<akita_types::sis::CommittedSourceContract, AkitaError>
+    fn committed_source_contract() -> Result<akita_params::sis::CommittedSourceContract, AkitaError>
     {
-        akita_types::sis::CommittedSourceContract::try_new(
+        akita_params::sis::CommittedSourceContract::try_new(
             Self::committed_source_class(),
             Self::decomposition(),
         )
@@ -455,14 +455,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Catalog-bound schedule selection objective.
     ///
-    /// Uniform/direct presets minimize proof payload. Adaptive-dimension and
-    /// recursive setup presets minimize the first remaining direct setup
-    /// footprint before payload. The policy is part of catalog identity.
+    /// Direct presets minimize first-direct setup capacity before proof and work,
+    /// across the adaptive dimension domain. Recursive setup presets
+    /// first minimize the padded total setup envelope. The policy is part of
+    /// catalog identity.
     fn selection_policy() -> akita_schedules::SelectionPolicyId {
-        akita_schedules::SelectionPolicyId::for_policy(
-            Self::recursive_setup_planning(),
-            Self::RING_DIMENSION_SCHEDULE_MODE,
-        )
+        akita_schedules::SelectionPolicyId::for_policy(Self::recursive_setup_planning())
     }
 
     /// Stable trusted schedule family identity for external artifact loading.
@@ -491,8 +489,13 @@ mod tests {
             "test_single_extension"
         }
 
-        const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
-            RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
+        const RING_DIMENSION_SCHEDULE: RingDimensionSchedule = RingDimensionSchedule {
+            num_search_levels: 2,
+            suffix_dimensions: &[64],
+            potential_a_dimensions: &[64],
+            potential_b_dimensions: &[64],
+            potential_d_dimensions: &[64],
+        };
 
         fn decomposition() -> DecompositionParams {
             DecompositionParams {
@@ -519,8 +522,8 @@ mod tests {
             (3, 3)
         }
 
-        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
-            akita_types::sis::CommittedSourceClass::BalancedSignedDigit
+        fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
+            akita_params::sis::CommittedSourceClass::BalancedSignedDigit
         }
     }
 
@@ -533,8 +536,8 @@ mod tests {
         }
 
         const EXT_DEGREE: usize = 2;
-        const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
-            SingleExtensionConfig::RING_DIMENSION_SCHEDULE_MODE;
+        const RING_DIMENSION_SCHEDULE: RingDimensionSchedule =
+            SingleExtensionConfig::RING_DIMENSION_SCHEDULE;
 
         fn decomposition() -> DecompositionParams {
             SingleExtensionConfig::decomposition()
@@ -552,7 +555,7 @@ mod tests {
             SingleExtensionConfig::opening_basis_range()
         }
 
-        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+        fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
             SingleExtensionConfig::committed_source_class()
         }
     }
@@ -578,10 +581,10 @@ mod tests {
 
 #[cfg(test)]
 mod sis_schedule_width_audit {
-    use akita_types::sis::{min_secure_l2_rank, min_secure_rank, InnerCommitSecurityRoute};
+    use akita_params::sis::{min_secure_l2_rank, min_secure_rank, InnerCommitSecurityRoute};
 
     pub(super) fn assert_schedule_stays_within_audited_sis_widths(
-        schedule: &akita_types::FoldSchedule,
+        schedule: &akita_params::FoldSchedule,
         num_vars: usize,
     ) {
         for (level_idx, lp) in std::iter::once(&schedule.root.params)
@@ -676,10 +679,10 @@ mod fp128_policy_tests {
         );
         for &num_vars in num_vars_values {
             let group = match crate::honest_fold_policy_of::<Cfg>() {
-                akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
+                akita_params::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
                     PolynomialGroupLayout::singleton(num_vars)
                 }
-                akita_types::sis::HonestFoldPolicySpec::UnitOneHot(_) => {
+                akita_params::sis::HonestFoldPolicySpec::UnitOneHot(_) => {
                     PolynomialGroupLayout::new(num_vars, 1)
                 }
             };
@@ -699,12 +702,8 @@ mod fp128_policy_tests {
     #[test]
     fn fp128_onehot_uses_adaptive_schedule_policy() {
         assert!(matches!(
-            fp128::OneHot::RING_DIMENSION_SCHEDULE_MODE,
-            RingDimensionScheduleMode::AdaptiveDimension { .. }
-        ));
-        assert!(matches!(
-            <fp128::OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
-            RingDimensionScheduleMode::AdaptiveDimension {
+            <fp128::OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE,
+            RingDimensionSchedule {
                 num_search_levels: 2,
                 suffix_dimensions: &[64],
                 ..
@@ -715,12 +714,8 @@ mod fp128_policy_tests {
     #[test]
     fn fp128_dense_uses_adaptive_schedule_policy() {
         assert!(matches!(
-            fp128::Dense::RING_DIMENSION_SCHEDULE_MODE,
-            RingDimensionScheduleMode::AdaptiveDimension { .. }
-        ));
-        assert!(matches!(
-            <fp128::Dense as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
-            RingDimensionScheduleMode::AdaptiveDimension {
+            <fp128::Dense as CommitmentConfig>::RING_DIMENSION_SCHEDULE,
+            RingDimensionSchedule {
                 num_search_levels: 2,
                 suffix_dimensions: &[64],
                 ..
@@ -926,7 +921,7 @@ mod fp128_policy_tests {
             let mut prefix = *step.params.setup_prefix().expect("setup-prefix group");
             let blocks = prefix.profile.blocks;
             let omitted_tail_rings = blocks.live_ring_elements_per_claim - 1;
-            prefix.profile.blocks = akita_types::BlockGeometry::new(
+            prefix.profile.blocks = akita_params::BlockGeometry::new(
                 omitted_tail_rings,
                 blocks.positions_per_block,
                 omitted_tail_rings.div_ceil(blocks.positions_per_block),

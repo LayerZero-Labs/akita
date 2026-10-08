@@ -130,7 +130,7 @@ fn accumulate_indices<F, I, const D: usize>(
     sources: &[DecomposeSource<'_, F, I>],
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
-) -> Vec<[i32; D]>
+) -> Result<Vec<[i32; D]>, AkitaError>
 where
     F: Field,
     I: OneHotIndex,
@@ -142,7 +142,7 @@ where
             ring_dimension = D,
         )
         .entered();
-        prepare_rotations::<D>(challenges)
+        prepare_rotations::<D>(challenges)?
     };
     let position_chunk = decompose_position_chunk::<F, I, D>(sources, num_positions_per_block, 1);
     let position_tasks = num_positions_per_block.div_ceil(position_chunk);
@@ -182,7 +182,7 @@ where
                 }
             }
         });
-    compressed
+    Ok(compressed)
 }
 
 fn accumulate_indices_chunked<F, I, const D: usize>(
@@ -190,13 +190,13 @@ fn accumulate_indices_chunked<F, I, const D: usize>(
     challenges: &[SparseChallenge],
     chunk_ranges: &[std::ops::Range<usize>],
     num_positions_per_block: usize,
-) -> Vec<Vec<[i32; D]>>
+) -> Result<Vec<Vec<[i32; D]>>, AkitaError>
 where
     F: Field,
     I: OneHotIndex,
 {
     if chunk_ranges.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let rotations = {
         let _span = tracing::info_span!(
@@ -205,7 +205,7 @@ where
             ring_dimension = D,
         )
         .entered();
-        prepare_rotations::<D>(challenges)
+        prepare_rotations::<D>(challenges)?
     };
     let num_chunks = chunk_ranges.len();
     let position_chunk =
@@ -256,7 +256,7 @@ where
                     }
                 });
         });
-    chunks
+    Ok(chunks)
 }
 
 fn expand_onehot_accum<const D: usize>(
@@ -357,7 +357,7 @@ impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
             challenges,
             chunk_ranges,
             num_positions_per_block,
-        );
+        )?;
         Ok(cfg_into_iter!(accumulators)
             .map(|accumulator| finish_decompose_fold(accumulator, num_digits))
             .collect())
@@ -383,7 +383,7 @@ impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
             num_positions_per_block,
         )?;
         let compressed =
-            accumulate_indices::<F, I, D>(&sources, challenges, num_positions_per_block);
+            accumulate_indices::<F, I, D>(&sources, challenges, num_positions_per_block)?;
         Ok(finish_decompose_fold(compressed, num_digits))
     }
 }

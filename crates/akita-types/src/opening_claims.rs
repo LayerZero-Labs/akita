@@ -1,10 +1,11 @@
 //! Public opening claims and layout-only opening geometry.
 
-use crate::layout::opening_layout::{OpeningClaimsLayout, PolynomialGroupLayout};
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupDescriptor;
-use crate::{CommittedGroup, GrindingSite, OpeningScheduleSelection};
+use crate::CommittedGroup;
 use akita_error::{checked, AkitaError};
+use akita_params::layout::opening_layout::{OpeningClaimsLayout, PolynomialGroupLayout};
+use akita_params::{GrindingSite, OpeningScheduleSelection};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 /// Public claims and commitment payload for one polynomial group.
@@ -157,11 +158,15 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     /// Validate group and count consistency.
     pub fn check(&self) -> Result<(), AkitaError> {
         if self.groups.is_empty() || self.checked_num_total_polynomials()? == 0 {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "opening claims must be nonempty".into(),
+            ));
         }
         for group in &self.groups {
             if group.evaluations.is_empty() {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::InvalidInput(
+                    "opening claim group evaluations must be nonempty".into(),
+                ));
             }
         }
         Ok(())
@@ -198,7 +203,9 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
                 .iter()
                 .map(PolynomialGroupClaims::num_evaluations),
         )
-        .ok_or(AkitaError::InvalidProof)
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("opening claim polynomial count overflows usize".into())
+        })
     }
 
     /// Borrow one group's evaluations.
@@ -206,7 +213,9 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
         self.groups
             .get(g)
             .map(PolynomialGroupClaims::evaluations)
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("opening evaluation group index is out of range".into())
+            })
     }
 
     /// Borrow one group's complete opening point.
@@ -214,7 +223,9 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
         self.groups
             .get(g)
             .map(PolynomialGroupClaims::point)
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("opening point group index is out of range".into())
+            })
     }
 
     /// Borrow one group's commitment.
@@ -222,7 +233,9 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
         self.groups
             .get(g)
             .map(PolynomialGroupClaims::commitment)
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("opening commitment group index is out of range".into())
+            })
     }
 
     /// Commitment groups in transcript order.
@@ -277,6 +290,54 @@ mod tests {
     use jolt_field::{Prime128OffsetA7F7, Ring, Zero};
 
     type F = Prime128OffsetA7F7;
+
+    #[test]
+    fn invalid_claim_arguments_name_the_bad_collection_or_index() {
+        let empty = OpeningClaims::<F> { groups: vec![] };
+        assert!(matches!(
+            empty.check(),
+            Err(AkitaError::InvalidInput(message)) if message.contains("claims must be nonempty")
+        ));
+        let group =
+            PolynomialGroupClaims::new(vec![F::zero()], vec![F::zero()], ()).expect("valid group");
+        let mut claims = OpeningClaims::from_groups(vec![group]).expect("valid claims");
+        assert!(matches!(
+            claims.group_evaluations(1),
+            Err(AkitaError::InvalidInput(message)) if message.contains("evaluation group index")
+        ));
+        assert!(matches!(
+            claims.group_point(1),
+            Err(AkitaError::InvalidInput(message)) if message.contains("point group index")
+        ));
+        assert!(matches!(
+            claims.group_commitment(1),
+            Err(AkitaError::InvalidInput(message)) if message.contains("commitment group index")
+        ));
+        claims.groups.push(PolynomialGroupClaims {
+            point: vec![F::zero()].into(),
+            evaluations: vec![],
+            commitment: (),
+        });
+        assert!(matches!(
+            claims.check(),
+            Err(AkitaError::InvalidInput(message)) if message.contains("group evaluations")
+        ));
+    }
+
+    #[test]
+    fn zero_sized_claim_counts_reject_total_overflow() {
+        let claims = OpeningClaims {
+            groups: vec![
+                PolynomialGroupClaims::new(Vec::<()>::new(), vec![(); usize::MAX], ())
+                    .expect("first group"),
+                PolynomialGroupClaims::new(Vec::<()>::new(), vec![()], ()).expect("second group"),
+            ],
+        };
+        assert!(matches!(
+            claims.checked_num_total_polynomials(),
+            Err(AkitaError::InvalidInput(message)) if message.contains("polynomial count overflows")
+        ));
+    }
 
     #[test]
     fn groups_own_independent_points() {
@@ -379,15 +440,17 @@ mod tests {
             .expect("aggregate layout");
 
         assert_eq!(aggregate, PolynomialGroupLayout::new(10, 3));
-        let final_only_bytes = crate::extension_opening_reduction_level_bytes(128, 4, final_group)
-            .expect("final-only EOR bytes");
-        let aggregate_bytes = crate::extension_opening_reduction_level_bytes(128, 4, aggregate)
-            .expect("aggregate EOR bytes");
+        let final_only_bytes =
+            akita_params::extension_opening_reduction_level_bytes(128, 4, final_group)
+                .expect("final-only EOR bytes");
+        let aggregate_bytes =
+            akita_params::extension_opening_reduction_level_bytes(128, 4, aggregate)
+                .expect("aggregate EOR bytes");
         assert!(final_only_bytes > 0);
-        let extra_partial_bytes = 2 * 4 * crate::field_bytes(128);
+        let extra_partial_bytes = 2 * 4 * akita_params::field_bytes(128);
         let extra_round_bytes =
-            2 * crate::EXTENSION_OPENING_REDUCTION_DEGREE * crate::field_bytes(128);
-        let extra_terminal_claim_bytes = 2 * crate::field_bytes(128);
+            2 * akita_params::EXTENSION_OPENING_REDUCTION_DEGREE * akita_params::field_bytes(128);
+        let extra_terminal_claim_bytes = 2 * akita_params::field_bytes(128);
         assert_eq!(
             aggregate_bytes - final_only_bytes,
             extra_partial_bytes + extra_round_bytes + extra_terminal_claim_bytes

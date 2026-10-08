@@ -2,10 +2,11 @@
 
 use super::{CompressionComputeBackend, OperationCtx};
 use akita_error::AkitaError;
-use akita_types::{
+use akita_params::{
     dispatch_for_field, field_modulus, CompressionChainPlan, CompressionChainWitness,
-    CompressionTerminalPayload, PackedNegativeBinary, RingRelationMode, RingVec,
+    CompressionTerminalPayload, PackedNegativeBinary, RingRelationMode,
 };
+use akita_types::RingVec;
 use jolt_field::{CanonicalEncoding, Field};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -103,7 +104,7 @@ fn quotient_from_products<F: Field, const D: usize>(
     negacyclic: &[akita_algebra::CyclotomicRing<F, D>],
 ) -> Result<RingVec<F>, AkitaError> {
     if cyclic.len() != negacyclic.len() {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "compression cyclic and negacyclic ranks disagree".into(),
         ));
     }
@@ -130,7 +131,7 @@ fn checked_sum_bytes(
         length
             .checked_mul(field_bytes)
             .and_then(|bytes| total.checked_add(bytes))
-            .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} overflow")))
+            .ok_or_else(|| AkitaError::Internal(format!("{context} overflow")))
     })
 }
 
@@ -145,7 +146,7 @@ where
     B: CompressionComputeBackend<F>,
 {
     if item_indices.is_empty() || item_indices.len() > MAX_COMPRESSION_RHS_BATCH {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "compression executor received an invalid bounded batch".into(),
         ));
     }
@@ -153,7 +154,7 @@ where
         .get(item_indices[0])
         .and_then(|item| item.plan.maps().get(map_index))
         .copied()
-        .ok_or_else(|| AkitaError::InvalidSetup("compression map is absent".into()))?;
+        .ok_or_else(|| AkitaError::Internal("compression batch first map is absent".into()))?;
     let relation_mode = items[item_indices[0]].relation_mode;
     if first_map.ring_dimension() != D
         || item_indices.iter().any(|&item_index| {
@@ -169,7 +170,7 @@ where
                 })
         })
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "compression execution batch contains mixed shapes".into(),
         ));
     }
@@ -191,7 +192,9 @@ where
                 .maps()
                 .get(map_index)
                 .copied()
-                .ok_or_else(|| AkitaError::InvalidSetup("compression map is absent".into()))?;
+                .ok_or_else(|| {
+                    AkitaError::Internal("compression digitization map is absent".into())
+                })?;
             PackedNegativeBinary::from_coefficients(map, &items[item_index].coefficients)
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -201,17 +204,15 @@ where
         .collect::<Result<Vec<_>, _>>()?;
     let digitization = digitization_started.elapsed();
     let packed_bytes = packed.iter().try_fold(0usize, |total, digits| {
-        total.checked_add(digits.bytes().len()).ok_or_else(|| {
-            AkitaError::InvalidSetup("compression packed batch bytes overflow".into())
-        })
+        total
+            .checked_add(digits.bytes().len())
+            .ok_or_else(|| AkitaError::Internal("compression packed batch bytes overflow".into()))
     })?;
     let expanded_rhs_bytes = expanded.iter().try_fold(0usize, |total, rows| {
         rows.len()
             .checked_mul(D)
             .and_then(|bytes| total.checked_add(bytes))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("compression expanded RHS bytes overflow".into())
-            })
+            .ok_or_else(|| AkitaError::Internal("compression expanded RHS bytes overflow".into()))
     })?;
     let views = expanded.iter().map(Vec::as_slice).collect::<Vec<_>>();
 
@@ -239,28 +240,28 @@ where
             .as_ref()
             .is_some_and(|outputs| outputs.len() != item_indices.len())
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "compression backend returned the wrong batch length".into(),
         ));
     }
     for (batch_index, ((&item_index, packed_digits), _)) in
         item_indices.iter().zip(packed).zip(expanded).enumerate()
     {
-        let negacyclic = negacyclic_outputs
-            .get(batch_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let negacyclic = negacyclic_outputs.get(batch_index).ok_or_else(|| {
+            AkitaError::Internal("compression negacyclic output batch is missing".into())
+        })?;
         if negacyclic.len() != first_map.output_rank() {
-            return Err(AkitaError::InvalidSetup(
-                "compression backend returned the wrong output rank".into(),
+            return Err(AkitaError::Internal(
+                "compression backend returned the wrong negacyclic rank".into(),
             ));
         }
         if let Some(cyclic_outputs) = &cyclic_outputs {
-            let cyclic = cyclic_outputs
-                .get(batch_index)
-                .ok_or(AkitaError::InvalidProof)?;
+            let cyclic = cyclic_outputs.get(batch_index).ok_or_else(|| {
+                AkitaError::Internal("compression cyclic output batch is missing".into())
+            })?;
             if cyclic.len() != first_map.output_rank() {
-                return Err(AkitaError::InvalidSetup(
-                    "compression backend returned the wrong output rank".into(),
+                return Err(AkitaError::Internal(
+                    "compression backend returned the wrong cyclic rank".into(),
                 ));
             }
             items[item_index]
@@ -269,7 +270,7 @@ where
         }
         let negacyclic_image = RingVec::from_ring_elems(negacyclic).coeffs().to_vec();
         if negacyclic_image.len() != first_map.output_coefficients() {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AkitaError::Internal(
                 "compression backend returned the wrong image length".into(),
             ));
         }
@@ -325,7 +326,7 @@ where
     for ((_, ring_dimension, _, _), item_indices) in groups {
         for chunk in item_indices.chunks(MAX_COMPRESSION_RHS_BATCH) {
             let report = dispatch_for_field!(
-                akita_types::ProtocolDispatchSlot::Compression,
+                akita_params::ProtocolDispatchSlot::Compression,
                 F,
                 ring_dimension,
                 |D| execute_chunk::<F, B, Id, D>(ctx, items, chunk, map_index)
@@ -384,14 +385,12 @@ where
             .len()
             .checked_mul(item.plan.field_bytes())
             .and_then(|bytes| total.checked_add(bytes))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("compression source byte total overflow".into())
-            })
+            .ok_or_else(|| AkitaError::Internal("compression source byte total overflow".into()))
     })?;
     let map_count = items.iter().try_fold(0usize, |total, item| {
         total
             .checked_add(item.plan.maps().len())
-            .ok_or_else(|| AkitaError::InvalidSetup("compression map count overflow".into()))
+            .ok_or_else(|| AkitaError::Internal("compression map count overflow".into()))
     })?;
     let max_maps = items
         .iter()
@@ -412,7 +411,7 @@ where
                 .checked_mul(item.plan.field_bytes())
                 .and_then(|bytes| total.checked_add(bytes))
                 .ok_or_else(|| {
-                    AkitaError::InvalidSetup("compression current image bytes overflow".into())
+                    AkitaError::Internal("compression current image bytes overflow".into())
                 })
         })?;
         report.max_current_image_bytes = report.max_current_image_bytes.max(current_image_bytes);
@@ -431,7 +430,7 @@ where
     report.executor_peak_scratch_bytes = report
         .max_expanded_rhs_bytes
         .checked_add(report.max_current_image_bytes)
-        .ok_or_else(|| AkitaError::InvalidSetup("compression peak scratch overflow".into()))?;
+        .ok_or_else(|| AkitaError::Internal("compression peak scratch overflow".into()))?;
 
     let mut outputs = Vec::with_capacity(items.len());
     for item in items {
@@ -440,14 +439,12 @@ where
             .retained_packed_witness_bytes
             .checked_add(witness.retained_bytes()?)
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("compression retained witness total overflow".into())
+                AkitaError::Internal("compression retained witness total overflow".into())
             })?;
         report.equivalent_i8_witness_bytes = report
             .equivalent_i8_witness_bytes
             .checked_add(item.plan.unpacked_witness_bytes()?)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("compression i8 witness total overflow".into())
-            })?;
+            .ok_or_else(|| AkitaError::Internal("compression i8 witness total overflow".into()))?;
         let terminal = CompressionTerminalPayload::new(item.plan, item.coefficients)?;
         report.terminal_bytes = report
             .terminal_bytes
@@ -457,11 +454,11 @@ where
                     .len()
                     .checked_mul(terminal.plan().field_bytes())
                     .ok_or_else(|| {
-                        AkitaError::InvalidSetup("compression terminal bytes overflow".into())
+                        AkitaError::Internal("compression terminal bytes overflow".into())
                     })?,
             )
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("compression terminal byte total overflow".into())
+                AkitaError::Internal("compression terminal byte total overflow".into())
             })?;
         let relation = match item.relation_mode {
             RingRelationMode::QuotientLift => {
@@ -469,7 +466,7 @@ where
                     .quotient_rows
                     .checked_add(item.quotients.len())
                     .ok_or_else(|| {
-                        AkitaError::InvalidSetup("compression quotient row count overflow".into())
+                        AkitaError::Internal("compression quotient row count overflow".into())
                     })?;
                 CompressionRelationOutput::QuotientLift {
                     quotients: item.quotients,
@@ -477,7 +474,9 @@ where
             }
             RingRelationMode::ReducedEvaluation => {
                 if !item.quotients.is_empty() {
-                    return Err(AkitaError::InvalidProof);
+                    return Err(AkitaError::Internal(
+                        "reduced compression evaluation unexpectedly retained quotients".into(),
+                    ));
                 }
                 CompressionRelationOutput::ReducedEvaluation
             }
@@ -499,7 +498,7 @@ mod tests {
     use super::*;
     use crate::opaque::{ComputeBackendSetup, CpuBackend};
     use crate::AkitaProverSetup;
-    use akita_types::{SetupMatrixCapacity, SisModulusProfileId};
+    use akita_params::{SetupMatrixCapacity, SisModulusProfileId};
     use jolt_field::{Prime128OffsetA7F7, Ring};
 
     type F = Prime128OffsetA7F7;
@@ -580,7 +579,7 @@ mod tests {
         );
         assert_eq!(
             batched[0].relation.quotient_lift().unwrap().len(),
-            akita_types::COMPRESSION_MAP_COUNT
+            akita_params::COMPRESSION_MAP_COUNT
         );
         assert_eq!(report.batches.len(), 2);
         assert!(report.batches.iter().all(|batch| batch.batch_size == 2));

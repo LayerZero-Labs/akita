@@ -11,12 +11,13 @@ use crate::workload::{
 use crate::workspace_schedules::load_workspace_scheme;
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_params::{
+    CommittedGroupParams, MultiChunkProfileId, PolynomialGroupLayout, ScheduleLookupKey,
+    SetupContributionMode,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_types::{
-    CommittedGroupParams, FpExtEncoding, MultiChunkProfileId, PolynomialGroupLayout,
-    ScheduleLookupKey, SetupContributionMode,
-};
+use akita_types::FpExtEncoding;
 use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 
@@ -598,10 +599,18 @@ fn run_profile_onehot_fp32(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_dense_fp32(nv: usize, num_polys: usize) {
-    type Cfg = fp32::Dense;
     assert_singleton_mode("dense_fp32", num_polys);
     let title = small_field_dense_title("fp32");
-    run_dense_mode_for::<fp32::Field, 256, Cfg>("dense_fp32", &title, nv);
+    match profile_setup_contribution_mode() {
+        SetupContributionMode::Direct => {
+            type Cfg = fp32::Dense;
+            run_dense_mode_for::<fp32::Field, 256, Cfg>("dense_fp32", &title, nv);
+        }
+        SetupContributionMode::Recursive => {
+            type Cfg = RecursiveCommitmentConfig<fp32::Dense>;
+            run_dense_mode_for::<fp32::Field, 256, Cfg>("dense_fp32", &title, nv);
+        }
+    }
 }
 
 fn run_profile_dense_fp64(nv: usize, num_polys: usize) {

@@ -1,5 +1,5 @@
 use akita_config::CommitmentConfig;
-use akita_types::{FoldSchedule, PolynomialGroupLayout, SetupContributionMode};
+use akita_params::{FoldSchedule, PolynomialGroupLayout, SetupContributionMode};
 
 pub(super) struct ProofSizeBudgets {
     planner_estimate: usize,
@@ -10,7 +10,7 @@ pub(super) fn proof_size_budgets<Cfg: CommitmentConfig>(
     schedule: &FoldSchedule,
     final_group: PolynomialGroupLayout,
 ) -> ProofSizeBudgets {
-    let key = akita_types::ScheduleLookupKey {
+    let key = akita_params::ScheduleLookupKey {
         final_group,
         precommitteds: schedule
             .root

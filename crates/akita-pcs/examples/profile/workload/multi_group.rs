@@ -11,11 +11,9 @@ use crate::report::{
 use crate::workspace_schedules::load_workspace_scheme;
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
+use akita_params::{BasisMode, FoldSchedule, PolynomialGroupLayout, SetupContributionMode};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_types::{
-    BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims, PolynomialGroupLayout, SetupContributionMode,
-};
+use akita_types::{FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 use rand::rngs::StdRng;
@@ -167,12 +165,12 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     let pre_key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
     let pre_descriptor = base_scheme
         .schedules()
-        .resolve_key(&akita_types::ScheduleLookupKey::single(pre_key))
+        .resolve_key(&akita_params::ScheduleLookupKey::single(pre_key))
         .expect("independent profile")
         .profiles()
         .final_group;
     let final_group = PolynomialGroupLayout::new(final_num_vars, final_num_polys);
-    let multi_group_key = akita_types::ScheduleLookupKey {
+    let multi_group_key = akita_params::ScheduleLookupKey {
         final_group,
         precommitteds: vec![pre_descriptor; PRE_GROUPS],
     };
@@ -293,7 +291,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             pre_openings.push(openings);
         }
 
-        let precommitteds = akita_types::PrecommittedGroupProfiles::from_profiles(
+        let precommitteds = akita_params::PrecommittedGroupProfiles::from_profiles(
             pre_commitments
                 .iter()
                 .map(|group| *group.profile())

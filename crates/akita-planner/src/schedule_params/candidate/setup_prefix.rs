@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct SetupPrefixSearchKey {
-    opening_method: akita_types::OpeningMethod,
+    opening_method: akita_params::OpeningMethod,
     ring_challenge: SparseChallengeConfig,
     log_basis_open: u32,
     n_prefix: usize,
@@ -119,13 +119,13 @@ impl SetupPrefixCandidateContext<'_> {
         &self,
         split: SetupPrefixSplit,
         inner_candidate: &InnerCommitmentCandidate,
-        outer_slice_count: akita_types::CommitmentSliceCount,
+        outer_slice_count: akita_params::CommitmentSliceCount,
     ) -> Result<Option<SetupPrefixFrontierEntry>, AkitaError> {
         let Some(outer_commit_matrix) =
             derive_outer_commitment_candidate(OuterCommitmentCandidateRequest {
                 policy: self.policy,
                 dimensions: self.dimensions,
-                payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+                payload_mode: akita_params::CommitmentPayloadMode::Compressed,
                 num_claims: 1,
                 num_live_blocks: split.num_live_blocks,
                 outer_slice_count,
@@ -140,26 +140,26 @@ impl SetupPrefixCandidateContext<'_> {
             version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::singleton(self.prefix_num_vars),
 
-            blocks: akita_types::BlockGeometry::new(
+            blocks: akita_params::BlockGeometry::new(
                 self.ring_slots,
                 split.num_positions_per_block,
                 split.num_live_blocks,
             ),
 
             outer_slice_count,
-            inner: akita_types::RoleParams::new(
-                akita_types::GadgetDigits::new(split.log_basis_inner, split.num_digits_inner),
+            inner: akita_params::RoleParams::new(
+                akita_params::GadgetDigits::new(split.log_basis_inner, split.num_digits_inner),
                 inner_candidate.inner_commit_matrix,
             ),
-            outer: akita_types::RoleParams::new(
-                akita_types::GadgetDigits::new(self.log_basis_open, self.num_digits_outer),
+            outer: akita_params::RoleParams::new(
+                akita_params::GadgetDigits::new(self.log_basis_open, self.num_digits_outer),
                 outer_commit_matrix,
             ),
         };
         let params = GroupOpenPhaseParams {
             setup_natural_len: None,
             profile,
-            opening: akita_types::GroupOpeningPlan {
+            opening: akita_params::GroupOpeningPlan {
                 opening_method: self.opening.method(),
                 fold_challenge_config: self.opening.challenge_config(),
                 log_basis_open: self.log_basis_open,
@@ -167,19 +167,19 @@ impl SetupPrefixCandidateContext<'_> {
                 num_digits_fold: inner_candidate.num_digits_fold,
             },
         };
-        let physical_width = akita_types::grouped_witness_body_coefficients(
+        let physical_width = akita_params::grouped_witness_body_coefficients(
             &params,
             // A setup prefix is a frozen standalone commitment, so canonical by
             // admission.
-            akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
+            akita_params::CommittedSourceEncoding::CanonicalCoefficientTable,
             self.dimensions,
             self.policy.claim_ext_degree,
             1,
             self.num_chunks,
         )?;
         let score = layout_candidate_score(physical_width, split.num_live_blocks, self.num_chunks)?;
-        let setup_fields = akita_types::setup_prefix_slot_field_elements(
-            &akita_types::scheduled_setup_prefix(self.n_prefix, params)
+        let setup_fields = akita_params::setup_prefix_slot_field_elements(
+            &akita_params::scheduled_setup_prefix(self.n_prefix, params)
                 .slot_id()
                 .expect("setup prefix group"),
         )?;
@@ -191,14 +191,14 @@ impl SetupPrefixCandidateContext<'_> {
 
 fn setup_prefix_slice_counts(
     num_live_blocks: usize,
-) -> impl Iterator<Item = akita_types::CommitmentSliceCount> {
-    akita_types::CommitmentSliceCount::ALL
+) -> impl Iterator<Item = akita_params::CommitmentSliceCount> {
+    akita_params::CommitmentSliceCount::ALL
         .into_iter()
         .filter(move |&count| {
             count
                 .validate_for_commitment(
                     0,
-                    akita_types::CommitmentPayloadMode::Compressed,
+                    akita_params::CommitmentPayloadMode::Compressed,
                     num_live_blocks,
                 )
                 .is_ok()
@@ -385,13 +385,13 @@ mod tests {
     fn setup_prefix_slicing_uses_standalone_precommitment_eligibility() {
         assert_eq!(
             setup_prefix_slice_counts(8)
-                .map(akita_types::CommitmentSliceCount::get)
+                .map(akita_params::CommitmentSliceCount::get)
                 .collect::<Vec<_>>(),
             vec![1, 2, 4, 8]
         );
         assert_eq!(
             setup_prefix_slice_counts(3)
-                .map(akita_types::CommitmentSliceCount::get)
+                .map(akita_params::CommitmentSliceCount::get)
                 .collect::<Vec<_>>(),
             vec![1, 2]
         );
@@ -441,7 +441,7 @@ mod tests {
 
         for log_basis_inner in min_basis..=max_basis {
             for position_index_bits in 0..=reduced_vars {
-                for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+                for outer_slice_count in akita_params::CommitmentSliceCount::ALL {
                     let guide = SetupPrefixLayoutGuide {
                         log_basis_inner,
                         position_index_bits,

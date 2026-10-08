@@ -2,7 +2,8 @@
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
-use akita_types::{PolynomialGroupLayout, ScheduleLookupKey};
+use akita_params::PolynomialGroupLayout;
+use akita_params::ScheduleLookupKey;
 
 fn catalog<Cfg: CommitmentConfig>() -> akita_config::TrustedScheduleCatalog<Cfg> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

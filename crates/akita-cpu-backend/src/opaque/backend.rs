@@ -5,9 +5,10 @@ use crate::opaque::owned_prefix::CachedSetupPrefix;
 use crate::opaque::{BackendIdentity, CpuProofSessionHandle, OperationBinding};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
+use akita_params::{FoldSchedule, OpeningClaimsLayout, SetupPrefixSlotId};
 use akita_prover::backend::ProofContext;
 use akita_serialization::Valid;
-use akita_types::{AkitaExpandedSetup, FoldSchedule, OpeningClaimsLayout, SetupPrefixSlotId};
+use akita_types::AkitaExpandedSetup;
 use core::marker::PhantomData;
 use jolt_field::{CanonicalEncoding, Field};
 use std::collections::BTreeMap;
@@ -94,9 +95,10 @@ impl<T: Send + Sync> SetupPrefixCache<T> {
         let mut derive = Some(derive);
         loop {
             let (cell, derive_here) = {
-                let mut cache = self.entries.lock().map_err(|_| {
-                    AkitaError::InvalidSetup("setup prefix cache lock poisoned".into())
-                })?;
+                let mut cache = self
+                    .entries
+                    .lock()
+                    .map_err(|_| AkitaError::Internal("setup prefix cache lock poisoned".into()))?;
                 match cache.get(id) {
                     Some(cell) => (Arc::clone(cell), false),
                     None => {
@@ -109,7 +111,7 @@ impl<T: Send + Sync> SetupPrefixCache<T> {
 
             if derive_here {
                 let derive = derive.take().ok_or_else(|| {
-                    AkitaError::InvalidSetup(
+                    AkitaError::Internal(
                         "setup prefix cache derivation was already consumed".into(),
                     )
                 })?;
@@ -119,9 +121,10 @@ impl<T: Send + Sync> SetupPrefixCache<T> {
                     cell: &cell,
                 };
                 let value = Arc::new(derive()?);
-                let mut state = cell.state.lock().map_err(|_| {
-                    AkitaError::InvalidSetup("setup prefix slot lock poisoned".into())
-                })?;
+                let mut state = cell
+                    .state
+                    .lock()
+                    .map_err(|_| AkitaError::Internal("setup prefix slot lock poisoned".into()))?;
                 *state = SetupPrefixCacheState::Ready(Arc::clone(&value));
                 cell.ready.notify_all();
                 drop(state);
@@ -132,12 +135,12 @@ impl<T: Send + Sync> SetupPrefixCache<T> {
             let mut state = cell
                 .state
                 .lock()
-                .map_err(|_| AkitaError::InvalidSetup("setup prefix slot lock poisoned".into()))?;
+                .map_err(|_| AkitaError::Internal("setup prefix slot lock poisoned".into()))?;
             loop {
                 match &*state {
                     SetupPrefixCacheState::Computing => {
                         state = cell.ready.wait(state).map_err(|_| {
-                            AkitaError::InvalidSetup("setup prefix slot lock poisoned".into())
+                            AkitaError::Internal("setup prefix slot lock poisoned".into())
                         })?;
                     }
                     SetupPrefixCacheState::Ready(value) => return Ok(Arc::clone(value)),
@@ -152,7 +155,7 @@ impl<T: Send + Sync> SetupPrefixCache<T> {
         self.entries
             .lock()
             .map(|cache| cache.len())
-            .map_err(|_| AkitaError::InvalidSetup("setup prefix cache lock poisoned".into()))
+            .map_err(|_| AkitaError::Internal("setup prefix cache lock poisoned".into()))
     }
 }
 
@@ -282,7 +285,7 @@ impl<F: Field, E> CpuBackend<F, E> {
     pub(crate) fn prepared(&self) -> Result<&CpuPreparedSetup<F>, AkitaError> {
         self.prepared
             .as_ref()
-            .ok_or_else(|| AkitaError::InvalidSetup("test backend has no owned setup".into()))
+            .ok_or_else(|| AkitaError::Internal("cpu backend has no owned setup".into()))
     }
 
     pub(crate) fn owner(&self) -> &Arc<BackendIdentity> {
@@ -350,7 +353,7 @@ impl<F: Field, E> CpuBackend<F, E> {
         let level = parent
             .fold_level()
             .checked_add(1)
-            .ok_or_else(|| AkitaError::InvalidInput("fold level overflow".into()))?;
+            .ok_or_else(|| AkitaError::Internal("fold level overflow".into()))?;
         let next = parent
             .for_level_operation(level, self.identity.next_operation_id()?)
             .with_group(None);

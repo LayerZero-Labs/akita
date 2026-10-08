@@ -202,7 +202,7 @@ setup-prefix commitment.
 - Recursive setup offloading for arbitrary base configurations. The current
   adapter wires only the fp128 one-hot and fp128 one-hot W8R2 companion
   catalogs; unsupported configurations return no recursive catalog.
-- Setup offloading at ring dimensions other than the supported uniform D64
+- Setup offloading at ring dimensions other than the supported A/B/D64
   shape.
 - Globally enumerating every suffix `(log_basis, m, r)` combination.
 - The future Pareto planner over proof bytes, verifier work, outgoing witness
@@ -297,7 +297,7 @@ both traversal and per-ring overhead.
 
 The objective intentionally does not begin with the maximum setup footprint
 over the complete direct schedule. Adaptive search gives the first two fold
-levels a wider parameter domain than the uniform suffix. On small rows, a
+levels a wider parameter domain than the equal-role suffix. On small rows, a
 second or later fold can consequently have a larger setup matrix than the root.
 Making that suffix maximum the leading direct objective can reward a shallow
 schedule that avoids the later matrix by stopping early and returning a larger
@@ -404,20 +404,17 @@ The external catalog binds:
 
 ```text
 cost model      = NoncePayloadAndSetupEnvelopeV2
-uniform direct policy = MinEstimatedExactProofAndWorkV5
-adaptive direct policy = MinFirstDirectSetupThenExactProofAndWorkV5
+direct policy = MinFirstDirectSetupThenExactProofAndWorkV5
 recursive policy = MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
 optional setup field budget = policy.setup_field_budget
 minimum offload contraction = policy.min_offloaded_witness_contraction
 ```
 
 The selection objective is an explicit catalog-identity input derived from the
-schedule mode. Uniform direct planning selects `MinEstimatedExactProofAndWorkV5`.
-Adaptive direct planning retains `MinFirstDirectSetupThenExactProofAndWorkV5`.
-Recursive setup planning selects
+setup mode. Adaptive direct planning selects
+`MinFirstDirectSetupThenExactProofAndWorkV5`. Recursive setup planning selects
 `MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6`. The scalar boundary
-disables recursive setup search but retains the adaptive objective when its
-dimension domain remains adaptive.
+disables recursive setup search and uses the direct objective.
 
 The planner does not use artifact registry contents to decide mode. Registry
 contents are setup-instance state and could differ between prover and verifier.
@@ -1318,7 +1315,7 @@ candidate was discarded rather than downgraded to direct. Generated rows stored
 a producer-side `SetupContributionMode`, replay recomputed the same threshold
 rule, and the existing proof-only comparator selected the smallest surviving
 schedule. Distributed recursion was rejected wholesale and recursive setup
-required uniform D64.
+required A/B/D64.
 
 That policy was valuable as a bounded integration path: it established Stage 3,
 prefix slots, carried setup openings, and generated recursive catalogs without
@@ -1389,9 +1386,9 @@ Update the statuses of related specs when their deferred work is completed.
 - `book/src/how/proving/sumcheck-stages.md`
 - `specs/archive/2026-Q3/multi-group-batching.md`
 - `specs/heterogeneous-group-source-contracts.md`
-- `crates/akita-types/src/layout/setup_prefix_slots.rs`
+- `crates/akita-params/src/layout/setup_prefix_slots.rs`
 - `crates/akita-types/src/proof/setup_prefix.rs`
-- `crates/akita-types/src/layout/params.rs`
+- `crates/akita-params/src/layout/params.rs`
 - `crates/akita-types/src/opening_claims.rs`
 - `crates/akita-planner/src/schedule_params.rs`
 - `crates/akita-planner/src/emit/materialize.rs`

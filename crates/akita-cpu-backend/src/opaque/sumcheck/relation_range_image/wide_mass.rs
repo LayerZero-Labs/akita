@@ -9,7 +9,7 @@
 use jolt_field::{Field, Unreduced, Zero};
 
 /// Largest digit basis the scan serves.
-const DEFAULT_MAX_DIGIT_BASIS: usize = 8;
+const DEFAULT_MAX_DIGIT_BASIS: usize = 16;
 
 /// Mass slots in blocks that always receive whole digit rows.
 ///

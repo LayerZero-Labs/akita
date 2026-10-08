@@ -3,11 +3,11 @@ use akita_config::{
     TrustedScheduleCatalog, ValidatedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
-use akita_serialization::AkitaSerialize;
-use akita_types::{
+use akita_params::{
     ChunkedWitnessCfg, DecompositionParams, OpeningScheduleSelection, ScheduleRowDigest,
     SisModulusProfileId,
 };
+use akita_serialization::AkitaSerialize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Clone, Copy, Debug)]
@@ -23,8 +23,8 @@ impl CommitmentConfig for CountingDense {
         fp128::Dense::schedule_family_name()
     }
 
-    const RING_DIMENSION_SCHEDULE_MODE: akita_config::RingDimensionScheduleMode =
-        fp128::Dense::RING_DIMENSION_SCHEDULE_MODE;
+    const RING_DIMENSION_SCHEDULE: akita_config::RingDimensionSchedule =
+        fp128::Dense::RING_DIMENSION_SCHEDULE;
     const EXT_DEGREE: usize = fp128::Dense::EXT_DEGREE;
 
     fn decomposition() -> DecompositionParams {
@@ -50,7 +50,7 @@ impl CommitmentConfig for CountingDense {
         fp128::Dense::inner_basis_range()
     }
 
-    fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+    fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
         fp128::Dense::committed_source_class()
     }
 
@@ -101,7 +101,7 @@ fn serialized_slot_ids<Cfg: CommitmentConfig>() -> Vec<String> {
 
 fn recursive_prefix_fixture<Cfg: CommitmentConfig>() -> (usize, String) {
     let slots = serialized_slot_ids::<Cfg>();
-    let digest = akita_types::digest_descriptor_bytes(slots.join("\n").as_bytes());
+    let digest = akita_params::digest_descriptor_bytes(slots.join("\n").as_bytes());
     let digest = digest
         .into_iter()
         .map(|byte| format!("{byte:02x}"))
@@ -336,7 +336,7 @@ fn trusted_artifact_round_trip_preserves_rows_and_selection() {
         .expect("load trusted artifact");
 
     let key =
-        akita_types::ScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
+        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::new(14, 1));
     let checked_in_row = checked_in.resolve_key(&key).expect("checked-in row");
     let loaded_row = loaded.resolve_key(&key).expect("artifact row");
     assert_eq!(loaded.catalog_digest(), checked_in.catalog_digest());
@@ -688,7 +688,7 @@ fn setup_requirements_keep_precommits_when_the_grouped_row_does_not_fit() {
         profile.group.num_polynomials(),
     )
     .expect("independent precommit remains supported");
-    let expected = akita_types::commit_only_setup_field_elements(
+    let expected = akita_params::commit_only_setup_field_elements(
         &profile.inner.matrix,
         &profile.outer.matrix,
         profile.outer_slice_count,
@@ -878,5 +878,59 @@ fn out_of_range_digit_depths_are_rejected_before_digit_formulas() {
             first_recursive_group(value)["opening"][key] = u64::MAX.into();
         });
         assert_digit_range_rejection::<Cfg>(&bytes, "recursive fold 0 final group", role, &edited);
+    }
+}
+
+#[test]
+fn canonical_chunk_ownership_rejects_coverage_preserving_mutations() {
+    let catalog = checked_in_catalog::<fp128::OneHotMultiChunk>();
+    let key =
+        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::singleton(16));
+    let row = catalog.resolve_key(&key).unwrap();
+    let policy = policy_of::<fp128::OneHotMultiChunk>();
+    let admit = |schedule| {
+        akita_config::ResolvedScheduleRow::try_new(row.profiles().clone(), schedule, &policy)
+    };
+    admit(row.schedule().clone()).unwrap();
+    let mut mutations = Vec::new();
+    let mut changed = row.schedule().clone();
+    let consumer = &mut changed.recursive_folds[0].params;
+    let old_end = consumer.witness_chunk_ends[0];
+    assert!(old_end + 1 < consumer.witness_chunk_ends[1]);
+    consumer.witness_chunk_ends[0] += 1;
+    let ranges = consumer
+        .witness_block_ranges(0, consumer.witness_chunk.num_chunks)
+        .unwrap();
+    assert!(ranges.windows(2).all(|pair| pair[0].end == pair[1].start));
+    assert_eq!(ranges.first().unwrap().start, 0);
+    assert_eq!(ranges.last().unwrap().end, consumer.blocks().live_blocks);
+    mutations.push(changed);
+    let mut changed = row.schedule().clone();
+    changed.root.params.successor_block_len = changed
+        .root
+        .params
+        .successor_block_len
+        .map(|width| width * 2);
+    mutations.push(changed);
+    let mut changed = row.schedule().clone();
+    changed.recursive_folds[0].params.witness_chunk_ends.pop();
+    mutations.push(changed);
+    let mut changed = row.schedule().clone();
+    changed.root.output_witness_len += 64;
+    changed.recursive_folds[0].input_witness_len += 64;
+    mutations.push(changed);
+    // The pre-cutover geometry used proportional recursive ownership and no
+    // successor padding. Each half of that old/new combination must reject.
+    let mut changed = row.schedule().clone();
+    changed.recursive_folds[0].params.witness_chunk_ends.clear();
+    mutations.push(changed);
+    let mut changed = row.schedule().clone();
+    changed.root.params.successor_block_len = None;
+    mutations.push(changed);
+    for changed in mutations {
+        assert!(matches!(
+            admit(changed),
+            Err(akita_error::AkitaError::InvalidSetup(_))
+        ));
     }
 }

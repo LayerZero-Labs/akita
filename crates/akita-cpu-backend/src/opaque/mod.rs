@@ -171,9 +171,9 @@ where
         context: &crate::opaque::ProofContext,
         prepared_opening_handles: &[Self::PreparedOpeningHandle],
         commitment_material_handles: Vec<Self::CommitmentMaterialHandle>,
-        level: &akita_types::CommittedGroupParams,
-        opening_batch: &akita_types::OpeningClaimsLayout,
-        relation_rhs_layout: &akita_types::RelationRhsLayout,
+        level: &akita_params::CommittedGroupParams,
+        opening_batch: &akita_params::OpeningClaimsLayout,
+        relation_rhs_layout: &akita_params::RelationRhsLayout,
         group_commitments: &[akita_types::RingVec<F>],
     ) -> Result<crate::opaque::RecursiveWitnessBuildStart<F, E, Self::WitnessBuildHandle>, AkitaError>
     {
@@ -185,7 +185,11 @@ where
             &schedule
                 .recursive_folds
                 .get(context.fold_level() as usize - 1)
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "recursive witness build requires a nonterminal fold level".into(),
+                    )
+                })?
                 .params
         };
         if expected != level || (context.fold_level() == 0 && &root_layout != opening_batch) {
@@ -209,11 +213,13 @@ where
         {
             let opening_binding = opening.operation_binding();
             let material_binding = material.binding();
-            material.validate_public_commitment(
-                group_commitments
-                    .get(group_index)
-                    .ok_or(AkitaError::InvalidProof)?,
-            )?;
+            material.validate_public_commitment(group_commitments.get(group_index).ok_or_else(
+                || {
+                    AkitaError::Internal(
+                        "validated witness build public commitment is missing".into(),
+                    )
+                },
+            )?)?;
             let committed_id = match opening.source()? {
                 openings::RetainedOpeningSource::Commitment(committed) => committed.commitment_id,
                 openings::RetainedOpeningSource::Witness(witness) => {
@@ -259,6 +265,12 @@ where
         plan: &crate::opaque::ValidatedRecursiveWitnessPlan<'_, F>,
     ) -> Result<Self::WitnessHandle, AkitaError> {
         self.validate_binding(&build_handle.binding)?;
+        if fold_inputs.len() != build_handle.opening_batch.num_groups() {
+            return Err(AkitaError::InvalidSize {
+                expected: build_handle.opening_batch.num_groups(),
+                actual: fold_inputs.len(),
+            });
+        }
         let parent_binding = build_handle.binding.clone();
         let level = build_handle.level.clone();
         for (group_index, input) in fold_inputs.iter().enumerate() {
@@ -272,7 +284,11 @@ where
                 build_handle
                     .opening_bindings
                     .get(group_index)
-                    .ok_or(AkitaError::InvalidProof)?,
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "retained witness build opening binding is missing".into(),
+                        )
+                    })?,
             )?;
             binding.validate_group(group_index, build_handle.opening_batch.num_groups())?;
         }
@@ -378,7 +394,12 @@ where
                 &schedule
                     .recursive_folds
                     .get(parent.fold_level() as usize - 1)
-                    .ok_or(AkitaError::InvalidProof)?
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "retained stage 1 recursive fold is missing from the admitted schedule"
+                                .into(),
+                        )
+                    })?
                     .params
             };
             if plan.digit_range() != expected.digit_range_plan()
@@ -392,7 +413,7 @@ where
             }
         } else {
             #[cfg(not(test))]
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "relation handle has no admitted Stage 1 policy".into(),
             ));
         }
@@ -510,7 +531,12 @@ where
                 &schedule
                     .recursive_folds
                     .get(parent.fold_level() as usize - 1)
-                    .ok_or(AkitaError::InvalidProof)?
+                    .ok_or_else(|| {
+                        AkitaError::Internal(
+                            "retained stage 2 recursive fold is missing from the admitted schedule"
+                                .into(),
+                        )
+                    })?
                     .params
             };
             if plan.relation().relation_plan != expected.as_ref()
@@ -524,7 +550,7 @@ where
             }
         } else {
             #[cfg(not(test))]
-            return Err(AkitaError::InvalidInput(
+            return Err(AkitaError::Internal(
                 "relation handle has no admitted Stage 2 policy".into(),
             ));
         }
@@ -636,15 +662,15 @@ where
             || plan.ring_dimension() != terminal.d_a()
             || plan.positions_per_block() != terminal.blocks.positions_per_block
             || plan.live_blocks() != terminal.blocks.live_blocks
-            || plan.opening_method() != akita_types::OpeningMethod::EvaluationTrace
+            || plan.opening_method() != akita_params::OpeningMethod::EvaluationTrace
         {
             return Err(AkitaError::InvalidInput(
                 "native terminal opening differs from the admitted terminal fold".into(),
             ));
         }
         let binding = self.next_binding(parent)?;
-        let opening = akita_types::dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        let opening = akita_params::dispatch_for_field!(
+            akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
             F,
             plan.ring_dimension(),
             |D| {
@@ -723,7 +749,9 @@ where
             .layout
             .groups
             .first()
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| {
+                AkitaError::Internal("admitted terminal response layout has no group".into())
+            })?;
         if binding.fold_level() as usize != schedule.recursive_folds.len() + 1
             || plan.ring_dimension() != terminal.d_a()
             || plan.num_positions_per_block() != terminal.blocks.positions_per_block
@@ -741,8 +769,8 @@ where
                 "terminal fold probe differs from the admitted policy".into(),
             ));
         }
-        akita_types::dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        akita_params::dispatch_for_field!(
+            akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
             F,
             plan.ring_dimension(),
             |D| {
@@ -796,8 +824,8 @@ where
     ) -> Result<Vec<u8>, AkitaError> {
         let binding = terminal_fold_handle.binding();
         self.validate_binding(&binding)?;
-        akita_types::dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        akita_params::dispatch_for_field!(
+            akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
             F,
             plan.ring_dimension(),
             |D| {

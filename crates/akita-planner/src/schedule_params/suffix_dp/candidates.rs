@@ -1,7 +1,8 @@
 use akita_error::AkitaError;
-use akita_types::{
+use akita_params::ScheduleLookupKey;
+use akita_params::{
     try_extension_opening_reduction_level_bytes, CommitmentRingDims, CommittedGroupParams,
-    OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey, TerminalFoldParams,
+    OpeningClaimsLayout, PolynomialGroupLayout, TerminalFoldParams,
 };
 
 use crate::{
@@ -54,23 +55,16 @@ struct OpeningWork {
     opening: crate::schedule_params::PlannerOpeningCandidate,
     /// One opening per interchangeable precommitted class, in class order.
     precommitted_class_openings: Vec<crate::schedule_params::PlannerOpeningCandidate>,
-    opening_reduction_bytes: usize,
     purpose: OpeningPurpose,
-}
-
-pub(super) struct RawTerminalCandidate {
-    pub(super) params: CommittedGroupParams,
-    pub(super) opening_reduction_bytes: usize,
 }
 
 pub(super) struct RawFoldCandidate {
     pub(super) params: CommittedGroupParams,
     pub(super) next_witness_len: usize,
-    pub(super) opening_reduction_bytes: usize,
 }
 
 pub(super) struct GeneratedCandidates {
-    pub(super) terminal: Vec<RawTerminalCandidate>,
+    pub(super) terminal: Vec<CommittedGroupParams>,
     pub(super) folds: Vec<RawFoldCandidate>,
 }
 
@@ -120,7 +114,7 @@ pub(crate) fn packing_precommit_opening_products(
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,
     key: &ScheduleLookupKey,
-    precommitted_source_contracts: &[akita_types::sis::CommittedSourceContract],
+    precommitted_source_contracts: &[akita_params::sis::CommittedSourceContract],
 ) -> Result<Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>>, AkitaError> {
     if !crate::schedule_params::precommitted_groups_support_opening_dimension(
         key.precommitteds.iter(),
@@ -175,7 +169,7 @@ pub(crate) fn packing_precommit_opening_products(
 /// deterministic tie behavior from the original search order.
 fn opening_work_domain(
     ctx: &SuffixCtx<'_>,
-    state: SuffixState,
+    state: SuffixState<'_>,
     root_level_key: Option<&ScheduleLookupKey>,
     root_main_constraint: Option<&CommittedGroupParams>,
     guide_fold: Option<&CommittedGroupParams>,
@@ -257,11 +251,13 @@ fn opening_work_domain(
                 .map(crate::schedule_params::PlannerOpeningCandidate::evaluation_trace),
         };
         if let Some(trace_opening) = trace_opening {
-            if let Some(opening_reduction_bytes) = try_extension_opening_reduction_level_bytes(
+            if try_extension_opening_reduction_level_bytes(
                 policy.challenge_field_bits()?,
                 policy.claim_ext_degree,
                 opening_shape,
-            )? {
+            )?
+            .is_some()
+            {
                 let precommitted_class_openings = if let Some(root_key) = root_level_key {
                     precommitted_group_equivalence_classes(
                         &root_key.precommitteds,
@@ -286,7 +282,6 @@ fn opening_work_domain(
                             dimensions,
                             opening: trace_opening,
                             precommitted_class_openings,
-                            opening_reduction_bytes,
                             purpose,
                         });
                     }
@@ -301,7 +296,6 @@ fn opening_work_domain(
                         dimensions,
                         opening,
                         precommitted_class_openings: precommitted_class_openings.clone(),
-                        opening_reduction_bytes: 0,
                         purpose: OpeningPurpose::FoldOnly,
                     });
                 }
@@ -311,7 +305,6 @@ fn opening_work_domain(
                 dimensions,
                 opening,
                 precommitted_class_openings: Vec::new(),
-                opening_reduction_bytes: 0,
                 purpose: OpeningPurpose::FoldOnly,
             }));
         }
@@ -327,12 +320,12 @@ fn guided_opening(
     constraint: &CommittedGroupParams,
 ) -> Result<crate::schedule_params::PlannerOpeningCandidate, AkitaError> {
     let opening = match constraint.opening_method() {
-        akita_types::OpeningMethod::EvaluationTrace => {
+        akita_params::OpeningMethod::EvaluationTrace => {
             crate::schedule_params::PlannerOpeningCandidate::evaluation_trace(
                 constraint.fold_challenge_config(),
             )
         }
-        akita_types::OpeningMethod::SubringCoefficientPacking {
+        akita_params::OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension,
         } => crate::schedule_params::PlannerOpeningCandidate::coefficient_packing(
             absolute_level,
@@ -371,8 +364,8 @@ fn root_candidate_matches_constraint(
 }
 
 fn inner_route_kind_matches(
-    candidate: akita_types::InnerCommitSecurityRoute,
-    guide: akita_types::InnerCommitSecurityRoute,
+    candidate: akita_params::InnerCommitSecurityRoute,
+    guide: akita_params::InnerCommitSecurityRoute,
 ) -> bool {
     CandidateInnerRoute::of(candidate) == CandidateInnerRoute::of(guide)
 }
@@ -391,8 +384,8 @@ fn candidate_layout_guide(guide: &CommittedGroupParams) -> CandidateLayoutGuide 
 }
 
 fn setup_prefix_structure_matches(
-    candidate: Option<&akita_types::GroupOpenPhaseParams>,
-    guide: Option<&akita_types::GroupOpenPhaseParams>,
+    candidate: Option<&akita_params::GroupOpenPhaseParams>,
+    guide: Option<&akita_params::GroupOpenPhaseParams>,
 ) -> bool {
     match (candidate, guide) {
         (None, None) => true,
@@ -445,16 +438,16 @@ fn terminal_candidate_matches_guide(
         && candidate.blocks().positions_per_block == guide.blocks.positions_per_block
         && candidate.inner().digits.log_basis == guide.inner.digits.log_basis
         && candidate.open().digits.log_basis == guide.fold.log_basis
-        && candidate.opening_method() == akita_types::OpeningMethod::EvaluationTrace
+        && candidate.opening_method() == akita_params::OpeningMethod::EvaluationTrace
         && matches!(
             candidate.inner().matrix.security_route(),
-            akita_types::InnerCommitSecurityRoute::Linf(_)
+            akita_params::InnerCommitSecurityRoute::Linf(_)
         )
         && candidate.setup_prefix().is_none()
 }
 
 impl<'a> CandidateDomain<'a> {
-    pub(super) fn prepare(ctx: &SuffixCtx<'a>, state: SuffixState) -> Result<Self, AkitaError> {
+    pub(super) fn prepare(ctx: &SuffixCtx<'a>, state: SuffixState<'_>) -> Result<Self, AkitaError> {
         let policy = ctx.policy;
         let root_level_key = ctx.root_lookup_key.filter(|_| state.level == 0);
         let root_main_constraint = ctx.root_main_constraint.filter(|_| state.level == 0);
@@ -562,14 +555,7 @@ impl<'a> CandidateDomain<'a> {
             opening_shape,
         )?;
         let retain_split_frontier = state.topology.incoming_setup_prefix().is_some()
-            || policy.selection_policy == crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5
-            || matches!(
-                policy.ring_dimension_schedule_mode,
-                crate::RingDimensionScheduleMode::AdaptiveDimension {
-                    num_search_levels,
-                    ..
-                } if state.level < num_search_levels
-            );
+            || state.level < policy.ring_dimension_schedule.num_search_levels;
         let fold_policy = if retain_split_frontier {
             FoldCandidatePolicy::Frontier(SplitBoundPolicy::Enabled)
         } else {
@@ -597,7 +583,7 @@ impl<'a> CandidateDomain<'a> {
     pub(super) fn generate_recursive_for_opening_basis(
         &self,
         ctx: &SuffixCtx<'_>,
-        state: SuffixState,
+        state: SuffixState<'_>,
         open_lb: u32,
         setup_prefixes: &mut SetupPrefixSearchCache,
     ) -> Result<GeneratedCandidates, AkitaError> {
@@ -622,7 +608,7 @@ impl<'a> CandidateDomain<'a> {
                     let guide = self.guide_fold.map(candidate_layout_guide).or_else(|| {
                         self.guide_terminal.map(|guide| CandidateLayoutGuide {
                             position_index_bits: guide.blocks.position_index_bits(),
-                            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
+                            outer_slice_count: akita_params::CommitmentSliceCount::ONE,
                             inner_route: CandidateInnerRoute::of(
                                 guide.inner.matrix.security_route(),
                             ),
@@ -630,6 +616,7 @@ impl<'a> CandidateDomain<'a> {
                         })
                     });
                     let request = RecursiveCandidateRequest {
+                        input_chunks: state.input_chunks.map(|chunks| **chunks),
                         policy,
                         payload_mode,
                         opening: work.opening,
@@ -658,10 +645,7 @@ impl<'a> CandidateDomain<'a> {
                                 || self.guide_terminal.is_some_and(|guide| {
                                     terminal_candidate_matches_guide(&params, guide)
                                 }))
-                            .then_some(RawTerminalCandidate {
-                                params,
-                                opening_reduction_bytes: work.opening_reduction_bytes,
-                            })
+                            .then_some(params)
                         }));
                         for (candidate, next_witness_len) in views.folds {
                             if !relation_domain.admits(candidate.ring_relation_mode) {
@@ -680,7 +664,6 @@ impl<'a> CandidateDomain<'a> {
                             folds.push(RawFoldCandidate {
                                 params: candidate,
                                 next_witness_len,
-                                opening_reduction_bytes: work.opening_reduction_bytes,
                             });
                         }
                         continue;
@@ -694,12 +677,7 @@ impl<'a> CandidateDomain<'a> {
                                         || self.guide_terminal.is_some_and(|guide| {
                                             terminal_candidate_matches_guide(&params, guide)
                                         }))
-                                    .then_some(
-                                        RawTerminalCandidate {
-                                            params,
-                                            opening_reduction_bytes: work.opening_reduction_bytes,
-                                        },
-                                    )
+                                    .then_some(params)
                                 }),
                         );
                     }
@@ -724,7 +702,6 @@ impl<'a> CandidateDomain<'a> {
                         folds.push(RawFoldCandidate {
                             params: candidate,
                             next_witness_len,
-                            opening_reduction_bytes: work.opening_reduction_bytes,
                         });
                     }
                 }
@@ -742,7 +719,7 @@ impl<'a> CandidateDomain<'a> {
     pub(super) fn visit_root_batches(
         &self,
         ctx: &SuffixCtx<'_>,
-        state: SuffixState,
+        state: SuffixState<'_>,
         open_lb: u32,
         mut visit: impl FnMut(GeneratedCandidates) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
@@ -798,10 +775,7 @@ impl<'a> CandidateDomain<'a> {
                     if (!self.adaptation_guided || self.guide_terminal.is_some())
                         && work.purpose.allows_terminal()
                     {
-                        terminal.push(RawTerminalCandidate {
-                            params: params.clone(),
-                            opening_reduction_bytes: work.opening_reduction_bytes,
-                        });
+                        terminal.push(params.clone());
                     }
                     if (!self.adaptation_guided || self.guide_fold.is_some())
                         && work.purpose.allows_fold()
@@ -809,7 +783,6 @@ impl<'a> CandidateDomain<'a> {
                         folds.push(RawFoldCandidate {
                             params,
                             next_witness_len,
-                            opening_reduction_bytes: work.opening_reduction_bytes,
                         });
                     }
                 }

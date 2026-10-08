@@ -1,12 +1,12 @@
 #![allow(missing_docs)]
 
 use akita_error::AkitaError;
-use akita_types::golomb_rice::{golomb_rice_decode_vec, golomb_rice_encode_vec};
-use akita_types::{
-    decode_terminal_z_golomb_payload, golomb_rice_max_quotient_for_cap,
-    golomb_rice_total_wire_bits, golomb_rice_values_within_cap, golomb_rice_zigzag_width,
-    wire_rice_low_bits, TailSegmentGroupLayout,
+use akita_params::golomb_rice::{golomb_rice_decode_vec, golomb_rice_encode_vec};
+use akita_params::{
+    golomb_rice_max_quotient_for_cap, golomb_rice_total_wire_bits, golomb_rice_values_within_cap,
+    golomb_rice_zigzag_width, wire_rice_low_bits, TailSegmentGroupLayout,
 };
+use akita_types::decode_terminal_z_golomb_payload;
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
