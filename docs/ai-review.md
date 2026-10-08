@@ -228,7 +228,7 @@ This policy is explicitly separated from generic review instructions in the
 skill's automation contract so it can be adapted when reusing the workflow.
 
 Source, generators, consumers and tests outside `artifacts/` remain in scope.
-The unchanged 300,000-character diff budget and 150-file cap apply to the remaining
+The 2,000,000-character diff budget and 150-file cap apply to the remaining
 review scope. Mixed PRs can receive an approval recommendation for that scope;
 the recommendation does not cover artifact contents. Artifact-only PRs cannot
 receive one. Validate excluded contents separately through the repository's
@@ -241,12 +241,13 @@ Reviews are static analysis. They cannot run tests, inspect CI logs, fetch linke
 issues/URLs, or prove other stacked PRs contain a fix. Excluded content and these
 limits must be reported when relevant. A clean automated review is not an approval.
 
-Current local budgets: 150 in-scope changed files, 300,000 characters of combined full/delta
+Current local budgets: 150 in-scope changed files, 2,000,000 characters of combined full/delta
 diff (the delta covers only files the PR changes now or changed at the previously
 reviewed head, so base-branch changes merged in since count only where they touch
 those same files), 300,000 characters of eligible discussion, 250,000 bytes per source blob,
 32 MiB per artifact, 48 model turns, 24 reads/searches per turn, 2,000,000 characters
-of accumulated context, 20 new findings and 100 retained findings (in practice at
+of accumulated context (the diff is part of the first model message, so a diff near
+the diff budget leaves little room for reads and stops early), 20 new findings and 100 retained findings (in practice at
 most 60: three attempts of 20). The published review must also fit GitHub's
 60,000-character comment limit; if it would not, the model is asked to shorten its
 evidence and other text. Exceeding a
