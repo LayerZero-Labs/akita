@@ -20,7 +20,7 @@ pub use family::{Check, Mutation};
 pub use registry::{registry, Limits, Registry, Selector};
 
 use crate::gen::Domain;
-use akita_types::GroupCommitPhaseParams;
+use akita_params::GroupCommitPhaseParams;
 
 /// What a committed group's source must look like.
 #[derive(Clone, Copy, Debug)]

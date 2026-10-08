@@ -9,13 +9,11 @@ use crate::{oracle, stats};
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend, DensePoly, GroupContext, OneHotPoly};
 use akita_error::AkitaError;
+use akita_params::sis::CommittedSourceClass;
+use akita_params::GroupCommitPhaseParams;
+use akita_params::{BasisMode, OpeningScheduleSelection, PrecommittedGroupProfiles};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_types::sis::CommittedSourceClass;
-use akita_types::GroupCommitPhaseParams;
-use akita_types::{
-    BasisMode, CommittedGroup, GroupBatchStatement, OpeningClaims, OpeningScheduleSelection,
-    PolynomialGroupClaims, PrecommittedGroupProfiles,
-};
+use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use akita_verifier::AkitaVerifier;
 use jolt_field::{ExtField, Field, One, Zero};
 use std::collections::HashMap;
@@ -529,7 +527,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
         // groups transfer dense sources only.
         let imported = matches!(plan.origin, Origin::Imported { .. });
         let onehot_chunk = plan.source.onehot_only.or_else(|| {
-            let chunk = akita_types::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE;
+            let chunk = akita_params::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE;
             (!imported && reader.u8().is_multiple_of(4) && len >= chunk).then_some(chunk)
         });
         let mut tables = stats::time("generate", || match onehot_chunk {

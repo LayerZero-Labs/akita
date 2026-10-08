@@ -296,10 +296,10 @@ fn install() {
 }
 
 /// A bounded prover-side retry loop gave up: the fold grind (4096 nonces) or
-/// operator-norm challenge rejection (4096 draws per coordinate). Both return
-/// `InvalidInput`, but neither is an input validation failure.
+/// operator-norm challenge rejection (4096 draws per coordinate). Neither is
+/// an input validation failure, whatever error variant reports it.
 pub fn is_liveness_exhaustion(error: &AkitaError) -> bool {
-    matches!(error, AkitaError::InvalidInput(message)
+    matches!(error, AkitaError::InvalidInput(message) | AkitaError::Internal(message)
         if message.contains("fold grind exceeded")
             || message.contains("operator-norm rejection exceeded"))
 }

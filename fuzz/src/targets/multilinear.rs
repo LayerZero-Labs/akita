@@ -11,7 +11,7 @@ use crate::{gen, stats};
 use akita_algebra::{EqPolynomial, GruenSplitEq, SplitEqEvals};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_error::AkitaError;
-use akita_types::{
+use akita_params::{
     basis_weights, basis_weights_prefix, lagrange_weights, monomial_weights, BasisMode,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Fold};

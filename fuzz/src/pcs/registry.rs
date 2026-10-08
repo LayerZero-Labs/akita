@@ -4,7 +4,7 @@ use super::family::{Family, FamilyImpl};
 use super::{Case, SourceSpec};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::RecursiveCommitmentConfig;
-use akita_types::GroupCommitPhaseParams;
+use akita_params::GroupCommitPhaseParams;
 use std::sync::OnceLock;
 
 /// Per-process case limits chosen by the target.

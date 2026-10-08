@@ -10,12 +10,12 @@ use akita_cpu_backend::{
     GroupContext, OneHotPoly,
 };
 use akita_error::AkitaError;
+use akita_params::{BasisMode, FoldSchedule, OpeningClaimsLayout, OpeningScheduleSelection};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ProverBackend, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::{
-    AkitaVerifierSetup, BasisMode, CommittedGroup, FoldSchedule, FpExtEncoding,
-    GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, OpeningScheduleSelection,
+    AkitaVerifierSetup, CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims,
 };
 use akita_verifier::AkitaVerifier;
 use jolt_field::{

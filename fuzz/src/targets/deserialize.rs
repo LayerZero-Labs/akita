@@ -9,10 +9,11 @@
 use crate::input::Reader;
 use crate::stats;
 use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_params::OpeningScheduleSelection;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_types::{
     AkitaExpandedSetup, AkitaInstanceDescriptor, AkitaSetupDescriptor, AkitaSetupSeed,
-    AkitaVerifierSetup, CommittedGroup, OpeningScheduleSelection,
+    AkitaVerifierSetup, CommittedGroup,
 };
 
 /// Whether an accepted encoding must equal its re-encoding byte for byte.

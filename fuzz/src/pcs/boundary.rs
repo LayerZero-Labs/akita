@@ -10,7 +10,8 @@ use crate::input::{Reader, SplitMix64};
 use crate::stats;
 use akita_cpu_backend::{DensePoly, GroupContext, OneHotPoly};
 use akita_error::AkitaError;
-use akita_types::{OpeningClaims, OpeningScheduleSelection, PolynomialGroupClaims};
+use akita_params::OpeningScheduleSelection;
+use akita_types::{OpeningClaims, PolynomialGroupClaims};
 use jolt_field::{CanonicalEncoding, Field, One, Zero};
 use std::sync::Arc;
 
@@ -224,7 +225,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                     let mut digest = [0u8; 32];
                     reader.fill(&mut digest);
                     OpeningScheduleSelection {
-                        row_digest: akita_types::ScheduleRowDigest::from_bytes(digest),
+                        row_digest: akita_params::ScheduleRowDigest::from_bytes(digest),
                     }
                 };
                 let unchanged = unchanged && selection == fixture.proved.selection;
