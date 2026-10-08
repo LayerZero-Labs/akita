@@ -119,8 +119,8 @@ where
         "evals_mapped"
     );
     // The implementation and its only caller (`GruenSplitEq`) use suffix
-    // tables, `result[j] = eq(r[n-j..], ·)`; the doc comment says prefixes.
-    // See `fuzz/FINDINGS.md`. The relied-upon behavior is asserted.
+    // tables, `result[j] = eq(r[n-j..], ·)`, although the doc comment says
+    // prefixes. The behavior callers rely on is asserted.
     let cached = EqPolynomial::evals_cached(&point).expect("eq");
     assert_eq!(cached.len(), num_vars + 1, "evals_cached depth");
     for (depth, table) in cached.iter().enumerate() {

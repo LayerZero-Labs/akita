@@ -383,8 +383,8 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                         .map(|_| ())
                     })
                 });
-                // Prover-side shape checks shared with the verifier report
-                // `InvalidProof` by convention (see FINDINGS.md, F-3).
+                // Prover-side shape checks shared with the verifier may report
+                // `InvalidProof`, the verifier's error class for the same check.
                 expect_err(
                     name,
                     "a point of the wrong dimension",

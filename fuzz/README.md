@@ -7,7 +7,7 @@ the `akita-fuzz` binary (`runner/`, which does not link Akita); developer
 commands over the library are the `akita-fuzz-dev` binary (`devtool/`).
 
 - What is tested, how, and what is not: [`COVERAGE.md`](COVERAGE.md)
-- Findings from development runs: [`FINDINGS.md`](FINDINGS.md)
+- Regression inputs replayed by every campaign: [`regressions/`](regressions/README.md)
 - Target registry (single source of truth): [`campaign/targets.toml`](campaign/targets.toml)
 
 ## Quick start
@@ -55,9 +55,20 @@ Ctrl-C or `SIGTERM`; rerun the same command to resume.
      versions, target triple, sanitizer, features, Cargo.lock hash, build
      host) and `MANIFEST.sha256` (every file's SHA-256)
 
-Options: `--sequential` builds the sequential (no Rayon) feature graph, which
-the repository's CI never executes; `--skip-build` repackages an existing
-build; `--sanitizer none` builds without ASan (faster, less detection).
+Options: `--sequential` builds the sequential (no Rayon) feature graph;
+`--skip-build` repackages an existing build; `--sanitizer none` builds without
+ASan (faster, less detection).
+
+The fuzz build enables two opt-in Akita features that production builds
+leave off. `response-model-diagnostics` makes the prover report every fold
+probe, which the liveness checks read. `fault-injection` lets `pcs_faults`
+make the prover emit a transcript-consistent proof that violates one
+verifier-enforced condition. With no fault installed, proofs are
+byte-identical to a build without the feature.
+
+CI (`.github/workflows/fuzz.yml`) fuzzes the primitive targets for a minute
+each. End-to-end and boundary targets need minutes of setup per process and
+several GiB of memory, so they run only in campaigns.
 
 The toolchain is pinned in `fuzz/rust-toolchain.toml` and dependency versions
 in `fuzz/Cargo.lock` (seeded from the workspace lock), so the same commit

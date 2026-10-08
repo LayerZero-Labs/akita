@@ -29,7 +29,7 @@ pub fn run(data: &[u8]) {
 
 /// Union of the opening and source basis ranges the config lets the planner
 /// select. Bases outside it (notably `log_basis = 1`) are not produced by any
-/// shipped schedule; see `fuzz/FINDINGS.md`.
+/// shipped schedule.
 fn basis_range<Cfg: CommitmentConfig>() -> (u32, u32) {
     let (open_lo, open_hi) = Cfg::opening_basis_range();
     let (inner_lo, inner_hi) = Cfg::inner_basis_range();
