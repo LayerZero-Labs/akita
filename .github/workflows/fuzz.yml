@@ -23,6 +23,10 @@ env:
   CARGO_TERM_COLOR: always
   FUZZ_DURATION: 60
   FUZZ_TARGET: x86_64-unknown-linux-gnu
+  # Warnings stay errors, except deprecations: nightly deprecates std APIs
+  # (for example `fetch_update`) whose replacements the workspace's stable
+  # toolchain does not have yet.
+  RUSTFLAGS: -A deprecated
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
