@@ -193,10 +193,17 @@ where
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[allow(unreachable_pub)]
 pub(crate) struct RecursiveWitnessFlat {
-    pub(super) digits: PackedSignedDigits,
-    pub(super) live_coeff_len: usize,
-    pub(super) committed_coeff_len: Option<usize>,
-    pub(super) commitment_ring_dim: Option<usize>,
+    pub(in crate::opaque) digits: PackedSignedDigits,
+    pub(in crate::opaque) live_coeff_len: usize,
+    pub(in crate::opaque) committed_coeff_len: Option<usize>,
+    pub(in crate::opaque) commitment_ring_dim: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WitnessPhase {
+    BuiltForFold(u32),
+    CommittedForSuccessor { producer: u32, successor: u32 },
+    ReadyInput(u32),
 }
 
 /// Opaque CPU-consumer handle for a complete recursive witness.
@@ -205,13 +212,12 @@ pub(crate) struct RecursiveWitnessFlat {
 /// metadata, but the packed coefficient representation remains private to the
 /// recursive-witness adapter.
 pub struct CpuWitnessHandle {
-    pub(crate) pending_successor: Option<u32>,
-    pub(in crate::opaque::recursive) relation_plan:
-        Option<Arc<akita_types::RelationRangeImagePlan>>,
-    pub(in crate::opaque::recursive) manifest: crate::opaque::RecursiveWitnessManifest,
-    pub(in crate::opaque::recursive) binding: crate::opaque::OperationBinding,
-    pub(in crate::opaque::recursive) logical: RecursiveWitnessFlat,
-    pub(in crate::opaque::recursive) committed: Option<RecursiveWitnessFlat>,
+    pub(crate) phase: WitnessPhase,
+    pub(in crate::opaque) relation_plan: Option<Arc<akita_types::RelationRangeImagePlan>>,
+    pub(in crate::opaque) manifest: crate::opaque::RecursiveWitnessManifest,
+    pub(in crate::opaque) binding: crate::opaque::OperationBinding,
+    pub(in crate::opaque) logical: RecursiveWitnessFlat,
+    pub(in crate::opaque) committed: Option<RecursiveWitnessFlat>,
 }
 
 pub(crate) type OpaqueRecursiveWitness = CpuWitnessHandle;
@@ -219,7 +225,7 @@ pub(crate) type OpaqueRecursiveWitness = CpuWitnessHandle;
 impl CpuWitnessHandle {
     pub(crate) fn snapshot(&self) -> Self {
         Self {
-            pending_successor: self.pending_successor,
+            phase: self.phase,
             relation_plan: self.relation_plan.clone(),
             manifest: self.manifest,
             binding: self.binding.clone(),

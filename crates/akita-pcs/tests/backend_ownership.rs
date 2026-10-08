@@ -254,7 +254,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
             .validate_structure()
             .expect("the altered public plan is structurally valid");
         assert!(matches!(
-            <CpuBackend<F, F> as ProofAdmission<F, F>>::begin_proof(
+            <CpuBackend<F, F> as ProofAdmission<F, F>>::prepare_executor(
                 &backend,
                 setup.expanded.descriptor(),
                 scheme.schedules(),
@@ -263,7 +263,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
             ),
             Err(akita_pcs::AkitaError::UnsupportedSchedule(_)),
         ));
-        let a = <CpuBackend<F, F> as ProofAdmission<F, F>>::begin_proof(
+        let a = <CpuBackend<F, F> as ProofAdmission<F, F>>::prepare_executor(
             &backend,
             setup.expanded.descriptor(),
             scheme.schedules(),
@@ -271,7 +271,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
             &layout,
         )
         .unwrap();
-        let b = <CpuBackend<F, F> as ProofAdmission<F, F>>::begin_proof(
+        let b = <CpuBackend<F, F> as ProofAdmission<F, F>>::prepare_executor(
             &backend,
             setup.expanded.descriptor(),
             scheme.schedules(),
@@ -357,14 +357,16 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
         );
         let mut changed_setup = setup.expanded.descriptor().clone();
         changed_setup.setup_seed = [9; 32].into();
-        assert!(<CpuBackend<F, F> as ProofAdmission<F, F>>::begin_proof(
-            &backend,
-            &changed_setup,
-            scheme.schedules(),
-            schedule,
-            &layout
-        )
-        .is_err());
+        assert!(
+            <CpuBackend<F, F> as ProofAdmission<F, F>>::prepare_executor(
+                &backend,
+                &changed_setup,
+                scheme.schedules(),
+                schedule,
+                &layout
+            )
+            .is_err()
+        );
     });
 }
 
@@ -379,14 +381,15 @@ fn admission_uses_the_extension_field_owned_by_the_configuration() {
         let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
         let key = akita_params::ScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
         let row = scheme.schedules().resolve_key(&key).unwrap();
-        let session = <CpuBackend<SmallF, SmallE> as ProofAdmission<SmallF, SmallE>>::begin_proof(
-            &backend,
-            setup.expanded.descriptor(),
-            scheme.schedules(),
-            row.schedule(),
-            &key.opening_layout().unwrap(),
-        )
-        .unwrap();
+        let session =
+            <CpuBackend<SmallF, SmallE> as ProofAdmission<SmallF, SmallE>>::prepare_executor(
+                &backend,
+                setup.expanded.descriptor(),
+                scheme.schedules(),
+                row.schedule(),
+                &key.opening_layout().unwrap(),
+            )
+            .unwrap();
         <CpuBackend<SmallF, SmallE> as ProofScopeConsumer>::finish_scope(&backend, &session)
             .unwrap();
     });

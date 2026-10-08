@@ -656,15 +656,7 @@ where
     // basis controls how many Z planes exist; it is not the basis used to
     // decompose their coefficients. The whole-buffer certificate and physical
     // packed width therefore use the widest basis that emits coefficients.
-    let known_balanced_log_basis = owned
-        .iter()
-        .flat_map(|group| {
-            [
-                group.params.log_basis_outer(),
-                group.params.log_basis_open(),
-            ]
-        })
-        .fold(lp.open().digits.log_basis, u32::max);
+    let known_balanced_log_basis = lp.witness_log_basis();
     let packed_width = u8::try_from(known_balanced_log_basis).map_err(|_| {
         AkitaError::Internal("recursive witness basis does not fit i8 storage".into())
     })?;

@@ -4,7 +4,7 @@ use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::{AkitaProverSetup, CommitmentHandle, CpuBackend};
 use akita_error::AkitaError;
 use akita_params::{BasisMode, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity};
-use akita_prover::{ProverBackend, SelectedProverOpeningData};
+use akita_prover::{BackendRegistry, FixedFoldRoute, ProverBackend, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::AkitaVerifierSetup;
 use akita_types::FpExtEncoding;
@@ -154,14 +154,17 @@ where
         )?;
         let prefix_slots =
             backend.import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)?;
-        let proof = akita_prover::batched_prove::<Cfg, CpuBackend<Cfg::Field, Cfg::ExtField>>(
+        let mut registry = BackendRegistry::<Cfg>::new()?;
+        let root = registry.register(backend, &prefix_slots)?;
+        let mut route = FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
+        let proof = akita_prover::batched_prove::<Cfg, _>(
             setup.expanded.descriptor(),
-            &prefix_slots,
             &self.schedules,
-            backend,
+            &registry,
             opening,
             session,
             basis,
+            &mut route,
         )?;
         tracing::info!(
             proof_bytes = proof.len(),

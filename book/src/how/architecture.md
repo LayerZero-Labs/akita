@@ -173,3 +173,27 @@ Opening batch kernels validate one authoritative challenge partition against eve
 source and return one aggregate witness per requested chunk. The protocol combines
 their `z` values into the global fold witness; non-fused backends reuse the public
 checked aggregator within each chunk.
+
+## Per-fold execution ownership
+
+The `batched_prove` API keeps one transcript while assigning each
+successor fold to a registered backend instance. A typed executor owns its local
+session and setup-prefix handles. The coordinator carries a public continuation
+(level, commitment binding, challenges, and openings) separately from an opaque,
+owner-tagged witness/material pair. Handle pairs and transfer packets are erased
+only at dispatch; all arithmetic kernels keep their associated handle types.
+
+After committing a successor, the producer invokes a blocking handoff before
+ring switching or sumchecks. A different destination prepares its assigned
+level and imports both handles atomically through a registered directed bridge.
+The producer exports its typed packet, `Edge<A, B>::convert` constructs the
+recipient's import packet, and the recipient validates and adopts it. Bridges
+are keyed by backend type pairs; instances retain distinct ownership identities.
+The coordinator checks packet metadata without reading private sections.
+The producer retains its source witness through its sumchecks, then releases it and transfers
+the public continuation to the destination executor. Same-instance choices
+retain the native pair without any export or import.
+
+See [backend routing](../usage/feature-flags.md#backend-routing),
+`crates/akita-prover/src/protocol/prove/execution.rs`, and
+`crates/akita-cpu-backend/src/opaque/transfer.rs`.

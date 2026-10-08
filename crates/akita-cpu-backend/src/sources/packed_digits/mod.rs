@@ -124,6 +124,42 @@ impl PackedSignedDigits {
         writer.finish()
     }
 
+    /// Fill final packed storage directly; local vector-load padding never crosses transport.
+    pub(crate) fn import_encoded(
+        len: usize,
+        bit_width: u8,
+        fill: impl FnOnce(&mut [u8]) -> Result<(), AkitaError>,
+    ) -> Result<Self, AkitaError> {
+        let mut writer = PackedSignedDigitWriter::new(len, bit_width)?;
+        fill(&mut Arc::make_mut(&mut writer.storage)[..writer.encoded_len])?;
+        let tail_bits = checked::product([len, bit_width as usize]).ok_or_else(|| {
+            AkitaError::InvalidInput("imported packed digit length overflow".into())
+        })? % 8;
+        if tail_bits != 0
+            && writer
+                .storage
+                .get(writer.encoded_len.saturating_sub(1))
+                .is_some_and(|last| last & !((1 << tail_bits) - 1) != 0)
+        {
+            return Err(AkitaError::InvalidInput(
+                "imported packed digits have nonzero tail bits".into(),
+            ));
+        }
+        let mut packed = Self {
+            storage: writer.storage,
+            encoded_len: writer.encoded_len,
+            len,
+            bit_width,
+            bounds: SignedDigitBounds::ZERO,
+        };
+        let mut bounds = SignedDigitBounds::ZERO;
+        for digit in packed.iter() {
+            bounds.include_bounds(signed_digit_bounds(&[digit]));
+        }
+        packed.bounds = bounds;
+        Ok(packed)
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.len
     }

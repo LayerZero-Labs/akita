@@ -71,6 +71,8 @@ struct ProofState {
     active: AtomicBool,
     group_counts: Arc<[usize]>,
     commitments: Mutex<HashMap<(u32, usize), u128>>,
+
+    prepared_levels: Mutex<std::collections::HashSet<usize>>,
     plan: Option<(
         Arc<akita_params::FoldSchedule>,
         akita_params::OpeningClaimsLayout,
@@ -87,6 +89,8 @@ impl ScopeLease {
                 active: AtomicBool::new(true),
                 group_counts: vec![usize::MAX].into(),
                 commitments: Mutex::new(HashMap::new()),
+
+                prepared_levels: Mutex::new(std::collections::HashSet::new()),
                 plan: None,
             }),
         }
@@ -212,6 +216,39 @@ impl ScopeLease {
             .ok_or_else(|| AkitaError::Internal("proof has no admitted plan".into()))
     }
 
+    pub(crate) fn prepare_level(&self, level: usize) -> Result<(), AkitaError> {
+        let level_u32 = u32::try_from(level)
+            .map_err(|_| AkitaError::InvalidInput("prepared level exceeds u32".into()))?;
+        self.validate(self.scope_id(), level_u32, None)?;
+        self.state
+            .prepared_levels
+            .lock()
+            .map_err(|_| AkitaError::Internal("prepared level map poisoned".into()))?
+            .insert(level);
+        Ok(())
+    }
+
+    pub(crate) fn require_prepared(&self, level: usize) -> Result<(), AkitaError> {
+        self.validate(
+            self.scope_id(),
+            u32::try_from(level)
+                .map_err(|_| AkitaError::InvalidInput("imported level exceeds u32".into()))?,
+            None,
+        )?;
+        if !self
+            .state
+            .prepared_levels
+            .lock()
+            .map_err(|_| AkitaError::Internal("prepared level map poisoned".into()))?
+            .contains(&level)
+        {
+            return Err(AkitaError::InvalidInput(
+                "successor level was not prepared".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn finish(&self) -> Result<(), AkitaError> {
         self.state
             .active
@@ -301,6 +338,8 @@ impl BackendIdentity {
                 active: AtomicBool::new(true),
                 group_counts: group_counts.into(),
                 commitments: Mutex::new(HashMap::new()),
+
+                prepared_levels: Mutex::new(std::collections::HashSet::new()),
                 plan,
             }),
         })
