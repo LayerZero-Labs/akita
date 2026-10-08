@@ -127,11 +127,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         BasisMode::Lagrange,
         &mut route,
     )?;
-    println!(
-        "Prove: {:.3}s, {} proof bytes",
-        started.elapsed().as_secs_f64(),
-        proof.len()
-    );
+    println!("Prove: {:.3}s", started.elapsed().as_secs_f64());
 
     let verifier = scheme.verifier(scheme.setup_verifier(&setup)?)?;
     let statement = GroupBatchStatement::new(
