@@ -137,12 +137,19 @@ libFuzzer re-executes a lane's whole corpus every time a job starts, before
 it honors its time limit. End-to-end inputs cost seconds each, so a growing
 corpus would eventually leave no time for fuzzing. When a target's corpus has
 at least 200 inputs and has doubled since its last compaction, the runner
-runs libFuzzer's own minimization (`-merge=1`) as a separate job. The job
-keeps a minimal subset that preserves every coverage feature of a snapshot of
-the corpus. Snapshot inputs it drops are moved to `corpus-archive/<target>/`,
-never deleted, and inputs that running jobs add in the meantime are kept.
-Compactions are at least an hour apart per target, and a failed compaction is
-retried after six hours.
+runs libFuzzer's own minimization (`-merge=1`) as a separate job, with the
+same coverage options as the fuzzing jobs (`-max_len`, value profiling). The
+job keeps a minimal subset that preserves every coverage feature of a snapshot
+of the corpus. A target with several variants shares one corpus, so the merge
+runs once per variant, one after another, into the same merged set: each run
+keeps what earlier runs selected and adds inputs with new coverage under its
+own variant. Only after the last run succeeds are snapshot inputs outside the
+merged set moved to `corpus-archive/<target>/`, never deleted; inputs that
+running jobs add in the meantime are kept. A failing run abandons the whole
+compaction without archiving anything. A crash, timeout, or out-of-memory
+input hit during a merge is recorded as a finding like any other. Compactions
+are at least an hour apart per target, and a failed compaction is retried
+after six hours.
 
 ### Limits
 
@@ -180,9 +187,16 @@ When a worker exits with a failure, the runner:
    a missing file or an OS OOM kill) back off exponentially from 5 s to
    30 min per lane and are counted separately from findings.
 
+A job's libFuzzer artifacts are deleted only after its finding is stored; if
+storing fails (e.g. a full disk), the job directory under `artifacts/<lane>/`
+is kept and named in `events.log`.
+
 Worker output is parsed as it arrives and written to per-job logs capped at
-4 MiB with one rotated backup; `events.log` is capped the same way. The
-output directory therefore grows with corpus and findings, not with time.
+4 MiB with one rotated backup; only the newest 16 job logs per lane are kept
+(older ones are pruned when a job starts and at startup). Finding reports live
+in `findings/`, not in the logs, and are never pruned. `events.log` is capped
+the same way. The output directory therefore grows with corpus and findings,
+not with time.
 
 ### Shutdown and resume
 
@@ -251,7 +265,8 @@ binary this size.)
 
 | Command | Purpose |
 |---|---|
-| `akita-fuzz targets` | Registry lanes and limits |
+| `akita-fuzz targets [--kind K]` | Registry lanes and limits |
+| `akita-fuzz targets --kind K --cargo-fuzz` | One `BINARY [KEY=VALUE ...]` line per lane of kind `K`: the `cargo fuzz run` binary and the variant's environment |
 | `akita-fuzz-dev cases [LOG2]` | Catalog rows planned or excluded at a cost limit |
 | `akita-fuzz-dev smoke TARGET [N] [SEED]` | N pseudo-random inputs, no libFuzzer |
 | `akita-fuzz-dev replay TARGET FILE...` | Run inputs once, no libFuzzer |
@@ -287,6 +302,8 @@ corpus/<target>/        shared, resumable corpora (libFuzzer SHA-1 names)
 findings/<id>/          meta.json, sample-N.input, sample-N.txt, replay.txt
 quarantine/<target>/    corpus inputs removed because they crash
 corpus-archive/<target>/ inputs dropped by corpus compaction
-logs/<lane>/            per-job libFuzzer output (capped)
+compaction/<target>/    workspace of a running corpus compaction
+artifacts/<lane>/       running jobs' libFuzzer artifacts (kept if a finding could not be stored)
+logs/<lane>/            per-job libFuzzer output (capped; newest 16 per lane)
 exports/                archives written by `export`
 ```

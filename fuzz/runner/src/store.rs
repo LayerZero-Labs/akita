@@ -253,6 +253,45 @@ impl RotatingLog {
     }
 }
 
+/// Keep the `keep` most recently modified `*.log` files in `dir`, removing
+/// older ones and every `*.log.1` backup whose log is not kept. Other files
+/// are left alone.
+pub fn prune_logs(dir: &Path, keep: usize) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut logs = Vec::new();
+    let mut backups = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if let Some(stem) = name.strip_suffix(".log.1") {
+            backups.push((stem.to_string(), entry.path()));
+        } else if let Some(stem) = name.strip_suffix(".log") {
+            let modified = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            logs.push((modified, stem.to_string(), entry.path()));
+        }
+    }
+    logs.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    let kept: std::collections::HashSet<String> = logs
+        .iter()
+        .take(keep)
+        .map(|(_, stem, _)| stem.clone())
+        .collect();
+    for (_, _, path) in logs.iter().skip(keep) {
+        let _ = fs::remove_file(path);
+    }
+    for (stem, path) in backups {
+        if !kept.contains(&stem) {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 pub fn directory_bytes(path: &Path) -> u64 {
     let Ok(entries) = fs::read_dir(path) else {
         return 0;
@@ -276,4 +315,37 @@ pub fn count_files(path: &Path) -> u64 {
                 .count() as u64
         })
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn prunes_old_job_logs_and_their_backups() {
+        let dir = std::env::temp_dir().join(format!("akita-fuzz-logs-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let touch = |name: &str, at: u64| {
+            let file = File::create(dir.join(name)).unwrap();
+            file.set_modified(UNIX_EPOCH + Duration::from_secs(at))
+                .unwrap();
+        };
+        for index in 0..20u64 {
+            touch(&format!("job-{index}.log"), 1000 + index);
+        }
+        touch("job-0.log.1", 2000);
+        touch("job-19.log.1", 2000);
+        touch("orphan.log.1", 2000);
+        touch("notes.txt", 0);
+        prune_logs(&dir, 16);
+        let exists = |name: &str| dir.join(name).exists();
+        assert!((0..4).all(|index| !exists(&format!("job-{index}.log"))));
+        assert!((4..20).all(|index| exists(&format!("job-{index}.log"))));
+        assert!(!exists("job-0.log.1"));
+        assert!(exists("job-19.log.1"));
+        assert!(!exists("orphan.log.1"));
+        assert!(exists("notes.txt"));
+    }
 }

@@ -120,16 +120,54 @@ enum Cmd {
     /// Check the prepared distribution (manifest, binaries, seeds, artifacts).
     Validate,
     /// List registry lanes.
-    Targets,
+    Targets {
+        /// Only lanes of this kind.
+        #[arg(long, value_parser = registry::KINDS)]
+        kind: Option<String>,
+        /// One `BINARY [KEY=VALUE ...]` line per lane: the cargo-fuzz binary
+        /// and the variant's environment.
+        #[arg(long)]
+        cargo_fuzz: bool,
+    },
 }
 
-fn dist_dir(explicit: Option<PathBuf>) -> PathBuf {
-    explicit.unwrap_or_else(|| {
-        std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(Path::to_path_buf))
-            .unwrap_or_else(|| PathBuf::from("."))
-    })
+/// Absolute form of a command-line path: workers run in their job
+/// directory, so a relative path would resolve somewhere else there.
+fn absolute(path: &Path) -> Result<PathBuf, String> {
+    std::path::absolute(path).map_err(|e| format!("resolve {}: {e}", path.display()))
+}
+
+impl Cmd {
+    /// Resolve every filesystem argument against the current directory.
+    fn absolutize(&mut self) -> Result<(), String> {
+        let paths: Vec<&mut PathBuf> = match self {
+            Cmd::Run { output, .. } | Cmd::Status { output, .. } | Cmd::Minimize { output, .. } => {
+                vec![output]
+            }
+            Cmd::Export { output, to, .. } => std::iter::once(output).chain(to).collect(),
+            Cmd::Reproduce { output, inputs, .. } => {
+                std::iter::once(output).chain(inputs.iter_mut()).collect()
+            }
+            Cmd::Prepare { out, .. } => vec![out],
+            Cmd::Validate | Cmd::Targets { .. } => Vec::new(),
+        };
+        for path in paths {
+            *path = absolute(path)?;
+        }
+        Ok(())
+    }
+}
+
+fn dist_dir(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
+    match explicit {
+        Some(path) => absolute(&path),
+        None => absolute(
+            &std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(Path::to_path_buf))
+                .unwrap_or_else(|| PathBuf::from(".")),
+        ),
+    }
 }
 
 fn registry_path(dist: &Path) -> PathBuf {
@@ -145,10 +183,19 @@ fn lanes(dist: &Path) -> Result<Vec<registry::Lane>, String> {
     registry::load(&registry_path(dist))
 }
 
+/// `BINARY [KEY=VALUE ...]`: how to run `lane` with `cargo fuzz run`, whose
+/// binaries are named by target; variants differ only by environment.
+fn cargo_fuzz_line(lane: &registry::Lane) -> String {
+    std::iter::once(lane.target.clone())
+        .chain(lane.env.iter().map(|(key, value)| format!("{key}={value}")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn main() -> ExitCode {
-    let cli = Cli::parse();
-    let dist = dist_dir(cli.dist);
-    match execute(&dist, cli.command) {
+    let mut cli = Cli::parse();
+    let resolved = cli.command.absolutize().and_then(|()| dist_dir(cli.dist));
+    match resolved.and_then(|dist| execute(&dist, cli.command)) {
         Ok(code) => ExitCode::from(code),
         Err(message) => {
             eprintln!("akita-fuzz: {message}");
@@ -284,8 +331,16 @@ fn execute(dist: &Path, command: Cmd) -> Result<u8, String> {
                 Err(problems.join("\n"))
             }
         }
-        Cmd::Targets => {
-            for lane in lanes(dist)? {
+        Cmd::Targets { kind, cargo_fuzz } => {
+            let lanes = lanes(dist)?;
+            let selected = lanes
+                .iter()
+                .filter(|lane| kind.as_ref().is_none_or(|kind| &lane.kind == kind));
+            for lane in selected {
+                if cargo_fuzz {
+                    println!("{}", cargo_fuzz_line(lane));
+                    continue;
+                }
                 println!(
                     "{:32} {:10} weight={:<5} threads={} timeout={}s rss={}MiB max_len={}  {}",
                     lane.name(),
@@ -300,5 +355,50 @@ fn execute(dist: &Path, command: Cmd) -> Result<u8, String> {
             }
             Ok(0)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relative_paths_become_absolute() {
+        let cwd = std::env::current_dir().unwrap();
+        let output = absolute(Path::new("./campaign")).unwrap();
+        assert!(output.is_absolute());
+        assert_eq!(output, cwd.join("campaign"));
+        assert_eq!(
+            dist_dir(Some(PathBuf::from("dist"))).unwrap(),
+            cwd.join("dist")
+        );
+        assert_eq!(
+            absolute(Path::new("/data/x")).unwrap(),
+            Path::new("/data/x")
+        );
+        let mut command = Cmd::Reproduce {
+            output: PathBuf::from("out"),
+            spec: "ring_ntt".into(),
+            inputs: vec![PathBuf::from("a/crash")],
+        };
+        command.absolutize().unwrap();
+        let Cmd::Reproduce { output, inputs, .. } = command else {
+            unreachable!()
+        };
+        assert_eq!(
+            (output, inputs),
+            (cwd.join("out"), vec![cwd.join("a/crash")])
+        );
+    }
+
+    #[test]
+    fn cargo_fuzz_lines_name_the_binary_and_variant_environment() {
+        let lanes = registry::load(&registry_path(Path::new("/nonexistent"))).unwrap();
+        let ring: Vec<String> = lanes
+            .iter()
+            .filter(|lane| lane.target == "ring_ntt")
+            .map(cargo_fuzz_line)
+            .collect();
+        assert_eq!(ring, ["ring_ntt", "ring_ntt AKITA_SCALAR_NTT=1"]);
     }
 }

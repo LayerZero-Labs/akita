@@ -5,7 +5,8 @@ use super::{Case, SourceSpec};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::RecursiveCommitmentConfig;
 use akita_params::GroupCommitPhaseParams;
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 /// Per-process case limits chosen by the target.
 #[derive(Clone, Copy, Debug)]
@@ -65,11 +66,24 @@ fn all_families() -> Vec<Box<dyn Family>> {
     ]
 }
 
-static REGISTRY: OnceLock<Registry> = OnceLock::new();
+type Registries = Mutex<HashMap<u64, &'static Registry>>;
 
-/// Load every artifact once. The first caller's limits apply to the process.
+/// Load every artifact and plan cases once per cost limit. Each target asks
+/// for its own limit, so `fuzz_all` running several targets in one process
+/// plans each one's cases as its own binary would. A process holds one
+/// registry per distinct limit (a handful), kept for its lifetime.
 pub fn registry(limits: Limits) -> &'static Registry {
-    REGISTRY.get_or_init(|| Registry::load(limits))
+    static REGISTRIES: OnceLock<Registries> = OnceLock::new();
+    let mut registries = REGISTRIES
+        .get_or_init(Default::default)
+        .lock()
+        .expect("registry map");
+    if let Some(registry) = registries.get(&limits.max_cost).copied() {
+        return registry;
+    }
+    let registry: &'static Registry = Box::leak(Box::new(Registry::load(limits)));
+    registries.insert(limits.max_cost, registry);
+    registry
 }
 
 impl Registry {

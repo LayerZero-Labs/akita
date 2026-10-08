@@ -9,7 +9,7 @@ use crate::findings;
 use crate::libfuzzer::{self, Status};
 use crate::registry::Lane;
 use crate::resources::Budget;
-use crate::store::{count_files, now, read_json, write_json, RotatingLog, Store};
+use crate::store::{count_files, now, prune_logs, read_json, write_json, RotatingLog, Store};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -28,6 +28,8 @@ const CORPUS_COUNT_INTERVAL: Duration = Duration::from_secs(300);
 const STARTUP_GRACE_S: u64 = 120;
 const KILL_GRACE: Duration = Duration::from_secs(30);
 const MAX_BACKOFF_S: u64 = 1800;
+/// Job logs kept per lane; older ones (and their rotated backups) are pruned.
+const MAX_JOB_LOGS: usize = 16;
 
 static SIGNALS: AtomicU32 = AtomicU32::new(0);
 
@@ -127,8 +129,21 @@ struct Job {
     exited_at: Option<Instant>,
     inited_after: Option<u64>,
     watchdog_stopped: bool,
-    /// Corpus file names a merge job started from.
-    merge_snapshot: Vec<String>,
+    /// The compaction a merge job belongs to.
+    compaction: Option<Compaction>,
+}
+
+/// One corpus compaction of a target: a `-merge=1` job per lane of the
+/// target, run one after another into the same merged set, so inputs any
+/// variant's coverage needs are kept.
+struct Compaction {
+    /// The lane whose state records the compaction schedule.
+    lane: Lane,
+    /// Corpus file names the compaction started from.
+    snapshot: Vec<String>,
+    /// Lanes still to merge after the running job.
+    pending: VecDeque<Lane>,
+    started: Instant,
 }
 
 enum Message {
@@ -180,6 +195,28 @@ fn corpus_names(dir: &Path) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Whether a finished job's failure is stored as a finding. A replay re-runs
+/// a stored finding, so its outcome goes to that finding instead.
+fn records_finding(
+    purpose: Purpose,
+    code: i32,
+    has_artifact: bool,
+    failure_output: bool,
+    interrupted: bool,
+) -> bool {
+    match purpose {
+        Purpose::Replay => false,
+        _ if has_artifact => true,
+        _ => code != 0 && !interrupted && failure_output,
+    }
+}
+
+/// A job's artifacts directory may hold the only copy of a reproducer until
+/// it is stored, so it is kept when recording one was attempted and failed.
+fn may_remove_artifacts(has_artifact: bool, recorded: Option<bool>) -> bool {
+    !has_artifact || recorded != Some(false)
 }
 
 pub fn symbolizer(dist: &Path) -> Option<PathBuf> {
@@ -371,11 +408,6 @@ impl Runner {
         std::fs::create_dir_all(stats_file.parent().expect("parent"))?;
         let binary = self.dist.join("bin").join(libfuzzer::BINARY);
         let corpus = self.store.corpus.join(&lane.target);
-        let merge_snapshot = if purpose == Purpose::Merge {
-            corpus_names(&corpus)
-        } else {
-            Vec::new()
-        };
         let mut args = match purpose {
             Purpose::Fuzz => libfuzzer::fuzz_args(
                 &binary,
@@ -396,19 +428,7 @@ impl Runner {
                 libfuzzer::fuzz_args(&binary, lane, &[&scratch, &seeds], &artifacts, 0, true, &[])
             }
             Purpose::Merge => {
-                let merged = artifacts.join("merged");
-                std::fs::create_dir_all(&merged)?;
-                // Merge a private snapshot: running jobs replace and remove
-                // corpus files (`-reduce_inputs`), which aborts a merge that
-                // reads the live directory.
-                let snapshot = artifacts.join("snapshot");
-                std::fs::create_dir_all(&snapshot)?;
-                for file in &merge_snapshot {
-                    let source = corpus.join(file);
-                    if std::fs::hard_link(&source, snapshot.join(file)).is_err() {
-                        let _ = std::fs::copy(&source, snapshot.join(file));
-                    }
-                }
+                let workspace = self.compaction_dir(&lane.target);
                 let mut args = libfuzzer::base_args(
                     &binary,
                     libfuzzer::Limits {
@@ -417,11 +437,11 @@ impl Runner {
                     },
                     &artifacts,
                 );
+                args.push("-merge=1".into());
+                args.extend(libfuzzer::coverage_args(lane));
                 args.extend([
-                    "-merge=1".to_string(),
-                    format!("-max_len={}", lane.max_len),
-                    merged.display().to_string(),
-                    snapshot.display().to_string(),
+                    workspace.join("merged").display().to_string(),
+                    workspace.join("snapshot").display().to_string(),
                 ]);
                 args
             }
@@ -463,17 +483,12 @@ impl Runner {
         let env = libfuzzer::environment(
             lane,
             &self.dist.join("artifacts/schedules"),
-            &stats_file,
+            Some(&stats_file),
             self.symbolizer.as_deref(),
         );
-        let mut log = RotatingLog::open(
-            &self
-                .store
-                .logs
-                .join(lane.name())
-                .join(format!("{job_name}.log")),
-            LOG_BYTES,
-        )?;
+        let logs = self.store.logs.join(lane.name());
+        prune_logs(&logs, MAX_JOB_LOGS - 1);
+        let mut log = RotatingLog::open(&logs.join(format!("{job_name}.log")), LOG_BYTES)?;
         log.line(&format!(
             "# {} job {job_name}: {}",
             purpose.name(),
@@ -552,7 +567,7 @@ impl Runner {
                 exited_at: None,
                 inited_after: None,
                 watchdog_stopped: false,
-                merge_snapshot,
+                compaction: None,
             },
         );
         Ok(id)
@@ -659,7 +674,7 @@ impl Runner {
         let _ = std::fs::remove_file(&job.stats_file);
     }
 
-    fn finish(&mut self, job: Job, code: i32) {
+    fn finish(&mut self, mut job: Job, code: i32) {
         let name = job.lane.name();
         if job.purpose == Purpose::Baseline {
             self.baseline_running.remove(&name);
@@ -673,17 +688,55 @@ impl Runner {
                 .map(|entry| entry.path())
                 .find(|path| path.is_file() && libfuzzer::is_failure_artifact(path))
         });
-        if job.purpose == Purpose::Replay {
-            self.finish_replay(&job, code, &tail);
-            let _ = std::fs::remove_dir_all(&job.artifacts);
-            return;
+        let failure_output = tail
+            .iter()
+            .any(|line| line.contains("panicked at") || line.contains("ERROR:"));
+        let interrupted = self.stopping && job.terminated_at.is_some();
+        // Failures become findings before any purpose-specific handling: a
+        // merge or baseline can hit a crashing input as well as a fuzz job.
+        let recorded = records_finding(
+            job.purpose,
+            code,
+            artifact.is_some(),
+            failure_output,
+            interrupted,
+        )
+        .then(|| self.record_finding(&job, artifact.as_deref(), &tail, elapsed));
+        match job.purpose {
+            Purpose::Replay => {
+                self.finish_replay(&job, code, &tail);
+                let _ = std::fs::remove_file(&job.stats_file);
+            }
+            Purpose::Merge => {
+                self.finish_merge(&mut job, code);
+                let _ = std::fs::remove_file(&job.stats_file);
+            }
+            Purpose::Fuzz | Purpose::Baseline => {
+                self.finish_worker(&job, code, elapsed, &tail, recorded.is_some());
+            }
         }
-        if job.purpose == Purpose::Merge {
-            self.finish_merge(&job, code, elapsed);
+        if may_remove_artifacts(artifact.is_some(), recorded) {
             let _ = std::fs::remove_dir_all(&job.artifacts);
-            return;
+        } else {
+            self.event(&format!(
+                "{name}: kept {} because its failure could not be recorded",
+                job.artifacts.display()
+            ));
         }
-        self.merge_harness_stats(&job);
+    }
+
+    /// Statistics and restart policy of a fuzzing or baseline job; `finding`
+    /// says whether its failure was recorded as a finding.
+    fn finish_worker(
+        &mut self,
+        job: &Job,
+        code: i32,
+        elapsed: f64,
+        tail: &[String],
+        finding: bool,
+    ) {
+        let name = job.lane.name();
+        self.merge_harness_stats(job);
         {
             let state = self.lane_state(&name);
             state.cpu_seconds += elapsed * job.lane.threads as f64;
@@ -722,19 +775,12 @@ impl Runner {
                     job.status.execs
                 ));
             }
-            let _ = std::fs::remove_dir_all(&job.artifacts);
             return;
         }
-        if self.stopping && job.terminated_at.is_some() && artifact.is_none() {
-            let _ = std::fs::remove_dir_all(&job.artifacts);
+        if finding || (self.stopping && job.terminated_at.is_some()) {
             return;
         }
-        let failure_output = tail
-            .iter()
-            .any(|line| line.contains("panicked at") || line.contains("ERROR:"));
-        if artifact.is_some() || failure_output {
-            self.record_finding(&job, artifact.as_deref(), &tail, elapsed);
-        } else if job.watchdog_stopped && !job.status.inited {
+        if job.watchdog_stopped && !job.status.inited {
             let init = self.lane_state(&name).init_seconds;
             self.event(&format!(
                 "{name}: corpus re-execution outlasted the deadline ({elapsed:.0}s); next job allows {}s",
@@ -775,16 +821,16 @@ impl Runner {
                 ),
             );
         }
-        let _ = std::fs::remove_dir_all(&job.artifacts);
     }
 
+    /// Store a failure as a finding; false if storage failed.
     fn record_finding(
         &mut self,
         job: &Job,
         artifact: Option<&Path>,
         tail: &[String],
         elapsed: f64,
-    ) {
+    ) -> bool {
         let name = job.lane.name();
         let kind = libfuzzer::classify(tail, artifact);
         let (id, text) = libfuzzer::signature(kind, &job.lane.target, tail);
@@ -811,14 +857,10 @@ impl Runner {
             Ok(result) => result,
             Err(error) => {
                 self.event(&format!("could not record finding {id}: {error}"));
-                return;
+                return false;
             }
         };
-        {
-            let state = self.lane_state(&name);
-            state.findings += 1;
-            state.restarts += 1;
-        }
+        self.lane_state(&name).findings += 1;
         let moved = findings::quarantine_corpus_copy(
             artifact,
             &self.store.corpus.join(&job.lane.target),
@@ -842,6 +884,11 @@ impl Runner {
                 ));
             }
         }
+        // A merge's outcome is handled by its compaction, not by restarts.
+        if job.purpose == Purpose::Merge {
+            return true;
+        }
+        self.lane_state(&name).restarts += 1;
         if elapsed < 60.0 && !job.status.inited && moved.is_none() {
             self.backoff(
                 &name,
@@ -850,50 +897,135 @@ impl Runner {
         } else {
             self.lane_state(&name).consecutive_failures = 0;
         }
+        true
     }
 
-    /// Keep the merge's minimal set: move snapshot inputs it dropped to
-    /// `corpus-archive/<target>/`. Inputs fuzz jobs added meanwhile stay.
-    fn finish_merge(&mut self, job: &Job, code: i32, elapsed: f64) {
-        let name = job.lane.name();
-        let target = job.lane.target.clone();
-        if code != 0 && job.terminated_at.is_some() && !job.watchdog_stopped {
+    /// Private workspace of a target's compaction: `snapshot/` (the corpus
+    /// it started from) and `merged/` (the minimal set so far).
+    fn compaction_dir(&self, target: &str) -> PathBuf {
+        self.store.root.join("compaction").join(target)
+    }
+
+    /// Snapshot `lane`'s target corpus and merge it under every lane of the
+    /// target, `lane` first.
+    fn start_compaction(&mut self, lane: &Lane) -> std::io::Result<()> {
+        let workspace = self.compaction_dir(&lane.target);
+        if workspace.exists() {
+            std::fs::remove_dir_all(&workspace)?;
+        }
+        // Merge a private snapshot: running jobs replace and remove corpus
+        // files (`-reduce_inputs`), which aborts a merge that reads the live
+        // directory.
+        let snapshot_dir = workspace.join("snapshot");
+        std::fs::create_dir_all(&snapshot_dir)?;
+        std::fs::create_dir_all(workspace.join("merged"))?;
+        let corpus = self.store.corpus.join(&lane.target);
+        let snapshot = corpus_names(&corpus);
+        for file in &snapshot {
+            let source = corpus.join(file);
+            if std::fs::hard_link(&source, snapshot_dir.join(file)).is_err() {
+                let _ = std::fs::copy(&source, snapshot_dir.join(file));
+            }
+        }
+        let pending = self
+            .lanes
+            .iter()
+            .filter(|other| other.target == lane.target && other.name() != lane.name())
+            .cloned()
+            .collect();
+        let compaction = Compaction {
+            lane: lane.clone(),
+            snapshot,
+            pending,
+            started: Instant::now(),
+        };
+        let result = self.spawn(lane, Purpose::Merge, &[]);
+        match result {
+            Ok(id) => {
+                self.jobs.get_mut(&id).expect("job").compaction = Some(compaction);
+                Ok(())
+            }
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(&workspace);
+                Err(error)
+            }
+        }
+    }
+
+    /// After each lane's merge, start the next lane's; after the last, keep
+    /// the merged set: move snapshot inputs it dropped to
+    /// `corpus-archive/<target>/`. Inputs fuzz jobs added meanwhile stay. Any
+    /// failure abandons the compaction and archives nothing.
+    fn finish_merge(&mut self, job: &mut Job, code: i32) {
+        let Some(mut compaction) = job.compaction.take() else {
+            return;
+        };
+        let name = compaction.lane.name();
+        let target = compaction.lane.target.clone();
+        let workspace = self.compaction_dir(&target);
+        let interrupted = if code == 0 {
+            self.stopping && !compaction.pending.is_empty()
+        } else {
+            job.terminated_at.is_some() && !job.watchdog_stopped
+        };
+        if interrupted {
             // Stopped by the runner at shutdown, not a merge failure:
             // compaction becomes due again on the next check.
+            let _ = std::fs::remove_dir_all(&workspace);
             self.event(&format!("compaction of {target} interrupted"));
             return;
         }
-        if code != 0 {
+        let failure = if code != 0 {
+            Some(format!("exit {code} under {}", job.lane.name()))
+        } else if let Some(next) = compaction.pending.pop_front() {
+            match self.spawn(&next, Purpose::Merge, &[]) {
+                Ok(id) => {
+                    self.event(&format!(
+                        "compacting {target}: merging under {}",
+                        next.name()
+                    ));
+                    self.jobs.get_mut(&id).expect("job").compaction = Some(compaction);
+                    return;
+                }
+                Err(error) => Some(format!("{} failed to start: {error}", next.name())),
+            }
+        } else {
+            None
+        };
+        if let Some(reason) = failure {
+            let _ = std::fs::remove_dir_all(&workspace);
             self.lane_state(&name).next_compaction_at = now() + 6 * 3600;
             self.event(&format!(
-                "compaction of {target} failed (exit {code}); retrying in 6h"
+                "compaction of {target} failed ({reason}); retrying in 6h"
             ));
             return;
         }
-        let kept: std::collections::HashSet<String> = corpus_names(&job.artifacts.join("merged"))
+        let kept: std::collections::HashSet<String> = corpus_names(&workspace.join("merged"))
             .into_iter()
             .collect();
         let corpus = self.store.corpus.join(&target);
         let archive = self.store.root.join("corpus-archive").join(&target);
         let _ = std::fs::create_dir_all(&archive);
         let mut archived = 0u64;
-        for file in &job.merge_snapshot {
+        for file in &compaction.snapshot {
             if !kept.contains(file)
                 && std::fs::rename(corpus.join(file), archive.join(file)).is_ok()
             {
                 archived += 1;
             }
         }
+        let _ = std::fs::remove_dir_all(&workspace);
         let remaining = count_files(&corpus);
         let state = self.lane_state(&name);
         state.compacted_corpus_files = remaining;
         state.corpus_files = remaining;
         state.compactions += 1;
         state.next_compaction_at = now() + 3600;
+        let total = compaction.snapshot.len() as u64;
         self.event(&format!(
-            "compacted {target}: {} -> {} inputs in {elapsed:.0}s ({archived} moved to corpus-archive)",
-            job.merge_snapshot.len(),
-            job.merge_snapshot.len() as u64 - archived
+            "compacted {target}: {total} -> {} inputs in {:.0}s ({archived} moved to corpus-archive)",
+            total - archived,
+            compaction.started.elapsed().as_secs_f64()
         ));
     }
 
@@ -1012,8 +1144,8 @@ impl Runner {
                 && state.corpus_files >= 2 * state.compacted_corpus_files
                 && state.next_compaction_at <= time;
             if due && !awaiting_baseline && self.fits(&lane) {
-                match self.spawn(&lane, Purpose::Merge, &[]) {
-                    Ok(_) => self.event(&format!(
+                match self.start_compaction(&lane) {
+                    Ok(()) => self.event(&format!(
                         "compacting {} ({} inputs)",
                         lane.target, state.corpus_files
                     )),
@@ -1097,6 +1229,11 @@ impl Runner {
         for lane in self.lanes.clone() {
             self.seed_corpus(&lane)?;
         }
+        if let Ok(entries) = std::fs::read_dir(&self.store.logs) {
+            for entry in entries.flatten() {
+                prune_logs(&entry.path(), MAX_JOB_LOGS);
+            }
+        }
         if !self.options.skip_baseline {
             self.queue_baselines();
         }
@@ -1151,5 +1288,34 @@ impl Runner {
         self.write_state(true);
         let _ = std::fs::remove_file(&self.store.live_path);
         self.event("stopped; state saved");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failures_are_recorded_for_every_purpose_but_replay() {
+        for purpose in [Purpose::Fuzz, Purpose::Baseline, Purpose::Merge] {
+            // An artifact is a reproducer even when the process exited 0
+            // (a merge survives crashes of its inner process).
+            assert!(records_finding(purpose, 0, true, false, false));
+            assert!(records_finding(purpose, 1, true, false, true));
+            assert!(records_finding(purpose, 1, false, true, false));
+            assert!(!records_finding(purpose, 0, false, true, false));
+            assert!(!records_finding(purpose, 1, false, false, false));
+            assert!(!records_finding(purpose, 1, false, true, true));
+        }
+        assert!(!records_finding(Purpose::Replay, 1, true, true, false));
+    }
+
+    #[test]
+    fn unrecorded_reproducers_are_kept() {
+        assert!(!may_remove_artifacts(true, Some(false)));
+        assert!(may_remove_artifacts(true, Some(true)));
+        assert!(may_remove_artifacts(true, None));
+        assert!(may_remove_artifacts(false, Some(false)));
+        assert!(may_remove_artifacts(false, None));
     }
 }

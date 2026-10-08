@@ -24,6 +24,17 @@ pub fn base_args(binary: &Path, limits: Limits<'_>, artifacts: &Path) -> Vec<Str
     ]
 }
 
+/// Options that change which inputs libFuzzer considers new coverage. Fuzzing
+/// and corpus merges must agree on them, or a merge drops inputs the fuzzing
+/// jobs kept (e.g. value-profile features).
+pub fn coverage_args(lane: &Lane) -> Vec<String> {
+    let mut args = vec![format!("-max_len={}", lane.max_len)];
+    if lane.value_profile {
+        args.push("-use_value_profile=1".into());
+    }
+    args
+}
+
 /// A fuzzing job over `corpus` for `seconds` (0 = run the corpus once).
 pub fn fuzz_args(
     binary: &Path,
@@ -42,8 +53,8 @@ pub fn fuzz_args(
         },
         artifacts,
     );
+    args.extend(coverage_args(lane));
     args.extend([
-        format!("-max_len={}", lane.max_len),
         // Slow-unit artifacts are informational; report them only at the
         // timeout so they never masquerade as failures.
         format!("-report_slow_units={}", lane.timeout_s),
@@ -56,9 +67,6 @@ pub fn fuzz_args(
     } else {
         args.push(format!("-max_total_time={seconds}"));
     }
-    if lane.value_profile {
-        args.push("-use_value_profile=1".into());
-    }
     args.extend(extra.iter().cloned());
     args.extend(corpus.iter().map(|dir| dir.display().to_string()));
     args
@@ -67,7 +75,7 @@ pub fn fuzz_args(
 pub fn environment(
     lane: &Lane,
     artifacts_dir: &Path,
-    stats_file: &Path,
+    stats_file: Option<&Path>,
     symbolizer: Option<&Path>,
 ) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
@@ -78,10 +86,13 @@ pub fn environment(
         "AKITA_FUZZ_ARTIFACTS".into(),
         artifacts_dir.display().to_string(),
     );
-    env.insert(
-        "AKITA_FUZZ_STATS_FILE".into(),
-        stats_file.display().to_string(),
-    );
+    // Without the variable the harness writes no statistics.
+    if let Some(stats_file) = stats_file {
+        env.insert(
+            "AKITA_FUZZ_STATS_FILE".into(),
+            stats_file.display().to_string(),
+        );
+    }
     env.insert("RUST_BACKTRACE".into(), "1".into());
     // Rust statics are reachable, so leak checking only adds noise; aborting
     // makes libFuzzer record every sanitizer report as an artifact.
@@ -317,6 +328,55 @@ mod tests {
 
     fn lines(text: &str) -> Vec<String> {
         text.lines().map(str::to_string).collect()
+    }
+
+    fn lane(value_profile: bool) -> Lane {
+        Lane {
+            target: "ring_ntt".into(),
+            variant: None,
+            kind: "primitive".into(),
+            description: String::new(),
+            weight: 1.0,
+            timeout_s: 10,
+            rss_limit_mb: 1024,
+            malloc_limit_mb: 1024,
+            max_len: 64,
+            threads: 1,
+            value_profile,
+            env: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn coverage_options_follow_the_registry() {
+        assert_eq!(coverage_args(&lane(false)), ["-max_len=64"]);
+        assert_eq!(
+            coverage_args(&lane(true)),
+            ["-max_len=64", "-use_value_profile=1"]
+        );
+        let fuzz = fuzz_args(
+            Path::new("/b"),
+            &lane(true),
+            &[],
+            Path::new("/a"),
+            1,
+            false,
+            &[],
+        );
+        assert!(fuzz.iter().any(|arg| arg == "-use_value_profile=1"));
+    }
+
+    #[test]
+    fn stats_file_is_optional() {
+        let without = environment(&lane(false), Path::new("/s"), None, None);
+        assert!(!without.contains_key("AKITA_FUZZ_STATS_FILE"));
+        let with = environment(
+            &lane(false),
+            Path::new("/s"),
+            Some(Path::new("/o/x.json")),
+            None,
+        );
+        assert_eq!(with["AKITA_FUZZ_STATS_FILE"], "/o/x.json");
     }
 
     #[test]

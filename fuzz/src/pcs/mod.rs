@@ -11,12 +11,15 @@ mod cache;
 mod family;
 mod import;
 pub mod ops;
+mod parallel;
 mod registry;
+mod reject;
 mod shared;
 
+pub use family::Check;
 pub use family::Family;
-pub use family::{Check, Mutation};
 pub use registry::{registry, Limits, Registry, Selector};
+pub use reject::Mutation;
 
 use crate::gen::Domain;
 use akita_error::AkitaError;

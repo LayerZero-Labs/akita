@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-const KINDS: [&str; 3] = ["primitive", "end_to_end", "boundary"];
+pub const KINDS: [&str; 3] = ["primitive", "end_to_end", "boundary"];
 
 /// One schedulable unit: a target, or one variant of it.
 #[derive(Clone, Debug)]

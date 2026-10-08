@@ -256,11 +256,12 @@ fn resolve<'a>(
     Ok((lane_for(lanes, spec)?, inputs.to_vec(), None))
 }
 
+/// Triage runs write no harness statistics.
 fn env_for(dist: &Path, lane: &Lane) -> Vec<(String, String)> {
     let mut env = libfuzzer::environment(
         lane,
         &dist.join("artifacts/schedules"),
-        Path::new("/dev/null"),
+        None,
         symbolizer(dist).as_deref(),
     );
     env.insert("RUST_BACKTRACE".into(), "full".into());
