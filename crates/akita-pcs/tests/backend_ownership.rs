@@ -66,7 +66,7 @@ fn false_root_evaluation_claim_returns_invalid_input() {
             scheme.schedules(),
         );
         assert!(matches!(
-            scheme.batched_prove(&setup, opening, &backend, DOMAIN, BasisMode::Lagrange),
+            scheme.prove_standalone(&setup, opening, &backend, DOMAIN, BasisMode::Lagrange),
             Err(akita_pcs::AkitaError::InvalidInput(_))
         ));
     });
@@ -122,7 +122,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
 
         let foreign = CpuBackend::new(setup.expanded.clone()).unwrap();
         assert!(scheme
-            .batched_prove(
+            .prove_standalone(
                 &setup,
                 claims(
                     &output.committed_group,
@@ -142,7 +142,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
             Commitment::new(RingVec::from_coeffs(fields)),
         );
         assert!(scheme
-            .batched_prove(
+            .prove_standalone(
                 &setup,
                 claims(&changed, output.private_handle.clone(), scheme.schedules()),
                 &backend,
@@ -166,7 +166,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
         )
         .unwrap();
         assert!(scheme
-            .batched_prove(&setup, false_claim, &backend, DOMAIN, BasisMode::Lagrange,)
+            .prove_standalone(&setup, false_claim, &backend, DOMAIN, BasisMode::Lagrange,)
             .is_err());
 
         // A public statement can arrive over the wire without carrying the
@@ -187,7 +187,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
             let opening = claims(&decoded, output.private_handle.clone(), scheme.schedules());
             let selection = opening.selection();
             let proof = scheme
-                .batched_prove(&setup, opening, &backend, DOMAIN, BasisMode::Lagrange)
+                .prove_standalone(&setup, opening, &backend, DOMAIN, BasisMode::Lagrange)
                 .unwrap();
             let public = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                 vec![F::from_u64(2); NV],
@@ -199,7 +199,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
             scheme
                 .verifier(scheme.setup_verifier(&setup).unwrap().clone())
                 .and_then(|verifier| {
-                    verifier.batched_verify(
+                    verifier.verify_standalone(
                         &proof,
                         DOMAIN,
                         GroupBatchStatement::new(selection, public).unwrap(),

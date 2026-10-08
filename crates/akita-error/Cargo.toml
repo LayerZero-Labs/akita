@@ -10,6 +10,7 @@ readme = "../../README.md"
 
 [dependencies]
 thiserror = "2.0"
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9d2eb0f211ae7c35f2c765002e7ece72c1dae424", default-features = false }
 
 [lints]
 workspace = true

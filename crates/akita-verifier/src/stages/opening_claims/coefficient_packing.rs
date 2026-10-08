@@ -11,6 +11,7 @@ use akita_types::{
     Commitment, FpExtEncoding, OpeningClaims, PreparedSubringCoefficientPackingPoint,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_transcript::{Channel, Sponge};
 
 fn prepare_group<E: Field>(
     point: &[E],
@@ -92,13 +93,13 @@ where
     })
 }
 
-pub(crate) fn verify_coefficient_packing_suffix_prefix<F, E>(
+pub(crate) fn verify_coefficient_packing_suffix_prefix<F, E, H: Sponge>(
     claims: &OpeningClaims<'_, E>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     lp: &CommittedGroupParams,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
     level: u32,
 ) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
@@ -108,21 +109,22 @@ where
     let prepared_points =
         prepare_prefix_points::<F, E, _>(claims, openings, opening_batch, basis, lp)?;
     for group_index in 0..opening_batch.num_groups() {
-        akita_transcript::public_extensions::<F, E, _>(
-            grinding.state_mut(),
+        grinding.state_mut().site(
             akita_types::FoldSite::GroupPoint {
                 level,
                 group: group_index,
             }
-            .id()?,
-            claims.group_point(group_index)?,
-        )?;
+            .id()?
+            .into(),
+        );
+        grinding
+            .state_mut()
+            .public_all(claims.group_point(group_index)?);
     }
-    akita_transcript::public_extensions::<F, E, _>(
-        grinding.state_mut(),
-        akita_types::FoldSite::Openings { level }.id()?,
-        openings,
-    )?;
+    grinding
+        .state_mut()
+        .site(akita_types::FoldSite::Openings { level }.id()?.into());
+    grinding.state_mut().public_all(openings);
     Ok(FoldClaimMaterial {
         prepared_points,
         openings: openings.to_vec(),

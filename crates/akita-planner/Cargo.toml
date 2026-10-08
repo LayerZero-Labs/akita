@@ -19,19 +19,6 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
 libm = "0.2"
 
 [features]
-default = ["transcript-blake2b"]
-transcript-blake2b = [
-  "akita-challenges/transcript-blake2b",
-  "akita-config?/transcript-blake2b",
-  "akita-schedules/transcript-blake2b",
-  "akita-params/transcript-blake2b",
-]
-transcript-keccak = [
-  "akita-challenges/transcript-keccak",
-  "akita-config?/transcript-keccak",
-  "akita-schedules/transcript-keccak",
-  "akita-params/transcript-keccak",
-]
 catalog-gen = ["dep:akita-config"]
 catalog-check = ["catalog-gen"]
 catalog-security = ["catalog-check", "dep:akita-sis-estimator"]

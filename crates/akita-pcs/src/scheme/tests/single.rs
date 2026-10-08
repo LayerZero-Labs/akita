@@ -45,7 +45,7 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
             scheme
                 .verifier(verifier_setup.clone())
                 .and_then(|verifier| {
-                    verifier.batched_verify(
+                    verifier.verify_standalone(
                         &proof,
                         b"test/prove",
                         verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
@@ -59,7 +59,7 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
             scheme
                 .verifier(verifier_setup.clone())
                 .and_then(|verifier| {
-                    verifier.batched_verify(
+                    verifier.verify_standalone(
                         &proof,
                         b"test/prove",
                         verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
@@ -107,7 +107,7 @@ fn verify_rejects_wrong_opening() {
     let commitments = [commitment];
 
     let proof = scheme
-        .batched_prove(
+        .prove_standalone(
             &setup,
             prover_claims(
                 &scheme,
@@ -127,7 +127,7 @@ fn verify_rejects_wrong_opening() {
     let result = scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 b"test/prove",
                 verifier_claims(
@@ -147,16 +147,16 @@ fn verify_rejects_wrong_opening() {
 }
 
 #[test]
-fn spongefish_roundtrip_and_statement_binding() {
+fn standalone_roundtrip_and_statement_binding() {
     std::thread::Builder::new()
         .stack_size(512 * 1024 * 1024)
-        .spawn(spongefish_roundtrip_and_statement_binding_inner)
+        .spawn(standalone_roundtrip_and_statement_binding_inner)
         .expect("native test thread")
         .join()
         .expect("native test thread panicked");
 }
 
-fn spongefish_roundtrip_and_statement_binding_inner() {
+fn standalone_roundtrip_and_statement_binding_inner() {
     let scheme = workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     let layout = singleton_layout(&scheme, 16);
     let num_vars =
@@ -184,7 +184,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
         .zip(&weights)
         .fold(F::zero(), |sum, (&value, &weight)| sum + value * weight);
     let proof = scheme
-        .batched_prove(
+        .prove_standalone(
             &setup,
             prover_claims(
                 &scheme,
@@ -201,7 +201,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening], &commitment),
@@ -212,7 +212,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening + F::one()], &commitment),
@@ -223,7 +223,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 b"test/different-session",
                 verifier_claims(&scheme, &opening_point, &[opening], &commitment),
@@ -234,7 +234,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
     let error = scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening, opening], &commitment),
@@ -254,7 +254,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
     let error = scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &[],
                 b"test/prove",
                 verifier_claims(&scheme, short_point, &[opening], &commitment),
@@ -274,7 +274,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &truncated,
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening], &commitment),
@@ -287,7 +287,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &trailing,
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening], &commitment),
@@ -302,7 +302,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &mutated,
                     b"test/prove",
                     verifier_claims(&scheme, &opening_point, &[opening], &commitment),

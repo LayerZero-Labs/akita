@@ -7,7 +7,8 @@ use akita_params::{
 };
 use akita_types::GrindingReplay;
 use akita_types::{Commitment, CommittedGroup, OpeningClaims, PolynomialGroupClaims};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_field::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
+use jolt_transcript::{Channel, Sponge};
 
 pub struct SelectedProverOpeningData<'a, E: Clone, H, F: Field> {
     selection: OpeningScheduleSelection,
@@ -158,14 +159,14 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
             self.groups.iter().map(&mut map).collect(),
         )
     }
-    pub(crate) fn append_to(
+    pub(crate) fn append_to<H: Sponge>(
         &self,
         root_params: &CommittedGroupParams,
-        grinding: &mut akita_types::ProverGrinding<'_>,
+        grinding: &mut akita_types::ProverGrinding<'_, H>,
     ) -> Result<(), AkitaError>
     where
         CommitF: CanonicalEncoding,
-        PointF: ExtField<CommitF>,
+        PointF: ExtField<CommitF> + CanonicalDecode,
     {
         let relation_geometry = akita_params::RelationWitnessGeometry::for_level(
             root_params,
@@ -187,22 +188,23 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
                     AkitaError::Internal("root commitment compression plan has no final map".into())
                 })?
                 .ring_dimension();
-            akita_transcript::public_fields_prover(
-                grinding.state_mut(),
+            grinding.state_mut().site(
                 akita_types::FoldSite::RootCommitment {
                     group: group_index,
                     ring_dimension: ring_dim,
                 }
-                .id()?,
-                commitment.rows().coeffs(),
-            )?;
+                .id()?
+                .into(),
+            );
+            grinding.state_mut().public_all(commitment.rows().coeffs());
         }
         for (group_index, group_claims) in self.opening_claims.groups().iter().enumerate() {
-            akita_transcript::public_extensions::<CommitF, PointF, _>(
-                grinding.state_mut(),
-                akita_types::FoldSite::RootPoint { group: group_index }.id()?,
-                group_claims.point(),
-            )?;
+            grinding.state_mut().site(
+                akita_types::FoldSite::RootPoint { group: group_index }
+                    .id()?
+                    .into(),
+            );
+            grinding.state_mut().public_all(group_claims.point());
         }
         Ok(())
     }

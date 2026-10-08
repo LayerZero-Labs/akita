@@ -12,7 +12,7 @@ Run this command from `crates/akita-pcs`:
 ```bash
 AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=36 \
   cargo run --release --no-default-features \
-  --features parallel,profile-onehot-fp128,transcript-blake2b \
+  --features parallel,profile-onehot-fp128 \
   --example profile
 ```
 
@@ -121,7 +121,7 @@ Build without `parallel` to measure the same workload sequentially:
 ```bash
 AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
   cargo run --release --no-default-features \
-  --features profile-onehot-fp128,transcript-blake2b \
+  --features profile-onehot-fp128 \
   --example profile
 ```
 
@@ -133,7 +133,7 @@ calibration adds full witness scans, so enable it explicitly for those runs:
 ```bash
 AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
   cargo run --release --no-default-features \
-  --features parallel,profile-onehot-fp128,transcript-blake2b,response-model-diagnostics \
+  --features parallel,profile-onehot-fp128,response-model-diagnostics \
   --example profile
 ```
 

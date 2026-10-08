@@ -240,7 +240,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                     BasisMode::Monomial => b"packing/root/monomial".as_slice(),
                 };
                 let proof = scheme
-                    .batched_prove(&setup, prover_data, &stack, label, basis)
+                    .prove_standalone(&setup, prover_data, &stack, label, basis)
                     .unwrap();
                 assert!(!proof.is_empty());
                 let verifier_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
@@ -254,7 +254,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 scheme
                     .verifier(verifier_setup.clone())
                     .and_then(|verifier| {
-                        verifier.batched_verify(proof.as_slice(), label, statement, basis)
+                        verifier.verify_standalone(proof.as_slice(), label, statement, basis)
                     })
                     .unwrap();
 
@@ -272,7 +272,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                     let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
                     assert!(scheme
                         .verifier(verifier_setup.clone())
-                        .and_then(|verifier| verifier.batched_verify(
+                        .and_then(|verifier| verifier.verify_standalone(
                             malformed.as_slice(),
                             label,
                             statement,

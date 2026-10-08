@@ -25,13 +25,13 @@ argument below. Bounded fold-response search lets an honest folded witness
 satisfy the scheduled representation and norm bounds. These mechanisms
 share one public, schedule-derived `GrindingPlan` and one plan cursor.
 
-All nonzero grinding values are inline Spongefish proof messages. A
-proof-of-work nonce and a fold-response nonce each use the same canonical
-unsigned LEB128 codec under distinct context kinds. There is no nonce prefix,
-bit-packed stream, proof shape, or separate replay transcript. Zero-bit
-proof-of-work sites emit no nonce and make no grinding-specific state
-transition. Receipt, absorption, challenge extraction, and EOF checking
-are authoritative.
+All nonzero grinding values are inline `jolt-transcript` proof messages. A
+proof-of-work nonce and a fold-response nonce each use the transcript's
+canonical unsigned LEB128 codec under distinct diagnostic sites. There is no
+nonce prefix, bit-packed stream, proof shape, or separate replay transcript.
+Zero-bit proof-of-work sites emit no nonce and make no grinding-specific state
+transition. Receipt, absorption, challenge extraction, and the outermost
+transcript's exact-consumption check are authoritative.
 
 The sparse fold sampler derives every claim-major block coordinate from an
 indexed SHAKE256 query. This preserves the configured coordinate law while
@@ -72,10 +72,12 @@ from fold-response trials. The target is a classical random-oracle
 bad-event rate. Accepting any satisfying in-range nonce is sound; the
 verifier MUST NOT require the prover's first solution.
 
-The predicate and protected challenge are distinct random-oracle queries. The
-predicate transition absorbs the candidate nonce and squeezes 32 bytes; after
-the accepted nonce is committed to the live state, the protected challenge is
-drawn separately. The predicate bytes MUST NOT be reused as the protocol
+The predicate and protected challenge are distinct random-oracle queries. Every
+search runs on seeded forks (`jolt_transcript::Fork`): one 32-byte seed is
+squeezed from the live state, and candidate `c`'s fork is a fresh sponge that
+absorbed the fork tag, the seed, and `LE32(c)`. The predicate is the fork's
+first 32 squeezed bytes. After the accepted nonce is committed to the live
+state, the protected challenge is drawn separately. The predicate bytes MUST NOT be reused as the protocol
 challenge. The versioned protocol identifier and descriptor bind the positional
 grammar; context records are diagnostics and are not absorbed.
 
@@ -120,21 +122,22 @@ For every proof-of-work entry with `g > 0`:
 
 1. Record diagnostic metadata for the canonical plan site, target, nonce width,
    and `GrindingNonce` kind when transcript logging is enabled.
-2. For each candidate in `[0, 2^(g+7))`, clone only the public duplex state,
-   absorb the canonical nonce, and squeeze 32 predicate bytes.
+2. Squeeze the 32-byte fork seed from the live state. For each candidate in
+   `[0, 2^(g+7))`, squeeze 32 predicate bytes from the candidate's fork.
 3. Select a candidate exactly when the first `g` bits, read low bit first, are
    zero. Exhaustion returns an error.
-4. Commit the winner once with `prover_message`. The verifier receives
-   the nonce, range-checks it against `g+7`, reproduces the predicate, and
-   rejects a failed predicate.
+4. Commit the winner once with `prover_message`. The verifier squeezes the
+   same seed, receives the nonce, range-checks it against `g+7`, reproduces
+   the predicate on the same fork, and rejects a failed predicate.
 5. Record the protected challenge's diagnostic site and draw the challenge.
 
 A zero-bit entry has nonce width zero, emits no proof bytes, and skips steps
 1--4. It remains present in the semantic plan so query coverage can be audited.
 
-Preview MUST NOT mutate the live sponge, private prover randomness, proof
-output, or plan cursor. Raw `duplex_sponge_state` access is confined to the
-reviewed transcript preview implementation and enforced by CI allowlists.
+Candidates never touch the live sponge, private prover randomness, proof
+output, or plan cursor: a fork is a fresh sponge. No crate reads or copies
+spongefish's duplex state; spongefish's `yolocrypto` feature is never enabled,
+which Jolt's CI checks.
 
 ## Fold-response search
 
@@ -142,21 +145,23 @@ Every nonterminal and terminal fold has one `FoldResponse` entry with a 12-bit
 domain and at most 4096 trials. One candidate is shared across all commitment
 groups in that fold.
 
-For candidate `c`:
+The prover squeezes one 32-byte fork seed from the live state when the search
+starts. For candidate `c`:
 
-1. Clone the current public sponge state and absorb the canonical unsigned
-   LEB128 encoding of `c`.
-2. In canonical group order, absorb each group's public sparse-draw payload and
-   squeeze its root. Diagnostic context metadata records the expected sequence
-   without changing the production sponge.
+1. Take `c`'s fork.
+2. In canonical group order, absorb each group's public sparse-draw payload
+   into the fork and squeeze its root. Diagnostic context metadata records the
+   expected sequence without changing any sponge.
 3. Derive every indexed sparse coordinate, compute the folded response, and
    accept only if all scheduled representation and norm bounds hold.
 
-The prover commits the accepted nonce once, then repeats the same group sequence
-on the live state. The verifier receives and range-checks the nonce, reproduces
-all roots in the same order, and performs the same response checks. The nonce
-is not repeated inside individual group payloads because the shared
-state already binds it.
+The prover commits the accepted nonce once as its canonical unsigned LEB128
+message. Both roles take the fold's roots from the accepted candidate's fork:
+the verifier squeezes the same seed, receives and range-checks the nonce,
+reproduces all roots on that fork in the same order, and performs the same
+response checks. The roots are not absorbed into the live state. They are a
+deterministic function of the seed, which binds the whole prior transcript,
+and of the nonce, which the live state absorbs.
 
 Fold-response search is honest-prover rejection sampling. It does not repair a
 small Fiat--Shamir challenge space and does not add 12 bits of soundness. Every
@@ -561,8 +566,8 @@ allocate from a proof-controlled length.
 
 | Component | Responsibility |
 |---|---|
-| Spongefish | State, argument bytes, nonce receipt/absorption, challenge squeeze, EOF |
-| `akita-transcript` | Positional codecs, diagnostic context records, public-state previews, predicate and bounded search primitive |
+| `jolt-transcript` | spongefish prover/verifier state, argument bytes, canonical nonce codec, seeded forks, grinding predicate and search, challenge squeeze, exact consumption |
+| `akita-types` (`transcript`) | Standalone protocol identity, default sponge, diagnostic site coordinates |
 | `akita-types` | Grinding sites, policy, plan, cursor, plan-owning adapters |
 | `akita-config` | Derive and descriptor-bind the public plan |
 | `akita-prover` | Fold-response candidate computation and honest bounded search |
@@ -579,17 +584,17 @@ structured proof replay, or alternate verifier is prohibited.
 - Zero-bit, nonzero, maximum-target, exhaustion, incomplete-plan, out-of-range,
   truncation, mutation, and trailing-byte cases reject correctly; diagnostic
   site sequences agree between prover and verifier.
-- Preview output matches live prover and verifier replay for both Blake2b and
-  Keccak, multiple groups, and multiple candidate counts.
-- Unsuccessful previews leave live state and proof output unchanged.
+- A candidate's fork draws, the committed fork, and the verifier's fork agree
+  for multiple groups.
 - Prover and verifier sparse roots agree, and the indexed SHAKE256
   implementation matches an independent 40-byte-input reference.
 - Reprogramming one indexed coordinate changes only that coordinate.
 - Signed-sparse and operator-rejected marginal distribution, support, unit
   difference, and norm-policy tests remain green for both opening methods.
-- Runtime plan completion and Spongefish EOF are both necessary for acceptance.
-- CI rejects unchecked proof decoding, raw-state access outside the reviewed
-  allowlist, and bypass state constructors in protocol code.
+- Runtime plan completion and the outermost transcript's exact-consumption
+  check are both necessary for acceptance.
+- CI rejects unchecked proof decoding and transcript construction in protocol
+  code outside the reviewed allowlist.
 - Planner artifacts are regenerated and checked whenever policy, byte cost, or
   plan identity changes.
 

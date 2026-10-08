@@ -13,14 +13,16 @@ akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9d2eb0f211ae7c35f2c765002e7ece72c1dae424", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9d2eb0f211ae7c35f2c765002e7ece72c1dae424", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
-akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9d2eb0f211ae7c35f2c765002e7ece72c1dae424", default-features = false, features = [
+  "transcript-blake2b",
+] }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 tracing = "0.1"
@@ -34,29 +36,6 @@ akita-types = { version = "0.1.0", path = "../akita-types", default-features = f
 ] }
 
 [features]
-default = ["transcript-blake2b"]
-transcript-blake2b = [
-  "akita-challenges/transcript-blake2b",
-  "akita-config/transcript-blake2b",
-  "akita-sumcheck/transcript-blake2b",
-  "akita-transcript/transcript-blake2b",
-  "akita-types/transcript-blake2b",
-  "akita-params/transcript-blake2b",
-]
-transcript-keccak = [
-  "akita-challenges/transcript-keccak",
-  "akita-config/transcript-keccak",
-  "akita-sumcheck/transcript-keccak",
-  "akita-transcript/transcript-keccak",
-  "akita-types/transcript-keccak",
-  "akita-params/transcript-keccak",
-]
-logging-transcript = [
-  "akita-challenges/logging-transcript",
-  "akita-transcript/logging-transcript",
-  "akita-types/logging-transcript",
-  "akita-params/logging-transcript",
-]
 response-model-diagnostics = []
 parallel = [
   "akita-challenges/parallel",

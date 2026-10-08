@@ -12,27 +12,34 @@ which bytes are absorbed and when each challenge is drawn.
 
 ## The transcript layer
 
-Production uses Spongefish's prover and verifier states. Its domain
-separator includes a backend-specific protocol tag, the caller's length-framed
-session bytes, and canonical instance bytes. The selected backend is BLAKE2b
-or Keccak; each has its own protocol tag.
+Akita runs on Jolt's `jolt-transcript` proof channel. A proof is the channel's
+argument string: the prover appends every message and absorbs exactly the
+appended bytes, and the verifier reads each message back and absorbs exactly
+the bytes it read. The sponge is a type parameter `H: Sponge` of the prove and
+verify entry points.
 
-Akita pins Spongefish v0.7.4. Its digest bridge encodes squeeze counters as
-fixed-width `u64` values, so Blake2b transcript bytes do not depend on whether
-the implementation uses 32-bit or 64-bit pointers. Akita keeps a known-answer
-vector for this boundary.
+Those entry points take the caller's transcript. Their first operation absorbs
+the canonical instance descriptor as a length-framed public message, and they
+never start, finish, or end-of-proof check a transcript. A protocol that opens
+Akita commitments therefore runs Akita on its own channel, and Akita's messages
+land in its argument string. The standalone API
+(`AkitaCommitmentScheme::prove_standalone` and
+`AkitaVerifier::verify_standalone`) starts a transcript under
+`PROOF_STREAM_PROTOCOL` with the default `AkitaSponge` (Blake2b-512), bound to
+the caller's session bytes, and runs the same entry points. The standalone
+verifier requires the proof to be consumed exactly.
 
-Every logical message or challenge has a fixed public diagnostic context
-record. Proof values use prover emission and verifier receipt, derived
-or public values use public messages, and verifier challenges use
-verifier messages. Field atoms are canonical. The one variable-size terminal
-payload carries a checked length atom before its body.
+Proof values are sent by the prover and received by the verifier, derived or
+public values are absorbed as public messages, and verifier challenges are
+squeezed. Field and extension atoms are canonical little-endian coefficients in
+basis order, and every field challenge is exactly uniform. The one
+variable-size terminal payload carries a checked `u32` length before its body.
 
-Production absorbs and squeezes are positional. Context records and callsite
-labels are diagnostics and do not enter sponge bytes. The backend-specific
-protocol identifier, length-framed session, canonical instance descriptor,
-messages, and replay order do enter the cryptographic state. Renaming a
-diagnostic label therefore differs from changing any of those bound values.
+Absorbs and squeezes are positional. Each operation group is tagged with a
+`ProtocolSiteId`, which the transcript records under its `logging` feature and
+never absorbs. The protocol identifier, session, instance descriptor, messages,
+and replay order do enter the cryptographic state. Renaming a diagnostic site
+therefore differs from changing any of those bound values.
 
 Prover and verifier must execute the same sequence, including challenge
 lengths and canonical ordering within a batch. Equal proof objects alone do
@@ -41,27 +48,38 @@ not establish that agreement.
 ## Sparse fold challenges
 
 A fold needs one sparse ring challenge for every `(claim, live block)` pair.
-Akita draws them in claim-major order. It performs only one live transcript
-squeeze per commitment group, while still giving each pair an independently
-forkable random-oracle coordinate.
+Akita draws them in claim-major order from a seeded fork of the live
+transcript, so the prover's search over fold responses never copies or rewinds
+the transcript, while each pair still gets an independently forkable
+random-oracle coordinate.
+
+### The fold-response fork
+
+At each fold-response site, the live transcript squeezes one 32-byte seed. The
+prover tries counters $c$ in $[0, 4096)$; each candidate's challenges come from
+the fork keyed by the seed and $c$, a fresh sponge that absorbs the fork tag,
+the seed, and `LE32(c)`. The prover sends the first counter whose fold response
+meets its bounds as a canonical unsigned LEB128 nonce message, so the live
+transcript absorbs exactly those proof bytes before any later challenge. The
+verifier squeezes the same seed, receives and range-checks the counter, and
+rebuilds the same fork.
 
 ### The group root
 
-Before the squeeze, the transcript absorbs the complete public draw context:
+For each commitment group, in group order, the fork absorbs the complete public
+draw context:
 
 - group index, number of live blocks, and number of claims;
 - total number of challenge coordinates;
 - challenge ring dimension;
 - counts of coefficients at magnitude 1 and magnitude 2;
-- the shared fold-response grinding nonce;
 - the coefficient-packing method domain and challenge-subring dimension, when
   coefficient packing is selected; and
 - the operator-norm rejection policy, when the selected L2 route requires it.
 
-The transcript then squeezes one 32-byte group root. Evaluation trace preserves
-its established domain encoding. Coefficient packing adds a distinct method
-domain so the same transcript state cannot reinterpret a draw under the two
-opening methods.
+The fork then squeezes the group's 32-byte root. Evaluation trace preserves its
+established domain encoding. Coefficient packing adds a distinct method domain
+so the same fork cannot reinterpret a draw under the two opening methods.
 
 ### One indexed stream per coordinate
 
@@ -78,12 +96,11 @@ This gives the extraction argument the required fork: one challenge can change
 while every other challenge and the surrounding transcript remain fixed.
 
 Expanding the whole challenge vector from one shared cursor would give a
-different oracle dependency. Each accepted nonce has one canonical unsigned
-LEB128 representation: those exact proof bytes are absorbed into the live
-transcript before the challenge context is derived. There is no second compact
-nonce representation or separate nonce absorption.
+different oracle dependency. The accepted counter has one canonical unsigned
+LEB128 representation, and the fork it keys is a function of the transcript's
+seed and those exact proof bytes; there is no second counter encoding.
 
-The indexed readers are an expansion of one transcript root, not additional
+The indexed readers are an expansion of one group root, not additional live
 Fiat--Shamir squeezes and not additional proof data.
 
 ### Positions, magnitudes, and signs
@@ -113,14 +130,16 @@ continues reading the same coordinate stream until one is accepted. The search
 is capped at 4096 candidates.
 
 This rejection rule is part of the public challenge method. The policy and
-threshold are bound before the group root is squeezed, and the verifier repeats
+threshold are bound into the fork before the group root is squeezed, and the verifier repeats
 the same deterministic search. Coefficient-packing folds use the L-infinity
 security route and reject an operator-norm policy.
 
 Implementation:
 
-- `crates/akita-challenges/src/fold_draw.rs` binds the group context and owns
-  the single transcript squeeze.
+- `crates/akita-challenges/src/fold_draw.rs` binds the group context into the
+  fold-response fork and squeezes each group root from it.
+- `crates/akita-types/src/transcript_grinding/replay.rs` squeezes the fork seed,
+  sends or receives the counter, and builds the fork for both roles.
 - `crates/akita-challenges/src/sampler/xof.rs` defines the indexed SHAKE256
   stream and unbiased bounded draws.
 - `crates/akita-challenges/src/sampler/position_sample.rs` implements the
@@ -133,9 +152,9 @@ Implementation:
 ## AkitaInstanceDescriptor
 
 Before replay, both parties construct an `AkitaInstanceDescriptor` from the
-validated public configuration. The shared
-`bind_transcript_instance_descriptor` helper binds its canonical bytes
-through spongefish's `DomainSeparator.instance(...)`.
+validated public configuration with the shared `transcript_instance_descriptor`
+helper. Its canonical bytes are the first public message Akita absorbs, before
+any Akita challenge.
 
 The descriptor records the following identities:
 
@@ -230,7 +249,7 @@ Nonzero proof-of-work sites and every fold-response site carry an inline
 canonical unsigned LEB128 nonce at the exact protocol position where it is
 used. A decoder does not
 obtain a nonce count or policy from proof bytes. The plan cursor checks sites in
-order and must be exhausted when EOF is checked.
+order and must be exhausted when replay finishes.
 
 The planner accepts only complete schedules whose expanded grinding query
 count is less than `u32::MAX`. If the objective-best candidate exceeds that
@@ -240,7 +259,7 @@ admitted by the planner's existing bounded candidate-generation policies.
 domain; it does not prove that no mathematically valid schedule exists among
 layouts discarded by those policies.
 
-Proof-of-work and fold-response nonces use distinct message kinds and
+Proof-of-work and fold-response nonces use distinct diagnostic sites and
 serve different purposes.
 
 ### Protected challenge queries
@@ -256,10 +275,12 @@ chooses the least nonnegative integer $g$ with $L 2^{128} \le |E| 2^g$, which
 keeps the chance per query at most $2^{-128}$. The calculation uses integers
 and the actual prime power, including the deficit below a power of two.
 
-At a protected query with grinding target $g>0$, the prover searches a
-nonce whose accepted value must fit $g+7$ bits. Each attempt absorbs the
-canonical nonce, then produces a separate 32-byte predicate. Diagnostic
-metadata records the grinding site without changing the sponge. The predicate
+At a protected query with grinding target $g>0$, the prover squeezes a
+32-byte seed and searches a nonce whose accepted value must fit $g+7$ bits.
+Each attempt squeezes a separate 32-byte predicate from a seeded fork, a fresh
+sponge keyed by the seed and the candidate, so no attempt touches the live
+transcript. The diagnostic
+site records the grinding query without changing the sponge. The predicate
 passes when its first $g$ low-order bits are zero.
 
 The verifier repeats that predicate check. Only after it passes does replay
@@ -340,13 +361,14 @@ records the contract.
 
 A fold-response entry carries a canonical unsigned LEB128 nonce whose value
 must fit the 12-bit search domain, shared by all commitment
-groups in that fold. The prover previews candidates until the resulting
-response satisfies the scheduled representation and norm bounds. It commits
+groups in that fold. The prover draws each candidate's challenges from its
+seeded fork until the resulting response satisfies the scheduled
+representation and norm bounds. It commits
 the winning nonce to replay, or returns an error if the bounded search is
 exhausted.
 
-The verifier reconstructs the challenges for that nonce and enforces the
-response bounds. This is separate from the proof-of-work predicate. The
+The verifier squeezes the same seed, reconstructs the challenges on that
+nonce's fork, and enforces the response bounds. This is separate from the proof-of-work predicate. The
 [PCS binding chapter](../foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces)
 explains why adversarial nonce trials must be included in random-oracle query
 accounting.
@@ -358,19 +380,19 @@ other versions. Pin an exact Akita revision and rerun prove and verify
 integration tests when upgrading; the repository does not promise
 compatibility across revisions.
 
-Binding an instance initializes the transcript state for that instance.
-Application code should use the intended session label and let the scheme's
-shared binding path construct the descriptor before replay. Prepending
-application messages to a transcript that will then be rebound does not
-preserve those messages in the new state.
+The descriptor binds the instance into the caller's transcript state, after
+any messages the caller absorbed first. Standalone callers choose the session
+label; composed callers bind their own protocol identity and statement before
+calling Akita, and finish the transcript once, at their outermost boundary.
 
 The current descriptor's `SetupSection.protocol_features.zk` is
 `false`. Transcript binding does not add hiding or zero knowledge.
 
-The protocol uses a descriptor-bound positional grammar. Context records
-capture semantic sites and widths for logging diagnostics without adding
-production hashing work. Tests cover prover/verifier vectors, tampering,
-truncation, statement/session binding, and EOF; they do not freeze one
+The protocol uses a descriptor-bound positional grammar. Site identities
+capture semantic positions for logging diagnostics without adding production
+hashing work. Tests compare the prover's and verifier's recorded event streams,
+flip a byte in every recorded message range, and cover truncation,
+statement/session binding, and trailing bytes; they do not freeze one
 proof-byte digest for all future schedules. The grinding grammar and
 nonce encoding are documented in
 [`specs/transcript-grinding.md`](../../../specs/transcript-grinding.md) and
@@ -382,9 +404,10 @@ nonce encoding are documented in
   shared descriptor and grinding plan.
 - `crates/akita-types/src/instance_descriptor/mod.rs` owns descriptor fields,
   canonical serialization, and version validation.
-- `crates/akita-transcript/src/proof_stream.rs` owns state construction,
-  context framing, canonical atom codecs, bounded bytes, and EOF-compatible
-  proof transport.
+- `crates/akita-types/src/transcript.rs` owns the standalone protocol identity
+  and default sponge, and `crates/akita-params/src/transcript_site.rs` owns the
+  diagnostic site coordinates; `jolt-transcript` owns framing, atom codecs,
+  bounded bytes, nonces, and grinding.
 - `crates/akita-params/src/transcript_grinding/plan.rs` defines the ordered
   plan; `crates/akita-types/src/transcript_grinding/replay.rs` couples
   nonce transport, predicate checks, challenges, and plan progress.

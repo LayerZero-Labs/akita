@@ -10,33 +10,17 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
-default = ["transcript-blake2b"]
-transcript-blake2b = [
-  "akita-challenges/transcript-blake2b",
-  "akita-schedules/transcript-blake2b",
-  "akita-transcript/transcript-blake2b",
-  "akita-types/transcript-blake2b",
-  "akita-params/transcript-blake2b",
-]
-transcript-keccak = [
-  "akita-challenges/transcript-keccak",
-  "akita-schedules/transcript-keccak",
-  "akita-transcript/transcript-keccak",
-  "akita-types/transcript-keccak",
-  "akita-params/transcript-keccak",
-]
 test-support = []
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9d2eb0f211ae7c35f2c765002e7ece72c1dae424", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 
@@ -44,6 +28,7 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [
   "test-support",
 ] }
+rand_core = "0.6"
 serde_json = "1"
 
 [lints]

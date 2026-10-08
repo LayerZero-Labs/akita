@@ -434,7 +434,7 @@ impl FoldSchedule {
         let (first_successor_d, first_successor_opening_num_vars) =
             self.recursive_folds.first().map_or_else(
                 || {
-                    Ok((
+                    Ok::<_, AkitaError>((
                         self.terminal.d_a(),
                         self.terminal.recursive_opening_num_vars()?,
                     ))
@@ -475,7 +475,7 @@ impl FoldSchedule {
             let (successor_d, successor_opening_num_vars) =
                 self.recursive_folds.get(index + 1).map_or_else(
                     || {
-                        Ok((
+                        Ok::<_, AkitaError>((
                             self.terminal.d_a(),
                             self.terminal.recursive_opening_num_vars()?,
                         ))

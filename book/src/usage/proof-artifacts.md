@@ -21,7 +21,7 @@ A host should define one versioned container with these fields:
 | Ordered commitments | Fixes every polynomial group |
 | Ordered opening points | States where each group is opened |
 | Ordered claimed values | States one value for each committed polynomial |
-| Proof bytes | Carries the canonical Spongefish argument stream |
+| Proof bytes | Carries the canonical argument stream |
 
 The host may store verifier setup separately and refer to it by an authenticated
 identifier. The remaining values still belong to one public verification
@@ -35,8 +35,8 @@ a clear protocol owner.
 ```rust
 const SESSION: &[u8] = b"my-system/akita-opening/v1";
 
-let proof = scheme.batched_prove(&prover_setup, opening, &stacks, SESSION, basis)?;
-scheme.verifier(verifier_setup)?.batched_verify(&proof, SESSION, statement, basis)?;
+let proof = scheme.prove_standalone(&prover_setup, opening, &stacks, SESSION, basis)?;
+scheme.verifier(verifier_setup)?.verify_standalone(&proof, SESSION, statement, basis)?;
 ```
 
 The verifier binds the canonical Akita instance descriptor before replay. That
@@ -44,9 +44,11 @@ descriptor covers the configuration, setup identity, schedule, and public
 claim layout. Akita then absorbs commitments, points, claimed values, and proof
 messages in protocol order.
 
-Akita constructs fresh prover and verifier states internally. Do not
-serialize a live state or reuse proof bytes under another session. Both sides
-use the same session bytes and independently bind the same public instance.
+The standalone API constructs fresh prover and verifier transcripts. Do not
+serialize a live transcript or reuse proof bytes under another session. Both
+sides use the same session bytes and independently bind the same public
+instance. A protocol that composes Akita instead passes its own transcript to
+`batched_prove` and `batched_verify`, and finishes it at its outermost boundary.
 
 The [transcript chapter](../how/transcript.md) lists the exact binding order and
 explains the wire checks used by transcript tests.
@@ -64,7 +66,7 @@ prevents a proof from supplying its own unchecked parameters.
 
 ## Store the proof canonically
 
-The PCS returns the canonical Spongefish argument byte string.
+The PCS returns the canonical argument byte string.
 
 ```rust
 let proof_bytes: Vec<u8> = proof;

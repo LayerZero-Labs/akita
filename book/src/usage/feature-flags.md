@@ -1,6 +1,6 @@
 # Feature flags and build recipes
 
-Akita uses Cargo features for transcript backends and compute support. Schedule
+Akita uses Cargo features for compute support and diagnostics. Schedule
 rows are external runtime artifacts, not Cargo features. The default
 `akita-pcs` build is a parallel CPU configuration for ordinary use.
 
@@ -9,9 +9,8 @@ rows are external runtime artifacts, not Cargo features. The default
 | Feature | What it provides |
 | --- | --- |
 | `parallel` | Rayon execution across field arithmetic, setup, proving, sumcheck, and verification |
-| `transcript-blake2b` | The default Spongefish transcript backend |
 
-The normal build uses both:
+The normal build uses it:
 
 ```bash
 cargo build -p akita-pcs --release
@@ -21,12 +20,10 @@ cargo build -p akita-pcs --release
 
 ### Sequential CPU build
 
-Keep the default transcript while removing Rayon:
+Remove Rayon:
 
 ```bash
-cargo build -p akita-pcs --release \
-  --no-default-features \
-  --features transcript-blake2b
+cargo build -p akita-pcs --release --no-default-features
 ```
 
 This build produces the same protocol results. It changes local execution and
@@ -49,17 +46,13 @@ cargo build -p akita-pcs --release --features disk-persistence
 This stores public matrix coefficients and setup prefix artifacts. Prepared NTT
 caches remain local memory state and rebuild from the public setup.
 
-## Transcript backends
+## Transcript sponge
 
-Production builds enable exactly one transcript backend.
-
-| Feature | Backend |
-| --- | --- |
-| `transcript-blake2b` | Blake2b based Spongefish transcript with SHA3 support |
-| `transcript-keccak` | Keccak based Spongefish transcript |
-
-The transcript backend is part of proof compatibility. Prover and verifier
-must use the same backend and protocol revision.
+The sponge is not a Cargo feature. The core prove and verify entry points are
+generic over a `jolt_transcript::Sponge` and run on the caller's transcript;
+the standalone API uses `AkitaSponge` (Blake2b-512). The sponge is bound into
+the transcript's protocol identifier, so prover and verifier must use the same
+sponge and protocol revision.
 
 ## Schedule catalog storage
 
@@ -73,18 +66,17 @@ explains which family to choose.
 
 | Feature | Purpose |
 | --- | --- |
-| `logging-transcript` | Records transcript schedule events and checks that wire values are absorbed before challenges |
+| `logging` (`akita-pcs`) | Records every transcript operation with its site and argument-string range, for the transcript-hardening suites and the profile example's wire report |
 | `response-model-diagnostics` | Measures complete source and response energies for planner model calibration |
 
 `response-model-diagnostics` scans witness data that normal proving does not
 scan. Use it for model calibration runs, not for ordinary performance numbers.
 
-The `transcript_schedule` example uses `logging-transcript`:
+The transcript-hardening suites compare the prover's and verifier's event
+streams under `logging`:
 
 ```bash
-cargo run -p akita-pcs \
-  --features logging-transcript \
-  --example transcript_schedule
+cargo test --release -p akita-pcs --features logging --test transcript_hardening
 ```
 
 ## Profile CI features

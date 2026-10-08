@@ -245,7 +245,7 @@ where
     let selection = prover_claims.selection();
 
     let proof = scheme
-        .batched_prove(
+        .prove_standalone(
             &setup,
             prover_claims,
             &stack,
@@ -280,7 +280,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 b"test/multi-group-unequal",
                 GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
@@ -309,7 +309,7 @@ where
         assert!(
             scheme
                 .verifier(verifier_setup.clone())
-                .and_then(|verifier| verifier.batched_verify(
+                .and_then(|verifier| verifier.verify_standalone(
                     &proof,
                     b"test/multi-group-unequal",
                     GroupBatchStatement::new(selection, swapped_claims)
@@ -332,7 +332,7 @@ where
         assert!(
             scheme
                 .verifier(verifier_setup.clone())
-                .and_then(|verifier| verifier.batched_verify(
+                .and_then(|verifier| verifier.verify_standalone(
                     &proof,
                     b"test/multi-group-unequal",
                     GroupBatchStatement::new(selection, tampered_claims)

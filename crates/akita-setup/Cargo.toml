@@ -9,19 +9,6 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
-default = ["transcript-blake2b"]
-transcript-blake2b = [
-  "akita-config/transcript-blake2b",
-  "akita-cpu-backend/transcript-blake2b",
-  "akita-types/transcript-blake2b",
-  "akita-params/transcript-blake2b",
-]
-transcript-keccak = [
-  "akita-config/transcript-keccak",
-  "akita-cpu-backend/transcript-keccak",
-  "akita-types/transcript-keccak",
-  "akita-params/transcript-keccak",
-]
 parallel = ["jolt-field/parallel", "akita-cpu-backend/parallel"]
 disk-persistence = ["akita-cpu-backend/disk-persistence"]
 
@@ -29,7 +16,7 @@ disk-persistence = ["akita-cpu-backend/disk-persistence"]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9d2eb0f211ae7c35f2c765002e7ece72c1dae424", default-features = false, features = [
   "asm",
   "solinas",
 ] }

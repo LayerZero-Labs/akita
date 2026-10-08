@@ -8,6 +8,9 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::{Ring, Zero};
+use jolt_transcript::{
+    Blake2b512, Keccak, ProtocolId, ProverTranscript, Sponge, VerifierTranscript,
+};
 
 #[test]
 fn dense_fp128_roundtrip() {
@@ -19,17 +22,24 @@ fn dense_fp128_roundtrip() {
         .unwrap();
 }
 
+/// The core entry points run on a caller-chosen sponge and protocol id, and
+/// leave the final consumption check to the caller.
 #[test]
-fn onehot_fp32_roundtrip() {
-    std::thread::Builder::new()
-        .stack_size(512 * 1024 * 1024)
-        .spawn(onehot_fp32_roundtrip_inner)
-        .unwrap()
-        .join()
-        .unwrap();
+fn onehot_fp32_roundtrip_on_caller_transcripts() {
+    for run in [
+        onehot_fp32_roundtrip_inner::<Blake2b512> as fn(),
+        onehot_fp32_roundtrip_inner::<Keccak>,
+    ] {
+        std::thread::Builder::new()
+            .stack_size(512 * 1024 * 1024)
+            .spawn(run)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }
 
-fn onehot_fp32_roundtrip_inner() {
+fn onehot_fp32_roundtrip_inner<H: Sponge>() {
     type Cfg = fp32::OneHot;
     type F = <Cfg as CommitmentConfig>::Field;
     type E = <Cfg as CommitmentConfig>::ExtField;
@@ -74,30 +84,31 @@ fn onehot_fp32_roundtrip_inner() {
     )
     .unwrap();
     let selection = prover_data.selection();
-    let proof = scheme
+    let protocol = ProtocolId::new::<H>("akita-pcs/test/caller-transcript");
+    let session = b"native-port-onehot-fp32";
+    let mut prover = ProverTranscript::<H>::new(&protocol, session);
+    prover.send(&7u32);
+    scheme
         .batched_prove(
             &setup,
             prover_data,
             &backend,
-            b"native-port-onehot-fp32",
+            &mut prover,
             BasisMode::Lagrange,
         )
         .unwrap();
+    let proof = prover.finish();
     let verify_group = PolynomialGroupClaims::new(point, vec![opening], &commitment).unwrap();
     let verify_claims = OpeningClaims::from_groups(vec![verify_group]).unwrap();
     let statement = GroupBatchStatement::new(selection, verify_claims).unwrap();
     let verifier_setup = scheme.setup_verifier(&setup).unwrap();
+    let mut verifier = VerifierTranscript::<H>::new(&protocol, session, &proof);
+    assert_eq!(verifier.receive::<u32>().unwrap(), 7);
     scheme
-        .verifier(verifier_setup.clone())
-        .and_then(|verifier| {
-            verifier.batched_verify(
-                &proof,
-                b"native-port-onehot-fp32",
-                statement,
-                BasisMode::Lagrange,
-            )
-        })
+        .verifier(verifier_setup)
+        .and_then(|akita| akita.batched_verify(&mut verifier, statement, BasisMode::Lagrange))
         .unwrap();
+    verifier.finish().unwrap();
 }
 
 fn dense_fp128_roundtrip_inner() {
@@ -139,7 +150,7 @@ fn dense_fp128_roundtrip_inner() {
     .unwrap();
     let selection = prover_data.selection();
     let proof = scheme
-        .batched_prove(
+        .prove_standalone(
             &setup,
             prover_data,
             &backend,
@@ -154,7 +165,7 @@ fn dense_fp128_roundtrip_inner() {
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(&proof, b"native-port-smoke", statement, BasisMode::Lagrange)
+            verifier.verify_standalone(&proof, b"native-port-smoke", statement, BasisMode::Lagrange)
         })
         .unwrap();
 }

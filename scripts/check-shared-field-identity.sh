@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # The integrated dependency graph must contain no akita-field, exactly one
-# jolt-field and jolt-poly package identity, and one shared Jolt Git commit.
+# jolt-field, jolt-poly, and jolt-transcript package identity, and one shared
+# Jolt Git commit.
 #
 # Structural check over `cargo metadata` package IDs: immune to `cargo tree`
 # rendering (CARGO_TERM_COLOR=always colorizes the `(*)` dedup marker, which
@@ -17,10 +18,13 @@ check_workspace() {
   local akita_identities
   local identities
   local poly_identities
+  local transcript_identities
   local count
   local poly_count
+  local transcript_count
   local field_source
   local poly_source
+  local transcript_source
 
   metadata="$(cargo metadata --format-version 1 --locked --manifest-path "$manifest")"
 
@@ -48,16 +52,26 @@ check_workspace() {
     exit 1
   fi
 
+  transcript_identities="$(jq -r '.packages[] | select(.name == "jolt-transcript") | .id' <<<"$metadata" | sort -u)"
+  transcript_count="$(grep -c . <<<"$transcript_identities" || true)"
+  if [[ "$transcript_count" -ne 1 ]]; then
+    echo "error: expected exactly one jolt-transcript package identity in $label, found $transcript_count" >&2
+    printf '%s\n' "$transcript_identities" >&2
+    exit 1
+  fi
+
   field_source="$(jq -r '.packages[] | select(.name == "jolt-field") | .source' <<<"$metadata" | sort -u)"
   poly_source="$(jq -r '.packages[] | select(.name == "jolt-poly") | .source' <<<"$metadata" | sort -u)"
-  if [[ "$field_source" != "$poly_source" || "$field_source" != git+https://github.com/a16z/jolt* ]]; then
-    echo "error: jolt-field and jolt-poly do not use the same Jolt Git source in $label" >&2
-    printf '%s\n%s\n' "$identities" "$poly_identities" >&2
+  transcript_source="$(jq -r '.packages[] | select(.name == "jolt-transcript") | .source' <<<"$metadata" | sort -u)"
+  if [[ "$field_source" != "$poly_source" || "$field_source" != "$transcript_source" || "$field_source" != git+https://github.com/a16z/jolt* ]]; then
+    echo "error: jolt-field, jolt-poly, and jolt-transcript do not use the same Jolt Git source in $label" >&2
+    printf '%s\n%s\n%s\n' "$identities" "$poly_identities" "$transcript_identities" >&2
     exit 1
   fi
 
   printf 'shared field identity (%s): %s\n' "$label" "$identities"
   printf 'shared polynomial identity (%s): %s\n' "$label" "$poly_identities"
+  printf 'shared transcript identity (%s): %s\n' "$label" "$transcript_identities"
 }
 
 check_workspace root Cargo.toml

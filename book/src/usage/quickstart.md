@@ -123,7 +123,7 @@ construction.
 ```rust
 const TRANSCRIPT_DOMAIN: &[u8] = b"akita/book/quickstart/v1";
 
-let proof = scheme.batched_prove(
+let proof = scheme.prove_standalone(
     &setup,
     prover_data,
     &backend,
@@ -138,7 +138,7 @@ in proof systems.
 
 ## Transport the proof
 
-The proof is already the canonical Spongefish argument byte string. Store or
+The proof is already the canonical argument byte string. Store or
 send it directly; the public schedule bounds every message the verifier reads.
 
 ```rust
@@ -165,7 +165,7 @@ let verifier_claims = OpeningClaims::from_groups(vec![
 ])?;
 let statement = GroupBatchStatement::new(selection, verifier_claims)?;
 
-verifier.batched_verify(&proof_bytes, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)?;
+verifier.verify_standalone(&proof_bytes, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)?;
 ```
 
 Akita constructs fresh prover and verifier states and binds the complete

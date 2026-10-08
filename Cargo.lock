@@ -43,8 +43,8 @@ name = "akita-challenges"
 version = "0.1.0"
 dependencies = [
  "akita-error",
- "akita-transcript",
  "jolt-field",
+ "jolt-transcript",
  "keccak 0.1.6",
  "serde",
  "shake",
@@ -60,9 +60,9 @@ dependencies = [
  "akita-params",
  "akita-schedules",
  "akita-serialization",
- "akita-transcript",
  "akita-types",
  "jolt-field",
+ "rand_core 0.6.4",
  "serde_json",
 ]
 
@@ -78,12 +78,12 @@ dependencies = [
  "akita-prover",
  "akita-serialization",
  "akita-sumcheck",
- "akita-transcript",
  "akita-types",
  "akita-verifier",
  "criterion",
  "jolt-field",
  "jolt-poly",
+ "jolt-transcript",
  "rand 0.8.8",
  "rayon",
  "tracing",
@@ -93,6 +93,7 @@ dependencies = [
 name = "akita-error"
 version = "0.1.0"
 dependencies = [
+ "jolt-transcript",
  "thiserror",
 ]
 
@@ -105,9 +106,9 @@ dependencies = [
  "akita-error",
  "akita-serialization",
  "akita-sumcheck",
- "akita-transcript",
  "blake2",
  "jolt-field",
+ "jolt-transcript",
  "num-bigint 0.5.1",
  "rand 0.8.8",
  "serde",
@@ -129,7 +130,6 @@ dependencies = [
  "akita-schedules",
  "akita-serialization",
  "akita-setup",
- "akita-transcript",
  "akita-types",
  "akita-verifier",
  "ark-bn254",
@@ -137,6 +137,7 @@ dependencies = [
  "criterion",
  "jolt-field",
  "jolt-poly",
+ "jolt-transcript",
  "libc",
  "num-bigint 0.5.1",
  "p3-baby-bear",
@@ -179,10 +180,10 @@ dependencies = [
  "akita-params",
  "akita-serialization",
  "akita-sumcheck",
- "akita-transcript",
  "akita-types",
  "jolt-field",
  "jolt-poly",
+ "jolt-transcript",
  "tracing",
 ]
 
@@ -201,6 +202,7 @@ dependencies = [
 name = "akita-serialization"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.2.17",
  "jolt-field",
  "jolt-poly",
  "proptest",
@@ -244,18 +246,9 @@ dependencies = [
  "akita-algebra",
  "akita-error",
  "akita-serialization",
- "akita-transcript",
  "jolt-field",
  "jolt-poly",
-]
-
-[[package]]
-name = "akita-transcript"
-version = "0.1.0"
-dependencies = [
- "akita-error",
- "jolt-field",
- "spongefish",
+ "jolt-transcript",
 ]
 
 [[package]]
@@ -268,10 +261,10 @@ dependencies = [
  "akita-params",
  "akita-serialization",
  "akita-sumcheck",
- "akita-transcript",
  "criterion",
  "jolt-field",
  "jolt-poly",
+ "jolt-transcript",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "shake",
@@ -289,11 +282,11 @@ dependencies = [
  "akita-params",
  "akita-serialization",
  "akita-sumcheck",
- "akita-transcript",
  "akita-types",
  "criterion",
  "jolt-field",
  "jolt-poly",
+ "jolt-transcript",
  "rayon",
  "tracing",
 ]
@@ -814,8 +807,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -906,20 +901,21 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=1618f4b6dc97effcec3568ca7cf2b7420ac9e75f#1618f4b6dc97effcec3568ca7cf2b7420ac9e75f"
+source = "git+https://github.com/a16z/jolt?rev=9d2eb0f211ae7c35f2c765002e7ece72c1dae424#9d2eb0f211ae7c35f2c765002e7ece72c1dae424"
 dependencies = [
  "cc",
  "num-traits",
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "spongefish",
  "thiserror",
 ]
 
 [[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=1618f4b6dc97effcec3568ca7cf2b7420ac9e75f#1618f4b6dc97effcec3568ca7cf2b7420ac9e75f"
+source = "git+https://github.com/a16z/jolt?rev=9d2eb0f211ae7c35f2c765002e7ece72c1dae424#9d2eb0f211ae7c35f2c765002e7ece72c1dae424"
 dependencies = [
  "jolt-field",
  "jolt-utils",
@@ -931,9 +927,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-transcript"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=9d2eb0f211ae7c35f2c765002e7ece72c1dae424#9d2eb0f211ae7c35f2c765002e7ece72c1dae424"
+dependencies = [
+ "jolt-field",
+ "rand 0.8.8",
+ "rand_core 0.6.4",
+ "spongefish",
+ "thiserror",
+]
+
+[[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=1618f4b6dc97effcec3568ca7cf2b7420ac9e75f#1618f4b6dc97effcec3568ca7cf2b7420ac9e75f"
+source = "git+https://github.com/a16z/jolt?rev=9d2eb0f211ae7c35f2c765002e7ece72c1dae424#9d2eb0f211ae7c35f2c765002e7ece72c1dae424"
 dependencies = [
  "num-traits",
 ]

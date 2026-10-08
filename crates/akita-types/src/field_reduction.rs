@@ -7,11 +7,13 @@
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
 use akita_serialization::Valid;
-use jolt_field::{Ext2, ExtField, Field, FpExt4, FpExt8, PseudoMersenne, Ring};
+use jolt_field::{CanonicalDecode, Ext2, ExtField, Field, FpExt4, FpExt8, PseudoMersenne, Ring};
 
 /// Extension fields whose `ExtField::to_base_vec` coordinates are the
 /// ring-subfield coordinates consumed by [`psi_embed`] and [`embed_subfield`].
-pub trait FpExtEncoding<F: Field>: ExtField<F> {
+///
+/// Their canonical transcript encoding is the same coordinates in order.
+pub trait FpExtEncoding<F: Field>: ExtField<F> + CanonicalDecode {
     /// Borrow coordinates in the ring-subfield basis.
     fn ext_coords(&self) -> &[F];
 

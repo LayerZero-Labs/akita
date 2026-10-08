@@ -34,3 +34,17 @@ ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/tw
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+
+# `jolt-sdk` reaches `jolt-akita` through `jolt-prover`, and Jolt pins its own
+# Akita revision. Resolve every Akita crate it names from this checkout, so the
+# harness links one Akita and one `jolt-field` (scripts/check-shared-field-identity.sh).
+[patch."https://github.com/LayerZero-Labs/akita.git"]
+akita-algebra = { path = "../../crates/akita-algebra" }
+akita-challenges = { path = "../../crates/akita-challenges" }
+akita-config = { path = "../../crates/akita-config" }
+akita-error = { path = "../../crates/akita-error" }
+akita-params = { path = "../../crates/akita-params" }
+akita-pcs = { path = "../../crates/akita-pcs" }
+akita-planner = { path = "../../crates/akita-planner" }
+akita-schedules = { path = "../../crates/akita-schedules" }
+akita-types = { path = "../../crates/akita-types" }

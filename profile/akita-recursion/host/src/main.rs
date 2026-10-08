@@ -163,7 +163,7 @@ macro_rules! strict_decode_and_verify {
             None,
         )
         .map_err(|err| format!("strict host verifier setup failed: {err}"))?
-        .batched_verify(
+        .verify_standalone(
             &decoded.proof,
             &decoded.transcript_domain,
             decoded
@@ -195,7 +195,7 @@ macro_rules! strict_fp128_preflight {
             Some(&cache),
         )
         .map_err(|err| format!("prepared verifier cache self-check failed: {err}"))?
-        .batched_verify(
+        .verify_standalone(
             &decoded.proof,
             &decoded.transcript_domain,
             decoded

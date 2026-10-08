@@ -270,7 +270,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let commitments = [commitment];
 
     let proof = scheme
-        .batched_prove(
+        .prove_standalone(
             &setup,
             prover_claims(
                 &scheme,

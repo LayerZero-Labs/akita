@@ -18,6 +18,7 @@ use akita_params::{
     PolynomialGroupLayout,
 };
 use akita_pcs::AkitaCommitmentScheme;
+use akita_pcs::{AkitaSponge, PROOF_STREAM_PROTOCOL};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::FpExtEncoding;
 use jolt_field::solinas::parallel::*;
@@ -26,6 +27,7 @@ use jolt_field::{
     PseudoMersenne, Ring,
 };
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
+use jolt_transcript::ProverTranscript;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::time::Instant;
@@ -106,7 +108,9 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             .expect("select generated schedule row")
             .selection();
         let t0 = Instant::now();
-        let proof = scheme
+        let mut transcript =
+            ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, b"profile");
+        scheme
             .batched_prove(
                 setup,
                 prover_claims::<Cfg>(
@@ -118,10 +122,13 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
                     hint,
                 ),
                 backend,
-                b"profile",
+                &mut transcript,
                 BasisMode::Lagrange,
             )
             .unwrap();
+        #[cfg(feature = "logging")]
+        crate::report::print_wire_events(label, transcript.events());
+        let proof = transcript.finish();
         report_timing(label, "prove", t0.elapsed().as_secs_f64());
         (commitments, proof)
     };
@@ -231,7 +238,8 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let verifier = scheme
         .verifier(verifier_setup.clone())
         .expect("verifier for the profile setup");
-    let verify = |claims| verifier.batched_verify(&proof, b"profile", claims, BasisMode::Lagrange);
+    let verify =
+        |claims| verifier.verify_standalone(&proof, b"profile", claims, BasisMode::Lagrange);
     run_verifier_timings(label, pools, "profile", prepare, verify);
     report_verifier_ntt_cache_size(label, verifier.terminal_ntt_cache_bytes());
 }

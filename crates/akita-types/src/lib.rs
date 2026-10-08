@@ -15,6 +15,7 @@ mod stage2_sites;
 mod stage3_sites;
 mod subring_coefficient_packing;
 pub mod trace_weight;
+pub mod transcript;
 mod transcript_grinding;
 pub use eor_sites::{eor_final_claims, eor_prefix, EorPrefix, EOR_SUMCHECK_INVOCATION};
 pub use extension_opening_reduction::{
@@ -99,9 +100,10 @@ pub use trace_weight::{
     ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
     EvaluationTraceGroupParameters, EvaluationTraceInputs,
 };
+pub use transcript::{extension_slots, AkitaSponge, PROOF_STREAM_PROTOCOL};
 pub use transcript_grinding::{
-    GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProofAcceptance,
-    ProverGrinding, VerifierGrinding,
+    GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProverGrinding,
+    VerifierGrinding,
 };
 
 #[cfg(test)]

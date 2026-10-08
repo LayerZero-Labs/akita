@@ -7,7 +7,7 @@ pub(crate) struct ProvedExtensionOpeningReduction<E: Field> {
 
 /// Drive one aggregate EOR session; individual contributions stay inside the backend.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn prove_extension_opening_reduction<F, E, B>(
+pub(crate) fn prove_extension_opening_reduction<F, E, B, H: Sponge>(
     backend: &B,
     session: &B::ProofSessionHandle,
     context: &crate::backend::ProofContext,
@@ -18,14 +18,20 @@ pub(crate) fn prove_extension_opening_reduction<F, E, B>(
         B::CommitmentHandle,
         B::WitnessHandle,
     >],
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, H>,
     level: u32,
     expected_openings: &[E],
 ) -> Result<ProvedExtensionOpeningReduction<E>, AkitaError>
 where
     F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize + 'static,
     <F as Unreduced>::Wide: From<F>,
-    E: ExtField<F> + Unreduced + Fold + MulBaseUnreduced<F> + AkitaSerialize + 'static,
+    E: ExtField<F>
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + AkitaSerialize
+        + 'static
+        + CanonicalDecode,
     B: crate::backend::OpaqueEorKernel<F, E>,
 {
     let (split_bits, width) = tensor_opening_split::<F, E>()?;
@@ -92,7 +98,7 @@ where
         rounds: max_tail_vars,
         field: std::marker::PhantomData,
     };
-    let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+    let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
         grinding,
         akita_params::SumcheckProtocol::ExtensionOpeningReduction,
         level,

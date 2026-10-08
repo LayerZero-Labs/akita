@@ -23,6 +23,7 @@ pub mod tail_golomb_rice_low_bits;
 mod transcript_grinding;
 #[path = "transcript_grinding/plan.rs"]
 mod transcript_grinding_plan;
+pub mod transcript_site;
 pub mod wire_limits;
 pub mod witness;
 pub use commitment_slicing::{CommitmentSliceCount, CommitmentSliceGeometry};
@@ -103,6 +104,7 @@ pub use transcript_grinding::{
 pub use transcript_grinding_plan::{
     derive_transcript_grinding_plan_from_public_shape, transcript_grinding_cost_for_planner_edge,
 };
+pub use transcript_site::ProtocolSiteId;
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,
     CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId,

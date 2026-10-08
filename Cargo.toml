@@ -9,7 +9,6 @@ members = [
   "crates/akita-serialization",
   "crates/akita-setup",
   "crates/akita-sumcheck",
-  "crates/akita-transcript",
   "crates/akita-types",
   "crates/akita-params",
   "crates/akita-verifier",

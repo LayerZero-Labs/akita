@@ -171,7 +171,7 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
     let selection = prover_claims.selection();
 
     let proof = recursive_scheme
-        .batched_prove(
+        .prove_standalone(
             setup,
             prover_claims,
             stack,
@@ -206,7 +206,7 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
     recursive_scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 transcript_domain,
                 verify_claims(final_openings.clone()),
@@ -223,7 +223,7 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
         let alternate_result = recursive_scheme
             .verifier(alternate_verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     transcript_domain,
                     verify_claims(final_openings.clone()),
@@ -240,7 +240,7 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
         let result = recursive_scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &tampered_proof,
                     transcript_domain,
                     verify_claims(final_openings.clone()),
@@ -279,7 +279,7 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
     let tampered_result = recursive_scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 transcript_domain,
                 verify_claims(tampered),

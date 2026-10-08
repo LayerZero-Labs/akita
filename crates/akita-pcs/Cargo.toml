@@ -22,37 +22,13 @@ include = ["src/**", "examples/**", "benches/**", "Cargo.toml"]
 
 [package.metadata.docs.rs]
 no-default-features = true
-features = ["parallel", "transcript-blake2b"]
+features = ["parallel"]
 
 [package.metadata.cargo-machete]
 ignored = ["akita-setup"]
 
 [features]
-default = ["parallel", "transcript-blake2b"]
-transcript-blake2b = [
-  "akita-challenges/transcript-blake2b",
-  "akita-config/transcript-blake2b",
-  "akita-cpu-backend/transcript-blake2b",
-  "akita-prover/transcript-blake2b",
-  "akita-planner/transcript-blake2b",
-  "akita-setup/transcript-blake2b",
-  "akita-transcript/transcript-blake2b",
-  "akita-types/transcript-blake2b",
-  "akita-params/transcript-blake2b",
-  "akita-verifier/transcript-blake2b",
-]
-transcript-keccak = [
-  "akita-challenges/transcript-keccak",
-  "akita-config/transcript-keccak",
-  "akita-cpu-backend/transcript-keccak",
-  "akita-prover/transcript-keccak",
-  "akita-planner/transcript-keccak",
-  "akita-setup/transcript-keccak",
-  "akita-transcript/transcript-keccak",
-  "akita-types/transcript-keccak",
-  "akita-params/transcript-keccak",
-  "akita-verifier/transcript-keccak",
-]
+default = ["parallel"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
@@ -90,11 +66,9 @@ disk-persistence = [
   "akita-setup/disk-persistence",
   "akita-cpu-backend/disk-persistence",
 ]
-logging-transcript = [
-  "akita-transcript/logging-transcript",
-  "akita-prover/logging-transcript",
-  "akita-cpu-backend/logging-transcript",
-]
+# Records prover and verifier transcript events for the transcript-hardening
+# suites and the profile example's wire report.
+logging = ["jolt-transcript/logging"]
 response-model-diagnostics = ["akita-cpu-backend/response-model-diagnostics"]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
@@ -102,12 +76,14 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9d2eb0f211ae7c35f2c765002e7ece72c1dae424", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9d2eb0f211ae7c35f2c765002e7ece72c1dae424", default-features = false, features = [
+  "transcript-blake2b",
+] }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
@@ -117,7 +93,11 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9d2eb0f211ae7c35f2c765002e7ece72c1dae424", default-features = false, features = [
+  "transcript-blake2b",
+  "transcript-keccak",
+] }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9d2eb0f211ae7c35f2c765002e7ece72c1dae424", default-features = false }
 # Test-only: pull in `akita-config`'s workspace artifact loader and ring-plan
 # seed. Schedule rows remain checked-in external artifacts loaded at runtime.
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [

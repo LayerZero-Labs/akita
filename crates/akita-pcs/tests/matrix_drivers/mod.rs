@@ -99,7 +99,7 @@ where
         let selection = prover_data.selection();
 
         let proof = scheme
-            .batched_prove(
+            .prove_standalone(
                 &setup,
                 prover_data,
                 &stack,
@@ -121,7 +121,7 @@ where
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     transcript_domain,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
@@ -179,14 +179,14 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
             scheme.schedules(),
         );
         let proof = prove_matching_byte_model(scheme.schedules(), prover_data.selection(), || {
-            scheme.batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
+            scheme.prove_standalone(&setup, prover_data, &stack, label, BasisMode::Lagrange)
         });
 
         let openings = [expected_opening];
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     label,
                     verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
@@ -234,14 +234,14 @@ where
             scheme.schedules(),
         );
         let proof = prove_matching_byte_model(scheme.schedules(), prover_data.selection(), || {
-            scheme.batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
+            scheme.prove_standalone(&setup, prover_data, &stack, label, BasisMode::Lagrange)
         });
 
         let openings = [expected_opening];
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     label,
                     verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
@@ -346,7 +346,7 @@ where
         let selection = prover_data.selection();
 
         let proof = prove_matching_byte_model(scheme.schedules(), selection, || {
-            scheme.batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
+            scheme.prove_standalone(&setup, prover_data, &stack, label, BasisMode::Lagrange)
         });
 
         let verifier_groups = vec![
@@ -367,7 +367,7 @@ where
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     label,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
@@ -448,7 +448,7 @@ where
         let selection = prover_data.selection();
 
         let proof = prove_matching_byte_model(scheme.schedules(), selection, || {
-            scheme.batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
+            scheme.prove_standalone(&setup, prover_data, &stack, label, BasisMode::Lagrange)
         });
 
         let verifier_groups = vec![
@@ -469,7 +469,7 @@ where
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     label,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
