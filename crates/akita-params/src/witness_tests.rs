@@ -434,3 +434,134 @@ fn canonical_tail_validation_rejects_changed_ownership_and_ranges() {
     wrong_rhs.groups[0].group_index = 1;
     assert!(layout.validate_tail(&params, &wrong_rhs, plan).is_err());
 }
+
+#[test]
+fn chunk_padding_preserves_semantic_ranges_and_tail_ownership() {
+    for chunks in [1, 2, 8] {
+        let (mut params, opening, compact) = test_layout(chunks);
+        params.successor_block_len = (chunks > 1).then_some(4096);
+        let geometry = RelationWitnessGeometry::for_level(&params, &opening, 1).unwrap();
+        let padded = WitnessLayout::new(
+            &params,
+            &opening,
+            &geometry,
+            chunks,
+            RelationQuotientPlan::quotient_lift(2).unwrap(),
+        )
+        .unwrap();
+        if chunks == 1 {
+            assert_eq!(padded, compact);
+        }
+        padded.validate_internal_ranges().unwrap();
+        padded
+            .validate_tail(
+                &params,
+                geometry.rhs_layout(),
+                RelationQuotientPlan::quotient_lift(2).unwrap(),
+            )
+            .unwrap();
+        for (before, after) in compact.units().iter().zip(padded.units()) {
+            assert_eq!(before.z_range().len(), after.z_range().len());
+            assert_eq!(before.e_range().len(), after.e_range().len());
+            assert_eq!(before.t_range().len(), after.t_range().len());
+            assert!(after
+                .z_range()
+                .start
+                .is_multiple_of(params.successor_block_len.unwrap_or(1)));
+        }
+        assert!(padded
+            .tail_range()
+            .start
+            .is_multiple_of(params.successor_block_len.unwrap_or(1)));
+        assert_eq!(
+            WitnessLayout::scalar_live_coeff_len(
+                &params,
+                &opening,
+                1,
+                chunks,
+                RelationQuotientPlan::quotient_lift(2).unwrap()
+            )
+            .unwrap(),
+            padded.live_coeff_len()
+        );
+        let (len, ends) = compact.chunk_shape().unwrap().align(4096, chunks).unwrap();
+        assert_eq!(len, padded.live_coeff_len());
+        assert_eq!(
+            ends.last().copied(),
+            (chunks > 1).then_some(len.div_ceil(4096))
+        );
+    }
+}
+
+#[test]
+fn inherited_chunks_keep_the_entire_tail_in_the_last_owner() {
+    let mut shape = WitnessChunkShape {
+        body_lengths: [0; MAX_WITNESS_CHUNKS],
+        num_chunks: 2,
+        tail_prefix_len: 0,
+        tail_alignment: 1,
+        tail_len: 5,
+        tail_suffix_alignment: 1,
+    };
+    shape.body_lengths[..2].copy_from_slice(&[7, 10]);
+    assert_eq!(shape.align(8, 2).unwrap(), (29, vec![1, 4]));
+    assert_eq!(shape.align(8, 1).unwrap(), (29, vec![]));
+    assert!(shape.align(8, 4).is_err());
+    assert!(shape.align(0, 2).is_err());
+    shape.tail_prefix_len = 3;
+    shape.tail_alignment = 16;
+    shape.tail_len = 8;
+    assert_eq!(shape.align(8, 2).unwrap(), (40, vec![1, 5]));
+    shape.tail_suffix_alignment = 32;
+    assert_eq!(shape.align(8, 2).unwrap(), (64, vec![1, 8]));
+    shape.body_lengths[0] = usize::MAX;
+    assert!(shape.align(8, 2).is_err());
+}
+
+#[test]
+fn pending_chunk_shape_matches_grouped_successor_alignment() {
+    for groups in 1..=3 {
+        let (mut params, opening) = crate::test_fixtures::address_oracle_fixture(groups);
+        crate::test_fixtures::retarget_group_role_dims(&mut params, 512, 64);
+        let mut preceding = params.precommitted_groups().to_vec();
+        if groups == 2 {
+            preceding[0] = crate::test_fixtures::address_oracle_precommit(128, 64, 64, 1, 1);
+        }
+        for group in preceding
+            .iter_mut()
+            .chain(std::iter::once(params.own_group_mut()))
+        {
+            group.opening.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: 64,
+            };
+            group.opening.fold_challenge_config =
+                akita_challenges::SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        }
+        params.set_precommitted_groups(preceding).unwrap();
+        for chunks in [1, 2, 8] {
+            params.successor_block_len = None;
+            let geometry = RelationWitnessGeometry::for_level(&params, &opening, 1).unwrap();
+            let plan = RelationQuotientPlan::quotient_lift(3).unwrap();
+            let compact = WitnessLayout::new(&params, &opening, &geometry, chunks, plan).unwrap();
+            for block_len in [1, 64, 128, 256, 512, 1024, 4096] {
+                params.successor_block_len = (chunks > 1).then_some(block_len);
+                let padded =
+                    WitnessLayout::new(&params, &opening, &geometry, chunks, plan).unwrap();
+                padded.validate_internal_ranges().unwrap();
+                if groups == 2 && chunks == 2 && block_len == 4096 {
+                    assert_ne!(padded.tail_range().len(), compact.tail_range().len());
+                }
+                assert_eq!(
+                    compact
+                        .chunk_shape()
+                        .unwrap()
+                        .align(block_len, chunks)
+                        .unwrap()
+                        .0,
+                    padded.live_coeff_len(),
+                    "groups={groups}, chunks={chunks}, block={block_len}"
+                );
+            }
+        }
+    }
+}

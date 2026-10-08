@@ -30,8 +30,8 @@ impl CommitmentConfig for WrongModulusProfileConfig {
         "test_wrong_modulus_profile"
     }
 
-    const RING_DIMENSION_SCHEDULE_MODE: akita_config::RingDimensionScheduleMode =
-        Cfg::RING_DIMENSION_SCHEDULE_MODE;
+    const RING_DIMENSION_SCHEDULE: akita_config::RingDimensionSchedule =
+        Cfg::RING_DIMENSION_SCHEDULE;
 
     fn decomposition() -> akita_params::DecompositionParams {
         Cfg::decomposition()

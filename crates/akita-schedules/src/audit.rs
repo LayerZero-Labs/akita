@@ -591,7 +591,7 @@ pub(crate) fn audit_resolved_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PlannerCostModelId, RingDimensionScheduleMode, SelectionPolicyId};
+    use crate::{PlannerCostModelId, RingDimensionSchedule, SelectionPolicyId};
     use akita_params::{
         ChunkedWitnessCfg, InnerRoleParams, SisL2TableDigest, SisModulusProfileId,
         SisSecurityPolicyId, SisTableDigest, TailSegmentLayout,
@@ -604,13 +604,17 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
-            selection_policy: SelectionPolicyId::MinEstimatedExactProofAndWorkV5,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 3,
-            ring_dimension_schedule_mode: RingDimensionScheduleMode::UniformDimension {
-                ring_dimension: 64,
+            ring_dimension_schedule: RingDimensionSchedule {
+                num_search_levels: 2,
+                suffix_dimensions: &[64],
+                potential_a_dimensions: &[64],
+                potential_b_dimensions: &[64],
+                potential_d_dimensions: &[64],
             },
             decomposition: DecompositionParams {
                 log_basis: 4,

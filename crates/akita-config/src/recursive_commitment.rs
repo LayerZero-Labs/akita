@@ -20,8 +20,8 @@ impl<Cfg: RecursiveScheduleConfig> CommitmentConfig for RecursiveCommitmentConfi
     type Field = Cfg::Field;
     type ExtField = Cfg::ExtField;
 
-    const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
-        Cfg::RING_DIMENSION_SCHEDULE_MODE;
+    const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
+        Cfg::RING_DIMENSION_SCHEDULE;
 
     fn schedule_family_name() -> &'static str {
         Cfg::RECURSIVE_SCHEDULE_FAMILY_NAME

@@ -599,10 +599,18 @@ fn run_profile_onehot_fp32(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_dense_fp32(nv: usize, num_polys: usize) {
-    type Cfg = fp32::Dense;
     assert_singleton_mode("dense_fp32", num_polys);
     let title = small_field_dense_title("fp32");
-    run_dense_mode_for::<fp32::Field, 256, Cfg>("dense_fp32", &title, nv);
+    match profile_setup_contribution_mode() {
+        SetupContributionMode::Direct => {
+            type Cfg = fp32::Dense;
+            run_dense_mode_for::<fp32::Field, 256, Cfg>("dense_fp32", &title, nv);
+        }
+        SetupContributionMode::Recursive => {
+            type Cfg = RecursiveCommitmentConfig<fp32::Dense>;
+            run_dense_mode_for::<fp32::Field, 256, Cfg>("dense_fp32", &title, nv);
+        }
+    }
 }
 
 fn run_profile_dense_fp64(nv: usize, num_polys: usize) {

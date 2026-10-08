@@ -2,11 +2,6 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum OracleObjective {
-    Payload {
-        exact_score: u128,
-        proof_bytes: usize,
-        setup_field_elements: usize,
-    },
     SetupFirst {
         first_direct_setup_capacity: usize,
         exact_score: u128,
@@ -67,11 +62,6 @@ pub(super) fn score(
         .first_direct_setup_field_len
         .map(|natural_len| padded_setup_prefix_len(natural_len.get()));
     let objective = match policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5 => OracleObjective::Payload {
-            exact_score: candidate.cost.exact_score(),
-            proof_bytes: candidate.cost.proof_bytes(),
-            setup_field_elements: candidate.setup_field_elements,
-        },
         crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => {
             OracleObjective::SetupFirst {
                 first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {

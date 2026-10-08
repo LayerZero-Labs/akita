@@ -541,6 +541,17 @@ impl RelationRangeImagePlan {
                         AkitaError::InvalidSetup("witness block coverage overflow".into())
                     })?;
             }
+            if let Some(range) =
+                witness_layout
+                    .compression_alignment_ranges()
+                    .iter()
+                    .find(|range| {
+                        range.start == witness_cursor
+                            && range.start < witness_layout.tail_range().start
+                    })
+            {
+                witness_cursor = range.end;
+            }
         }
 
         if witness_layout.tail_range().start != witness_cursor

@@ -9,7 +9,9 @@ use super::range_class_tables::{
     FoldedProductPairTable, OrderedProductPairCoefficients, ProductNodeTable,
     SecondRoundProductQuartetCoefficients,
 };
-use super::round_accumulation::accumulate_equality_weighted_values;
+use super::round_accumulation::{
+    accumulate_equality_weighted_class_values, accumulate_equality_weighted_values,
+};
 use super::{MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
@@ -488,14 +490,13 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                     kernel_strategy = "ordered-pair-coefficients",
                 )
                 .entered();
-                accumulate_equality_weighted_values(
+                accumulate_equality_weighted_class_values(
                     equality_prefix_weights,
                     equality_suffix_weights,
                     source.pair_count(),
-                    |pair_index| {
-                        pair_coefficients
-                            .coefficients_by_pair_index(source.ordered_pair_index(pair_index))
-                    },
+                    source.class_count() * source.class_count(),
+                    |pair_index| source.ordered_pair_index(pair_index),
+                    |pair| pair_coefficients.coefficients_by_pair_index(pair),
                     pair_coefficients.coefficients_by_pair_index(0),
                 )
             }
@@ -602,14 +603,22 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                         );
                         let (equality_prefix_weights, equality_suffix_weights) =
                             self.split_eq.remaining_eq_tables();
-                        Some(accumulate_equality_weighted_values(
+                        let pair_class_count = source.class_count() * source.class_count();
+                        Some(accumulate_equality_weighted_class_values(
                             equality_prefix_weights,
                             equality_suffix_weights,
                             source.quartet_count(),
+                            pair_class_count * pair_class_count,
                             |quartet_index| {
                                 let (left_pair, right_pair) =
                                     source.ordered_pair_indices_for_quartet(quartet_index);
-                                quartets.coefficients_by_pair_indices(left_pair, right_pair)
+                                left_pair * pair_class_count + right_pair
+                            },
+                            |quartet| {
+                                quartets.coefficients_by_pair_indices(
+                                    quartet / pair_class_count,
+                                    quartet % pair_class_count,
+                                )
                             },
                             quartets.coefficients_by_pair_indices(0, 0),
                         ))

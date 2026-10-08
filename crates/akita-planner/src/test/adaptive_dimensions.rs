@@ -40,7 +40,7 @@ fn candidates_enumerate_exact_role_cartesian_product() {
 }
 
 #[test]
-fn fp32_suffix_candidates_are_uniform_and_monotone() {
+fn fp32_suffix_candidates_use_equal_roles_and_monotone_dimensions() {
     use akita_config::{policy_of, proof_optimized::fp32::OneHot};
 
     let policy = policy_of::<OneHot>();

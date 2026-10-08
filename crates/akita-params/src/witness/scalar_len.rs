@@ -1,9 +1,6 @@
 use akita_error::AkitaError;
 
-use super::{
-    dyadic_block_ranges, witness_unit_lengths, RelationQuotientPlan, WitnessLayout,
-    MAX_WITNESS_CHUNKS,
-};
+use super::{witness_unit_lengths, RelationQuotientPlan, WitnessLayout, MAX_WITNESS_CHUNKS};
 use crate::{CommittedGroupParams, OpeningClaimsLayout, RelationWitnessGeometry};
 
 impl WitnessLayout {
@@ -67,7 +64,7 @@ impl WitnessLayout {
         }
 
         let mut cursor = 0usize;
-        for block_range in dyadic_block_ranges(params.num_live_blocks(), num_chunks)? {
+        for block_range in lp.witness_block_ranges(group_index, num_chunks)? {
             let (z_len, e_len, t_len) = witness_unit_lengths(
                 &params,
                 role_dims,
@@ -79,6 +76,16 @@ impl WitnessLayout {
                 .checked_add(z_len)
                 .and_then(|n| n.checked_add(e_len))
                 .and_then(|n| n.checked_add(t_len))
+                .and_then(|len| {
+                    akita_error::checked::align_up(
+                        len,
+                        if num_chunks > 1 {
+                            lp.successor_block_len.unwrap_or(1)
+                        } else {
+                            1
+                        },
+                    )
+                })
                 .ok_or_else(|| AkitaError::InvalidSetup("witness unit range overflow".into()))?;
         }
 

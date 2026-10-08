@@ -116,7 +116,7 @@ impl_proof_optimized_preset!(
     128,
     source = balanced_digits,
     schedule_family = "fp128_dense",
-    ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+    ring_dimension_schedule = akita_schedules::RingDimensionSchedule {
         num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
         suffix_dimensions: &[64],
         potential_a_dimensions: &Dense::A_RING_DIMENSIONS,
@@ -136,7 +136,7 @@ impl_proof_optimized_preset!(
     DenseBounded::LOG_COMMIT_BOUND,
     source = balanced_digits,
     schedule_family = "fp128_dense_bounded",
-    ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+    ring_dimension_schedule = akita_schedules::RingDimensionSchedule {
         num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
         suffix_dimensions: &[64],
         potential_a_dimensions: &Dense::A_RING_DIMENSIONS,
@@ -153,7 +153,7 @@ impl_proof_optimized_preset!(
     1,
     source = unit_one_hot,
     schedule_family = "fp128_onehot",
-    ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+    ring_dimension_schedule = akita_schedules::RingDimensionSchedule {
         num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
         suffix_dimensions: &[64],
         potential_a_dimensions: &OneHot::A_RING_DIMENSIONS,

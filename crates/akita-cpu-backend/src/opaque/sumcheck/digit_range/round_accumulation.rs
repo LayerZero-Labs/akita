@@ -118,6 +118,83 @@ pub(super) fn accumulate_equality_weighted_values<E: Field + Unreduced, const N:
     values
 }
 
+/// Explicit entries per class below which a block-local histogram would spend
+/// more on scaling its classes than on multiplying each entry's weight.
+const MIN_BLOCK_ENTRIES_PER_CLASS: usize = 8;
+
+/// Sum class-indexed values over a split-equality round.
+///
+/// Equivalent to [`accumulate_equality_weighted_values`] with
+/// `values_at(index) = class_values(class_at(index))`, for values that depend
+/// on an entry only through a class below `class_count`. The equality weight is
+/// first totalled per class and each class's values are multiplied once, so the
+/// traversal costs at most one multiplication per entry instead of `N`. When
+/// blocks are long relative to `class_count` the per-entry work is additions
+/// only: a block's inner weights are binned by class and the bins are scaled by
+/// the block's outer weight.
+pub(super) fn accumulate_equality_weighted_class_values<E: Field, const N: usize>(
+    first: &[E],
+    second: &[E],
+    explicit_count: usize,
+    class_count: usize,
+    class_at: impl Fn(usize) -> usize + Sync,
+    class_values: impl Fn(usize) -> [E; N],
+    default_values: [E; N],
+) -> [E; N] {
+    debug_assert!(explicit_count <= first.len() * second.len());
+    let block_count = explicit_count.div_ceil(first.len());
+    let task_count = super::super::parallel_tasks(2).min(block_count).max(1);
+    let blocks_per_task = block_count.div_ceil(task_count).max(1);
+    let bin_blocks = first.len() >= class_count * MIN_BLOCK_ENTRIES_PER_CLASS;
+    let class_weights = cfg_fold_reduce!(
+        0..task_count,
+        || vec![E::zero(); class_count],
+        |mut weights: Vec<E>, task_index| {
+            let blocks =
+                task_index * blocks_per_task..block_count.min((task_index + 1) * blocks_per_task);
+            let mut block_weights = vec![E::zero(); if bin_blocks { class_count } else { 0 }];
+            for second_index in blocks {
+                let block_start = second_index * first.len();
+                let block_end = explicit_count.min(block_start + first.len());
+                let second_weight = second[second_index];
+                if bin_blocks {
+                    block_weights.fill(E::zero());
+                    for index in block_start..block_end {
+                        block_weights[class_at(index)] += first[index - block_start];
+                    }
+                    for (weight, block_weight) in weights.iter_mut().zip(&block_weights) {
+                        *weight += second_weight * *block_weight;
+                    }
+                } else {
+                    for index in block_start..block_end {
+                        weights[class_at(index)] += second_weight * first[index - block_start];
+                    }
+                }
+            }
+            weights
+        },
+        |mut left: Vec<E>, right: Vec<E>| {
+            for (left, right) in left.iter_mut().zip(right) {
+                *left += right;
+            }
+            left
+        }
+    );
+    let suffix_weight = SplitEqualitySuffixMass::new(first, second)
+        .and_then(|suffix| suffix.weight_from(explicit_count))
+        .expect("split equality and exact prefix were validated at construction");
+    let mut values = default_values.map(|default| suffix_weight * default);
+    for (class, weight) in class_weights.into_iter().enumerate() {
+        if weight.is_zero() {
+            continue;
+        }
+        for (value, class_value) in values.iter_mut().zip(class_values(class)) {
+            *value += weight * class_value;
+        }
+    }
+    values
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::MAX_TREE_STAGE_Q_DEGREE;
@@ -125,7 +202,20 @@ mod tests {
     use jolt_field::{FpExt4, Prime128Offset275, Prime32Offset99, Ring};
 
     fn check_blocked_accumulation<E: Field + Ring + Unreduced>() {
-        let first = [2, 3, 5, 7].map(E::from_u64);
+        // Inner tables below, at and above the block-binning threshold for
+        // four classes.
+        for first_len in [4, 16, 32, 64] {
+            check_blocked_accumulation_with_inner_len::<E>(first_len);
+        }
+    }
+
+    fn check_blocked_accumulation_with_inner_len<E: Field + Ring + Unreduced>(first_len: usize) {
+        // A zero weight and a cancelling pair sit among generic weights.
+        let mut first = (0..first_len)
+            .map(|index| E::from_u64((index * index + 3 * index + 2) as u64))
+            .collect::<Vec<_>>();
+        first[1] = E::zero();
+        first[3] = E::zero() - first[2];
         let second = [11, 13, 17, 19].map(E::from_u64);
         let rows = (0..first.len() * second.len())
             .map(|row| {
@@ -157,6 +247,30 @@ mod tests {
                 }
             }
             assert_eq!(actual, expected);
+
+            // Few classes bin each block; many classes weight each entry.
+            for class_count in [1, 3, 4, rows.len()] {
+                let class_rows = &rows[..class_count];
+                let class_at = |index: usize| (index * 5 + 2) % class_count;
+                assert_eq!(
+                    accumulate_equality_weighted_class_values(
+                        &first,
+                        &second,
+                        explicit_pair_count,
+                        class_count,
+                        class_at,
+                        |class| class_rows[class],
+                        default,
+                    ),
+                    accumulate_equality_weighted_values(
+                        &first,
+                        &second,
+                        explicit_pair_count,
+                        |index| class_rows[class_at(index)],
+                        default,
+                    )
+                );
+            }
         }
     }
 
