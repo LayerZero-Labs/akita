@@ -13,6 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 akita-fuzz = { path = "..", default-features = false }
+# Key order matters: regression inputs must keep the artifact's canonical layout.
+serde_json = { version = "1", features = ["preserve_order"] }
 
 [features]
 default = ["parallel"]

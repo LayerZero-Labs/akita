@@ -227,6 +227,28 @@ pub fn seeds(out: &Path) {
         write(&out.join("schedule_artifact"), family, &bytes);
     }
 
+    for (name, family, pointer, value) in ARTIFACT_REGRESSIONS {
+        let selector = targets::artifact::FAMILIES
+            .iter()
+            .position(|known| known == family)
+            .expect("regression family is shipped");
+        let path: PathBuf = artifacts.join(format!("{family}.aks"));
+        let mut artifact: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display())),
+        )
+        .expect("shipped artifact is JSON");
+        *artifact
+            .pointer_mut(pointer)
+            .unwrap_or_else(|| panic!("{family}.aks has no field {pointer}")) = (*value).into();
+        let mut bytes = vec![selector as u8];
+        bytes.extend(serde_json::to_vec_pretty(&artifact).expect("artifact JSON"));
+        write(
+            &out.join("schedule_artifact"),
+            &format!("regression-{name}"),
+            &bytes,
+        );
+    }
+
     // Regression inputs replay as seeds (`regressions/README.md`); inputs that
     // still fail live under `regressions/pending/` and are skipped.
     let regressions = Path::new(env!("CARGO_MANIFEST_DIR")).join("../regressions");
@@ -244,6 +266,24 @@ pub fn seeds(out: &Path) {
         }
     }
 }
+
+/// Schedule-artifact regression inputs: a shipped artifact with one field
+/// changed, as `(name, family, JSON pointer, value)`. Generated rather than
+/// stored because each artifact is hundreds of KiB.
+const ARTIFACT_REGRESSIONS: &[(&str, &str, &str, u64)] = &[
+    (
+        "terminal-log-basis-zero",
+        "fp128_dense",
+        "/rows/0/schedule/terminal/inner/digits/log_basis",
+        0,
+    ),
+    (
+        "oversized-num-digits-fold",
+        "fp128_onehot_multi_chunk_w2r2",
+        "/rows/0/schedule/root/params/groups/entries/0/opening/num_digits_fold",
+        37_777_777_777,
+    ),
+];
 
 fn registry_for(limits: Limits) -> akita_fuzz::pcs::Registry {
     akita_fuzz::pcs::Registry::load(limits)
