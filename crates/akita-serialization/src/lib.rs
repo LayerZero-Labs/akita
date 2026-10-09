@@ -5,7 +5,43 @@
 #![allow(clippy::missing_panics_doc)]
 
 mod field_impls;
+
+/// `'static` bytes whose holder vouches that every field word in them is a
+/// canonical encoding written by this crate's serializers.
+///
+/// In-place views take this token instead of raw bytes, so the one unchecked
+/// assumption is made once, at [`Self::new`], by the code that knows where the
+/// bytes came from (for example a guest's own image).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TrustedBytes(&'static [u8]);
+
+impl TrustedBytes {
+    /// # Safety
+    ///
+    /// Every field word that a decoder of these bytes, or of any suffix taken
+    /// with [`Self::skip`], views in place must be canonical.
+    #[must_use]
+    pub const unsafe fn new(bytes: &'static [u8]) -> Self {
+        Self(bytes)
+    }
+
+    /// The vouched bytes.
+    #[must_use]
+    pub const fn bytes(self) -> &'static [u8] {
+        self.0
+    }
+
+    /// The vouched suffix after `count` bytes, if there are that many.
+    #[must_use]
+    pub fn skip(self, count: usize) -> Option<Self> {
+        self.0.get(count..).map(Self)
+    }
+}
 mod poly_impls;
+
+/// Elements a run decoder reserves ahead of the bytes it has read, so a forged
+/// element count cannot force a large allocation before the data arrives.
+const DECODE_CHUNK_ELEMENTS: usize = 1 << 12;
 
 use std::io::{Cursor, Read, Write};
 
@@ -127,6 +163,54 @@ pub trait AkitaDeserialize: Sized {
         ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
         Self::deserialize_with_mode(reader, Compress::Yes, Validate::Yes, ctx)
+    }
+
+    /// View `count` consecutive trusted values in place at the front of
+    /// `bytes`, returning them with the unread remainder. Only fixed-width
+    /// types whose wire word is their in-memory form support this (see the
+    /// prime-field impls, little-endian targets only); the default reports the
+    /// capability gap.
+    ///
+    /// The viewed words are used as values without a range check; the
+    /// [`TrustedBytes`] token carries the caller's promise that they are
+    /// canonical.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the type cannot be viewed in place, `bytes` is
+    /// too short, or the run is not aligned for the element type.
+    fn borrow_many_trusted(
+        bytes: TrustedBytes,
+        count: usize,
+    ) -> Result<(&'static [Self], TrustedBytes), SerializationError> {
+        let _ = (bytes, count);
+        Err(SerializationError::InvalidData(
+            "type cannot be viewed in its wire form".to_string(),
+        ))
+    }
+
+    /// Deserialize `count` consecutive values, exactly as `count` calls to
+    /// `deserialize_with_mode` would. Fixed-width types override this to read
+    /// the whole run in one pass; the default decodes one at a time.
+    fn deserialize_many_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        ctx: &Self::Context,
+        count: usize,
+    ) -> Result<Vec<Self>, SerializationError> {
+        let mut out = Vec::new();
+        out.try_reserve_exact(count.min(DECODE_CHUNK_ELEMENTS))
+            .map_err(|_| SerializationError::InvalidData("allocation failed".to_string()))?;
+        for _ in 0..count {
+            out.push(Self::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                ctx,
+            )?);
+        }
+        Ok(out)
     }
 
     /// Deserialize one complete compressed artifact and reject trailing bytes.

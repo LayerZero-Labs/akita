@@ -253,7 +253,7 @@ pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usi
     macro_rules! homogeneous {
         ($params:expr, $variant:ident, $needs_tail:expr) => {{
             let params = *$params;
-            let neg = cfg_iter!(matrix.as_slice())
+            let neg: Vec<_> = cfg_iter!(matrix.as_slice())
                 .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
                 .collect();
             let requested_tail_len = if $needs_tail {
@@ -271,18 +271,18 @@ pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usi
                 let tail_rings = matrix.as_slice().get(..tail_len).ok_or_else(|| {
                     AkitaError::InvalidSetup("i16-tail NTT prefix exceeds the base matrix".into())
                 })?;
-                let negacyclic = cfg_iter!(tail_rings)
+                let negacyclic: Vec<_> = cfg_iter!(tail_rings)
                     .map(|ring| CyclotomicCrtNtt::from_ring(ring, &tail_params))
                     .collect();
                 Some(PreparedI16Tail {
-                    negacyclic,
+                    negacyclic: PreparedRows::from(negacyclic),
                     params: I16TailParams::new(params.clone(), tail_params),
                 })
             } else {
                 None
             };
             PreparedNttCacheRepr::$variant {
-                neg: Some(neg),
+                neg: Some(PreparedRows::from(neg)),
                 cyc: None,
                 params,
                 tail,

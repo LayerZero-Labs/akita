@@ -12,7 +12,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_serialization::{
-    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, TrustedBytes, Valid, Validate,
 };
 use jolt_field::Field;
 use std::io::{Read, Write};
@@ -25,27 +25,65 @@ use std::io::{Read, Write};
 ///
 /// Any prefix of a uniformly random vector is uniformly random, so role matrices
 /// derived from prefixes of the same flat vector are binding.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The coefficients are owned, or viewed for the program's lifetime when a
+/// verifier uses its own trusted setup bytes in place
+/// ([`Self::borrow_trusted_with_expected_shape`]).
+#[derive(Debug, Clone)]
 pub struct FlatMatrix<F: Field> {
-    data: Vec<F>,
+    data: FlatStorage<F>,
 }
+
+/// Coefficient storage. `Static` stands in for a `&'static [F]` without
+/// forcing a `'static` bound onto every `Field` parameter.
+#[derive(Debug, Clone)]
+enum FlatStorage<F> {
+    Owned(Vec<F>),
+    /// Invariant: `ptr` and `len` were taken from a `&'static [F]`.
+    Static {
+        ptr: *const F,
+        len: usize,
+    },
+}
+
+// SAFETY: `Static` is a shared view of immutable memory that lives for the
+// whole program, exactly a `&'static [F]`, which is `Send`/`Sync` when `F:
+// Sync`; `Owned` carries a `Vec<F>`.
+unsafe impl<F: Send + Sync> Send for FlatStorage<F> {}
+// SAFETY: as above; no interior mutability behind the view.
+unsafe impl<F: Sync> Sync for FlatStorage<F> {}
+
+impl<F: Field> PartialEq for FlatMatrix<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_field_slice() == other.as_field_slice()
+    }
+}
+
+impl<F: Field> Eq for FlatMatrix<F> {}
 
 impl<F: Field> FlatMatrix<F> {
     /// Number of stored base-field elements.
     #[inline]
     pub fn num_field_elements(&self) -> usize {
-        self.data.len()
+        self.as_field_slice().len()
     }
 
     /// Borrow the backing field-element coefficients.
     #[inline]
     pub fn as_field_slice(&self) -> &[F] {
-        &self.data
+        match &self.data {
+            FlatStorage::Owned(data) => data,
+            // SAFETY: by the `Static` invariant, `ptr`/`len` describe a live
+            // `&'static [F]`.
+            FlatStorage::Static { ptr, len } => unsafe { std::slice::from_raw_parts(*ptr, *len) },
+        }
     }
 
     /// Build from pre-flattened field-element data.
     pub fn from_flat_data(data: Vec<F>) -> Self {
-        Self { data }
+        Self {
+            data: FlatStorage::Owned(data),
+        }
     }
 
     /// Build from a flat slice of ring elements.
@@ -54,7 +92,7 @@ impl<F: Field> FlatMatrix<F> {
         for ring_elem in elements {
             data.extend_from_slice(&ring_elem.coeffs);
         }
-        Self { data }
+        Self::from_flat_data(data)
     }
 
     /// Create a typed matrix view at ring dimension D with the given shape.
@@ -77,10 +115,10 @@ impl<F: Field> FlatMatrix<F> {
         let field_len = needed.checked_mul(D).ok_or_else(|| {
             AkitaError::InvalidSetup("matrix view field length overflow".to_string())
         })?;
-        let data = self.data.get(..field_len).ok_or_else(|| {
+        let data = self.as_field_slice().get(..field_len).ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
                 "requested {field_len} field elements for a {num_rows}x{num_cols} D={D} matrix, but setup only has {}",
-                self.data.len()
+                self.num_field_elements()
             ))
         })?;
         RingMatrixView {
@@ -120,10 +158,10 @@ impl<F: Field> FlatMatrix<F> {
         let field_len = needed.checked_mul(ring_d).ok_or_else(|| {
             AkitaError::InvalidSetup("matrix view field length overflow".to_string())
         })?;
-        let data = self.data.get(..field_len).ok_or_else(|| {
+        let data = self.as_field_slice().get(..field_len).ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
                 "requested {field_len} field elements for a {num_rows}x{num_cols} D={ring_d} matrix, but setup only has {}",
-                self.data.len()
+                self.num_field_elements()
             ))
         })?;
         Ok(FlatRingMatrixView {
@@ -196,26 +234,13 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> FlatMatrix<F> {
         expected_num_field_elements: usize,
         max_field_elements: usize,
     ) -> Result<Self, SerializationError> {
-        if expected_num_field_elements == 0 {
-            return Err(SerializationError::InvalidData(
-                "expected flat matrix field count must be non-zero".to_string(),
-            ));
-        }
-        if expected_num_field_elements > max_field_elements {
-            return Err(SerializationError::LengthLimitExceeded {
-                len: u64::try_from(expected_num_field_elements).unwrap_or(u64::MAX),
-                max: max_field_elements,
-            });
-        }
-
-        let num_field_elements =
-            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        if num_field_elements != expected_num_field_elements {
-            return Err(SerializationError::InvalidData(
-                "flat matrix field count does not match expected setup shape".to_string(),
-            ));
-        }
-
+        let num_field_elements = read_expected_field_count(
+            &mut reader,
+            compress,
+            validate,
+            expected_num_field_elements,
+            max_field_elements,
+        )?;
         Self::deserialize_data(reader, compress, validate, num_field_elements)
     }
 
@@ -225,19 +250,14 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> FlatMatrix<F> {
         validate: Validate,
         num_field_elements: usize,
     ) -> Result<Self, SerializationError> {
-        let mut data = Vec::new();
-        data.try_reserve_exact(num_field_elements).map_err(|_| {
-            SerializationError::InvalidData("flat matrix allocation failed".to_string())
-        })?;
-        for _ in 0..num_field_elements {
-            data.push(F::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?);
-        }
-        let out = Self { data };
+        let data = F::deserialize_many_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &(),
+            num_field_elements,
+        )?;
+        let out = Self::from_flat_data(data);
         if matches!(validate, Validate::Yes) {
             out.check()?;
         }
@@ -245,14 +265,85 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> FlatMatrix<F> {
     }
 }
 
+impl<F: Field + AkitaDeserialize<Context = ()> + 'static> FlatMatrix<F> {
+    /// In-place counterpart of [`Self::deserialize_with_expected_shape`] for
+    /// trusted, uncompressed bytes that outlive the program: the coefficients
+    /// are viewed where they lie instead of copied. Returns the matrix with
+    /// the unread remainder of `bytes`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the expected shape is invalid, the serialized header
+    /// does not match it, or the field type cannot be viewed in place (see
+    /// [`AkitaDeserialize::borrow_many_trusted`]).
+    pub fn borrow_trusted_with_expected_shape(
+        bytes: TrustedBytes,
+        expected_num_field_elements: usize,
+        max_field_elements: usize,
+    ) -> Result<(Self, TrustedBytes), SerializationError> {
+        let mut reader = bytes.bytes();
+        let num_field_elements = read_expected_field_count(
+            &mut reader,
+            Compress::No,
+            Validate::Yes,
+            expected_num_field_elements,
+            max_field_elements,
+        )?;
+        let count_header = bytes.bytes().len() - reader.len();
+        let coefficients = bytes.skip(count_header).ok_or_else(|| {
+            SerializationError::InvalidData("flat matrix header is truncated".to_string())
+        })?;
+        let (data, rest) = F::borrow_many_trusted(coefficients, num_field_elements)?;
+        Ok((
+            Self {
+                data: FlatStorage::Static {
+                    ptr: data.as_ptr(),
+                    len: data.len(),
+                },
+            },
+            rest,
+        ))
+    }
+}
+
+/// Check a trusted expected shape, then read the serialized field count and
+/// require it to match, before any coefficient storage is touched. Shared by
+/// the copying and in-place setup decoders.
+fn read_expected_field_count<R: Read>(
+    reader: R,
+    compress: Compress,
+    validate: Validate,
+    expected_num_field_elements: usize,
+    max_field_elements: usize,
+) -> Result<usize, SerializationError> {
+    if expected_num_field_elements == 0 {
+        return Err(SerializationError::InvalidData(
+            "expected flat matrix field count must be non-zero".to_string(),
+        ));
+    }
+    if expected_num_field_elements > max_field_elements {
+        return Err(SerializationError::LengthLimitExceeded {
+            len: u64::try_from(expected_num_field_elements).unwrap_or(u64::MAX),
+            max: max_field_elements,
+        });
+    }
+    let num_field_elements = usize::deserialize_with_mode(reader, compress, validate, &())?;
+    if num_field_elements != expected_num_field_elements {
+        return Err(SerializationError::InvalidData(
+            "flat matrix field count does not match expected setup shape".to_string(),
+        ));
+    }
+    Ok(num_field_elements)
+}
+
 impl<F: Field + Valid> Valid for FlatMatrix<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.data.is_empty() {
+        if self.num_field_elements() == 0 {
             return Err(SerializationError::InvalidData(
                 "flat matrix field count must be non-zero".to_string(),
             ));
         }
-        for f in &self.data {
+        for f in self.as_field_slice() {
             f.check()?;
         }
         Ok(())
@@ -267,7 +358,7 @@ impl<F: Field + AkitaSerialize> AkitaSerialize for FlatMatrix<F> {
     ) -> Result<(), SerializationError> {
         self.num_field_elements()
             .serialize_with_mode(&mut writer, compress)?;
-        for f in &self.data {
+        for f in self.as_field_slice() {
             f.serialize_with_mode(&mut writer, compress)?;
         }
         Ok(())
@@ -276,7 +367,7 @@ impl<F: Field + AkitaSerialize> AkitaSerialize for FlatMatrix<F> {
     fn serialized_size(&self, compress: Compress) -> usize {
         self.num_field_elements().serialized_size(compress)
             + self
-                .data
+                .as_field_slice()
                 .iter()
                 .map(|f| f.serialized_size(compress))
                 .sum::<usize>()
@@ -411,7 +502,7 @@ mod tests {
             assert_eq!(
                 flat.serialized_size(compress),
                 8 + flat
-                    .data
+                    .as_field_slice()
                     .iter()
                     .map(|field| field.serialized_size(compress))
                     .sum::<usize>()

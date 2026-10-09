@@ -192,7 +192,7 @@ fn encode_riscv64_scalar_q128_cache<const D: usize>(
     };
     let tail_rings = tail
         .as_ref()
-        .map(|tail| tail.negacyclic.as_slice())
+        .map(|tail| &tail.negacyclic[..])
         .unwrap_or(&[]);
     if metadata.ring_dimension != D
         || neg.len() != metadata.base_prefix_len
@@ -233,7 +233,7 @@ fn encode_riscv64_scalar_q128_cache<const D: usize>(
     );
     bytes.extend_from_slice(&metadata.binding.setup_seed_digest);
     bytes.extend_from_slice(metadata.binding.schedule_row_digest.as_bytes());
-    for ring in neg {
+    for ring in neg.iter() {
         for limb in &ring.limbs {
             for coefficient in limb {
                 bytes.extend_from_slice(&coefficient.raw().to_le_bytes());
@@ -258,21 +258,23 @@ fn encode_riscv64_scalar_q128_cache<const D: usize>(
     Ok(bytes)
 }
 
-/// Decode a scalar Q128 artifact whose bytes have trusted provenance.
-///
-/// This checks the header, the expected setup and schedule identities, the
-/// exact payload length, and every residue range. It cannot prove that the
-/// transformed payload was derived from the named setup seed. Callers must
-/// bind the bytes to trusted setup provisioning or to the verifier program
-/// identity.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidSetup`] for any malformed or mismatched artifact.
-pub fn decode_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: usize>(
+/// Body layout of a RISC-V scalar Q128 cache artifact, checked against the
+/// verifier's expectations: the negacyclic residues and the optional i16 tail
+/// are stored as little-endian words in their in-memory order, `MontCoeff`
+/// being a transparent `i32`/`i16` and `CyclotomicCrtNtt` a transparent array
+/// of them.
+struct ScalarQ128CacheLayout<'a, const D: usize> {
+    metadata: PreparedVerifierNttCacheMetadata,
+    params: CrtNttParamSet<i32, Q128_NUM_PRIMES, D>,
+    needs_tail: bool,
+    base_body: &'a [u8],
+    tail_body: &'a [u8],
+}
+
+fn scalar_q128_cache_layout<F: Field + CanonicalEncoding, const D: usize>(
     bytes: &[u8],
     expected_binding: PreparedVerifierNttCacheBinding,
-) -> Result<(PreparedVerifierNttCacheMetadata, PreparedNttCache<D>), AkitaError> {
+) -> Result<ScalarQ128CacheLayout<'_, D>, AkitaError> {
     let metadata = prepared_verifier_ntt_cache_metadata(bytes)?;
     if metadata.ring_dimension != D || metadata.binding != expected_binding {
         return Err(invalid(
@@ -295,45 +297,49 @@ pub fn decode_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: u
             "prepared cache tail does not match scalar exactness sizing",
         ));
     }
-    let mut cursor = HEADER_BYTES;
-    let mut neg = Vec::with_capacity(metadata.base_prefix_len);
-    for _ in 0..metadata.base_prefix_len {
-        let mut limbs = [[MontCoeff::from_raw(0i32); D]; Q128_NUM_PRIMES];
-        for (limb, prime) in limbs.iter_mut().zip(&params.primes) {
-            for coefficient in limb {
-                let raw = i32::from_le_bytes(read_array(bytes, cursor)?);
-                cursor = cursor
-                    .checked_add(4)
-                    .ok_or_else(|| invalid("prepared cache cursor overflow"))?;
-                if raw <= -prime.p || raw >= prime.p {
-                    return Err(invalid("prepared cache Q128 residue is out of range"));
-                }
-                *coefficient = MontCoeff::from_raw(raw);
-            }
-        }
-        neg.push(CyclotomicCrtNtt { limbs });
-    }
-    let tail_params = CrtNttParamSet::<i16, 1, D>::new([I16_TAIL_PRIME]);
-    let mut tail_rings = Vec::with_capacity(metadata.tail_prefix_len);
-    for _ in 0..metadata.tail_prefix_len {
-        let mut limbs = [[MontCoeff::from_raw(0i16); D]; 1];
-        for coefficient in &mut limbs[0] {
-            let raw = i16::from_le_bytes(read_array(bytes, cursor)?);
-            cursor = cursor
-                .checked_add(2)
-                .ok_or_else(|| invalid("prepared cache cursor overflow"))?;
-            if raw <= -I16_TAIL_PRIME.p || raw >= I16_TAIL_PRIME.p {
-                return Err(invalid("prepared cache i16 residue is out of range"));
-            }
-            *coefficient = MontCoeff::from_raw(raw);
-        }
-        tail_rings.push(CyclotomicCrtNtt { limbs });
-    }
+    // Residues are read from fixed-width chunks of a pre-sliced body: the
+    // per-coefficient bounds checks and cursor arithmetic dominated this
+    // decode on a RISC-V guest verifier.
+    let base_bytes = metadata
+        .base_prefix_len
+        .checked_mul(Q128_NUM_PRIMES * D * 4)
+        .ok_or_else(|| invalid("prepared cache cursor overflow"))?;
+    let tail_bytes = metadata
+        .tail_prefix_len
+        .checked_mul(D * 2)
+        .ok_or_else(|| invalid("prepared cache cursor overflow"))?;
+    let base_end = HEADER_BYTES
+        .checked_add(base_bytes)
+        .ok_or_else(|| invalid("prepared cache cursor overflow"))?;
+    let cursor = base_end
+        .checked_add(tail_bytes)
+        .ok_or_else(|| invalid("prepared cache cursor overflow"))?;
+    let base_body = bytes
+        .get(HEADER_BYTES..base_end)
+        .ok_or_else(|| invalid("prepared cache body is truncated"))?;
+    let tail_body = bytes
+        .get(base_end..cursor)
+        .ok_or_else(|| invalid("prepared cache body is truncated"))?;
     if cursor != bytes.len() {
         return Err(invalid("prepared cache decoder left trailing bytes"));
     }
-    let tail = needs_tail.then(|| PreparedI16Tail {
-        negacyclic: tail_rings,
+    Ok(ScalarQ128CacheLayout {
+        metadata,
+        params,
+        needs_tail,
+        base_body,
+        tail_body,
+    })
+}
+
+fn assemble_scalar_q128_cache<const D: usize>(
+    params: CrtNttParamSet<i32, Q128_NUM_PRIMES, D>,
+    neg: PreparedRows<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>,
+    tail_rings: Option<PreparedRows<CyclotomicCrtNtt<i16, 1, D>>>,
+) -> Result<PreparedNttCache<D>, AkitaError> {
+    let tail_params = CrtNttParamSet::<i16, 1, D>::new([I16_TAIL_PRIME]);
+    let tail = tail_rings.map(|negacyclic| PreparedI16Tail {
+        negacyclic,
         params: I16TailParams::new(params.clone(), tail_params),
     });
     let prepared = PreparedNttCacheRepr::Q128 {
@@ -344,7 +350,143 @@ pub fn decode_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: u
         exact: true,
     };
     prepared.validate()?;
-    Ok((metadata, PreparedNttCache(prepared)))
+    Ok(PreparedNttCache(prepared))
+}
+
+/// Decode a scalar Q128 artifact whose bytes have trusted provenance.
+///
+/// This checks the header, the expected setup and schedule identities, the
+/// exact payload length, and every residue range. It cannot prove that the
+/// transformed payload was derived from the named setup seed. Callers must
+/// bind the bytes to trusted setup provisioning or to the verifier program
+/// identity.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] for any malformed or mismatched artifact.
+pub fn decode_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: usize>(
+    bytes: &[u8],
+    expected_binding: PreparedVerifierNttCacheBinding,
+) -> Result<(PreparedVerifierNttCacheMetadata, PreparedNttCache<D>), AkitaError> {
+    const {
+        assert!(
+            core::mem::size_of::<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>()
+                == Q128_NUM_PRIMES * D * 4
+        );
+        assert!(core::mem::size_of::<CyclotomicCrtNtt<i16, 1, D>>() == D * 2);
+    }
+    let layout = scalar_q128_cache_layout::<F, D>(bytes, expected_binding)?;
+    let metadata = layout.metadata;
+    let mut neg: Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>> =
+        Vec::with_capacity(metadata.base_prefix_len);
+    // SAFETY: `base_body.len() == base_prefix_len * size_of::<CyclotomicCrtNtt<..>>()`
+    // by the layout above; every bit pattern is a valid `i32` residue
+    // candidate, and the range check below rejects out-of-range values.
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            layout.base_body.as_ptr(),
+            neg.as_mut_ptr().cast::<u8>(),
+            layout.base_body.len(),
+        );
+        neg.set_len(metadata.base_prefix_len);
+    }
+    #[cfg(target_endian = "big")]
+    for ring in &mut neg {
+        for coefficient in ring.limbs.iter_mut().flatten() {
+            *coefficient = MontCoeff::from_raw(i32::from_le(coefficient.raw()));
+        }
+    }
+    for ring in &neg {
+        for (limb, prime) in ring.limbs.iter().zip(&layout.params.primes) {
+            let (min, max) = (-prime.p, prime.p);
+            if limb.iter().any(|coefficient| {
+                let raw = coefficient.raw();
+                raw <= min || raw >= max
+            }) {
+                return Err(invalid("prepared cache Q128 residue is out of range"));
+            }
+        }
+    }
+    let mut tail_rings: Vec<CyclotomicCrtNtt<i16, 1, D>> =
+        Vec::with_capacity(metadata.tail_prefix_len);
+    // SAFETY: as above, for the `i16` tail body.
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            layout.tail_body.as_ptr(),
+            tail_rings.as_mut_ptr().cast::<u8>(),
+            layout.tail_body.len(),
+        );
+        tail_rings.set_len(metadata.tail_prefix_len);
+    }
+    #[cfg(target_endian = "big")]
+    for ring in &mut tail_rings {
+        for coefficient in &mut ring.limbs[0] {
+            *coefficient = MontCoeff::from_raw(i16::from_le(coefficient.raw()));
+        }
+    }
+    for ring in &tail_rings {
+        if ring.limbs[0].iter().any(|coefficient| {
+            let raw = coefficient.raw();
+            raw <= -I16_TAIL_PRIME.p || raw >= I16_TAIL_PRIME.p
+        }) {
+            return Err(invalid("prepared cache i16 residue is out of range"));
+        }
+    }
+    let tail = layout.needs_tail.then(|| PreparedRows::from(tail_rings));
+    let prepared = assemble_scalar_q128_cache(layout.params, PreparedRows::from(neg), tail)?;
+    Ok((metadata, prepared))
+}
+
+/// In-place counterpart of [`decode_riscv64_scalar_q128_cache`] for an
+/// artifact that outlives the program: the residues are used where they lie.
+///
+/// The header, identities, geometry, lengths, and alignment are checked as in
+/// the decoder. The residue ranges are not: like the matrix of an unvalidated
+/// setup, they are taken as trusted, so the caller must bind the bytes to
+/// trusted setup provisioning or to the verifier program identity. The body's
+/// little-endian words are their in-memory form only on a little-endian
+/// target, so a big-endian target must decode instead.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] for a malformed, mismatched, or
+/// misaligned artifact, or on a big-endian target.
+pub fn view_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: usize>(
+    bytes: &'static [u8],
+    expected_binding: PreparedVerifierNttCacheBinding,
+) -> Result<(PreparedVerifierNttCacheMetadata, PreparedNttCache<D>), AkitaError> {
+    fn view_rows<T: 'static>(
+        body: &'static [u8],
+        count: usize,
+    ) -> Result<PreparedRows<T>, AkitaError> {
+        if body.len() != count * core::mem::size_of::<T>() {
+            return Err(invalid("prepared cache body does not match its row count"));
+        }
+        if body.as_ptr().align_offset(core::mem::align_of::<T>()) != 0 {
+            return Err(invalid(
+                "prepared cache body is not aligned for in-place use",
+            ));
+        }
+        // SAFETY: `body` holds exactly `count` rows of `T` (a transparent
+        // array of `i32`/`i16` residues, valid for every bit pattern), is
+        // aligned (checked above), and lives for `'static`.
+        let rows = unsafe { core::slice::from_raw_parts(body.as_ptr().cast::<T>(), count) };
+        Ok(PreparedRows::Static(rows))
+    }
+    if cfg!(target_endian = "big") {
+        return Err(invalid(
+            "in-place RISC V scalar Q128 cache view requires a little-endian target",
+        ));
+    }
+    let layout = scalar_q128_cache_layout::<F, D>(bytes, expected_binding)?;
+    let metadata = layout.metadata;
+    let neg = view_rows(layout.base_body, metadata.base_prefix_len)?;
+    let tail = layout
+        .needs_tail
+        .then(|| view_rows(layout.tail_body, metadata.tail_prefix_len))
+        .transpose()?;
+    let prepared = assemble_scalar_q128_cache(layout.params, neg, tail)?;
+    Ok((metadata, prepared))
 }
 
 #[cfg(test)]
@@ -419,6 +561,34 @@ mod tests {
                     sum + *lhs * rhs
                 });
         assert_eq!(actual, vec![expected]);
+    }
+
+    #[test]
+    fn in_place_view_matches_decode_and_rejects_misalignment() {
+        let bytes = artifact();
+        // Copy the artifact `shift` bytes past an 8-aligned address.
+        let place = |shift: usize| -> &'static [u8] {
+            let storage = Box::leak(vec![0u8; bytes.len() + 16].into_boxed_slice());
+            let start = storage.as_ptr().align_offset(8) + shift;
+            storage[start..start + bytes.len()].copy_from_slice(&bytes);
+            &storage[start..start + bytes.len()]
+        };
+        let rhs = (0..WIDTH)
+            .map(|column| {
+                std::array::from_fn(|coefficient| ((column + coefficient) % 7) as i16 - 3)
+            })
+            .collect::<Vec<_>>();
+        let (_, decoded) =
+            decode_riscv64_scalar_q128_cache::<F, D>(&bytes, binding()).expect("decode");
+        let (_, viewed) =
+            view_riscv64_scalar_q128_cache::<F, D>(place(0), binding()).expect("view");
+        assert_eq!(
+            viewed.mat_vec_i16::<F>(16, 1, &rhs).expect("view matvec"),
+            decoded
+                .mat_vec_i16::<F>(16, 1, &rhs)
+                .expect("decode matvec")
+        );
+        assert!(view_riscv64_scalar_q128_cache::<F, D>(place(1), binding()).is_err());
     }
 
     #[test]
