@@ -102,17 +102,16 @@ impl PreparedLimbCommitMatrix {
         )
     }
 
+    /// Transform `n_a * m` reduced matrix elements, in row-major order.
+    ///
+    /// Callers have already rejected a zero rank or width; the element count
+    /// is checked here because it ties the stored shape to the matrix buffer.
     fn prepare_elements(
         domain: TrinomialLimbDomain,
         n_a: usize,
         m: usize,
         elements: impl ExactSizeIterator<Item = Result<[u32; DEGREE], AkitaError>>,
     ) -> Result<Self, AkitaError> {
-        if n_a == 0 || m == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "limb commitment rank and width must be nonzero".into(),
-            ));
-        }
         let q0 = domain.prime();
         let entries = checked::product([n_a, m])
             .ok_or_else(|| AkitaError::InvalidSetup("limb matrix size overflow".into()))?;

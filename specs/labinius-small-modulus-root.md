@@ -69,8 +69,7 @@ reduces each image coefficient modulo `q0`, while
 `PreparedLimbCommitMatrix` and the 32-bit-lane limb kernel, then embeds the
 result in `F_P`. Both paths must return equal commitments, image for image and
 coefficient for coefficient; `crates/akita-labinius-prover/tests/limb_commit_setup.rs`
-pins their agreement with `commit_binary_clear`. The 128-bit prepared path
-is retained for now.
+pins their agreement with `commit_binary_clear`.
 
 ### Implemented bias admission policy
 
@@ -258,9 +257,15 @@ boundary additionally rejects any canonical matrix coefficient at least q0.
 
 For binary packed source coefficients in `[-1,1]`, the true reduced matrix
 product coefficient has magnitude at most `3*m*D*(q0-1)`. Admission rejects
-unless twice this bound is strictly below P. Both commitment paths compute
-in R_P, centre each coefficient exactly, then take its integer remainder
-modulo q0 in `[0,q0)`.
+unless twice this bound is strictly below P. The reference path
+`commit_binary_clear` and the prepared path `commit_binary_clear_prepared`
+compute in R_P, centre each coefficient exactly, then take its integer
+remainder modulo q0 in `[0,q0)`. The limb path
+`commit_binary_clear_small_modulus_prepared` computes the same product
+directly modulo q0 and returns the residue in `[0,q0)`. Reduction modulo q0
+commutes with the integer matrix product and with reduction by the monic
+`Phi_D`, so under the admitted bound the three paths return the same
+coefficients.
 
 The root quotient kernel obtains the original-ring remainder and the
 conjugate-ring residual through the existing transforms. It centres the
