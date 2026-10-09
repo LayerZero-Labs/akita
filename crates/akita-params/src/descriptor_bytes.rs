@@ -1,7 +1,9 @@
 //! Shared canonical byte helpers for Fiat-Shamir descriptor digests.
 
 use crate::layout::SisModulusProfileId;
+#[cfg(not(all(feature = "blake2-inline", target_arch = "riscv64")))]
 use blake2::digest::consts::U32;
+#[cfg(not(all(feature = "blake2-inline", target_arch = "riscv64")))]
 use blake2::{Blake2b, Digest};
 
 /// Descriptor schema version for the in-development transcript preamble.
@@ -35,10 +37,22 @@ pub fn sis_modulus_profile_tag(family: SisModulusProfileId) -> u8 {
 /// Domain separation and version bytes are owned by the caller's canonical
 /// descriptor. This shared primitive prevents catalog and transcript identity
 /// code from implementing divergent hash truncation rules.
+#[cfg(not(all(feature = "blake2-inline", target_arch = "riscv64")))]
 pub fn digest_descriptor_bytes(bytes: &[u8]) -> DescriptorDigest {
     type Blake2b256 = Blake2b<U32>;
     let digest = Blake2b256::digest(bytes);
     let mut out = [0u8; 32];
     out.copy_from_slice(&digest);
+    out
+}
+
+/// Same bytes as the portable digest, through the jolt-inlines Blake2b. Host
+/// builds keep the portable digest; only a RISC-V guest has the inline.
+#[cfg(all(feature = "blake2-inline", target_arch = "riscv64"))]
+pub fn digest_descriptor_bytes(bytes: &[u8]) -> DescriptorDigest {
+    let mut hasher = jolt_inlines_blake2::Blake2b::new_with_output_len(32);
+    hasher.update(bytes);
+    let mut out = [0u8; 32];
+    hasher.finalize_into(&mut out);
     out
 }

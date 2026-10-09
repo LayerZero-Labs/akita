@@ -268,6 +268,30 @@ jobs:
 
   # Exercise the proof stream through the opaque CPU backend under both
   # transcript hashes, including a small-field Stage 1 route.
+  test-inline-backends:
+    name: Guest inline backends
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          targets: riscv64gc-unknown-linux-gnu
+      # The guest backends select themselves only on riscv64. The NTT inline's
+      # portable fallback runs on any host, so its table layout is pinned here;
+      # Jolt pins the Blake2b and Keccak inlines on their host paths, and its
+      # recursion example runs this verifier in a guest with all three.
+      - name: Inline NTT against the portable transform
+        run: cargo test --release -p akita-algebra --features ntt-inline --lib
+      - name: Host builds with every inline feature
+        run: cargo check --release -p akita-pcs --features blake2-inline,keccak-inline,ntt-inline
+      # A riscv64 target compiles every guest-selected path; the inline
+      # instructions run only under Jolt's emulator, so this is a build check.
+      - name: RISC-V builds with every inline feature
+        run: >-
+          cargo check --release -p akita-pcs --target riscv64gc-unknown-linux-gnu
+          --features blake2-inline,keccak-inline,ntt-inline
+
   test-proof-stream-roundtrips:
     name: Proof channel roundtrips (${{ matrix.backend }})
     runs-on: ubuntu-latest
