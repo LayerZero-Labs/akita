@@ -12,13 +12,19 @@ mod scope;
 mod stage3;
 mod traits;
 
+mod transfer;
+
+pub use plans::{FoldExecutionRequirements, SuccessorPublicBinding, ValidatedSuccessorHandoffPlan};
+
+pub use transfer::*;
+
 pub use admission::ProofAdmission;
 pub use context::OperationCtx;
 pub use handles::{
     AcceptedFoldHandle, CommitmentHandleMetadata, OpeningSource, RecursiveWitnessHandle,
     RecursiveWitnessManifest, RelationWitnessMetadata, SourceMetadata,
 };
-pub use identity::ProofContext;
+pub use identity::{BackendInstanceIdentity, ProofContext};
 pub use messages::{
     FoldProbeDiagnostics, FoldProbeOutcome, NextWitnessBindingMessage, PreparedGroupOpening,
     PreparedRelationHandle, RecursiveWitnessBuildStart, RecursiveWitnessFoldInput,
@@ -63,6 +69,8 @@ pub trait ProverBackend<F: jolt_field::Field + jolt_field::CanonicalEncoding, E:
     + OpaqueTerminalFoldKernel<F, E>
     + OpaqueWitnessOpeningKernel<F, E>
     + OpaqueResourceReleaseKernel<F, E>
+    + SuccessorExportKernel<F, E>
+    + SuccessorImportKernel<F, E>
     + TerminalCommitmentMaterialKernel<F, Self::CommitmentMaterialHandle>
 {
 }
@@ -83,6 +91,8 @@ where
         + OpaqueTerminalFoldKernel<F, E>
         + OpaqueWitnessOpeningKernel<F, E>
         + OpaqueResourceReleaseKernel<F, E>
+        + SuccessorExportKernel<F, E>
+        + SuccessorImportKernel<F, E>
         + TerminalCommitmentMaterialKernel<F, B::CommitmentMaterialHandle>,
 {
 }

@@ -148,14 +148,25 @@ fn nonzero_alignment_gaps_preserve_the_proven_statement() {
             };
             let selection = opening().selection();
             let prove = || {
+                let prefixes = akita_prover::SetupPrefixProverRegistry::default();
+                let mut registry = akita_prover::BackendRegistry::<Cfg>::new().unwrap();
+                let root = registry.register(&backend, &prefixes).unwrap();
+                let mut route = akita_prover::FixedFoldRoute::new(vec![
+                    root;
+                    catalog
+                        .resolve_selection(selection)
+                        .unwrap()
+                        .schedule()
+                        .num_fold_levels()
+                ]);
                 akita_prover::batched_prove::<Cfg, _>(
                     setup.expanded.descriptor(),
-                    &akita_prover::SetupPrefixProverRegistry::default(),
                     &catalog,
-                    &backend,
+                    &registry,
                     opening(),
                     SESSION,
                     BasisMode::Lagrange,
+                    &mut route,
                 )
                 .unwrap()
             };

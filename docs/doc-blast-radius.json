@@ -64,6 +64,8 @@
       "consider_updating": [
         "book/src/how/proving/**",
         "book/src/how/recursion.md",
+        "book/src/usage/feature-flags.md",
+        "specs/dynamic-backend-bridges.md",
         "specs/packed-sumcheck.md",
         "specs/archive/2026-Q3/terminal-fold-cutover.md",
         "specs/archive/2026-Q3/protocol-field-geometry-cutover.md"
