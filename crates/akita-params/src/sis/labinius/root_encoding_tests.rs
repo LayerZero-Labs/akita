@@ -12,32 +12,11 @@ const BASES: [LabiniusDigitBase; 3] = [
 fn golden_enforced_ranges_and_root_witness_lengths() {
     let shape = LabiniusRootShape::derive(PROFILE, 22, 8, 128).unwrap();
     let expected = [
-        (
-            39,
-            38,
-            1186484727296,
-            [42_467_328, 6_279, 6_156],
-            42_479_763,
-            26,
-        ),
-        (
-            40,
-            38,
-            2011118448128,
-            [21_233_664, 3_220, 3_078],
-            21_239_962,
-            25,
-        ),
-        (
-            40,
-            40,
-            2835752168960,
-            [10_616_832, 1_610, 1_620],
-            10_620_062,
-            24,
-        ),
+        (39, 38, 1186484727296, 67_108_864, 26),
+        (40, 38, 2011118448128, 33_554_432, 25),
+        (40, 40, 2835752168960, 16_777_216, 24),
     ];
-    for (base, (eq, ek, total, lengths, natural, padded)) in BASES.into_iter().zip(expected) {
+    for (base, (eq, ek, total, response_len, response_log)) in BASES.into_iter().zip(expected) {
         let encoding = shape.derive_encoding(base).unwrap();
         assert_eq!(encoding.base(), base);
         assert_eq!(encoding.response().bits(), 16);
@@ -46,11 +25,14 @@ fn golden_enforced_ranges_and_root_witness_lengths() {
         assert_eq!(encoding.quotient().bits(), eq);
         assert_eq!(encoding.carry().bits(), ek);
         assert_eq!(encoding.no_wrap_total(), total);
-        assert_eq!(encoding.segment_lengths(), lengths);
-        assert_eq!(encoding.natural_len(), natural);
-        assert_eq!(encoding.padded_log_len(), padded);
+        assert_eq!(encoding.padded_coefficient_len(), 1024);
+        assert_eq!(encoding.response_table_len(), response_len);
+        assert_eq!(encoding.response_table_log_len(), response_log);
+        assert_eq!(encoding.parity_quotient_len(), 161);
+        assert_eq!(encoding.parity_carry_len(), 162);
         assert_eq!(shape.image_len(), 165_888);
-        assert_eq!(encoding.image_padded_log_len(), 18);
+        assert_eq!(encoding.image_table_len(), 262_144);
+        assert_eq!(encoding.image_table_log_len(), 18);
         for (range, honest) in [
             (
                 encoding.response(),
@@ -65,6 +47,31 @@ fn golden_enforced_ranges_and_root_witness_lengths() {
             assert_eq!(
                 range.digit_count(),
                 usize::try_from(range.bits() / base.bits()).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
+fn response_table_length_matches_digit_innermost_addresses_and_coefficient_tails() {
+    for (log_n, log_c, lambda) in [(2, 0, 0), (3, 0, 0), (22, 8, 128)] {
+        let shape = LabiniusRootShape::derive(PROFILE, log_n, log_c, lambda).unwrap();
+        for base in BASES {
+            let encoding = shape.derive_encoding(base).unwrap();
+            let digit_count = usize::try_from(16 / base.bits()).unwrap();
+            let degree = shape.commitment_degree();
+            let padded_coefficient_len = degree.next_power_of_two();
+            // The address rule is increasing in each coordinate, so the natural
+            // maximum occurs at the last digit, coefficient and ring element.
+            let largest_natural_address = digit_count - 1
+                + digit_count
+                    * (degree - 1
+                        + padded_coefficient_len * (shape.ring_elements_per_column() - 1));
+            let coefficient_tail = (padded_coefficient_len - degree) * digit_count;
+            assert!(coefficient_tail > 0);
+            assert_eq!(
+                largest_natural_address + coefficient_tail,
+                encoding.response_table_len() - 1
             );
         }
     }
@@ -284,9 +291,55 @@ fn range_and_witness_overflows_reject_without_allocation() {
         Err(AkitaError::InvalidSetup(_))
     ));
     let mut shape = LabiniusRootShape::derive(PROFILE, 22, 8, 128).unwrap();
-    shape.image_len = usize::MAX;
+    shape.fold_width = usize::MAX;
     assert!(matches!(
         shape.derive_encoding(LabiniusDigitBase::Bits1),
         Err(AkitaError::InvalidSetup(_))
     ));
+}
+
+#[test]
+fn coefficient_padding_and_padded_response_product_overflows_reject() {
+    let mut shape = LabiniusRootShape::derive(PROFILE, 22, 8, 128).unwrap();
+    shape.commitment_degree = usize::MAX;
+    assert!(matches!(
+        shape.derive_encoding(LabiniusDigitBase::Bits1),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+    let mut shape = LabiniusRootShape::derive(PROFILE, 22, 8, 128).unwrap();
+    // The natural coefficient product fits, but padding the coefficient axis
+    // makes the response-table product overflow.
+    shape.ring_elements_per_column = usize::MAX / (shape.commitment_degree() * 16);
+    assert!(checked::product([
+        shape.ring_elements_per_column(),
+        shape.commitment_degree(),
+        16,
+    ])
+    .is_some());
+    assert!(matches!(
+        shape.derive_encoding(LabiniusDigitBase::Bits1),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
+fn stable_digit_base_tags_and_bits_have_literal_fixtures() {
+    assert_eq!(LabiniusDigitBase::Bits1.tag(), 0);
+    assert_eq!(LabiniusDigitBase::Bits2.tag(), 1);
+    assert_eq!(LabiniusDigitBase::Bits4.tag(), 2);
+    assert_eq!(
+        LabiniusDigitBase::from_tag(0).unwrap(),
+        LabiniusDigitBase::Bits1
+    );
+    assert_eq!(
+        LabiniusDigitBase::from_tag(1).unwrap(),
+        LabiniusDigitBase::Bits2
+    );
+    assert_eq!(
+        LabiniusDigitBase::from_tag(2).unwrap(),
+        LabiniusDigitBase::Bits4
+    );
+    assert_eq!(LabiniusDigitBase::Bits1.bits(), 1);
+    assert_eq!(LabiniusDigitBase::Bits2.bits(), 2);
+    assert_eq!(LabiniusDigitBase::Bits4.bits(), 4);
 }

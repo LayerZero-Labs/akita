@@ -76,12 +76,15 @@ impl LabiniusSignedDigitRange {
     }
 }
 
-/// Accepted integer ranges and natural/padded lengths for the root digit vector.
+/// Enforced integer ranges and canonical root response-table lengths.
 ///
-/// Segment order is response, parity quotient, parity carry. Within-segment
-/// address order belongs to the lowered relation. All padded digits have the
-/// same alphabet, zero public relation weights and honest value zero. The image
-/// is a coefficient-field vector and needs no range proof.
+/// The committed table contains only response digits, addressed as
+/// `digit + digit_count * (coefficient + padded_coefficient_len * ring_element)`.
+/// Every position has the same alphabet; padding has zero public relation
+/// weights and honest digit zero. Parity quotient and carry lengths count
+/// integers outside this table; the root protocol chooses how to enforce their
+/// ranges. The image uses the same padded coefficient index over the
+/// coefficient field and needs no range proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabiniusRootEncoding {
     base: LabiniusDigitBase,
@@ -89,10 +92,13 @@ pub struct LabiniusRootEncoding {
     quotient: LabiniusSignedDigitRange,
     carry: LabiniusSignedDigitRange,
     no_wrap_total: u128,
-    segment_lengths: [usize; 3],
-    natural_len: usize,
-    padded_log_len: usize,
-    image_padded_log_len: usize,
+    padded_coefficient_len: usize,
+    response_table_len: usize,
+    response_table_log_len: usize,
+    parity_quotient_len: usize,
+    parity_carry_len: usize,
+    image_table_len: usize,
+    image_table_log_len: usize,
 }
 
 impl LabiniusRootEncoding {
@@ -104,11 +110,11 @@ impl LabiniusRootEncoding {
     pub const fn response(&self) -> LabiniusSignedDigitRange {
         self.response
     }
-    /// Accepted parity quotient map.
+    /// Enforced parity quotient range, independent of its protocol representation.
     pub const fn quotient(&self) -> LabiniusSignedDigitRange {
         self.quotient
     }
-    /// Accepted parity carry map.
+    /// Enforced parity carry range, independent of its protocol representation.
     pub const fn carry(&self) -> LabiniusSignedDigitRange {
         self.carry
     }
@@ -116,21 +122,33 @@ impl LabiniusRootEncoding {
     pub const fn no_wrap_total(&self) -> u128 {
         self.no_wrap_total
     }
-    /// Natural digit lengths, in response/quotient/carry order.
-    pub const fn segment_lengths(&self) -> [usize; 3] {
-        self.segment_lengths
+    /// Coefficient-axis length `D` rounded up to a power of two.
+    pub const fn padded_coefficient_len(&self) -> usize {
+        self.padded_coefficient_len
     }
-    /// Sum of the three natural segment lengths.
-    pub const fn natural_len(&self) -> usize {
-        self.natural_len
+    /// Committed response digits `m * padded_coefficient_len * response.digit_count`.
+    pub const fn response_table_len(&self) -> usize {
+        self.response_table_len
     }
-    /// Smallest `n` with `2^n >= natural_len`.
-    pub const fn padded_log_len(&self) -> usize {
-        self.padded_log_len
+    /// Smallest `n` with `2^n >= response_table_len`.
+    pub const fn response_table_log_len(&self) -> usize {
+        self.response_table_log_len
     }
-    /// Smallest `n` with `2^n >= shape.image_len`.
-    pub const fn image_padded_log_len(&self) -> usize {
-        self.image_padded_log_len
+    /// Parity quotient integers `d - 1`, outside the committed response table.
+    pub const fn parity_quotient_len(&self) -> usize {
+        self.parity_quotient_len
+    }
+    /// Parity carry integers `d`, outside the committed response table.
+    pub const fn parity_carry_len(&self) -> usize {
+        self.parity_carry_len
+    }
+    /// Image field entries `padded_coefficient_len * C * n_A`, with no range proof.
+    pub const fn image_table_len(&self) -> usize {
+        self.image_table_len
+    }
+    /// Smallest `n` with `2^n >= image_table_len`.
+    pub const fn image_table_log_len(&self) -> usize {
+        self.image_table_log_len
     }
 }
 
@@ -167,35 +185,43 @@ impl LabiniusRootShape {
                 })?;
         let size_overflow =
             || AkitaError::InvalidSetup("LaBinius root digit witness size overflow".into());
-        let segment_lengths = [
-            checked::product([
-                self.ring_elements_per_column,
-                self.commitment_degree,
-                response.digit_count,
-            ])
-            .ok_or_else(size_overflow)?,
-            checked::product([
-                self.scalar_degree
-                    .checked_sub(1)
-                    .ok_or_else(size_overflow)?,
-                quotient.digit_count,
-            ])
-            .ok_or_else(size_overflow)?,
-            checked::product([self.scalar_degree, carry.digit_count]).ok_or_else(size_overflow)?,
-        ];
-        let natural_len = checked::sum(segment_lengths).ok_or_else(size_overflow)?;
-        let padded_log_len = checked::ceil_log2(natural_len).ok_or_else(size_overflow)?;
-        let image_padded_log_len = checked::ceil_log2(self.image_len).ok_or_else(size_overflow)?;
+        let padded_coefficient_len = self
+            .commitment_degree
+            .checked_next_power_of_two()
+            .ok_or_else(size_overflow)?;
+        let response_table_len = checked::product([
+            self.ring_elements_per_column,
+            padded_coefficient_len,
+            response.digit_count,
+        ])
+        .ok_or_else(size_overflow)?;
+        let response_table_log_len =
+            checked::ceil_log2(response_table_len).ok_or_else(size_overflow)?;
+        let parity_quotient_len = self
+            .scalar_degree
+            .checked_sub(1)
+            .ok_or_else(size_overflow)?;
+        let parity_carry_len = self.scalar_degree;
+        let image_table_len = checked::product([
+            padded_coefficient_len,
+            self.fold_width,
+            usize::try_from(self.rank_a).map_err(|_| size_overflow())?,
+        ])
+        .ok_or_else(size_overflow)?;
+        let image_table_log_len = checked::ceil_log2(image_table_len).ok_or_else(size_overflow)?;
         Ok(LabiniusRootEncoding {
             base,
             response,
             quotient,
             carry,
             no_wrap_total,
-            segment_lengths,
-            natural_len,
-            padded_log_len,
-            image_padded_log_len,
+            padded_coefficient_len,
+            response_table_len,
+            response_table_log_len,
+            parity_quotient_len,
+            parity_carry_len,
+            image_table_len,
+            image_table_log_len,
         })
     }
 }

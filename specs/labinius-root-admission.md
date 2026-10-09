@@ -158,38 +158,54 @@ magnitudes. The derivation calls `check_parity_no_wrap` with offsets
 `H + 3*2^(e_Q-1) + 2*2^(e_K-1)`. A rounded envelope reaching P rejects even
 when the honest envelope would pass. Both paths use the same total formula.
 
-The natural digit vector W has three consecutive segments, in this order:
+The committed successor table contains only response digits in the canonical
+trinomial response layout, `akita_types::TrinomialResponseLayout`: digits are
+innermost, then the coefficient index padded to a power of two, then the ring
+element index. Its address rule and lengths are
 
-| Segment | Natural digit length |
-| --- | --- |
-| Response | `m * D * (e_v/b)` |
-| Parity quotient | `(d-1) * (e_Q/b)` |
-| Parity carry | `d * (e_K/b)` |
+```text
+address = digit + digit_count * (coefficient + padded_coefficient_len * ring_element)
+padded_coefficient_len = next_power_of_two(D)
+digit_count = e_v/b
+response_table_len = m * padded_coefficient_len * digit_count
+response_table_log_len = ceil_log2(response_table_len).
+```
 
-`LabiniusRootEncoding` exposes this ordered length array, its sum, the smallest
-padded log n with `2^n >=` that sum, and the analogous padded log of the image
-vector. The lowered relation owns segment-internal address order; it is not
-fixed here. Products, sums and padding use `akita_error::checked`; range and
-no-wrap computations use checked u128 arithmetic. Overflow rejects.
+The parity quotient and carry are `d - 1` and `d` integers, respectively, with
+the enforced ranges above; they are not part of the committed response table.
+The root protocol must enforce those ranges, either by sending the integers in
+the clear and checking them directly or by committing digits. Whichever method
+it chooses, the no-wrap condition uses the enforced offsets
+`2^(e_Q-1)` and `2^(e_K-1)`.
 
-Every position of the padded digit vector, including padding, is subject to
-the same b-bit alphabet check. Public relation weights are zero at every
-padding position, and the honest prover writes the zero digit there. Thus a
-padding position cannot contribute to any relation row. No selector polynomial
-or separate support proof is needed. Zero here means the unsigned digit value
-zero, not the lower endpoint of an entire signed integer map. The image vector
-is over the coefficient field and needs no range proof.
+`LabiniusRootEncoding` exposes the padded coefficient length, response table
+length and log length, parity integer counts, and image table length and log
+length. Coefficient padding uses checked integer rounding, products and log
+rounding use `akita_error::checked`, and range and no-wrap computations use
+checked u128 arithmetic. Overflow rejects.
+
+Every position of the response table, including coefficient positions `t >= D`
+and any positions above the natural extent, is subject to the same b-bit
+alphabet check. Public relation weights are zero at every padding position,
+and the honest prover writes the zero digit there. Thus a padding position
+cannot contribute to any relation row. No selector polynomial or separate
+support proof is needed. Zero here means the unsigned digit value zero, not
+the lower endpoint of an entire signed integer map.
+
+The image table uses the same padded coefficient index and has
+`padded_coefficient_len * C * n_A` entries over the coefficient field, with no
+range proof.
 
 At `(log_num_cells, log_fold_width, lambda_fold) = (22,8,128)`,
 `B_Q=173946199040` and `B_K=130459649280`. Rounding gives:
 
-| b | e_Q | e_K | Accepted no-wrap total | Natural W length | Padded log |
+| b | e_Q | e_K | Accepted no-wrap total | Response table length | Response table log length |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 39 | 38 | 1186484727296 | 42479763 | 26 |
-| 2 | 40 | 38 | 2011118448128 | 21239962 | 25 |
-| 4 | 40 | 40 | 2835752168960 | 10620062 | 24 |
+| 1 | 39 | 38 | 1186484727296 | 67108864 | 26 |
+| 2 | 40 | 38 | 2011118448128 | 33554432 | 25 |
+| 4 | 40 | 40 | 2835752168960 | 16777216 | 24 |
 
-The image has 165888 coefficient-field elements and padded log 18.
+This gives image table length 262144, log 18.
 
 Tests exercise rounded rejection by deriving a P128 shape with a signed 32-bit
 response interval and `(log_num_cells, log_fold_width)=(22,0)`, then perturbing
@@ -260,9 +276,10 @@ binary reduction cover random, extremal, valid and invalid parity rows.
 ## Remaining protocol work
 
 This slice defines no schedule family, proof-size model, Fiat–Shamir ledger,
-proof wire grammar, segment-internal addresses, planner integration, or root
-protocol. The three digit-segment lengths above do not specify a complete
-successor witness. This is not protocol security admission and does not claim
+proof wire grammar, representation of the parity quotient and carry, planner
+integration, or root protocol. The response table's address rule and the
+lengths above fix the committed table's size and index order but not the
+relation over it. This is not protocol security admission and does not claim
 complete PCS security admission. Those belong to the root
 protocol and its composition with the ordinary tail. No unpublished paper or
 unlicensed reference implementation is needed for these formulas or tests.
