@@ -132,19 +132,27 @@ final claim; it MUST be followed by the terminal check and, at the enclosing
 proof boundary, the channel's EOF check.
 
 The combined prover evaluates both terms in one pass per round and interpolates
-at nodes `0,...,2^b+1`. Round zero uses a digit-pair lookup table with `2^(2b)`
-rows. Later rounds use folded field values. For `N=2^nu`, peak owned storage is
+at nodes `0,...,2^b+1`. It packs the input digits and delays lifting them to
+field elements for `r=min(nu,4/3/2)` rounds for one-, two-, and four-bit digits.
+Equality uses two suffix tensor factors. Response weights use the tensor of
+`digit_powers` (length `2^a`, occupying the lowest variables) and a compact
+coefficient table `cw` (length `N/2^a`, coefficient-low, ring-element-high).
+Padded coefficient positions in `cw` are zero. The prover never expands these
+weight factors into a length-`N` field table.
 
-```text
-(2N + max(1,N/2) + nu + 2^(2b)*(2^b+2))*size_of::<F>()
-    + N bytes + O(2^b) field workspace.
-```
+The first `a` challenges fold only the digit factor. Its final scalar is applied
+to `cw` in place, and subsequent rounds fold that table. For the first root
+profile, `a=r`: packed class buckets sum compact coefficients by class and
+remaining digit-pair position, then apply the digit factor once per bucket.
+Other factorizations use direct weight endpoint evaluation. Once the packed
+rounds finish, the lifted digit table has length `N/2^r`.
 
-This excludes caller-retained originals and excess capacities of supplied
-vectors. A dense field table at `nu=26` occupies 1 GiB when `F` occupies
-16 bytes; the two dense tables and equality suffix occupy 2.5 GiB, plus the
-digit copy and small lookup/workspace storage. The product prover owns two
-length-`2^mu` field tables and constant-size round workspace.
+The exact reservation bound, including worker buckets and small tables, is
+specified on `CombinedRootKernel`. At `nu=25`, two-bit digits, `a=3`, 16-byte
+field elements and one worker, it is 148,579,168 bytes (about 141.7 MiB),
+excluding caller-retained originals, allocator rounding and interpolation
+scratch. The two main field tables each occupy 64 MiB. The product prover owns
+two length-`2^mu` field tables and constant-size round workspace.
 
 ## Scope and validation
 
