@@ -5,9 +5,11 @@
 //! The final multiplication by one bounds every slot strictly below p.
 
 use super::{use_neon, TrinomialError, DEGREE, EXPONENTS, LANES, PIECE};
+use std::sync::OnceLock;
 
 pub(super) mod arithmetic;
 mod gather;
+mod interleaved;
 #[cfg(target_arch = "aarch64")]
 mod neon;
 #[cfg(test)]
@@ -21,6 +23,7 @@ pub struct TrinomialWideLimbDomain {
     arithmetic: Arithmetic,
     table: Box<[[i32; LANES]; 256]>,
     first_level: Box<[[[i32; 3 * LANES]; 256]; 3]>,
+    interleaved_first_level: OnceLock<Box<[[[i32; 3 * LANES]; 256]]>>,
     evaluation: [[i32; LANES]; LANES],
     interpolation: [[i32; LANES]; LANES],
     splits: Vec<Split>,
@@ -149,6 +152,7 @@ impl TrinomialWideLimbDomain {
             arithmetic,
             table,
             first_level,
+            interleaved_first_level: OnceLock::new(),
             evaluation,
             interpolation,
             splits,
