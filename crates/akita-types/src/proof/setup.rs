@@ -643,12 +643,8 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()> + 'st
     /// viewed in place.
     pub fn borrow_trusted(bytes: TrustedBytes) -> Result<Self, SerializationError> {
         let (expanded, rest) = AkitaExpandedSetup::borrow_trusted(bytes)?;
-        let prefix_slots = SetupPrefixVerifierRegistry::deserialize_with_mode(
-            rest.bytes(),
-            Compress::No,
-            Validate::Yes,
-            &(),
-        )?;
+        let prefix_slots =
+            SetupPrefixVerifierRegistry::deserialize_uncompressed_exact(rest.bytes(), &())?;
         Self::from_parts(Arc::new(expanded), prefix_slots)
             .map_err(|err| SerializationError::InvalidData(err.to_string()))
     }
@@ -872,17 +868,26 @@ mod tests {
         let offset = AkitaExpandedSetup::<F>::coefficient_offset(&bytes).expect("offset");
         let align = core::mem::align_of::<F>();
         // Copy the bytes so the matrix starts `shift` bytes past an aligned address.
-        let place = |shift: usize| -> &'static [u8] {
+        let place = |bytes: &[u8], shift: usize| -> &'static [u8] {
             let storage = Box::leak(vec![0u8; bytes.len() + 2 * align].into_boxed_slice());
             let lead = (align - (storage.as_ptr() as usize + offset) % align) % align + shift;
-            storage[lead..lead + bytes.len()].copy_from_slice(&bytes);
+            storage[lead..lead + bytes.len()].copy_from_slice(bytes);
             &storage[lead..lead + bytes.len()]
         };
-        // SAFETY: the bytes are this setup's own canonical serialization.
-        let trusted = |shift| unsafe { TrustedBytes::new(place(shift)) };
-        let borrowed = AkitaVerifierSetup::<F>::borrow_trusted(trusted(0)).expect("borrow");
+        // SAFETY: the bytes are this setup's own canonical serialization,
+        // possibly followed by a suffix that is never viewed in place.
+        let trusted = |bytes: &[u8], shift| unsafe { TrustedBytes::new(place(bytes, shift)) };
+        let borrowed = AkitaVerifierSetup::<F>::borrow_trusted(trusted(&bytes, 0)).expect("borrow");
         assert_eq!(borrowed, setup);
-        assert!(AkitaVerifierSetup::<F>::borrow_trusted(trusted(1)).is_err());
+        assert!(AkitaVerifierSetup::<F>::borrow_trusted(trusted(&bytes, 1)).is_err());
+        for suffix in [0x00, 0xa5] {
+            let mut extended = bytes.clone();
+            extended.push(suffix);
+            assert!(
+                AkitaVerifierSetup::<F>::borrow_trusted(trusted(&extended, 0)).is_err(),
+                "trailing {suffix:#04x} accepted"
+            );
+        }
     }
 
     #[test]

@@ -93,9 +93,11 @@ macro_rules! impl_prime_serialization {
                 Ok((elements, rest))
             }
 
-            /// One bulk read of the `count * $bytes` little-endian words into
-            /// the element storage, then the single-element rule per word:
-            /// checked under `Validate::Yes`, reduced otherwise.
+            /// Bulk reads of the little-endian words into the element storage,
+            /// then the single-element rule per word: checked under
+            /// `Validate::Yes`, reduced otherwise. Storage grows one chunk per
+            /// read, so a forged `count` costs memory only for bytes that
+            /// actually arrive.
             #[cfg(target_endian = "little")]
             fn deserialize_many_with_mode<R: Read>(
                 mut reader: R,
@@ -105,23 +107,28 @@ macro_rules! impl_prime_serialization {
                 count: usize,
             ) -> Result<Vec<Self>, SerializationError> {
                 const _: () = assert!(core::mem::size_of::<$field<0>>() == $bytes);
-                let byte_len = count.checked_mul($bytes).ok_or_else(|| {
-                    SerializationError::InvalidData("field run length overflow".into())
-                })?;
                 let mut out: Vec<Self> = Vec::new();
-                out.try_reserve_exact(count)
-                    .map_err(|_| SerializationError::InvalidData("allocation failed".into()))?;
-                out.resize(
-                    count,
-                    <$field<P> as CanonicalEncoding>::from_u128_reduced(0),
-                );
-                // SAFETY: `out` holds `count` initialized elements of `$bytes`
-                // bytes each, and any byte pattern is a valid raw word for the
-                // per-word pass below, which replaces every element.
-                let raw = unsafe {
-                    core::slice::from_raw_parts_mut(out.as_mut_ptr().cast::<u8>(), byte_len)
-                };
-                reader.read_exact(raw)?;
+                while out.len() < count {
+                    let start = out.len();
+                    let take = (count - start).min(crate::DECODE_CHUNK_ELEMENTS);
+                    out.try_reserve(take)
+                        .map_err(|_| SerializationError::InvalidData("allocation failed".into()))?;
+                    out.resize(
+                        start + take,
+                        <$field<P> as CanonicalEncoding>::from_u128_reduced(0),
+                    );
+                    // SAFETY: `out[start..start + take]` holds `take` initialized
+                    // elements of `$bytes` bytes each, and any byte pattern is a
+                    // valid raw word for the per-word pass below, which replaces
+                    // every element.
+                    let raw = unsafe {
+                        core::slice::from_raw_parts_mut(
+                            out.as_mut_ptr().add(start).cast::<u8>(),
+                            take * $bytes,
+                        )
+                    };
+                    reader.read_exact(raw)?;
+                }
                 for element in &mut out {
                     let value = <$modulus>::from_le(element.$to_canonical()) as u128;
                     *element = if validate == Validate::Yes {
@@ -267,7 +274,7 @@ mod tests {
         Prime64Offset59,
     };
 
-    use crate::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
+    use crate::{AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Validate};
 
     type Base = Fp64<4294967197>;
     type Extension = FpExt8<Base>;
@@ -465,6 +472,35 @@ mod tests {
             2,
         )
         .is_err());
+    }
+
+    #[test]
+    fn bulk_decode_of_a_forged_count_fails_on_the_missing_bytes() {
+        // A header claiming 2^40 elements with no payload must fail as a
+        // truncated read, not after reserving or zero-filling the claimed run.
+        let forged = 1usize << 40;
+        let err = Prime128OffsetA7F7::deserialize_many_with_mode(
+            &[0u8; 16][..],
+            Compress::No,
+            Validate::Yes,
+            &(),
+            forged,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, SerializationError::IoError(io) if io.kind() == std::io::ErrorKind::UnexpectedEof),
+            "{err:?}"
+        );
+        // The trait default (per-element decode) bounds its reservation too.
+        let err = u64::deserialize_many_with_mode(
+            std::io::empty(),
+            Compress::No,
+            Validate::Yes,
+            &(),
+            forged,
+        )
+        .unwrap_err();
+        assert!(matches!(err, SerializationError::IoError(_)), "{err:?}");
     }
 
     #[test]
