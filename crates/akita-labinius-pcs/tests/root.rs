@@ -4,6 +4,8 @@
 mod adversarial;
 #[path = "root/benchmark.rs"]
 mod benchmark;
+#[path = "root/binding.rs"]
+mod binding;
 mod common;
 #[path = "root/oracle.rs"]
 mod oracle;

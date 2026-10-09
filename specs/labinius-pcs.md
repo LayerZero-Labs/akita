@@ -47,8 +47,13 @@ Both catalogs MUST be provisioned on one setup. Constructors compute
 `SetupRequirements::from_catalog` at the setup's capacity bounds and `union`
 the requirements, then require the setup matrix to cover that union. They
 also resolve the exact selected image and grouped rows and check their setup
-admission before any proof byte is read. Missing rows and insufficient setups
-return errors. The grouped key MUST contain the exact scalar Y profile, as
+admission and coverage of every required setup-prefix slot before any parent
+channel operation or proof byte is read. Both constructors check the selected
+scalar image row and the grouped digit row that is replayed. Slot requirements
+come from `required_setup_prefix_slot_ids_for_schedule`, independently of the
+conditional prefix enumeration in `SetupRequirements::from_catalog`. Missing
+rows, prefix slots and insufficient setups return errors. The grouped key MUST
+contain the exact scalar Y profile, as
 created by `PrecommittedProducer::try_new` with
 `ImageConfig::committed_source_contract()` during offline planning. A matching
 table length alone is insufficient. The planner is only a test dependency.
@@ -74,10 +79,13 @@ basis search ranges. `log_commit_bound=b+1` denotes a signed interval that
 contains every honest unsigned digit in `[0,2^b)`. `log_open_bound=Some(128)`
 allows opening witnesses to contain arbitrary coefficient-field elements.
 
-The commitment bound MUST NOT be treated as the digit alphabet proof. The
-reduction's combined sumcheck proves the stricter unsigned alphabet condition,
-including every padding entry. The Akita commitment only has to admit honest
-digits and bind the entire table.
+An accepted grouped opening gives, under Akita's weak-binding and evaluation
+soundness, consistent coefficient-field tables for Y and W. The root combined
+sumcheck constrains that W table to the unsigned digit alphabet `[0,2^b)` at
+every Boolean position, including padding. The `DenseBounded` commit bound is
+an honest-prover representability condition; it does not enforce the alphabet.
+It admits honest digits while Akita's conditional guarantees provide consistent
+tables for the root reduction.
 
 W is imported through `DensePoly::<F>::from_field_evals`. Its field allocation
 costs 16 bytes per digit, in addition to the reduction's original digit bytes
@@ -93,7 +101,10 @@ Define `LP(x)=u64_le(byte_length(x)) || x`. The reduction binds the admitted
 root identity and base before calling the image oracle, and binds the host
 point and value in the same statement phase. It already fixes both evaluation
 claims before calling discharge. Oracle methods MUST run exactly once, in the
-following order. Repeated or out-of-order calls return an error.
+following order. On entry to any call the oracle becomes terminally failed;
+only a successful image or response operation advances to the next live state.
+An error, repeated call or out-of-order call leaves it failed. Every later call
+returns `AkitaError::InvalidProof` without touching the parent channel.
 
 | Call and timing | Operation | Bytes or guarantee |
 | --- | --- | --- |
@@ -102,6 +113,11 @@ following order. Repeated or out-of-order calls return an error.
 | `discharge`, after w_eval and y_eval | Build `[Y,W]` claims; `public` | `LP(transcript_instance_descriptor::<F,C>(..., Lagrange))`, then Y point coordinates and value followed by W point coordinates and value, each in canonical fixed-width little-endian F encoding |
 | Nested session derivation | `public`, then one challenge | `LP("akita/labinius/root-akita-opening-session/v1")`, then one parent `challenge_block`; session is domain concatenated with that 32-byte seed |
 | Grouped opening transport | Existing Akita batched prove / verify; `message` | u64 little-endian inner proof length, then exactly that many inner proof bytes |
+
+The parent binds the Akita setup descriptor, but does not bind the payloads of
+the setup-prefix registry. This is inherited from native Akita; callers remain
+responsible for installing prefix commitments with the required setup provenance.
+Prefix-slot coverage is checked during setup preflight.
 
 The Akita instance descriptor covers the selected row, setup, decomposition,
 layout, basis and grinding plan. It does not contain actual points or values,
@@ -141,8 +157,9 @@ zero proof bytes. There is one grouped proof, with no separate Y proof.
 ## Conditional guarantees and exclusions
 
 Acceptance authenticates both returned coefficient-field evaluations against
-the same Y and W owners, conditional on ordinary Akita's binding and evaluation
-soundness. Together with the assumptions and local soundness arguments in
+consistent Y and W coefficient-field tables, conditional on ordinary Akita's
+weak-binding and evaluation soundness. Together with the assumptions and local
+soundness arguments in
 [the root reduction](labinius-root-reduction.md),
 [the lowered relation](labinius-lowered-root.md), and
 [the root sumchecks](labinius-root-sumcheck.md), this supplies the concrete

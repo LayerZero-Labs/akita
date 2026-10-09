@@ -18,6 +18,7 @@ pub mod config;
 pub mod image;
 pub mod root;
 pub mod session;
+mod setup;
 
 pub use config::{DigitConfig, Digits1, Digits2, Digits4};
 pub use image::{ImageCommitOutput, ImageEvaluation, ImageProver, ImageVerifier};

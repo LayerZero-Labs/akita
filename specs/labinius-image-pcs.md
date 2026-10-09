@@ -63,7 +63,11 @@ it. No change to `SwitchField` or the existing kernel is needed.
 The scalar row MUST match the commitment's complete frozen profile, image log
 and polynomial count. A missing row, different profile or image length, invalid
 commitment payload, wrong point dimension, or unsupported setup MUST reject
-before reading proof bytes. The prover MUST validate retained handle ownership,
+before any parent channel operation or proof byte is read. Verifier setup
+preflight MUST check coverage of every slot returned by
+`required_setup_prefix_slot_ids_for_schedule` for the selected scalar row,
+even when catalog setup sizing conditionally omits prefix enumeration. The
+prover MUST validate retained handle ownership,
 producer contract, shape and public commitment against the existing backend
 admission boundary before deriving the nested session. A rejected statement
 does not require the caller to continue using a partially advanced channel.
@@ -88,10 +92,15 @@ Both roles MUST run the same `bind_image_statement` function for steps 1–5.
 | 6 | Nested opening and `message` | Run existing Akita batched prove/verify under the derived session; send/read u64 proof length followed by exactly that many inner proof bytes |
 | 7 | Return | The caller continues or checks its own enclosing EOF |
 
-Row resolution and input validation may occur before public absorption so
-invalid inputs fail before proof reads. Step 4 binds the fully resolved row,
+The image verifier resolves the row, validates input and checks setup-prefix
+coverage before public absorption, leaving the parent channel untouched on
+preflight rejection. Step 4 binds the fully resolved row,
 opening layout, basis and grinding plan through the existing descriptor owner.
 The commitment is public input and MUST NOT be copied into the proof.
+
+The parent binds the setup descriptor, but not setup-prefix registry payloads,
+as in native Akita. The caller must establish prefix commitment provenance when
+installing the setup; coverage preflight checks that required slots are present.
 
 The inner Akita session is the raw step-5 domain followed by the 32-byte seed.
 It depends on every preceding public statement byte and the caller's prior

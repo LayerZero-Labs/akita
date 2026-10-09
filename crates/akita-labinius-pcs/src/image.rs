@@ -222,6 +222,9 @@ impl ImageVerifier {
                 "image row does not fit verifier setup".into(),
             ));
         }
+        crate::setup::ensure_setup_prefix_coverage(row, |id| {
+            self.verifier.setup().prefix_slots().get(id).is_some()
+        })?;
         let bound = bind_image_statement::<H, S>(
             admitted,
             self.verifier.setup().expanded().descriptor(),

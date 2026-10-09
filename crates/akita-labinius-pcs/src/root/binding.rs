@@ -26,15 +26,22 @@ use jolt_field::{CanonicalBytes, Zero};
 
 pub(super) const OPENING_DOMAIN: &[u8] = b"akita/labinius/root-akita-opening-session/v1";
 
-/// A failed transition also consumes its slot: an oracle is never retryable.
-#[derive(Default)]
-pub(super) struct Order(u8);
+/// Every call enters the terminal failed state; only success permits the next call.
+/// After an unexpected call or error, later calls reject without channel activity.
+#[derive(Default, PartialEq)]
+pub(super) enum Order {
+    #[default]
+    Image,
+    Response,
+    Discharge,
+    Failed,
+}
 impl Order {
-    pub(super) fn take(&mut self, expected: u8) -> Result<(), AkitaError> {
-        if self.0 != expected {
+    pub(super) fn take(&mut self, expected: Self) -> Result<(), AkitaError> {
+        let previous = std::mem::replace(self, Self::Failed);
+        if previous != expected {
             return Err(AkitaError::InvalidProof);
         }
-        self.0 = expected + 1;
         Ok(())
     }
 }
@@ -204,4 +211,125 @@ pub(super) fn bind_opening<'a, C: DigitConfig, S: ClearChannel>(
     }
     let session = NestedOpeningSession::derive::<C, S>(OPENING_DOMAIN, row, channel)?;
     Ok((GroupBatchStatement::new(row.selection(), groups)?, session))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use akita_config::{policy_of, ValidatedScheduleCatalog};
+    use akita_params::CommittedGroupBatchProfile;
+    use akita_planner::emit::{GroupedGenerationRequest, PrecommittedProducer};
+    use jolt_field::One;
+
+    #[test]
+    fn discharge_rejects_swapped_w_y_group_order_after_shapes_match() {
+        type C = crate::config::Digits2;
+        let image_key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(10));
+        let image_plan = akita_planner::find_schedule(
+            &image_key,
+            ImageConfig::committed_source_contract().unwrap(),
+            &[],
+            &policy_of::<ImageConfig>(),
+            ImageConfig::ring_challenge_config,
+        )
+        .unwrap();
+        let image_profile = GroupCommitPhaseParams::try_from_params(
+            image_key.final_group,
+            &image_plan.schedule.root.params,
+        )
+        .unwrap();
+        let producer = PrecommittedProducer::try_new(
+            image_profile,
+            ImageConfig::committed_source_contract().unwrap(),
+        )
+        .unwrap();
+        let request =
+            GroupedGenerationRequest::new(PolynomialGroupLayout::singleton(11), vec![producer]);
+        let key = request.key();
+        let planned = akita_planner::find_schedule(
+            &key,
+            C::committed_source_contract().unwrap(),
+            &request.source_contracts(),
+            &policy_of::<C>(),
+            C::ring_challenge_config,
+        )
+        .unwrap();
+        let profiles = CommittedGroupBatchProfile {
+            final_group: GroupCommitPhaseParams::try_from_params(
+                key.final_group,
+                &planned.schedule.root.params,
+            )
+            .unwrap(),
+            precommitteds: key.precommitteds.clone(),
+        };
+        let catalog = TrustedScheduleCatalog::<C>::new(
+            ValidatedScheduleCatalog::try_new(
+                C::schedule_family_name(),
+                [(profiles.clone(), planned.schedule)],
+                &policy_of::<C>(),
+                C::ring_challenge_config,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let row = catalog.resolve_key(&key).unwrap();
+        let image = CommittedGroup::new(
+            image_profile,
+            Commitment::new(RingVec::from_coeffs(Vec::<F>::new())),
+        );
+        let response = CommittedGroup::new(
+            profiles.final_group,
+            Commitment::new(RingVec::from_coeffs(Vec::<F>::new())),
+        );
+        let claims = RootEvaluationClaims {
+            image_point: vec![F::zero(); 10],
+            image_value: F::zero(),
+            response_point: vec![F::one(); 11],
+            response_value: F::one(),
+        };
+        let honest = grouped_claims(&claims, &image, &response).unwrap();
+        row.validate_opening_layout(&honest.committed_layout().unwrap())
+            .unwrap();
+        // Reverse complete groups, including their own points and values, so
+        // each shape is valid and only the selected row's group order differs.
+        let swapped = RootEvaluationClaims {
+            image_point: claims.response_point.clone(),
+            image_value: claims.response_value,
+            response_point: claims.image_point.clone(),
+            response_value: claims.image_value,
+        };
+        let reversed = grouped_claims(&swapped, &response, &image).unwrap();
+        let layout = reversed.committed_layout().unwrap();
+        assert!(matches!(
+            row.validate_opening_layout(&layout),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        let requirements = SetupRequirements::from_catalog(&catalog, 11, 2).unwrap();
+        let setup = akita_pcs::new_prover_setup(&requirements).unwrap();
+        let descriptor = setup.expanded.descriptor();
+        let mut honest_channel =
+            akita_transcript::new_prover_channel(b"swapped-groups-test", b"").unwrap();
+        bind_opening::<C, _>(
+            descriptor,
+            row,
+            &claims,
+            &image,
+            &response,
+            &mut honest_channel,
+        )
+        .unwrap();
+        let mut channel =
+            akita_transcript::new_prover_channel(b"swapped-groups-test", b"").unwrap();
+        let mut control =
+            akita_transcript::new_prover_channel(b"swapped-groups-test", b"").unwrap();
+        assert!(matches!(
+            bind_opening::<C, _>(descriptor, row, &swapped, &response, &image, &mut channel),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert_eq!(
+            channel.challenge_block().unwrap(),
+            control.challenge_block().unwrap()
+        );
+    }
 }

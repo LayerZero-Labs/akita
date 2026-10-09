@@ -49,6 +49,11 @@ impl<C: DigitConfig> RootPcsProver<C> {
             setup.expanded.descriptor(),
         )?;
         let (image_row, digit_row) = resolve_rows(&admitted, &image_schedules, &digit_schedules)?;
+        for row in [image_row, digit_row] {
+            crate::setup::ensure_setup_prefix_coverage(row, |id| {
+                setup.prefix_slots.get(id).is_some()
+            })?;
+        }
         ensure_prover_schedule_fits_setup::<ImageConfig>(
             &setup.expanded,
             image_row.schedule(),
@@ -139,6 +144,11 @@ impl<C: DigitConfig> RootPcsVerifier<C> {
             setup.expanded().descriptor(),
         )?;
         let (image_row, digit_row) = resolve_rows(&admitted, &image_schedules, &digit_schedules)?;
+        for row in [image_row, digit_row] {
+            crate::setup::ensure_setup_prefix_coverage(row, |id| {
+                setup.prefix_slots().get(id).is_some()
+            })?;
+        }
         if !TrustedScheduleCatalog::<ImageConfig>::verifier_admits(setup.expanded(), image_row)?
             || !TrustedScheduleCatalog::<C>::verifier_admits(setup.expanded(), digit_row)?
         {

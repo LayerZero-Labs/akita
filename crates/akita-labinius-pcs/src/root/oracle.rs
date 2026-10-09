@@ -79,7 +79,7 @@ impl<C: DigitConfig> RootProverOracle<F> for RootPcsProverOracle<'_, C> {
         layout: &LoweredRootLayout,
         channel: &mut S,
     ) -> Result<(), AkitaError> {
-        self.order.take(0)?;
+        self.order.take(Order::Image)?;
         binding::bind_image::<C, S>(
             layout,
             &self.owner.admitted,
@@ -87,7 +87,9 @@ impl<C: DigitConfig> RootProverOracle<F> for RootPcsProverOracle<'_, C> {
             self.image_row,
             &self.image.committed_group,
             channel,
-        )
+        )?;
+        self.order = Order::Response;
+        Ok(())
     }
     fn commit_response<S: ClearChannel>(
         &mut self,
@@ -95,7 +97,7 @@ impl<C: DigitConfig> RootProverOracle<F> for RootPcsProverOracle<'_, C> {
         digits: &[u8],
         channel: &mut S,
     ) -> Result<(), AkitaError> {
-        self.order.take(1)?;
+        self.order.take(Order::Response)?;
         if *layout
             != LoweredRootLayout::new(
                 self.owner.admitted.setup(),
@@ -143,6 +145,7 @@ impl<C: DigitConfig> RootProverOracle<F> for RootPcsProverOracle<'_, C> {
         channel.message(&mut length)?;
         channel.message(&mut bytes)?;
         self.response = Some((output.committed_group, output.private_handle));
+        self.order = Order::Discharge;
         Ok(())
     }
     fn discharge<S: ClearChannel>(
@@ -150,7 +153,7 @@ impl<C: DigitConfig> RootProverOracle<F> for RootPcsProverOracle<'_, C> {
         claims: &RootEvaluationClaims<F>,
         channel: &mut S,
     ) -> Result<(), AkitaError> {
-        self.order.take(2)?;
+        self.order.take(Order::Discharge)?;
         let (response, response_handle) = self.response.as_ref().ok_or(AkitaError::InvalidProof)?;
         let (_, session) = bind_opening::<C, S>(
             self.owner.image.setup.expanded.descriptor(),
@@ -220,7 +223,7 @@ impl<C: DigitConfig> RootVerifierOracle<F> for RootPcsVerifierOracle<'_, C> {
         layout: &LoweredRootLayout,
         channel: &mut S,
     ) -> Result<(), AkitaError> {
-        self.order.take(0)?;
+        self.order.take(Order::Image)?;
         binding::bind_image::<C, S>(
             layout,
             &self.owner.admitted,
@@ -228,14 +231,16 @@ impl<C: DigitConfig> RootVerifierOracle<F> for RootPcsVerifierOracle<'_, C> {
             self.image_row,
             self.image,
             channel,
-        )
+        )?;
+        self.order = Order::Response;
+        Ok(())
     }
     fn bind_response<S: ClearChannel>(
         &mut self,
         layout: &LoweredRootLayout,
         channel: &mut S,
     ) -> Result<(), AkitaError> {
-        self.order.take(1)?;
+        self.order.take(Order::Response)?;
         if *layout
             != LoweredRootLayout::new(
                 self.owner.admitted.setup(),
@@ -271,6 +276,7 @@ impl<C: DigitConfig> RootVerifierOracle<F> for RootPcsVerifierOracle<'_, C> {
             return Err(AkitaError::InvalidProof);
         }
         self.response = Some(response);
+        self.order = Order::Discharge;
         Ok(())
     }
     fn discharge<S: ClearChannel>(
@@ -278,7 +284,7 @@ impl<C: DigitConfig> RootVerifierOracle<F> for RootPcsVerifierOracle<'_, C> {
         claims: &RootEvaluationClaims<F>,
         channel: &mut S,
     ) -> Result<(), AkitaError> {
-        self.order.take(2)?;
+        self.order.take(Order::Discharge)?;
         let response = self.response.as_ref().ok_or(AkitaError::InvalidProof)?;
         let (statement, session) = bind_opening::<C, S>(
             self.owner.verifier.setup().expanded().descriptor(),
