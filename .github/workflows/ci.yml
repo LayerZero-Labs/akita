@@ -439,7 +439,9 @@ jobs:
   test-labinius-clear-opening:
     name: LaBinius clear binary opening (${{ matrix.backend }})
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Builds the three crates twice from a cold cache and runs the root PCS
+    # suite in both feature sets; the slower hosted runners need over 25 minutes.
+    timeout-minutes: 45
     strategy:
       matrix:
         backend: [transcript-blake2b, transcript-keccak]
