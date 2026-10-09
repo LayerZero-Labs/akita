@@ -2,30 +2,44 @@
 
 use std::collections::BTreeMap;
 
-pub(super) const SNAPSHOT_HEADER: &str = "family\tlogical_key\tlookup_key_digest\tsetup_fields\tfirst_direct_setup_capacity\tproof_bytes\tfold_levels\trow_digest\tpolicy\n";
+const SNAPSHOT_HEADER: &str = "family\tlogical_key\tlookup_key_digest\tsetup_fields\tfirst_direct_setup_capacity\tproof_bytes\tfold_levels\trow_digest\tpolicy\n";
 
 const LEGACY_SNAPSHOT_HEADER: &str = "family\tlogical_key\tlookup_key_digest\tsetup_fields\tproof_bytes\tfold_levels\trow_digest\tpolicy\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SnapshotSchema {
+/// Snapshot schema retained when parsing current or historical catalog evidence.
+pub(super) enum SnapshotSchema {
+    /// Historical rows without first-direct setup capacity.
     Legacy,
+    /// Current rows with the optional first-direct setup capacity column.
     Current,
 }
 
-pub(super) const COMPARISON_HEADER: &str = "family\tstatus\tlogical_key\tbaseline_lookup_key_digest\tcurrent_lookup_key_digest\tbaseline_setup_fields\tcurrent_setup_fields\tbaseline_first_direct_setup_capacity\tcurrent_first_direct_setup_capacity\tbaseline_proof_bytes\tcurrent_proof_bytes\tbaseline_levels\tcurrent_levels\tbaseline_row_digest\tcurrent_row_digest\tbaseline_policy\tcurrent_policy\n";
+const COMPARISON_HEADER: &str = "family\tstatus\tlogical_key\tbaseline_lookup_key_digest\tcurrent_lookup_key_digest\tbaseline_setup_fields\tcurrent_setup_fields\tbaseline_first_direct_setup_capacity\tcurrent_first_direct_setup_capacity\tbaseline_proof_bytes\tcurrent_proof_bytes\tbaseline_levels\tcurrent_levels\tbaseline_row_digest\tcurrent_row_digest\tbaseline_policy\tcurrent_policy\n";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct CatalogSnapshotRow {
-    pub schema: SnapshotSchema,
-    pub family: String,
-    pub logical_key: String,
-    pub lookup_key_digest: String,
-    pub setup_fields: usize,
-    pub first_direct_setup_capacity: Option<usize>,
-    pub proof_bytes: usize,
-    pub fold_levels: usize,
-    pub row_digest: String,
-    pub policy: String,
+/// One canonical schedule row's lookup identity, sizing and policy evidence.
+pub struct CatalogSnapshotRow {
+    /// Format admitted by the snapshot parser.
+    pub(super) schema: SnapshotSchema,
+    /// Catalog family name.
+    pub(super) family: String,
+    /// Human-readable geometry and any disambiguating producer contracts.
+    pub(super) logical_key: String,
+    /// Digest of the complete lookup descriptor, including frozen producers.
+    pub(super) lookup_key_digest: String,
+    /// Required setup capacity in coefficient-field elements.
+    pub(super) setup_fields: usize,
+    /// Capacity for the schedule's first direct setup, when represented.
+    pub(super) first_direct_setup_capacity: Option<usize>,
+    /// Modeled serialized proof length in bytes.
+    pub(super) proof_bytes: usize,
+    /// Number of nonterminal fold levels.
+    pub(super) fold_levels: usize,
+    /// Digest of the complete committed profiles and schedule.
+    pub(super) row_digest: String,
+    /// Canonical per-level opening and security policy signature.
+    pub(super) policy: String,
 }
 
 impl CatalogSnapshotRow {
@@ -100,7 +114,10 @@ fn indexed_rows(
     Ok(indexed)
 }
 
-pub(crate) fn write_snapshot(rows: Vec<CatalogSnapshotRow>) -> Result<String, String> {
+/// Write the current TSV schema in canonical family and logical-key order.
+///
+/// Rejects duplicate logical identities and invalid single-line TSV fields.
+pub fn write_snapshot(rows: Vec<CatalogSnapshotRow>) -> Result<String, String> {
     let indexed = indexed_rows(rows, "write snapshot")?;
     let mut out = SNAPSHOT_HEADER.to_string();
     for row in indexed.values() {
@@ -114,7 +131,8 @@ fn parse_usize(raw: &str, line: usize, field: &str) -> Result<usize, String> {
         .map_err(|error| format!("catalog snapshot line {line}: invalid {field} `{raw}`: {error}"))
 }
 
-pub(super) fn parse_snapshot(input: &str) -> Result<Vec<CatalogSnapshotRow>, String> {
+/// Parse current or historical TSV evidence and reject malformed or duplicate rows.
+pub fn parse_snapshot(input: &str) -> Result<Vec<CatalogSnapshotRow>, String> {
     let mut lines = input.lines();
     let header = lines
         .next()
@@ -230,15 +248,22 @@ fn optional_nested_usize(
         .map_or_else(|| "-".to_string(), |value| value.to_string())
 }
 
-pub(super) struct CatalogRevisionComparison {
+/// Complete logical-key union and revision counts for two catalog snapshots.
+pub struct CatalogRevisionComparison {
+    /// Canonical TSV revision-comparison report.
     pub report: String,
+    /// Logical identities present only in the current snapshot.
     pub added_rows: usize,
+    /// Logical identities present only in the baseline snapshot.
     pub removed_rows: usize,
+    /// Shared identities whose sizing, descriptors or policy changed.
     pub changed_rows: usize,
+    /// Shared identities with equal revision evidence.
     pub equal_rows: usize,
 }
 
-pub(super) fn compare_snapshots(
+/// Compare the complete logical-key union of baseline and current snapshots.
+pub fn compare_snapshots(
     baseline: Vec<CatalogSnapshotRow>,
     current: Vec<CatalogSnapshotRow>,
 ) -> Result<CatalogRevisionComparison, String> {

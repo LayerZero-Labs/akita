@@ -85,6 +85,7 @@ jobs:
           scripts/check-crate-deps.sh akita-zk-prover
           scripts/check-crate-deps.sh akita-labinius-verifier
           scripts/check-crate-deps.sh akita-labinius-prover
+          scripts/check-crate-deps.sh akita-labinius-pcs
 
   labinius-trinomial:
     name: LaBinius trinomial arithmetic and relation bridge
@@ -262,6 +263,7 @@ jobs:
   test-labinius-schedule-artifact-drift:
     name: LaBinius schedule artifact drift
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       matrix:
         include:
@@ -293,7 +295,7 @@ jobs:
           artifact_root="$RUNNER_TEMP/akita-labinius-schedule-artifacts${{ matrix.suffix }}"
           mkdir -p "$artifact_root"
           cargo run --release -p akita-labinius-pcs --no-default-features \
-            --features "labinius,catalog-gen,transcript-blake2b${{ matrix.extra-feature }}" \
+            --features "labinius,labinius-catalog-gen,transcript-blake2b${{ matrix.extra-feature }}" \
             --bin gen_labinius_schedule_artifacts -- --output-dir "$artifact_root"
           diff -u "artifacts/schedule-catalog-labinius${{ matrix.suffix }}.tsv" "$artifact_root/schedule-catalog-labinius${{ matrix.suffix }}.tsv"
           diff -ru "artifacts/schedules-labinius${{ matrix.suffix }}" "$artifact_root/schedules-labinius${{ matrix.suffix }}"

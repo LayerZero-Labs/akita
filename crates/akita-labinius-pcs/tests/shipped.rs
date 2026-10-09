@@ -123,3 +123,37 @@ fn altered_row_in_local_copy_is_rejected_by_the_shared_trust_boundary() {
     ));
     std::fs::remove_dir_all(local).unwrap();
 }
+
+#[test]
+fn opposite_protocol_files_under_selected_directory_are_rejected_by_admission() {
+    let geometry = SUPPORTED_GEOMETRIES[0];
+    let sizing = RootPcsSizing::new(
+        geometry.profile,
+        geometry.log_num_cells,
+        geometry.log_fold_width,
+        geometry.lambda_fold,
+        LabiniusDigitBase::Bits2,
+    )
+    .unwrap();
+    let (selected, opposite) = if akita_params::DEV_PROTOCOL {
+        ("schedules-labinius-dev", "schedules-labinius")
+    } else {
+        ("schedules-labinius", "schedules-labinius-dev")
+    };
+    let local =
+        std::env::temp_dir().join(format!("akita-labinius-wrong-set-{}", std::process::id()));
+    std::fs::create_dir_all(local.join(selected)).unwrap();
+    for family in [
+        akita_labinius_pcs::ImageConfig::schedule_family_name(),
+        Digits2::schedule_family_name(),
+    ] {
+        std::fs::copy(
+            artifacts().join(opposite).join(format!("{family}.aks")),
+            local.join(selected).join(format!("{family}.aks")),
+        )
+        .unwrap();
+    }
+    let result = catalogs::<Digits2>(&sizing, &local);
+    std::fs::remove_dir_all(local).unwrap();
+    assert!(matches!(result, Err(ShippedCatalogError::Admission(_))));
+}

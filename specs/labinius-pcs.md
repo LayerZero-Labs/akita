@@ -56,7 +56,9 @@ rows, prefix slots and insufficient setups return errors. The grouped key MUST
 contain the exact scalar Y profile, as
 created by `PrecommittedProducer::try_new` with
 `ImageConfig::committed_source_contract()` during offline planning. A matching
-table length alone is insufficient. The planner is only a test dependency.
+table length alone is insufficient. The planner is used by tests and the optional
+offline generator feature.
+Ordinary runtime catalog loading has no planner dependency.
 
 The root prover reuses `ImageProver::commit` on its backend. Retained handles
 from other backend owners MUST reject before transcript operations. Existing
@@ -157,13 +159,13 @@ boundary as ordinary Akita catalogs, and resolves both scalar and grouped
 keys. Unsupported geometries return `ShippedCatalogError::UnsupportedGeometry`
 before file access. I/O and admission errors remain distinct.
 
-The off-by-default `catalog-gen` feature enables the optional planner dependency
-and `gen_labinius_schedule_artifacts` binary. Runtime loading with only
+The off-by-default `labinius-catalog-gen` feature enables the optional planner
+dependency and `gen_labinius_schedule_artifacts` binary. Runtime loading with only
 `labinius` has no planner dependency. Regenerate with:
 
 ```sh
 cargo run --release -p akita-labinius-pcs --no-default-features \
-  --features labinius,catalog-gen,transcript-blake2b \
+  --features labinius,labinius-catalog-gen,transcript-blake2b \
   --bin gen_labinius_schedule_artifacts -- --output-dir artifacts
 ```
 

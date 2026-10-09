@@ -26,6 +26,8 @@ pub use akita_schedules::{
     DEFAULT_SIS_SECURITY_POLICY,
 };
 
+#[cfg(feature = "catalog-gen")]
+pub mod catalog_report;
 mod diagnostics;
 pub mod emit;
 #[cfg(feature = "catalog-gen")]

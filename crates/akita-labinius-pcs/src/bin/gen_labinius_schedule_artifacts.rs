@@ -1,11 +1,5 @@
 //! Regenerate the opt-in root PCS catalogs with the canonical artifact owners.
 
-// The snapshot owner lives in the planner binary. Reuse it directly rather than
-// maintain another TSV format, policy signature, or row-metrics implementation.
-#[allow(dead_code, unexpected_cfgs)]
-#[path = "../../../akita-planner/src/bin/gen_schedule_artifacts.rs"]
-mod canonical_generator;
-
 use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_labinius_pcs::{
@@ -16,6 +10,7 @@ use akita_params::{
     CommittedGroupBatchProfile, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
     ScheduleLookupKey,
 };
+use akita_planner::catalog_report;
 use akita_planner::emit::{
     bounded_parallel_filter_map, offline_planning_worker_count, GroupedGenerationRequest,
     PrecommittedProducer,
@@ -218,14 +213,12 @@ fn generate(artifact_root: &Path) -> Result<(), String> {
                     entries.len()
                 ));
             }
-            rows.extend(canonical_generator::materialized_snapshot_rows(
-                spec, entries,
-            )?);
+            rows.extend(catalog_report::materialized_snapshot_rows(spec, entries)?);
             Ok(())
         },
     )?;
     let row_count = rows.len();
-    let snapshot = canonical_generator::catalog_snapshot::write_snapshot(rows)?;
+    let snapshot = catalog_report::write_snapshot(rows)?;
     publish_artifact_outputs(outputs)?;
     fs::write(
         artifact_root.join(format!("schedule-catalog-labinius{suffix}.tsv")),

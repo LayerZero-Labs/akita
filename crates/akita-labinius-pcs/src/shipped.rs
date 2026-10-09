@@ -12,10 +12,15 @@ use std::{fmt, path::Path};
 /// One supported geometry and its admitted digit bases.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SupportedGeometry {
+    /// Root parameter profile identifying the admitted SIS geometry.
     pub profile: LabiniusRootProfile,
+    /// Base-2 logarithm of the number of binary evaluation cells.
     pub log_num_cells: u32,
+    /// Base-2 logarithm of the number of cells per fold.
     pub log_fold_width: u32,
+    /// Fold soundness target, in security bits.
     pub lambda_fold: u32,
+    /// Admitted digit bases, represented by their bits per digit.
     pub bases: [LabiniusDigitBase; 3],
 }
 

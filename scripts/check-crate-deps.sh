@@ -114,7 +114,15 @@ if [ "${pkg}" = "akita-prover" ]; then
 fi
 
 if [ "${pkg}" = "akita-labinius-pcs" ]; then
-  for features in transcript-blake2b labinius,transcript-blake2b; do
+  # The union covers every runtime feature combination, including future features.
+  runtime_features="$(cargo metadata --format-version 1 --no-deps | python3 -c '
+import json
+import sys
+package = next(package for package in json.load(sys.stdin)["packages"]
+               if package["name"] == "akita-labinius-pcs")
+print(",".join(sorted(set(package["features"]) - {"labinius-catalog-gen"})))
+')"
+  for features in transcript-blake2b labinius,transcript-blake2b "$runtime_features"; do
     runtime_tree="$(cargo tree -p "$pkg" --edges normal --no-default-features --features "$features")"
     if grep -qE '(^|[[:space:]])akita-planner([[:space:]]|$)' <<<"$runtime_tree"; then
       echo "planner dependency found in runtime LaBinius PCS ($features)" >&2

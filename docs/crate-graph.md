@@ -77,7 +77,7 @@ graph TD
   LabiniusPcs --> Error
   LabiniusPcs --> Ser
   LabiniusPcs --> Field
-  LabiniusPcs -. tests and catalog-gen .-> Planner
+  LabiniusPcs -. tests and labinius-catalog-gen .-> Planner
   LabiniusPcs -. tests only .-> Transcript
   LabiniusPcs --> Challenges
 
@@ -269,7 +269,8 @@ including that `akita-prover` and `akita-verifier` source does not name
 generation path adds the reverse configuration dependency. Add new forbidden
 edges there whenever a crate gets split further.
 
-The LaBinius PCS `catalog-gen` feature enables its optional planner dependency
-for the offline root catalog generator. With `labinius` enabled and `catalog-gen`
-disabled, shipped catalog loading uses the ordinary artifact admission owner
+The LaBinius PCS `labinius-catalog-gen` feature enables its optional planner
+dependency for the offline root catalog generator. With `labinius` enabled and
+`labinius-catalog-gen` disabled, shipped catalog loading uses the ordinary artifact
+admission owner
 and does not depend on the planner.

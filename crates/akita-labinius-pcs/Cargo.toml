@@ -14,7 +14,11 @@ labinius = [
   "akita-labinius-verifier/labinius",
   "akita-labinius-prover/labinius",
 ]
-catalog-gen = ["labinius", "dep:akita-planner", "akita-planner/catalog-gen"]
+labinius-catalog-gen = [
+  "labinius",
+  "dep:akita-planner",
+  "akita-planner/catalog-gen",
+]
 transcript-blake2b = [
   "akita-config/transcript-blake2b",
   "akita-cpu-backend/transcript-blake2b",
@@ -90,7 +94,7 @@ akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-fe
 [[bin]]
 name = "gen_labinius_schedule_artifacts"
 path = "src/bin/gen_labinius_schedule_artifacts.rs"
-required-features = ["catalog-gen"]
+required-features = ["labinius-catalog-gen"]
 test = false
 
 [lints]

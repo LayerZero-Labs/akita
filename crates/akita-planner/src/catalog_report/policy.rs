@@ -1,7 +1,7 @@
 //! Per-level schedule policy fields included in catalog audit reports.
 
+use crate::EmitSpec;
 use akita_params::FoldSchedule;
-use akita_planner::EmitSpec;
 
 pub(super) fn source_encoding_signature(value: akita_params::CommittedSourceEncoding) -> String {
     match value {
