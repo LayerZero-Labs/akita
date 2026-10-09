@@ -16,7 +16,7 @@ use akita_params::{
 };
 use akita_prover::SelectedProverOpeningData;
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-use common::{fixture, Case, Host, Recording, BASES, INNER_DOMAIN, PREFIX, PROFILE};
+use common::{fixture, Case, Event, Host, Recording, BASES, INNER_DOMAIN, PREFIX, PROFILE};
 use jolt_field::Zero;
 
 fn complete<H: Host>(fold: u32) {
@@ -201,9 +201,34 @@ fn two_openings_compose_in_order_and_absorb_inner_payload() {
             &mut misplaced
         )
         .is_err());
-    let mut without_messages = akita_transcript::new_prover_channel(b"compose/v1", b"").unwrap();
-    for bytes in &prover.public {
-        without_messages.public(bytes).unwrap();
+    // Replay every parent event in order, omitting only the two inner payloads.
+    // Length frames and all earlier challenge draws stay in their original places.
+    let mut exact = akita_transcript::new_prover_channel(b"compose/v1", b"").unwrap();
+    let mut without_payload = akita_transcript::new_prover_channel(b"compose/v1", b"").unwrap();
+    let mut message_index = 0;
+    let mut omitted = 0;
+    let mut counterfactual_after = None;
+    for event in &prover.events {
+        match event {
+            Event::Public(bytes) => {
+                exact.public(bytes).unwrap();
+                without_payload.public(bytes).unwrap();
+            }
+            Event::Message(bytes) => {
+                exact.message(&mut bytes.clone()).unwrap();
+                if message_index % 2 == 0 {
+                    without_payload.message(&mut bytes.clone()).unwrap();
+                } else {
+                    omitted += 1;
+                }
+                message_index += 1;
+            }
+            Event::Challenge(expected) => {
+                assert_eq!(exact.challenge_block().unwrap(), *expected);
+                counterfactual_after = Some(without_payload.challenge_block().unwrap());
+            }
+        }
     }
-    assert_ne!(without_messages.challenge_block().unwrap(), after);
+    assert_eq!(omitted, 2);
+    assert_ne!(counterfactual_after.unwrap(), after);
 }

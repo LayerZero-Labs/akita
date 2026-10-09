@@ -20,7 +20,7 @@ fn invalid_statement_returns_before_any_proof_byte_is_read() {
         Commitment::new(RingVec::from_coeffs(Vec::<F>::new())),
     );
     let larger = admitted(1, 0x31);
-    for (root, commitment, evaluation) in [
+    for (root, commitment, evaluation, expected) in [
         (
             &case.root,
             &case.output.committed_group,
@@ -28,10 +28,32 @@ fn invalid_statement_returns_before_any_proof_byte_is_read() {
                 point: &case.point[..case.point.len() - 1],
                 value: case.value,
             },
+            AkitaError::InvalidPointDimension {
+                expected: case.point.len(),
+                actual: case.point.len() - 1,
+            },
         ),
-        (&larger, &case.output.committed_group, case.evaluation()),
-        (&case.root, &wrong_profile, case.evaluation()),
-        (&case.root, &malformed, case.evaluation()),
+        (
+            &larger,
+            &case.output.committed_group,
+            case.evaluation(),
+            AkitaError::InvalidPointDimension {
+                expected: case.point.len() + 1,
+                actual: case.point.len(),
+            },
+        ),
+        (
+            &case.root,
+            &wrong_profile,
+            case.evaluation(),
+            AkitaError::UnsupportedSchedule(String::new()),
+        ),
+        (
+            &case.root,
+            &malformed,
+            case.evaluation(),
+            AkitaError::InvalidProof,
+        ),
     ] {
         let state = akita_transcript::new_verifier_channel(b"validation/v1", b"", &[]).unwrap();
         let mut record = Recording::new(state);
@@ -44,7 +66,15 @@ fn invalid_statement_returns_before_any_proof_byte_is_read() {
             )
         }));
         assert!(result.is_ok());
-        assert!(result.unwrap().is_err());
+        let error = result.unwrap().unwrap_err();
+        assert_eq!(
+            std::mem::discriminant(&error),
+            std::mem::discriminant(&expected)
+        );
+        if let AkitaError::InvalidPointDimension { .. } = expected {
+            assert_eq!(error, expected);
+        }
+        assert!(record.public.is_empty());
         assert!(record.messages.is_empty());
         assert_eq!(record.message_calls, 0);
         assert!(record.draws.is_empty());
@@ -58,14 +88,16 @@ fn invalid_statement_returns_before_any_proof_byte_is_read() {
     .unwrap();
     let state = akita_transcript::new_verifier_channel(b"validation/v1", b"", &[]).unwrap();
     let mut record = Recording::new(state);
-    assert!(missing
-        .verify_on_channel::<BinaryField128, _>(
+    assert!(matches!(
+        missing.verify_on_channel::<BinaryField128, _>(
             &case.root,
             &case.output.committed_group,
             case.evaluation(),
             &mut record
-        )
-        .is_err());
+        ),
+        Err(AkitaError::UnsupportedSchedule(_))
+    ));
+    assert!(record.public.is_empty());
     assert!(record.messages.is_empty());
     assert_eq!(record.message_calls, 0);
     assert!(record.draws.is_empty());
@@ -78,14 +110,16 @@ fn foreign_handle_and_mismatched_prepared_matrix_are_rejected() {
     let foreign = ImageProver::new(f.scheme.schedules().clone(), f.prover_setup.clone()).unwrap();
     let state = akita_transcript::new_prover_channel(b"validation/v1", b"").unwrap();
     let mut record = Recording::new(state);
-    assert!(foreign
-        .open_on_channel::<BinaryField128, _>(
+    assert!(matches!(
+        foreign.open_on_channel::<BinaryField128, _>(
             &case.root,
             &case.output,
             case.evaluation(),
             &mut record
-        )
-        .is_err());
+        ),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(record.public.is_empty());
     assert!(record.messages.is_empty());
     assert_eq!(record.message_calls, 0);
     assert!(record.draws.is_empty());
@@ -108,9 +142,8 @@ fn foreign_handle_and_mismatched_prepared_matrix_are_rejected() {
     }
     let state = akita_transcript::new_prover_channel(b"validation/v1", b"").unwrap();
     let mut record = Recording::new(state);
-    assert!(case
-        .prover
-        .open_on_channel::<BinaryField128, _>(
+    assert!(matches!(
+        case.prover.open_on_channel::<BinaryField128, _>(
             &case.root,
             &case.output,
             ImageEvaluation {
@@ -118,8 +151,10 @@ fn foreign_handle_and_mismatched_prepared_matrix_are_rejected() {
                 value: case.value
             },
             &mut record
-        )
-        .is_err());
+        ),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(record.public.is_empty());
     assert!(record.messages.is_empty());
     assert_eq!(record.message_calls, 0);
     assert!(record.draws.is_empty());
