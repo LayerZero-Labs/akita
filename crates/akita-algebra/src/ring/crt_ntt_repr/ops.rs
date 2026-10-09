@@ -1,9 +1,16 @@
+#[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
+use jolt_inlines_ntt::{DEGREE as INLINE_NTT_DEGREE, DOT_PRODUCTS};
 #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use std::mem::size_of;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::ntt::avx::{self, AvxNttMode};
 use crate::ntt::butterfly::forward_ntt;
+#[cfg(any(
+    test,
+    not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))
+))]
+use crate::ntt::montgomery::reduce_i32;
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
@@ -243,6 +250,20 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             return;
         }
 
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+        if params.uses_lazy_i32_dot() {
+            for k in 0..K {
+                add_assign_pointwise_dot_limb_i32(
+                    i32_limb_mut(&mut self.limbs[k]),
+                    |product| i32_limb(&lhs[product].limbs[k]),
+                    |product| i32_limb(&rhs[product].limbs[k]),
+                    lhs.len(),
+                    i32_prime(params.primes[k]),
+                    params.kernel_plan,
+                );
+            }
+            return;
+        }
         for (lhs, rhs) in lhs.iter().zip(rhs) {
             self.add_assign_pointwise_mul(lhs, rhs, params);
         }
@@ -344,7 +365,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         assert_eq!(accs.len(), ntt_mat.len());
         assert!(
             params.uses_lazy_i32_dot(),
-            "lazy pointwise dot requires an i32 SIMD parameter set"
+            "lazy pointwise dot requires an i32 batched parameter set"
         );
         assert!(
             !digits.is_empty() && digits.len() <= params.pointwise_dot_batch_size(),
@@ -355,6 +376,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             for (dst, digit) in scratch.iter_mut().zip(digits) {
                 lut.fill_ntt_limb::<false, D>(k, digit, params, dst);
             }
+            #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
             let rhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
                 digits
                     .get(index)
@@ -363,6 +385,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let prime = params.primes[k];
 
             for (acc, matrix_row) in accs.iter_mut().zip(ntt_mat) {
+                #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
                 let lhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
                     digits.get(index).map_or(std::ptr::null(), |_| {
                         matrix_row[column_start + index].limbs[k]
@@ -396,6 +419,19 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                         prime.pinv.to_i64() as i32,
                     );
                 }
+                #[cfg(not(any(
+                    target_arch = "aarch64",
+                    target_arch = "x86",
+                    target_arch = "x86_64"
+                )))]
+                add_assign_pointwise_dot_limb_i32(
+                    i32_limb_mut(&mut acc.limbs[k]),
+                    |product| i32_limb(&matrix_row[column_start + product].limbs[k]),
+                    |product| i32_limb(&scratch[product]),
+                    digits.len(),
+                    i32_prime(prime),
+                    params.kernel_plan,
+                );
             }
         }
     }
@@ -626,5 +662,96 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             }
             Self::add_assign_pointwise_mul_limb(acc_limb, lhs_limb, rhs_limb, prime);
         }
+    }
+}
+
+/// `acc[i] += Σ_{j < count} lhs(j)[i] · rhs(j)[i] · 2^-32 mod p` over `i32`
+/// Montgomery residues, through the guest's pointwise-dot inline when `plan`
+/// selects it.
+///
+/// Callers pass canonical residues in `(-p, p)`, `p < 2^30`, and `count <= 6`,
+/// the contract the SIMD lazy dot kernels share. The raw sum then has magnitude
+/// below `6p^2 < 2^31 · 3p`, so one [`reduce_i32`] lands in `(-2p, 2p)`, which
+/// [`NttPrime::reduce_range`] maps back to `(-p, p)`.
+#[cfg(any(
+    test,
+    not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))
+))]
+#[inline(always)]
+pub(super) fn add_assign_pointwise_dot_limb_i32<'a, const D: usize>(
+    acc: &mut [i32; D],
+    lhs: impl Fn(usize) -> &'a [i32; D],
+    rhs: impl Fn(usize) -> &'a [i32; D],
+    count: usize,
+    prime: NttPrime<i32>,
+    plan: crate::ntt::NttKernelPlan,
+) {
+    debug_assert!(count <= I32_LAZY_DOT_BATCH);
+    #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
+    if crate::ntt::butterfly::inline_ntt64::<i32, D>(plan) && count <= DOT_PRODUCTS {
+        let zero = [0i32; INLINE_NTT_DEGREE];
+        // SAFETY: `inline_ntt64` pins `D == INLINE_NTT_DEGREE`, so each cast is
+        // an identity on the array type.
+        unsafe {
+            let row = |rows: &dyn Fn(usize) -> &'a [i32; D], index: usize| {
+                if index < count {
+                    &*rows(index).as_ptr().cast::<[i32; INLINE_NTT_DEGREE]>()
+                } else {
+                    &zero
+                }
+            };
+            jolt_inlines_ntt::pointwise_dot64(
+                &mut *acc.as_mut_ptr().cast::<[i32; INLINE_NTT_DEGREE]>(),
+                std::array::from_fn(|index| row(&lhs, index)),
+                std::array::from_fn(|index| row(&rhs, index)),
+                prime.p,
+                prime.pinv,
+            );
+        }
+        return;
+    }
+    #[cfg(not(all(feature = "ntt-inline", target_arch = "riscv64")))]
+    let _ = plan;
+    for (lane, coefficient) in acc.iter_mut().enumerate() {
+        let raw_sum = (0..count).fold(0i64, |sum, product| {
+            sum + i64::from(lhs(product)[lane]) * i64::from(rhs(product)[lane])
+        });
+        let reduced = prime.reduce_range(MontCoeff::from_raw(reduce_i32(
+            raw_sum, prime.p, prime.pinv,
+        )));
+        *coefficient = prime
+            .reduce_range(MontCoeff::from_raw(*coefficient + reduced.raw()))
+            .raw();
+    }
+}
+
+/// A limb as raw `i32` residues. `PrimeWidth` is sealed to `i16` and `i32`
+/// and `MontCoeff` is transparent, so a 4-byte width is `i32`.
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+#[inline(always)]
+fn i32_limb<W: PrimeWidth, const D: usize>(limb: &[MontCoeff<W>; D]) -> &[i32; D] {
+    assert!(core::mem::size_of::<W>() == core::mem::size_of::<i32>());
+    // SAFETY: by the sealed width and the assertion, `limb` is `D` `i32`s.
+    unsafe { &*limb.as_ptr().cast::<[i32; D]>() }
+}
+
+/// Mutable form of [`i32_limb`].
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+#[inline(always)]
+fn i32_limb_mut<W: PrimeWidth, const D: usize>(limb: &mut [MontCoeff<W>; D]) -> &mut [i32; D] {
+    assert!(core::mem::size_of::<W>() == core::mem::size_of::<i32>());
+    // SAFETY: as in `i32_limb`.
+    unsafe { &mut *limb.as_mut_ptr().cast::<[i32; D]>() }
+}
+
+/// A prime's constants at the `i32` width `i32_limb` proves.
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+#[inline(always)]
+fn i32_prime<W: PrimeWidth>(prime: NttPrime<W>) -> NttPrime<i32> {
+    NttPrime {
+        p: prime.p.to_i64() as i32,
+        pinv: prime.pinv.to_i64() as i32,
+        mont: prime.mont.to_i64() as i32,
+        montsq: prime.montsq.to_i64() as i32,
     }
 }
