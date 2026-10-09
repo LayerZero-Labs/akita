@@ -4,6 +4,7 @@
 mod support;
 use akita_algebra::binary::BinaryField162 as B;
 use jolt_field::Zero;
+use support::common;
 use support::*;
 
 fn bits(value: B) -> [i128; 162] {
@@ -131,5 +132,88 @@ fn independent_integer_and_schoolbook_oracles_match_every_witness_coefficient() 
             .iter()
             .all(|&x| x == F::zero()));
         eprintln!("independent oracle {base:?}: {:?}", start.elapsed());
+    }
+}
+
+#[path = "common/lifted.rs"]
+mod lifted;
+
+#[test]
+fn arbitrary_precision_lifted_oracle_checks_transmitted_qa_and_ka_rows() {
+    use jolt_field::CanonicalBytes;
+    use std::{
+        fmt::Write as _,
+        io::Write as _,
+        process::{Command, Stdio},
+    };
+    fn canonical(value: lifted::F) -> u128 {
+        let mut bytes = [0u8; 16];
+        value.to_bytes_le(&mut bytes);
+        u128::from_le_bytes(bytes)
+    }
+    fn line<T: std::fmt::Display>(input: &mut String, values: impl IntoIterator<Item = T>) {
+        for value in values {
+            write!(input, "{value} ").unwrap();
+        }
+        input.push('\n');
+    }
+    for base in lifted::BASES {
+        let case = lifted::Case::new(base, 1);
+        let (packed, fold, a) = lifted::transmitted_relation(&case);
+        let mut input = format!(
+            "{} 268433353 648 3 {} {}\n",
+            lifted::SMALL.coefficient_prime().modulus(),
+            case.layout.m(),
+            case.layout.columns()
+        );
+        for matrix in case.admitted.setup().matrix() {
+            line(
+                &mut input,
+                matrix.coefficients().iter().copied().map(canonical),
+            );
+        }
+        for row in packed {
+            line(&mut input, row);
+        }
+        for image in &case.commitment.images {
+            line(
+                &mut input,
+                image.coefficients().iter().copied().map(canonical),
+            );
+        }
+        for challenge in fold {
+            let mut coefficients = vec![0i128; 648];
+            for term in challenge.terms() {
+                let s = usize::from(term.position);
+                coefficients[4 * s] =
+                    i128::from(term.coefficient) * if s % 2 == 0 { 1 } else { -1 };
+            }
+            line(&mut input, coefficients);
+        }
+        for q in a.quotients {
+            line(&mut input, q.into_iter().map(canonical));
+        }
+        for k in a.carry.chunks_exact(648) {
+            line(&mut input, k);
+        }
+        let mut child = Command::new("python3")
+            .args(["-c", include_str!("lifted_integer_oracle.py")])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{base:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

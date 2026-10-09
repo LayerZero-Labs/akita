@@ -5,6 +5,7 @@
 //! not select a protocol or admit a complete schedule. Challenge sampling and
 //! its certified multiplication bound belong to `akita-challenges`.
 
+mod generated_small_modulus_width_table;
 mod generated_width_table;
 mod root_profile;
 mod root_shape;
@@ -13,14 +14,53 @@ mod width_table;
 pub use root_profile::LabiniusRootProfile;
 pub use root_shape::{
     LabiniusDigitBase, LabiniusRootEncoding, LabiniusRootShape, LabiniusSignedDigitRange,
+    LABINIUS_MIN_DERIVATION_BIAS_BITS,
 };
 pub use width_table::{
-    labinius_min_secure_rank, LabiniusWidthCell, LABINIUS_WIDTH_TABLE, LABINIUS_WIDTH_TABLE_DIGEST,
+    labinius_min_secure_rank, labinius_small_modulus_min_secure_rank,
+    LabiniusSmallModulusWidthCell, LabiniusWidthCell, LabiniusWidthCutoff,
+    LABINIUS_SMALL_MODULUS_WIDTH_TABLE, LABINIUS_SMALL_MODULUS_WIDTH_TABLE_DIGEST,
+    LABINIUS_WIDTH_TABLE, LABINIUS_WIDTH_TABLE_DIGEST,
 };
 
 use akita_error::AkitaError;
 
 use super::norm_bound::source_comparison_inf_norm;
+
+/// Closed commitment moduli, distinct from the opening coefficient prime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LabiniusCommitmentModulus {
+    /// Commitments use the opening coefficient prime.
+    CoefficientPrime,
+    /// Commitments use the splitting prime `2^28 - 2103`.
+    Q28Offset2103,
+}
+
+impl LabiniusCommitmentModulus {
+    /// Exact small modulus, when the commitment and opening primes differ.
+    pub const fn small_modulus(self) -> Option<u32> {
+        match self {
+            Self::CoefficientPrime => None,
+            Self::Q28Offset2103 => Some(268_433_353),
+        }
+    }
+
+    /// Stable profile label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::CoefficientPrime => "coefficient-prime",
+            Self::Q28Offset2103 => "q28-2103",
+        }
+    }
+
+    /// Stable wire tag; tags are never reassigned.
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::CoefficientPrime => 0,
+            Self::Q28Offset2103 => 1,
+        }
+    }
+}
 
 /// Coefficient prime used by a staged binary-source SIS cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

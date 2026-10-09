@@ -6,7 +6,7 @@ pub(crate) mod quotient_support;
 use quotient_support::a_relation_quotients;
 
 #[path = "common/mod.rs"]
-mod common;
+pub(crate) mod common;
 
 use akita_algebra::{
     binary::{BinaryField128 as H, BinaryField162 as B},

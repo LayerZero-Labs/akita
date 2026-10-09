@@ -1,12 +1,17 @@
 #![cfg(feature = "labinius-sis")]
 
 use akita_params::sis::labinius::{
-    LabiniusCoefficientPrime, LabiniusRingDegree, LabiniusWidthCell, LABINIUS_WIDTH_TABLE,
-    LABINIUS_WIDTH_TABLE_DIGEST,
+    LabiniusCoefficientPrime, LabiniusCommitmentModulus, LabiniusRingDegree,
+    LabiniusSmallModulusWidthCell, LabiniusWidthCell, LabiniusWidthCutoff,
+    LABINIUS_SMALL_MODULUS_WIDTH_TABLE, LABINIUS_SMALL_MODULUS_WIDTH_TABLE_DIGEST,
+    LABINIUS_WIDTH_TABLE, LABINIUS_WIDTH_TABLE_DIGEST,
 };
 use akita_sis_estimator::{
-    labinius_width_table::certified_rows,
-    width_table::{validate_infinity_width_rows, InfinityWidthRow},
+    labinius_width_table::{certified_rows, certified_small_modulus_rows},
+    width_table::{
+        generate_infinity_width_rows, validate_infinity_width_rows, InfinityWidthOrigin,
+        InfinityWidthRow, InfinityWidthTableConfig,
+    },
     AkitaModulusProfileId, SisSecurityPolicy,
 };
 use sha3::{Digest, Sha3_256};
@@ -151,4 +156,81 @@ fn checked_in_labinius_cells_have_exact_cutoffs_and_rejected_successors() {
         1_944,
         "phi729-fixed-w25-delta32"
     )));
+}
+
+#[test]
+fn small_modulus_rows_regenerate_with_the_unchanged_policy_and_cap() {
+    for line in include_str!("../data/labinius_small_modulus_infinity_width.csv")
+        .lines()
+        .skip(1)
+    {
+        let fields = line.split(',').take(4).collect::<Vec<_>>();
+        assert_eq!(
+            fields,
+            [
+                "akita-infinity-width-v4",
+                "phi243-bounded-w46-delta16",
+                "162",
+                "4"
+            ]
+        );
+    }
+    let rows = certified_small_modulus_rows().unwrap();
+    let profile = AkitaModulusProfileId::Q28Offset2103;
+    let config = InfinityWidthTableConfig {
+        profiles: vec![profile],
+        ring_dims: vec![648],
+        coeff_linf_bounds: vec![24_116_880],
+        max_rank: 4,
+        explicit_origins: Some(vec![InfinityWidthOrigin {
+            modulus_profile: profile,
+            d: 648,
+            coeff_linf_bound: 24_116_880,
+        }]),
+        ..InfinityWidthTableConfig::default()
+    };
+    let candidates = generate_infinity_width_rows(&config).unwrap();
+    assert_eq!(candidates.len(), 4);
+    assert!(candidates
+        .iter()
+        .filter(|row| row.rank <= 2)
+        .all(|row| row.max_width == 0));
+    let regenerated = candidates
+        .into_iter()
+        .filter(|row| row.max_width > 0)
+        .collect::<Vec<_>>();
+    assert_eq!(rows, regenerated);
+    validate_infinity_width_rows(rows).unwrap();
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        assert_eq!(row.modulus_profile, profile);
+        assert_eq!(row.policy, SisSecurityPolicy::Quantum128BitADPS16);
+        assert_eq!(row.d, 648);
+        assert_eq!(row.coeff_linf_bound, 24_116_880);
+        assert_eq!(row.max_width, row.search_cap);
+        assert_eq!(row.max_width, 6_400_000_000_000);
+        assert!(row.hit_cap);
+        assert!(row.next_costs.is_none());
+    }
+    let cells = rows
+        .iter()
+        .map(|row| LabiniusSmallModulusWidthCell {
+            commitment_modulus: LabiniusCommitmentModulus::Q28Offset2103,
+            ring_degree: LabiniusRingDegree::D648,
+            rank: row.rank,
+            coeff_linf_bound: row.coeff_linf_bound,
+            max_width: row.max_width,
+            cutoff: if row.hit_cap {
+                LabiniusWidthCutoff::SearchCap
+            } else {
+                LabiniusWidthCutoff::Exact
+            },
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(LABINIUS_SMALL_MODULUS_WIDTH_TABLE, cells);
+    let digest: [u8; 32] = Sha3_256::digest(include_bytes!(
+        "../data/labinius_small_modulus_infinity_width.csv"
+    ))
+    .into();
+    assert_eq!(LABINIUS_SMALL_MODULUS_WIDTH_TABLE_DIGEST, digest);
 }

@@ -125,6 +125,7 @@ where
             commitment,
             &fold,
             &response,
+            layout.encoding().a_carry(),
         )
     })?;
     let (mut q, mut k) = info_span!("root_parity")

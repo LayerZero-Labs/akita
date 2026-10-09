@@ -1,0 +1,3 @@
+estimator_id,source_profile,scalar_degree,packing_degree,policy,modulus_profile,d,rank,coeff_linf_bound,max_width,scalar_n,search_cap,hit_cap,profile,target_bits,max_adps16_quantum_rop_log2,next_adps16_quantum_rop_log2,max_beta,max_zeta,next_beta,next_zeta,cutoff_kind
+akita-infinity-width-v4,phi243-bounded-w46-delta16,162,4,Quantum128BitADPS16,q28-labinius,648,3,24116880,6400000000000,1944,6400000000000,true,local-minimum+proven-pruned-certification,128.0,above-target:128.26000000000002,,484,,,,AtLeast
+akita-infinity-width-v4,phi243-bounded-w46-delta16,162,4,Quantum128BitADPS16,q28-labinius,648,4,24116880,6400000000000,2592,6400000000000,true,local-minimum+proven-pruned-certification,128.0,above-target:128.26000000000002,,484,,,,AtLeast

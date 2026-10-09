@@ -15,7 +15,9 @@ use akita_algebra::{
     TrinomialRing,
 };
 use akita_error::{checked, AkitaError};
-use akita_labinius_verifier::{BinaryClearCommitment, BinaryClearSetup};
+use akita_labinius_verifier::{
+    commitment::reduce_commitment_image, BinaryClearCommitment, BinaryClearSetup,
+};
 use jolt_field::WithPacking;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -187,6 +189,7 @@ where
     {
         commit_column::<H, F, D, M>(prepared, words, output)?;
     }
+    reduce_commitment_image(setup, &mut images)?;
     Ok(BinaryClearCommitment { images })
 }
 

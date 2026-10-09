@@ -20,7 +20,7 @@ The statement consists of an immutable `AdmittedRootSetup<F,D,M>`, a digit base
 `r` and a claimed host-field value `t` of the committed binary source. The
 host field H MUST implement the sealed `SwitchField` contract. F is the odd
 coefficient prime field; all binary frontend operations use B = F162 instead.
-The only admitted profile currently uses D = 648, the minus trinomial,
+Both admitted profiles use D = 648, the minus trinomial,
 packing degree k = 4, and P128 coefficient prime.
 
 `LoweredRootLayout::new(admitted.setup(), admitted.shape(), base)` determines
@@ -94,7 +94,7 @@ Let `f=F::NUM_BYTES`, `h=H::ROWS`, `a=H::BATCH_BITS`,
 F128 has `(h,a,w_H)=(128,7,16)`; F192 has `(192,8,8)`.
 Canonical F coefficients are fixed-width little-endian and MUST reject a
 non-canonical encoding. B elements are 21 little-endian bytes with the six
-unused high bits zero. Q and K use unsigned offsets
+unused high bits zero. Q, K and tag-1 KA use unsigned offsets
 `value+2^(e-1)` in `ceil(e/8)` little-endian bytes. An offset at least `2^e`
 MUST reject; these are precisely the ranges enforced by `LoweredPublic::new`,
 not an additional honest-witness range.
@@ -109,7 +109,7 @@ public message. Public messages and challenges occupy zero proof bytes.
 | 3 | P: left expansion U | C canonical B elements; `21*C` bytes; `verify_left_expansion` MUST pass | Left expansion message |
 | 4 | V: fold challenges | C challenges from the admitted binary sampler; profile, count and label absorbed before its root draw | `akita/labinius/root-fold/v1` |
 | 5 | Oracle: response commitment | Scheme-dependent; transparent oracle sends `2^nu` bytes | Response binding call |
-| 6 | P: QA, Q, K | `n_A*(D-1)*f` canonical F bytes; `(d-1)*q` and `d*k_Q` offset bytes, in that order | Clear lowered witness messages |
+| 6 | P: QA, optional KA, Q, K | `n_A*(D-1)*f` canonical F bytes; tag 1 adds `n_A*D*ceil(e_KA/8)` offset bytes; then `(d-1)*q` and `d*k_Q` offset bytes | Clear lowered witness messages; exact KA grammar in [small-modulus spec](labinius-small-modulus-root.md#exact-auxiliary-message-grammar-and-matrix-identity) |
 | 7 | V: alpha, xi, gamma | Three fresh F draws at distinct sites, in that order | `LRRD`, details 0 (alpha), 1 (xi), 2 (gamma) |
 | 8 | P: y_Y | One canonical F element, f bytes; define `s=c_pub-y_Y` | Image weighted-sum message |
 | 9 | V: tau, beta | nu fresh F coordinates, lowest index bit first, then one fresh F beta | `LRRD`, detail 3 / round i (tau_i), detail 4 (beta) |
@@ -121,7 +121,7 @@ public message. Public messages and challenges occupy zero proof bytes.
 
 The prover MUST compute `fold_integer` and reject without retry if any
 coefficient leaves the admitted interval; it then calls `encode_witness`.
-The same response determines QA, Q and K. The verifier builds `LoweredPublic`
+The same response determines QA, Q and K, and tag-1 KA. The verifier builds `LoweredPublic`
 only after receiving these messages and drawing alpha, xi and gamma. The
 combined terminal MUST equal
 `combined_terminal(base,tau,rho,beta,w_eval,kw)` with
@@ -166,7 +166,7 @@ finite support family S, embedded in B by parity, rather than uniformly from B.
 | Frontend batching point, a B coordinates | Setup, image commitment, host statement and partials | An incorrect fixed partial vector has a nonzero multilinear discrepancy; total degree at most a | `a/|B|` |
 | Frontend round `z_i` in B | Partials, batching point and previous rounds; this round's two coefficients | A false degree-two product-sumcheck transition matches at a random point | `2/|B|` per round, `2n/|B|` total |
 | Fold challenge vector | Setup, image commitment, binary claim and all U | Conditional fold comparison: a nonzero B-linear discrepancy has at most one family member per conditioned coordinate because parity is injective; union over C coordinates | `C/|S|`; extraction and its loss remain open |
-| alpha in F | Y, W commitment, U, folds and QA/Q/K | A false unreduced A row has degree at most `2D-2`; choose one false row, with no n_A factor | `(2D-2)/P` |
+| alpha in F | Y, W commitment, U, folds and QA/Q/K (plus tag-1 KA) | A false unreduced A row has degree at most `2D-2`; choose one false row, with no n_A factor | `(2D-2)/P` |
 | xi in F | Same fixed witness messages, and alpha | A false parity residual modulo P has degree at most `2d-2=322` | `322/P` |
 | gamma in F | All row polynomials and their alpha/xi evaluations | A nonzero combination of n_A A evaluations and the parity evaluation has degree at most n_A | `n_A/P` |
 | tau, nu F coordinates | W, Y, public weights, c_pub and y_Y, hence s | An invalid digit makes `Z(tau)=sum_x eq(tau,x) P_b(W(x))` a nonzero multilinear polynomial of total degree at most nu | `nu/P` |
@@ -202,7 +202,7 @@ it does not close the source-extraction or Fiat–Shamir obligations below.
 There is no error for the exact host reconstruction, left expansion, range
 checks, integer no-wrap implication or canonical encoding.
 
-At `(log_num_cells,log_fold_width,lambda_fold)=(22,8,128)`, the profile gives
+At `(log_num_cells,log_fold_width,lambda_fold)=(22,8,128)`, tag 0 gives
 `m=4096`, `C=256`, `n_A=1`, `D=648`, `n=22`, `mu=18`,
 `P=340282366920938463463374607427473266697`. The bounded-weight-46 family has
 
@@ -225,16 +225,28 @@ The 128-bit fold allocation and certified SIS profile do not imply a 128-bit
 bound for this union: polynomial identity tests over the 128-bit coefficient
 prime determine the displayed arithmetic bound.
 
+For tag 1, the extra KA term has degree below D, so the alpha bound is
+unchanged. Rank 3 changes the gamma term to `3/P`; at the sample geometry
+mu grows from 18 to 20 while nu stays fixed. The numerator of E_lowered
+therefore grows by six. Exact auxiliary bytes follow the admitted shape. The additional derivation
+bias and conditional cancellation/extraction argument are owned by
+[the small-modulus specification](labinius-small-modulus-root.md#soundness-ledger-delta).
+They do not close the composition obligations below.
+
 ## What acceptance proves, and open obligations
 
 The conditional theorem intended by this composition is: if the verifier
 accepts and the two oracles are binding and evaluation-sound, then except with
 probability at most `E_lowered+epsilon_bind+epsilon_eval`, the fixed committed
 W has the required alphabet and the fixed committed W and Y satisfy the
-lowered polynomial relations, with the received Q/K in their enforced ranges.
+lowered polynomial relations, with the received Q/K (and tag-1 KA) in their
+enforced ranges.
 By the [lowered-root specification](labinius-lowered-root.md), decoding W then
-gives the clear A endpoint and F162 parity endpoint for that response. The
-admitted no-wrap inequality promotes the checked parity identity modulo P to
+gives the clear A endpoint for tag 0 and the lifted A relation with the
+selected-base carry envelope for tag 1; both give the F162 parity endpoint.
+The tag-1 clear endpoint uses the narrower one-bit envelope as recorded in the
+small-modulus specification, so arbitrary accepting lifted witnesses need not
+satisfy that narrower envelope. The admitted no-wrap inequality promotes the checked parity identity modulo P to
 an integer identity before reducing modulo two. Alphabet-valid padding has
 zero public relation weight and is permitted.
 
@@ -264,8 +276,8 @@ obligations merely by defining an encoding or passing differential tests.
 For valid setup and source input with an honest oracle, the algebraic protocol
 is complete whenever the integer fold lies in the admitted interval. The
 honest prover returns an error without retry otherwise. Its probability source
-is the admitted binary challenge distribution, not a sumcheck event. The sole
-admitted profile additionally enforces the deterministic envelope
+is the admitted binary challenge distribution, not a sumcheck event. Both
+admitted profiles additionally enforce the deterministic envelope
 `C*Gamma_inf <= min(upper,-lower)`; with binary source coefficients this makes
 the out-of-interval probability zero. Allocation failure and malformed caller
 input are execution errors rather than probabilistic completeness losses.
@@ -304,13 +316,14 @@ The exact reduction-owned byte count, excluding oracle bytes, is
 ```text
 h*w_H + (2n+1)*21 + 21*C
 + f*n_A*(D-1) + (d-1)*ceil(e_Q/8) + d*ceil(e_K/8)
++ [tag 1 only: n_A*D*ceil(e_KA/8)]
 + f*[3 + nu*(2^b+1) + 2mu].
 ```
 
 This formula needs only shape, base and H; it requires no materialized matrix.
 All products, sums, widths and powers of two MUST use checked arithmetic.
 Absorbed statement bytes, headers and challenges contribute zero proof bytes.
-At the first real profile, Q/K byte widths are both five for every base:
+For tag 0 at the first real geometry, Q/K byte widths are both five for every base:
 `(e_Q,e_K)=(39,38),(40,38),(40,40)` for b = 1, 2, 4 respectively.
 
 | Message region | b=1 | b=2 | b=4 |

@@ -6,12 +6,13 @@ use akita_algebra::{
     ring::{TrinomialModulus, TrinomialRing},
 };
 use akita_error::{checked, AkitaError};
-use akita_params::sis::labinius::{LabiniusRootProfile, LabiniusRootShape};
+use akita_params::sis::labinius::{
+    LabiniusCommitmentModulus, LabiniusRootProfile, LabiniusRootShape,
+};
 use akita_types::proof::{
     derive_public_matrix_prefix, AkitaSetupSeed, PublicMatrixDerivation,
     MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
-use jolt_field::{CanonicalEncoding, Field};
 
 use crate::BinaryClearSetup;
 
@@ -22,17 +23,16 @@ const MAX_RING_BYTES: usize = 1 << 16;
 /// Derive the tight row-major trinomial view of the seed's public field prefix.
 ///
 /// Coefficient `t` of element `(i, j)` is at `(i * columns + j) * D + t`.
-/// The seed is passed unchanged to the canonical expander. Empty dimensions,
+/// The seed is passed unchanged to the canonical expander. For a small
+/// commitment modulus, each canonical prefix coefficient is reduced modulo q0.
+/// Empty dimensions,
 /// invalid degrees, unsupported field descriptors, and excessive allocations
 /// return `InvalidSetup` before expansion.
-pub fn derive_trinomial_matrix<
-    F: Field + CanonicalEncoding,
-    const D: usize,
-    M: TrinomialModulus,
->(
+pub fn derive_trinomial_matrix<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
     seed: &AkitaSetupSeed,
     rows: usize,
     columns: usize,
+    commitment_modulus: LabiniusCommitmentModulus,
 ) -> Result<Vec<TrinomialRing<F, D, M>>, AkitaError> {
     if rows == 0 || columns == 0 || D == 0 || !D.is_multiple_of(2) {
         return Err(AkitaError::InvalidSetup(
@@ -45,6 +45,13 @@ pub fn derive_trinomial_matrix<
         .ok_or_else(|| AkitaError::InvalidSetup("trinomial matrix size overflow".into()))?;
     let coefficient_count = checked::product([rows, columns, D])
         .ok_or_else(|| AkitaError::InvalidSetup("trinomial coefficient count overflow".into()))?;
+    // Temporary field storage for the q0 profile needs 128 MiB. A later
+    // u32 matrix and paged-prefix materializer will restore the 64 MiB caps.
+    let max_bytes = if commitment_modulus.small_modulus().is_some() {
+        1 << 27
+    } else {
+        MAX_MATRIX_BYTES
+    };
     let field_bytes = checked::product([coefficient_count, core::mem::size_of::<F>()]);
     let matrix_bytes =
         checked::product([matrix_len, core::mem::size_of::<TrinomialRing<F, D, M>>()]);
@@ -52,7 +59,7 @@ pub fn derive_trinomial_matrix<
         || core::mem::size_of::<TrinomialRing<F, D, M>>() > MAX_RING_BYTES
         || [field_bytes, matrix_bytes]
             .into_iter()
-            .any(|extent| extent.is_none_or(|bytes| bytes > MAX_MATRIX_BYTES))
+            .any(|extent| extent.is_none_or(|bytes| bytes > max_bytes))
     {
         return Err(AkitaError::InvalidSetup(
             "trinomial matrix exceeds materialization budget".into(),
@@ -72,21 +79,35 @@ pub fn derive_trinomial_matrix<
         .map_err(|_| AkitaError::InvalidSetup("public prefix allocation failed".into()))?;
     drop(allocation_probe);
     let prefix = derive_public_matrix_prefix::<F>(coefficient_count, seed);
-    materialize_trinomial_matrix(prefix.as_field_slice(), matrix)
+    materialize_trinomial_matrix(prefix.as_field_slice(), matrix, commitment_modulus)
 }
 
 // Keep fixed-size ring temporaries out of the public entry point's stack frame.
 // In particular, debug builds must reject a huge const D before reserving a
 // frame containing [F; D]. Only the resource-checked path above calls here.
 #[inline(never)]
-fn materialize_trinomial_matrix<F: Field, const D: usize, M: TrinomialModulus>(
+fn materialize_trinomial_matrix<
+    F: akita_algebra::SmoothFftField,
+    const D: usize,
+    M: TrinomialModulus,
+>(
     coefficients: &[F],
     mut matrix: Vec<TrinomialRing<F, D, M>>,
+    commitment_modulus: LabiniusCommitmentModulus,
 ) -> Result<Vec<TrinomialRing<F, D, M>>, AkitaError> {
     for chunk in coefficients.chunks_exact(D) {
-        let coefficients: [F; D] = chunk.try_into().map_err(|_| {
+        let mut coefficients: [F; D] = chunk.try_into().map_err(|_| {
             AkitaError::InvalidSetup("trinomial coefficient length mismatch".into())
         })?;
+        if let Some(q0) = commitment_modulus.small_modulus() {
+            for coefficient in &mut coefficients {
+                let value =
+                    crate::commitment::canonical_coefficient(*coefficient)? % u128::from(q0);
+                *coefficient = F::from_u64(u64::try_from(value).map_err(|_| {
+                    AkitaError::InvalidSetup("reduced coefficient conversion overflow".into())
+                })?);
+            }
+        }
         matrix.push(
             TrinomialRing::from_coefficients(coefficients)
                 .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?,
@@ -127,9 +148,14 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> AdmittedRootSetup<F
             .map_err(|_| AkitaError::InvalidSetup("root lower endpoint exceeds i64".into()))?;
         let upper = i64::try_from(upper)
             .map_err(|_| AkitaError::InvalidSetup("root upper endpoint exceeds i64".into()))?;
-        let matrix = derive_trinomial_matrix(&seed, n_a, shape.ring_elements_per_column())?;
+        let matrix = derive_trinomial_matrix(
+            &seed,
+            n_a,
+            shape.ring_elements_per_column(),
+            profile.commitment_modulus(),
+        )?;
         // This canonical constructor already checks F's prime, D, and M's sign.
-        let setup = BinaryClearSetup::new(
+        let mut setup = BinaryClearSetup::new(
             matrix,
             n_a,
             shape.ring_elements_per_column(),
@@ -142,6 +168,7 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> AdmittedRootSetup<F
             profile.ring_degree(),
         )
         .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
+        setup.admit_root_modulus(&shape)?;
         Ok(Self {
             setup,
             shape,
@@ -213,5 +240,93 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> AdmittedRootSetup<F
         crate::codec::length_prefixed(&mut bytes, &clear)
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
         Ok(bytes)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use akita_algebra::MinusTrinomial;
+    use jolt_field::Prime128OffsetA7F7;
+
+    #[test]
+    fn small_modulus_boundary_rejects_unreduced_matrix_coefficients() {
+        use jolt_field::Ring;
+        let profile = LabiniusRootProfile::D648P128Q28BoundedW46Delta16;
+        let shape = LabiniusRootShape::derive(profile, 2, 0, 128).unwrap();
+        let q0 = profile.commitment_modulus().small_modulus().unwrap();
+        let entry = TrinomialRing::<Prime128OffsetA7F7, 648, MinusTrinomial>::from_coefficients(
+            [Prime128OffsetA7F7::from_u64(u64::from(q0)); 648],
+        )
+        .unwrap();
+        let mut setup = BinaryClearSetup::new(
+            vec![entry; 3],
+            3,
+            1,
+            1,
+            -32768,
+            32767,
+            128,
+            profile.challenge_profile().unwrap(),
+            profile.coefficient_prime(),
+            profile.ring_degree(),
+        )
+        .unwrap();
+        assert!(matches!(
+            setup.admit_root_modulus(&shape),
+            Err(AkitaError::InvalidSetup(message))
+                if message == "small-modulus matrix coefficient is not reduced"
+        ));
+    }
+
+    #[test]
+    fn small_modulus_materializes_the_canonical_reduced_prefix() {
+        let seed = AkitaSetupSeed::shake256_paged_v1([0x28; 32]);
+        let admitted = AdmittedRootSetup::<Prime128OffsetA7F7, 648, MinusTrinomial>::derive(
+            LabiniusRootProfile::D648P128Q28BoundedW46Delta16,
+            4,
+            1,
+            128,
+            seed.clone(),
+        )
+        .unwrap();
+        assert_eq!(admitted.setup().n_a(), 3);
+        let q0 = admitted
+            .setup()
+            .commitment_modulus()
+            .small_modulus()
+            .unwrap();
+        let count = admitted.setup().matrix().len() * 648;
+        let prefix = derive_public_matrix_prefix::<Prime128OffsetA7F7>(count, &seed);
+        for (&coefficient, &original) in admitted
+            .setup()
+            .matrix()
+            .iter()
+            .flat_map(|element| element.coefficients())
+            .zip(prefix.as_field_slice())
+        {
+            assert_eq!(
+                crate::commitment::canonical_coefficient(coefficient).unwrap(),
+                crate::commitment::canonical_coefficient(original).unwrap() % u128::from(q0)
+            );
+        }
+        let explicit = BinaryClearSetup::new(
+            admitted.setup().matrix().to_vec(),
+            3,
+            admitted.setup().m(),
+            admitted.setup().columns(),
+            admitted.setup().lower(),
+            admitted.setup().upper(),
+            128,
+            admitted.setup().profile().clone(),
+            LabiniusRootProfile::D648P128Q28BoundedW46Delta16.coefficient_prime(),
+            LabiniusRootProfile::D648P128Q28BoundedW46Delta16.ring_degree(),
+        )
+        .unwrap();
+        assert_ne!(
+            explicit.matrix_view_digest(),
+            admitted.setup().matrix_view_digest()
+        );
     }
 }

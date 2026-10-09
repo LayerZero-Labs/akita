@@ -53,6 +53,85 @@ fn golden_enforced_ranges_and_root_witness_lengths() {
 }
 
 #[test]
+fn all_shared_prime_encoding_fields_equal_base_commit_literals() {
+    let shape = LabiniusRootShape::derive(PROFILE, 22, 8, 128).unwrap();
+    for (base, qbits, qdigits, qoffset, kbits, kdigits, koffset, rdigits, total, len, log) in [
+        (
+            LabiniusDigitBase::Bits1,
+            39,
+            39,
+            274_877_906_944,
+            38,
+            38,
+            137_438_953_472,
+            16,
+            1_186_484_727_296,
+            67_108_864,
+            26,
+        ),
+        (
+            LabiniusDigitBase::Bits2,
+            40,
+            20,
+            549_755_813_888,
+            38,
+            19,
+            137_438_953_472,
+            8,
+            2_011_118_448_128,
+            33_554_432,
+            25,
+        ),
+        (
+            LabiniusDigitBase::Bits4,
+            40,
+            10,
+            549_755_813_888,
+            40,
+            10,
+            549_755_813_888,
+            4,
+            2_835_752_168_960,
+            16_777_216,
+            24,
+        ),
+    ] {
+        let expected = LabiniusRootEncoding {
+            base,
+            response: LabiniusSignedDigitRange {
+                bits: 16,
+                digit_count: rdigits,
+                offset: 32_768,
+                interval: (-32_768, 32_767),
+            },
+            quotient: LabiniusSignedDigitRange {
+                bits: qbits,
+                digit_count: qdigits,
+                offset: qoffset,
+                interval: (-(qoffset as i128), qoffset as i128 - 1),
+            },
+            carry: LabiniusSignedDigitRange {
+                bits: kbits,
+                digit_count: kdigits,
+                offset: koffset,
+                interval: (-(koffset as i128), koffset as i128 - 1),
+            },
+            a_carry: None,
+            a_carry_len: 0,
+            no_wrap_total: total,
+            padded_coefficient_len: 1024,
+            response_table_len: len,
+            response_table_log_len: log,
+            parity_quotient_len: 161,
+            parity_carry_len: 162,
+            image_table_len: 262_144,
+            image_table_log_len: 18,
+        };
+        assert_eq!(shape.derive_encoding(base).unwrap(), expected);
+    }
+}
+
+#[test]
 fn response_table_length_matches_digit_innermost_addresses_and_coefficient_tails() {
     for (log_n, log_c, lambda) in [(2, 0, 0), (3, 0, 0), (22, 8, 128)] {
         let shape = LabiniusRootShape::derive(PROFILE, log_n, log_c, lambda).unwrap();
@@ -158,6 +237,7 @@ fn custom_shape(
     super::super::derive_shape(
         PROFILE,
         prime,
+        None,
         PROFILE.ring_degree(),
         &PROFILE.challenge_profile()?,
         interval,
@@ -231,6 +311,7 @@ fn nearest_certified_envelope_boundary_for_supported_primes() {
                     let Ok(shape) = super::super::derive_shape(
                         PROFILE,
                         prime,
+                        None,
                         PROFILE.ring_degree(),
                         &challenge,
                         (-offset, offset - 1),
