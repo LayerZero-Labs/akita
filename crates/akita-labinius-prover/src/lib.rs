@@ -12,6 +12,7 @@
 pub mod commit_kernel;
 pub mod fold_kernel;
 pub mod lowered;
+pub mod quotient_kernel;
 pub mod root;
 pub mod root_sumcheck;
 
