@@ -9,14 +9,14 @@ use akita_algebra::{
 use akita_error::AkitaError;
 use akita_labinius_prover::{commit_binary_clear, prove_binary_clear_bytes};
 use akita_labinius_verifier::{
-    akita_types::{
-        proof::{derive_public_matrix_prefix, AkitaSetupSeed},
-        setup_contribution::{TrinomialASetupView, TrinomialResponseLayout},
-        RelationPolynomial,
-    },
     derive_trinomial_matrix, verify_binary_clear_bytes, AdmittedRootSetup,
 };
 use akita_params::sis::labinius::{LabiniusRootProfile, LabiniusRootShape};
+use akita_types::{
+    proof::{derive_public_matrix_prefix, AkitaSetupSeed},
+    setup_contribution::{TrinomialASetupView, TrinomialResponseLayout},
+    RelationPolynomial,
+};
 use common::{data, TestHost};
 use jolt_field::Prime128OffsetA7F7;
 
@@ -219,10 +219,7 @@ fn excessive_matrix_extents_reject_before_seed_expansion() {
     // 8192 * 648 field elements fit the generic count cap, but their P128
     // coefficient storage exceeds this API's materialization byte budget.
     const {
-        assert!(
-            8192 * 648
-                < akita_labinius_verifier::akita_types::proof::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS
-        );
+        assert!(8192 * 648 < akita_types::proof::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS);
     }
     for (rows, columns) in [(usize::MAX, 1), (1, usize::MAX), (1 << 26, 1), (8192, 1)] {
         let outcome = std::panic::catch_unwind(|| {

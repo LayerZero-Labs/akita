@@ -1,8 +1,15 @@
-//! Verifier-side standalone clear binary openings for Akita (#45).
+//! Verifier-side binary-root components for Akita (#45).
 //!
-//! This opt-in extension is a differential oracle: it performs no SIS
-//! width-table/security lookup and admits no production parameter set. It is
-//! not on the Akita proof path. There is no outer commitment, setup offloading,
+//! This opt-in extension is not on the Akita proof path. It holds the
+//! standalone clear opening, which is a differential oracle; the seed-derived
+//! and SIS-admitted root setup ([`admitted`]); and the lowered root relation
+//! over the canonical response layout ([`lowered`]).
+//!
+//! [`BinaryClearSetup::new`] takes an explicit matrix and checks geometry,
+//! fold entropy and integer no-wrap only: it performs no SIS width-table
+//! lookup. [`AdmittedRootSetup::derive`] is the construction that derives the
+//! shape from a root profile, takes the certified rank, and expands the matrix
+//! from a public seed. There is no outer commitment, setup offloading,
 //! recursion or zero knowledge. Verifier-reachable code follows
 //! `docs/verifier-contract.md`; this crate never depends on a prover crate.
 #![cfg(feature = "labinius")]
@@ -26,8 +33,6 @@ pub mod profile;
 pub mod source;
 
 pub use admitted::{derive_trinomial_matrix, AdmittedRootSetup};
-// Shared public seed types and coefficient-prefix views used by setup callers.
-pub use akita_types;
 pub use channel::ClearChannel;
 pub use commitment::BinaryClearCommitment;
 pub use frontend::BinaryEvaluationClaim;

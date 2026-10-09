@@ -61,11 +61,9 @@ impl LoweredRootLayout {
             -1 => RelationPolynomial::minus_trinomial(D)?,
             _ => return Err(invalid()),
         };
-        let padded = checked::ceil_log2(D)
-            .and_then(checked::pow2)
-            .ok_or_else(invalid)?;
-        let witness_len = checked::product([setup.m(), padded, encoding.response().digit_count()])
-            .ok_or_else(invalid)?;
+        // The admitted encoding is the one source for both table sizes.
+        let padded = encoding.padded_coefficient_len();
+        let witness_len = encoding.response_table_len();
         let response = TrinomialResponseLayout::new(
             polynomial,
             padded,
@@ -83,10 +81,7 @@ impl LoweredRootLayout {
             TrinomialASetupView::new(polynomial, setup.n_a(), setup.m(), 0, setup_len, response)
                 .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
         let image_count = checked::product([setup.columns(), setup.n_a()]).ok_or_else(invalid)?;
-        let image_len = checked::product([padded, image_count])
-            .and_then(checked::ceil_log2)
-            .and_then(checked::pow2)
-            .ok_or_else(invalid)?;
+        let image_len = checked::pow2(encoding.image_table_log_len()).ok_or_else(invalid)?;
         Ok(Self {
             response,
             setup_view,

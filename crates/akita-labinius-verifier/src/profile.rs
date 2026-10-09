@@ -1,8 +1,9 @@
 //! Explicit setup admission and transcript identity.
 //!
-//! Admission checks geometry, fold entropy, and integer no-wrap only. This
-//! differential oracle performs no SIS or width-table security admission and
-//! admits no production parameter set.
+//! Admission here checks geometry, fold entropy, and integer no-wrap only.
+//! `BinaryClearSetup::new` takes the matrix from its caller and performs no SIS
+//! or width-table security admission; `crate::admitted::AdmittedRootSetup` is
+//! the seed-derived construction that does.
 
 use akita_algebra::binary::field_switch::SwitchField;
 use akita_algebra::fft::SmoothFftField;

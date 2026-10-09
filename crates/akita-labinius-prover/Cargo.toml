@@ -20,6 +20,7 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 ] }
 
 [dev-dependencies]
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 rand = "0.8"
 
 [features]

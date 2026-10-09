@@ -105,6 +105,14 @@ impl Case {
     pub(crate) fn new(base: LabiniusDigitBase) -> Self {
         let shape = LabiniusRootShape::derive(PROFILE, 4, 1, 128).unwrap();
         let setup = setup(&shape);
+        Self::with_setup(base, shape, setup)
+    }
+    /// The same honest transcript over a caller-chosen admitted setup.
+    pub(crate) fn with_setup(
+        base: LabiniusDigitBase,
+        shape: LabiniusRootShape,
+        setup: Setup,
+    ) -> Self {
         let (source, _, _) = data::<H>(setup.source_len(), setup.num_vars());
         let commitment = commit_binary_clear::<H, F, 648, MinusTrinomial>(&setup, &source).unwrap();
         let point = (0..setup.num_vars())

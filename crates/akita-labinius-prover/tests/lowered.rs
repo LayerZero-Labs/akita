@@ -3,12 +3,16 @@
 #[path = "lowered_support.rs"]
 mod support;
 
-use akita_algebra::poly::multilinear_eval;
+use akita_algebra::{poly::multilinear_eval, MinusTrinomial};
 use akita_labinius_prover::lowered::encode_witness;
-use akita_labinius_verifier::lowered::{
-    a_row_residual, check_lowered_clear, image_weight_mle, image_weights_dense,
-    parity_row_residual, witness_weight_mle, witness_weights_dense,
+use akita_labinius_verifier::{
+    lowered::{
+        a_row_residual, check_lowered_clear, image_weight_mle, image_weights_dense,
+        parity_row_residual, witness_weight_mle, witness_weights_dense,
+    },
+    AdmittedRootSetup,
 };
+use akita_types::proof::AkitaSetupSeed;
 use jolt_field::{One, Zero};
 use rand::{rngs::StdRng, SeedableRng};
 use support::*;
@@ -200,5 +204,40 @@ fn alphabet_checked_zero_weight_tails_remain_free() {
             &case.y[..case.y.len() - 1]
         )
         .is_err());
+    }
+}
+
+#[test]
+fn layout_table_sizes_are_the_admitted_encoding_sizes() {
+    for base in BASES {
+        let case = Case::new(base);
+        let encoding = case.shape.derive_encoding(base).unwrap();
+        assert_eq!(
+            case.layout.padded_coefficients(),
+            encoding.padded_coefficient_len()
+        );
+        assert_eq!(case.layout.witness_len(), encoding.response_table_len());
+        assert_eq!(
+            case.layout.witness_log_len(),
+            encoding.response_table_log_len()
+        );
+        assert_eq!(case.layout.image_log_len(), encoding.image_table_log_len());
+        assert_eq!(case.w.len(), encoding.response_table_len());
+        assert_eq!(case.y.len(), 1 << encoding.image_table_log_len());
+    }
+}
+
+#[test]
+fn seed_derived_admitted_setup_satisfies_the_lowered_relation() {
+    let seed = AkitaSetupSeed::shake256_paged_v1([0x5a; 32]);
+    let admitted =
+        AdmittedRootSetup::<F, 648, MinusTrinomial>::derive(PROFILE, 4, 1, 128, seed).unwrap();
+    for base in BASES {
+        let case = Case::with_setup(base, admitted.shape().clone(), admitted.setup().clone());
+        case.verify().unwrap();
+        check_lowered_clear(&case.layout, &case.public(), &case.w, &case.y).unwrap();
+        let mut w = case.w.clone();
+        w[0] ^= 1;
+        assert!(check_lowered_clear(&case.layout, &case.public(), &w, &case.y).is_err());
     }
 }
