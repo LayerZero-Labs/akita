@@ -343,6 +343,7 @@ mod tests {
             max_len: 64,
             threads: 1,
             value_profile,
+            ci: false,
             env: BTreeMap::new(),
         }
     }

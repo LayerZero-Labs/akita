@@ -879,7 +879,7 @@ impl<Cfg: PcsOps> Family for FamilyImpl<Cfg> {
         let honest = self.honest_with(case, reader, check == Check::Liveness);
         match check {
             Check::Valid => self.check_valid(case, &honest, &mut control),
-            Check::Reject => self.check_reject(&honest, &mut control),
+            Check::Reject => self.check_reject(case, &honest, &mut control),
             Check::Parallel => self.check_parallel(&honest, &mut control),
             Check::Liveness => {
                 stats::count("liveness_shaped_proofs");

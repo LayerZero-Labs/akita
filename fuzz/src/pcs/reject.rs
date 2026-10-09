@@ -53,7 +53,7 @@ fn other_basis(basis: BasisMode) -> BasisMode {
 }
 
 impl<Cfg: PcsOps> FamilyImpl<Cfg> {
-    pub(super) fn check_reject(&self, honest: &Honest<Cfg>, reader: &mut Reader<'_>) {
+    pub(super) fn check_reject(&self, case: usize, honest: &Honest<Cfg>, reader: &mut Reader<'_>) {
         self.check_valid_baseline(honest);
         let mutation = MUTATIONS[reader.choose(MUTATIONS.len())];
         let setup = &self.prepared().verifier;
@@ -183,7 +183,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
             Mutation::Commitment => {
                 // Search a few single-entry changes for one that makes the
                 // original claim false, then commit only that polynomial.
-                let domain = target_domain(self, group_index, honest);
+                let plan = &self.cases()[case].groups[group_index];
                 let seed = reader.u64();
                 let mut rng = crate::input::SplitMix64::new(seed);
                 // Index 0 always has monomial weight one; at a Boolean point the
@@ -203,7 +203,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                     let (other_tables, changed) = perturb(
                         &target.tables,
                         &mut Reader::new(&bytes),
-                        domain,
+                        plan.source.domain,
                         (attempt == 0).then_some(hint),
                     );
                     if changed && other_tables.evaluate(&target.point, honest.basis) != target.evals
@@ -216,7 +216,6 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                     stats::count("commitment_swap_still_true");
                     return;
                 };
-                let plan = &self.cases()[self.case_of(honest)].groups[group_index];
                 let (other_commitment, _) =
                     self.commit(plan, &other_tables, &honest.groups[..group_index]);
                 claims[group_index].2 = &other_commitment;
@@ -257,28 +256,6 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
         }
         stats::count(mutation_name(mutation));
     }
-
-    fn case_of(&self, honest: &Honest<Cfg>) -> usize {
-        self.cases()
-            .iter()
-            .position(|case| {
-                Cfg::schedules(&self.scheme)
-                    .rows()
-                    .nth(case.row)
-                    .is_some_and(|row| row.selection() == honest.proved.selection)
-            })
-            .expect("honest proof belongs to a planned case")
-    }
-}
-
-fn target_domain<Cfg: PcsOps>(
-    family: &FamilyImpl<Cfg>,
-    group: usize,
-    honest: &Honest<Cfg>,
-) -> Domain {
-    family.cases()[family.case_of(honest)].groups[group]
-        .source
-        .domain
 }
 
 /// Change exactly one committed entry while staying admissible.

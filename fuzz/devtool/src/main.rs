@@ -12,8 +12,9 @@
 //! ```
 
 use akita_fuzz::input::SplitMix64;
-use akita_fuzz::pcs::{Limits, Selector};
+use akita_fuzz::pcs::Limits;
 use akita_fuzz::targets;
+use akita_fuzz::targets::pcs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -24,7 +25,7 @@ pub fn list() {
 }
 
 pub fn cases(log2: u32) {
-    print!("{}", targets::pcs::describe_cases(log2));
+    print!("{}", pcs::describe_cases(log2));
 }
 
 pub fn smoke(name: &str, count: usize, seed: u64) -> Result<(), String> {
@@ -73,7 +74,7 @@ pub fn sweep(log2: u32, inputs: usize, seed: u64) -> Result<(), String> {
     let registry = registry_for(Limits {
         max_cost: 1 << log2,
     });
-    let cases = registry.select(Selector::Any);
+    let cases = registry.select(pcs::LIVENESS.0);
     println!(
         "{:>4}  {:<34} {:<24} {:>6} {:>6} {:>8} {:>8} {:>8} {:>6}  status",
         "case", "family", "shape", "inputs", "folds", "l2", "linf", "attempts", "mean"
@@ -92,7 +93,7 @@ pub fn sweep(log2: u32, inputs: usize, seed: u64) -> Result<(), String> {
                 1 => vec![0xffu8; 4096],
                 _ => random_bytes(seed ^ ((index as u64) << 20) ^ input as u64, 4096),
             });
-            if std::panic::catch_unwind(|| targets::pcs::liveness(&bytes)).is_err() {
+            if std::panic::catch_unwind(|| pcs::liveness(&bytes)).is_err() {
                 failures.push(input);
             }
         }
@@ -147,23 +148,19 @@ pub fn seeds(out: &Path) {
     }
 
     // End-to-end targets: one seed family per planned case, selected by its
-    // leading u16. The case list depends on the process cost limit, so these
-    // mirror each target's default limit.
-    let pcs: [(&str, Selector, u32); 8] = [
-        ("pcs_dense", Selector::DenseSingle, 18),
-        ("pcs_onehot", Selector::OneHotSingle, 20),
-        ("pcs_batch", Selector::Batch, 20),
-        ("pcs_recursive", Selector::Recursive, 21),
-        ("pcs_reject", Selector::AnyDirect, 17),
-        ("pcs_parallel", Selector::AnyDirect, 17),
-        ("pcs_liveness", Selector::Any, 20),
-        ("pcs_shared", Selector::AnyDirect, 17),
+    // leading u16, from the case list the target itself draws from.
+    let end_to_end = [
+        ("pcs_dense", pcs::DENSE),
+        ("pcs_onehot", pcs::ONEHOT),
+        ("pcs_batch", pcs::BATCH),
+        ("pcs_recursive", pcs::RECURSIVE),
+        ("pcs_reject", pcs::REJECT),
+        ("pcs_parallel", pcs::PARALLEL),
+        ("pcs_liveness", pcs::LIVENESS),
+        ("pcs_shared", pcs::SHARED),
     ];
-    for (name, selector, log2) in pcs {
-        let limits = Limits {
-            max_cost: 1 << log2,
-        };
-        let cases = registry_for(limits).select(selector);
+    for (name, (selector, log2)) in end_to_end {
+        let cases = registry_for(pcs::limits(log2)).select(selector);
         for (index, _) in cases.iter().enumerate() {
             for variant in 0..3u64 {
                 let mut bytes = (index as u16).to_le_bytes().to_vec();
@@ -186,8 +183,8 @@ pub fn seeds(out: &Path) {
     // Boundary targets: seed the verifier with honest proofs (including
     // recursive rows) and the deserializer with honest public objects, using
     // the same case lists the targets select from.
-    let (selector, limits) = targets::boundary::VERIFIER_CASES;
-    let registry = registry_for(limits);
+    let (selector, log2) = targets::boundary::VERIFIER_CASES;
+    let registry = registry_for(pcs::limits(log2));
     for (index, (family, case)) in registry.select(selector).iter().enumerate() {
         let family = &registry.families()[*family];
         let mut bytes = (index as u16).to_le_bytes().to_vec();
@@ -206,8 +203,8 @@ pub fn seeds(out: &Path) {
             );
         }
     }
-    let (selector, limits) = targets::boundary::PROVER_CASES;
-    for index in 0..registry_for(limits).select(selector).len() {
+    let (selector, log2) = targets::boundary::PROVER_CASES;
+    for index in 0..registry_for(pcs::limits(log2)).select(selector).len() {
         let mut prover = (index as u16).to_le_bytes().to_vec();
         prover.extend(random_bytes(0xb0da_0000 ^ index as u64, 2048));
         write(

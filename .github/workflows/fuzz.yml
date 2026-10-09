@@ -45,23 +45,33 @@ jobs:
         uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # cargo-fuzz
         with:
           tool: cargo-fuzz
-      # End-to-end and boundary targets need minutes of setup per process and
-      # more memory than this runner has; they run in long campaigns
-      # (fuzz/README.md). CI builds without the `end-to-end` feature and fuzzes
-      # the primitive targets briefly.
-      - name: Fuzz primitive targets
+      # Cargo in fuzz/ uses the nightly pinned in fuzz/rust-toolchain.toml, the
+      # one campaigns build with. The end-to-end harness is only type-checked
+      # here; the runner does not link Akita, so its tests are cheap.
+      - name: Check the fuzz crates
+        working-directory: fuzz
+        run: |
+          set -euo pipefail
+          cargo fmt --all --check
+          cargo check -q --workspace --all-targets
+          cargo test -q --release -p akita-fuzz-runner
+      # End-to-end and boundary targets that prove need minutes of setup per
+      # process and more memory than this runner has; they run in long
+      # campaigns (fuzz/README.md). CI builds without the `end-to-end` feature
+      # and fuzzes every lane the registry marks `ci` briefly.
+      - name: Fuzz CI targets
         working-directory: fuzz
         run: |
           set -euo pipefail
           # One line per lane: the cargo-fuzz binary, then the lane's variant
           # environment (for example the scalar NTT lane of ring_ntt).
-          lanes=$(cargo run --release -q -p akita-fuzz-runner -- targets --kind primitive --cargo-fuzz)
+          lanes=$(cargo run --release -q -p akita-fuzz-runner -- targets --ci --cargo-fuzz)
           if [ -z "$lanes" ]; then
-            echo "No primitive fuzz targets found"
+            echo "No CI fuzz targets found"
             exit 1
           fi
           while read -r binary envs; do
             echo "--- Fuzzing $binary ${envs} for ${FUZZ_DURATION}s ---"
             # shellcheck disable=SC2086 # envs is a list of KEY=VALUE words
-            env $envs cargo +nightly fuzz run --release --debug-assertions --no-default-features --features parallel --target "${FUZZ_TARGET}" "$binary" -- -max_total_time="${FUZZ_DURATION}" < /dev/null
+            env $envs cargo fuzz run --release --debug-assertions --no-default-features --features parallel --target "${FUZZ_TARGET}" "$binary" -- -max_total_time="${FUZZ_DURATION}" < /dev/null
           done <<< "$lanes"

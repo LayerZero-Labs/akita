@@ -1,13 +1,15 @@
 //! Public-boundary targets for prover requests and untrusted verifier input.
 
+use super::pcs::limits;
 use crate::input::Reader;
-use crate::pcs::{registry, Limits, Selector};
+use crate::pcs::{registry, Selector};
 
-/// Per-process case limits. The verifier boundary builds one honest fixture
-/// per case and then only verifies, so it affords recursive rows; the prover
-/// boundary proves on most inputs and stays small.
-const VERIFIER_LIMITS: Limits = Limits { max_cost: 1 << 20 };
-const PROVER_LIMITS: Limits = Limits { max_cost: 1 << 16 };
+/// Selector and default cost cap (`log2` coefficients) of each boundary
+/// target, as in [`super::pcs`]. The verifier boundary builds one honest
+/// fixture per case and then only verifies, so it affords recursive rows;
+/// the prover boundary proves on most inputs and stays small.
+pub const VERIFIER_CASES: (Selector, u32) = (Selector::Any, 20);
+pub const PROVER_CASES: (Selector, u32) = (Selector::AnyDirect, 16);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Boundary {
@@ -17,14 +19,18 @@ enum Boundary {
 }
 
 fn run(data: &[u8], boundary: Boundary) {
-    let prover = boundary == Boundary::Prover;
-    let (limits, selector) = if prover {
-        (PROVER_LIMITS, Selector::AnyDirect)
+    let (selector, default_log2) = if boundary == Boundary::Prover {
+        PROVER_CASES
     } else {
-        (VERIFIER_LIMITS, Selector::Any)
+        VERIFIER_CASES
     };
-    let registry = registry(limits);
+    let registry = registry(limits(default_log2));
     let cases = registry.select(selector);
+    assert!(
+        !cases.is_empty(),
+        "no {selector:?} case fits the process limit {:?}",
+        registry.limits()
+    );
     let mut reader = Reader::new(data);
     let (family, case) = cases[reader.choose(cases.len())];
     let family = &registry.families()[family];
@@ -34,10 +40,6 @@ fn run(data: &[u8], boundary: Boundary) {
         Boundary::TerminalCache => family.terminal_cache(case, &mut reader),
     });
 }
-
-/// Selector and limits each boundary target uses, for seed generation.
-pub const VERIFIER_CASES: (Selector, Limits) = (Selector::Any, VERIFIER_LIMITS);
-pub const PROVER_CASES: (Selector, Limits) = (Selector::AnyDirect, PROVER_LIMITS);
 
 pub fn verifier(data: &[u8]) {
     run(data, Boundary::Verifier);

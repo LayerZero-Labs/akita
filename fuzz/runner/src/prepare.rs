@@ -88,6 +88,18 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 }
 
 pub fn run(options: Prepare) -> Result<(), String> {
+    let dist = &options.dist;
+    // `--out` is deleted recursively below, so it must be a previous
+    // distribution or empty. Checked before the long build.
+    if dist.exists()
+        && !dist.join("BUILD-INFO.json").is_file()
+        && !std::fs::read_dir(dist).is_ok_and(|mut entries| entries.next().is_none())
+    {
+        return Err(format!(
+            "{} exists and is not a distribution (no BUILD-INFO.json); remove it or choose another --out",
+            dist.display()
+        ));
+    }
     let fuzz = fuzz_root();
     let repo = fuzz.join("..");
     let lanes = registry::load(&fuzz.join("campaign/targets.toml"))?;
@@ -156,7 +168,6 @@ pub fn run(options: Prepare) -> Result<(), String> {
         }
     }
 
-    let dist = &options.dist;
     if dist.exists() {
         std::fs::remove_dir_all(dist).map_err(|e| format!("clear {}: {e}", dist.display()))?;
     }

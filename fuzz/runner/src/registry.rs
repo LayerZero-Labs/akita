@@ -20,6 +20,8 @@ pub struct Lane {
     pub max_len: u64,
     pub threads: u64,
     pub value_profile: bool,
+    /// Fuzzed briefly by `.github/workflows/fuzz.yml`.
+    pub ci: bool,
     pub env: BTreeMap<String, String>,
 }
 
@@ -44,6 +46,7 @@ struct Spec {
     max_len: Option<u64>,
     threads: Option<u64>,
     value_profile: Option<bool>,
+    ci: Option<bool>,
     variants: Option<Vec<Variant>>,
 }
 
@@ -97,6 +100,7 @@ pub fn load(path: &Path) -> Result<Vec<Lane>, String> {
                 max_len: pick(spec.max_len, d.max_len, "max_len")?,
                 threads: pick(spec.threads, d.threads, "threads")?.max(1),
                 value_profile: spec.value_profile.or(d.value_profile).unwrap_or(false),
+                ci: spec.ci.or(d.ci).unwrap_or(false),
                 env: variant.as_ref().map(|v| v.env.clone()).unwrap_or_default(),
             });
         }
@@ -130,6 +134,34 @@ mod tests {
         assert!(ring
             .iter()
             .any(|lane| lane.env.get("AKITA_SCALAR_NTT").map(String::as_str) == Some("1")));
+    }
+
+    /// CI builds without the `end-to-end` feature, so it can fuzz only the
+    /// binaries that do not require it.
+    #[test]
+    fn ci_lanes_build_without_end_to_end() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let manifest: toml::Value =
+            toml::from_str(&std::fs::read_to_string(root.join("Cargo.toml")).unwrap()).unwrap();
+        let needs_end_to_end = |target: &str| {
+            manifest["bin"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|bin| bin["name"].as_str() == Some(target))
+                .unwrap_or_else(|| panic!("no [[bin]] {target}"))
+                .get("required-features")
+                .is_some()
+        };
+        let lanes = load(&root.join("campaign/targets.toml")).unwrap();
+        assert!(lanes.iter().any(|lane| lane.ci));
+        for lane in lanes.iter().filter(|lane| lane.ci) {
+            assert!(
+                !needs_end_to_end(&lane.target),
+                "{} needs end-to-end",
+                lane.name()
+            );
+        }
     }
 
     #[test]

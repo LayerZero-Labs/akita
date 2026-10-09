@@ -13,6 +13,8 @@
 #   threads          Akita's internal Rayon threads (AKITA_FUZZ_THREADS);
 #                    the lane reserves this many CPU slots
 #   kind             primitive | end_to_end | boundary (reporting only)
+#   ci               fuzzed for a minute per lane by .github/workflows/fuzz.yml;
+#                    only targets that build without the `end-to-end` feature
 
 [defaults]
 timeout_s = 60
@@ -22,9 +24,11 @@ max_len = 4096
 threads = 1
 weight = 1.0
 value_profile = false
+ci = false
 
 [target.field_arith]
 kind = "primitive"
+ci = true
 description = "Base fields vs num-bigint; extension-field laws; delayed-reduction and commit-accumulator contracts"
 max_len = 2048
 timeout_s = 10
@@ -32,6 +36,7 @@ value_profile = true
 
 [target.ring_ntt]
 kind = "primitive"
+ci = true
 description = "CRT+NTT negacyclic/cyclic products, LUT and i16-tail mat-vec vs schoolbook, ring identities"
 weight = 2.0
 max_len = 8192
@@ -44,6 +49,7 @@ variants = [
 
 [target.decompose]
 kind = "primitive"
+ci = true
 description = "Balanced gadget decomposition: recomposition, digit range, SIMD/u64/generic agreement"
 max_len = 4096
 timeout_s = 10
@@ -51,18 +57,21 @@ value_profile = true
 
 [target.multilinear]
 kind = "primitive"
+ci = true
 description = "Eq tables, basis weights, split/Gruen eq invariants, multilinear evaluation and folding"
 max_len = 8192
 timeout_s = 30
 
 [target.sumcheck_roundtrip]
 kind = "primitive"
+ci = true
 description = "Native sumcheck prover/verifier drivers on product instances; false claims and tampering"
 max_len = 8192
 timeout_s = 30
 
 [target.sumcheck_rounds]
 kind = "boundary"
+ci = true
 description = "Original target: verifier round replay over arbitrary argument bytes"
 weight = 0.25
 max_len = 1024
@@ -70,12 +79,14 @@ timeout_s = 10
 
 [target.transcript_roundtrip]
 kind = "primitive"
+ci = true
 description = "Spongefish prover/verifier agreement, byte-level binding, session separation"
 max_len = 4096
 timeout_s = 10
 
 [target.transcript_labels]
 kind = "boundary"
+ci = true
 description = "Original target: arbitrary instance labels and public bytes"
 weight = 0.25
 max_len = 1024
@@ -83,6 +94,7 @@ timeout_s = 10
 
 [target.serialization_vec]
 kind = "boundary"
+ci = true
 description = "Original target: Vec<u8>/Vec<bool> decoding"
 weight = 0.25
 max_len = 1024
@@ -90,18 +102,21 @@ timeout_s = 10
 
 [target.public_deserialize]
 kind = "boundary"
+ci = true
 description = "Untrusted decoding of commitments, setups, descriptors, selections; canonical re-encoding"
 max_len = 65536
 timeout_s = 30
 
 [target.fold_challenges]
 kind = "primitive"
+ci = true
 description = "Fold-challenge sampling: exact declared shape and norms, operator-norm rejection soundness (independent DFT), determinism, group binding"
 max_len = 512
 timeout_s = 30
 
 [target.schedule_artifact]
 kind = "boundary"
+ci = true
 description = "Trusted-schedule artifact admission from mutated shipped artifacts; canonical re-encoding"
 max_len = 300000
 timeout_s = 60

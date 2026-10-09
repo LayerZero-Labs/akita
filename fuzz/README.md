@@ -43,7 +43,8 @@ Ctrl-C or `SIGTERM`; rerun the same command to resume.
    dependency it links*. The fuzz profile (`fuzz/Cargo.toml`) also enables
    `debug-assertions`, `overflow-checks`, and line tables. A plain
    `cargo build --release` produces none of this and cannot be fuzzed.
-3. Copies into `--out`:
+3. Replaces `--out`, which must be absent, empty, or a previous
+   distribution, with:
    - `akita-fuzz` (this runner, uninstrumented)
    - `bin/fuzz_all`, the instrumented libFuzzer executable
    - `artifacts/schedules/*.aks` (the shipped trusted schedule catalogs)
@@ -64,9 +65,11 @@ which production builds leave off: the prover then reports every selected
 fold (attempts, response energy, cap, measured source energy), and the
 liveness checks read those reports. Proof bytes are unchanged.
 
-CI (`.github/workflows/fuzz.yml`) fuzzes the primitive targets for a minute
-each. End-to-end and boundary targets need minutes of setup per process and
-several GiB of memory, so they run only in campaigns.
+CI (`.github/workflows/fuzz.yml`) type-checks every fuzz crate, runs the
+runner's tests, and fuzzes each lane marked `ci` in `campaign/targets.toml`
+for a minute: every target that builds without the `end-to-end` feature.
+Targets that prove need minutes of setup per process and several GiB of
+memory, so they run only in campaigns.
 
 The toolchain is pinned in `fuzz/rust-toolchain.toml` and dependency versions
 in `fuzz/Cargo.lock` (seeded from the workspace lock), so the same commit
@@ -105,9 +108,9 @@ At startup the runner:
   (`MemAvailable` and cgroup `memory.max`) and prints the chosen budget;
 - copies seeds into the writable corpus and runs every lane once over the
   shipped seeds (`-runs=0`): the **honest baseline**. Each lane starts
-  fuzzing as soon as its own baseline passes. For the end-to-end
-  targets each seed is a complete commit/prove/verify of a shipped catalog
-  row; any failure is recorded as a finding before fuzzing starts.
+  fuzzing as soon as its own baseline finishes. For the end-to-end targets
+  each seed is a complete commit/prove/verify of a shipped catalog row; a
+  failure is recorded as a finding before the lane starts fuzzing.
 
 ### Workers, threads, and scheduling
 
@@ -125,11 +128,12 @@ cgroup scope.
 
 Lanes are chosen by weighted deficit: the lane with the least CPU time per
 unit `weight` runs next. If that lane does not fit yet, the runner waits for
-capacity instead of starting smaller lanes, so heavy lanes cannot starve. A job fuzzes for `--slice-minutes` or ten times
-the lane's last corpus re-execution time at startup, whichever is longer, so
-restarting on a large end-to-end corpus stays cheap. Every job ends after `--slice-minutes`, which
-rotates lanes and bounds any slow growth inside a process. Workers of one
-target share a corpus directory (`-reload=1`).
+capacity instead of starting smaller lanes, so heavy lanes cannot starve.
+A job fuzzes for `--slice-minutes` or ten times the lane's last corpus
+re-execution time at startup, whichever is longer, so restarting on a large
+end-to-end corpus stays cheap. Ending every job after its slice rotates lanes
+and bounds any slow growth inside a process. Workers of one target share a
+corpus directory (`-reload=1`).
 
 ### Corpus compaction
 
@@ -167,7 +171,9 @@ controller), every worker also runs in its own scope with
 Otherwise only the sampled libFuzzer limits apply and the runner says so at
 startup and in `status`. No hard CPU-time limit is set per input beyond
 libFuzzer's timeout; a wall-clock watchdog kills any job that outlives its
-slice by more than twice the timeout plus a grace period.
+budget (a fuzzing job's slice plus its corpus re-execution, or a baseline's
+seed count times the timeout) by more than twice the timeout plus a grace
+period.
 
 ### Failures and restarts
 
@@ -265,8 +271,8 @@ binary this size.)
 
 | Command | Purpose |
 |---|---|
-| `akita-fuzz targets [--kind K]` | Registry lanes and limits |
-| `akita-fuzz targets --kind K --cargo-fuzz` | One `BINARY [KEY=VALUE ...]` line per lane of kind `K`: the `cargo fuzz run` binary and the variant's environment |
+| `akita-fuzz targets [--kind K] [--ci]` | Registry lanes and limits |
+| `akita-fuzz targets [--kind K] [--ci] --cargo-fuzz` | One `BINARY [KEY=VALUE ...]` line per selected lane: the `cargo fuzz run` binary and the variant's environment (`--ci`: the lanes CI fuzzes) |
 | `akita-fuzz-dev cases [LOG2]` | Catalog rows planned or excluded at a cost limit |
 | `akita-fuzz-dev smoke TARGET [N] [SEED]` | N pseudo-random inputs, no libFuzzer |
 | `akita-fuzz-dev replay TARGET FILE...` | Run inputs once, no libFuzzer |

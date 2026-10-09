@@ -52,7 +52,7 @@ pub fn status(store: &Store, lanes: &[Lane], as_json: bool) -> i32 {
         Some(live) => println!(
             "RUNNING pid {} for {}; budget {} cpus / {} MiB; hard memory limit: {}",
             live["pid"],
-            duration((now() - live["started"].as_u64().unwrap_or(now())) as f64),
+            duration(now().saturating_sub(live["started"].as_u64().unwrap_or_else(now)) as f64),
             live["budget"]["cpus"],
             live["budget"]["memory_mb"],
             if live["budget"]["hard_memory"] == true {
@@ -195,20 +195,50 @@ pub fn export(
         let source = store.root.join(member);
         // Campaign files are written atomically or appended, so a snapshot
         // taken while the campaign runs is consistent per file.
-        let result = if source.is_dir() {
-            archive.append_dir_all(format!("{prefix}/{member}"), &source)
-        } else if source.is_file() {
-            archive.append_path_with_name(&source, format!("{prefix}/{member}"))
-        } else {
-            Ok(())
-        };
-        result.map_err(|e| format!("archive {member}: {e}"))?;
+        append_live(
+            &mut archive,
+            &source,
+            &Path::new(&prefix).join(member),
+            source.is_dir(),
+        )
+        .map_err(|e| format!("archive {member}: {e}"))?;
     }
     archive
         .into_inner()
         .and_then(|gz| gz.finish())
         .map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+/// Append `source` as `name`, recursively for a directory. A running
+/// campaign removes files at any time (libFuzzer replaces reduced corpus
+/// inputs, compaction archives them), so entries that vanish are skipped.
+fn append_live<W: std::io::Write>(
+    archive: &mut tar::Builder<W>,
+    source: &Path,
+    name: &Path,
+    is_dir: bool,
+) -> std::io::Result<()> {
+    let result = if is_dir {
+        archive.append_dir(name, source).and_then(|()| {
+            std::fs::read_dir(source)?.try_for_each(|entry| {
+                let entry = entry?;
+                let is_dir = entry.file_type()?.is_dir();
+                append_live(
+                    archive,
+                    &entry.path(),
+                    &name.join(entry.file_name()),
+                    is_dir,
+                )
+            })
+        })
+    } else {
+        archive.append_path_with_name(source, name)
+    };
+    match result {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
 }
 
 fn lane_for<'a>(lanes: &'a [Lane], spec: &str) -> Result<&'a Lane, String> {
@@ -396,4 +426,35 @@ pub fn validate_dist(dist: &Path, lanes: &[Lane]) -> Vec<String> {
         problems.push("missing artifacts/schedules/*.aks".into());
     }
     problems
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn archiving_skips_entries_that_vanished() {
+        let root = std::env::temp_dir().join(format!("akita-fuzz-export-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("corpus/x")).unwrap();
+        std::fs::write(root.join("corpus/x/a"), b"a").unwrap();
+        let mut archive = tar::Builder::new(Vec::new());
+        append_live(
+            &mut archive,
+            &root.join("corpus"),
+            Path::new("p/corpus"),
+            true,
+        )
+        .unwrap();
+        append_live(&mut archive, &root.join("gone"), Path::new("p/gone"), false).unwrap();
+        append_live(&mut archive, &root.join("gone"), Path::new("p/gone"), true).unwrap();
+        let bytes = archive.into_inner().unwrap();
+        let mut names: Vec<String> = tar::Archive::new(&bytes[..])
+            .entries()
+            .unwrap()
+            .map(|entry| entry.unwrap().path().unwrap().display().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["p/corpus", "p/corpus/x", "p/corpus/x/a"]);
+    }
 }

@@ -5,7 +5,22 @@ use crate::pcs::{registry, Check, Limits, Selector};
 
 const MAX_COST_ENV: &str = "AKITA_FUZZ_MAX_CASE_COEFFS";
 
-fn limits(default_log2: u32) -> Limits {
+/// The planned cases each end-to-end target draws from: a selector and the
+/// default cost cap as `log2` of the committed coefficients. Seed generation
+/// reads the same values, so a seed's leading case index selects the case it
+/// was generated for.
+pub const DENSE: (Selector, u32) = (Selector::DenseSingle, 18);
+pub const ONEHOT: (Selector, u32) = (Selector::OneHotSingle, 20);
+pub const BATCH: (Selector, u32) = (Selector::Batch, 20);
+pub const RECURSIVE: (Selector, u32) = (Selector::Recursive, 21);
+pub const REJECT: (Selector, u32) = (Selector::AnyDirect, 17);
+pub const PARALLEL: (Selector, u32) = (Selector::AnyDirect, 17);
+pub const LIVENESS: (Selector, u32) = (Selector::Any, 20);
+pub const SHARED: (Selector, u32) = (Selector::AnyDirect, 17);
+
+/// Case limits of a target with this default cap, unless
+/// `AKITA_FUZZ_MAX_CASE_COEFFS` overrides it.
+pub fn limits(default_log2: u32) -> Limits {
     let max_cost = std::env::var(MAX_COST_ENV)
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
@@ -13,7 +28,7 @@ fn limits(default_log2: u32) -> Limits {
     Limits { max_cost }
 }
 
-fn run(data: &[u8], selector: Selector, check: Check, default_log2: u32) {
+fn run(data: &[u8], (selector, default_log2): (Selector, u32), check: Check) {
     let registry = registry(limits(default_log2));
     let cases = registry.select(selector);
     assert!(
@@ -28,31 +43,31 @@ fn run(data: &[u8], selector: Selector, check: Check, default_log2: u32) {
 }
 
 pub fn dense(data: &[u8]) {
-    run(data, Selector::DenseSingle, Check::Valid, 18);
+    run(data, DENSE, Check::Valid);
 }
 
 pub fn onehot(data: &[u8]) {
-    run(data, Selector::OneHotSingle, Check::Valid, 20);
+    run(data, ONEHOT, Check::Valid);
 }
 
 pub fn batch(data: &[u8]) {
-    run(data, Selector::Batch, Check::Valid, 20);
+    run(data, BATCH, Check::Valid);
 }
 
 pub fn recursive(data: &[u8]) {
-    run(data, Selector::Recursive, Check::Valid, 21);
+    run(data, RECURSIVE, Check::Valid);
 }
 
 pub fn reject(data: &[u8]) {
-    run(data, Selector::AnyDirect, Check::Reject, 17);
+    run(data, REJECT, Check::Reject);
 }
 
 pub fn parallel(data: &[u8]) {
-    run(data, Selector::AnyDirect, Check::Parallel, 17);
+    run(data, PARALLEL, Check::Parallel);
 }
 
 pub fn liveness(data: &[u8]) {
-    run(data, Selector::Any, Check::Liveness, 20);
+    run(data, LIVENESS, Check::Liveness);
 }
 
 /// One covering setup per field and one backend per field pair, shared by
@@ -63,8 +78,9 @@ pub fn shared(data: &[u8]) {
     use std::sync::OnceLock;
     type Requirements = HashMap<TypeId, Box<dyn Any + Send + Sync>>;
     static REQUIREMENTS: OnceLock<Requirements> = OnceLock::new();
-    let registry = registry(limits(17));
-    let cases = registry.select(Selector::AnyDirect);
+    let (selector, default_log2) = SHARED;
+    let registry = registry(limits(default_log2));
+    let cases = registry.select(selector);
     assert!(!cases.is_empty(), "no direct case fits the process limit");
     let requirements = REQUIREMENTS.get_or_init(|| {
         // Every family with a planned case, grouped by field, at the largest

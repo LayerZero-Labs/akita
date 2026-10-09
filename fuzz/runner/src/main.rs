@@ -124,6 +124,9 @@ enum Cmd {
         /// Only lanes of this kind.
         #[arg(long, value_parser = registry::KINDS)]
         kind: Option<String>,
+        /// Only lanes CI fuzzes (`ci = true`).
+        #[arg(long)]
+        ci: bool,
         /// One `BINARY [KEY=VALUE ...]` line per lane: the cargo-fuzz binary
         /// and the variant's environment.
         #[arg(long)]
@@ -331,11 +334,15 @@ fn execute(dist: &Path, command: Cmd) -> Result<u8, String> {
                 Err(problems.join("\n"))
             }
         }
-        Cmd::Targets { kind, cargo_fuzz } => {
+        Cmd::Targets {
+            kind,
+            ci,
+            cargo_fuzz,
+        } => {
             let lanes = lanes(dist)?;
-            let selected = lanes
-                .iter()
-                .filter(|lane| kind.as_ref().is_none_or(|kind| &lane.kind == kind));
+            let selected = lanes.iter().filter(|lane| {
+                kind.as_ref().is_none_or(|kind| &lane.kind == kind) && (!ci || lane.ci)
+            });
             for lane in selected {
                 if cargo_fuzz {
                     println!("{}", cargo_fuzz_line(lane));
