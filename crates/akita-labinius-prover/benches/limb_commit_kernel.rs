@@ -6,7 +6,7 @@
 use std::{hint::black_box, time::Duration};
 
 use akita_algebra::{
-    binary::BinaryField128, MinusTrinomial, TrinomialRing, TrinomialWideLimbAccumulator,
+    binary::BinaryField128, MinusTrinomial, TrinomialLimbAccumulator, TrinomialRing,
 };
 use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing};
 use akita_labinius_prover::{
@@ -193,7 +193,7 @@ fn source_components(criterion: &mut Criterion, matrix: &[u32], source: &[u128])
         })
         .collect();
     let mut accumulators: Vec<_> = (0..3)
-        .map(|_| TrinomialWideLimbAccumulator::new(domain))
+        .map(|_| TrinomialLimbAccumulator::new(domain))
         .collect();
     group.bench_function("multiply_accumulate_rank3", |b| {
         b.iter(|| {

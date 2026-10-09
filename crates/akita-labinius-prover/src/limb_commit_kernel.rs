@@ -1,4 +1,4 @@
-//! Commitment modulo an admitted wide limb prime, with signed binary sources.
+//! Commitment modulo an admitted limb prime, with signed binary sources.
 //!
 //! This arithmetic kernel is independent of root-profile admission. Its output
 //! is reduced coefficient storage in the same column/row/coefficient order as
@@ -14,8 +14,8 @@
 )]
 
 use akita_algebra::{
-    binary::field_switch::SwitchField, TrinomialWideLimbAccumulator, TrinomialWideLimbDomain,
-    TrinomialWideLimbSlots,
+    binary::field_switch::SwitchField, TrinomialLimbAccumulator, TrinomialLimbDomain,
+    TrinomialLimbSlots,
 };
 use akita_error::{checked, AkitaError};
 #[cfg(feature = "parallel")]
@@ -26,7 +26,7 @@ use crate::commit_kernel::{check_source_len, source_element_rank};
 const DEGREE: usize = 648;
 const K: usize = 4;
 
-/// Row-major transforms of a reduced integer matrix over a wide limb prime.
+/// Row-major transforms of a reduced integer matrix over a limb prime.
 ///
 /// Each entry holds 648 signed 32-bit slots and a `u32` prime tag. No original
 /// coefficients or source transforms are retained. The reusable domain owns
@@ -34,8 +34,8 @@ const K: usize = 4;
 /// at commitment time and do not affect preparation.
 #[derive(Debug)]
 pub struct PreparedLimbCommitMatrix {
-    domain: TrinomialWideLimbDomain,
-    matrix: Vec<TrinomialWideLimbSlots>,
+    domain: TrinomialLimbDomain,
+    matrix: Vec<TrinomialLimbSlots>,
     n_a: usize,
     m: usize,
     matrix_bytes: usize,
@@ -66,7 +66,7 @@ impl PreparedLimbCommitMatrix {
                 "limb commitment rank and width must be nonzero".into(),
             ));
         }
-        let domain = TrinomialWideLimbDomain::new(q0)
+        let domain = TrinomialLimbDomain::new(q0)
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
         let entries = checked::product([n_a, m])
             .ok_or_else(|| AkitaError::InvalidSetup("limb matrix size overflow".into()))?;
@@ -83,7 +83,7 @@ impl PreparedLimbCommitMatrix {
                 "matrix coefficient must be below the limb prime".into(),
             ));
         }
-        let matrix_bytes = checked::product([entries, size_of::<TrinomialWideLimbSlots>()])
+        let matrix_bytes = checked::product([entries, size_of::<TrinomialLimbSlots>()])
             .ok_or_else(|| AkitaError::InvalidSetup("limb matrix size overflow".into()))?;
         let mut matrix = Vec::new();
         matrix
@@ -109,7 +109,7 @@ impl PreparedLimbCommitMatrix {
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
         let prepared_bytes = checked::sum([matrix_bytes, domain.table_storage_bytes()])
             .ok_or_else(|| AkitaError::InvalidSetup("limb prepared size overflow".into()))?;
-        let workspace_bytes = checked::product([n_a, size_of::<TrinomialWideLimbAccumulator>()])
+        let workspace_bytes = checked::product([n_a, size_of::<TrinomialLimbAccumulator>()])
             .and_then(|accumulators| checked::sum([accumulators, size_of::<Workspace>()]))
             .ok_or_else(|| AkitaError::InvalidSetup("limb workspace size overflow".into()))?;
         Ok(Self {
@@ -146,20 +146,20 @@ impl PreparedLimbCommitMatrix {
         self.workspace_bytes
     }
 
-    /// The reusable wide-limb transform domain.
-    pub fn domain(&self) -> &TrinomialWideLimbDomain {
+    /// The reusable limb transform domain.
+    pub fn domain(&self) -> &TrinomialLimbDomain {
         &self.domain
     }
 
     /// Transformed matrix entries in row-major order, with per-entry prime tags.
-    pub fn matrix_ntt(&self) -> &[TrinomialWideLimbSlots] {
+    pub fn matrix_ntt(&self) -> &[TrinomialLimbSlots] {
         &self.matrix
     }
 }
 
 /// Pack the unsigned magnitudes of the canonical four-word signed interleaving.
 ///
-/// Bit `4*s+c` is coordinate `s` of `embed_source::<H>(words[c])`. The wide
+/// Bit `4*s+c` is coordinate `s` of `embed_source::<H>(words[c])`. The limb
 /// domain applies its fixed sign `(-1)^s` through lookup tables. This agrees
 /// exactly with [`crate::commit_kernel::pack_binary_element_i8`], without a
 /// degree-sized array of signed bytes. Both supported source types embed into
@@ -239,8 +239,8 @@ where
 }
 
 struct Workspace {
-    transformed: TrinomialWideLimbSlots,
-    accumulators: Vec<TrinomialWideLimbAccumulator>,
+    transformed: TrinomialLimbSlots,
+    accumulators: Vec<TrinomialLimbAccumulator>,
     coefficients: [i32; DEGREE],
 }
 
@@ -252,7 +252,7 @@ impl Workspace {
             .map_err(|_| AkitaError::InvalidInput("limb accumulator allocation failed".into()))?;
         accumulators.resize(
             prepared.n_a,
-            TrinomialWideLimbAccumulator::new(&prepared.domain),
+            TrinomialLimbAccumulator::new(&prepared.domain),
         );
         Ok(Self {
             transformed: prepared.domain.zero_slots(),

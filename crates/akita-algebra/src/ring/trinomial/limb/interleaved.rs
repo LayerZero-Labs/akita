@@ -1,17 +1,17 @@
 //! Table transform for interleaved binary words with alternating word-bit signs.
 
-use super::{gather, use_neon, TrinomialError, TrinomialWideLimbDomain, TrinomialWideLimbSlots};
+use super::{gather, use_neon, TrinomialError, TrinomialLimbDomain, TrinomialLimbSlots};
 use super::{DEGREE, LANES, PIECE};
 
 #[cfg(test)]
 mod tests;
 
-impl TrinomialWideLimbDomain {
+impl TrinomialLimbDomain {
     /// Transform coefficient-order bits with coefficient `n` negated when
     /// `floor(n / 4)` is odd.
     ///
-    /// Bits are little-endian within and across eleven words, as for
-    /// [`Self::forward_bits`]. This represents four interleaved binary words:
+    /// Bits are little-endian within and across eleven words. This represents
+    /// four interleaved binary words:
     /// coefficient `4*s+c` equals `(-1)^s` times bit `s` of word `c`.
     /// The signs are folded into lazily initialized fused tables; no signed
     /// coefficient array is unpacked. Subsequent calls allocate nothing.
@@ -21,66 +21,83 @@ impl TrinomialWideLimbDomain {
     pub fn forward_interleaved_bits(
         &self,
         bits: &[u64],
-        out: &mut TrinomialWideLimbSlots,
+        out: &mut TrinomialLimbSlots,
     ) -> Result<(), TrinomialError> {
         self.forward_interleaved_bits_backend(bits, out, use_neon())
     }
 
     /// Heap bytes occupied by the bit transform lookup tables.
     ///
-    /// Includes the unsigned tables and, after the first interleaved transform,
-    /// its signed tables. Excludes the domain struct and the split-plan vector.
+    /// Includes signed tables after the first interleaved transform. Excludes
+    /// the domain struct and split-plan vector.
     pub fn table_storage_bytes(&self) -> usize {
-        std::mem::size_of_val(self.table.as_ref())
-            + std::mem::size_of_val(self.first_level.as_ref())
-            + self
-                .interleaved_first_level
-                .get()
-                .map_or(0, |tables| std::mem::size_of_val(tables.as_ref()))
+        self.interleaved_first_level
+            .get()
+            .map_or(0, |tables| std::mem::size_of_val(tables.as_ref()))
     }
 
-    fn forward_interleaved_bits_backend(
+    pub(super) fn forward_interleaved_bits_backend(
         &self,
         bits: &[u64],
-        out: &mut TrinomialWideLimbSlots,
+        out: &mut TrinomialLimbSlots,
         neon: bool,
     ) -> Result<(), TrinomialError> {
         Self::check_bits(bits)?;
         self.check_slots(out)?;
         let mut indices = [0; PIECE];
-        gather::indices(bits, &mut indices, true);
+        gather::indices(bits, &mut indices);
         let tables = self.interleaved_first_level.get_or_init(|| {
             // Four sign phases for each of the three first-level sources.
             // A phase offset of four negates every entry. Allocate in blocks
             // of 24 KiB rather than constructing a 288 KiB stack temporary.
             let mut tables = vec![[[0; 3 * LANES]; 256]; 4 * 3].into_boxed_slice();
             for phase in 0..4 {
-                // At gather position t+81*j, sign is determined by bit two
-                // of t+j, because 81 == 1 (mod 8).
-                let mask =
-                    (0..LANES).fold(0, |mask, j| mask | (usize::from((phase + j) & 4 != 0) << j));
                 for source in 0..3 {
                     for byte in 0..256 {
-                        for lane in 0..3 * LANES {
-                            // XOR inserts the negative baseline coefficients;
-                            // subtracting that baseline restores zero bits.
-                            let difference = self.first_level[source][byte ^ mask][lane]
-                                - self.first_level[source][mask][lane];
-                            tables[phase * 3 + source][byte][lane] =
-                                self.arithmetic.center(i64::from(difference));
+                        let mut values = [0; DEGREE];
+                        for lane in 0..LANES {
+                            // Gather index t+81*j has sign determined by
+                            // bit two of t+j; phases offset by four negate.
+                            let sum: i64 = (0..LANES)
+                                .filter(|&j| byte & (1 << j) != 0)
+                                .map(|j| {
+                                    let weight = i64::from(self.evaluation[lane][j]);
+                                    if (phase + j) & 4 == 0 {
+                                        weight
+                                    } else {
+                                        -weight
+                                    }
+                                })
+                                .sum();
+                            values[source * 27 * LANES + lane] = self.arithmetic.center(sum);
+                        }
+                        super::arithmetic::butterfly(
+                            self.arithmetic,
+                            self.omega,
+                            self.inverse_omega,
+                            &mut values,
+                            &self.splits[0],
+                            false,
+                        );
+                        for branch in 0..3 {
+                            for lane in 0..LANES {
+                                tables[phase * 3 + source][byte][branch * LANES + lane] = self
+                                    .arithmetic
+                                    .center(i64::from(values[branch * 27 * LANES + lane]));
+                            }
                         }
                     }
                 }
             }
             tables
         });
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
         if neon {
             table_neon(tables, &indices, &mut out.values);
         } else {
             table_scalar(tables, &indices, &mut out.values);
         }
-        #[cfg(not(target_arch = "aarch64"))]
+        #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
         table_scalar(tables, &indices, &mut out.values);
         self.transform(&mut out.values, false, neon, true);
         Ok(())
@@ -93,7 +110,7 @@ fn table_scalar(
     values: &mut [i32; DEGREE],
 ) {
     // Entries are centered; the signed sum is bounded by 3*floor(p/2),
-    // exactly the same bound as the existing unsigned fused first level.
+    // below the centered path first-level bound B1.
     for t in 0..27 {
         let rows: [_; 3] = std::array::from_fn(|source| {
             let phase = (t + source * 27) & 7;
@@ -112,14 +129,14 @@ fn table_scalar(
     }
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 fn table_neon(
     tables: &[[[i32; 3 * LANES]; 256]],
     indices: &[u8; PIECE],
     values: &mut [i32; DEGREE],
 ) {
     use std::arch::aarch64::*;
-    // SAFETY: AArch64 guarantees NEON. Each indexed table has 256 complete
+    // SAFETY: The module is compiled only with statically available NEON. Each indexed table has 256 complete
     // 24-lane rows and each load reads four lanes within that row. Stores
     // cover disjoint four-lane halves of the output. Centered table entries
     // and their signed sum are bounded by 3*floor(p/2), fitting i32.

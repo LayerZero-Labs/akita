@@ -1,16 +1,6 @@
 //! Eight 81-bit pieces gathered with an eight-by-eight delta-swap transpose.
 
-pub(super) fn indices(bits: &[u64], out: &mut [u8; 81], transpose: bool) {
-    if !transpose {
-        for (t, byte) in out.iter_mut().enumerate() {
-            *byte = 0;
-            for j in 0..8 {
-                let position = t + 81 * j;
-                *byte |= (((bits[position / 64] >> (position % 64)) & 1) as u8) << j;
-            }
-        }
-        return;
-    }
+pub(super) fn indices(bits: &[u64], out: &mut [u8; 81]) {
     for block in 0..11 {
         let mut square = 0u64;
         for j in 0..8 {

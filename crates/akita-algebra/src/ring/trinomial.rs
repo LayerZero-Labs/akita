@@ -14,10 +14,7 @@ use jolt_field::{Field, Packed, WithPacking};
 use crate::fft::{field_pow, primitive_nth_root, FftWorkspace, SmoothDomain, SmoothFftField};
 
 mod limb;
-pub use limb::{
-    TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots,
-    TrinomialWideLimbAccumulator, TrinomialWideLimbDomain, TrinomialWideLimbSlots,
-};
+pub use limb::{TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots};
 
 mod sealed {
     pub trait Sealed {}

@@ -2,7 +2,7 @@
 
 use akita_algebra::{
     binary::{field_switch::SwitchField, BinaryField128, BinaryField192},
-    MinusTrinomial, TrinomialRing, TrinomialWideLimbDomain, TrinomialWideLimbSlots,
+    MinusTrinomial, TrinomialLimbDomain, TrinomialLimbSlots, TrinomialRing,
 };
 use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing};
 use akita_error::AkitaError;
@@ -204,9 +204,9 @@ fn check_case<H: SwitchField>(
 }
 
 #[test]
-fn all_wide_primes_random_ranks_and_widths_match_integer_and_p128() {
+fn all_limb_primes_random_ranks_and_widths_match_integer_and_p128() {
     let mut rng = StdRng::seed_from_u64(0x011b_c064_8000);
-    for prime in TrinomialWideLimbDomain::ADMITTED_PRIMES {
+    for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
         for rank in 1..=4 {
             for width in [1, 2, 3] {
                 let matrix = random_matrix(&mut rng, prime, rank, width);
@@ -235,7 +235,7 @@ fn all_wide_primes_random_ranks_and_widths_match_integer_and_p128() {
 
 #[test]
 fn extreme_coefficients_and_edge_sources_match_integer_and_p128() {
-    for prime in TrinomialWideLimbDomain::ADMITTED_PRIMES {
+    for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
         for rank in 1..=4 {
             for width in [1, 2, 3] {
                 let matrix = vec![prime - 1; rank * width * D];
@@ -268,7 +268,7 @@ fn extreme_coefficients_and_edge_sources_match_integer_and_p128() {
 #[test]
 fn u64_source_host_matches_integer_and_p128() {
     let mut rng = StdRng::seed_from_u64(0x0064_0192);
-    for prime in TrinomialWideLimbDomain::ADMITTED_PRIMES {
+    for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
         let matrix = random_matrix(&mut rng, prime, 3, 3);
         let random: Vec<u64> = (0..2 * 3 * K).map(|_| rng.next_u64()).collect();
         for source in [random, vec![u64::MAX; 2 * 3 * K]] {
@@ -290,8 +290,8 @@ fn check_bit_packing<H: SwitchField>(words: &[H::Source]) {
         assert_eq!(coefficient, expected, "degree={degree}");
     }
     assert!(bits[8..].iter().all(|&word| word == 0));
-    for prime in TrinomialWideLimbDomain::ADMITTED_PRIMES {
-        let domain = TrinomialWideLimbDomain::new(prime).unwrap();
+    for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
+        let domain = TrinomialLimbDomain::new(prime).unwrap();
         let mut actual = domain.zero_slots();
         let mut expected = domain.zero_slots();
         domain.forward_interleaved_bits(&bits, &mut actual).unwrap();
@@ -346,7 +346,7 @@ fn prepared_matrix_has_tagged_slots_and_canonical_transform() {
     let prepared = PreparedLimbCommitMatrix::prepare(Q, D, 3, 2, &matrix).unwrap();
     assert_eq!(
         prepared.matrix_bytes(),
-        3 * 2 * size_of::<TrinomialWideLimbSlots>()
+        3 * 2 * size_of::<TrinomialLimbSlots>()
     );
     assert_eq!(
         prepared.prepared_bytes(),
@@ -368,7 +368,17 @@ fn prepared_matrix_has_tagged_slots_and_canonical_transform() {
             .domain()
             .forward_centered(&centered, &mut actual)
             .unwrap();
-        assert_eq!(&actual, expected);
+        let mut actual_coefficients = [0; D];
+        let mut expected_coefficients = [0; D];
+        prepared
+            .domain()
+            .inverse_centered(&actual, &mut actual_coefficients)
+            .unwrap();
+        prepared
+            .domain()
+            .inverse_centered(expected, &mut expected_coefficients)
+            .unwrap();
+        assert_eq!(actual_coefficients, expected_coefficients);
     }
 }
 
@@ -406,7 +416,7 @@ fn malformed_matrix_and_source_inputs_return_specific_errors() {
         );
     }
     let unadmitted = 268_435_399;
-    let expected = TrinomialWideLimbDomain::new(unadmitted).unwrap_err();
+    let expected = TrinomialLimbDomain::new(unadmitted).unwrap_err();
     assert_eq!(
         error(unadmitted, D, 1, 1, &coefficients),
         AkitaError::InvalidSetup(expected.to_string())

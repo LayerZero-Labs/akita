@@ -18,7 +18,7 @@ fn signed_coefficients(bits: &[u64; 11]) -> [i32; DEGREE] {
     })
 }
 
-fn assert_centered_agreement(domain: &TrinomialWideLimbDomain, bits: &[u64; 11]) {
+fn assert_centered_agreement(domain: &TrinomialLimbDomain, bits: &[u64; 11]) {
     let coefficients = signed_coefficients(bits);
     let mut expected = domain.zero_slots();
     domain
@@ -29,9 +29,9 @@ fn assert_centered_agreement(domain: &TrinomialWideLimbDomain, bits: &[u64; 11])
         .inverse_centered(&expected, &mut expected_coefficients)
         .unwrap();
     assert_eq!(expected_coefficients, coefficients);
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     let backends = [false, true];
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
     let backends = [false];
     let mut previous = None;
     for neon in backends {
@@ -45,16 +45,19 @@ fn assert_centered_agreement(domain: &TrinomialWideLimbDomain, bits: &[u64; 11])
             .unwrap();
         assert_eq!(actual_coefficients, expected_coefficients);
         if let Some(previous) = previous {
-            assert_eq!(actual, previous);
+            assert_eq!(
+                super::super::canonical_slots(&actual),
+                super::super::canonical_slots(&previous)
+            );
         }
         previous = Some(actual);
     }
 }
 
 #[test]
-fn wide_limb_interleaved_every_single_bit_matches_centered() {
-    for prime in TrinomialWideLimbDomain::ADMITTED_PRIMES {
-        let domain = TrinomialWideLimbDomain::new(prime).unwrap();
+fn limb_interleaved_every_single_bit_matches_centered() {
+    for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
+        let domain = TrinomialLimbDomain::new(prime).unwrap();
         for position in 0..DEGREE {
             let mut bits = [0; 11];
             bits[position / 64] = 1 << (position % 64);
@@ -64,10 +67,10 @@ fn wide_limb_interleaved_every_single_bit_matches_centered() {
 }
 
 #[test]
-fn wide_limb_interleaved_random_zero_and_ones_match_centered() {
+fn limb_interleaved_random_zero_and_ones_match_centered() {
     let mut seed = 0x40f5_bca8_721f_291d;
-    for prime in TrinomialWideLimbDomain::ADMITTED_PRIMES {
-        let domain = TrinomialWideLimbDomain::new(prime).unwrap();
+    for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
+        let domain = TrinomialLimbDomain::new(prime).unwrap();
         assert_centered_agreement(&domain, &[0; 11]);
         let mut ones = [u64::MAX; 11];
         ones[10] = 255;
@@ -90,9 +93,9 @@ fn wide_limb_interleaved_random_zero_and_ones_match_centered() {
 }
 
 #[test]
-fn wide_limb_interleaved_rejects_bad_bits_and_tags_without_mutation() {
-    for prime in TrinomialWideLimbDomain::ADMITTED_PRIMES {
-        let domain = TrinomialWideLimbDomain::new(prime).unwrap();
+fn limb_interleaved_rejects_bad_bits_and_tags_without_mutation() {
+    for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
+        let domain = TrinomialLimbDomain::new(prime).unwrap();
         let mut out = domain.zero_slots();
         out.values.fill(17);
         let original = out.clone();
@@ -115,12 +118,17 @@ fn wide_limb_interleaved_rejects_bad_bits_and_tags_without_mutation() {
                 })
             );
         }
-        assert_eq!(out, original);
-        for other in TrinomialWideLimbDomain::ADMITTED_PRIMES
+        assert_eq!(
+            super::super::canonical_slots(&out),
+            super::super::canonical_slots(&original)
+        );
+        assert_eq!(out.values, original.values);
+        assert_eq!(out.prime, original.prime);
+        for other in TrinomialLimbDomain::ADMITTED_PRIMES
             .into_iter()
             .filter(|&p| p != prime)
         {
-            let mut wrong = TrinomialWideLimbDomain::new(other).unwrap().zero_slots();
+            let mut wrong = TrinomialLimbDomain::new(other).unwrap().zero_slots();
             let original = wrong.clone();
             assert_eq!(
                 domain.forward_interleaved_bits(&[0; 11], &mut wrong),
@@ -128,21 +136,24 @@ fn wide_limb_interleaved_rejects_bad_bits_and_tags_without_mutation() {
                     reason: "slot prime does not match the domain",
                 })
             );
-            assert_eq!(wrong, original);
+            assert_eq!(
+                super::super::canonical_slots(&wrong),
+                super::super::canonical_slots(&original)
+            );
+            assert_eq!(wrong.values, original.values);
+            assert_eq!(wrong.prime, original.prime);
         }
         assert!(domain.interleaved_first_level.get().is_none());
     }
 }
 
 #[test]
-fn wide_limb_interleaved_tables_are_lazy_and_reported() {
-    let domain = TrinomialWideLimbDomain::new(268_433_353).unwrap();
-    assert_eq!(domain.table_storage_bytes(), 81_920);
+fn limb_interleaved_tables_are_lazy_and_reported() {
+    let domain = TrinomialLimbDomain::new(268_433_353).unwrap();
+    assert_eq!(domain.table_storage_bytes(), 0);
     let mut out = domain.zero_slots();
-    domain.forward_bits(&[0; 11], &mut out).unwrap();
-    assert_eq!(domain.table_storage_bytes(), 81_920);
     domain.forward_interleaved_bits(&[0; 11], &mut out).unwrap();
-    assert_eq!(domain.table_storage_bytes(), 81_920 + 294_912);
+    assert_eq!(domain.table_storage_bytes(), 294_912);
     let original = domain.interleaved_first_level.get().unwrap().as_ptr();
     domain.forward_interleaved_bits(&[0; 11], &mut out).unwrap();
     assert_eq!(
@@ -182,7 +193,7 @@ fn shadow_product(prime: u32, value: i128, twiddle: super::super::arithmetic::Tw
     result
 }
 
-fn assert_signed_shadow(domain: &TrinomialWideLimbDomain, indices: &[u8; PIECE]) {
+fn assert_signed_shadow(domain: &TrinomialLimbDomain, indices: &[u8; PIECE]) {
     use super::super::arithmetic;
 
     let prime = domain.prime();
@@ -272,9 +283,9 @@ fn assert_signed_shadow(domain: &TrinomialWideLimbDomain, indices: &[u8; PIECE])
         i32::try_from(reduced).unwrap()
     });
     let bits = bits_from_indices(indices);
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     let backends = [false, true];
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
     let backends = [false];
     for neon in backends {
         let mut slots = domain.zero_slots();
@@ -289,10 +300,10 @@ fn assert_signed_shadow(domain: &TrinomialWideLimbDomain, indices: &[u8; PIECE])
 }
 
 #[test]
-fn wide_limb_interleaved_lazy_levels_match_checked_signed_shadow() {
+fn limb_interleaved_lazy_levels_match_checked_signed_shadow() {
     let mut seed = 0x7e40_c152_a4d9_116f;
-    for prime in TrinomialWideLimbDomain::ADMITTED_PRIMES {
-        let domain = TrinomialWideLimbDomain::new(prime).unwrap();
+    for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
+        let domain = TrinomialLimbDomain::new(prime).unwrap();
         domain
             .forward_interleaved_bits(&[0; 11], &mut domain.zero_slots())
             .unwrap();
@@ -339,7 +350,7 @@ fn wide_limb_interleaved_lazy_levels_match_checked_signed_shadow() {
                     );
                     let bits = bits_from_indices(&indices);
                     let mut gathered = [0; PIECE];
-                    TrinomialWideLimbDomain::gather_bits(&bits, &mut gathered).unwrap();
+                    gather::indices(&bits, &mut gathered);
                     assert_eq!(gathered, indices);
                     assert_signed_shadow(&domain, &indices);
                 }

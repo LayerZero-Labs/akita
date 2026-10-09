@@ -28,5 +28,5 @@ pub use trinomial::{
     embed_scalar, pack_scalar_components, unpack_scalar_components, MinusTrinomial, PlusTrinomial,
     TrinomialError, TrinomialI8Lut, TrinomialLimbAccumulator, TrinomialLimbDomain,
     TrinomialLimbSlots, TrinomialModulus, TrinomialNtt, TrinomialNttDomain, TrinomialNttWorkspace,
-    TrinomialRing, TrinomialWideLimbAccumulator, TrinomialWideLimbDomain, TrinomialWideLimbSlots,
+    TrinomialRing,
 };
