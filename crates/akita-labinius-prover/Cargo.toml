@@ -28,6 +28,7 @@ jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 criterion = { version = "0.8", features = ["html_reports"] }
+num-bigint = "0.5.1"
 rand = "0.8"
 
 [[bench]]
