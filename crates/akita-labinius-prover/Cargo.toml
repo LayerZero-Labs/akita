@@ -1,0 +1,54 @@
+[package]
+name = "akita-labinius-prover"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "Apache-2.0 OR MIT"
+description = "Standalone clear binary opening prover for Akita"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+
+# The brief requires direct backend feature forwarding, while all transcript
+# operations are isolated in the verifier crate's channel.rs.
+[package.metadata.cargo-machete]
+ignored = ["akita-transcript"]
+
+[dependencies]
+akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-error = { version = "0.1.0", path = "../akita-error" }
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
+akita-labinius-verifier = { version = "0.1.0", path = "../akita-labinius-verifier", default-features = false }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c7c2d08d5bb0c7c80501f29f723e595af7fcff3c", default-features = false, features = [
+  "asm",
+  "solinas",
+] }
+
+[dev-dependencies]
+rand = "0.8"
+
+[features]
+default = ["transcript-blake2b"]
+labinius = [
+  "akita-algebra/labinius-binary",
+  "akita-algebra/labinius-trinomial",
+  "akita-challenges/labinius-challenges",
+  "akita-params/labinius-sis",
+  "akita-labinius-verifier/labinius",
+]
+transcript-blake2b = [
+  "akita-transcript/transcript-blake2b",
+  "akita-challenges/transcript-blake2b",
+  "akita-params/transcript-blake2b",
+  "akita-labinius-verifier/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-transcript/transcript-keccak",
+  "akita-challenges/transcript-keccak",
+  "akita-params/transcript-keccak",
+  "akita-labinius-verifier/transcript-keccak",
+]
+
+[lints]
+workspace = true

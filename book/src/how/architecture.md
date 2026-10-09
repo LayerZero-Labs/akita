@@ -28,9 +28,14 @@ orchestration lives in `akita-pcs`.
 | `akita-prover` | Protocol sequencing, public geometry checks, proof assembly, opaque operation contracts |
 | `akita-cpu-backend` | Backend-owned sources, commitment and witness arithmetic, prepared setup resources, caches |
 | `akita-pcs` | Umbrella crate: `AkitaCommitmentScheme`, re-exports, examples, benches, integration tests |
+| `akita-labinius-verifier` (`dev`) | Standalone clear binary opening admission, parsing, field-switch frontend, and direct endpoint checks |
+| `akita-labinius-prover` (`dev`) | Binary source commitment and clear opening prover; differential oracle with no production admission |
 
 **Dependency graph and ownership rules:** [`docs/crate-graph.md`](../../../docs/crate-graph.md).
 CI enforces one-way boundaries via `scripts/check-crate-deps.sh`.
+The standalone clear binary opening prover depends on its verifier crate; both
+depend on algebra, errors, challenges, parameters, transcript, and the shared
+field crate. No Akita proof-path crate depends on this opt-in extension.
 
 Key structural facts:
 
