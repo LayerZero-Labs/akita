@@ -7,16 +7,88 @@ publish = false
 [package.metadata]
 cargo-fuzz = true
 
+[workspace]
+members = [".", "runner", "devtool"]
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["parallel", "end-to-end"]
+# Commit/prove/verify harnesses over every catalog family (`pcs`, the boundary
+# targets, and `fuzz_all`). Without it only the primitive targets build, which
+# keeps CI builds small; campaigns and `akita-fuzz-dev` need it.
+end-to-end = []
+# Rayon-parallel production paths. Build with `--no-default-features` for the
+# sequential feature graph, which CI otherwise never executes.
+parallel = [
+  "akita-challenges/parallel",
+  "akita-cpu-backend/parallel",
+  "akita-pcs/parallel",
+  "akita-prover/parallel",
+  "akita-sumcheck/parallel",
+  "akita-types/parallel",
+  "akita-verifier/parallel",
+  "jolt-field/parallel",
+]
+
 [dependencies]
+akita-algebra = { path = "../crates/akita-algebra" }
+akita-config = { path = "../crates/akita-config", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-setup = { path = "../crates/akita-setup", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-cpu-backend = { path = "../crates/akita-cpu-backend", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-error = { path = "../crates/akita-error" }
+akita-params = { path = "../crates/akita-params", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-pcs = { path = "../crates/akita-pcs", default-features = false, features = [
+  "transcript-blake2b",
+  "response-model-diagnostics",
+] }
+akita-prover = { path = "../crates/akita-prover", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-schedules = { path = "../crates/akita-schedules", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-serialization = { path = "../crates/akita-serialization" }
+akita-sumcheck = { path = "../crates/akita-sumcheck", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-challenges = { path = "../crates/akita-challenges", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-transcript = { path = "../crates/akita-transcript", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-types = { path = "../crates/akita-types", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-verifier = { path = "../crates/akita-verifier", default-features = false, features = [
+  "transcript-blake2b",
+] }
 jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-akita-serialization = { path = "../crates/akita-serialization" }
-akita-error = { path = "../crates/akita-error" }
-akita-sumcheck = { path = "../crates/akita-sumcheck" }
-akita-transcript = { path = "../crates/akita-transcript" }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false }
 libfuzzer-sys = "0.4.12"
+num-bigint = "0.4"
+rayon = "1.10"
+tracing = "0.1"
+
+# cargo-fuzz builds with `--release`; keep assertions, overflow checks, and
+# line tables so findings carry actionable diagnostics.
+[profile.release]
+debug = 1
+debug-assertions = true
+overflow-checks = true
 
 [[bin]]
 name = "serialization_vec"
@@ -38,3 +110,162 @@ path = "fuzz_targets/sumcheck_rounds.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "pcs_dense"
+path = "fuzz_targets/pcs_dense.rs"
+test = false
+doc = false
+bench = false
+required-features = ["end-to-end"]
+
+[[bin]]
+name = "pcs_onehot"
+path = "fuzz_targets/pcs_onehot.rs"
+test = false
+doc = false
+bench = false
+required-features = ["end-to-end"]
+
+[[bin]]
+name = "pcs_batch"
+path = "fuzz_targets/pcs_batch.rs"
+test = false
+doc = false
+bench = false
+required-features = ["end-to-end"]
+
+[[bin]]
+name = "pcs_recursive"
+path = "fuzz_targets/pcs_recursive.rs"
+test = false
+doc = false
+bench = false
+required-features = ["end-to-end"]
+
+[[bin]]
+name = "pcs_reject"
+path = "fuzz_targets/pcs_reject.rs"
+test = false
+doc = false
+bench = false
+required-features = ["end-to-end"]
+
+[[bin]]
+name = "pcs_parallel"
+path = "fuzz_targets/pcs_parallel.rs"
+test = false
+doc = false
+bench = false
+required-features = ["end-to-end"]
+
+[[bin]]
+name = "fold_challenges"
+path = "fuzz_targets/fold_challenges.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "terminal_cache"
+path = "fuzz_targets/terminal_cache.rs"
+test = false
+doc = false
+bench = false
+required-features = ["end-to-end"]
+
+[[bin]]
+name = "pcs_shared"
+path = "fuzz_targets/pcs_shared.rs"
+test = false
+doc = false
+bench = false
+required-features = ["end-to-end"]
+
+[[bin]]
+name = "pcs_liveness"
+path = "fuzz_targets/pcs_liveness.rs"
+test = false
+doc = false
+bench = false
+required-features = ["end-to-end"]
+
+[[bin]]
+name = "field_arith"
+path = "fuzz_targets/field_arith.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ring_ntt"
+path = "fuzz_targets/ring_ntt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decompose"
+path = "fuzz_targets/decompose.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "multilinear"
+path = "fuzz_targets/multilinear.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sumcheck_roundtrip"
+path = "fuzz_targets/sumcheck_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transcript_roundtrip"
+path = "fuzz_targets/transcript_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "public_deserialize"
+path = "fuzz_targets/public_deserialize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "schedule_artifact"
+path = "fuzz_targets/schedule_artifact.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verifier_boundary"
+path = "fuzz_targets/verifier_boundary.rs"
+test = false
+doc = false
+bench = false
+required-features = ["end-to-end"]
+
+[[bin]]
+name = "prover_boundary"
+path = "fuzz_targets/prover_boundary.rs"
+test = false
+doc = false
+bench = false
+required-features = ["end-to-end"]
+
+[[bin]]
+name = "fuzz_all"
+path = "fuzz_targets/fuzz_all.rs"
+test = false
+doc = false
+bench = false
+required-features = ["end-to-end"]
