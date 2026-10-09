@@ -1,8 +1,14 @@
 # LaBinius binary-root matrix and shape admission
 
-Status: active
-Book-chapter: book/src/foundations/security.md
-Tracking: https://github.com/LayerZero-Labs/akita/issues/45
+| Field | Value |
+|---|---|
+| Author(s) | Quang Dao |
+| Created | 2026-10-09 |
+| Status | active |
+| PR | #199 |
+| Book-chapter | book/src/how/security.md |
+
+Tracking issue: https://github.com/LayerZero-Labs/akita/issues/45
 
 ## Scope and profile
 
