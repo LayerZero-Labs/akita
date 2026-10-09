@@ -478,7 +478,7 @@ fn one_and_three_thread_pools_have_identical_column_order_and_values() {
 
 #[cfg(feature = "parallel")]
 #[test]
-#[ignore = "full 679477248-bit table thread-scaling measurement; run in release mode"]
+#[ignore = "full 536870912-bit table thread-scaling measurement; run in release mode"]
 fn full_table_thread_scaling() {
     use std::{process::Command, time::Instant};
 
@@ -488,7 +488,8 @@ fn full_table_thread_scaling() {
     const RANK: usize = 3;
     const WIDTH: usize = 4096;
     const COLUMNS: usize = 256;
-    const BITS: usize = COLUMNS * WIDTH * D;
+    // Source bits; each packed polynomial has 136 fixed-zero coefficients besides.
+    const BITS: usize = COLUMNS * WIDTH * K * 128;
     let load = |when| {
         if let Ok(output) = Command::new("uptime").output() {
             println!(
@@ -504,13 +505,13 @@ fn full_table_thread_scaling() {
     let start = Instant::now();
     let prepared = PreparedLimbCommitMatrix::prepare(Q, D, RANK, WIDTH, &matrix).unwrap();
     println!(
-        "prepared: build={:.6}s, lane_bytes={}, tagged_slot_bytes={}, prepared_payload_bytes={}, workspace_bytes_per_thread={}, committed_bits={BITS}, live_source_bits={}",
+        "prepared: build={:.6}s, lane_bytes={}, tagged_slot_bytes={}, prepared_payload_bytes={}, workspace_bytes_per_thread={}, source_bits={BITS}, ring_coefficients={}",
         start.elapsed().as_secs_f64(),
         RANK * WIDTH * D * size_of::<u32>(),
         prepared.matrix_bytes(),
         prepared.prepared_bytes(),
         prepared.workspace_bytes(),
-        source.len() * 128,
+        COLUMNS * WIDTH * D,
     );
     drop(matrix);
     let mut one_thread_min = 0.0;

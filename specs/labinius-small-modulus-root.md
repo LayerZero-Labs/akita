@@ -1,8 +1,13 @@
 # LaBinius small-modulus root admission and foreign-modulus lift
 
-Status: reduction-level protocol implemented; image and root PCS deferred
-Book-chapter: book/src/foundations/security.md
-Tracking: https://github.com/LayerZero-Labs/akita/issues/45
+| Field | Value |
+|---|---|
+| Author(s) | Quang Dao |
+| Created | 2026-10-09 |
+| Status | active |
+| Book-chapter | book/src/how/security.md |
+
+Tracking issue: https://github.com/LayerZero-Labs/akita/issues/45
 
 ## Scope and implementation status
 
