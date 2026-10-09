@@ -16,6 +16,7 @@
 
 pub mod image;
 pub mod session;
+mod setup;
 
 pub use image::{ImageCommitOutput, ImageEvaluation, ImageProver, ImageVerifier};
 

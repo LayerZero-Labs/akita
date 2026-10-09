@@ -122,6 +122,9 @@ impl ImageProver {
             row.schedule(),
             &row.profiles().opening_layout()?,
         )?;
+        crate::setup::ensure_setup_prefix_coverage(row, |id| {
+            self.setup.prefix_slots.get(id).is_some()
+        })?;
         let mut values = Vec::new();
         values
             .try_reserve_exact(1)
@@ -222,6 +225,9 @@ impl ImageVerifier {
                 "image row does not fit verifier setup".into(),
             ));
         }
+        crate::setup::ensure_setup_prefix_coverage(row, |id| {
+            self.verifier.setup().prefix_slots().get(id).is_some()
+        })?;
         let bound = bind_image_statement::<H, S>(
             admitted,
             self.verifier.setup().expanded().descriptor(),
