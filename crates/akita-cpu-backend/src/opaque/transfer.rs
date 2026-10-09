@@ -3,7 +3,7 @@ use super::*;
 use crate::commitment::{
     CommitmentExecutionPlan, InnerRelationStateMaterial, PortableCompressionState,
 };
-use crate::sources::packed_digits::{PackedSignedDigitWriter, PackedSignedDigits};
+use crate::sources::packed_digits::PackedSignedDigits;
 use akita_error::checked;
 use akita_params::{CompressionChainWitness, PackedNegativeBinary, RingRelationMode};
 use akita_serialization::AkitaSerialize;
@@ -553,8 +553,7 @@ where
                     native.compression,
                 )
             } else {
-                let (logical, inner, compression) =
-                    read_portable::<F>(plan, &packet.descriptor, &packet)?;
+                let (logical, inner, compression) = read_portable::<F>(plan, &mut packet)?;
                 (logical, None, inner, compression)
             };
         let tensor = matches!(
@@ -607,32 +606,24 @@ where
 
 fn read_digits<F: Field>(
     descriptor: &SuccessorSectionDescriptor,
-    packet: &CpuImportPacket<F>,
+    packet: &mut CpuImportPacket<F>,
 ) -> Result<PackedSignedDigits, AkitaError> {
-    match descriptor.encoding {
-        SuccessorEncoding::PackedSigned { bit_width } => {
-            PackedSignedDigits::import_encoded(descriptor.coefficients, bit_width, |bytes| {
-                packet.read(descriptor.section, 0, bytes)
-            })
+    let bit_width = match descriptor.encoding {
+        SuccessorEncoding::PackedSigned { bit_width } => bit_width,
+        SuccessorEncoding::SignedI8 => 8,
+        _ => {
+            return Err(AkitaError::InvalidInput(
+                "invalid portable digit encoding".into(),
+            ))
         }
-        SuccessorEncoding::SignedI8 => {
-            let mut writer = PackedSignedDigitWriter::new(descriptor.coefficients, 8)?;
-            let mut bytes = [0u8; 4096];
-            let mut digits = [0i8; 4096];
-            for start in (0..descriptor.coefficients).step_by(bytes.len()) {
-                let count = (descriptor.coefficients - start).min(bytes.len());
-                packet.read(descriptor.section, start, &mut bytes[..count])?;
-                for (digit, byte) in digits[..count].iter_mut().zip(&bytes[..count]) {
-                    *digit = *byte as i8;
-                }
-                writer.write_at(start, &digits[..count])?;
-            }
-            writer.finish()
-        }
-        _ => Err(AkitaError::InvalidInput(
-            "invalid portable digit encoding".into(),
-        )),
-    }
+    };
+    let index = packet
+        .sections
+        .iter()
+        .position(|(section, _)| *section == descriptor.section)
+        .ok_or_else(|| AkitaError::InvalidInput("logical section is missing".into()))?;
+    let (_, bytes) = packet.sections.swap_remove(index);
+    PackedSignedDigits::import_encoded(descriptor.coefficients, bit_width, bytes)
 }
 
 fn read_fields<F: Field + CanonicalEncoding>(
@@ -675,15 +666,16 @@ type PortableParts<F> = (
 
 fn read_portable<F: Field + CanonicalEncoding>(
     plan: &ValidatedSuccessorHandoffPlan<'_, F>,
-    descriptor: &CpuPacketDescriptor,
-    packet: &CpuImportPacket<F>,
+    packet: &mut CpuImportPacket<F>,
 ) -> Result<PortableParts<F>, AkitaError> {
-    let logical_section = descriptor
+    let logical_section = packet
+        .descriptor
         .sections
         .iter()
         .find(|s| s.section == SuccessorSection::LogicalDigits)
+        .copied()
         .ok_or_else(|| AkitaError::InvalidInput("logical section is missing".into()))?;
-    let digits = read_digits(logical_section, packet)?;
+    let digits = read_digits(&logical_section, packet)?;
     let producer = plan.producer_parameters();
     for unit in plan.witness_layout().units() {
         let group = producer
@@ -695,28 +687,24 @@ fn read_portable<F: Field + CanonicalEncoding>(
             (unit.e_range(), group.log_basis_open()),
             (unit.t_range(), group.log_basis_outer()),
         ] {
-            let half = akita_params::balanced_signed_digit_abs_bound(log_basis)
-                .ok_or_else(|| AkitaError::InvalidInput("invalid producer digit basis".into()))?;
-            if digits.view().slice(range)?.iter().any(|digit| {
-                i128::from(digit) < -i128::from(half) || i128::from(digit) >= i128::from(half)
-            }) {
+            if !digits
+                .view()
+                .slice(range)?
+                .scan_bounds()
+                .fits_balanced_log_basis(log_basis)
+            {
                 return Err(AkitaError::InvalidInput(
                     "successor digit exceeds its producer segment basis".into(),
                 ));
             }
         }
     }
-    let binary = plan.witness_layout().negative_binary_support_intervals();
-    let mut span = 0;
-    for (offset, digit) in digits.iter().enumerate() {
-        while binary.get(span).is_some_and(|range| offset >= range.end) {
-            span += 1;
-        }
-        if binary
-            .get(span)
-            .is_some_and(|range| range.contains(&offset))
-            && digit != 0
-            && digit != -1
+    for range in plan.witness_layout().negative_binary_support_intervals() {
+        if !digits
+            .view()
+            .slice(range)?
+            .scan_bounds()
+            .fits_balanced_log_basis(1)
         {
             return Err(AkitaError::InvalidInput(
                 "compression witness digit is not negative binary".into(),
@@ -768,3 +756,7 @@ fn read_portable<F: Field + CanonicalEncoding>(
     };
     Ok((logical, inner, compression))
 }
+
+#[cfg(test)]
+#[path = "transfer/tests.rs"]
+mod tests;

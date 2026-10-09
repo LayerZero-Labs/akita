@@ -7,7 +7,6 @@ mod aarch64;
 #[cfg(target_arch = "x86_64")]
 mod x86_64;
 
-use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::{iter::FusedIterator, ops::Range};
 
@@ -67,7 +66,7 @@ impl SignedDigitBounds {
 /// vector loads that extend past the final payload byte.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PackedSignedDigits {
-    storage: Arc<[u8]>,
+    storage: Arc<Vec<u8>>,
     encoded_len: usize,
     len: usize,
     bit_width: u8,
@@ -77,7 +76,7 @@ pub(crate) struct PackedSignedDigits {
 impl Default for PackedSignedDigits {
     fn default() -> Self {
         Self {
-            storage: Arc::from([0; VECTOR_LOAD_PADDING]),
+            storage: Arc::new(vec![0; VECTOR_LOAD_PADDING]),
             encoded_len: 0,
             len: 0,
             bit_width: 1,
@@ -95,7 +94,7 @@ impl From<Arc<[i8]>> for PackedSignedDigits {
 
 impl PackedSignedDigits {
     pub(crate) fn from_i8_digits_auto(digits: Vec<i8>) -> Self {
-        let bounds = signed_digit_bounds(&digits);
+        let bounds = signed_digit_bounds(digits.iter().copied());
         let bit_width = minimum_signed_bit_width(bounds);
         let len = digits.len();
         let encoded_len = encoded_byte_len(len, bit_width);
@@ -124,39 +123,48 @@ impl PackedSignedDigits {
         writer.finish()
     }
 
-    /// Fill final packed storage directly; local vector-load padding never crosses transport.
+    /// Adopt an owned encoded payload and append local vector-load padding.
     pub(crate) fn import_encoded(
         len: usize,
         bit_width: u8,
-        fill: impl FnOnce(&mut [u8]) -> Result<(), AkitaError>,
+        mut bytes: Vec<u8>,
     ) -> Result<Self, AkitaError> {
-        let mut writer = PackedSignedDigitWriter::new(len, bit_width)?;
-        fill(&mut Arc::make_mut(&mut writer.storage)[..writer.encoded_len])?;
+        validate_bit_width(bit_width)?;
+        let encoded_len = encoded_byte_len(len, bit_width);
+        if bytes.len() != encoded_len {
+            return Err(AkitaError::InvalidInput(
+                "imported packed digit length mismatch".into(),
+            ));
+        }
         let tail_bits = checked::product([len, bit_width as usize]).ok_or_else(|| {
             AkitaError::InvalidInput("imported packed digit length overflow".into())
         })? % 8;
         if tail_bits != 0
-            && writer
-                .storage
-                .get(writer.encoded_len.saturating_sub(1))
+            && bytes
+                .last()
                 .is_some_and(|last| last & !((1 << tail_bits) - 1) != 0)
         {
             return Err(AkitaError::InvalidInput(
                 "imported packed digits have nonzero tail bits".into(),
             ));
         }
+        bytes.try_reserve_exact(VECTOR_LOAD_PADDING).map_err(|_| {
+            AkitaError::InvalidInput("packed signed-digit allocation failed".into())
+        })?;
+        bytes.resize(
+            checked::sum([encoded_len, VECTOR_LOAD_PADDING]).ok_or_else(|| {
+                AkitaError::InvalidInput("packed signed-digit storage length overflow".into())
+            })?,
+            0,
+        );
         let mut packed = Self {
-            storage: writer.storage,
-            encoded_len: writer.encoded_len,
+            storage: Arc::new(bytes),
+            encoded_len,
             len,
             bit_width,
             bounds: SignedDigitBounds::ZERO,
         };
-        let mut bounds = SignedDigitBounds::ZERO;
-        for digit in packed.iter() {
-            bounds.include_bounds(signed_digit_bounds(&[digit]));
-        }
-        packed.bounds = bounds;
+        packed.bounds = packed.view().scan_bounds();
         Ok(packed)
     }
 
@@ -242,7 +250,7 @@ impl PackedSignedDigits {
 /// directly into storage; only the block split by the current position waits
 /// in `pending` until a later write or [`Self::finish`] completes it.
 pub(crate) struct PackedSignedDigitWriter {
-    storage: Arc<[u8]>,
+    storage: Arc<Vec<u8>>,
     encoded_len: usize,
     len: usize,
     bit_width: u8,
@@ -253,28 +261,21 @@ pub(crate) struct PackedSignedDigitWriter {
     bounds: SignedDigitBounds,
 }
 
-/// Largest byte length an `Arc<[u8]>` layout can hold: `isize::MAX` less the
-/// two reference counts and the rounding to their alignment.
-const MAX_STORAGE_LEN: usize = isize::MAX as usize - 3 * size_of::<usize>();
+/// Conservative byte-allocation cap, leaving room for local SIMD padding.
+const MAX_STORAGE_LEN: usize = isize::MAX as usize - VECTOR_LOAD_PADDING;
 
 impl PackedSignedDigitWriter {
     // The Arc is fresh and has no weak references, so make_mut never copies.
-    fn allocate_zeroed_storage(storage_len: usize) -> Arc<[u8]> {
-        // Touch every page here: faulting fresh pages from parallel encoders
-        // costs far more than one serial fill.
-        let mut storage = Arc::<[u8]>::new_uninit_slice(storage_len);
-        Arc::make_mut(&mut storage).fill(MaybeUninit::new(0));
-        // SAFETY: every slot was initialized immediately above.
-        let storage = unsafe { storage.assume_init() };
-        debug_assert_eq!(storage.len(), storage_len);
-        storage
+    fn allocate_zeroed_storage(storage_len: usize) -> Arc<Vec<u8>> {
+        // Initialize gaps and vector-load padding before encoders run.
+        Arc::new(vec![0; storage_len])
     }
 
     pub(crate) fn new(len: usize, bit_width: u8) -> Result<Self, AkitaError> {
         validate_bit_width(bit_width)?;
         let encoded_len = encoded_byte_len(len, bit_width);
-        // An allocation layout is capped at isize::MAX bytes including the
-        // Arc header; past that the allocator panics instead of failing.
+        // Byte allocations are capped at isize::MAX; reject larger layouts
+        // before the allocator can panic.
         let storage_len = checked::sum([encoded_len, VECTOR_LOAD_PADDING])
             .filter(|&storage_len| storage_len <= MAX_STORAGE_LEN)
             .ok_or_else(|| {
@@ -411,6 +412,43 @@ pub(crate) struct PackedSignedDigitView<'a> {
 }
 
 impl<'a> PackedSignedDigitView<'a> {
+    /// Scan a validated view in independent blocks, without per-digit iterator overhead.
+    pub(crate) fn scan_bounds(self) -> SignedDigitBounds {
+        const CHUNK: usize = 1 << 16;
+        let scan = |chunk: usize| {
+            let start = chunk * CHUNK;
+            let end = start + (self.len - start).min(CHUNK);
+            if self.bit_width == 8 && self.start + end <= self.stored_len {
+                return signed_digit_bounds(
+                    self.storage[self.start + start..self.start + end]
+                        .iter()
+                        .map(|&byte| byte as i8),
+                );
+            }
+            let mut bounds = SignedDigitBounds::ZERO;
+            let mut decoded = [0i8; 4096];
+            for offset in (start..end).step_by(decoded.len()) {
+                let count = (end - offset).min(decoded.len());
+                self.decode_validated_range(offset, &mut decoded[..count]);
+                bounds.include_bounds(signed_digit_bounds(decoded[..count].iter().copied()));
+            }
+            bounds
+        };
+        let chunks = self.len.div_ceil(CHUNK);
+        let combine = |mut bounds: SignedDigitBounds, chunk| {
+            bounds.include_bounds(chunk);
+            bounds
+        };
+        #[cfg(feature = "parallel")]
+        if self.len >= CHUNK {
+            return (0..chunks)
+                .into_par_iter()
+                .map(scan)
+                .reduce(|| SignedDigitBounds::ZERO, combine);
+        }
+        (0..chunks).map(scan).fold(SignedDigitBounds::ZERO, combine)
+    }
+
     #[inline]
     fn decode_stored(self, index: usize) -> i8 {
         if self.vector_safe {
@@ -800,10 +838,10 @@ fn validate_bounds(bounds: SignedDigitBounds, bit_width: u8) -> Result<(), Akita
     )))
 }
 
-fn signed_digit_bounds(digits: &[i8]) -> SignedDigitBounds {
+fn signed_digit_bounds(digits: impl Iterator<Item = i8>) -> SignedDigitBounds {
     // Folding from zero makes the minimum's magnitude the largest negative
     // magnitude and the maximum the largest nonnegative digit.
-    let (min, max) = digits.iter().fold((0i8, 0i8), |(min, max), &digit| {
+    let (min, max) = digits.fold((0i8, 0i8), |(min, max), digit| {
         (min.min(digit), max.max(digit))
     });
     SignedDigitBounds {
@@ -833,7 +871,7 @@ fn encode_digits(digits: &[i8], bit_width: u8, output: &mut [u8]) -> SignedDigit
             .chunks_mut(block_bytes)
             .zip(digits.chunks(DIGITS_PER_BLOCK))
             .for_each(|(encoded, source)| scalar::encode_block(source, bit_width, encoded));
-        signed_digit_bounds(digits)
+        signed_digit_bounds(digits.iter().copied())
     };
 
     #[cfg(feature = "parallel")]

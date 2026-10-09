@@ -126,7 +126,10 @@ fn streaming_writer_round_trips_split_blocks_gaps_and_bulk_writes() {
                 expected,
                 "bit width {bit_width}, len {len}"
             );
-            assert_eq!(packed.bounds(), signed_digit_bounds(&expected));
+            assert_eq!(
+                packed.bounds(),
+                signed_digit_bounds(expected.iter().copied())
+            );
             let mut oracle = vec![0u8; packed.encoded_len];
             for (index, &digit) in expected.iter().enumerate() {
                 scalar::encode_at(&mut oracle, index, bit_width, digit);
@@ -384,7 +387,7 @@ fn writer_stays_in_the_final_partial_block_at_the_index_boundary() {
     let mut pending = [0; DIGITS_PER_BLOCK];
     pending[(usize::MAX - 3) % DIGITS_PER_BLOCK] = -1;
     let mut writer = PackedSignedDigitWriter {
-        storage: Arc::from([0u8; VECTOR_LOAD_PADDING]),
+        storage: Arc::new(vec![0u8; VECTOR_LOAD_PADDING]),
         encoded_len: 0,
         len: usize::MAX,
         bit_width: 2,
@@ -407,4 +410,63 @@ fn writer_rejects_lengths_past_the_allocation_layout_limit_without_allocating() 
     }
     let padded = isize::MAX as usize - VECTOR_LOAD_PADDING;
     assert!(PackedSignedDigitWriter::new(padded, 8).is_err());
+}
+
+#[test]
+fn owned_import_preserves_payload_allocation_bounds_and_padding() {
+    let mut rng = StdRng::seed_from_u64(0x696d_706f_7274);
+    for bit_width in 1..=8 {
+        for len in [0, 1, 7, 63, 64, 65, (1 << 16) + 13] {
+            let digits = random_digits(&mut rng, len, bit_width);
+            let original = PackedSignedDigits::from_i8_digits(digits.clone(), bit_width).unwrap();
+            let mut bytes = original.encoded_bytes().to_vec();
+            bytes.reserve_exact(VECTOR_LOAD_PADDING);
+            let allocation = bytes.as_ptr();
+            let imported = PackedSignedDigits::import_encoded(len, bit_width, bytes).unwrap();
+            assert_eq!(imported.encoded_bytes().as_ptr(), allocation);
+            assert_eq!(imported.encoded_bytes(), original.encoded_bytes());
+            assert_eq!(imported.bounds(), original.bounds());
+            assert_eq!(imported.decode(), digits);
+            assert!(imported.storage[imported.encoded_len..]
+                .iter()
+                .all(|&b| b == 0));
+        }
+    }
+}
+
+#[test]
+fn owned_import_rejects_wrong_lengths_widths_and_nonzero_tail_bits() {
+    for bit_width in [0, 9, u8::MAX] {
+        assert!(PackedSignedDigits::import_encoded(0, bit_width, Vec::new()).is_err());
+    }
+    assert!(PackedSignedDigits::import_encoded(3, 8, vec![0; 2]).is_err());
+    assert!(PackedSignedDigits::import_encoded(3, 8, vec![0; 4]).is_err());
+    assert!(PackedSignedDigits::import_encoded(1, 2, vec![0x80]).is_err());
+    let imported = PackedSignedDigits::import_encoded(3, 8, vec![128, 0, 127]).unwrap();
+    assert_eq!(imported.bounds().negative_abs_max(), 128);
+    assert_eq!(imported.bounds().positive_max(), 127);
+}
+
+#[test]
+fn scanned_bounds_match_scalar_oracle_for_slices_and_zero_padding() {
+    let mut rng = StdRng::seed_from_u64(0x626f_756e_6473);
+    for bit_width in 1..=8 {
+        let mut digits = random_digits(&mut rng, (1 << 16) + 79, bit_width);
+        let packed = PackedSignedDigits::from_i8_digits(digits.clone(), bit_width).unwrap();
+        digits.resize(digits.len() + 100, 0);
+        let view = packed.zero_padded(digits.len()).unwrap();
+        for range in [
+            0..0,
+            1..65,
+            7..513,
+            13..digits.len(),
+            (1 << 16)..digits.len(),
+            packed.len()..digits.len(),
+        ] {
+            assert_eq!(
+                view.slice(range.clone()).unwrap().scan_bounds(),
+                signed_digit_bounds(digits[range].iter().copied())
+            );
+        }
+    }
 }
