@@ -12,6 +12,7 @@ readme = "../../README.md"
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
+rayon = { version = "1.10", optional = true }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 akita-labinius-verifier = { version = "0.1.0", path = "../akita-labinius-verifier", default-features = false }
@@ -24,10 +25,17 @@ jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c
 
 [dev-dependencies]
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
+
+[[bench]]
+name = "commit_kernel"
+harness = false
+required-features = ["labinius"]
 
 [features]
 default = ["transcript-blake2b"]
+parallel = ["dep:rayon", "akita-algebra/parallel", "jolt-field/parallel"]
 labinius = [
   "akita-algebra/labinius-binary",
   "akita-algebra/labinius-trinomial",

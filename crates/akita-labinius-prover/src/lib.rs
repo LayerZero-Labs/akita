@@ -2,18 +2,21 @@
 //!
 //! This crate commits binary host words and proves their host-field multilinear
 //! evaluation with a clear integer response, which provides no zero knowledge,
-//! and builds the lowered root witness ([`lowered`]). Setup admission lives in
+//! and builds the lowered root witness (`lowered`). Setup admission lives in
 //! the verifier crate: these functions accept any admitted
 //! `BinaryClearSetup`, explicit or seed-derived.
 //! The [`root`] reduction returns two committed-table evaluation claims through an oracle seam.
 
 #![cfg(feature = "labinius")]
 
+pub mod commit_kernel;
 pub mod lowered;
 pub mod root;
 pub mod root_sumcheck;
 
 pub use root::{prove_root_reduction, prove_root_reduction_bytes, TransparentRootProverOracle};
+
+pub use commit_kernel::{commit_binary_clear_prepared, PreparedCommitMatrix};
 
 use akita_algebra::{binary::field_switch::SwitchField, SmoothFftField, TrinomialModulus};
 use akita_challenges::BinaryChallengeSampler;

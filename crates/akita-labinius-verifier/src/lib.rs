@@ -2,13 +2,13 @@
 //!
 //! This opt-in extension is not on the Akita proof path. It holds the
 //! standalone clear opening, which is a differential oracle; the seed-derived
-//! and SIS-admitted root setup ([`admitted`]); and the lowered root relation
-//! over the canonical response layout ([`lowered`]).
-//! [`root`] reduces binary openings to two committed-table evaluation claims.
+//! and SIS-admitted root setup (`admitted`); and the lowered root relation
+//! over the canonical response layout (`lowered`).
+//! `root` reduces binary openings to two committed-table evaluation claims.
 //!
-//! [`BinaryClearSetup::new`] takes an explicit matrix and checks geometry,
+//! `BinaryClearSetup::new` takes an explicit matrix and checks geometry,
 //! fold entropy and integer no-wrap only: it performs no SIS width-table
-//! lookup. [`AdmittedRootSetup::derive`] is the construction that derives the
+//! lookup. `AdmittedRootSetup::derive` is the construction that derives the
 //! shape from a root profile, takes the certified rank, and expands the matrix
 //! from a public seed. There is no outer commitment, setup offloading,
 //! recursion or zero knowledge. Verifier-reachable code follows

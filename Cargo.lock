@@ -109,9 +109,11 @@ dependencies = [
  "akita-params",
  "akita-sumcheck",
  "akita-types",
+ "criterion",
  "jolt-field",
  "jolt-poly",
  "rand 0.8.8",
+ "rayon",
 ]
 
 [[package]]
