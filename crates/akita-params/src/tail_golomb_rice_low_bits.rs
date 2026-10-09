@@ -13,6 +13,20 @@ pub fn wire_rice_low_bits(cap: u128) -> u32 {
     rice_low_bits_for_cap(cap).saturating_sub(OFFLINE_RICE_LOW_BITS_DELTA)
 }
 
+/// Cap low-bit widths whose [`wire_rice_low_bits`] equals `wire_rice_low_bits`.
+///
+/// The wire width drops [`OFFLINE_RICE_LOW_BITS_DELTA`] bits and saturates at
+/// zero, so a nonzero wire width names exactly one cap width.
+#[must_use]
+pub fn cap_rice_low_bits_for_wire(wire_rice_low_bits: u32) -> std::ops::RangeInclusive<u32> {
+    if wire_rice_low_bits == 0 {
+        0..=OFFLINE_RICE_LOW_BITS_DELTA
+    } else {
+        let cap = wire_rice_low_bits.saturating_add(OFFLINE_RICE_LOW_BITS_DELTA);
+        cap..=cap
+    }
+}
+
 /// Rice low-bit width from a per-coordinate magnitude scale (e.g. fold `‖z‖_inf` cap).
 ///
 /// Equals `floor(log2(scale))` for `scale > 1`; divisor is `2^rice_low_bits`.
