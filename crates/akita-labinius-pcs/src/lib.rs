@@ -19,10 +19,13 @@ pub mod image;
 pub mod root;
 pub mod session;
 mod setup;
+pub mod shipped;
+pub mod sizing;
 
 pub use config::{DigitConfig, Digits1, Digits2, Digits4};
 pub use image::{ImageCommitOutput, ImageEvaluation, ImageProver, ImageVerifier};
 pub use root::{RootPcsProver, RootPcsVerifier};
+pub use sizing::RootPcsSizing;
 
 /// Coefficient field of the admitted D648/P128 root.
 pub type F = akita_config::proof_optimized::fp128::Field;

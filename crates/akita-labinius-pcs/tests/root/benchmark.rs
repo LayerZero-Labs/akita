@@ -58,12 +58,34 @@ fn full_first_profile_two_bit_digits() {
         start.elapsed().as_secs_f64(),
         proof.len()
     );
+    if !akita_params::DEV_PROTOCOL {
+        assert_eq!(proof.len(), 93_454);
+    }
     let start = Instant::now();
     verifier
         .verify::<BinaryField128>(&output.committed_group, &point, value, &proof)
         .unwrap();
     eprintln!(
         "root full verify_seconds={:.6}",
+        start.elapsed().as_secs_f64()
+    );
+}
+
+#[test]
+#[ignore = "measure planner baseline before shipped artifact loading"]
+fn first_profile_planner_catalogs() {
+    let root = RootSetup::derive(
+        crate::common::PROFILE,
+        22,
+        8,
+        128,
+        AkitaSetupSeed::shake256_paged_v1([0x31; 32]),
+    )
+    .unwrap();
+    let start = Instant::now();
+    let _ = Fixture::<Digits2>::planned_catalogs(&root);
+    eprintln!(
+        "root full planner_catalogs_seconds={:.6}",
         start.elapsed().as_secs_f64()
     );
 }

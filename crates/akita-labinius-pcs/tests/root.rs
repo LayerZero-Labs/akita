@@ -79,3 +79,55 @@ fn configuration_contracts_match_honest_signed_digit_bounds() {
     assert_eq!(Digits2::decomposition().log_open_bound, Some(128));
     assert_eq!(Digits4::decomposition().log_open_bound, Some(128));
 }
+
+#[test]
+fn shipped_small_supported_geometry_round_trip() {
+    use akita_labinius_pcs::{shipped::SUPPORTED_GEOMETRIES, RootPcsSizing, RootSetup};
+    use akita_serialization::AkitaSerialize;
+    use akita_types::proof::AkitaSetupSeed;
+    let geometry = SUPPORTED_GEOMETRIES[0];
+    let root = RootSetup::derive(
+        geometry.profile,
+        geometry.log_num_cells,
+        geometry.log_fold_width,
+        geometry.lambda_fold,
+        AkitaSetupSeed::shake256_paged_v1([0x31; 32]),
+    )
+    .unwrap();
+    let fixture = support::Fixture::<Digits2>::new(&root);
+    let prover = fixture.prover(root.clone());
+    let verifier = fixture.verifier(root.clone());
+    let source = <BinaryField128 as Host>::source(root.setup().source_len());
+    let point = <BinaryField128 as Host>::point(root.setup().num_vars());
+    let value = support::evaluate::<BinaryField128>(&source, &point);
+    let output = prover.commit::<BinaryField128>(&source).unwrap();
+    let proof = prover
+        .open::<BinaryField128>(&source, &output, &point, value)
+        .unwrap();
+    verifier
+        .verify::<BinaryField128>(&output.committed_group, &point, value, &proof)
+        .unwrap();
+    let sizing = RootPcsSizing::new(
+        geometry.profile,
+        geometry.log_num_cells,
+        geometry.log_fold_width,
+        geometry.lambda_fold,
+        Digits2::BASE,
+    )
+    .unwrap();
+    assert!(
+        proof.len()
+            <= sizing
+                .opening_proof_bound::<Digits2, BinaryField128>(&fixture.images, &fixture.digits)
+                .unwrap()
+    );
+    let mut bytes = Vec::new();
+    output
+        .committed_group
+        .serialize_compressed(&mut bytes)
+        .unwrap();
+    assert_eq!(
+        bytes.len(),
+        sizing.commitment_bytes(&fixture.images).unwrap()
+    );
+}

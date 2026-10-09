@@ -21,6 +21,7 @@ use akita_verifier::AkitaVerifier;
 use crate::{
     config::DigitConfig, ImageCommitOutput, ImageConfig, ImageProver, PreparedRoot, RootSetup, F,
 };
+pub(crate) use binding::commitment_size;
 use binding::{admit_catalogs, resolve_rows};
 use verifier::GroupedVerifier;
 

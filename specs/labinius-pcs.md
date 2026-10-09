@@ -127,6 +127,58 @@ commitment is absorbed before all coefficient challenges. Nested session
 challenges follow both evaluation messages. All oracle proof bytes are
 absorbed by the parent channel, so later challenges depend on the inner proof.
 
+## Sizing and shipped schedule catalogs
+
+`RootPcsSizing::new` accepts the root profile, `log_num_cells`,
+`log_fold_width`, `lambda_fold`, and digit base. It derives the admitted root
+shape and encoding before any source data, matrix or commitment exists.
+The encoding supplies the image and digit table log lengths. The sizing owner
+also supplies the scalar image key, scalar digit key, and grouped digit key.
+The grouped key resolves the image row and retains its complete producer
+profile; the displayed TSV key alone MUST NOT be used to reconstruct it.
+
+Given both trusted catalogs, the sizing owner computes their union
+`SetupRequirements`, the image commitment's exact serialized size, and the
+complete opening's byte bound. It calls the existing shape, commitment,
+reduction wire and expanded Akita proof sizing owners. The bound includes
+both eight-byte frames and the response commitment.
+
+`shipped::SUPPORTED_GEOMETRIES` is the shared list for generation, loading and
+tests. It contains root profile tag 0, fold-width log 8, fold security 128,
+cell-count logs 16, 18, 20, 22 and 24, and all three digit bases. Each geometry
+has an image row, scalar digit rows, and grouped digit rows with the exact
+image producer. Identical keys are stored once.
+
+Call `shipped::catalogs::<C>(&sizing, artifact_root)` to load both catalogs.
+The path names the directory containing `schedules-labinius/`. Applications
+must distribute these external files with their binary. Loading crosses
+`TrustedScheduleCatalog::from_artifact_bytes`, the same audited admission
+boundary as ordinary Akita catalogs, and resolves both scalar and grouped
+keys. Unsupported geometries return `ShippedCatalogError::UnsupportedGeometry`
+before file access. I/O and admission errors remain distinct.
+
+The off-by-default `catalog-gen` feature enables the optional planner dependency
+and `gen_labinius_schedule_artifacts` binary. Runtime loading with only
+`labinius` has no planner dependency. Regenerate with:
+
+```sh
+cargo run --release -p akita-labinius-pcs --no-default-features \
+  --features labinius,catalog-gen,transcript-blake2b \
+  --bin gen_labinius_schedule_artifacts -- --output-dir artifacts
+```
+
+The generator reuses the main generator's canonical emit, row admission,
+metrics, policy signature and TSV snapshot owners. `--check` instead generates
+into temporary storage and checks every output byte against the tracked files.
+The CI job **LaBinius schedule artifact drift** runs the temporary regeneration
+and diffs the snapshot and artifact directory.
+
+A workspace selection of `akita-params/dev-protocol` uses only
+`schedules-labinius-dev/` and `schedule-catalog-labinius-dev.tsv`. Add that
+explicit feature to the generation command to regenerate the dev set.
+The drift job checks both sets. Enabling `labinius` never selects the dev
+protocol. Existing main-protocol artifact sets remain unchanged.
+
 ## Framing and allocation bounds
 
 W's announced byte length MUST equal the exact canonical size implied by the

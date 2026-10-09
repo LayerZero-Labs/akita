@@ -60,7 +60,8 @@ else
       forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
       ;;
     akita-labinius-pcs)
-      forbidden=(akita-planner akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
+      # Offline artifact generation may opt into the planner; ordinary loading may not.
+      forbidden=(akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
       ;;
     akita-zk-prover)
       # Prover-side zero-knowledge building blocks (#120). Like akita-prover,
@@ -110,4 +111,14 @@ if [ "${pkg}" = "akita-prover" ]; then
     echo "CPU execution or witness storage leaked into generic prover contracts" >&2
     exit 1
   fi
+fi
+
+if [ "${pkg}" = "akita-labinius-pcs" ]; then
+  for features in transcript-blake2b labinius,transcript-blake2b; do
+    runtime_tree="$(cargo tree -p "$pkg" --edges normal --no-default-features --features "$features")"
+    if grep -qE '(^|[[:space:]])akita-planner([[:space:]]|$)' <<<"$runtime_tree"; then
+      echo "planner dependency found in runtime LaBinius PCS ($features)" >&2
+      exit 1
+    fi
+  done
 fi

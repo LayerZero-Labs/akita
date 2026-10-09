@@ -7,7 +7,7 @@ pub(super) const SNAPSHOT_HEADER: &str = "family\tlogical_key\tlookup_key_digest
 const LEGACY_SNAPSHOT_HEADER: &str = "family\tlogical_key\tlookup_key_digest\tsetup_fields\tproof_bytes\tfold_levels\trow_digest\tpolicy\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SnapshotSchema {
+pub(crate) enum SnapshotSchema {
     Legacy,
     Current,
 }
@@ -15,7 +15,7 @@ pub(super) enum SnapshotSchema {
 pub(super) const COMPARISON_HEADER: &str = "family\tstatus\tlogical_key\tbaseline_lookup_key_digest\tcurrent_lookup_key_digest\tbaseline_setup_fields\tcurrent_setup_fields\tbaseline_first_direct_setup_capacity\tcurrent_first_direct_setup_capacity\tbaseline_proof_bytes\tcurrent_proof_bytes\tbaseline_levels\tcurrent_levels\tbaseline_row_digest\tcurrent_row_digest\tbaseline_policy\tcurrent_policy\n";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct CatalogSnapshotRow {
+pub(crate) struct CatalogSnapshotRow {
     pub schema: SnapshotSchema,
     pub family: String,
     pub logical_key: String,
@@ -100,7 +100,7 @@ fn indexed_rows(
     Ok(indexed)
 }
 
-pub(super) fn write_snapshot(rows: Vec<CatalogSnapshotRow>) -> Result<String, String> {
+pub(crate) fn write_snapshot(rows: Vec<CatalogSnapshotRow>) -> Result<String, String> {
     let indexed = indexed_rows(rows, "write snapshot")?;
     let mut out = SNAPSHOT_HEADER.to_string();
     for row in indexed.values() {

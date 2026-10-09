@@ -1,10 +1,7 @@
 #![allow(dead_code)]
 
 use akita_algebra::binary::{field_switch::SwitchField, BinaryField128, BinaryField192};
-use akita_config::{
-    policy_of, CommitmentConfig, SetupRequirements, TrustedScheduleCatalog,
-    ValidatedScheduleCatalog,
-};
+use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog, ValidatedScheduleCatalog};
 use akita_cpu_backend::AkitaProverSetup;
 use akita_error::AkitaError;
 use akita_labinius_pcs::{
@@ -103,6 +100,31 @@ impl<C: DigitConfig> Fixture<C> {
         TrustedScheduleCatalog<ImageConfig>,
         TrustedScheduleCatalog<C>,
     ) {
+        let sizing = akita_labinius_pcs::RootPcsSizing::new(
+            root.shape().profile(),
+            root.log_num_cells(),
+            root.log_fold_width(),
+            root.lambda_fold(),
+            C::BASE,
+        )
+        .unwrap();
+        match akita_labinius_pcs::shipped::catalogs::<C>(
+            &sizing,
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../artifacts"),
+        ) {
+            Ok(catalogs) => catalogs,
+            Err(akita_labinius_pcs::shipped::ShippedCatalogError::UnsupportedGeometry) => {
+                Self::planned_catalogs(root)
+            }
+            Err(error) => panic!("supported shipped catalogs must load: {error}"),
+        }
+    }
+    pub(crate) fn planned_catalogs(
+        root: &RootSetup,
+    ) -> (
+        TrustedScheduleCatalog<ImageConfig>,
+        TrustedScheduleCatalog<C>,
+    ) {
         let layout = LoweredRootLayout::new(root.setup(), root.shape(), C::BASE).unwrap();
         let image_log = layout.image_log_len();
         static IMAGE_SMALL: OnceLock<TrustedScheduleCatalog<ImageConfig>> = OnceLock::new();
@@ -157,12 +179,15 @@ impl<C: DigitConfig> Fixture<C> {
         images: TrustedScheduleCatalog<ImageConfig>,
         digits: TrustedScheduleCatalog<C>,
     ) -> Self {
-        let layout = LoweredRootLayout::new(root.setup(), root.shape(), C::BASE).unwrap();
-        let max = layout.image_log_len().max(layout.witness_log_len());
-        let requirements = SetupRequirements::from_catalog(&images, max, 2)
-            .unwrap()
-            .union(SetupRequirements::from_catalog(&digits, max, 2).unwrap())
-            .unwrap();
+        let sizing = akita_labinius_pcs::RootPcsSizing::new(
+            root.shape().profile(),
+            root.log_num_cells(),
+            root.log_fold_width(),
+            root.lambda_fold(),
+            C::BASE,
+        )
+        .unwrap();
+        let requirements = sizing.setup_requirements(&images, &digits).unwrap();
         let prover_setup = akita_pcs::new_prover_setup(&requirements).unwrap();
         let verifier_setup = prover_setup
             .to_verifier_setup(requirements.matrix_capacity())

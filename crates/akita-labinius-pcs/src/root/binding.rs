@@ -15,7 +15,6 @@ use akita_labinius_verifier::{
 };
 use akita_params::{
     BasisMode, CompressionChainPlan, GroupCommitPhaseParams, PolynomialGroupLayout,
-    ScheduleLookupKey,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
@@ -51,19 +50,15 @@ pub(super) fn resolve_rows<'a, C: DigitConfig>(
     image: &'a TrustedScheduleCatalog<ImageConfig>,
     digits: &'a TrustedScheduleCatalog<C>,
 ) -> Result<(&'a ResolvedScheduleRow, &'a ResolvedScheduleRow), AkitaError> {
-    let layout = LoweredRootLayout::new(admitted.setup(), admitted.shape(), C::BASE)?;
-    let image_row = image.resolve_key(&ScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(layout.image_log_len()),
-    ))?;
-    let mut precommitteds = Vec::new();
-    precommitteds
-        .try_reserve_exact(1)
-        .map_err(|_| AkitaError::InvalidSetup("root row allocation failed".into()))?;
-    precommitteds.push(image_row.profiles().final_group);
-    let grouped = digits.resolve_key(&ScheduleLookupKey {
-        final_group: PolynomialGroupLayout::singleton(layout.witness_log_len()),
-        precommitteds,
-    })?;
+    let sizing = crate::RootPcsSizing::new(
+        admitted.shape().profile(),
+        admitted.log_num_cells(),
+        admitted.log_fold_width(),
+        admitted.lambda_fold(),
+        C::BASE,
+    )?;
+    let image_row = image.resolve_key(&sizing.image_key())?;
+    let grouped = digits.resolve_key(&sizing.grouped_digit_key(image)?)?;
     Ok((image_row, grouped))
 }
 
@@ -91,7 +86,7 @@ pub(super) fn admit_catalogs<C: DigitConfig>(
 
 /// Ask the serializer for its fixed header and the compression owner for its
 /// terminal count. There is no public profile-only serialized-size function.
-pub(super) fn commitment_size(profile: GroupCommitPhaseParams) -> Result<usize, AkitaError> {
+pub(crate) fn commitment_size(profile: GroupCommitPhaseParams) -> Result<usize, AkitaError> {
     let source = profile.outer_slice_count.complete_source_coefficients(
         profile.outer.matrix.output_rank(),
         profile.outer.matrix.ring_dimension(),
@@ -219,6 +214,7 @@ mod tests {
     use super::*;
     use akita_config::{policy_of, ValidatedScheduleCatalog};
     use akita_params::CommittedGroupBatchProfile;
+    use akita_params::ScheduleLookupKey;
     use akita_planner::emit::{GroupedGenerationRequest, PrecommittedProducer};
     use jolt_field::One;
 

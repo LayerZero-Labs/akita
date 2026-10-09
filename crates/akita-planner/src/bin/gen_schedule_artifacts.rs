@@ -1,7 +1,7 @@
 //! Generate external schedule artifacts using the offline DP planner.
 
 mod catalog_policy_report;
-mod catalog_snapshot;
+pub(crate) mod catalog_snapshot;
 mod generation_output_path;
 
 use catalog_policy_report::catalog_policy_signature;
@@ -431,7 +431,7 @@ fn catalog_snapshot_row(
     })
 }
 
-fn materialized_snapshot_rows(
+pub(crate) fn materialized_snapshot_rows(
     spec: &EmitSpec,
     entries: &[akita_planner::emit::MaterializedEntry],
 ) -> Result<Vec<catalog_snapshot::CatalogSnapshotRow>, String> {
