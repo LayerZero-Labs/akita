@@ -10,6 +10,7 @@
 #![cfg(feature = "labinius")]
 
 pub mod commit_kernel;
+pub mod fold_kernel;
 pub mod lowered;
 pub mod root;
 pub mod root_sumcheck;
