@@ -444,11 +444,11 @@ jobs:
         with:
           components: clippy
       - name: Test opt-in clear openings
-        run: cargo test -p akita-labinius-verifier -p akita-labinius-prover --no-default-features --features labinius,${{ matrix.backend }}
+        run: cargo test -p akita-labinius-verifier -p akita-labinius-prover -p akita-labinius-pcs --no-default-features --features labinius,${{ matrix.backend }}
       - name: Check opt-in clear opening targets
-        run: cargo clippy -p akita-labinius-verifier -p akita-labinius-prover --all-targets --no-default-features --features labinius,${{ matrix.backend }} -- -D warnings
+        run: cargo clippy -p akita-labinius-verifier -p akita-labinius-prover -p akita-labinius-pcs --all-targets --no-default-features --features labinius,${{ matrix.backend }} -- -D warnings
       - name: Check unselected extension targets
-        run: cargo clippy -p akita-labinius-verifier -p akita-labinius-prover --all-targets --no-default-features --features ${{ matrix.backend }} -- -D warnings
+        run: cargo clippy -p akita-labinius-verifier -p akita-labinius-prover -p akita-labinius-pcs --all-targets --no-default-features --features ${{ matrix.backend }} -- -D warnings
 
   test-timing:
     name: Test timing

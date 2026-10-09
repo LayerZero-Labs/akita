@@ -1,0 +1,87 @@
+[package]
+name = "akita-labinius-pcs"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "Apache-2.0 OR MIT"
+description = "Opt-in Akita evaluation openings for LaBinius image tables"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+
+[features]
+default = ["transcript-blake2b"]
+labinius = [
+  "akita-labinius-verifier/labinius",
+  "akita-labinius-prover/labinius",
+]
+transcript-blake2b = [
+  "akita-config/transcript-blake2b",
+  "akita-cpu-backend/transcript-blake2b",
+  "akita-labinius-prover/transcript-blake2b",
+  "akita-labinius-verifier/transcript-blake2b",
+  "akita-params/transcript-blake2b",
+  "akita-pcs/transcript-blake2b",
+  "akita-prover/transcript-blake2b",
+  "akita-schedules/transcript-blake2b",
+  "akita-types/transcript-blake2b",
+  "akita-verifier/transcript-blake2b",
+  "akita-transcript/transcript-blake2b",
+  "akita-challenges/transcript-blake2b",
+  "akita-planner/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-config/transcript-keccak",
+  "akita-cpu-backend/transcript-keccak",
+  "akita-labinius-prover/transcript-keccak",
+  "akita-labinius-verifier/transcript-keccak",
+  "akita-params/transcript-keccak",
+  "akita-pcs/transcript-keccak",
+  "akita-prover/transcript-keccak",
+  "akita-schedules/transcript-keccak",
+  "akita-types/transcript-keccak",
+  "akita-verifier/transcript-keccak",
+  "akita-transcript/transcript-keccak",
+  "akita-challenges/transcript-keccak",
+  "akita-planner/transcript-keccak",
+]
+parallel = [
+  "akita-challenges/parallel",
+  "akita-labinius-prover/parallel",
+  "akita-pcs/parallel",
+  "akita-prover/parallel",
+  "akita-cpu-backend/parallel",
+  "akita-verifier/parallel",
+  "akita-types/parallel",
+  "akita-params/parallel",
+  "akita-algebra/parallel",
+  "jolt-field/parallel",
+]
+
+[dependencies]
+akita-algebra = { version = "0.1.0", path = "../akita-algebra", default-features = false }
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
+akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
+akita-error = { version = "0.1.0", path = "../akita-error", default-features = false }
+akita-labinius-prover = { version = "0.1.0", path = "../akita-labinius-prover", default-features = false }
+akita-labinius-verifier = { version = "0.1.0", path = "../akita-labinius-verifier", default-features = false }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
+akita-pcs = { version = "0.1.0", path = "../akita-pcs", default-features = false }
+akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }
+akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
+akita-serialization = { version = "0.1.0", path = "../akita-serialization", default-features = false }
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c7c2d08d5bb0c7c80501f29f723e595af7fcff3c", default-features = false, features = [
+  "asm",
+  "solinas",
+] }
+
+[dev-dependencies]
+akita-planner = { version = "0.1.0", path = "../akita-planner", default-features = false }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false, features = [
+  "logging-transcript",
+] }
+
+[lints]
+workspace = true

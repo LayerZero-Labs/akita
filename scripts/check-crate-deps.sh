@@ -59,6 +59,9 @@ else
     akita-labinius-prover)
       forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
       ;;
+    akita-labinius-pcs)
+      forbidden=(akita-planner akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
+      ;;
     akita-zk-prover)
       # Prover-side zero-knowledge building blocks (#120). Like akita-prover,
       # they reach CPU kernels only through backend traits.
