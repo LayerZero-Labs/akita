@@ -7,6 +7,8 @@
 use super::TrinomialError;
 
 mod arithmetic;
+mod wide;
+pub use wide::{TrinomialWideLimbAccumulator, TrinomialWideLimbDomain, TrinomialWideLimbSlots};
 #[cfg(target_arch = "aarch64")]
 mod neon;
 #[cfg(test)]
