@@ -155,7 +155,10 @@ All three checks use the same decoded integer response:
 - **Prime:** map signed coefficients into `F`, pack every contiguous group of
   `k` scalar rows, and require
   `A*pack(v) = sum_col embed_scalar(c_col)*Y_col` in every matrix row.
-  Products use `TrinomialNttDomain`.
+  Products use `TrinomialNttDomain`. For an admitted tag-1 root setup,
+  the integer-divisibility and bounded-carry check in the
+  [small-modulus specification](labinius-small-modulus-root.md#commitment-and-clear-endpoint-lifting)
+  replaces the shared-prime equality; no carry message is added.
 - **Binary:** take each coefficient's `rem_euclid(2)` parity, including
   negative odd coefficients, and require
   `sum_row eq(z_row,row)*(v_row mod 2) = sum_col U_col*(c_col mod 2)` in F162.

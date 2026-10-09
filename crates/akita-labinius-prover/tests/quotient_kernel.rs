@@ -77,8 +77,10 @@ fn honest_root_geometries<T: TestHost>() {
                 &case.commitment,
                 &challenges,
                 &response,
+                None,
             )
-            .unwrap();
+            .unwrap()
+            .quotients;
             assert_eq!(actual, expected, "fold={fold}, base={base:?}");
             assert_eq!(actual.len(), setup.n_a());
             assert!(actual.iter().all(|row| row.len() == 647));
@@ -96,8 +98,10 @@ fn honest_root_geometries<T: TestHost>() {
                         &case.commitment,
                         &challenges,
                         &response,
+                        None,
                     )
                     .unwrap()
+                    .quotients
                 });
                 assert_eq!(parallel, expected, "threads={threads}");
             }
@@ -124,7 +128,7 @@ fn reject(
         Err(AkitaError::InvalidProof)
     );
     assert_eq!(
-        kernel(commit, quotient, setup, commitment, challenges, response),
+        kernel(commit, quotient, setup, commitment, challenges, response, None),
         Err(AkitaError::InvalidProof)
     );
 }
@@ -269,7 +273,8 @@ fn both_prepared_matrices_reject_different_seed_or_shape() {
                     setup,
                     &case.commitment,
                     &challenges,
-                    &response
+                    &response,
+                    None
                 ),
                 Err(AkitaError::InvalidSetup(_))
             ));
@@ -302,7 +307,8 @@ fn both_prepared_matrices_reject_different_seed_or_shape() {
             setup,
             &case.commitment,
             &challenges,
-            &response
+            &response,
+            None
         ),
         Err(AkitaError::InvalidSetup(_))
     ));
@@ -313,7 +319,8 @@ fn both_prepared_matrices_reject_different_seed_or_shape() {
             setup,
             &case.commitment,
             &challenges,
-            &response
+            &response,
+            None
         ),
         Err(AkitaError::InvalidSetup(_))
     ));
@@ -332,7 +339,8 @@ fn both_prepared_matrices_reject_different_seed_or_shape() {
             setup,
             &case.commitment,
             &challenges,
-            &response
+            &response,
+            None
         ),
         Err(AkitaError::InvalidSetup(_))
     ));
@@ -343,7 +351,8 @@ fn both_prepared_matrices_reject_different_seed_or_shape() {
             setup,
             &case.commitment,
             &challenges,
-            &response
+            &response,
+            None
         ),
         Err(AkitaError::InvalidSetup(_))
     ));
@@ -386,8 +395,10 @@ where
         &commitment,
         &challenges,
         &response,
+        None,
     )
-    .unwrap();
+    .unwrap()
+    .quotients;
     assert_eq!(
         actual,
         reference(setup, &commitment, &challenges, &response).unwrap()

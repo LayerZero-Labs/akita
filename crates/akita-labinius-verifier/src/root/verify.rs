@@ -7,7 +7,9 @@ use crate::{
     codec::{exchange_binary, exchange_field},
     endpoint::verify_left_expansion,
     frontend::verify_frontend,
-    lowered::{image_weight_mle, witness_weight_mle, LoweredChallenges, LoweredPublic},
+    lowered::{
+        image_weight_mle, witness_weight_mle, ARelationAuxiliary, LoweredChallenges, LoweredPublic,
+    },
     root_sumcheck::{
         combined_terminal, product_terminal, verify_combined_rounds, verify_product_rounds,
     },
@@ -69,6 +71,10 @@ where
     for _ in 0..layout.n_a() {
         qa.push(zero_vec::<F>(quotient_len)?);
     }
+    let mut qa = ARelationAuxiliary {
+        quotients: qa,
+        carry: zero_vec(layout.encoding().a_carry_len())?,
+    };
     let mut q = zero_vec(layout.encoding().parity_quotient_len())?;
     let mut k = zero_vec(layout.encoding().parity_carry_len())?;
     exchange_root_auxiliary(&layout, channel, &mut qa, &mut q, &mut k)?;

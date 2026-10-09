@@ -1,26 +1,26 @@
 # LaBinius small-modulus root admission and foreign-modulus lift
 
-Status: parameter admission implemented; protocol not implemented
+Status: reduction-level protocol implemented; image and root PCS deferred
 Book-chapter: book/src/foundations/security.md
 Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 
 ## Scope and implementation status
 
-The off-by-default `labinius-sis` feature adds the closed parameter profile
-`LabiniusRootProfile::D648P128Q28BoundedW46Delta16`, a typed commitment
-modulus, a separate certified SIS (short integer solution) width table,
-shape admission and digit-base carry envelopes. At `(22, 8, 128)` it admits
-rank 3. Every opening-time object in the proposed protocol stays over the
-128-bit coefficient prime P. Selecting the profile does not implement that
-protocol.
+The off-by-default `labinius` feature supports the closed profile
+`LabiniusRootProfile::D648P128Q28BoundedW46Delta16` for seed-derived setup,
+clear binary openings and the root reduction with the transparent oracle.
+The parameter layer supplies its typed commitment modulus, certified SIS
+(short integer solution) width table, shape admission and digit-base carry
+envelopes. At `(22, 8, 128)` it admits rank 3. Opening-time objects stay over
+the 128-bit coefficient prime P.
 
-`AdmittedRootSetup::derive` explicitly returns `InvalidSetup` for the small
-commitment modulus before deriving the shape or matrix. The root prover
-consumes this admitted setup, and the image PCS uses the same setup type.
-The guard stays until protocol support implements the obligations below.
-No new commitment kernel, reduced matrix, wire grammar, carry transport,
-relation, planner integration or catalog is implemented here. The existing
-tag-0 profile, its exact-only table and its identity bytes are unchanged.
+Commitment and quotient construction use the existing P-field transform
+kernels on the reduced matrix, followed by exact centred lifting. A dedicated
+small-prime kernel, planner integration and catalogs remain deferred.
+`akita-labinius-pcs` rejects this profile with `InvalidSetup` at root prover
+and verifier construction and at the image methods that accept an admitted
+root. Its image constructors do not take a root profile. The existing tag-0
+profile, table, identities, commitments and reduction proof bytes are unchanged.
 
 ## Notation
 
@@ -44,15 +44,17 @@ other five primes. Admission selects the smallest certified rank dominating
 both eta_A and m, with no interpolation or extrapolation. The rank-2 candidate
 has zero width and is absent from the runtime table, even at requested width 1.
 
-## Commitment and derivation bias (protocol not implemented)
+## Commitment and derivation bias
 
-The following commitment and reduced matrix are proposed protocol behavior.
+The following commitment and reduced matrix are implemented behavior.
 
 
 - Matrix: `A in Z[Y]^{n_A x m}`, each coefficient an integer in `[0, q0)`: coefficient `t` of `A[i,j]` is `canonical(prefix((i*m + j)*D + t)) mod q0`, where `prefix` is the existing `derive_public_matrix_prefix::<F>` stream.
 - Distribution: for `X` uniform on `[0, P)` and `r = P mod q0`, the total variation distance of `X mod q0` from uniform is `r * (q0 - r) / (P * q0) <= q0 / (4P)`. Over `N = n_A * m * D` coefficients a hybrid gives at most `N * q0 / (4P)`: `2^-79.1` at `m = 4096`, `2^-71.1` at `m = 2^20`, `2^-63.1` at `m = 2^28`. This term enters the SIS reduction as an additive loss and must be budgeted per admitted geometry. The reduced view and the unreduced `F_P` view of the same prefix are correlated; nothing may treat them as independent matrices.
-- Image: `T_(col,i) = [sum_j A_ij * s_(col,j) mod Phi_D]`, coefficientwise, `n_A * C * D` integers in `[0, q0)`.
-- The image table `Y` of the lowered relation holds these integers embedded in `F_P` and is committed by the existing image PCS. It is not range-checked.
+- Image: `T_(col,i) = [sum_j A_ij * s_(col,j) mod Phi_D] mod q0`, coefficientwise, `n_A * C * D` integers in `[0, q0)`.
+- The image table `Y` holds these integers embedded in `F_P` and is bound by
+  the transparent oracle here. Image PCS integration is deferred. Y is not
+  range-checked.
 
 ### Implemented bias admission policy
 
@@ -65,7 +67,7 @@ security. The large-width bias figures above are algebraic examples, not
 claims of admission or feasible matrix materialization. In particular the
 width 2^28 example misses the provisional 64-bit floor.
 
-## Lifted relation (not implemented)
+## Lifted relation
 
 
 The A row becomes an identity over `Z[Y]`, with every product unreduced:
@@ -178,7 +180,7 @@ At `(log_num_cells, log_fold_width, lambda_fold) = (22,8,128)`:
 | 2 | 40 | 435222320333752371255 | 160161813882820872621840 |
 | 4 | 40 | 435222320333752371255 | 160161813882820872621840 |
 
-## Soundness ledger delta (protocol not implemented)
+## Soundness ledger delta
 
 - The A-row polynomial identity test remains `(2D - 2)/|F|`.
 - The implemented lift inequalities use e_KA rounded to the selected base.
@@ -186,31 +188,92 @@ At `(log_num_cells, log_fold_width, lambda_fold) = (22,8,128)`:
   derivation bias. The width certificate rule is stated below. The generic
   estimate does not establish ring-ideal security or the open extraction and
   Fiat-Shamir composition theorem.
-- Future wire support needs exactly n_A rows of D-1 canonical field elements
-  for QA, and n_A*D integers of e_KA bits for KA, bound before alpha. KA uses
-  the parity witness's canonical signed-offset encoding. Unused high bits
-  reject: for e_KA=39 the fortieth bit rejects, and for e_KA=40 all five bytes
-  are used. Integer range checking precedes any reduction modulo P.
+- The auxiliary message binds QA and KA before alpha, using the exact grammar
+  below. KA is checked as an integer before field embedding.
 - The closed profile and setup identity bind q0, the reduced derivation,
   carry-envelope rule and layout before challenges. Existing setup transcript
-  binding already absorbs the profile identity; the guard prevents using the
-  new identity with the shared-prime route.
+  binding absorbs the profile identity; the layout also requires the setup
+  commitment modulus to match the root shape.
 - Parity no-wrap remains unchanged.
 
-## Consequences outside the relation (not implemented)
+## Exact auxiliary-message grammar and matrix identity
+
+For tag 1, the auxiliary message has no count fields or framing:
+
+```text
+QA[0][0..D-1], ..., QA[n_A-1][0..D-1]  : canonical F_P, 16 bytes each
+KA[0][0..D],   ..., KA[n_A-1][0..D]    : signed offset, ceil(e_KA/8) bytes each
+Q[0..161]                             : signed offset, ceil(e_Q/8) bytes each
+K[0..162]                             : signed offset, ceil(e_K/8) bytes each
+```
+
+Ranges above are half-open. KA is row-major, with exactly `n_A*D` integers.
+For any signed e-bit value x, the bytes encode `x + 2^(e-1)` little-endian;
+the value must lie in `[-2^(e-1), 2^(e-1)-1]`. An offset at least `2^e`,
+including any nonzero unused high bit, rejects. QA is unconstrained beyond
+canonical field encoding and its exact degree extent. All four sections
+precede alpha. Tag 0 omits KA entirely, including any empty-section framing.
+
+Let `LP(x) = u64_le(byte_length(x)) || x`. The reduced matrix-view digest
+uses the existing backend-specific `matrix_digest` construction: a fresh
+channel frames this header as its session, the canonical field coefficient
+list's `field_digest` as its instance, and squeezes 32 bytes. Its header is:
+
+```text
+LP("akita/labinius/clear-matrix-view/reduced/v1")
+|| commitment_modulus_tag:u8 || q0:u32_le
+|| n_A:u64_le || m:u64_le || D:u64_le || middle_coefficient:i8
+```
+
+The coefficient list contains the reduced matrix entries in tight row-major
+order, each as its canonical F_P representation. This explicitly binds the
+reduction view and q0 even when the same coefficients appear in another view.
+Tag 0 retains `akita/labinius/clear-matrix-view/v1` and its original header.
+The nested clear identity binds this digest; the admitted identity also binds
+the root profile and derivation seed. No second matrix identity is introduced.
+
+`BinaryClearSetup::new` constructs only a shared-prime explicit setup.
+Caller-supplied small-modulus setups are unrepresentable through that public
+constructor; pairing one with a tag-1 shape rejects at layout admission.
+Only seed-derived root admission installs the small modulus. Its internal
+boundary additionally rejects any canonical matrix coefficient at least q0.
+
+## Commitment and clear-endpoint lifting
+
+For binary packed source coefficients in `[-1,1]`, the true reduced matrix
+product coefficient has magnitude at most `3*m*D*(q0-1)`. Admission rejects
+unless twice this bound is strictly below P. Both commitment paths compute
+in R_P, centre each coefficient exactly, then take its integer remainder
+modulo q0 in `[0,q0)`.
+
+The root quotient kernel obtains the original-ring remainder and the
+conjugate-ring residual through the existing transforms. It centres the
+remainder under `6*H_A < P`, checks integer divisibility by q0, and range-checks
+KA using the selected digit base. Subtracting the remainder from the conjugate
+residual leaves the existing field QA recovery unchanged. Tag 0 retains its
+nonzero-remainder rejection.
+
+The clear endpoint centres each coefficient of `A*z - sum_col ch_col*T_col`
+in R_P and checks integer divisibility by q0 and the admitted carry interval.
+It sends no carry message. Because the clear API has no digit-base selector,
+it uses the smallest admitted envelope, that for one-bit digits. Root reduction
+uses the selected base's envelope. Field division by q0 is never an integer
+check. T is not range-checked by either verifier.
+
+## Consequences outside the relation (deferred)
 
 Setup offloading cannot authenticate the reduced matrix using a commitment to
 the unreduced prefix: reduction `canonical(S_t) mod q0` is not F_P-linear.
 Future verification needs the materialized reduced view or a separately
 authenticated derived source. Common-field opening batching still uses P.
 
-The current materializer caps the flat F_P prefix and matrix allocations at
-64 MiB each, with separate coefficient-count and per-ring limits. At rank 3
-and m=4096 the matrix is 127401984 bytes as field elements or 31850496 bytes
-as u32. Future support needs paged derivation and u32 storage without a full
-field prefix or matrix copy. These are two allocation caps, not a global
+The materializer temporarily allows 128 MiB each for the flat F_P prefix and
+stored matrix for tag 1; tag 0 retains both 64 MiB caps. At rank 3 and m=4096
+the matrix is 127401984 bytes as field elements or 31850496 bytes as u32.
+A later storage change will derive the prefix in pages and store u32 entries,
+then return both caps to 64 MiB. These are two allocation caps, not a global
 verifier-memory cap. The padded setup-weight scratch vector separately has
-2^23 field elements, or 128 MiB. No such storage change is implemented here.
+2^23 field elements, or 128 MiB. No storage representation change is implemented.
 
 `LoweredPublic::new` and `witness_weight_mle` scan n_A*m*D coefficients,
 three times the current count at the sample geometry. Although reduced
@@ -220,12 +283,12 @@ multiplication cost or performance claim follows from the storage size.
 The image layout is unchanged: every ring element is padded to 1024, giving
 `image_table_len = 3*256*1024 = 786432` and `image_table_log_len = 20`.
 The final power-of-two domain has 1048576 entries, two variables more than
-rank one's 2^18. Small honest entries still use the full-field image PCS.
+rank one's 2^18. Future image PCS support will still use full-field openings for small honest
+entries.
 Future support needs new scalar and grouped catalogs and wire-size accounting
-over P. Total proof size and verifier time are not established. The clear
-endpoint also needs a carry-aware A check, rather than equality in the
-shared-prime ring. Field division by q0 alone cannot check integer carry
-divisibility or the admitted envelope.
+over P. Composed PCS proof size and verifier time are not established. Reduction wire
+size includes the clear KA section; the exact formula is in the
+[root-reduction specification](labinius-root-reduction.md).
 
 ## Profile identity bytes
 

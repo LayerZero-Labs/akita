@@ -81,6 +81,12 @@ pub fn a_row_residual<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
             .a_quotient_evaluations
             .get(row)
             .ok_or(AkitaError::InvalidProof)?;
+    if layout.encoding().a_carry().is_some() {
+        residual -= *public
+            .a_carry_terms
+            .get(row)
+            .ok_or(AkitaError::InvalidProof)?;
+    }
     Ok(residual)
 }
 

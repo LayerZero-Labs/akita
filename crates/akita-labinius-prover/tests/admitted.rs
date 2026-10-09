@@ -11,7 +11,9 @@ use akita_labinius_prover::{commit_binary_clear, prove_binary_clear_bytes};
 use akita_labinius_verifier::{
     derive_trinomial_matrix, verify_binary_clear_bytes, AdmittedRootSetup,
 };
-use akita_params::sis::labinius::{LabiniusRootProfile, LabiniusRootShape};
+use akita_params::sis::labinius::{
+    LabiniusCommitmentModulus, LabiniusRootProfile, LabiniusRootShape,
+};
 use akita_types::{
     proof::{derive_public_matrix_prefix, AkitaSetupSeed},
     setup_contribution::{TrinomialASetupView, TrinomialResponseLayout},
@@ -61,9 +63,13 @@ fn row_major_coefficients_match_setup_addresses_and_the_shared_prefix() {
     let (rows, columns, degree) = (2, 3, 648);
     let seed = seed(0x47);
     let count = rows * columns * degree;
-    let matrix =
-        derive_trinomial_matrix::<Prime128OffsetA7F7, 648, MinusTrinomial>(&seed, rows, columns)
-            .unwrap();
+    let matrix = derive_trinomial_matrix::<Prime128OffsetA7F7, 648, MinusTrinomial>(
+        &seed,
+        rows,
+        columns,
+        LabiniusCommitmentModulus::CoefficientPrime,
+    )
+    .unwrap();
     let prefix = derive_public_matrix_prefix::<Prime128OffsetA7F7>(count, &seed);
     // The longer expansion crosses the derivation's 4096-element page boundary.
     let longer_prefix = derive_public_matrix_prefix::<Prime128OffsetA7F7>(count * 2, &seed);
@@ -71,6 +77,7 @@ fn row_major_coefficients_match_setup_addresses_and_the_shared_prefix() {
         &seed,
         rows * 2,
         columns,
+        LabiniusCommitmentModulus::CoefficientPrime,
     )
     .unwrap();
     assert_eq!(
@@ -227,6 +234,7 @@ fn excessive_matrix_extents_reject_before_seed_expansion() {
                 &seed(0x72),
                 rows,
                 columns,
+                LabiniusCommitmentModulus::CoefficientPrime,
             )
         });
         assert!(matches!(outcome, Ok(Err(AkitaError::InvalidSetup(_)))));
@@ -241,6 +249,7 @@ fn empty_matrix_dimensions_return_invalid_setup_without_panicking() {
                 &seed(0x73),
                 rows,
                 columns,
+                LabiniusCommitmentModulus::CoefficientPrime,
             )
         });
         assert!(matches!(outcome, Ok(Err(AkitaError::InvalidSetup(_)))));
@@ -249,7 +258,12 @@ fn empty_matrix_dimensions_return_invalid_setup_without_panicking() {
 
 fn invalid_matrix_degree<const D: usize>() {
     let outcome = std::panic::catch_unwind(|| {
-        derive_trinomial_matrix::<Prime128OffsetA7F7, D, MinusTrinomial>(&seed(0x74), 1, 1)
+        derive_trinomial_matrix::<Prime128OffsetA7F7, D, MinusTrinomial>(
+            &seed(0x74),
+            1,
+            1,
+            LabiniusCommitmentModulus::CoefficientPrime,
+        )
     });
     assert!(matches!(outcome, Ok(Err(AkitaError::InvalidSetup(_)))));
 }
@@ -268,6 +282,7 @@ fn excessive_ring_degree_rejects_without_reserving_a_coefficient_stack_array() {
             &seed(0x76),
             1,
             1,
+            LabiniusCommitmentModulus::CoefficientPrime,
         )
     });
     assert!(matches!(outcome, Ok(Err(AkitaError::InvalidSetup(_)))));

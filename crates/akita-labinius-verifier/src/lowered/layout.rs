@@ -40,6 +40,7 @@ impl LoweredRootLayout {
         };
         let encoding = shape.derive_encoding(base)?;
         if modulus != Some(shape.profile().coefficient_prime().modulus())
+            || setup.commitment_modulus() != shape.profile().commitment_modulus()
             || D != shape.commitment_degree()
             || setup.k() != shape.packing_degree()
             || shape.scalar_degree() != 162
@@ -185,6 +186,7 @@ impl LoweredRootLayout {
         setup: &BinaryClearSetup<F, D, M>,
     ) -> Result<(), AkitaError> {
         if self.degree() != D
+            || setup.commitment_modulus() != self.root_profile.commitment_modulus()
             || self.m() != setup.m()
             || self.n_a() != setup.n_a()
             || self.columns() != setup.columns()

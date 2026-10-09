@@ -16,9 +16,10 @@ use akita_algebra::{
 use akita_challenges::BinaryChallenge;
 use akita_error::{checked, AkitaError};
 use akita_labinius_verifier::{
-    endpoint::pack_response, profile::BinaryClearSetup, source::challenge_scalar,
-    BinaryClearCommitment,
+    commitment::centered_coefficient, endpoint::pack_response, lowered::ARelationAuxiliary,
+    profile::BinaryClearSetup, source::challenge_scalar, BinaryClearCommitment,
 };
+use akita_params::sis::labinius::LabiniusSignedDigitRange;
 use jolt_field::WithPacking;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -106,7 +107,7 @@ impl<F: SmoothFftField, const D: usize, M: ConjugateModulus> PreparedQuotientMat
     }
 }
 
-/// Return exactly the reference quotient rows using conjugate-ring transforms.
+/// Recover QA and optional integer KA using conjugate-ring transforms.
 ///
 /// Count, interval, packing, and challenge validation follow the reference's
 /// order. Both cache bindings are checked immediately afterwards, before any
@@ -120,7 +121,8 @@ pub fn a_relation_quotients<F, const D: usize, M>(
     commitment: &BinaryClearCommitment<F, D, M>,
     fold_challenges: &[BinaryChallenge],
     response: &[[i64; 162]],
-) -> Result<Vec<Vec<F>>, AkitaError>
+    a_carry_range: Option<LabiniusSignedDigitRange>,
+) -> Result<ARelationAuxiliary<F>, AkitaError>
 where
     F: SmoothFftField + WithPacking,
     M: ConjugateModulus,
@@ -157,6 +159,12 @@ where
         .ok_or(AkitaError::InvalidProof)?;
     prepared_quotient.check_setup(setup)?;
     prepared_commit.check_setup(setup)?;
+    let small_modulus = setup.commitment_modulus().small_modulus();
+    if small_modulus.is_some() != a_carry_range.is_some() {
+        return Err(AkitaError::InvalidSetup(
+            "A-carry range does not match commitment modulus".into(),
+        ));
+    }
     let domain = prepared_commit.domain();
     let conjugate = &prepared_quotient.domain;
     let mut lhs = Vec::new();
@@ -240,8 +248,19 @@ where
     quotients
         .try_reserve_exact(setup.n_a())
         .map_err(|_| AkitaError::InvalidProof)?;
+    let mut carry = Vec::new();
+    if small_modulus.is_some() {
+        carry
+            .try_reserve_exact(checked::product([setup.n_a(), D]).ok_or(AkitaError::InvalidProof)?)
+            .map_err(|_| AkitaError::InvalidProof)?;
+    }
     for (row, (accumulator, conjugate_accumulator)) in lhs.iter().enumerate() {
         let mut remainder_slots = *accumulator.slots();
+        let mut remainder = small_modulus.map(|_| {
+            domain
+                .inverse_with_workspace(accumulator, &mut workspace)
+                .into_coefficients()
+        });
         let mut residual = conjugate
             .inverse_with_workspace(conjugate_accumulator, &mut conjugate_workspace)
             .into_coefficients();
@@ -250,6 +269,14 @@ where
             for (destination, &value) in remainder_slots.iter_mut().zip(term.slots()) {
                 *destination -= value;
             }
+            if let Some(remainder) = &mut remainder {
+                let coefficients = domain
+                    .inverse_with_workspace(term, &mut workspace)
+                    .into_coefficients();
+                for (destination, value) in remainder.iter_mut().zip(coefficients) {
+                    *destination -= value;
+                }
+            }
             let coefficients = conjugate
                 .inverse_with_workspace(conjugate_term, &mut conjugate_workspace)
                 .into_coefficients();
@@ -257,7 +284,27 @@ where
                 *destination -= value;
             }
         }
-        if remainder_slots.iter().any(|v| !v.is_zero()) {
+        if let (Some(q0), Some(range), Some(remainder)) = (small_modulus, a_carry_range, remainder)
+        {
+            // Admission ensures 6*H_A < P, so the honest remainder bounded by
+            // 3*H_A has a unique centered lift. Division here is over Z, not F_P.
+            let (lower, upper) = range.interval();
+            let q0 = i128::from(q0);
+            for (&coefficient, conjugate_residual) in remainder.iter().zip(&mut residual) {
+                let lifted = centered_coefficient(coefficient)?;
+                if lifted % q0 != 0 {
+                    return Err(AkitaError::InvalidProof);
+                }
+                let value = lifted / q0;
+                if value < lower || value > upper {
+                    return Err(AkitaError::InvalidProof);
+                }
+                carry.push(value);
+                // The remainder has degree below D, hence the same coefficients
+                // in both rings. Subtract it before recovering the field quotient.
+                *conjugate_residual -= coefficient;
+            }
+        } else if remainder_slots.iter().any(|v| !v.is_zero()) {
             return Err(AkitaError::InvalidProof);
         }
         let mut quotient = Vec::new();
@@ -285,5 +332,5 @@ where
         quotient.truncate(quotient_len);
         quotients.push(quotient);
     }
-    Ok(quotients)
+    Ok(ARelationAuxiliary { quotients, carry })
 }

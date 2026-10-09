@@ -11,7 +11,7 @@ use akita_algebra::ring::{
 use akita_challenges::{BinaryChallenge, BinaryChallengeProfile};
 use akita_error::{checked, AkitaError};
 
-use crate::commitment::{apply_matrix, BinaryClearCommitment};
+use crate::commitment::{apply_matrix, centered_coefficient, BinaryClearCommitment};
 use crate::frontend::BinaryEvaluationClaim;
 use crate::profile::BinaryClearSetup;
 use crate::source::{challenge_binary, challenge_scalar, equality_weights, scalar_from_signed};
@@ -243,7 +243,21 @@ pub fn verify_endpoints<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
                 .ok_or(AkitaError::InvalidProof)?;
             rhs += domain.multiply_with_workspace(challenge, image, &mut workspace);
         }
-        if expected != &rhs {
+        if let Some(q0) = setup.commitment_modulus().small_modulus() {
+            let (lower, upper) = setup.a_carry().ok_or(AkitaError::InvalidProof)?.interval();
+            for (&left, &right) in expected.coefficients().iter().zip(rhs.coefficients()) {
+                // This is integer divisibility after exact centred lifting;
+                // division by q0 inside F_P would not enforce the relation.
+                let residual = centered_coefficient(left - right)?;
+                if residual % i128::from(q0) != 0 {
+                    return Err(AkitaError::InvalidProof);
+                }
+                let carry = residual / i128::from(q0);
+                if carry < lower || carry > upper {
+                    return Err(AkitaError::InvalidProof);
+                }
+            }
+        } else if expected != &rhs {
             return Err(AkitaError::InvalidProof);
         }
     }
