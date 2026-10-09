@@ -24,7 +24,9 @@ const D: usize = 648;
 const K: usize = 4;
 const WIDTH: usize = 4096;
 const Q: u32 = 268_433_353;
-const BITS: u64 = (WIDTH * D) as u64;
+/// Committed source bits per column: `WIDTH` ring elements of `K` 128-bit words.
+/// Each packed polynomial has `D = 648` coefficients, of which 136 are fixed zero.
+const BITS: u64 = (WIDTH * K * 128) as u64;
 
 fn benchmark_geometry(criterion: &mut Criterion) {
     #[cfg(feature = "parallel")]
@@ -50,12 +52,12 @@ fn benchmark_geometry(criterion: &mut Criterion) {
             PreparedLimbCommitMatrix::prepare(Q, D, rank, WIDTH, &matrix[..rank * WIDTH * D])
                 .expect("benchmark matrix has reduced coefficients and admitted geometry");
         eprintln!(
-            "limb rank={rank}: build={:.6}s, matrix_with_tags={} bytes, prepared={} bytes, workspace={} bytes, committed_bits={BITS}, live_source_bits={}",
+            "limb rank={rank}: build={:.6}s, matrix_with_tags={} bytes, prepared={} bytes, workspace={} bytes, source_bits={BITS}, ring_coefficients={}",
             start.elapsed().as_secs_f64(),
             prepared.matrix_bytes(),
             prepared.prepared_bytes(),
             prepared.workspace_bytes(),
-            source.len() * 128,
+            WIDTH * D,
         );
         group.bench_with_input(
             BenchmarkId::new("limb_rank", rank),
