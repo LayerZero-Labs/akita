@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
 license = "Apache-2.0 OR MIT"
-description = "Opt-in Akita evaluation openings for LaBinius image tables"
+description = "Opt-in Akita polynomial commitments for LaBinius binary evaluations"
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
@@ -59,6 +59,7 @@ parallel = [
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra", default-features = false }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
 akita-error = { version = "0.1.0", path = "../akita-error", default-features = false }
@@ -78,7 +79,6 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 
 [dev-dependencies]
 akita-planner = { version = "0.1.0", path = "../akita-planner", default-features = false }
-akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false, features = [
   "logging-transcript",
 ] }

@@ -39,9 +39,9 @@ pub struct ImageEvaluation<'a> {
 
 /// Caller-trusted catalog, Akita setup and owning CPU backend for image openings.
 pub struct ImageProver {
-    scheme: AkitaCommitmentScheme<ImageConfig>,
-    setup: AkitaProverSetup<F>,
-    backend: CpuBackend<F, F>,
+    pub(crate) scheme: AkitaCommitmentScheme<ImageConfig>,
+    pub(crate) setup: AkitaProverSetup<F>,
+    pub(crate) backend: CpuBackend<F, F>,
 }
 
 impl ImageProver {

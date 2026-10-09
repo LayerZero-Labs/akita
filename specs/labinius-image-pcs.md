@@ -35,10 +35,11 @@ bits from lowest to highest, as in the lowered-root relation.
 An accepted opening authenticates the claimed evaluation of the table bound
 by the public Akita commitment, conditional on Akita's binding and evaluation
 soundness. Verification does not recompute the clear image or establish that
-an arbitrary supplied commitment was created from a binary source. This
+an arbitrary supplied commitment was created from a binary source. The image-only
 adapter proves no binary source opening and provides no extraction, SIS claim,
-or complete Fiat–Shamir composition theorem. The oracle and composition
-obligations in [the root reduction](labinius-root-reduction.md) remain separate.
+or complete Fiat–Shamir composition theorem. The crate also exposes
+[the root PCS](labinius-pcs.md), which composes this commitment with the root
+reduction and a grouped Akita opening.
 
 ## Public API and trusted inputs
 
