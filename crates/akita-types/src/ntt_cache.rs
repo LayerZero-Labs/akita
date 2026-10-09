@@ -9,7 +9,7 @@ use akita_algebra::ntt::tables::{
 };
 use akita_algebra::{
     CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt, I16TailParams, Ifma52NttMatrix, Ifma52Params,
-    MontCoeff, NttPrime,
+    NttPrime,
 };
 use akita_error::AkitaError;
 #[allow(unused_imports)]
@@ -37,8 +37,9 @@ use exact::{
 use limbs::PreparedLimbMatrix;
 pub use prepared_artifact::{
     build_riscv64_scalar_q128_cache_artifact, decode_riscv64_scalar_q128_cache,
-    prepared_verifier_ntt_cache_metadata, PreparedVerifierNttCacheBinding,
-    PreparedVerifierNttCacheMetadata, PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
+    prepared_verifier_ntt_cache_metadata, view_riscv64_scalar_q128_cache,
+    PreparedVerifierNttCacheBinding, PreparedVerifierNttCacheMetadata,
+    PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
 };
 
 /// Transform representation stored by one exact-prefix NTT cache entry.
@@ -386,8 +387,34 @@ pub enum NttCacheMode {
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct PreparedI16Tail<const K: usize, const D: usize> {
-    negacyclic: Vec<CyclotomicCrtNtt<i16, 1, D>>,
+    negacyclic: PreparedRows<CyclotomicCrtNtt<i16, 1, D>>,
     params: I16TailParams<K, D>,
+}
+
+/// Prepared transform rows: owned, or viewed in a trusted prepared artifact
+/// that outlives the program (see
+/// [`view_riscv64_scalar_q128_cache`]).
+#[derive(Debug)]
+pub(crate) enum PreparedRows<T: 'static> {
+    Owned(Vec<T>),
+    Static(&'static [T]),
+}
+
+impl<T: 'static> From<Vec<T>> for PreparedRows<T> {
+    fn from(rows: Vec<T>) -> Self {
+        Self::Owned(rows)
+    }
+}
+
+impl<T: 'static> std::ops::Deref for PreparedRows<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &[T] {
+        match self {
+            Self::Owned(rows) => rows,
+            Self::Static(rows) => rows,
+        }
+    }
 }
 
 /// Read-only view of an exactness-only i16 tail pair.
@@ -493,8 +520,8 @@ enum PreparedNttCacheRepr<const D: usize> {
     },
     #[non_exhaustive]
     Q32 {
-        neg: Option<Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>>,
-        cyc: Option<Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>>,
+        neg: Option<PreparedRows<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>>,
+        cyc: Option<PreparedRows<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>>,
         params: CrtNttParamSet<i32, Q32_NUM_PRIMES, D>,
         tail: Option<PreparedI16Tail<Q32_NUM_PRIMES, D>>,
         exact: bool,
@@ -506,8 +533,8 @@ enum PreparedNttCacheRepr<const D: usize> {
     },
     #[non_exhaustive]
     Q64 {
-        neg: Option<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
-        cyc: Option<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
+        neg: Option<PreparedRows<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
+        cyc: Option<PreparedRows<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
         params: CrtNttParamSet<i32, Q64_NUM_PRIMES, D>,
         tail: Option<PreparedI16Tail<Q64_NUM_PRIMES, D>>,
         exact: bool,
@@ -518,8 +545,8 @@ enum PreparedNttCacheRepr<const D: usize> {
     },
     #[non_exhaustive]
     Q128 {
-        neg: Option<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
-        cyc: Option<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
+        neg: Option<PreparedRows<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
+        cyc: Option<PreparedRows<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
         params: CrtNttParamSet<i32, Q128_NUM_PRIMES, D>,
         tail: Option<PreparedI16Tail<Q128_NUM_PRIMES, D>>,
         exact: bool,
@@ -637,8 +664,8 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
     fn cache_bytes(&self) -> usize {
         macro_rules! bytes {
             ($neg:expr, $cyc:expr, $tail:expr, $k:expr) => {{
-                let base_entries =
-                    $neg.as_ref().map_or(0, Vec::len) + $cyc.as_ref().map_or(0, Vec::len);
+                let base_entries = $neg.as_ref().map_or(0, |rows| rows.len())
+                    + $cyc.as_ref().map_or(0, |rows| rows.len());
                 let base = base_entries * D * $k * core::mem::size_of::<i32>();
                 let tail = $tail.as_ref().map_or(0, |tail| {
                     tail.negacyclic.len() * D * core::mem::size_of::<i16>()
@@ -1134,7 +1161,8 @@ fn prepare_transform_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
                     neg: Some(
                         cfg_iter!(matrix.as_slice())
                             .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
-                            .collect(),
+                            .collect::<Vec<_>>()
+                            .into(),
                     ),
                     cyc: None,
                     params,
@@ -1146,7 +1174,8 @@ fn prepare_transform_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
                     cyc: Some(
                         cfg_iter!(matrix.as_slice())
                             .map(|ring| CyclotomicCrtNtt::from_ring_cyclic(ring, &params))
-                            .collect(),
+                            .collect::<Vec<_>>()
+                            .into(),
                     ),
                     params,
                     tail: None,
@@ -1155,8 +1184,8 @@ fn prepare_transform_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
                 NttCacheMode::BothTransforms => {
                     let (neg, cyc) = convert_flat_pair(matrix, &params);
                     PreparedNttCacheRepr::$variant {
-                        neg: Some(neg),
-                        cyc: Some(cyc),
+                        neg: Some(neg.into()),
+                        cyc: Some(cyc.into()),
                         params,
                         tail: None,
                         exact: false,
