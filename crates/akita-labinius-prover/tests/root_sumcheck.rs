@@ -469,13 +469,15 @@ fn shapes_and_excess_degree_messages() {
         degree: 2,
     };
     let mut state = channel::new_prover().unwrap();
-    assert!(prove_sumcheck::<F, F, _, _>(
-        &mut InfallibleSumcheck(&mut instance),
-        &mut RootSumcheckProverChannel::new(&mut state),
-        product_shape(1).unwrap(),
-        7,
-    )
-    .is_err());
+    assert!(matches!(
+        prove_sumcheck::<F, F, _, _>(
+            &mut InfallibleSumcheck(&mut instance),
+            &mut RootSumcheckProverChannel::new(&mut state),
+            product_shape(1).unwrap(),
+            7,
+        ),
+        Err(AkitaError::Internal(_))
+    ));
     assert!(matches!(
         combined_shape(usize::BITS as usize, BASES[0]),
         Err(AkitaError::InvalidInput(_))
@@ -493,15 +495,20 @@ fn truncated_and_extra_round_coefficients_are_rejected() {
         ProductSumcheck::new(vec![F::one(); 2], vec![F::one(); 2], F::from_u64(2)).unwrap();
     let (proof, _, _) = prove(&mut instance, product_shape(1).unwrap());
     assert_eq!(proof.len(), 2 * F::NUM_BYTES);
-    assert!(replay::<F>(
-        &proof[..proof.len() - 1],
-        product_shape(1).unwrap(),
-        F::from_u64(2)
-    )
-    .is_err());
+    assert!(matches!(
+        replay::<F>(
+            &proof[..proof.len() - 1],
+            product_shape(1).unwrap(),
+            F::from_u64(2)
+        ),
+        Err(AkitaError::InvalidProof)
+    ));
     let mut extra = proof;
     extra.extend(vec![0; F::NUM_BYTES]);
-    assert!(replay::<F>(&extra, product_shape(1).unwrap(), F::from_u64(2)).is_err());
+    assert!(matches!(
+        replay::<F>(&extra, product_shape(1).unwrap(), F::from_u64(2)),
+        Err(AkitaError::InvalidProof)
+    ));
 }
 
 #[test]

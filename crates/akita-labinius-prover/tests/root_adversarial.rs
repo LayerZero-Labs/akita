@@ -3,7 +3,9 @@
 mod root_forgery_support;
 
 use akita_error::AkitaError;
-use akita_labinius_verifier::lowered::{a_row_residual, check_lowered_clear, parity_row_residual};
+use akita_labinius_verifier::lowered::{
+    a_row_residual, check_lowered_clear, parity_row_residual, witness_weights_dense,
+};
 use jolt_field::Zero;
 use root_forgery_support::root_reduction_support::{Case, BASES};
 use root_forgery_support::{assemble, combined_terminal_matches, Attack};
@@ -43,6 +45,30 @@ fn honest_sequence_agrees_with_the_lowered_checker_at_transcript_challenges() {
             // The independent round construction agrees with the production prover.
             assert_eq!(evidence.proof, case.prove().0);
         }
+    }
+}
+
+#[test]
+fn nonzero_in_alphabet_padding_tail_accepts_the_full_root_proof() {
+    for base in BASES {
+        let mut case = Case::new(base, 0);
+        let evidence = assemble(&mut case, Attack::NonzeroTail);
+        let tail = 648 * case.layout.encoding().response().digit_count();
+        assert_eq!(evidence.digits[tail], (1 << base.bits()) - 1);
+        let weights = witness_weights_dense(&case.layout, &evidence.public).unwrap();
+        assert!(
+            weights[tail].is_zero(),
+            "the selected tail must have zero relation weight"
+        );
+        check_lowered_clear(
+            &case.layout,
+            &evidence.public,
+            &evidence.digits,
+            &case.image,
+        )
+        .unwrap();
+        assert!(combined_terminal_matches(&case, &evidence.proof));
+        case.verify(&evidence.proof).unwrap();
     }
 }
 
