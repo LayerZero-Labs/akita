@@ -11,11 +11,14 @@ use akita_algebra::{
 use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing};
 use akita_labinius_prover::{
     commit_binary_clear_limb_prepared, commit_binary_clear_prepared,
-    commit_kernel::pack_binary_element_i8, limb_commit_kernel::pack_binary_element_bits,
-    PreparedCommitMatrix, PreparedLimbCommitMatrix,
+    commit_binary_clear_small_modulus_prepared, commit_kernel::pack_binary_element_i8,
+    limb_commit_kernel::pack_binary_element_bits, PreparedCommitMatrix, PreparedLimbCommitMatrix,
 };
-use akita_labinius_verifier::BinaryClearSetup;
-use akita_params::sis::labinius::{LabiniusCoefficientPrime, LabiniusRingDegree};
+use akita_labinius_verifier::{AdmittedRootSetup, BinaryClearSetup};
+use akita_params::sis::labinius::{
+    LabiniusCoefficientPrime, LabiniusRingDegree, LabiniusRootProfile,
+};
+use akita_types::proof::AkitaSetupSeed;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_field::{Prime128OffsetA7F7, Ring};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -77,6 +80,37 @@ fn benchmark_geometry(criterion: &mut Criterion) {
                 });
             },
         );
+        if rank == 3 {
+            let admitted = AdmittedRootSetup::<Prime128OffsetA7F7, D, MinusTrinomial>::derive(
+                LabiniusRootProfile::D648P128Q28BoundedW46Delta16,
+                14,
+                0,
+                128,
+                AkitaSetupSeed::shake256_paged_v1([0x28; 32]),
+            )
+            .expect("benchmark small-modulus setup is admitted");
+            let setup = admitted.setup();
+            assert_eq!((setup.n_a(), setup.m(), setup.columns()), (3, WIDTH, 1));
+            let bound = PreparedLimbCommitMatrix::prepare_for_setup(setup)
+                .expect("benchmark setup has canonical small-modulus coefficients");
+            group.bench_function("limb_setup_rank/3", |b| {
+                b.iter(|| {
+                    let run = || {
+                        commit_binary_clear_small_modulus_prepared::<
+                            BinaryField128,
+                            Prime128OffsetA7F7,
+                        >(
+                            black_box(&bound), black_box(setup), black_box(&source)
+                        )
+                        .expect("benchmark source has the admitted setup geometry")
+                    };
+                    #[cfg(feature = "parallel")]
+                    black_box(pool.install(run));
+                    #[cfg(not(feature = "parallel"))]
+                    black_box(run());
+                });
+            });
+        }
     }
     let rings = matrix[..WIDTH * D]
         .chunks_exact(D)

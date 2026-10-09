@@ -25,7 +25,10 @@ pub use root::{
 };
 
 pub use commit_kernel::{commit_binary_clear_prepared, PreparedCommitMatrix};
-pub use limb_commit_kernel::{commit_binary_clear_limb_prepared, PreparedLimbCommitMatrix};
+pub use limb_commit_kernel::{
+    commit_binary_clear_limb_prepared, commit_binary_clear_small_modulus_prepared,
+    PreparedLimbCommitMatrix,
+};
 
 use akita_algebra::{binary::field_switch::SwitchField, SmoothFftField, TrinomialModulus};
 use akita_challenges::BinaryChallengeSampler;

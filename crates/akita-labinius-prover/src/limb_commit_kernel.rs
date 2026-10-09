@@ -1,6 +1,6 @@
 //! Commitment modulo an admitted limb prime, with signed binary sources.
 //!
-//! This arithmetic kernel is independent of root-profile admission. Its output
+//! The raw arithmetic kernel is independent of root-profile admission. Its output
 //! is reduced coefficient storage in the same column/row/coefficient order as
 //! `BinaryClearCommitment::images`; it has no proof or serialization format.
 
@@ -23,6 +23,10 @@ use rayon::prelude::*;
 
 use crate::commit_kernel::{check_source_len, source_element_rank};
 
+mod setup;
+
+pub use setup::commit_binary_clear_small_modulus_prepared;
+
 const DEGREE: usize = 648;
 const K: usize = 4;
 
@@ -41,6 +45,7 @@ pub struct PreparedLimbCommitMatrix {
     matrix_bytes: usize,
     prepared_bytes: usize,
     workspace_bytes: usize,
+    setup_digest: Option<[u8; 32]>,
 }
 
 impl PreparedLimbCommitMatrix {
@@ -49,6 +54,8 @@ impl PreparedLimbCommitMatrix {
     /// Reject degrees other than 648, unadmitted primes, zero rank or width,
     /// incorrect length, unreduced coefficients, overflowing sizes, and failed
     /// matrix allocations. Preparation initializes the signed-bit tables too.
+    /// The result is unbound and cannot serve the setup-bound entry point; use
+    /// [`Self::prepare_for_setup`] for small-modulus setups.
     pub fn prepare(
         q0: u32,
         degree: usize,
@@ -68,9 +75,7 @@ impl PreparedLimbCommitMatrix {
         }
         let domain = TrinomialLimbDomain::new(q0)
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
-        let entries = checked::product([n_a, m])
-            .ok_or_else(|| AkitaError::InvalidSetup("limb matrix size overflow".into()))?;
-        let expected = checked::product([entries, DEGREE])
+        let expected = checked::product([n_a, m, DEGREE])
             .ok_or_else(|| AkitaError::InvalidSetup("limb matrix size overflow".into()))?;
         if coefficients.len() != expected {
             return Err(AkitaError::InvalidSize {
@@ -83,6 +88,40 @@ impl PreparedLimbCommitMatrix {
                 "matrix coefficient must be below the limb prime".into(),
             ));
         }
+        Self::prepare_elements(
+            domain,
+            n_a,
+            m,
+            coefficients.chunks_exact(DEGREE).map(|element| {
+                let mut values = [0; DEGREE];
+                for (out, &value) in values.iter_mut().zip(element) {
+                    *out = value;
+                }
+                Ok(values)
+            }),
+        )
+    }
+
+    fn prepare_elements(
+        domain: TrinomialLimbDomain,
+        n_a: usize,
+        m: usize,
+        elements: impl ExactSizeIterator<Item = Result<[u32; DEGREE], AkitaError>>,
+    ) -> Result<Self, AkitaError> {
+        if n_a == 0 || m == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "limb commitment rank and width must be nonzero".into(),
+            ));
+        }
+        let q0 = domain.prime();
+        let entries = checked::product([n_a, m])
+            .ok_or_else(|| AkitaError::InvalidSetup("limb matrix size overflow".into()))?;
+        if elements.len() != entries {
+            return Err(AkitaError::InvalidSize {
+                expected: entries,
+                actual: elements.len(),
+            });
+        }
         let matrix_bytes = checked::product([entries, size_of::<TrinomialLimbSlots>()])
             .ok_or_else(|| AkitaError::InvalidSetup("limb matrix size overflow".into()))?;
         let mut matrix = Vec::new();
@@ -90,8 +129,8 @@ impl PreparedLimbCommitMatrix {
             .try_reserve_exact(entries)
             .map_err(|_| AkitaError::InvalidSetup("limb matrix allocation failed".into()))?;
         let mut centered = [0i32; DEGREE];
-        for element in coefficients.chunks_exact(DEGREE) {
-            for (out, &value) in centered.iter_mut().zip(element) {
+        for element in elements {
+            for (out, value) in centered.iter_mut().zip(element?) {
                 *out = if value > q0 / 2 {
                     (i64::from(value) - i64::from(q0)) as i32
                 } else {
@@ -120,6 +159,7 @@ impl PreparedLimbCommitMatrix {
             matrix_bytes,
             prepared_bytes,
             workspace_bytes,
+            setup_digest: None,
         })
     }
 

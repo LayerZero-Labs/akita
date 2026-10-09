@@ -14,9 +14,10 @@ The parameter layer supplies its typed commitment modulus, certified SIS
 envelopes. At `(22, 8, 128)` it admits rank 3. Opening-time objects stay over
 the 128-bit coefficient prime P.
 
-Commitment and quotient construction use the existing P-field transform
-kernels on the reduced matrix, followed by exact centred lifting. A dedicated
-small-prime kernel, planner integration and catalogs remain deferred.
+The existing commitment and quotient paths use P-field transform kernels on
+the reduced matrix, followed by exact centred lifting. Prepared commitments
+also have a dedicated small-prime limb path. Planner integration and catalogs
+remain deferred.
 `akita-labinius-pcs` rejects this profile with `InvalidSetup` at root prover
 and verifier construction and at the image methods that accept an admitted
 root. Its image constructors do not take a root profile. The existing tag-0
@@ -55,6 +56,16 @@ The following commitment and reduced matrix are implemented behavior.
 - The image table `Y` holds these integers embedded in `F_P` and is bound by
   the transparent oracle here. Image PCS integration is deferred. Y is not
   range-checked.
+
+This profile has two prepared commitment paths:
+`commit_binary_clear_prepared` computes over the 128-bit coefficient field and
+reduces each image coefficient modulo `q0`, while
+`commit_binary_clear_small_modulus_prepared` uses a setup-bound
+`PreparedLimbCommitMatrix` and the 32-bit-lane limb kernel, then embeds the
+result in `F_P`. Both paths must return equal commitments, image for image and
+coefficient for coefficient; `crates/akita-labinius-prover/tests/limb_commit_setup.rs`
+pins their agreement with `commit_binary_clear`. The 128-bit prepared path
+is retained for now.
 
 ### Implemented bias admission policy
 
