@@ -11,6 +11,7 @@ readme = "../../README.md"
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-error = { version = "0.1.0", path = "../akita-error" }
+akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 akita-labinius-verifier = { version = "0.1.0", path = "../akita-labinius-verifier", default-features = false }
@@ -18,6 +19,8 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
   "asm",
   "solinas",
 ] }
+
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c7c2d08d5bb0c7c80501f29f723e595af7fcff3c", default-features = false }
 
 [dev-dependencies]
 rand = "0.8"
@@ -32,11 +35,13 @@ labinius = [
   "akita-labinius-verifier/labinius",
 ]
 transcript-blake2b = [
+  "akita-sumcheck/transcript-blake2b",
   "akita-challenges/transcript-blake2b",
   "akita-params/transcript-blake2b",
   "akita-labinius-verifier/transcript-blake2b",
 ]
 transcript-keccak = [
+  "akita-sumcheck/transcript-keccak",
   "akita-challenges/transcript-keccak",
   "akita-params/transcript-keccak",
   "akita-labinius-verifier/transcript-keccak",

@@ -21,6 +21,7 @@ pub mod commitment;
 pub mod endpoint;
 pub mod frontend;
 pub mod profile;
+pub mod root_sumcheck;
 pub mod source;
 
 pub use channel::ClearChannel;
