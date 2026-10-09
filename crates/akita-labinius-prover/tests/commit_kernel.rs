@@ -58,6 +58,40 @@ fn random_u64_host_and_p64_coefficient_field() {
     random_equal::<BinaryField192, Prime128OffsetA7F7, 648, MinusTrinomial>();
 }
 
+#[test]
+fn random_u128_host_and_p64_coefficient_field() {
+    random_equal::<BinaryField128, Prime64Offset23703, 162, PlusTrinomial>();
+    random_equal::<BinaryField128, Prime64Offset23703, 324, MinusTrinomial>();
+    random_equal::<BinaryField128, Prime64Offset23703, 648, MinusTrinomial>();
+}
+
+/// One column at the benchmark geometry: 4096 ring elements accumulate into
+/// each row, the longest sum the first root profile produces.
+fn benchmark_column_equal<F: TestPrime + WithPacking>(n_a: usize) {
+    let setup = setup::<F, 648, MinusTrinomial>(n_a, 4096, 1);
+    let prepared = PreparedCommitMatrix::prepare(&setup).unwrap();
+    let (source, _, _) = data::<BinaryField128>(setup.source_len(), setup.num_vars());
+    assert_eq!(source.len() * 128, 2_097_152);
+    let reference =
+        commit_binary_clear::<BinaryField128, F, 648, MinusTrinomial>(&setup, &source).unwrap();
+    let actual = commit_binary_clear_prepared::<BinaryField128, F, 648, MinusTrinomial>(
+        &prepared, &setup, &source,
+    )
+    .unwrap();
+    assert_eq!(actual.images.len(), n_a);
+    assert_eq!(actual.images, reference.images, "n_a={n_a}");
+}
+
+#[test]
+fn benchmark_column_p128_rank_one_matches_reference() {
+    benchmark_column_equal::<Prime128OffsetA7F7>(1);
+}
+
+#[test]
+fn benchmark_column_p64_rank_two_matches_reference() {
+    benchmark_column_equal::<Prime64Offset23703>(2);
+}
+
 fn edge_equal<const D: usize, M: TrinomialModulus + Send + Sync>() {
     let setup = setup::<Prime128OffsetA7F7, D, M>(2, 2, 2);
     let prepared = PreparedCommitMatrix::prepare(&setup).unwrap();
