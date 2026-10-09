@@ -28,6 +28,7 @@ encoding remains the existing canonical 21-byte representation.
 Folding retains capacity and updates storage in place; no full-table temporary
 or per-round allocation is needed. Conversion and scalar extraction preserve
 the exact element order.
+The parallel path preserves this contract with chunk-local in-place folding followed by compaction.
 
 For two equal-length tables `a` and `b`, a round pairs adjacent elements, so it
 eliminates the least-significant table-index bit. A missing last odd-indexed
