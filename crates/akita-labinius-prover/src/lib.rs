@@ -81,8 +81,13 @@ where
         b"akita/labinius/clear-fold/v1",
         setup.columns(),
     )?;
-    let mut response =
-        fold_integer::<H>(source, setup.scalar_rows(), setup.columns(), &challenges)?;
+    let mut response = fold_integer::<H>(
+        source,
+        setup.scalar_rows(),
+        setup.columns(),
+        &challenges,
+        setup.profile(),
+    )?;
     if response
         .iter()
         .flatten()

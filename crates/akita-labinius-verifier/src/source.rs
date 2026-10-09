@@ -3,13 +3,18 @@
 use akita_algebra::binary::{field_switch::SwitchField, BinaryField162};
 use akita_algebra::fft::SmoothFftField;
 use akita_algebra::ring::{pack_scalar_components, PlusTrinomial, TrinomialModulus, TrinomialRing};
-use akita_challenges::BinaryChallenge;
+use akita_challenges::{BinaryChallenge, BinaryChallengeProfile};
 use akita_error::{checked, AkitaError};
 use jolt_field::Field;
 
 use crate::profile::BinaryClearSetup;
 
 /// Expand binary equality weights, with the first coordinate on the low index bit.
+///
+/// This duplicates the private `row_weights` helper in
+/// `akita-algebra/src/binary/field_switch.rs` for arbitrary endpoint geometry.
+/// Replace it when `akita-algebra` exposes a checked arbitrary-dimension F162
+/// equality expansion (tracking issue LayerZero-Labs/akita#45).
 pub fn equality_weights(point: &[BinaryField162]) -> Result<Vec<BinaryField162>, AkitaError> {
     let size = checked::pow2(point.len())
         .ok_or_else(|| AkitaError::InvalidInput("binary equality table size overflow".into()))?;
@@ -84,28 +89,20 @@ pub fn challenge_scalar<F: Field>(
     scalar_from_signed(&coefficients)
 }
 
-/// Project the same signed challenge terms modulo two.
-pub fn challenge_binary(challenge: &BinaryChallenge) -> Result<BinaryField162, AkitaError> {
-    let mut bytes = [0u8; 21];
-    for term in challenge.terms() {
-        let position = usize::from(term.position);
-        if position >= 162 || !matches!(term.coefficient, -1 | 1) {
-            return Err(AkitaError::InvalidInput(
-                "invalid scalar binary challenge".into(),
-            ));
-        }
-        let byte = bytes
-            .get_mut(position / 8)
-            .ok_or(AkitaError::InvalidProof)?;
-        let mask = 1u8 << (position % 8);
-        if *byte & mask != 0 {
-            return Err(AkitaError::InvalidInput(
-                "duplicate binary challenge position".into(),
-            ));
-        }
-        *byte |= mask;
+/// Project the admitted challenge's canonical support encoding modulo two.
+/// Only the degree-162 scalar ring has the F162 byte representation.
+pub fn challenge_binary(
+    challenge: &BinaryChallenge,
+    profile: &BinaryChallengeProfile,
+) -> Result<BinaryField162, AkitaError> {
+    if profile.scalar_ring().degree() != BinaryField162::DEGREE {
+        return Err(AkitaError::InvalidInput(
+            "binary challenge parity requires scalar degree 162".into(),
+        ));
     }
-    BinaryField162::from_bytes(&bytes).ok_or(AkitaError::InvalidProof)
+    let bytes = challenge.canonical_support_encoding(profile)?;
+    BinaryField162::from_bytes(&bytes)
+        .ok_or_else(|| AkitaError::InvalidInput("invalid F162 challenge support encoding".into()))
 }
 
 /// Pack one column, using scalar row `element * k + component`.

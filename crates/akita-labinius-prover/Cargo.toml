@@ -8,15 +8,9 @@ description = "Standalone clear binary opening prover for Akita"
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
-# The brief requires direct backend feature forwarding, while all transcript
-# operations are isolated in the verifier crate's channel.rs.
-[package.metadata.cargo-machete]
-ignored = ["akita-transcript"]
-
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-error = { version = "0.1.0", path = "../akita-error" }
-akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 akita-labinius-verifier = { version = "0.1.0", path = "../akita-labinius-verifier", default-features = false }
@@ -38,13 +32,11 @@ labinius = [
   "akita-labinius-verifier/labinius",
 ]
 transcript-blake2b = [
-  "akita-transcript/transcript-blake2b",
   "akita-challenges/transcript-blake2b",
   "akita-params/transcript-blake2b",
   "akita-labinius-verifier/transcript-blake2b",
 ]
 transcript-keccak = [
-  "akita-transcript/transcript-keccak",
   "akita-challenges/transcript-keccak",
   "akita-params/transcript-keccak",
   "akita-labinius-verifier/transcript-keccak",

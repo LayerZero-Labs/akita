@@ -174,7 +174,14 @@ fn ring_oracle<H: TestHost, F: TestPrime, const D: usize, M: TrinomialModulus>(
     let challenges = BinaryChallengeSampler::new(profile())
         .sample_challenges(&mut FixedDraw, b"oracle", columns)
         .unwrap();
-    let response = fold_integer::<H>(&source, setup.scalar_rows(), columns, &challenges).unwrap();
+    let response = fold_integer::<H>(
+        &source,
+        setup.scalar_rows(),
+        columns,
+        &challenges,
+        setup.profile(),
+    )
+    .unwrap();
     for (row, actual) in response.iter().enumerate() {
         // A dense wide convolution, independently reduced from highest degree.
         let mut convolution = [0i128; 323];
@@ -190,7 +197,7 @@ fn ring_oracle<H: TestHost, F: TestPrime, const D: usize, M: TrinomialModulus>(
                     convolution[power + bit] += coefficient * ((word >> bit) & 1) as i128;
                 }
             }
-            parity += challenge_binary(challenge).unwrap()
+            parity += challenge_binary(challenge, setup.profile()).unwrap()
                 * embed_source::<H>(source[row + setup.scalar_rows() * column]);
         }
         for power in (162..323).rev() {
@@ -270,4 +277,44 @@ fn parity_uses_euclidean_remainders_for_negative_coefficients() {
         response_parity(&signed).unwrap(),
         B::from_words([1, 0, 1 << 33]).unwrap()
     );
+}
+
+#[test]
+fn d324_matrix_action_and_scalar_packing_match_schoolbook() {
+    ring_oracle::<BinaryField128, Prime64Offset23703, 324, MinusTrinomial>(2, 4);
+    ring_oracle::<BinaryField192, Prime64Offset23703, 324, MinusTrinomial>(2, 4);
+    ring_oracle::<BinaryField128, Prime128OffsetA7F7, 324, MinusTrinomial>(2, 4);
+    ring_oracle::<BinaryField192, Prime128OffsetA7F7, 324, MinusTrinomial>(2, 4);
+}
+
+#[test]
+fn challenge_parity_decodes_canonical_support_and_checks_scalar_degree() {
+    use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing};
+    let profile = profile();
+    let challenges = BinaryChallengeSampler::new(profile.clone())
+        .sample_challenges(&mut FixedDraw, b"canonical-parity", 2)
+        .unwrap();
+    for challenge in &challenges {
+        let bytes = challenge.canonical_support_encoding(&profile).unwrap();
+        assert_eq!(bytes.len(), 21);
+        assert_eq!(
+            challenge_binary(challenge, &profile)
+                .unwrap()
+                .to_bytes()
+                .as_slice(),
+            bytes
+        );
+        let wrong_degree =
+            BinaryChallengeProfile::fixed_weight(BinaryScalarRing::Cyclotomic729, 47).unwrap();
+        assert!(matches!(
+            challenge_binary(challenge, &wrong_degree),
+            Err(akita_error::AkitaError::InvalidInput(_))
+        ));
+        let wrong_weight =
+            BinaryChallengeProfile::fixed_weight(BinaryScalarRing::Cyclotomic243, 46).unwrap();
+        assert!(matches!(
+            challenge_binary(challenge, &wrong_weight),
+            Err(akita_error::AkitaError::InvalidInput(_))
+        ));
+    }
 }

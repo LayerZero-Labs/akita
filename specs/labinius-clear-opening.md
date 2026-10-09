@@ -161,6 +161,16 @@ All three checks use the same decoded integer response:
   `sum_row eq(z_row,row)*(v_row mod 2) = sum_col U_col*(c_col mod 2)` in F162.
 - **Range:** the canonical offset decoder enforces the accepted interval.
 
+The challenge's parity image decodes
+`BinaryChallenge::canonical_support_encoding(profile)` directly as F162.
+That API validates profile weight, ordered support, positions, and deterministic
+signs and returns the same 21-byte little-endian coordinate bitset. The parity
+conversion accepts only scalar degree 162; other degrees return `InvalidInput`.
+Endpoint verification maps invalid challenge encodings to `InvalidProof`.
+The local arbitrary-dimension F162 equality expansion duplicates the algebra
+crate's private fixed-batch helper until a checked public expansion is exposed
+under tracking issue #45.
+
 A zero transparent weight leaves every source-opening check mandatory.
 `prove_binary_clear` and `verify_binary_clear` operate on an existing channel
 without finishing it. The byte wrappers create the standard backend channels;
@@ -188,3 +198,10 @@ Malformed encoding, statement and setup identity changes, proof-message
 tampering, range failures, and a forced zero transparent weight are tested.
 Both transcript backends run the same protocol suite. The verifier crate also
 checks canonical interval encodings at their exact endpoints.
+
+Direct endpoint regressions isolate the binary comparison while keeping range,
+prime action, and left expansion valid for both scalar and packed geometry.
+Packed response mutations also isolate the prime check while preserving parity
+and range. Constructor tests exercise the adjacent no-wrap boundary intervals;
+roundtrips include bounded weight 46 with the degree-648 P128 coefficient field,
+and matrix-action oracles include degree 324.

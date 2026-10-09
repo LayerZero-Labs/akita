@@ -277,3 +277,47 @@ fn prover_rejects_an_out_of_interval_response_without_retrying() {
         prove_binary_clear_bytes(&good, &source, &commitment, &[], BinaryField128::ZERO).is_err()
     );
 }
+
+#[test]
+fn constructor_admits_last_no_wrap_interval_and_rejects_adjacent_endpoint() {
+    let profile = profile();
+    let prime = P::P64Offset23703.modulus();
+    let gamma = u128::from(profile.multiplication_linf_operator_bound());
+    assert_eq!(gamma, 94);
+    let factor = 4 * gamma;
+    assert_eq!(factor, 376);
+    let admitted_upper = (prime - 1) / factor;
+    let rejected_upper = admitted_upper + 1;
+    assert_eq!(admitted_upper, 49_060_489_557_738_106);
+    assert_eq!(rejected_upper, 49_060_489_557_738_107);
+    let admitted_eta = factor * admitted_upper;
+    let rejected_eta = factor * rejected_upper;
+    assert_eq!(admitted_eta, 18_446_744_073_709_527_856);
+    assert_eq!(rejected_eta, 18_446_744_073_709_528_232);
+    assert!(admitted_eta < prime);
+    assert!(rejected_eta > prime);
+
+    // This one-column geometry meets the fold budget; admission performs no
+    // width-table lookup or honest-response-cap restriction. Only the accepted
+    // diameter's singleton comparison bound changes across the adjacent pair.
+    let ordinary = setup::<F, 162, PlusTrinomial>(1, 1, 1);
+    let construct = |upper| {
+        BinaryClearSetup::new(
+            ordinary.matrix().to_vec(),
+            1,
+            1,
+            1,
+            0,
+            i64::try_from(upper).unwrap(),
+            128,
+            profile.clone(),
+            P::P64Offset23703,
+            D::D162,
+        )
+    };
+    assert!(construct(admitted_upper).is_ok());
+    assert!(matches!(
+        construct(rejected_upper),
+        Err(akita_error::AkitaError::InvalidSetup(_))
+    ));
+}

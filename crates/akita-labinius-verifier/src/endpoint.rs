@@ -8,7 +8,7 @@ use akita_algebra::fft::SmoothFftField;
 use akita_algebra::ring::{
     embed_scalar, pack_scalar_components, TrinomialModulus, TrinomialNttDomain, TrinomialRing,
 };
-use akita_challenges::BinaryChallenge;
+use akita_challenges::{BinaryChallenge, BinaryChallengeProfile};
 use akita_error::{checked, AkitaError};
 
 use crate::commitment::{apply_matrix, BinaryClearCommitment};
@@ -61,6 +61,7 @@ pub fn fold_integer<H: SwitchField>(
     scalar_rows: usize,
     columns: usize,
     challenges: &[BinaryChallenge],
+    profile: &BinaryChallengeProfile,
 ) -> Result<Vec<[i64; 162]>, AkitaError> {
     let length = checked::product([scalar_rows, columns])
         .ok_or_else(|| AkitaError::InvalidInput("integer fold size overflow".into()))?;
@@ -74,7 +75,7 @@ pub fn fold_integer<H: SwitchField>(
         ));
     }
     for challenge in challenges {
-        challenge_binary(challenge)?;
+        challenge_binary(challenge, profile)?;
     }
     let mut result = Vec::new();
     result
@@ -253,7 +254,8 @@ pub fn verify_endpoints<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
     }
     let mut binary_rhs = BinaryField162::ZERO;
     for (&value, challenge) in u.iter().zip(challenges) {
-        binary_rhs += value * challenge_binary(challenge)?;
+        binary_rhs += value
+            * challenge_binary(challenge, setup.profile()).map_err(|_| AkitaError::InvalidProof)?;
     }
     if binary_lhs != binary_rhs {
         return Err(AkitaError::InvalidProof);

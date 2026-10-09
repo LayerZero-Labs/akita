@@ -47,3 +47,36 @@ fn both_hosts_primes_geometries_and_matrix_ranks() {
     roundtrip_geometry::<BinaryField128, Prime64Offset23703, 648, MinusTrinomial>(1, 2, 4);
     roundtrip_geometry::<BinaryField192, Prime128OffsetA7F7, 648, MinusTrinomial>(1, 2, 4);
 }
+
+#[test]
+fn bounded_weight_46_d648_p128_roundtrips_for_both_hosts() {
+    use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing};
+    use akita_labinius_verifier::BinaryClearSetup;
+    use akita_params::sis::labinius::{LabiniusCoefficientPrime, LabiniusRingDegree};
+
+    fn bounded_roundtrip<H: TestHost>() {
+        let ordinary = setup::<Prime128OffsetA7F7, 648, MinusTrinomial>(1, 2, 8);
+        let bounded = BinaryClearSetup::new(
+            ordinary.matrix().to_vec(),
+            1,
+            2,
+            8,
+            -1024,
+            1024,
+            128,
+            BinaryChallengeProfile::bounded_weight(BinaryScalarRing::Cyclotomic243, 46).unwrap(),
+            LabiniusCoefficientPrime::P128OffsetA7F7,
+            LabiniusRingDegree::D648,
+        )
+        .unwrap();
+        let (source, point, claim) = data::<H>(bounded.source_len(), bounded.num_vars());
+        let commitment =
+            commit_binary_clear::<H, Prime128OffsetA7F7, 648, MinusTrinomial>(&bounded, &source)
+                .unwrap();
+        let proof =
+            prove_binary_clear_bytes(&bounded, &source, &commitment, &point, claim).unwrap();
+        verify_binary_clear_bytes(&bounded, &commitment, &point, claim, &proof).unwrap();
+    }
+    bounded_roundtrip::<BinaryField128>();
+    bounded_roundtrip::<BinaryField192>();
+}

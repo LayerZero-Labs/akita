@@ -1,21 +1,29 @@
 #![cfg(feature = "labinius")]
 
 mod common;
-use common::{data, setup, TestHost};
+use common::{data, setup, FixedDraw, TestHost};
 
 use akita_algebra::{
     binary::{
         field_switch::{transparent_weight, SwitchField},
         BinaryField128, BinaryField162 as B, BinaryField192,
     },
-    MinusTrinomial, PlusTrinomial, Prime64Offset23703 as F, TrinomialRing,
+    embed_scalar, MinusTrinomial, PlusTrinomial, Prime64Offset23703 as F, TrinomialModulus,
+    TrinomialRing,
 };
-use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing};
+use akita_challenges::{
+    BinaryChallenge, BinaryChallengeProfile, BinaryChallengeSampler, BinaryScalarRing,
+};
+use akita_error::AkitaError;
 use akita_labinius_prover::{commit_binary_clear, prove_binary_clear, prove_binary_clear_bytes};
 use akita_labinius_verifier::{
     codec::{decode_response_coefficient, encode_response_coefficient, response_width},
+    endpoint::{
+        fold_integer, pack_response, response_parity, verify_endpoints, verify_left_expansion,
+    },
     profile::BinaryClearSetup,
-    verify_binary_clear, verify_binary_clear_bytes,
+    source::{challenge_binary, challenge_scalar, equality_weights},
+    verify_binary_clear, verify_binary_clear_bytes, BinaryClearCommitment, BinaryEvaluationClaim,
 };
 use akita_params::sis::labinius::{LabiniusCoefficientPrime as P, LabiniusRingDegree as D};
 
@@ -323,4 +331,268 @@ fn multi_round_messages<H: TestHost>() {
 fn every_round_of_four_round_proofs_and_each_response_row_are_checked() {
     multi_round_messages::<BinaryField128>();
     multi_round_messages::<BinaryField192>();
+}
+
+// Independent schoolbook sides for the one-matrix-row, one-ring-element cases.
+fn endpoint_prime_sides<const DEGREE: usize, M: TrinomialModulus>(
+    setup: &BinaryClearSetup<F, DEGREE, M>,
+    commitment: &BinaryClearCommitment<F, DEGREE, M>,
+    challenges: &[BinaryChallenge],
+    response: &[[i64; 162]],
+) -> (TrinomialRing<F, DEGREE, M>, TrinomialRing<F, DEGREE, M>) {
+    assert_eq!((setup.n_a(), setup.m()), (1, 1));
+    let packed = pack_response(setup, response).unwrap();
+    let lhs = setup.matrix()[0].schoolbook_mul(&packed[0]).unwrap();
+    let mut rhs = TrinomialRing::zero().unwrap();
+    for (challenge, image) in challenges.iter().zip(&commitment.images) {
+        let embedded = embed_scalar(&challenge_scalar::<F>(challenge).unwrap()).unwrap();
+        rhs += embedded.schoolbook_mul(image).unwrap();
+    }
+    (lhs, rhs)
+}
+
+#[test]
+fn binary_endpoint_rejects_an_unselected_column_at_scalar_degree() {
+    let setup = setup::<F, 162, PlusTrinomial>(1, 1, 2);
+    assert_ne!(setup.matrix()[0], TrinomialRing::zero().unwrap());
+    let commitment = BinaryClearCommitment {
+        images: vec![TrinomialRing::zero().unwrap(); 2],
+    };
+    let response = vec![[0; 162]];
+    let claim = BinaryEvaluationClaim {
+        point: vec![B::ZERO],
+        value: B::ZERO,
+    };
+    let challenges = BinaryChallengeSampler::new(setup.profile().clone())
+        .sample_challenges(&mut FixedDraw, b"binary-endpoint", 2)
+        .unwrap();
+    let u = [B::ZERO, B::ZERO];
+    assert_eq!(
+        verify_endpoints(&setup, &commitment, &claim, &u, &challenges, &response),
+        Ok(())
+    );
+    let changed_u = [B::ZERO, B::ONE];
+    assert_eq!(verify_left_expansion(&setup, &claim, &changed_u), Ok(()));
+    assert!(response
+        .iter()
+        .flatten()
+        .all(|&v| (setup.lower()..=setup.upper()).contains(&v)));
+    let (lhs, rhs) = endpoint_prime_sides(&setup, &commitment, &challenges, &response);
+    assert_eq!(lhs, rhs);
+    assert_ne!(
+        challenge_binary(&challenges[1], setup.profile()).unwrap(),
+        B::ZERO
+    );
+    // Column equality weights are [1, 0], so changing U[1] preserves left
+    // expansion, range, and the prime equation. Only the binary check rejects.
+    assert_eq!(
+        verify_endpoints(
+            &setup,
+            &commitment,
+            &claim,
+            &changed_u,
+            &challenges,
+            &response,
+        ),
+        Err(AkitaError::InvalidProof)
+    );
+}
+
+struct PackedEndpointCase {
+    setup: BinaryClearSetup<F, 324, MinusTrinomial>,
+    commitment: BinaryClearCommitment<F, 324, MinusTrinomial>,
+    challenges: Vec<BinaryChallenge>,
+    response: Vec<[i64; 162]>,
+    claim: BinaryEvaluationClaim,
+}
+
+fn packed_endpoint_case() -> PackedEndpointCase {
+    let setup = setup::<F, 324, MinusTrinomial>(1, 1, 2);
+    assert_ne!(setup.matrix()[0], TrinomialRing::zero().unwrap());
+    // Only scalar component 1 of column 0 is nonzero; column 1 is zero.
+    let source = [0u128, 1, 0, 0];
+    let commitment =
+        commit_binary_clear::<BinaryField128, F, 324, MinusTrinomial>(&setup, &source).unwrap();
+    let challenges = BinaryChallengeSampler::new(setup.profile().clone())
+        .sample_challenges(&mut FixedDraw, b"packed-binary-endpoint", 2)
+        .unwrap();
+    let response = fold_integer::<BinaryField128>(
+        &source,
+        setup.scalar_rows(),
+        setup.columns(),
+        &challenges,
+        setup.profile(),
+    )
+    .unwrap();
+    assert_eq!(response[0], [0; 162]);
+    assert_ne!(response[1], [0; 162]);
+    let claim = BinaryEvaluationClaim {
+        point: vec![B::ONE, B::ZERO],
+        value: B::ONE,
+    };
+    PackedEndpointCase {
+        setup,
+        commitment,
+        challenges,
+        response,
+        claim,
+    }
+}
+
+#[test]
+fn binary_endpoint_rejects_an_unselected_column_at_packed_degree() {
+    let case = packed_endpoint_case();
+    let u = [B::ONE, B::ZERO];
+    assert_eq!(
+        verify_endpoints(
+            &case.setup,
+            &case.commitment,
+            &case.claim,
+            &u,
+            &case.challenges,
+            &case.response,
+        ),
+        Ok(())
+    );
+    let changed_u = [B::ONE, B::ONE];
+    assert_eq!(
+        verify_left_expansion(&case.setup, &case.claim, &changed_u),
+        Ok(())
+    );
+    assert!(case
+        .response
+        .iter()
+        .flatten()
+        .all(|&v| (case.setup.lower()..=case.setup.upper()).contains(&v)));
+    let (lhs, rhs) = endpoint_prime_sides(
+        &case.setup,
+        &case.commitment,
+        &case.challenges,
+        &case.response,
+    );
+    assert_eq!(lhs, rhs);
+    let binary_lhs = response_parity(&case.response[1]).unwrap();
+    let binary_rhs = challenge_binary(&case.challenges[0], case.setup.profile()).unwrap()
+        + challenge_binary(&case.challenges[1], case.setup.profile()).unwrap();
+    assert_ne!(binary_lhs, binary_rhs);
+    // The row point selects scalar component 1, and column weights are [1, 0].
+    // Range, the prime equation, and left expansion hold; the binary check rejects.
+    assert_eq!(
+        verify_endpoints(
+            &case.setup,
+            &case.commitment,
+            &case.claim,
+            &changed_u,
+            &case.challenges,
+            &case.response,
+        ),
+        Err(AkitaError::InvalidProof)
+    );
+}
+
+#[test]
+fn packed_response_component_mutation_preserves_parity_but_fails_prime_equation() {
+    let case = packed_endpoint_case();
+    let mut changed_response = case.response.clone();
+    changed_response[1][0] += 2;
+    assert_eq!(changed_response[0], case.response[0]);
+    assert_eq!(
+        response_parity(&changed_response[1]).unwrap(),
+        response_parity(&case.response[1]).unwrap()
+    );
+    assert!(changed_response
+        .iter()
+        .flatten()
+        .all(|&v| (case.setup.lower()..=case.setup.upper()).contains(&v)));
+    let u = [B::ONE, B::ZERO];
+    assert_eq!(verify_left_expansion(&case.setup, &case.claim, &u), Ok(()));
+    let (lhs, rhs) = endpoint_prime_sides(
+        &case.setup,
+        &case.commitment,
+        &case.challenges,
+        &changed_response,
+    );
+    assert_ne!(lhs, rhs);
+    // The +2 change is confined to scalar component 1; the prime check rejects.
+    assert_eq!(
+        verify_endpoints(
+            &case.setup,
+            &case.commitment,
+            &case.claim,
+            &u,
+            &case.challenges,
+            &changed_response,
+        ),
+        Err(AkitaError::InvalidProof)
+    );
+}
+
+#[test]
+fn packed_response_component_cancellation_preserves_prime_but_fails_binary() {
+    let seeded = setup::<F, 324, MinusTrinomial>(1, 1, 2);
+    let a = seeded.matrix()[0];
+    assert_ne!(a, TrinomialRing::zero().unwrap());
+    // Repeated nonzero matrix entries permit cancellation between two ring
+    // elements without making the public matrix row zero.
+    let setup = BinaryClearSetup::<F, 324, MinusTrinomial>::new(
+        vec![a, a],
+        1,
+        2,
+        2,
+        -1024,
+        1024,
+        128,
+        seeded.profile().clone(),
+        P::P64Offset23703,
+        D::D324,
+    )
+    .unwrap();
+    let commitment = BinaryClearCommitment {
+        images: vec![TrinomialRing::zero().unwrap(); 2],
+    };
+    let claim = BinaryEvaluationClaim {
+        point: vec![B::ONE, B::ZERO, B::ZERO],
+        value: B::ZERO,
+    };
+    let challenges = BinaryChallengeSampler::new(setup.profile().clone())
+        .sample_challenges(&mut FixedDraw, b"packed-response-cancellation", 2)
+        .unwrap();
+    let u = [B::ZERO, B::ZERO];
+    let mut response = vec![[0; 162]; 4];
+    assert_eq!(
+        verify_endpoints(&setup, &commitment, &claim, &u, &challenges, &response),
+        Ok(())
+    );
+    // Change component 1 in each packed ring element with opposite signs.
+    response[1][0] = 1;
+    response[3][0] = -1;
+    assert!(response
+        .iter()
+        .flatten()
+        .all(|&v| (setup.lower()..=setup.upper()).contains(&v)));
+    assert_eq!(verify_left_expansion(&setup, &claim, &u), Ok(()));
+    let packed = pack_response(&setup, &response).unwrap();
+    let lhs = setup.matrix()[0].schoolbook_mul(&packed[0]).unwrap()
+        + setup.matrix()[1].schoolbook_mul(&packed[1]).unwrap();
+    let mut rhs = TrinomialRing::zero().unwrap();
+    for (challenge, image) in challenges.iter().zip(&commitment.images) {
+        let embedded = embed_scalar(&challenge_scalar::<F>(challenge).unwrap()).unwrap();
+        rhs += embedded.schoolbook_mul(image).unwrap();
+    }
+    assert_eq!(lhs, TrinomialRing::zero().unwrap());
+    assert_eq!(lhs, rhs);
+    let weights = equality_weights(&claim.point[..setup.row_vars()]).unwrap();
+    let binary_lhs = weights
+        .iter()
+        .zip(&response)
+        .fold(B::ZERO, |sum, (&weight, row)| {
+            sum + weight * response_parity(row).unwrap()
+        });
+    assert_eq!(binary_lhs, B::ONE);
+    // The row point selects scalar row 1, so the binary RHS is zero but the
+    // binary LHS is one. Range, left expansion, and the prime check all pass.
+    assert_eq!(
+        verify_endpoints(&setup, &commitment, &claim, &u, &challenges, &response),
+        Err(AkitaError::InvalidProof)
+    );
 }
