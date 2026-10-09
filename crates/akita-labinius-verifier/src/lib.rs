@@ -15,6 +15,7 @@
     clippy::unwrap_used
 )]
 
+pub mod admitted;
 pub mod channel;
 pub mod codec;
 pub mod commitment;
@@ -23,6 +24,9 @@ pub mod frontend;
 pub mod profile;
 pub mod source;
 
+pub use admitted::{derive_trinomial_matrix, AdmittedRootSetup};
+// Shared public seed types and coefficient-prefix views used by setup callers.
+pub use akita_types;
 pub use channel::ClearChannel;
 pub use commitment::BinaryClearCommitment;
 pub use frontend::BinaryEvaluationClaim;
