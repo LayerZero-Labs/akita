@@ -12,6 +12,9 @@ unsafe fn mul(a: int32x4_t, w: int32x4_t, q: int32x4_t, p: int32x4_t) -> int32x4
     // Assembly touches only registers. Early output constraints keep both
     // outputs distinct from every input: a must survive the first MUL.
     // The three instructions access no memory, stack, or condition flags.
+    // The value equals `vmlsq_s32(vmulq_s32(a, w), vqrdmulhq_s32(a, q), p)`;
+    // written with those intrinsics, the signed bit transform measured about
+    // 8% slower on an Apple M4 Max, so the instruction order is fixed here.
     unsafe {
         let result;
         std::arch::asm!(

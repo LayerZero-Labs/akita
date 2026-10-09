@@ -29,8 +29,9 @@ use rayon::prelude::*;
 ///
 /// Zero-based class rounds are 0..4, 0..3 and 0..2 for one-, two- and
 /// four-bit digits respectively, limited by `nu`. Buckets are used when the
-/// class count is at most `N`; smaller inputs evaluate their packed pairs
-/// directly in the remaining early rounds. After the last packed round,
+/// replicated class count `P * 2^(b*2^j)` is at most the live pair count
+/// `N / 2^j` in one-based packed round `j`; otherwise packed pairs are
+/// evaluated directly. After the last packed round,
 /// the packed digits are lifted directly to `N / 2^r` field elements, where
 /// `r = min(nu, 4/3/2)` respectively. Weights are supplied as a low-variable
 /// digit factor of length `D=2^a` and a compact coefficient table of length
@@ -52,7 +53,8 @@ use rayon::prelude::*;
 /// bytes.
 /// Here `S = size_of::<F>()`, `V = N/2^r` (zero when `nu=0`),
 /// `E = 2^ceil(max(nu-1,0)/2) + 2^floor(max(nu-1,0)/2)`,
-/// `M` is the largest `2^(b*2^j) <= N` for `1 <= j <= r` (zero if absent),
+/// `M` is the largest `2^(b*2^j)` with `P * 2^(b*2^j) <= N / 2^j`
+/// for `1 <= j <= r` (zero if absent),
 /// and `L = 2^(b*2^(r-1))` for `nu>0` (one otherwise).
 /// `B` is the largest `2^(b*2^j) * D/2^j` over those same `j` when `a=r`,
 /// and zero otherwise. `P` is one without `parallel`; with it, `P` is the
@@ -97,6 +99,37 @@ fn buffer<T: Clone>(len: usize, value: T) -> Result<Vec<T>, AkitaError> {
     Ok(output)
 }
 
+// Class counts increase and live pairs decrease with each packed round, so
+// admitted rounds form a prefix. A capacity check therefore enforces the
+// same per-round rule. Overflow in any sizing comparison means no fit.
+fn bucket_class_count(
+    nu: usize,
+    digit_bits: usize,
+    lift_round: usize,
+    worker_count: usize,
+) -> usize {
+    let Some(len) = checked::pow2(nu) else {
+        return 0;
+    };
+    if worker_count == 0 {
+        return 0;
+    }
+    let mut classes = 0;
+    for round in 1..=lift_round.min(nu) {
+        let admitted = checked::pow2(round).and_then(|group| {
+            let count = checked::product([digit_bits, group]).and_then(checked::pow2)?;
+            let replicated = checked::product([worker_count, count])?;
+            let pairs = checked::exact_div(len, group)?;
+            (replicated <= pairs).then_some(count)
+        });
+        let Some(count) = admitted else {
+            break;
+        };
+        classes = count;
+    }
+    classes
+}
+
 impl<F: SmoothFftField> CombinedRootKernel<F> {
     /// Weights are the tensor of the low-variable digit factor and compact table.
     /// Both factors must have power-of-two length and their product must be `w.len()`.
@@ -135,25 +168,7 @@ impl<F: SmoothFftField> CombinedRootKernel<F> {
         });
         let class_bits = checked::product([bits, checked::pow2(lift_round).ok_or_else(invalid)?])
             .ok_or_else(invalid)?;
-        // Small inputs retain the same packed rounds but evaluate pairs
-        // directly when a full class space would exceed the original table.
         let factor_buckets = digit_factor.len() == checked::pow2(lift_round).ok_or_else(invalid)?;
-        let mut compact_classes = 0;
-        let mut classes = 0;
-        for round in 1..=lift_round {
-            let bits = checked::product([bits, checked::pow2(round).ok_or_else(invalid)?])
-                .ok_or_else(invalid)?;
-            let count = checked::pow2(bits).ok_or_else(invalid)?;
-            if count <= expected {
-                classes = count;
-                if factor_buckets {
-                    compact_classes = compact_classes.max(
-                        checked::product([count, digit_factor.len() >> round])
-                            .ok_or_else(invalid)?,
-                    );
-                }
-            }
-        }
         let lut_capacity = if tau.is_empty() {
             1
         } else {
@@ -187,6 +202,25 @@ impl<F: SmoothFftField> CombinedRootKernel<F> {
         let worker_count = rayon::current_num_threads().min(eq_high.len());
         #[cfg(not(feature = "parallel"))]
         let worker_count = 1;
+        let classes = bucket_class_count(tau.len(), bits, lift_round, worker_count);
+        // A round uses buckets exactly when its class count fits `classes`.
+        // Each such round holds one compact coefficient per class and
+        // remaining digit-factor pair.
+        let mut compact_classes = 0;
+        if factor_buckets {
+            for round in 1..=lift_round {
+                let count = checked::pow2(round)
+                    .and_then(|group| checked::product([bits, group]))
+                    .and_then(checked::pow2)
+                    .ok_or_else(invalid)?;
+                if count <= classes {
+                    compact_classes = compact_classes.max(
+                        checked::product([count, digit_factor.len() >> round])
+                            .ok_or_else(invalid)?,
+                    );
+                }
+            }
+        }
         let mut workers = Vec::new();
         workers
             .try_reserve_exact(worker_count)
@@ -819,6 +853,90 @@ impl<F: SmoothFftField> Workspace<F> {
                 for sum in self.total.alphabet.iter_mut().take(tables.alphabet_nodes) {
                     *sum += eq * alphabet_polynomial(tables.base, value);
                     value += delta;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bucket_class_count;
+
+    #[test]
+    fn bucket_class_count_accounts_for_worker_replication() {
+        assert_eq!(bucket_class_count(16, 2, 3, 64), 256);
+        assert_eq!(bucket_class_count(16, 2, 3, 4), 256);
+    }
+
+    #[test]
+    fn bucket_class_count_admits_boundary_but_not_one_more_worker() {
+        assert_eq!(bucket_class_count(16, 2, 2, 64), 256);
+        assert_eq!(bucket_class_count(16, 2, 2, 65), 16);
+        assert_eq!(bucket_class_count(5, 2, 1, 1), 16);
+        assert_eq!(bucket_class_count(5, 2, 1, 2), 0);
+    }
+
+    #[test]
+    fn bucket_class_count_handles_empty_and_overflowing_geometry() {
+        assert_eq!(bucket_class_count(0, 2, 0, 1), 0);
+        assert_eq!(bucket_class_count(0, 2, 3, 64), 0);
+        assert_eq!(bucket_class_count(8, 4, 2, 1), 0);
+        assert_eq!(bucket_class_count(16, 2, 3, 0), 0);
+        assert_eq!(bucket_class_count(16, 2, 3, usize::MAX), 0);
+        assert_eq!(bucket_class_count(16, usize::MAX, 3, 1), 0);
+        assert_eq!(bucket_class_count(16, usize::BITS as usize, 3, 1), 0);
+        assert_eq!(bucket_class_count(usize::BITS as usize, 2, 3, 1), 0);
+    }
+
+    #[test]
+    fn bucket_class_count_pins_small_and_full_size_cutoffs() {
+        // Expected counts for P=1,4,16,64, including the stricter serial rule.
+        for (bits, lift_round, rows) in [
+            (
+                1,
+                4,
+                [
+                    (8, [16, 16, 4, 0]),
+                    (12, [256, 16, 16, 16]),
+                    (16, [256, 256, 256, 16]),
+                    (20, [65536, 256, 256, 256]),
+                    (26, [65536; 4]),
+                    (29, [65536; 4]),
+                ],
+            ),
+            (
+                2,
+                3,
+                [
+                    (8, [16, 16, 0, 0]),
+                    (12, [256, 256, 16, 16]),
+                    (16, [256; 4]),
+                    (20, [65536, 256, 256, 256]),
+                    (26, [65536; 4]),
+                    (29, [65536; 4]),
+                ],
+            ),
+            (
+                4,
+                2,
+                [
+                    (8, [0; 4]),
+                    (12, [256, 256, 0, 0]),
+                    (16, [256; 4]),
+                    (20, [65536, 65536, 256, 256]),
+                    (26, [65536; 4]),
+                    (29, [65536; 4]),
+                ],
+            ),
+        ] {
+            for (nu, expected) in rows {
+                for (workers, classes) in [1, 4, 16, 64].into_iter().zip(expected) {
+                    assert_eq!(
+                        bucket_class_count(nu, bits, lift_round, workers),
+                        classes,
+                        "nu={nu}, bits={bits}, workers={workers}"
+                    );
                 }
             }
         }
