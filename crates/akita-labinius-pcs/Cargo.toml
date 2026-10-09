@@ -78,6 +78,8 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 ] }
 
 [dev-dependencies]
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 akita-planner = { version = "0.1.0", path = "../akita-planner", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false, features = [
   "logging-transcript",

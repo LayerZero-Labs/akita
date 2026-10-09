@@ -7,6 +7,12 @@ use std::time::Instant;
 #[test]
 #[ignore = "first admitted root geometry; run explicitly in release with parallel"]
 fn full_first_profile_two_bit_digits() {
+    let _ = tracing_subscriber::fmt()
+        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_max_level(tracing::Level::INFO)
+        .try_init();
     let start = Instant::now();
     let root = RootSetup::derive(
         crate::common::PROFILE,
