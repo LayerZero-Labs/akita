@@ -1,5 +1,4 @@
 use super::*;
-use akita_algebra::ring::eval_ring_at_pows_fast;
 use akita_params::layout::relation_layout::{RelationGroupRows, RelationRowGeometry};
 use akita_params::{CommitmentRingDims, CommitmentSliceCount, OpeningMethod};
 use jolt_field::{ExtField, Fp32, FpExt2, NegOneNr, Prime128OffsetA7F7, Ring, Zero};
@@ -369,11 +368,11 @@ fn fused_relation_claim_matches_full_logical_row_evaluation() {
     let mut y_alpha = vec![E::zero(); padded_domain];
     let mut row_idx = 1usize + N_A;
     for ring in &u {
-        y_alpha[row_idx] = eval_ring_at_pows_fast(ring, &alpha_pows);
+        y_alpha[row_idx] = MulBaseUnreduced::dot_base(&alpha_pows, ring.coefficients());
         row_idx += 1;
     }
     for ring in &v {
-        y_alpha[row_idx] = eval_ring_at_pows_fast(ring, &alpha_pows);
+        y_alpha[row_idx] = MulBaseUnreduced::dot_base(&alpha_pows, ring.coefficients());
         row_idx += 1;
     }
     y_alpha[evaluation_trace_row] = trace_target;

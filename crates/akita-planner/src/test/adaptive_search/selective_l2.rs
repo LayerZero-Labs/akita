@@ -4,7 +4,6 @@ use super::*;
 fn unpruned_search_covers_selective_l2_candidate_domain() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
-    let domain = RingDimensionSearchDomain::uniform(64).expect("D64 test domain");
     let mut policy = policy_of::<OneHot>();
     policy.inner_basis_range.1 = policy.inner_basis_range.0;
     policy.opening_basis_range.1 = policy.opening_basis_range.0;
@@ -13,7 +12,6 @@ fn unpruned_search_covers_selective_l2_candidate_domain() {
         key,
         &policy,
         OneHot::committed_source_contract().unwrap(),
-        &domain,
         OneHot::ring_challenge_config,
     )
     .expect("production selective-L2 schedule");

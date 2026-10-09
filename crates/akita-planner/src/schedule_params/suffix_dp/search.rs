@@ -142,7 +142,7 @@ fn price_planned_fold_candidate(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
     search: &OpeningSearch<'_>,
-    guide: Option<(CompleteObjectiveBound, Option<usize>)>,
+    guide: Option<(CompleteObjectiveBound, usize)>,
     candidate: PlannedFoldCandidate,
     frontiers: &mut StateFrontiers,
 ) -> Result<(), AkitaError> {
@@ -168,7 +168,7 @@ fn price_planned_fold_candidate(
             return Ok(());
         }
     }
-    let natural_len = guide.and_then(|(_, natural_len)| natural_len).map_or_else(
+    let natural_len = guide.map(|(_, natural_len)| natural_len).map_or_else(
         || active_setup_field_len(&params, search.opening_layout),
         Ok,
     )?;
@@ -316,7 +316,7 @@ pub(super) fn process_candidate_batch(
         return Ok(());
     }
     let incoming_setup_prefix = state.topology.incoming_setup_prefix();
-    let guide_scope = GuideScope::for_state(ctx.policy, is_root_level, incoming_setup_prefix);
+    let guide_scope = GuideScope::for_state(is_root_level, incoming_setup_prefix);
     let traversal = candidate_traversal(ctx.policy, guide_scope, opening_layout, candidates)?;
     for (guide, candidate) in traversal {
         let opening_layout = candidate

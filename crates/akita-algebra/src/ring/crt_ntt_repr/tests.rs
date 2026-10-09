@@ -508,7 +508,6 @@ fn i32_crt_mat_vec_with_i16_tail_matches_schoolbook() {
 #[test]
 fn portable_lazy_dot_satisfies_canonical_montgomery_relation() {
     const D: usize = 64;
-    type Ntt = CyclotomicCrtNtt<i32, 1, D>;
     for p in I32_RAW_PRIMES {
         let prime = NttPrime::compute(p);
         for case in 0..4 {
@@ -534,24 +533,28 @@ fn portable_lazy_dot_satisfies_canonical_montgomery_relation() {
             let initial = std::array::from_fn::<_, D, _>(|lane| {
                 MontCoeff::from_raw(if lane % 2 == 0 { 0 } else { p - 1 })
             });
+            let (lhs, rhs) = (
+                lhs.map(|row| row.map(MontCoeff::raw)),
+                rhs.map(|row| row.map(MontCoeff::raw)),
+            );
             for count in 0..=I32_LAZY_DOT_BATCH {
-                let mut actual = initial;
-                Ntt::add_assign_pointwise_dot_limb(
+                let mut actual = initial.map(MontCoeff::raw);
+                super::ops::add_assign_pointwise_dot_limb_i32(
                     &mut actual,
                     |product| &lhs[product],
                     |product| &rhs[product],
                     count,
                     prime,
+                    crate::ntt::NttKernelPlan::SCALAR,
                 );
                 for lane in 0..D {
-                    assert!((0..p).contains(&actual[lane].raw()));
+                    assert!((0..p).contains(&actual[lane]));
                     let products: i128 = (0..count)
                         .map(|product| {
-                            i128::from(lhs[product][lane].raw())
-                                * i128::from(rhs[product][lane].raw())
+                            i128::from(lhs[product][lane]) * i128::from(rhs[product][lane])
                         })
                         .sum();
-                    let delta = i128::from(actual[lane].raw()) - i128::from(initial[lane].raw());
+                    let delta = i128::from(actual[lane]) - i128::from(initial[lane].raw());
                     assert_eq!(
                         (delta * (1i128 << 32) - products).rem_euclid(i128::from(p)),
                         0,

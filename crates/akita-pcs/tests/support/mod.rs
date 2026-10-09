@@ -784,8 +784,8 @@ where
     type ExtField = Base::ExtField;
 
     const EXT_DEGREE: usize = Base::EXT_DEGREE;
-    const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
-        Base::RING_DIMENSION_SCHEDULE_MODE;
+    const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
+        Base::RING_DIMENSION_SCHEDULE;
 
     fn schedule_family_name() -> &'static str {
         Base::schedule_family_name()
@@ -836,8 +836,8 @@ where
     type ExtField = Base::ExtField;
 
     const EXT_DEGREE: usize = Base::EXT_DEGREE;
-    const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
-        Base::RING_DIMENSION_SCHEDULE_MODE;
+    const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
+        Base::RING_DIMENSION_SCHEDULE;
 
     fn schedule_family_name() -> &'static str {
         Base::schedule_family_name()
@@ -896,8 +896,8 @@ where
     type Field = Envelope::Field;
     type ExtField = Envelope::ExtField;
 
-    const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
-        Envelope::RING_DIMENSION_SCHEDULE_MODE;
+    const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
+        Envelope::RING_DIMENSION_SCHEDULE;
 
     fn decomposition() -> DecompositionParams {
         Envelope::decomposition()

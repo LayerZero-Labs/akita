@@ -157,13 +157,17 @@ mod tests {
         let policy = PlannerPolicy {
             cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
-            selection_policy: SelectionPolicyId::MinEstimatedExactProofAndWorkV5,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 1,
-            ring_dimension_schedule_mode: crate::RingDimensionScheduleMode::UniformDimension {
-                ring_dimension: RING_DIMENSION,
+            ring_dimension_schedule: crate::RingDimensionSchedule {
+                num_search_levels: 2,
+                suffix_dimensions: &[RING_DIMENSION],
+                potential_a_dimensions: &[RING_DIMENSION],
+                potential_b_dimensions: &[RING_DIMENSION],
+                potential_d_dimensions: &[RING_DIMENSION],
             },
             decomposition: DecompositionParams {
                 log_basis: 1,
@@ -211,13 +215,17 @@ mod tests {
         let policy = PlannerPolicy {
             cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
-            selection_policy: SelectionPolicyId::MinEstimatedExactProofAndWorkV5,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 1,
-            ring_dimension_schedule_mode: crate::RingDimensionScheduleMode::UniformDimension {
-                ring_dimension: RING_DIMENSION,
+            ring_dimension_schedule: crate::RingDimensionSchedule {
+                num_search_levels: 2,
+                suffix_dimensions: &[RING_DIMENSION],
+                potential_a_dimensions: &[RING_DIMENSION],
+                potential_b_dimensions: &[RING_DIMENSION],
+                potential_d_dimensions: &[RING_DIMENSION],
             },
             decomposition: DecompositionParams {
                 log_basis: 4,

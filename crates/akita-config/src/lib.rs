@@ -33,8 +33,8 @@ macro_rules! impl_multi_chunk_companion {
             fn schedule_family_name() -> &'static str {
                 $family
             }
-            const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
-                <$base as $crate::CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
+            const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
+                <$base as $crate::CommitmentConfig>::RING_DIMENSION_SCHEDULE;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
             fn decomposition() -> akita_params::DecompositionParams {
                 <$base as $crate::CommitmentConfig>::decomposition()
@@ -79,7 +79,7 @@ pub mod test_support;
 mod transcript_binding;
 mod transcript_grinding_plan;
 pub use akita_schedules::ResolvedScheduleRow;
-pub use akita_schedules::RingDimensionScheduleMode;
+pub use akita_schedules::RingDimensionSchedule;
 pub use akita_schedules::{
     ValidatedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
@@ -110,7 +110,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         },
         setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
-        ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,
+        ring_dimension_schedule: Cfg::RING_DIMENSION_SCHEDULE,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_params::DEFAULT_SIS_SECURITY_POLICY,
@@ -392,8 +392,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// [`field_reduction::embed_subfield`]: akita_types::field_reduction::embed_subfield
     const EXT_DEGREE: usize = <Self::ExtField as ExtField<Self::Field>>::DEGREE;
 
-    /// Uniform or bounded-adaptive ring-dimension schedule policy.
-    const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode;
+    /// Bounded adaptive ring-dimension search and suffix domains.
+    const RING_DIMENSION_SCHEDULE: RingDimensionSchedule;
 
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;
@@ -476,14 +476,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Catalog-bound schedule selection objective.
     ///
-    /// Uniform/direct presets minimize proof payload. Adaptive-dimension and
-    /// recursive setup presets minimize the first remaining direct setup
-    /// footprint before payload. The policy is part of catalog identity.
+    /// Direct presets minimize first-direct setup capacity before proof and work,
+    /// across the adaptive dimension domain. Recursive setup presets
+    /// first minimize the padded total setup envelope. The policy is part of
+    /// catalog identity.
     fn selection_policy() -> akita_schedules::SelectionPolicyId {
-        akita_schedules::SelectionPolicyId::for_policy(
-            Self::recursive_setup_planning(),
-            Self::RING_DIMENSION_SCHEDULE_MODE,
-        )
+        akita_schedules::SelectionPolicyId::for_policy(Self::recursive_setup_planning())
     }
 
     /// Stable trusted schedule family identity for external artifact loading.
@@ -512,8 +510,13 @@ mod tests {
             "test_single_extension"
         }
 
-        const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
-            RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
+        const RING_DIMENSION_SCHEDULE: RingDimensionSchedule = RingDimensionSchedule {
+            num_search_levels: 2,
+            suffix_dimensions: &[64],
+            potential_a_dimensions: &[64],
+            potential_b_dimensions: &[64],
+            potential_d_dimensions: &[64],
+        };
 
         fn decomposition() -> DecompositionParams {
             DecompositionParams {
@@ -554,8 +557,8 @@ mod tests {
         }
 
         const EXT_DEGREE: usize = 2;
-        const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
-            SingleExtensionConfig::RING_DIMENSION_SCHEDULE_MODE;
+        const RING_DIMENSION_SCHEDULE: RingDimensionSchedule =
+            SingleExtensionConfig::RING_DIMENSION_SCHEDULE;
 
         fn decomposition() -> DecompositionParams {
             SingleExtensionConfig::decomposition()
@@ -720,12 +723,8 @@ mod fp128_policy_tests {
     #[test]
     fn fp128_onehot_uses_adaptive_schedule_policy() {
         assert!(matches!(
-            fp128::OneHot::RING_DIMENSION_SCHEDULE_MODE,
-            RingDimensionScheduleMode::AdaptiveDimension { .. }
-        ));
-        assert!(matches!(
-            <fp128::OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
-            RingDimensionScheduleMode::AdaptiveDimension {
+            <fp128::OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE,
+            RingDimensionSchedule {
                 num_search_levels: 2,
                 suffix_dimensions: &[64],
                 ..
@@ -736,12 +735,8 @@ mod fp128_policy_tests {
     #[test]
     fn fp128_dense_uses_adaptive_schedule_policy() {
         assert!(matches!(
-            fp128::Dense::RING_DIMENSION_SCHEDULE_MODE,
-            RingDimensionScheduleMode::AdaptiveDimension { .. }
-        ));
-        assert!(matches!(
-            <fp128::Dense as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
-            RingDimensionScheduleMode::AdaptiveDimension {
+            <fp128::Dense as CommitmentConfig>::RING_DIMENSION_SCHEDULE,
+            RingDimensionSchedule {
                 num_search_levels: 2,
                 suffix_dimensions: &[64],
                 ..

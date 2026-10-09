@@ -209,11 +209,11 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
     }
 }
 
-/// Whether the guest's 64-point i32 NTT and pointwise-dot inlines serve this
-/// width and degree.
+/// Whether `plan` selects the guest's 64-point i32 NTT and pointwise-dot
+/// inlines and they serve this width and degree.
 #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
-pub(crate) const fn inline_ntt64<W: PrimeWidth, const D: usize>() -> bool {
-    D == jolt_inlines_ntt::DEGREE && W::R_LOG == 32
+pub(crate) const fn inline_ntt64<W: PrimeWidth, const D: usize>(plan: NttKernelPlan) -> bool {
+    plan.uses_jolt_inline() && D == jolt_inlines_ntt::DEGREE && W::R_LOG == 32
 }
 
 /// Forward negacyclic NTT (twist + cyclic Gentleman-Sande DIF).
@@ -228,7 +228,7 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
     plan: NttKernelPlan,
 ) {
     #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
-    if inline_ntt64::<W, D>() {
+    if inline_ntt64::<W, D>(plan) {
         // SAFETY: PrimeWidth is sealed to i16/i32 and MontCoeff is transparent.
         // The branch pins both element width and array length. The inline SDK
         // copies to aligned buffers when an array lacks doubleword alignment.
@@ -329,6 +329,9 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
     tw: &NttTwiddles<W, D>,
     plan: NttKernelPlan,
 ) {
+    // Only the SIMD transforms take a plan-selected path here.
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+    let _ = plan;
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_x86_transform_ntt::<D>(plan) {
         // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and
@@ -413,6 +416,9 @@ pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
     tw: &NttTwiddles<W, D>,
     plan: NttKernelPlan,
 ) {
+    // Only the SIMD transforms take a plan-selected path here.
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+    let _ = plan;
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_x86_transform_ntt::<D>(plan) {
         // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and
@@ -493,6 +499,9 @@ pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
     tw: &NttTwiddles<W, D>,
     plan: NttKernelPlan,
 ) {
+    // Only the SIMD transforms take a plan-selected path here.
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+    let _ = plan;
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_x86_transform_ntt::<D>(plan) {
         // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and

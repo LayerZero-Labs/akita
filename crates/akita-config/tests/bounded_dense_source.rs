@@ -86,8 +86,8 @@ fn bound_is_the_only_declared_difference_from_full_width_dense() {
         fp128::Dense::sis_modulus_profile()
     );
     assert_eq!(
-        fp128::DenseBounded::RING_DIMENSION_SCHEDULE_MODE,
-        fp128::Dense::RING_DIMENSION_SCHEDULE_MODE,
+        fp128::DenseBounded::RING_DIMENSION_SCHEDULE,
+        fp128::Dense::RING_DIMENSION_SCHEDULE,
         "the source bound must not change the A/B/D search domain"
     );
     assert_eq!(

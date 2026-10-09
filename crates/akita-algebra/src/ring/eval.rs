@@ -3,9 +3,9 @@
 use super::CyclotomicRing;
 use crate::fft::field_pow;
 use akita_error::{narrowing::usize_to_u64, AkitaError};
+use jolt_field::Field;
 #[cfg(test)]
-use jolt_field::ExtField;
-use jolt_field::{Field, MulBaseUnreduced};
+use jolt_field::{ExtField, MulBaseUnreduced};
 
 /// Return the first `len` powers of `alpha`, starting with one.
 pub fn scalar_powers<F: Field>(alpha: F, len: usize) -> Vec<F> {
@@ -116,53 +116,6 @@ where
         })
 }
 
-/// Fast counterpart of `eval_flat_ring_at_pows`, through `E::dot_base`.
-///
-/// This is the runtime-dimension form of [`eval_ring_at_pows_fast`].
-///
-/// # Panics
-///
-/// Panics in debug builds if `coeffs.len() != alpha_pows.len()`. Callers
-/// must pass equal lengths: a field-inline guest's `dot_base` asserts them,
-/// while the host fold stops at the shorter slice.
-#[inline]
-pub fn eval_flat_ring_at_pows_fast<F, E>(coeffs: &[F], alpha_pows: &[E]) -> E
-where
-    F: Field,
-    E: MulBaseUnreduced<F>,
-{
-    debug_assert_eq!(alpha_pows.len(), coeffs.len());
-    E::dot_base(alpha_pows, coeffs)
-}
-
-/// Fast counterpart of `eval_ring_at_pows`, through `E::dot_base`.
-///
-/// Same signature and result as `eval_ring_at_pows`. On a host, `dot_base`
-/// accumulates all `D` widening `E × F` products into a single
-/// [`jolt_field::Unreduced::Product`] and reduces **once** instead of after
-/// every coefficient; a field-inline guest keeps the sum in its register file.
-///
-/// Bit-identical to `eval_ring_at_pows` as long as the running product-sum
-/// stays within the accumulator's carry headroom. For `Fp128` each `u128`
-/// accumulator limb holds a 64-bit product word, so the sum of up to ~`2^64`
-/// products is exact — `D ≈ 64` is trivially within bounds (validated by
-/// `deferred_matches_per_term_fp128_d64`). This is why callers can use it even
-/// though `Fp128` keeps `SUM_IS_EXACT` at its conservative
-/// `false` default.
-///
-/// # Panics
-///
-/// Panics in debug builds if `alpha_pows.len() != D`.
-#[inline]
-pub fn eval_ring_at_pows_fast<F, E, const D: usize>(r: &CyclotomicRing<F, D>, alpha_pows: &[E]) -> E
-where
-    F: Field,
-    E: MulBaseUnreduced<F>,
-{
-    debug_assert_eq!(alpha_pows.len(), D);
-    E::dot_base(alpha_pows, r.coefficients())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,13 +153,8 @@ mod tests {
             }
             assert_eq!(
                 eval_ring_at_pows(&ring, &pows),
-                eval_ring_at_pows_fast(&ring, &pows),
+                F::dot_base(&pows, ring.coefficients()),
                 "deferred reduction diverged from per-term at seed {seed}"
-            );
-            assert_eq!(
-                eval_flat_ring_at_pows(ring.coefficients(), &pows),
-                eval_flat_ring_at_pows_fast(ring.coefficients(), &pows),
-                "flat deferred reduction diverged from per-term at seed {seed}"
             );
         }
     }

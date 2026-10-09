@@ -21,9 +21,9 @@ spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "ef97413
 
 [features]
 default = ["transcript-blake2b"]
-# Blake2b sponge over the jolt-inlines hasher (a RISC-V guest verifier); same
-# bytes as the `blake2` crate.
-blake2-inline = ["dep:jolt-inlines-blake2"]
+# Spongefish's Blake2b sponge over the jolt-inlines hasher (a RISC-V guest
+# verifier); same bytes as the `blake2` crate.
+blake2-inline = ["dep:jolt-inlines-blake2", "jolt-inlines-blake2/digest"]
 logging-transcript = []
 # spongefish 0.7 imports StdHash from its prover/verifier/domain modules
 # even when Akita selects Blake2b or Keccak explicitly, so sha3 is required

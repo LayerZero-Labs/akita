@@ -1252,7 +1252,7 @@ geometry. It does not enlarge the partial opening or quotient.
 
 The planner enumerates every admitted `(d_A, s)` pair at levels 0 and 1 under
 the incoming dimension ceiling. It preserves the selective L2 branch's current
-dimension policy and uniform suffix after level 1. This feature does not add A
+dimension policy and equal-role suffix after level 1. This feature does not add A
 dimension search beyond level 1. A terminal reached inside that adaptive
 prefix may use an admitted adaptive dimension.
 
@@ -1376,7 +1376,7 @@ The planner MUST keep the search bounded in the following ways.
 5. Search subring packing candidates only at levels 0 and 1.
 6. Apply B slicing only after A and `t_hat` geometry is known.
 7. Keep the existing deterministic frontier and memo state objective.
-8. Keep the current uniform suffix after the adaptive prefix.
+8. Keep the current equal-role suffix after the adaptive prefix.
 9. Compare the pruned result with an unpruned oracle on small fixtures.
 
 ## Implementation boundaries
@@ -1440,7 +1440,7 @@ The planner MUST keep the search bounded in the following ways.
 
 - Add bounded subring packing candidates and the level policy above.
 - Extend the existing two level adaptive search with the bounded `s` registry.
-  Keep the current uniform suffix after that prefix.
+  Keep the current equal-role suffix after that prefix.
 - Recompute exact ranks, setup, compression, proof bytes, and successors.
 - Regenerate every affected catalog on top of the selective L2 branch.
 - Add report columns for opening method, challenge subring dimension, packing
@@ -1511,7 +1511,7 @@ The planner MUST keep the search bounded in the following ways.
 - [x] Short schedule tests cover root to terminal and root to one recursive
       fold to terminal without inserting another fold.
 - [x] The planner searches every admitted `(d_A, s)` pair only inside the two
-      level adaptive prefix and keeps the current uniform suffix.
+      level adaptive prefix and keeps the current equal-role suffix.
 - [x] Adaptive direct catalogs minimize first-direct setup capacity, the exact
       proof-and-work score, proof bytes, exact total setup, root output-witness length, and the canonical
       descriptor. Recursive catalogs minimize padded total setup-envelope

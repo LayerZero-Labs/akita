@@ -126,8 +126,8 @@ pub fn verifier_schedule_fits_setup(
 /// `[PROOF_OPTIMIZED_LOG_BASIS_MIN, MAX]` basis range, so those are not
 /// parameters.
 macro_rules! impl_proof_optimized_preset {
-    (@ring_dimension_schedule_mode $mode:expr) => {
-        const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode = $mode;
+    (@ring_dimension_schedule $mode:expr) => {
+        const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule = $mode;
     };
     (@committed_source_class unit_one_hot) => {
         fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
@@ -141,11 +141,11 @@ macro_rules! impl_proof_optimized_preset {
             akita_params::sis::CommittedSourceClass::BalancedSignedDigit
         }
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, source = $source:ident, schedule_family = $family_name:literal, ring_dimension_schedule_mode = $mode:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $field_bits, $log_commit_bound, $source, $family_name, ring_dimension_schedule_mode = $mode);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, source = $source:ident, schedule_family = $family_name:literal, ring_dimension_schedule = $mode:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $field_bits, $log_commit_bound, $source, $family_name, ring_dimension_schedule = $mode);
     };
-    (@options ring_dimension_schedule_mode = $mode:expr) => {
-        impl_proof_optimized_preset!(@ring_dimension_schedule_mode $mode);
+    (@options ring_dimension_schedule = $mode:expr) => {
+        impl_proof_optimized_preset!(@ring_dimension_schedule $mode);
     };
     (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, $source:ident, $family_name:literal, $($options:tt)*) => {
         impl $crate::CommitmentConfig for $cfg {

@@ -39,6 +39,10 @@ impl TrustedBytes {
 }
 mod poly_impls;
 
+/// Elements a run decoder reserves ahead of the bytes it has read, so a forged
+/// element count cannot force a large allocation before the data arrives.
+const DECODE_CHUNK_ELEMENTS: usize = 1 << 12;
+
 use std::io::{Cursor, Read, Write};
 
 /// Default maximum number of elements accepted by self-described validated
@@ -196,7 +200,7 @@ pub trait AkitaDeserialize: Sized {
         count: usize,
     ) -> Result<Vec<Self>, SerializationError> {
         let mut out = Vec::new();
-        out.try_reserve_exact(count)
+        out.try_reserve_exact(count.min(DECODE_CHUNK_ELEMENTS))
             .map_err(|_| SerializationError::InvalidData("allocation failed".to_string()))?;
         for _ in 0..count {
             out.push(Self::deserialize_with_mode(

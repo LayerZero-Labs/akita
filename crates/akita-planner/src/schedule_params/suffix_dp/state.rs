@@ -455,19 +455,15 @@ impl SuffixTopology {
 
 impl SuffixState<'_> {
     pub(super) fn memo_key(self, policy: &PlannerPolicy) -> ScheduleMemoKey {
-        let memo_dimensions = match policy.ring_dimension_schedule_mode {
-            crate::RingDimensionScheduleMode::AdaptiveDimension {
-                num_search_levels,
-                suffix_dimensions,
-                ..
-            } if self.level >= num_search_levels => {
-                crate::schedule_params::suffix_dimension_ceiling(
-                    suffix_dimensions,
-                    self.dimension_ceiling,
-                )
-                .map_or(self.dimension_ceiling, CommitmentRingDims::uniform)
-            }
-            _ => self.dimension_ceiling,
+        let domain = policy.ring_dimension_schedule;
+        let memo_dimensions = if self.level >= domain.num_search_levels {
+            crate::schedule_params::suffix_dimension_ceiling(
+                domain.suffix_dimensions,
+                self.dimension_ceiling,
+            )
+            .map_or(self.dimension_ceiling, CommitmentRingDims::uniform)
+        } else {
+            self.dimension_ceiling
         };
         ScheduleMemoKey {
             level: self.level,

@@ -1,6 +1,4 @@
 use super::PhysicalBWeightTerm;
-#[cfg(test)]
-use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use jolt_field::{ExtField, Field, MulBaseUnreduced};
@@ -388,7 +386,7 @@ where
             AkitaError::InvalidSetup("weighted setup coeff start overflow".into())
         })?;
         let coeffs = checked_slice(row, coeff_start, ring_d, "weighted setup coeffs")?;
-        acc += row_weight * col_weight * eval_flat_ring_at_pows_fast::<Base, E>(coeffs, alpha_pows);
+        acc += row_weight * col_weight * MulBaseUnreduced::dot_base(alpha_pows, coeffs);
     }
     Ok(acc)
 }

@@ -28,13 +28,13 @@ impl IndexedXofPrefix {
         Ok(Self { state })
     }
 
-    fn reader(&self, coordinate_index: u64) -> IndexedShakeReader {
+    fn cursor(&self, coordinate_index: u64) -> XofCursor {
         let mut state = self.state;
         absorb_bytes(&mut state, GROUP_ROOT_LEN, &coordinate_index.to_le_bytes());
         xor_state_byte(&mut state, COORDINATE_INPUT_LEN, SHAKE_DOMAIN_SUFFIX);
         xor_state_byte(&mut state, SHAKE256_RATE - 1, 0x80);
         f1600(&mut state);
-        IndexedShakeReader { state, pos: 0 }
+        XofCursor { state, pos: 0 }
     }
 }
 
@@ -69,13 +69,51 @@ fn xor_state_byte(state: &mut [u64; 25], index: usize, byte: u8) {
     state[index / 8] ^= u64::from(byte) << (8 * (index % 8));
 }
 
-struct IndexedShakeReader {
+/// Streaming cursor over one coordinate's SHAKE256 stream: the squeezed
+/// state and the next unread byte of its rate lanes.
+pub(crate) struct XofCursor {
     state: [u64; 25],
     pos: usize,
 }
 
-impl IndexedShakeReader {
-    fn read(&mut self, out: &mut [u8]) {
+impl XofCursor {
+    /// Allocate reusable cursor storage before its first indexed reset.
+    pub(crate) fn new() -> Self {
+        Self {
+            state: [0u64; 25],
+            pos: SHAKE256_RATE,
+        }
+    }
+
+    /// Build the canonical stream for one claim-major fold coordinate.
+    #[cfg(test)]
+    pub(crate) fn from_indexed_prefix(prefix: &IndexedXofPrefix, coordinate_index: u64) -> Self {
+        prefix.cursor(coordinate_index)
+    }
+
+    /// Reset to another coordinate stream without allocating.
+    pub(crate) fn reset_indexed_prefix(
+        &mut self,
+        prefix: &IndexedXofPrefix,
+        coordinate_index: u64,
+    ) {
+        *self = prefix.cursor(coordinate_index);
+    }
+
+    #[inline]
+    fn next_u8(&mut self) -> u8 {
+        if self.pos == SHAKE256_RATE {
+            f1600(&mut self.state);
+            self.pos = 0;
+        }
+        let pos = self.pos;
+        self.pos += 1;
+        (self.state[pos / 8] >> (8 * (pos % 8))) as u8
+    }
+
+    /// Copy the next stream bytes, permuting only at a rate boundary.
+    #[inline]
+    pub(crate) fn fill_bytes(&mut self, out: &mut [u8]) {
         let mut written = 0;
         while written < out.len() {
             if self.pos == SHAKE256_RATE {
@@ -95,57 +133,6 @@ impl IndexedShakeReader {
                 written += lane_take;
             }
         }
-    }
-}
-
-/// Streaming cursor reading directly from the SHAKE256 rate lanes.
-pub(crate) struct XofCursor {
-    reader: IndexedShakeReader,
-}
-
-impl XofCursor {
-    /// Allocate reusable cursor storage before its first indexed reset.
-    pub(crate) fn new() -> Self {
-        Self {
-            reader: IndexedShakeReader {
-                state: [0u64; 25],
-                pos: SHAKE256_RATE,
-            },
-        }
-    }
-
-    /// Build the canonical stream for one claim-major fold coordinate.
-    #[cfg(test)]
-    pub(crate) fn from_indexed_prefix(prefix: &IndexedXofPrefix, coordinate_index: u64) -> Self {
-        Self {
-            reader: prefix.reader(coordinate_index),
-        }
-    }
-
-    /// Reset to another coordinate stream without allocating.
-    pub(crate) fn reset_indexed_prefix(
-        &mut self,
-        prefix: &IndexedXofPrefix,
-        coordinate_index: u64,
-    ) {
-        self.reader = prefix.reader(coordinate_index);
-    }
-
-    #[inline]
-    fn next_u8(&mut self) -> u8 {
-        if self.reader.pos == SHAKE256_RATE {
-            f1600(&mut self.reader.state);
-            self.reader.pos = 0;
-        }
-        let pos = self.reader.pos;
-        self.reader.pos += 1;
-        (self.reader.state[pos / 8] >> (8 * (pos % 8))) as u8
-    }
-
-    /// Copy the next stream bytes, permuting only at a rate boundary.
-    #[inline]
-    pub(crate) fn fill_bytes(&mut self, out: &mut [u8]) {
-        self.reader.read(out);
     }
 
     #[inline]

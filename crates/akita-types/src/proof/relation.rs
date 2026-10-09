@@ -3,7 +3,7 @@
 use crate::proof::RingVec;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::ring::{eval_flat_ring_at_pows_fast, eval_ring_at, scalar_powers};
+use akita_algebra::ring::{eval_ring_at, scalar_powers};
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
 use akita_params::dispatch_for_field;
@@ -329,7 +329,7 @@ pub fn assemble_compressed_relation_rhs<F: Field>(
 
 fn accumulate_extension_rows<F, E, const D: usize>(
     eq_tau1: &[E],
-    alpha: E,
+    alpha_pows: &[E],
     rows: &[CyclotomicRing<F, D>],
     row_idx: &mut usize,
     acc: &mut E,
@@ -338,13 +338,12 @@ where
     F: Field + CanonicalEncoding,
     E: Field + MulBaseUnreduced<F>,
 {
-    let alpha_pows = scalar_powers(alpha, D);
     let weights = relation_row_weights(eq_tau1, *row_idx, rows.len())?;
     let row_slices = rows
         .iter()
         .map(|r| r.coefficients().as_slice())
         .collect::<Vec<_>>();
-    *acc += E::weighted_dot_base_rows(&row_slices, weights, &alpha_pows);
+    *acc += E::weighted_dot_base_rows(&row_slices, weights, alpha_pows);
     *row_idx += rows.len();
     Ok(())
 }
@@ -451,8 +450,9 @@ where
     let eq_tau1 = EqPolynomial::evals_prefix(tau1, row_count)?;
     let mut acc = E::zero();
     let mut row_idx = 1usize + n_a;
-    accumulate_extension_rows(&eq_tau1, alpha, u, &mut row_idx, &mut acc)?;
-    accumulate_extension_rows(&eq_tau1, alpha, v, &mut row_idx, &mut acc)?;
+    let alpha_pows = scalar_powers(alpha, D);
+    accumulate_extension_rows(&eq_tau1, &alpha_pows, u, &mut row_idx, &mut acc)?;
+    accumulate_extension_rows(&eq_tau1, &alpha_pows, v, &mut row_idx, &mut acc)?;
     Ok(acc)
 }
 
@@ -530,6 +530,7 @@ where
             outer_dim,
             |D_B| {
                 let u_typed = u.as_ring_slice::<D_B>()?;
+                let alpha_pows = scalar_powers(alpha, D_B);
                 let mut commit_offset = 0usize;
                 for group in &layout.groups {
                     row_idx = row_idx
@@ -550,7 +551,7 @@ where
                     })?;
                     accumulate_extension_rows::<F, E, D_B>(
                         &eq_tau1,
-                        alpha,
+                        &alpha_pows,
                         rows,
                         &mut row_idx,
                         &mut acc,
@@ -611,7 +612,14 @@ where
         layout.d_ring_dimension,
         |D_D| {
             let v_typed = v.as_ring_slice::<D_D>()?;
-            accumulate_extension_rows::<F, E, D_D>(&eq_tau1, alpha, v_typed, &mut row_idx, &mut acc)
+            let alpha_pows = scalar_powers(alpha, D_D);
+            accumulate_extension_rows::<F, E, D_D>(
+                &eq_tau1,
+                &alpha_pows,
+                v_typed,
+                &mut row_idx,
+                &mut acc,
+            )
         }
     )?;
     Ok(acc)
@@ -700,7 +708,7 @@ where
             })?
             .1;
         if include(family) {
-            let row_evaluation = eval_flat_ring_at_pows_fast(row, powers);
+            let row_evaluation = MulBaseUnreduced::dot_base(powers, row);
             claim += *row_weights.get(row_index).ok_or_else(|| {
                 AkitaError::Internal(
                     "generated relation row weights are missing the selected row".into(),

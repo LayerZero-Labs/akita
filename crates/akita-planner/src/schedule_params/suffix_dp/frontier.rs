@@ -303,6 +303,7 @@ impl ProjectedObjectiveChoices {
         self.setup.iter().map(|candidate| &candidate.schedule)
     }
 
+    #[cfg(all(test, feature = "catalog-gen"))]
     pub(super) fn payload_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
         self.payload.iter().map(|candidate| &candidate.schedule)
     }
@@ -432,25 +433,18 @@ impl ProjectedFrontier {
         projections: &[Projection],
     ) -> ProjectionMask {
         let choices = self.by_parent_cost.get(parent_cost);
-        let keep = |projection| {
-            match projection {
-            Projection::FirstDirectSetup => {
-                matches!(
-                policy.selection_policy,
-                crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
-                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-            ) && !choices.is_some_and(|choices| {
-                    choices.projected(projection).iter().any(|existing| {
-                        setup_primary_strictly_dominates(
-                            policy.selection_policy,
-                            setup_score(policy.selection_policy, existing.schedule.metrics()),
-                            existing.admission,
-                            setup_score(policy.selection_policy, metrics),
-                            admission,
-                        )
-                    })
+        let keep = |projection| match projection {
+            Projection::FirstDirectSetup => !choices.is_some_and(|choices| {
+                choices.projected(projection).iter().any(|existing| {
+                    setup_primary_strictly_dominates(
+                        policy.selection_policy,
+                        setup_score(policy.selection_policy, existing.schedule.metrics()),
+                        existing.admission,
+                        setup_score(policy.selection_policy, metrics),
+                        admission,
+                    )
                 })
-            }
+            }),
             Projection::Payload => !choices.is_some_and(|choices| {
                 choices.projected(projection).iter().any(|existing| {
                     payload_primary_strictly_dominates(
@@ -462,7 +456,6 @@ impl ProjectedFrontier {
                     )
                 })
             }),
-        }
         };
         let mut retained = ProjectionMask::default();
         for &projection in projections {

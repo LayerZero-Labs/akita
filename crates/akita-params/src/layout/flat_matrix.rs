@@ -234,26 +234,13 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> FlatMatrix<F> {
         expected_num_field_elements: usize,
         max_field_elements: usize,
     ) -> Result<Self, SerializationError> {
-        if expected_num_field_elements == 0 {
-            return Err(SerializationError::InvalidData(
-                "expected flat matrix field count must be non-zero".to_string(),
-            ));
-        }
-        if expected_num_field_elements > max_field_elements {
-            return Err(SerializationError::LengthLimitExceeded {
-                len: u64::try_from(expected_num_field_elements).unwrap_or(u64::MAX),
-                max: max_field_elements,
-            });
-        }
-
-        let num_field_elements =
-            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        if num_field_elements != expected_num_field_elements {
-            return Err(SerializationError::InvalidData(
-                "flat matrix field count does not match expected setup shape".to_string(),
-            ));
-        }
-
+        let num_field_elements = read_expected_field_count(
+            &mut reader,
+            compress,
+            validate,
+            expected_num_field_elements,
+            max_field_elements,
+        )?;
         Self::deserialize_data(reader, compress, validate, num_field_elements)
     }
 
@@ -294,26 +281,15 @@ impl<F: Field + AkitaDeserialize<Context = ()> + 'static> FlatMatrix<F> {
         expected_num_field_elements: usize,
         max_field_elements: usize,
     ) -> Result<(Self, TrustedBytes), SerializationError> {
-        if expected_num_field_elements == 0 {
-            return Err(SerializationError::InvalidData(
-                "expected flat matrix field count must be non-zero".to_string(),
-            ));
-        }
-        if expected_num_field_elements > max_field_elements {
-            return Err(SerializationError::LengthLimitExceeded {
-                len: u64::try_from(expected_num_field_elements).unwrap_or(u64::MAX),
-                max: max_field_elements,
-            });
-        }
         let mut reader = bytes.bytes();
-        let num_field_elements =
-            usize::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
+        let num_field_elements = read_expected_field_count(
+            &mut reader,
+            Compress::No,
+            Validate::Yes,
+            expected_num_field_elements,
+            max_field_elements,
+        )?;
         let count_header = bytes.bytes().len() - reader.len();
-        if num_field_elements != expected_num_field_elements {
-            return Err(SerializationError::InvalidData(
-                "flat matrix field count does not match expected setup shape".to_string(),
-            ));
-        }
         let coefficients = bytes.skip(count_header).ok_or_else(|| {
             SerializationError::InvalidData("flat matrix header is truncated".to_string())
         })?;
@@ -328,6 +304,36 @@ impl<F: Field + AkitaDeserialize<Context = ()> + 'static> FlatMatrix<F> {
             rest,
         ))
     }
+}
+
+/// Check a trusted expected shape, then read the serialized field count and
+/// require it to match, before any coefficient storage is touched. Shared by
+/// the copying and in-place setup decoders.
+fn read_expected_field_count<R: Read>(
+    reader: R,
+    compress: Compress,
+    validate: Validate,
+    expected_num_field_elements: usize,
+    max_field_elements: usize,
+) -> Result<usize, SerializationError> {
+    if expected_num_field_elements == 0 {
+        return Err(SerializationError::InvalidData(
+            "expected flat matrix field count must be non-zero".to_string(),
+        ));
+    }
+    if expected_num_field_elements > max_field_elements {
+        return Err(SerializationError::LengthLimitExceeded {
+            len: u64::try_from(expected_num_field_elements).unwrap_or(u64::MAX),
+            max: max_field_elements,
+        });
+    }
+    let num_field_elements = usize::deserialize_with_mode(reader, compress, validate, &())?;
+    if num_field_elements != expected_num_field_elements {
+        return Err(SerializationError::InvalidData(
+            "flat matrix field count does not match expected setup shape".to_string(),
+        ));
+    }
+    Ok(num_field_elements)
 }
 
 impl<F: Field + Valid> Valid for FlatMatrix<F> {

@@ -260,8 +260,9 @@ fn encode_riscv64_scalar_q128_cache<const D: usize>(
 
 /// Body layout of a RISC-V scalar Q128 cache artifact, checked against the
 /// verifier's expectations: the negacyclic residues and the optional i16 tail
-/// are stored in their in-memory forms, `MontCoeff` being a transparent
-/// `i32`/`i16` and `CyclotomicCrtNtt` a transparent array of them.
+/// are stored as little-endian words in their in-memory order, `MontCoeff`
+/// being a transparent `i32`/`i16` and `CyclotomicCrtNtt` a transparent array
+/// of them.
 struct ScalarQ128CacheLayout<'a, const D: usize> {
     metadata: PreparedVerifierNttCacheMetadata,
     params: CrtNttParamSet<i32, Q128_NUM_PRIMES, D>,
@@ -274,12 +275,6 @@ fn scalar_q128_cache_layout<F: Field + CanonicalEncoding, const D: usize>(
     bytes: &[u8],
     expected_binding: PreparedVerifierNttCacheBinding,
 ) -> Result<ScalarQ128CacheLayout<'_, D>, AkitaError> {
-    // The body is the little-endian in-memory image of the residue rows.
-    if cfg!(target_endian = "big") {
-        return Err(invalid(
-            "RISC V scalar Q128 cache requires a little-endian target",
-        ));
-    }
     let metadata = prepared_verifier_ntt_cache_metadata(bytes)?;
     if metadata.ring_dimension != D || metadata.binding != expected_binding {
         return Err(invalid(
@@ -395,6 +390,12 @@ pub fn decode_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: u
         );
         neg.set_len(metadata.base_prefix_len);
     }
+    #[cfg(target_endian = "big")]
+    for ring in &mut neg {
+        for coefficient in ring.limbs.iter_mut().flatten() {
+            *coefficient = MontCoeff::from_raw(i32::from_le(coefficient.raw()));
+        }
+    }
     for ring in &neg {
         for (limb, prime) in ring.limbs.iter().zip(&layout.params.primes) {
             let (min, max) = (-prime.p, prime.p);
@@ -417,6 +418,12 @@ pub fn decode_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: u
         );
         tail_rings.set_len(metadata.tail_prefix_len);
     }
+    #[cfg(target_endian = "big")]
+    for ring in &mut tail_rings {
+        for coefficient in &mut ring.limbs[0] {
+            *coefficient = MontCoeff::from_raw(i16::from_le(coefficient.raw()));
+        }
+    }
     for ring in &tail_rings {
         if ring.limbs[0].iter().any(|coefficient| {
             let raw = coefficient.raw();
@@ -436,12 +443,14 @@ pub fn decode_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: u
 /// The header, identities, geometry, lengths, and alignment are checked as in
 /// the decoder. The residue ranges are not: like the matrix of an unvalidated
 /// setup, they are taken as trusted, so the caller must bind the bytes to
-/// trusted setup provisioning or to the verifier program identity.
+/// trusted setup provisioning or to the verifier program identity. The body's
+/// little-endian words are their in-memory form only on a little-endian
+/// target, so a big-endian target must decode instead.
 ///
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] for a malformed, mismatched, or
-/// misaligned artifact.
+/// misaligned artifact, or on a big-endian target.
 pub fn view_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: usize>(
     bytes: &'static [u8],
     expected_binding: PreparedVerifierNttCacheBinding,
@@ -463,6 +472,11 @@ pub fn view_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: usi
         // aligned (checked above), and lives for `'static`.
         let rows = unsafe { core::slice::from_raw_parts(body.as_ptr().cast::<T>(), count) };
         Ok(PreparedRows::Static(rows))
+    }
+    if cfg!(target_endian = "big") {
+        return Err(invalid(
+            "in-place RISC V scalar Q128 cache view requires a little-endian target",
+        ));
     }
     let layout = scalar_q128_cache_layout::<F, D>(bytes, expected_binding)?;
     let metadata = layout.metadata;

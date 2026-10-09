@@ -39,8 +39,6 @@ pub use proof_stream::{
     SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_STAGE3,
     SITE_FAMILY_SUMCHECK, SITE_FAMILY_TERMINAL,
 };
-#[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
-pub use sponge::InlineBlake2bSponge;
 pub use sponge::TranscriptSponge;
 
 /// Byte length of every proof channel challenge block.
