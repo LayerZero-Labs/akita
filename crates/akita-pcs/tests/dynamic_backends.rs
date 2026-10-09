@@ -16,7 +16,7 @@ type Cfg = fp128::OneHot;
 type F = fp128::Field;
 type E = F;
 
-use private_cpu::PrivateCpu;
+use private_cpu::{Fault, PrivateCpu};
 
 const NUM_VARS: usize = 15;
 const NUM_POLYS: usize = 4;
@@ -25,10 +25,16 @@ const DOMAIN: &[u8] = b"akita/test/dynamic-onehot/v1";
 #[test]
 fn dynamic_onehot_matches_homogeneous_proof() {
     common::init_rayon_pool();
-    common::run_on_large_stack(|| run().unwrap());
+    common::run_on_large_stack(|| run(false).unwrap());
 }
 
-fn run() -> Result<(), AkitaError> {
+#[test]
+fn dynamic_backend_failures_cleanup_and_retry() {
+    common::init_rayon_pool();
+    common::run_on_large_stack(|| run(true).unwrap());
+}
+
+fn run(check_failures: bool) -> Result<(), AkitaError> {
     let scheme = common::load_workspace_scheme::<Cfg>()?;
     let chunk_size = unit_onehot_source_chunk_size::<Cfg>()?;
     let chunks_per_poly = (1usize << NUM_VARS) / chunk_size;
@@ -110,11 +116,78 @@ fn run() -> Result<(), AkitaError> {
     let statement = GroupBatchStatement::new(
         selection,
         OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-            point,
-            evaluations,
+            point.clone(),
+            evaluations.clone(),
             &committed_group,
         )?])?,
     )?;
     verifier.batched_verify(&proof, DOMAIN, statement, BasisMode::Lagrange)?;
+    if check_failures {
+        let destination = PrivateCpu::new(CpuBackend::new(setup.expanded.clone())?);
+        let unused = PrivateCpu::new(CpuBackend::new(setup.expanded.clone())?);
+        let prefixes_destination = destination.prefixes(&setup, &prefix_ids);
+        let prefixes_unused = unused.prefixes(&setup, &prefix_ids);
+        let mut registry = BackendRegistry::<Cfg>::new()?;
+        let source_id = registry.register(&private, &prefixes_private)?;
+        let destination_id = registry.register(&destination, &prefixes_destination)?;
+        registry.register(&unused, &prefixes_unused)?;
+        registry.register_bridge_with::<PrivateCpu, PrivateCpu>(|packet, _| Ok(packet))?;
+        let prove = || {
+            let mut owners = vec![destination_id; levels];
+            owners[0] = source_id;
+            batched_prove(
+                setup.expanded.descriptor(),
+                scheme.schedules(),
+                &registry,
+                opening()?,
+                DOMAIN,
+                BasisMode::Lagrange,
+                &mut FixedFoldRoute::new(owners),
+            )
+        };
+        let backends = [&private, &destination, &unused];
+        // Preparation includes unused executors; finishing stops at the first error.
+        for (fault, target) in [
+            (Fault::Preparation, &unused),
+            (Fault::Export, &private),
+            (Fault::Import, &destination),
+            (Fault::SourceStage1, &private),
+            (Fault::DestinationOpening, &destination),
+            (Fault::Finish, &destination),
+        ] {
+            let before = backends.map(|b| (b.admitted.get(), b.finished.get(), b.aborted.get()));
+            let folds = private.folds.get();
+            let imports = destination.imports.get();
+            target.fault.set(fault);
+            let error = prove().unwrap_err();
+            assert!(matches!(error, AkitaError::InvalidInput(message)
+                if message == format!("injected {fault:?} failure")));
+            for (index, backend) in backends.iter().enumerate() {
+                let prepared = usize::from(fault != Fault::Preparation || index < 2);
+                let finished = usize::from(fault == Fault::Finish && index == 0);
+                assert_eq!(backend.admitted.get() - before[index].0, prepared);
+                assert_eq!(backend.finished.get() - before[index].1, finished);
+                assert_eq!(backend.aborted.get() - before[index].2, prepared - finished);
+            }
+            if fault == Fault::Preparation {
+                assert_eq!(private.folds.get(), folds);
+            }
+            if matches!(fault, Fault::SourceStage1 | Fault::DestinationOpening) {
+                assert_eq!(destination.imports.get(), imports + 1);
+            }
+            target.fault.set(Fault::None);
+            let finished = backends.map(|b| b.finished.get());
+            let aborted = backends.map(|b| b.aborted.get());
+            assert_eq!(prove()?, reference);
+            for (index, backend) in backends.iter().enumerate() {
+                assert_eq!(backend.finished.get(), finished[index] + 1);
+                assert_eq!(backend.aborted.get(), aborted[index]);
+                assert_eq!(
+                    backend.admitted.get(),
+                    backend.finished.get() + backend.aborted.get()
+                );
+            }
+        }
+    }
     Ok(())
 }

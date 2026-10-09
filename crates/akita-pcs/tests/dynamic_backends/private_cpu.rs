@@ -8,6 +8,7 @@ use akita_prover::backend::*;
 use akita_prover::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 use akita_types::{AkitaSetupDescriptor, Commitment};
 use jolt_poly::UnivariatePoly;
+use std::cell::Cell;
 
 type Cpu = CpuBackend<F, E>;
 #[derive(Clone)]
@@ -32,12 +33,46 @@ impl CommitmentRelationMaterial<F> for OwnedMaterial {
         self.0.metadata()
     }
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Fault {
+    #[default]
+    None,
+    Preparation,
+    Export,
+    Import,
+    SourceStage1,
+    DestinationOpening,
+    Finish,
+}
+
 pub(crate) struct PrivateCpu {
     inner: Cpu,
+    pub(crate) fault: Cell<Fault>,
+    pub(crate) admitted: Cell<usize>,
+    pub(crate) finished: Cell<usize>,
+    pub(crate) aborted: Cell<usize>,
+    pub(crate) folds: Cell<usize>,
+    pub(crate) imports: Cell<usize>,
 }
 impl PrivateCpu {
     pub(crate) fn new(inner: Cpu) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            fault: Cell::default(),
+            admitted: Cell::new(0),
+            finished: Cell::new(0),
+            aborted: Cell::new(0),
+            folds: Cell::new(0),
+            imports: Cell::new(0),
+        }
+    }
+    fn fail(&self, fault: Fault) -> Result<(), AkitaError> {
+        if self.fault.get() == fault {
+            return Err(AkitaError::InvalidInput(format!(
+                "injected {fault:?} failure"
+            )));
+        }
+        Ok(())
     }
     pub(crate) fn prefixes(
         &self,
@@ -80,10 +115,14 @@ impl PrivateCpu {
 impl ProofScopeConsumer for PrivateCpu {
     type ProofSessionHandle = <Cpu as ProofScopeConsumer>::ProofSessionHandle;
     fn finish_scope(&self, session: &Self::ProofSessionHandle) -> Result<(), AkitaError> {
-        self.inner.finish_scope(session)
+        self.fail(Fault::Finish)?;
+        self.inner.finish_scope(session)?;
+        self.finished.set(self.finished.get() + 1);
+        Ok(())
     }
     fn abort_scope_best_effort(&self, session: &Self::ProofSessionHandle) {
         self.inner.abort_scope_best_effort(session);
+        self.aborted.set(self.aborted.get() + 1);
     }
 }
 impl ProverHandleFamily<F, E> for PrivateCpu {
@@ -109,14 +148,21 @@ impl ProofAdmission<F, E> for PrivateCpu {
         plan: &FoldSchedule,
         layout: &OpeningClaimsLayout,
     ) -> Result<Self::ProofSessionHandle, AkitaError> {
-        self.inner.prepare_executor(setup, schedules, plan, layout)
+        self.fail(Fault::Preparation)?;
+        let session = self
+            .inner
+            .prepare_executor(setup, schedules, plan, layout)?;
+        self.admitted.set(self.admitted.get() + 1);
+        Ok(session)
     }
     fn begin_fold(
         &self,
         session: &Self::ProofSessionHandle,
         requirements: &FoldExecutionRequirements<'_>,
     ) -> Result<(), AkitaError> {
-        self.inner.begin_fold(session, requirements)
+        self.inner.begin_fold(session, requirements)?;
+        self.folds.set(self.folds.get() + 1);
+        Ok(())
     }
     fn proof_context(
         &self,
@@ -248,6 +294,7 @@ impl OpaqueStage1Kernel<F, E> for PrivateCpu {
         relation_handle: &Self::RelationHandle,
         plan: &ValidatedStage1Plan<E>,
     ) -> Result<Self::Stage1SessionHandle, AkitaError> {
+        self.fail(Fault::SourceStage1)?;
         self.inner.begin_stage1(relation_handle, plan)
     }
     fn stage1_round_polynomial(
@@ -368,6 +415,7 @@ impl OpaqueOpeningKernel<F, E> for PrivateCpu {
         session: &Self::ProofSessionHandle,
         requests: &[GroupOpeningRequest<'_, E, Self::CommitmentHandle, Self::WitnessHandle>],
     ) -> Result<Vec<PreparedGroupOpening<E, Self::PreparedOpeningHandle>>, AkitaError> {
+        self.fail(Fault::DestinationOpening)?;
         let requests = requests
             .iter()
             .map(|r| GroupOpeningRequest {
@@ -480,6 +528,7 @@ impl SuccessorExportKernel<F, E> for PrivateCpu {
         material: &Self::CommitmentMaterialHandle,
         plan: &ValidatedSuccessorHandoffPlan<'_, F>,
     ) -> Result<Self::ExportPacket, AkitaError> {
+        self.fail(Fault::Export)?;
         let export = self
             .inner
             .export_successor(session, &witness.0, &material.0, plan)?;
@@ -495,10 +544,12 @@ impl SuccessorImportKernel<F, E> for PrivateCpu {
         packet: Self::ImportPacket,
     ) -> Result<ImportedSuccessor<Self::WitnessHandle, Self::CommitmentMaterialHandle>, AkitaError>
     {
+        self.fail(Fault::Import)?;
         let (witness, material) = self
             .inner
             .import_successor(session, plan, packet)?
             .into_parts();
+        self.imports.set(self.imports.get() + 1);
         Ok(ImportedSuccessor::new(
             OwnedWitness(witness),
             OwnedMaterial(material),
