@@ -9,6 +9,7 @@
 
 #![cfg(feature = "labinius")]
 
+pub mod combined_kernel;
 pub mod commit_kernel;
 pub mod lowered;
 pub mod root;
