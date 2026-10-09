@@ -10,6 +10,139 @@ use akita_serialization::AkitaSerialize;
 use akita_types::RingVec;
 use jolt_field::ExtField;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SuccessorSection {
+    LogicalDigits,
+    InnerRows,
+    CompressionDigits(usize),
+    CompressionQuotient(usize),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SuccessorEncoding {
+    SignedI8,
+    PackedSigned { bit_width: u8 },
+    CanonicalField,
+    NegativeBinary,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SuccessorSectionDescriptor {
+    pub section: SuccessorSection,
+    pub encoding: SuccessorEncoding,
+    pub coefficients: usize,
+    pub bytes: usize,
+}
+
+/// Public portable CPU packet format; native packets use the same shape description.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CpuPacketDescriptor {
+    pub metadata: HandoffMetadata,
+    pub sections: Vec<SuccessorSectionDescriptor>,
+}
+
+impl CpuPacketDescriptor {
+    /// Validate identity, encodings, and every length before allocating or decoding sections.
+    pub fn validate<F: Field + CanonicalEncoding>(
+        &self,
+        plan: &ValidatedSuccessorHandoffPlan<'_, F>,
+    ) -> Result<(), AkitaError> {
+        plan.validate_metadata(&self.metadata)?;
+        let compression = plan.compression()?;
+        let maps = compression.as_ref().map_or(&[][..], |(p, _)| p.maps());
+        let max_sections = checked::sum([2, maps.len(), maps.len()])
+            .ok_or_else(|| AkitaError::InvalidInput("successor section count overflow".into()))?;
+        if self.sections.len() > max_sections {
+            return Err(AkitaError::InvalidInput(
+                "too many successor sections".into(),
+            ));
+        }
+        for (index, section) in self.sections.iter().enumerate() {
+            if self.sections[..index]
+                .iter()
+                .any(|s| s.section == section.section)
+            {
+                return Err(AkitaError::InvalidInput(
+                    "duplicate successor section".into(),
+                ));
+            }
+            let coefficients = match section.section {
+                SuccessorSection::LogicalDigits => plan.commitment().logical_len(),
+                SuccessorSection::InnerRows => plan.inner_coefficients()?,
+                SuccessorSection::CompressionDigits(i) => maps
+                    .get(i)
+                    .ok_or_else(|| AkitaError::InvalidInput("unexpected compression stage".into()))?
+                    .real_digit_count(),
+                SuccessorSection::CompressionQuotient(i) => {
+                    if !matches!(compression, Some((_, RingRelationMode::QuotientLift))) {
+                        return Err(AkitaError::InvalidInput(
+                            "unexpected compression quotient".into(),
+                        ));
+                    }
+                    maps.get(i)
+                        .ok_or_else(|| AkitaError::InvalidInput("unexpected quotient map".into()))?
+                        .output_coefficients()
+                }
+            };
+            let bytes = match (section.section, section.encoding) {
+                (SuccessorSection::LogicalDigits, SuccessorEncoding::SignedI8) => coefficients,
+                (
+                    SuccessorSection::LogicalDigits,
+                    SuccessorEncoding::PackedSigned { bit_width },
+                ) if (1..=8).contains(&bit_width) => {
+                    checked::product([coefficients, bit_width as usize])
+                        .and_then(|n| checked::div_ceil(n, 8))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput("packed successor length overflow".into())
+                        })?
+                }
+                (
+                    SuccessorSection::InnerRows | SuccessorSection::CompressionQuotient(_),
+                    SuccessorEncoding::CanonicalField,
+                ) => checked::product([coefficients, F::NUM_BYTES]).ok_or_else(|| {
+                    AkitaError::InvalidInput("successor field section overflow".into())
+                })?,
+                (SuccessorSection::CompressionDigits(i), SuccessorEncoding::NegativeBinary) => maps
+                    .get(i)
+                    .ok_or_else(|| AkitaError::InvalidInput("missing compression map".into()))?
+                    .packed_digit_bytes(),
+                _ => {
+                    return Err(AkitaError::InvalidInput(
+                        "invalid successor section encoding".into(),
+                    ))
+                }
+            };
+            if section.coefficients != coefficients || section.bytes != bytes {
+                return Err(AkitaError::InvalidInput(
+                    "successor section length differs from canonical geometry".into(),
+                ));
+            }
+        }
+        for required in [SuccessorSection::LogicalDigits, SuccessorSection::InnerRows] {
+            if !self.sections.iter().any(|s| s.section == required) {
+                return Err(AkitaError::InvalidInput("missing successor section".into()));
+            }
+        }
+        for i in 0..maps.len() {
+            for required in [
+                Some(SuccessorSection::CompressionDigits(i)),
+                matches!(compression, Some((_, RingRelationMode::QuotientLift)))
+                    .then_some(SuccessorSection::CompressionQuotient(i)),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !self.sections.iter().any(|s| s.section == required) {
+                    return Err(AkitaError::InvalidInput(
+                        "missing compression section".into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 struct CpuSuccessorStorage<F: Field> {
     logical: RecursiveWitnessFlat,
     committed: Option<RecursiveWitnessFlat>,
@@ -88,14 +221,14 @@ pub type CpuPacketSections = Vec<(SuccessorSection, Vec<u8>)>;
 /// An owned snapshot of a committed successor. Its native storage remains private.
 /// Portable sections carry logical digits; CPU import derives tensor packing locally.
 pub struct CpuExportPacket<F: Field> {
-    descriptor: SuccessorExportDescriptor,
+    descriptor: CpuPacketDescriptor,
     storage: CpuSuccessorStorage<F>,
 }
 
 /// CPU import representation. External bridges construct it from encoded sections.
 /// CPU-to-CPU edges retain shared storage instead of encoding and copying it.
 pub struct CpuImportPacket<F: Field> {
-    descriptor: SuccessorExportDescriptor,
+    descriptor: CpuPacketDescriptor,
     sections: CpuPacketSections,
     native: Option<CpuSuccessorStorage<F>>,
 }
@@ -104,7 +237,7 @@ impl<F: Field> CpuImportPacket<F> {
     /// Check section presence, uniqueness, and byte lengths. Adoption additionally
     /// checks the admitted plan, canonical encodings, and witness digit bounds.
     pub fn new(
-        descriptor: SuccessorExportDescriptor,
+        descriptor: CpuPacketDescriptor,
         sections: CpuPacketSections,
     ) -> Result<Self, AkitaError> {
         if sections.len() != descriptor.sections.len() {
@@ -149,25 +282,21 @@ impl<F: Field> CpuImportPacket<F> {
     }
 }
 impl<F: Field + Send + Sync + 'static> SuccessorImportPacket for CpuImportPacket<F> {
-    fn descriptor(&self) -> &SuccessorExportDescriptor {
-        &self.descriptor
+    fn metadata(&self) -> &HandoffMetadata {
+        &self.descriptor.metadata
     }
 }
 
 impl<F: Field + CanonicalEncoding> CpuExportPacket<F> {
     /// Encode sections for a bridge targeting another backend representation.
-    pub fn into_sections(
-        self,
-    ) -> Result<(SuccessorExportDescriptor, CpuPacketSections), AkitaError> {
+    pub fn into_sections(self) -> Result<(CpuPacketDescriptor, CpuPacketSections), AkitaError> {
         let sections = encode_sections(&self.descriptor, &self.storage)?;
         Ok((self.descriptor, sections))
     }
 }
 impl<F: Field + CanonicalEncoding> CpuImportPacket<F> {
     /// Materialize a native packet into the same public representation accepted by `new`.
-    pub fn into_sections(
-        self,
-    ) -> Result<(SuccessorExportDescriptor, CpuPacketSections), AkitaError> {
+    pub fn into_sections(self) -> Result<(CpuPacketDescriptor, CpuPacketSections), AkitaError> {
         let sections = match self.native {
             Some(storage) => encode_sections(&self.descriptor, &storage)?,
             None => self.sections,
@@ -176,7 +305,7 @@ impl<F: Field + CanonicalEncoding> CpuImportPacket<F> {
     }
 }
 fn encode_sections<F: Field + CanonicalEncoding>(
-    descriptor: &SuccessorExportDescriptor,
+    descriptor: &CpuPacketDescriptor,
     storage: &CpuSuccessorStorage<F>,
 ) -> Result<CpuPacketSections, AkitaError> {
     descriptor
@@ -204,7 +333,7 @@ where
         packet: CpuExportPacket<F>,
         plan: &ValidatedSuccessorHandoffPlan<'_, F>,
     ) -> Result<CpuImportPacket<F>, AkitaError> {
-        plan.validate_export(&packet.descriptor)?;
+        packet.descriptor.validate(plan)?;
         Ok(CpuImportPacket {
             descriptor: packet.descriptor,
             sections: Vec::new(),
@@ -360,12 +489,14 @@ where
                 }
             }
         }
-        let descriptor = SuccessorExportDescriptor {
-            handoff: plan.handoff_id(),
-            manifest: witness.manifest(),
+        let descriptor = CpuPacketDescriptor {
+            metadata: HandoffMetadata {
+                handoff: plan.handoff_id(),
+                manifest: witness.manifest(),
+            },
             sections,
         };
-        plan.validate_export(&descriptor)?;
+        descriptor.validate(plan)?;
         Ok(CpuExportPacket {
             descriptor,
             storage,
@@ -396,7 +527,7 @@ where
                 "import belongs to another admitted proof".into(),
             ));
         }
-        plan.validate_export(&packet.descriptor)?;
+        packet.descriptor.validate(plan)?;
         let (logical, mut committed, inner, compression) =
             if let Some(native) = packet.native.take() {
                 native.source.scope_lease().validate(
@@ -544,7 +675,7 @@ type PortableParts<F> = (
 
 fn read_portable<F: Field + CanonicalEncoding>(
     plan: &ValidatedSuccessorHandoffPlan<'_, F>,
-    descriptor: &SuccessorExportDescriptor,
+    descriptor: &CpuPacketDescriptor,
     packet: &CpuImportPacket<F>,
 ) -> Result<PortableParts<F>, AkitaError> {
     let logical_section = descriptor

@@ -1,7 +1,5 @@
 use super::{ValidatedRecursiveWitnessCommitPlan, WitnessCommitmentParameters};
-use crate::backend::{
-    RecursiveWitnessManifest, SuccessorEncoding, SuccessorExportDescriptor, SuccessorSection,
-};
+use crate::backend::{HandoffMetadata, RecursiveWitnessManifest};
 use akita_error::{checked, AkitaError};
 use akita_params::{
     CompressionChainPlan, FoldSchedule, OpeningClaimsLayout, RingRelationMode, WitnessLayout,
@@ -141,109 +139,15 @@ impl<F: Field + CanonicalEncoding> ValidatedSuccessorHandoffPlan<'_, F> {
             p.ring_relation_mode,
         )))
     }
-    /// Validate all lengths before a backend allocates from an export descriptor.
-    pub fn validate_export(
-        &self,
-        descriptor: &SuccessorExportDescriptor,
-    ) -> Result<(), AkitaError> {
-        if descriptor.handoff != self.handoff
-            || descriptor.manifest != self.manifest()?
+    /// Check packet identity and witness geometry independently of its representation.
+    pub fn validate_metadata(&self, metadata: &HandoffMetadata) -> Result<(), AkitaError> {
+        if metadata.handoff != self.handoff
+            || metadata.manifest != self.manifest()?
             || self.layout.live_coeff_len() != self.commitment.logical_len()
         {
             return Err(AkitaError::InvalidInput(
                 "successor export differs from its handoff plan".into(),
             ));
-        }
-        let compression = self.compression()?;
-        let maps = compression.as_ref().map_or(&[][..], |(p, _)| p.maps());
-        let max_sections = checked::sum([2, maps.len(), maps.len()])
-            .ok_or_else(|| AkitaError::InvalidInput("successor section count overflow".into()))?;
-        if descriptor.sections.len() > max_sections {
-            return Err(AkitaError::InvalidInput(
-                "too many successor sections".into(),
-            ));
-        }
-        for (index, section) in descriptor.sections.iter().enumerate() {
-            if descriptor.sections[..index]
-                .iter()
-                .any(|s| s.section == section.section)
-            {
-                return Err(AkitaError::InvalidInput(
-                    "duplicate successor section".into(),
-                ));
-            }
-            let coefficients = match section.section {
-                SuccessorSection::LogicalDigits => self.commitment.logical_len(),
-                SuccessorSection::InnerRows => self.inner_coefficients()?,
-                SuccessorSection::CompressionDigits(i) => maps
-                    .get(i)
-                    .ok_or_else(|| AkitaError::InvalidInput("unexpected compression stage".into()))?
-                    .real_digit_count(),
-                SuccessorSection::CompressionQuotient(i) => {
-                    if !matches!(compression, Some((_, RingRelationMode::QuotientLift))) {
-                        return Err(AkitaError::InvalidInput(
-                            "unexpected compression quotient".into(),
-                        ));
-                    }
-                    maps.get(i)
-                        .ok_or_else(|| AkitaError::InvalidInput("unexpected quotient map".into()))?
-                        .output_coefficients()
-                }
-            };
-            let bytes = match (section.section, section.encoding) {
-                (SuccessorSection::LogicalDigits, SuccessorEncoding::SignedI8) => coefficients,
-                (
-                    SuccessorSection::LogicalDigits,
-                    SuccessorEncoding::PackedSigned { bit_width },
-                ) if (1..=8).contains(&bit_width) => {
-                    checked::product([coefficients, bit_width as usize])
-                        .and_then(|n| checked::div_ceil(n, 8))
-                        .ok_or_else(|| {
-                            AkitaError::InvalidInput("packed successor length overflow".into())
-                        })?
-                }
-                (
-                    SuccessorSection::InnerRows | SuccessorSection::CompressionQuotient(_),
-                    SuccessorEncoding::CanonicalField,
-                ) => checked::product([coefficients, F::NUM_BYTES]).ok_or_else(|| {
-                    AkitaError::InvalidInput("successor field section overflow".into())
-                })?,
-                (SuccessorSection::CompressionDigits(i), SuccessorEncoding::NegativeBinary) => maps
-                    .get(i)
-                    .ok_or_else(|| AkitaError::InvalidInput("missing compression map".into()))?
-                    .packed_digit_bytes(),
-                _ => {
-                    return Err(AkitaError::InvalidInput(
-                        "invalid successor section encoding".into(),
-                    ))
-                }
-            };
-            if section.coefficients != coefficients || section.bytes != bytes {
-                return Err(AkitaError::InvalidInput(
-                    "successor section length differs from canonical geometry".into(),
-                ));
-            }
-        }
-        for required in [SuccessorSection::LogicalDigits, SuccessorSection::InnerRows] {
-            if !descriptor.sections.iter().any(|s| s.section == required) {
-                return Err(AkitaError::InvalidInput("missing successor section".into()));
-            }
-        }
-        for i in 0..maps.len() {
-            for required in [
-                Some(SuccessorSection::CompressionDigits(i)),
-                matches!(compression, Some((_, RingRelationMode::QuotientLift)))
-                    .then_some(SuccessorSection::CompressionQuotient(i)),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                if !descriptor.sections.iter().any(|s| s.section == required) {
-                    return Err(AkitaError::InvalidInput(
-                        "missing compression section".into(),
-                    ));
-                }
-            }
         }
         Ok(())
     }

@@ -78,7 +78,8 @@ where
             request.schedule,
             session
                 .as_ref()
-                .ok_or_else(|| AkitaError::Internal("root executor has no session".into()))?,
+                .ok_or_else(|| AkitaError::Internal("root executor has no session".into()))?
+                .session(),
             grinding,
             basis,
             &mut handoff,
@@ -88,7 +89,6 @@ where
     }
     fn validate_prefixes(
         &self,
-        request: &ProofRequest<'_, Cfg>,
         requirements: &FoldExecutionRequirements<'_>,
     ) -> Result<(), AkitaError> {
         let schedule = requirements.schedule();
@@ -106,17 +106,9 @@ where
             .map(|f| &f.params);
         for params in current.into_iter().chain(successor) {
             if let Some(id) = params.setup_prefix().and_then(|p| p.slot_id()) {
-                let local = self.prefixes.get(&id).ok_or_else(|| {
+                self.prefixes.get(&id).ok_or_else(|| {
                     AkitaError::InvalidSetup("executor lacks its setup-prefix handle".into())
                 })?;
-                let public = request.prefixes.get(&id).ok_or_else(|| {
-                    AkitaError::InvalidSetup("admitted setup prefix is missing".into())
-                })?;
-                if &local.public != *public {
-                    return Err(AkitaError::InvalidSetup(
-                        "executor setup prefix differs from the admitted commitment".into(),
-                    ));
-                }
             }
         }
         Ok(())
@@ -126,17 +118,18 @@ where
             .session
             .try_borrow_mut()
             .map_err(|_| AkitaError::InvalidInput("backend executor re-entry".into()))?;
-        *session = Some(self.backend.prepare_executor(
+        let prepared = self.backend.prepare_executor(
             request.setup,
             request.schedules,
             request.schedule,
             request.layout,
-        )?);
+        )?;
+        *session = Some(ProofScope::admitted(self.backend, prepared));
         Ok(())
     }
     fn begin_fold(&self, request: &ProofRequest<'_, Cfg>, level: usize) -> Result<(), AkitaError> {
         let requirements = FoldExecutionRequirements::new(request.schedule, request.layout, level)?;
-        self.validate_prefixes(request, &requirements)?;
+        self.validate_prefixes(&requirements)?;
         let session = self
             .session
             .try_borrow_mut()
@@ -144,7 +137,8 @@ where
         self.backend.begin_fold(
             session
                 .as_ref()
-                .ok_or_else(|| AkitaError::Internal("executor has not been prepared".into()))?,
+                .ok_or_else(|| AkitaError::Internal("executor has not been prepared".into()))?
+                .session(),
             &requirements,
         )
     }
@@ -163,7 +157,8 @@ where
         let imported = self.backend.import_successor(
             session
                 .as_ref()
-                .ok_or_else(|| AkitaError::InvalidInput("destination was not admitted".into()))?,
+                .ok_or_else(|| AkitaError::InvalidInput("destination was not admitted".into()))?
+                .session(),
             plan,
             *packet,
         )?;
@@ -206,7 +201,8 @@ where
             request.schedule,
             session
                 .as_ref()
-                .ok_or_else(|| AkitaError::InvalidInput("executor was not admitted".into()))?,
+                .ok_or_else(|| AkitaError::InvalidInput("executor was not admitted".into()))?
+                .session(),
             index,
             &mut handoff,
         )?;
@@ -235,26 +231,26 @@ where
                 commitment_material,
             },
             &request.schedule.terminal,
-            session.as_ref().ok_or_else(|| {
-                AkitaError::InvalidInput("terminal executor was not admitted".into())
-            })?,
+            session
+                .as_ref()
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("terminal executor was not admitted".into())
+                })?
+                .session(),
         )
     }
     fn finish(&self) -> Result<(), AkitaError> {
         let mut session = self.session.try_borrow_mut().map_err(|_| {
             AkitaError::InvalidInput("backend executor re-entry during completion".into())
         })?;
-        if let Some(active) = session.as_ref() {
-            self.backend.finish_scope(active)?;
+        if let Some(scope) = session.take() {
+            scope.finish()?;
         }
-        session.take();
         Ok(())
     }
     fn abort(&self) {
         if let Ok(mut session) = self.session.try_borrow_mut() {
-            if let Some(active) = session.take() {
-                self.backend.abort_scope_best_effort(&active);
-            }
+            session.take();
         }
     }
 }
@@ -303,7 +299,6 @@ where
         schedules,
         schedule: resolved.schedule(),
         layout: claims.opening_layout(),
-        prefixes: &registry.public_prefixes,
         identity,
     };
     for executor in &registry.slots {

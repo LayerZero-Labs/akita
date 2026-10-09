@@ -1,15 +1,13 @@
 // A distinct handle family; CPU storage is private to this test backend.
-use super::{Cfg, E, F, NV};
+use super::{Cfg, E, F};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
-use akita_cpu_backend::{CpuBackend, CpuImportPacket, DensePoly, GroupContext, OneHotPoly};
+use akita_cpu_backend::{CpuBackend, CpuImportPacket, GroupContext, OneHotPoly};
 use akita_error::AkitaError;
 use akita_params::{FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout};
 use akita_prover::backend::*;
 use akita_prover::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 use akita_types::{AkitaSetupDescriptor, Commitment};
-use jolt_field::One;
 use jolt_poly::UnivariatePoly;
-use std::cell::{Cell, RefCell};
 
 type Cpu = CpuBackend<F, E>;
 #[derive(Clone)]
@@ -34,47 +32,12 @@ impl CommitmentRelationMaterial<F> for OwnedMaterial {
         self.0.metadata()
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Fault {
-    None,
-    Preparation,
-    Export,
-    Import,
-    SourceStage1,
-    DestinationOpening,
-    Descriptor,
-    Packet,
-    InvalidDigits,
-    InvalidFields,
-    SignedDigits,
-}
-
 pub(crate) struct PrivateCpu {
     inner: Cpu,
-    pub(crate) portable: Cell<bool>,
-    pub(crate) fault: Cell<Fault>,
-    pub(crate) supported: RefCell<Vec<usize>>,
-    pub(crate) events: RefCell<Vec<&'static str>>,
-    pub(crate) admitted: Cell<usize>,
-    pub(crate) finished: Cell<usize>,
-    pub(crate) aborted: Cell<usize>,
-    pub(crate) commitments: Cell<usize>,
-    pub(crate) releases: Cell<usize>,
 }
 impl PrivateCpu {
     pub(crate) fn new(inner: Cpu) -> Self {
-        Self {
-            inner,
-            portable: Cell::new(false),
-            fault: Cell::new(Fault::None),
-            supported: RefCell::default(),
-            events: RefCell::default(),
-            admitted: Cell::new(0),
-            finished: Cell::new(0),
-            aborted: Cell::new(0),
-            commitments: Cell::new(0),
-            releases: Cell::new(0),
-        }
+        Self { inner }
     }
     pub(crate) fn prefixes(
         &self,
@@ -97,40 +60,6 @@ impl PrivateCpu {
         }
         prefixes
     }
-    // Shared by tests (`commit_root`) and the dynamic_onehot example (`commit_onehot`).
-    #[allow(dead_code)]
-    pub(crate) fn commit_root(
-        &self,
-        schedules: &TrustedScheduleCatalog<Cfg>,
-    ) -> (akita_types::CommittedGroup<F>, OwnedCommitment) {
-        let source = if let Ok(chunk) = akita_config::unit_onehot_source_chunk_size::<Cfg>() {
-            self.inner.import_source(vec![OneHotPoly::<F, u8>::new(
-                chunk,
-                vec![Some(0); (1 << NV) / chunk],
-            )
-            .unwrap()])
-        } else {
-            self.inner.import_source(vec![DensePoly::from_field_evals(
-                NV,
-                vec![F::one(); 1 << NV],
-            )
-            .unwrap()])
-        }
-        .unwrap();
-        let output = self
-            .inner
-            .commit(
-                schedules,
-                &source,
-                GroupContext::scheduler_without_precommitted_groups(),
-            )
-            .unwrap();
-        (
-            output.committed_group,
-            OwnedCommitment(output.private_handle),
-        )
-    }
-    #[allow(dead_code)]
     pub(crate) fn commit_onehot(
         &self,
         schedules: &TrustedScheduleCatalog<Cfg>,
@@ -151,13 +80,10 @@ impl PrivateCpu {
 impl ProofScopeConsumer for PrivateCpu {
     type ProofSessionHandle = <Cpu as ProofScopeConsumer>::ProofSessionHandle;
     fn finish_scope(&self, session: &Self::ProofSessionHandle) -> Result<(), AkitaError> {
-        self.inner.finish_scope(session)?;
-        self.finished.set(self.finished.get() + 1);
-        Ok(())
+        self.inner.finish_scope(session)
     }
     fn abort_scope_best_effort(&self, session: &Self::ProofSessionHandle) {
         self.inner.abort_scope_best_effort(session);
-        self.aborted.set(self.aborted.get() + 1);
     }
 }
 impl ProverHandleFamily<F, E> for PrivateCpu {
@@ -183,31 +109,13 @@ impl ProofAdmission<F, E> for PrivateCpu {
         plan: &FoldSchedule,
         layout: &OpeningClaimsLayout,
     ) -> Result<Self::ProofSessionHandle, AkitaError> {
-        self.events.borrow_mut().push("prepare_executor");
-        if self.fault.get() == Fault::Preparation {
-            return Err(AkitaError::InvalidInput(
-                "injected executor preparation failure".into(),
-            ));
-        }
-        let session = self
-            .inner
-            .prepare_executor(setup, schedules, plan, layout)?;
-        self.admitted.set(self.admitted.get() + 1);
-        Ok(session)
+        self.inner.prepare_executor(setup, schedules, plan, layout)
     }
     fn begin_fold(
         &self,
         session: &Self::ProofSessionHandle,
         requirements: &FoldExecutionRequirements<'_>,
     ) -> Result<(), AkitaError> {
-        self.events.borrow_mut().push("begin_fold");
-        if !self.supported.borrow().is_empty()
-            && !self.supported.borrow().contains(&requirements.level())
-        {
-            return Err(AkitaError::UnsupportedSchedule(
-                "private backend cannot execute this level".into(),
-            ));
-        }
         self.inner.begin_fold(session, requirements)
     }
     fn proof_context(
@@ -307,7 +215,6 @@ impl OpaqueWitnessCommitKernel<F, E> for PrivateCpu {
         WitnessCommitmentOutput<F, Self::WitnessHandle, Self::CommitmentMaterialHandle>,
         AkitaError,
     > {
-        self.commitments.set(self.commitments.get() + 1);
         self.inner
             .commit_witness(witness_handle.0, plan)
             .map(|output| {
@@ -341,12 +248,6 @@ impl OpaqueStage1Kernel<F, E> for PrivateCpu {
         relation_handle: &Self::RelationHandle,
         plan: &ValidatedStage1Plan<E>,
     ) -> Result<Self::Stage1SessionHandle, AkitaError> {
-        self.events.borrow_mut().push("stage1");
-        if self.fault.get() == Fault::SourceStage1 {
-            return Err(AkitaError::InvalidInput(
-                "injected source failure after adoption".into(),
-            ));
-        }
         self.inner.begin_stage1(relation_handle, plan)
     }
     fn stage1_round_polynomial(
@@ -458,7 +359,6 @@ impl OpaqueResourceReleaseKernel<F, E> for PrivateCpu {
         &self,
         witness_handle: Self::WitnessHandle,
     ) -> Result<(), AkitaError> {
-        self.releases.set(self.releases.get() + 1);
         self.inner.release_witness_handle(witness_handle.0)
     }
 }
@@ -468,11 +368,6 @@ impl OpaqueOpeningKernel<F, E> for PrivateCpu {
         session: &Self::ProofSessionHandle,
         requests: &[GroupOpeningRequest<'_, E, Self::CommitmentHandle, Self::WitnessHandle>],
     ) -> Result<Vec<PreparedGroupOpening<E, Self::PreparedOpeningHandle>>, AkitaError> {
-        if self.fault.get() == Fault::DestinationOpening {
-            return Err(AkitaError::InvalidInput(
-                "injected destination opening failure".into(),
-            ));
-        }
         let requests = requests
             .iter()
             .map(|r| GroupOpeningRequest {
@@ -585,107 +480,10 @@ impl SuccessorExportKernel<F, E> for PrivateCpu {
         material: &Self::CommitmentMaterialHandle,
         plan: &ValidatedSuccessorHandoffPlan<'_, F>,
     ) -> Result<Self::ExportPacket, AkitaError> {
-        self.events.borrow_mut().push("export");
-        if self.fault.get() == Fault::Export {
-            return Err(AkitaError::InvalidInput("injected export failure".into()));
-        }
         let export = self
             .inner
             .export_successor(session, &witness.0, &material.0, plan)?;
-        if !self.portable.get()
-            && !matches!(
-                self.fault.get(),
-                Fault::Descriptor
-                    | Fault::Packet
-                    | Fault::InvalidDigits
-                    | Fault::InvalidFields
-                    | Fault::SignedDigits
-            )
-        {
-            return Edge::<Cpu, Cpu>::convert(export, plan);
-        }
-        let (mut descriptor, mut sections) = export.into_sections()?;
-        // Tensor sources must expose only the logical digit payload. The
-        // destination reconstructs its transformed source from these digits.
-        assert_eq!(
-            descriptor
-                .sections
-                .iter()
-                .filter(|section| matches!(
-                    section.encoding,
-                    SuccessorEncoding::SignedI8 | SuccessorEncoding::PackedSigned { .. }
-                ))
-                .count(),
-            1,
-        );
-        if self.fault.get() == Fault::Descriptor {
-            for alteration in 0..5 {
-                let mut invalid = descriptor.clone();
-                match alteration {
-                    0 => invalid.sections.clear(),
-                    1 => invalid.sections[0].coefficients = usize::MAX,
-                    2 => invalid.handoff += 1,
-                    3 => invalid.sections[0].encoding = SuccessorEncoding::CanonicalField,
-                    _ => invalid.sections.push(invalid.sections[0]),
-                }
-                assert!(plan.validate_export(&invalid).is_err());
-            }
-            // Shape remains self-consistent but cannot be used for this handoff.
-            descriptor.handoff += 1;
-        }
-        if self.fault.get() == Fault::Packet {
-            assert!(CpuImportPacket::<F>::new(descriptor.clone(), Vec::new()).is_err());
-            let mut duplicate = sections.clone();
-            duplicate[1] = duplicate[0].clone();
-            assert!(CpuImportPacket::<F>::new(descriptor.clone(), duplicate).is_err());
-            sections[0].1.pop();
-        }
-        if self.fault.get() == Fault::InvalidFields {
-            sections
-                .iter_mut()
-                .find(|(s, _)| *s == SuccessorSection::InnerRows)
-                .unwrap()
-                .1
-                .fill(0xff);
-        }
-        if self.fault.get() == Fault::InvalidDigits {
-            sections
-                .iter_mut()
-                .find(|(s, _)| *s == SuccessorSection::LogicalDigits)
-                .unwrap()
-                .1
-                .fill(0x55);
-        }
-        if self.fault.get() == Fault::SignedDigits {
-            let logical = descriptor
-                .sections
-                .iter_mut()
-                .find(|s| s.section == SuccessorSection::LogicalDigits)
-                .unwrap();
-            let SuccessorEncoding::PackedSigned { bit_width } = logical.encoding else {
-                panic!("CPU source must be packed")
-            };
-            let bytes = &mut sections
-                .iter_mut()
-                .find(|(s, _)| *s == SuccessorSection::LogicalDigits)
-                .unwrap()
-                .1;
-            let mut signed = Vec::with_capacity(logical.coefficients);
-            let mask = (1u16 << bit_width) - 1;
-            let sign = 1u16 << (bit_width - 1);
-            for index in 0..logical.coefficients {
-                let bit = index * bit_width as usize;
-                let word = u16::from(bytes[bit / 8])
-                    | (u16::from(bytes.get(bit / 8 + 1).copied().unwrap_or(0)) << 8);
-                let value = (word >> (bit % 8)) & mask;
-                signed.push(((value ^ sign) as i16 - sign as i16) as i8 as u8);
-            }
-            *bytes = signed;
-            logical.encoding = SuccessorEncoding::SignedI8;
-            logical.bytes = logical.coefficients;
-        }
-        // This is the public constructor available to any external backend/bridge.
-        CpuImportPacket::new(descriptor, sections)
+        Edge::<Cpu, Cpu>::convert(export, plan)
     }
 }
 impl SuccessorImportKernel<F, E> for PrivateCpu {
@@ -697,33 +495,14 @@ impl SuccessorImportKernel<F, E> for PrivateCpu {
         packet: Self::ImportPacket,
     ) -> Result<ImportedSuccessor<Self::WitnessHandle, Self::CommitmentMaterialHandle>, AkitaError>
     {
-        self.events.borrow_mut().push("import");
-        if self.fault.get() == Fault::Import {
-            return Err(AkitaError::InvalidInput("injected import failure".into()));
-        }
-        let packet = if self.portable.get() {
-            let (descriptor, sections) = packet.into_sections()?;
-            CpuImportPacket::new(descriptor, sections)?
-        } else {
-            packet
-        };
-        let (mut witness, material) = self
+        let (witness, material) = self
             .inner
             .import_successor(session, plan, packet)?
             .into_parts();
-        assert!(self.inner.advance_witness_level(&mut witness).is_err());
         Ok(ImportedSuccessor::new(
             OwnedWitness(witness),
             OwnedMaterial(material),
         ))
-    }
-}
-impl SuccessorBridge<PrivateCpu, PrivateCpu, F, E> for Edge<PrivateCpu, PrivateCpu> {
-    fn convert(
-        packet: CpuImportPacket<F>,
-        _: &ValidatedSuccessorHandoffPlan<'_, F>,
-    ) -> Result<CpuImportPacket<F>, AkitaError> {
-        Ok(packet)
     }
 }
 impl SuccessorBridge<PrivateCpu, Cpu, F, E> for Edge<PrivateCpu, Cpu> {
@@ -732,7 +511,7 @@ impl SuccessorBridge<PrivateCpu, Cpu, F, E> for Edge<PrivateCpu, Cpu> {
         plan: &ValidatedSuccessorHandoffPlan<'_, F>,
     ) -> Result<CpuImportPacket<F>, AkitaError> {
         // Exercise a bridge building CPU imports using only its public section API.
-        plan.validate_export(packet.descriptor())?;
+        plan.validate_metadata(packet.metadata())?;
         let (descriptor, sections) = packet.into_sections()?;
         CpuImportPacket::new(descriptor, sections)
     }

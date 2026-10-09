@@ -69,8 +69,9 @@ the root to the selected executor, checks its commitment handle family, and
 validates that the handles belong to that instance. The route stores only IDs.
 Each instance supplies the prefix handles needed by its folds and successor
 commitments. Registration builds a union of public prefix slots and rejects
-conflicting public values for a shared slot ID. Proofs borrow this union, while
-each selected executor must still have its required local handles. Registration
+conflicting public values for a shared slot ID. Public agreement is checked once
+for the immutable registrations; each selected executor must still have its
+required local handles. Registration
 also rejects duplicate instances; IDs from another registry reject. Route implementations
 own any cost model; Akita does not request or compare cost estimates.
 
@@ -91,11 +92,15 @@ A single instance needs no bridge: same-ID choices retain native handles without
 export, conversion, or import.
 
 The handoff is blocking: export a typed packet, convert it to the destination's
-packet, then validate and import both handles. The coordinator checks shape
-metadata and dispatches typed bridges without reading private payloads. CPU
+packet, then validate and import both handles. Every import packet exposes
+`HandoffMetadata`: the identity of this transfer and the logical witness geometry.
+The coordinator checks this metadata and dispatches typed bridges without reading
+private payloads or prescribing their encoding. CPU
 self-edges share immutable packed witness and material storage. External bridges
 can construct `CpuImportPacket::new(descriptor, sections)` with packed or signed
-digits, canonical field coefficients, and compression sections. CPU exports
+digits, canonical field coefficients, and compression sections described by
+`CpuPacketDescriptor`. These section types and encodings belong to
+`akita_cpu_backend`; other backend pairs can use their own packet formats. CPU exports
 provide `into_sections()` for conversion to another representation. Import checks
 section lengths, the admitted handoff, digit bounds, and canonical encodings.
 Portable packets carry logical witness digits only; CPU import derives the tensor
@@ -110,7 +115,8 @@ Before any proof computation, the coordinator calls `prepare_executor` on every
 registered backend to open its local proof session. Before each assigned level,
 `begin_fold` validates that level and its successor commitment work. Preparation
 does not require a backend to execute unassigned levels. All prepared sessions
-finish on success or abort on failure, including those on unselected backends.
+use `ProofScope` to finish on success or abort on failure, including those on
+unselected backends and scopes whose completion fails.
 A registry supports repeated proofs, with one active proof at a time.
 
 Implementation: `crates/akita-prover/src/protocol/prove/registry.rs`,

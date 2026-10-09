@@ -26,7 +26,10 @@ pub mod standalone;
 pub(crate) mod sumcheck;
 
 mod transfer;
-pub use transfer::{CpuExportPacket, CpuImportPacket, CpuPacketSections};
+pub use transfer::{
+    CpuExportPacket, CpuImportPacket, CpuPacketDescriptor, CpuPacketSections, SuccessorEncoding,
+    SuccessorSection, SuccessorSectionDescriptor,
+};
 
 #[cfg(test)]
 pub(crate) use crate::arithmetic::CyclicRowsComputeBackend;

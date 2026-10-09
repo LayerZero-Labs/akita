@@ -103,7 +103,6 @@ pub(super) struct ProofRequest<'p, Cfg: CommitmentConfig> {
     pub(super) schedules: &'p TrustedScheduleCatalog<Cfg>,
     pub(super) schedule: &'p FoldSchedule,
     pub(super) layout: &'p OpeningClaimsLayout,
-    pub(super) prefixes: &'p BTreeMap<SetupPrefixSlotId, &'p SetupPrefixVerifierSlot<Cfg::Field>>,
     pub(super) identity: u64,
 }
 
@@ -129,7 +128,6 @@ pub(super) trait Executor<Cfg: CommitmentConfig> {
     ) -> Result<ExecutionContinuation<Cfg>, AkitaError>;
     fn validate_prefixes(
         &self,
-        request: &ProofRequest<'_, Cfg>,
         requirements: &FoldExecutionRequirements<'_>,
     ) -> Result<(), AkitaError>;
     fn prepare_executor(&self, request: &ProofRequest<'_, Cfg>) -> Result<(), AkitaError>;
@@ -164,20 +162,6 @@ pub(super) trait Executor<Cfg: CommitmentConfig> {
     fn abort(&self);
 }
 
-impl<Cfg: CommitmentConfig> dyn Executor<Cfg> + '_ {
-    fn import_as<B>(
-        &self,
-        id: BackendId,
-        plan: &ValidatedSuccessorHandoffPlan<'_, Cfg::Field>,
-        packet: B::ImportPacket,
-    ) -> Result<ResidentSuccessor, AkitaError>
-    where
-        B: SuccessorImportKernel<Cfg::Field, Cfg::ExtField>,
-    {
-        self.import_packet(id, plan, Box::new(packet))
-    }
-}
-
 pub(super) struct TypedExecutor<
     'a,
     Cfg: CommitmentConfig,
@@ -185,7 +169,7 @@ pub(super) struct TypedExecutor<
 > {
     pub(super) backend: &'a B,
     pub(super) prefixes: &'a SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
-    pub(super) session: RefCell<Option<B::ProofSessionHandle>>,
+    pub(super) session: RefCell<Option<ProofScope<'a, B>>>,
 }
 
 /// Reusable instances and setup resources; all sessions are prepared before proving.
@@ -256,11 +240,13 @@ where
         }
         self.bridges.insert(
             key,
-            Box::new(move |src, dst, id, plan| {
-                let export = src.export_as::<A>(plan)?;
-                let packet = convert(export, plan)?;
-                plan.validate_export(packet.descriptor())?;
-                dst.import_as::<B>(id, plan, packet)
+            Box::new(move |export, dst, id, plan| {
+                let export = export.downcast::<A::ExportPacket>().map_err(|_| {
+                    AkitaError::InvalidInput("bridge export packet family mismatch".into())
+                })?;
+                let packet = convert(*export, plan)?;
+                plan.validate_metadata(packet.metadata())?;
+                dst.import_packet(id, plan, Box::new(packet))
             }),
         );
         Ok(())
@@ -328,61 +314,8 @@ impl<Cfg: CommitmentConfig> BackendRegistry<'_, Cfg> {
     }
 }
 
-/// Type-erased producer export; borrows stay on the active fold session.
-trait ErasedExporter<Cfg: CommitmentConfig> {
-    fn export_packet(
-        &self,
-        plan: &ValidatedSuccessorHandoffPlan<'_, Cfg::Field>,
-    ) -> Result<Box<dyn Any + Send>, AkitaError>;
-}
-
-impl<Cfg: CommitmentConfig> dyn ErasedExporter<Cfg> + '_ {
-    fn export_as<A>(
-        &self,
-        plan: &ValidatedSuccessorHandoffPlan<'_, Cfg::Field>,
-    ) -> Result<A::ExportPacket, AkitaError>
-    where
-        A: SuccessorExportKernel<Cfg::Field, Cfg::ExtField>,
-    {
-        self.export_packet(plan)?
-            .downcast::<A::ExportPacket>()
-            .map(|packet| *packet)
-            .map_err(|_| AkitaError::InvalidInput("bridge export packet family mismatch".into()))
-    }
-}
-
-struct TypedExporter<'a, Cfg, B>
-where
-    Cfg: CommitmentConfig,
-    B: SuccessorExportKernel<Cfg::Field, Cfg::ExtField>,
-{
-    backend: &'a B,
-    session: &'a B::ProofSessionHandle,
-    witness: &'a B::WitnessHandle,
-    material: &'a B::CommitmentMaterialHandle,
-}
-
-impl<Cfg, B> ErasedExporter<Cfg> for TypedExporter<'_, Cfg, B>
-where
-    Cfg: CommitmentConfig,
-    Cfg::Field: CanonicalEncoding,
-    B: SuccessorExportKernel<Cfg::Field, Cfg::ExtField>,
-{
-    fn export_packet(
-        &self,
-        plan: &ValidatedSuccessorHandoffPlan<'_, Cfg::Field>,
-    ) -> Result<Box<dyn Any + Send>, AkitaError> {
-        Ok(Box::new(self.backend.export_successor(
-            self.session,
-            self.witness,
-            self.material,
-            plan,
-        )?))
-    }
-}
-
 type ErasedBridge<Cfg> = dyn Fn(
-    &dyn ErasedExporter<Cfg>,
+    Box<dyn Any + Send>,
     &dyn Executor<Cfg>,
     BackendId,
     &ValidatedSuccessorHandoffPlan<'_, <Cfg as CommitmentConfig>::Field>,
@@ -460,7 +393,7 @@ impl<Cfg: CommitmentConfig> FoldHandoff<'_, '_, '_, Cfg> {
             .choose_backend(Some(self.current), &requirements)?;
         let destination = self.registry.slot(selected)?;
         if selected == self.current {
-            destination.validate_prefixes(self.request, &requirements)?;
+            destination.validate_prefixes(&requirements)?;
             backend.begin_fold(session, &requirements)?;
             return Ok(());
         }
@@ -493,13 +426,8 @@ impl<Cfg: CommitmentConfig> FoldHandoff<'_, '_, '_, Cfg> {
             .ok_or_else(|| {
                 AkitaError::InvalidInput("no bridge registered for selected backend types".into())
             })?;
-        let src = TypedExporter::<Cfg, B> {
-            backend,
-            session,
-            witness,
-            material,
-        };
-        self.adopted = Some(bridge(&src, destination, selected, &plan)?);
+        let export = backend.export_successor(session, witness, material, &plan)?;
+        self.adopted = Some(bridge(Box::new(export), destination, selected, &plan)?);
         Ok(())
     }
 }

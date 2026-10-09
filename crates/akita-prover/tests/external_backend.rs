@@ -67,9 +67,9 @@ impl<F, E> ProofScopeConsumer for ExternalBackend<F, E> {
 }
 impl<F: Field + CanonicalEncoding, E: Field> OpaqueProverConsumer<F, E> for ExternalBackend<F, E> {}
 
-pub struct ExternalExport(SuccessorExportDescriptor);
+pub struct ExternalExport(HandoffMetadata);
 impl SuccessorImportPacket for ExternalExport {
-    fn descriptor(&self) -> &SuccessorExportDescriptor {
+    fn metadata(&self) -> &HandoffMetadata {
         &self.0
     }
 }

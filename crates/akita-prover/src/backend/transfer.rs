@@ -20,42 +20,17 @@ impl BackendInstanceIdentity {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SuccessorSection {
-    LogicalDigits,
-    InnerRows,
-    CompressionDigits(usize),
-    CompressionQuotient(usize),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SuccessorEncoding {
-    SignedI8,
-    PackedSigned { bit_width: u8 },
-    CanonicalField,
-    NegativeBinary,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SuccessorSectionDescriptor {
-    pub section: SuccessorSection,
-    pub encoding: SuccessorEncoding,
-    pub coefficients: usize,
-    pub bytes: usize,
-}
-
-/// Shape metadata does not grant access to private sections.
+/// Backend-independent identity and geometry of a committed successor.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SuccessorExportDescriptor {
+pub struct HandoffMetadata {
     pub handoff: u128,
     pub manifest: RecursiveWitnessManifest,
-    pub sections: Vec<SuccessorSectionDescriptor>,
 }
 
 /// Import metadata is checked against the admitted handoff before adoption.
 /// Concrete backends expose constructors for their own packet representation.
 pub trait SuccessorImportPacket: Send + 'static {
-    fn descriptor(&self) -> &SuccessorExportDescriptor;
+    fn metadata(&self) -> &HandoffMetadata;
 }
 
 /// An importer publishes both destination handles together, after validation.
