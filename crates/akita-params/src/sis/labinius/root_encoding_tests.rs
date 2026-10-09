@@ -290,3 +290,25 @@ fn range_and_witness_overflows_reject_without_allocation() {
         Err(AkitaError::InvalidSetup(_))
     ));
 }
+
+#[test]
+fn stable_digit_base_tags_and_bits_have_literal_fixtures() {
+    assert_eq!(LabiniusDigitBase::Bits1.tag(), 0);
+    assert_eq!(LabiniusDigitBase::Bits2.tag(), 1);
+    assert_eq!(LabiniusDigitBase::Bits4.tag(), 2);
+    assert_eq!(
+        LabiniusDigitBase::from_tag(0).unwrap(),
+        LabiniusDigitBase::Bits1
+    );
+    assert_eq!(
+        LabiniusDigitBase::from_tag(1).unwrap(),
+        LabiniusDigitBase::Bits2
+    );
+    assert_eq!(
+        LabiniusDigitBase::from_tag(2).unwrap(),
+        LabiniusDigitBase::Bits4
+    );
+    assert_eq!(LabiniusDigitBase::Bits1.bits(), 1);
+    assert_eq!(LabiniusDigitBase::Bits2.bits(), 2);
+    assert_eq!(LabiniusDigitBase::Bits4.bits(), 4);
+}
