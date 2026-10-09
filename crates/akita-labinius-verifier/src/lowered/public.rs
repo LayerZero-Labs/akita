@@ -178,6 +178,9 @@ impl<F: SmoothFftField> LoweredPublic<F> {
     pub fn c_pub(&self) -> F {
         self.c_pub
     }
+    pub fn digit_powers(&self) -> &[F] {
+        &self.digit_powers
+    }
     pub fn challenges(&self) -> LoweredChallenges<F> {
         self.challenges
     }
@@ -195,7 +198,7 @@ impl<F: SmoothFftField> LoweredPublic<F> {
             .copied()
             .ok_or(AkitaError::InvalidProof)
     }
-    pub(crate) fn coefficient_weight(&self, j: usize, t: usize) -> Result<F, AkitaError> {
+    pub fn coefficient_weight(&self, j: usize, t: usize) -> Result<F, AkitaError> {
         let k = self.layout.k();
         let row = checked::mul_add(j, k, t % k).ok_or(AkitaError::InvalidProof)?;
         Ok(*self.abar.get(j).ok_or(AkitaError::InvalidProof)?

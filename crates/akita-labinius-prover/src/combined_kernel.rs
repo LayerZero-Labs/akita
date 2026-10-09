@@ -32,27 +32,35 @@ use rayon::prelude::*;
 /// class count is at most `N`; smaller inputs evaluate their packed pairs
 /// directly in the remaining early rounds. After the last packed round,
 /// the packed digits are lifted directly to `N / 2^r` field elements, where
-/// `r = min(nu, 4/3/2)` respectively. The caller's `kw` is folded in place;
-/// there is no length-`N` field digit table. Equality uses two tensor factors.
+/// `r = min(nu, 4/3/2)` respectively. Weights are supplied as a low-variable
+/// digit factor of length `D=2^a` and a compact coefficient table of length
+/// `C=N/D`. Only the digit factor folds during the first `a` rounds; its final
+/// scalar is then applied to the compact table in place. No length-`N` weight
+/// table is constructed. Equality uses two tensor factors.
+///
+/// When `a=r`, packed rounds accumulate compact coefficients per (class,
+/// digit-pair position) with additions only, and apply digit factors once per
+/// bucket. Other factorizations evaluate the two weight endpoints directly;
+/// they retain the factors until round `a`, even after the digits are lifted.
 ///
 /// Peak reserved payload, excluding Vec metadata, allocator rounding and the
 /// interpolation library's `O(2^b)` scratch, is bounded by
 /// ```text
-/// (N + V + E + nu + 2*L + 21*P) * S + ceil(N*b/8)
-/// + P * M * (4*S + size_of::<usize>() + 1)
+/// (D + C + V + E + nu + 2*L + 21*P) * S + ceil(N*b/8)
+/// + P * M * (4*S + size_of::<usize>() + 1) + P * B * S
 /// ```
 /// bytes.
 /// Here `S = size_of::<F>()`, `V = N/2^r` (zero when `nu=0`),
 /// `E = 2^ceil(max(nu-1,0)/2) + 2^floor(max(nu-1,0)/2)`,
 /// `M` is the largest `2^(b*2^j) <= N` for `1 <= j <= r` (zero if absent),
 /// and `L = 2^(b*2^(r-1))` for `nu>0` (one otherwise).
-/// `P` is one without `parallel`; with it, `P` is the lesser of the current
-/// Rayon pool size and the initial outer equality table length. Each worker
-/// owns its buckets, so reductions only add exact field elements. Replace
-/// the first `N` in the formula by `kw.capacity()` if the caller supplies
-/// excess capacity.
-/// At `nu=26`, `b=1`, `S=16` and `P=1`, this bound is 1,154,228,976 bytes
-/// (about 1,100.8 MiB), versus about 2.5 GiB for the reference's dense tables.
+/// `B` is the largest `2^(b*2^j) * D/2^j` over those same `j` when `a=r`,
+/// and zero otherwise. `P` is one without `parallel`; with it, `P` is the
+/// lesser of the current Rayon pool size and initial outer equality length.
+/// Workers own their buckets, so reductions only add exact field elements.
+/// Replace `D` and `C` by the supplied factors' capacities for excess capacity.
+/// At `nu=25`, `b=2`, `a=3`, `S=16` and `P=1`, the bound is 148,579,168 bytes
+/// (about 141.7 MiB). At `P=16` it is 236,074,768 bytes (about 225.1 MiB).
 /// All reservations happen in `new`; round computation and folding reuse them.
 /// `SmoothFftField` already requires `Send + Sync` through `Field`.
 #[derive(Debug)]
@@ -61,6 +69,8 @@ pub struct CombinedRootKernel<F: SmoothFftField> {
     packed: Vec<u8>,
     w: Vec<F>,
     kw: Vec<F>,
+    digit_factor: Vec<F>,
+    factor_buckets: bool,
     tau: Vec<F>,
     eq_low: Vec<F>,
     eq_high: Vec<F>,
@@ -88,18 +98,26 @@ fn buffer<T: Clone>(len: usize, value: T) -> Result<Vec<T>, AkitaError> {
 }
 
 impl<F: SmoothFftField> CombinedRootKernel<F> {
-    /// Same arguments, statement validation and errors as the dense reference.
+    /// Weights are the tensor of the low-variable digit factor and compact table.
+    /// Both factors must have power-of-two length and their product must be `w.len()`.
+    /// Statement validation and errors match the dense reference.
     /// A false linear claim is retained verbatim, without altering round values.
     pub fn new(
         base: LabiniusDigitBase,
         w: &[u8],
-        kw: Vec<F>,
+        mut digit_factor: Vec<F>,
+        mut kw: Vec<F>,
         tau: &[F],
         beta: F,
         s: F,
     ) -> Result<Self, AkitaError> {
         let expected = checked::pow2(tau.len()).ok_or_else(invalid)?;
-        if !w.len().is_power_of_two() || w.len() != expected || kw.len() != expected {
+        if !w.len().is_power_of_two()
+            || w.len() != expected
+            || !digit_factor.len().is_power_of_two()
+            || !kw.len().is_power_of_two()
+            || checked::product([digit_factor.len(), kw.len()]) != Some(expected)
+        {
             return Err(invalid());
         }
         let shape = combined_shape(tau.len(), base)?;
@@ -119,6 +137,8 @@ impl<F: SmoothFftField> CombinedRootKernel<F> {
             .ok_or_else(invalid)?;
         // Small inputs retain the same packed rounds but evaluate pairs
         // directly when a full class space would exceed the original table.
+        let factor_buckets = digit_factor.len() == checked::pow2(lift_round).ok_or_else(invalid)?;
+        let mut compact_classes = 0;
         let mut classes = 0;
         for round in 1..=lift_round {
             let bits = checked::product([bits, checked::pow2(round).ok_or_else(invalid)?])
@@ -126,6 +146,12 @@ impl<F: SmoothFftField> CombinedRootKernel<F> {
             let count = checked::pow2(bits).ok_or_else(invalid)?;
             if count <= expected {
                 classes = count;
+                if factor_buckets {
+                    compact_classes = compact_classes.max(
+                        checked::product([count, digit_factor.len() >> round])
+                            .ok_or_else(invalid)?,
+                    );
+                }
             }
         }
         let lut_capacity = if tau.is_empty() {
@@ -166,7 +192,7 @@ impl<F: SmoothFftField> CombinedRootKernel<F> {
             .try_reserve_exact(worker_count)
             .map_err(|_| invalid())?;
         for _ in 0..worker_count {
-            workers.push(Workspace::new(classes)?);
+            workers.push(Workspace::new(classes, compact_classes)?);
         }
         let mut lut = Vec::new();
         lut.try_reserve_exact(lut_capacity).map_err(|_| invalid())?;
@@ -177,11 +203,17 @@ impl<F: SmoothFftField> CombinedRootKernel<F> {
         spare_lut
             .try_reserve_exact(lut_capacity)
             .map_err(|_| invalid())?;
+        if let &[scalar] = digit_factor.as_slice() {
+            scale(&mut kw, scalar);
+            digit_factor = Vec::new();
+        }
         Ok(Self {
             base,
             packed,
             w: field_w,
             kw,
+            digit_factor,
+            factor_buckets,
             tau: equality_point,
             eq_low,
             eq_high,
@@ -242,6 +274,8 @@ impl<F: SmoothFftField> SumcheckInstanceProver<F> for CombinedRootKernel<F> {
             packed: &self.packed,
             w: &self.w,
             kw: &self.kw,
+            digit_factor: &self.digit_factor,
+            factor_buckets: self.factor_buckets && !self.digit_factor.is_empty(),
             low: &self.eq_low,
             high: &self.eq_high,
             lut: &self.lut,
@@ -315,7 +349,15 @@ impl<F: SmoothFftField> SumcheckInstanceProver<F> for CombinedRootKernel<F> {
         let Some(&tau) = self.tau.get(self.next_round) else {
             return;
         };
-        fold(&mut self.kw, challenge);
+        if self.digit_factor.is_empty() {
+            fold(&mut self.kw, challenge);
+        } else {
+            fold(&mut self.digit_factor, challenge);
+            if let &[scalar] = self.digit_factor.as_slice() {
+                scale(&mut self.kw, scalar);
+                self.digit_factor = Vec::new();
+            }
+        }
         if self.next_round < self.lift_round {
             if checked::sum([self.next_round, 1]) == Some(self.lift_round) {
                 let Some(bits) = checked::pow2(self.lift_round)
@@ -323,7 +365,10 @@ impl<F: SmoothFftField> SumcheckInstanceProver<F> for CombinedRootKernel<F> {
                 else {
                     return;
                 };
-                self.w.resize(self.kw.len(), F::zero());
+                let Some(len) = checked::pow2(self.tau.len() - self.lift_round) else {
+                    return;
+                };
+                self.w.resize(len, F::zero());
                 let lut = &self.lut;
                 let packed = &self.packed;
                 let bind = |(pair, output): (usize, &mut F)| {
@@ -449,6 +494,13 @@ fn fold<F: SmoothFftField>(table: &mut Vec<F>, challenge: F) {
     table.truncate(half);
 }
 
+fn scale<F: SmoothFftField>(table: &mut [F], scalar: F) {
+    #[cfg(feature = "parallel")]
+    table.par_iter_mut().for_each(|value| *value *= scalar);
+    #[cfg(not(feature = "parallel"))]
+    table.iter_mut().for_each(|value| *value *= scalar);
+}
+
 fn fold_chunk<F: SmoothFftField>(table: &mut [F], challenge: F) {
     for index in 0..table.len() / 2 {
         let Some(start) = checked::product([index, 2]) else {
@@ -537,6 +589,8 @@ struct Tables<'a, F> {
     packed: &'a [u8],
     w: &'a [F],
     kw: &'a [F],
+    digit_factor: &'a [F],
+    factor_buckets: bool,
     low: &'a [F],
     high: &'a [F],
     lut: &'a [F],
@@ -546,21 +600,46 @@ struct Tables<'a, F> {
     buckets: bool,
 }
 
+impl<F: SmoothFftField> Tables<'_, F> {
+    fn weight_pair(&self, pair: usize) -> Option<(F, F)> {
+        let start = checked::product([pair, 2])?;
+        if self.digit_factor.is_empty() {
+            let &[left, right] = self.kw.get(checked::range(start, 2)?)? else {
+                return None;
+            };
+            Some((left, right))
+        } else {
+            let depth = self.digit_factor.len();
+            let coefficient = *self.kw.get(start >> depth.trailing_zeros())?;
+            let &[left, right] = self
+                .digit_factor
+                .get(checked::range(start & (depth - 1), 2)?)?
+            else {
+                return None;
+            };
+            Some((left * coefficient, right * coefficient))
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Workspace<F> {
     // Suffix equality weight and the two unweighted K endpoints per class.
     buckets: Vec<[F; 3]>,
+    // Compact coefficients per (packed class, remaining digit-pair position).
+    compact_buckets: Vec<F>,
     inner: Vec<F>,
     marked: Vec<u8>,
     touched: Vec<usize>,
     total: Totals<F>,
 }
 impl<F: SmoothFftField> Workspace<F> {
-    fn new(classes: usize) -> Result<Self, AkitaError> {
+    fn new(classes: usize, compact_classes: usize) -> Result<Self, AkitaError> {
         let mut touched = Vec::new();
         touched.try_reserve_exact(classes).map_err(|_| invalid())?;
         Ok(Self {
             buckets: buffer(classes, [F::zero(); 3])?,
+            compact_buckets: buffer(compact_classes, F::zero())?,
             inner: buffer(classes, F::zero())?,
             marked: buffer(classes, 0)?,
             touched,
@@ -578,32 +657,40 @@ impl<F: SmoothFftField> Workspace<F> {
         };
         if tables.class_round && tables.buckets {
             self.buckets.fill([F::zero(); 3]);
+            self.compact_buckets.fill(F::zero());
         }
-        for (block, (weights, &outer)) in tables
-            .kw
-            .chunks_exact(block_width)
-            .zip(tables.high)
-            .enumerate()
-            .skip(start)
-            .take(block_count)
-        {
+        for (block, &outer) in tables.high.iter().enumerate().skip(start).take(block_count) {
             if tables.class_round && tables.buckets {
-                for (inner, (k, &eq)) in weights.chunks_exact(2).zip(tables.low).enumerate() {
+                for (inner, &eq) in tables.low.iter().enumerate() {
                     let Some(pair) = checked::mul_add(block, tables.low.len(), inner) else {
                         return;
                     };
                     let Some(class) = class_index(tables.packed, pair, tables.class_bits) else {
                         return;
                     };
-                    let &[k0, k1] = k else {
-                        return;
-                    };
-                    let Some(bucket) = self.buckets.get_mut(class) else {
-                        return;
-                    };
-                    let [_, sum0, sum1] = bucket;
-                    *sum0 += k0;
-                    *sum1 += k1;
+                    if tables.factor_buckets {
+                        let pairs = tables.digit_factor.len() / 2;
+                        let Some(index) = checked::mul_add(class, pairs, pair & (pairs - 1)) else {
+                            return;
+                        };
+                        let Some(sum) = self.compact_buckets.get_mut(index) else {
+                            return;
+                        };
+                        let Some(&coefficient) = tables.kw.get(pair >> pairs.trailing_zeros())
+                        else {
+                            return;
+                        };
+                        *sum += coefficient;
+                    } else {
+                        let Some((k0, k1)) = tables.weight_pair(pair) else {
+                            return;
+                        };
+                        let Some([_, sum0, sum1]) = self.buckets.get_mut(class) else {
+                            return;
+                        };
+                        *sum0 += k0;
+                        *sum1 += k1;
+                    }
                     let Some(eq_sum) = self.inner.get_mut(class) else {
                         return;
                     };
@@ -640,7 +727,7 @@ impl<F: SmoothFftField> Workspace<F> {
                 };
                 let digits = tables.w.get(range);
                 let mut alphabet = [F::zero(); 18];
-                for (inner, (k, &eq)) in weights.chunks_exact(2).zip(tables.low).enumerate() {
+                for (inner, &eq) in tables.low.iter().enumerate() {
                     let (w0, w1) = if tables.class_round {
                         let Some(pair) = checked::mul_add(block, tables.low.len(), inner) else {
                             return;
@@ -669,7 +756,10 @@ impl<F: SmoothFftField> Workspace<F> {
                         };
                         (left, right)
                     };
-                    let &[k0, k1] = k else {
+                    let Some(pair) = checked::mul_add(block, tables.low.len(), inner) else {
+                        return;
+                    };
+                    let Some((k0, k1)) = tables.weight_pair(pair) else {
                         return;
                     };
                     self.total.product(w0, w1, k0, k1);
@@ -689,7 +779,30 @@ impl<F: SmoothFftField> Workspace<F> {
             let Some(classes) = checked::pow2(tables.class_bits) else {
                 return;
             };
-            for (class, &[eq, k0, k1]) in self.buckets.iter().take(classes).enumerate() {
+            for (class, &[eq, mut k0, mut k1]) in self.buckets.iter().take(classes).enumerate() {
+                if tables.factor_buckets {
+                    let pairs = tables.digit_factor.len() / 2;
+                    let Some(start) = checked::product([class, pairs]) else {
+                        return;
+                    };
+                    let Some(coefficients) = checked::range(start, pairs)
+                        .and_then(|range| self.compact_buckets.get(range))
+                    else {
+                        return;
+                    };
+                    for (&coefficient, digit_pair) in
+                        coefficients.iter().zip(tables.digit_factor.chunks_exact(2))
+                    {
+                        if coefficient == F::zero() {
+                            continue;
+                        }
+                        let &[left, right] = digit_pair else {
+                            return;
+                        };
+                        k0 += coefficient * left;
+                        k1 += coefficient * right;
+                    }
+                }
                 if eq == F::zero() && k0 == F::zero() && k1 == F::zero() {
                     continue;
                 }
