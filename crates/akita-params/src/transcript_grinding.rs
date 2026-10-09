@@ -747,20 +747,23 @@ pub fn independent_batch_loss_factor(values: usize) -> Result<u64, AkitaError> {
         .map_err(|_| AkitaError::InvalidSetup("independent batch length exceeds u64".into()))
 }
 
-/// Canonical ring-switch polynomial loss for one opening method.
+/// Canonical ring-switch polynomial loss for one group's native inner ring.
+///
+/// Both opening methods check inner-consistency rows in this ring, regardless
+/// of the challenge-subring dimension. Quotient-lift residuals have degree
+/// below twice its dimension. The plan takes the maximum loss over all groups.
+/// This also conservatively prices reduced evaluation, whose residual degree
+/// is below the native ring dimension.
 pub fn ring_switch_alpha_loss_factor(
     opening_method: OpeningMethod,
     inner_ring_dimension: usize,
 ) -> Result<u64, AkitaError> {
     let degree_bound = match opening_method {
-        OpeningMethod::EvaluationTrace => inner_ring_dimension
-            .checked_mul(2)
-            .and_then(|value| value.checked_sub(1)),
-        OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension,
-        } => challenge_subring_dimension
-            .checked_mul(2)
-            .and_then(|value| value.checked_sub(1)),
+        OpeningMethod::EvaluationTrace | OpeningMethod::SubringCoefficientPacking { .. } => {
+            inner_ring_dimension
+                .checked_mul(2)
+                .and_then(|value| value.checked_sub(1))
+        }
     }
     .ok_or_else(|| AkitaError::InvalidSetup("ring-switch alpha degree overflow".into()))?;
     polynomial_identity_loss_factor(degree_bound)
