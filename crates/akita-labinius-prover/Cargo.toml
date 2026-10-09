@@ -13,6 +13,7 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 rayon = { version = "1.10", optional = true }
+tracing = "0.1"
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 akita-labinius-verifier = { version = "0.1.0", path = "../akita-labinius-verifier", default-features = false }
@@ -24,12 +25,28 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c7c2d08d5bb0c7c80501f29f723e595af7fcff3c", default-features = false }
 
 [dev-dependencies]
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
 
 [[bench]]
 name = "commit_kernel"
+harness = false
+required-features = ["labinius"]
+
+[[bench]]
+name = "fold_kernel"
+harness = false
+required-features = ["labinius"]
+
+[[bench]]
+name = "quotient_kernel"
+harness = false
+required-features = ["labinius"]
+
+[[bench]]
+name = "combined_kernel"
 harness = false
 required-features = ["labinius"]
 

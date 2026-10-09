@@ -1,3 +1,8 @@
+//! Independent schoolbook A-relation quotient for tests and benchmark baselines.
+
+#![cfg(feature = "labinius")]
+#![allow(dead_code)]
+
 use akita_algebra::{embed_scalar, SmoothFftField, TrinomialModulus, TrinomialRing};
 use akita_challenges::BinaryChallenge;
 use akita_error::{checked, AkitaError};
@@ -12,7 +17,7 @@ use akita_labinius_verifier::{
 /// residual rejects. Schoolbook products preserve the unreduced degree; the
 /// public transform API does not expose mutable or constructible NTT slots for
 /// division on a shifted evaluation set.
-pub fn a_relation_quotients<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
+pub(crate) fn a_relation_quotients<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
     setup: &BinaryClearSetup<F, D, M>,
     commitment: &BinaryClearCommitment<F, D, M>,
     fold_challenges: &[BinaryChallenge],

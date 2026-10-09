@@ -102,6 +102,19 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> PreparedCommitMatri
     pub fn i8_lut(&self) -> &TrinomialI8Lut<F, D, M> {
         &self.lut
     }
+
+    /// Reject a setup whose matrix shape or digest differs from the cached one.
+    pub(crate) fn check_setup(&self, setup: &BinaryClearSetup<F, D, M>) -> Result<(), AkitaError> {
+        if self.n_a != setup.n_a()
+            || self.m != setup.m()
+            || self.digest != *setup.matrix_view_digest()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "prepared commitment matrix does not match setup".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Pack exactly one group of `k` source words directly into signed coefficients.
@@ -151,14 +164,7 @@ where
             actual: source.len(),
         });
     }
-    if prepared.n_a != setup.n_a()
-        || prepared.m != setup.m()
-        || prepared.digest != *setup.matrix_view_digest()
-    {
-        return Err(AkitaError::InvalidSetup(
-            "prepared commitment matrix does not match setup".into(),
-        ));
-    }
+    prepared.check_setup(setup)?;
     let image_count = checked::product([setup.columns(), setup.n_a()])
         .ok_or_else(|| AkitaError::InvalidSetup("commitment size overflow".into()))?;
     let mut images = Vec::new();

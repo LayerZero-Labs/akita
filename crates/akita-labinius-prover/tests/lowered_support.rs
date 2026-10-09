@@ -1,6 +1,10 @@
 #![cfg(feature = "labinius")]
 #![allow(dead_code)]
 
+#[path = "quotient_support.rs"]
+pub(crate) mod quotient_support;
+use quotient_support::a_relation_quotients;
+
 #[path = "common/mod.rs"]
 mod common;
 
@@ -12,7 +16,7 @@ use akita_challenges::{BinaryChallenge, BinaryChallengeSampler};
 use akita_error::AkitaError;
 use akita_labinius_prover::{
     commit_binary_clear,
-    lowered::{a_relation_quotients, encode_witness, flatten_image, parity_quotient_and_carry},
+    lowered::{encode_witness, flatten_image, parity_quotient_and_carry},
 };
 use akita_labinius_verifier::{
     endpoint::{fold_integer, left_expansion, verify_endpoints},

@@ -7,9 +7,7 @@ use akita_algebra::{
 };
 use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing};
 use akita_error::AkitaError;
-use akita_labinius_prover::lowered::{
-    a_relation_quotients, encode_witness, flatten_image, parity_quotient_and_carry,
-};
+use akita_labinius_prover::lowered::{encode_witness, flatten_image, parity_quotient_and_carry};
 use akita_labinius_verifier::{
     commitment::apply_matrix,
     endpoint::{pack_response, response_parity, verify_endpoints},
@@ -20,6 +18,7 @@ use akita_params::sis::labinius::{
     LabiniusCoefficientPrime as Prime, LabiniusRingDegree as Degree,
 };
 use jolt_field::One;
+use support::quotient_support::a_relation_quotients;
 use support::*;
 
 #[test]

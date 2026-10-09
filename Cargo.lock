@@ -131,12 +131,14 @@ dependencies = [
  "akita-labinius-verifier",
  "akita-params",
  "akita-sumcheck",
+ "akita-transcript",
  "akita-types",
  "criterion",
  "jolt-field",
  "jolt-poly",
  "rand 0.8.8",
  "rayon",
+ "tracing",
 ]
 
 [[package]]
