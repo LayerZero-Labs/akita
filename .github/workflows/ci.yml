@@ -276,7 +276,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
-          targets: riscv64gc-unknown-linux-gnu
+          target: riscv64gc-unknown-linux-gnu
       # The guest backends select themselves only on riscv64. The NTT inline's
       # portable fallback runs on any host, so its table layout is pinned here;
       # Jolt pins the Blake2b and Keccak inlines on their host paths, and its
