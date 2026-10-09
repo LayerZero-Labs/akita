@@ -81,9 +81,9 @@ impl LabiniusSignedDigitRange {
 /// The committed table contains only response digits, addressed as
 /// `digit + digit_count * (coefficient + padded_coefficient_len * ring_element)`.
 /// Every position has the same alphabet; padding has zero public relation
-/// weights and honest digit zero. Parity quotient and carry lengths count
-/// integers outside this table; the root protocol chooses how to enforce their
-/// ranges. The image uses the same padded coefficient index over the
+/// weights and honest digit zero. Parity quotient, parity carry, and A-row carry
+/// lengths count integers outside this table; the root protocol chooses how to
+/// enforce their ranges. The image uses the same padded coefficient index over the
 /// coefficient field and needs no range proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabiniusRootEncoding {
@@ -91,6 +91,8 @@ pub struct LabiniusRootEncoding {
     response: LabiniusSignedDigitRange,
     quotient: LabiniusSignedDigitRange,
     carry: LabiniusSignedDigitRange,
+    a_carry: Option<LabiniusSignedDigitRange>,
+    a_carry_len: usize,
     no_wrap_total: u128,
     padded_coefficient_len: usize,
     response_table_len: usize,
@@ -117,6 +119,14 @@ impl LabiniusRootEncoding {
     /// Enforced parity carry range, independent of its protocol representation.
     pub const fn carry(&self) -> LabiniusSignedDigitRange {
         self.carry
+    }
+    /// Enforced foreign-modulus A-row carry range, when the primes differ.
+    pub const fn a_carry(&self) -> Option<LabiniusSignedDigitRange> {
+        self.a_carry
+    }
+    /// A-row carry integers `n_A * D`, or zero for a shared-prime profile.
+    pub const fn a_carry_len(&self) -> usize {
+        self.a_carry_len
     }
     /// Checked `H + 3*quotient.offset + 2*carry.offset`, strictly below P.
     pub const fn no_wrap_total(&self) -> u128 {
@@ -183,6 +193,14 @@ impl LabiniusRootShape {
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("LaBinius parity no-wrap sum overflow".into())
                 })?;
+        let a_carry = self
+            .honest_a_carry_bound()
+            .map(|bound| envelope_for_bound(bound, base))
+            .transpose()?;
+        if let Some(range) = a_carry {
+            self.check_a_carry_no_wrap(range.bits())?;
+        }
+        let a_carry_len = self.a_carry_len();
         let size_overflow =
             || AkitaError::InvalidSetup("LaBinius root digit witness size overflow".into());
         let padded_coefficient_len = self
@@ -214,6 +232,8 @@ impl LabiniusRootShape {
             response,
             quotient,
             carry,
+            a_carry,
+            a_carry_len,
             no_wrap_total,
             padded_coefficient_len,
             response_table_len,

@@ -34,7 +34,7 @@ use akita_labinius_verifier::{
     bind_statement,
     channel::{finish_prover, new_prover, ClearChannel},
     codec::{exchange_binary, exchange_response},
-    commitment::{apply_matrix, BinaryClearCommitment},
+    commitment::{apply_matrix, reduce_commitment_image, BinaryClearCommitment},
     endpoint::{fold_integer, left_expansion},
     frontend::prove_frontend,
     profile::BinaryClearSetup,
@@ -60,7 +60,9 @@ where
     let mut images = Vec::new();
     for column in 0..setup.columns() {
         let packed = pack_source_column::<H, F, D, M>(setup, source, column)?;
-        images.extend(apply_matrix(setup, &packed)?);
+        let mut column_image = apply_matrix(setup, &packed)?;
+        reduce_commitment_image(setup, &mut column_image)?;
+        images.extend(column_image);
     }
     Ok(BinaryClearCommitment { images })
 }

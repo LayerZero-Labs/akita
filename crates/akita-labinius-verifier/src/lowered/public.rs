@@ -9,7 +9,7 @@ use akita_types::RelationPolynomial;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::{horner, powers, signed_field, zero_vec, LoweredRootLayout};
+use super::{horner, powers, signed_field, zero_vec, ARelationRows, LoweredRootLayout};
 use crate::{
     endpoint::verify_left_expansion,
     source::{challenge_scalar, equality_weights, scalar_from_binary},
@@ -37,6 +37,7 @@ pub struct LoweredPublic<F> {
     pub(crate) gamma_powers: Vec<F>,
     pub(crate) digit_powers: Vec<F>,
     pub(crate) a_quotient_evaluations: Vec<F>,
+    pub(crate) a_carry_terms: Vec<F>,
     pub(crate) parity_rhs: F,
     c_pub: F,
 }
@@ -50,7 +51,7 @@ impl<F: SmoothFftField> LoweredPublic<F> {
         claim: &BinaryEvaluationClaim,
         u: &[BinaryField162],
         fold_challenges: &[BinaryChallenge],
-        a_quotients: &[Vec<F>],
+        a_rows: &(impl ARelationRows<F> + ?Sized),
         parity_quotient: &[i128],
         parity_carry: &[i128],
         challenges: LoweredChallenges<F>,
@@ -62,14 +63,24 @@ impl<F: SmoothFftField> LoweredPublic<F> {
             ));
         }
         verify_left_expansion(setup, claim, u)?;
+        let a_quotients = a_rows.quotients();
+        let a_carry = a_rows.a_carry();
         let quotient_len = layout.polynomial().quotient_coefficient_len()?;
         if fold_challenges.len() != layout.columns()
             || a_quotients.len() != layout.n_a()
             || a_quotients.iter().any(|row| row.len() != quotient_len)
+            || a_carry.len() != layout.encoding().a_carry_len()
             || parity_quotient.len() != 161
             || parity_carry.len() != 162
         {
             return Err(AkitaError::InvalidProof);
+        }
+        // Check integer endpoints before any embedding into the opening field.
+        if let Some(range) = layout.encoding().a_carry() {
+            let (lower, upper) = range.interval();
+            if a_carry.iter().any(|&value| value < lower || value > upper) {
+                return Err(AkitaError::InvalidProof);
+            }
         }
         for challenge in fold_challenges {
             challenge
@@ -178,6 +189,16 @@ impl<F: SmoothFftField> LoweredPublic<F> {
         for (destination, row) in a_quotient_evaluations.iter_mut().zip(a_quotients) {
             *destination = horner(row, challenges.alpha);
         }
+        let mut a_carry_terms = Vec::new();
+        if let Some(q0) = setup.commitment_modulus().small_modulus() {
+            a_carry_terms = zero_vec(layout.n_a())?;
+            for (destination, row) in a_carry_terms.iter_mut().zip(a_carry.chunks_exact(D)) {
+                *destination = F::from_u64(u64::from(q0))
+                    * row.iter().rev().fold(F::zero(), |acc, &value| {
+                        acc * challenges.alpha + signed_field::<F>(value)
+                    });
+            }
+        }
         let integer_evaluation = |values: &[i128]| {
             values.iter().rev().fold(F::zero(), |acc, &value| {
                 acc * challenges.xi + signed_field::<F>(value)
@@ -198,6 +219,7 @@ impl<F: SmoothFftField> LoweredPublic<F> {
             gamma_powers,
             digit_powers,
             a_quotient_evaluations,
+            a_carry_terms,
             parity_rhs,
             c_pub: F::zero(),
         };
@@ -225,6 +247,9 @@ impl<F: SmoothFftField> LoweredPublic<F> {
             .zip(&result.a_quotient_evaluations)
         {
             result.c_pub += weight * modulus * quotient;
+        }
+        for (&weight, &carry) in result.gamma_powers.iter().zip(&result.a_carry_terms) {
+            result.c_pub += weight * carry;
         }
         result.c_pub += result.g()? * result.parity_rhs;
         Ok(result)

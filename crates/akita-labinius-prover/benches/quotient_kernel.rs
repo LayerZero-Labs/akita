@@ -99,6 +99,7 @@ fn benchmarks(criterion: &mut Criterion) {
             &commitment,
             &challenges,
             &response,
+            None,
         )
         .expect("honest A relation holds")
     };
@@ -107,7 +108,7 @@ fn benchmarks(criterion: &mut Criterion) {
     #[cfg(not(feature = "parallel"))]
     let expected = call_kernel();
     assert_eq!(
-        expected,
+        expected.quotients,
         reference(setup, &commitment, &challenges, &response)
             .expect("honest reference A relation holds")
     );

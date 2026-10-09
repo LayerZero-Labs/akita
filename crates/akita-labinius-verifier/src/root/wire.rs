@@ -29,6 +29,13 @@ pub fn root_reduction_wire_size<H: SwitchField>(
         .ok_or_else(invalid)?;
     let u = checked::product([21, shape.fold_width()]).ok_or_else(invalid)?;
     let qa = checked::product([rank, quotient_degree, coefficient_bytes]).ok_or_else(invalid)?;
+    let ka = if let Some(range) = encoding.a_carry() {
+        checked::div_ceil(range.bits() as usize, 8)
+            .and_then(|width| checked::product([encoding.a_carry_len(), width]))
+            .ok_or_else(invalid)?
+    } else {
+        0
+    };
     let q = checked::div_ceil(encoding.quotient().bits() as usize, 8)
         .and_then(|width| checked::product([encoding.parity_quotient_len(), width]))
         .ok_or_else(invalid)?;
@@ -48,6 +55,7 @@ pub fn root_reduction_wire_size<H: SwitchField>(
         frontend_rounds,
         u,
         qa,
+        ka,
         q,
         k,
         evaluations,

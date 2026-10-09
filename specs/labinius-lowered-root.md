@@ -8,10 +8,10 @@ Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 
 The opt-in `lowered` modules in `akita-labinius-verifier` and
 `akita-labinius-prover` express the clear root endpoints as a digit alphabet,
-two clear integer range checks and one coefficient-field linear relation.
+clear integer range checks and one coefficient-field linear relation.
 They take explicit field challenges. They define no transcript, sumcheck,
 commitment to the digit table, polynomial opening or wire encoding.
-The existing clear endpoint and its encodings are unchanged.
+The shared-prime clear endpoint and its encodings are unchanged.
 
 This document is the normative definition of the lowered statement. The
 [clear opening](labinius-clear-opening.md),
@@ -26,7 +26,9 @@ Write `d=162`, `Phi(Z)=Z^162+Z^81+1`, `D=d*k`, `k` in `{1,2,4}`,
 and `Phi_D(Y)=Y^D+s*Y^(D/2)+1`, where `s` is the commitment modulus's middle
 coefficient. The scalar ring is over the integers, and the commitment ring is
 `R=F[Y]/(Phi_D)` for the coefficient prime field F of modulus P.
-The only admitted root profile currently has `D=648` and P128.
+Both admitted root profiles have `D=648` and P128. The tag-1 foreign-modulus
+relation and its integer argument are specified in
+[the small-modulus specification](labinius-small-modulus-root.md).
 
 Let `m=setup.m()`, `M_rows=k*m`, `C=setup.columns()` and `n_A=setup.n_a()`.
 `LoweredRootLayout::new` requires agreement with `LabiniusRootShape` on the
@@ -81,7 +83,7 @@ Let `Ch_col` be the integer polynomial of a validated fold challenge,
 The left expansion of u against the remaining claim coordinates is checked
 separately by the existing clear endpoint helper.
 
-The unreduced A rows over F are
+For tag 0, the unreduced A rows over F are
 
 ```text
 sum_j A_ij(Y)*p_j(Y) - sum_col iota(Ch_col)(Y)*Y_(col,i)(Y)
@@ -89,7 +91,9 @@ sum_j A_ij(Y)*p_j(Y) - sum_col iota(Ch_col)(Y)*Y_(col,i)(Y)
 ```
 
 Every side has degree at most `2D-2`, and each clear QA row has exactly `D-1`
-coefficients. The unreduced parity row over the integers is
+coefficients. Tag 1 adds `q0*KA_i(Y)` to the right side, with D range-checked
+integers per row; the canonical auxiliary witness contains QA followed by KA.
+The unreduced parity row over the integers is
 
 ```text
 sum_r B_r(Z)*V_r(Z) - sum_col U_col(Z)*Ch_col(Z)
@@ -117,15 +121,16 @@ c_pub      = sum_(j,t<D) off(t)*(Abar_j*alpha^t
                   + Phi(xi)*Q(xi) + 2*K(xi)).
 ```
 
-Weights are zero at all coefficient tails and image padding. Acceptance is
-`<W,K_W>+<Y,K_Y>=c_pub`, together with the alphabet and clear Q/K range checks.
+Weights are zero at all coefficient tails and image padding. For tag 1, c_pub additionally contains `sum_i gamma^i*q0*KA_i(alpha)`;
+K_W and K_Y use the same formulas with the reduced A coefficients. Acceptance is
+`<W,K_W>+<Y,K_Y>=c_pub`, together with the alphabet and clear integer range checks.
 Subtracting c_pub gives precisely the gamma combination of the A-row residuals
 plus g times the parity-row residual. The offset has no effect on either public
 weight. `RelationPolynomial::evaluate_modulus_at` supplies both modulus values,
 using the degree-162 plus trinomial for Phi.
 
 `LoweredPublic` validates lengths and fold challenges, checks the left expansion
-and Q/K ranges, and caches the row evaluations and powers. The dense weight path
+and Q/K ranges (and KA for tag 1), and caches the row evaluations and powers. The dense weight path
 uses direct Horner evaluations of matrix coefficients, independently of the
 canonical setup-weight preparation path.
 
@@ -159,10 +164,21 @@ coefficient tails zero. The image weight factors as
   * MLE_(e padded)(-gamma^i*iota(Ch_col)(alpha)).
 ```
 
-The A quotient constructor uses the algebra crate's schoolbook product and
-monic quotient reducer. The public trinomial transform API exposes immutable
-slots without a constructor or pointwise division, so shifted-transform
-quotient interpolation would require a separate algebra seam.
+The production A quotient constructor uses the original and conjugate
+trinomial transforms. The tests independently use schoolbook products and
+monic division; tag 1 also has an arbitrary-precision integer oracle that
+checks the transmitted QA and KA without the production weights.
+
+## Witness binding order
+
+The lowered helpers take explicit challenges; their consumer binds these
+messages in the following order. Exact byte grammar is owned by the
+[root reduction](labinius-root-reduction.md) and the small-modulus specification.
+
+| Profile | Before alpha | Before xi | Before gamma |
+| --- | --- | --- | --- |
+| Tag 0 | Y, W, U, folds, QA, Q, K | Same messages and alpha | All evaluated rows |
+| Tag 1 | Y, W, U, folds, QA, KA, Q, K | Same messages and alpha | All evaluated rows |
 
 ## Conditional soundness and challenge order
 
@@ -178,7 +194,9 @@ adjusted to satisfy a false A row. All evaluated rows MUST be fixed before
 gamma.
 
 - A false A polynomial row survives uniform alpha with probability at most
-  `(2D-2)/|F|`, equal to `1294/|F|` at D648. QA and W must be fixed before alpha.
+  `(2D-2)/|F|`, equal to `1294/|F|` at D648. QA and W must be fixed before alpha; tag 1 also fixes KA before alpha.
+  The degree bound is unchanged. Its derivation-bias and extraction ledger delta
+  are recorded only in the small-modulus specification.
 - A parity polynomial row false modulo P survives uniform xi with probability
   at most `322/|F|`. W, Q and K must be fixed before xi. If it instead holds as
   a polynomial identity modulo P, the alphabet, clear range checks and admitted
@@ -199,7 +217,9 @@ they do not establish a complete security theorem.
 
 ## Source binding and projection
 
-**Obligation sketch; not yet a complete theorem.** Two accepting transcripts
+**Tag-0 obligation sketch; not yet a complete theorem.** For tag 1 use the
+cancellation lemma and conditional composition obligation in the small-modulus
+specification. Two accepting tag-0 transcripts
 that differ in one fold-challenge coordinate should yield an extracted
 occurrence `(a,s)` satisfying `A*a=s*Y_col mod P` and
 `B(a mod 2)=U_col*(s mod 2)`, with `||a||_inf<=Delta`.
