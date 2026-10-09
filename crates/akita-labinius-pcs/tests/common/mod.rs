@@ -197,8 +197,16 @@ impl<H: Host> Case<H> {
     }
 }
 
+#[derive(Clone)]
+pub(crate) enum Event {
+    Public(Vec<u8>),
+    Message(Vec<u8>),
+    Challenge([u8; 32]),
+}
+
 pub(crate) struct Recording<S> {
     pub(crate) inner: S,
+    pub(crate) events: Vec<Event>,
     pub(crate) messages: Vec<Vec<u8>>,
     pub(crate) message_calls: usize,
     pub(crate) public: Vec<Vec<u8>>,
@@ -208,6 +216,7 @@ impl<S> Recording<S> {
     pub(crate) fn new(inner: S) -> Self {
         Self {
             inner,
+            events: Vec::new(),
             messages: Vec::new(),
             message_calls: 0,
             public: Vec::new(),
@@ -217,17 +226,20 @@ impl<S> Recording<S> {
 }
 impl<S: ClearChannel> ClearChannel for Recording<S> {
     fn public(&mut self, bytes: &[u8]) -> Result<(), AkitaError> {
+        self.events.push(Event::Public(bytes.to_vec()));
         self.public.push(bytes.to_vec());
         self.inner.public(bytes)
     }
     fn message(&mut self, bytes: &mut [u8]) -> Result<(), AkitaError> {
         self.message_calls += 1;
         self.inner.message(bytes)?;
+        self.events.push(Event::Message(bytes.to_vec()));
         self.messages.push(bytes.to_vec());
         Ok(())
     }
     fn challenge_block(&mut self) -> Result<[u8; 32], AkitaError> {
         let seed = self.inner.challenge_block()?;
+        self.events.push(Event::Challenge(seed));
         self.draws.push(seed);
         Ok(seed)
     }

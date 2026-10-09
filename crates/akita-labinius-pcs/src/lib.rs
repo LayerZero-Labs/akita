@@ -1,8 +1,8 @@
-//! Akita commitments and evaluation openings for padded LaBinius image tables.
+//! Succinct, non-hiding Akita commitments for LaBinius binary evaluations.
 //!
 //! Enable `labinius` explicitly to use `ImageProver` and `ImageVerifier`.
-//! Openings borrow the caller's active clear channel; the caller owns EOF.
-//! This authenticates an image-table evaluation, with no binary source opening.
+//! Root openings compose the root reduction with one grouped Akita proof and
+//! own their session and EOF. Image-only openings remain available on a channel.
 
 #![cfg(feature = "labinius")]
 #![deny(
@@ -14,10 +14,15 @@
     clippy::unwrap_used
 )]
 
+pub mod config;
 pub mod image;
+pub mod root;
 pub mod session;
+mod setup;
 
+pub use config::{DigitConfig, Digits1, Digits2, Digits4};
 pub use image::{ImageCommitOutput, ImageEvaluation, ImageProver, ImageVerifier};
+pub use root::{RootPcsProver, RootPcsVerifier};
 
 /// Coefficient field of the admitted D648/P128 root.
 pub type F = akita_config::proof_optimized::fp128::Field;
@@ -29,3 +34,6 @@ pub type RootSetup =
 /// Prepared transform-domain root commitment matrix.
 pub type PreparedMatrix =
     akita_labinius_prover::PreparedCommitMatrix<F, 648, akita_algebra::MinusTrinomial>;
+/// Prepared root matrix caches for committing and for the root reduction.
+pub type PreparedRoot =
+    akita_labinius_prover::PreparedRootMatrices<F, 648, akita_algebra::MinusTrinomial>;
