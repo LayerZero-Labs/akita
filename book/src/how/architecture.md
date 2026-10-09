@@ -34,8 +34,9 @@ orchestration lives in `akita-pcs`.
 **Dependency graph and ownership rules:** [`docs/crate-graph.md`](../../../docs/crate-graph.md).
 CI enforces one-way boundaries via `scripts/check-crate-deps.sh`.
 The standalone clear binary opening prover depends on its verifier crate; both
-depend on algebra, errors, challenges, parameters, transcript, and the shared
-field crate. No Akita proof-path crate depends on this opt-in extension.
+depend on algebra, errors, challenges, parameters, and the shared field crate.
+Only the verifier crate depends on the transcript crate directly. No Akita
+proof-path crate depends on this opt-in extension.
 
 Key structural facts:
 

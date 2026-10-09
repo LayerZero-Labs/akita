@@ -72,7 +72,6 @@ graph TD
   LabiniusProver --> Error
   LabiniusProver --> Challenges
   LabiniusProver --> Params
-  LabiniusProver --> Transcript
   LabiniusProver --> Field
 
   Algebra --> Error
