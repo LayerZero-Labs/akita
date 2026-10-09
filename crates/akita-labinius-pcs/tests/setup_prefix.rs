@@ -199,8 +199,15 @@ fn shrink_profile(profile: &mut GroupCommitPhaseParams, domain: usize) {
 }
 
 fn native_schedule() -> akita_params::FoldSchedule {
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../artifacts")
+            .join(akita_params::SCHEDULE_ARTIFACT_SET)
+            .join("fp128_dense_recursive.aks"),
+    )
+    .unwrap();
     let recursive = TrustedScheduleCatalog::<akita_config::RecursiveCommitmentConfig<ImageConfig>>::from_artifact_bytes(
-        include_bytes!("../../../artifacts/schedules/fp128_dense_recursive.aks"),
+        &bytes,
     ).unwrap();
     let row = recursive
         .rows()
