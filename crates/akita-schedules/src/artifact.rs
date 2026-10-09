@@ -1,10 +1,12 @@
-//! Versioned trusted JSON schedule catalog artifacts.
+//! Versioned trusted schedule catalog artifacts.
+
+mod verifier_view;
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_params::{
     digest_descriptor_bytes, CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
-    AKITA_INSTANCE_DESCRIPTOR_VERSION,
+    ScheduleRowDigest, AKITA_INSTANCE_DESCRIPTOR_VERSION,
 };
 use akita_params::{ScheduleLookupKey, ScheduleLookupOrderKey};
 use serde::de::{self, DeserializeSeed, SeqAccess, Visitor};
@@ -31,10 +33,31 @@ pub const MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES: usize = 1024 * 1024;
 const MAX_FAMILY_NAME_BYTES: usize = 128;
 pub(crate) const MAX_TRUSTED_CATALOG_ROWS: usize = 1 << 14;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ScheduleCatalogArtifactRowV1 {
     schedule: FoldSchedule,
+}
+
+impl ScheduleCatalogArtifactRowV1 {
+    fn into_profile_and_schedule(
+        self,
+    ) -> Result<(CommittedGroupBatchProfile, FoldSchedule), AkitaError> {
+        // Root topology must be checked before accessing its own group.
+        self.schedule.root.params.validate_group_topology()?;
+        let profiles = CommittedGroupBatchProfile {
+            final_group: self.schedule.root.params.own_group().profile,
+            precommitteds: self
+                .schedule
+                .root
+                .params
+                .precommitted_groups()
+                .iter()
+                .map(|group| group.profile)
+                .collect(),
+        };
+        Ok((profiles, self.schedule))
+    }
 }
 
 #[derive(Deserialize)]
@@ -120,6 +143,12 @@ impl<'de> DeserializeSeed<'de> for RejectExtraScheduleRow {
     }
 }
 
+#[derive(Clone, Debug)]
+enum CatalogCoverage {
+    Complete,
+    Selected { row_digests: Vec<[u8; 32]> },
+}
+
 /// An owned schedule catalog whose rows have passed semantic validation.
 ///
 /// Proofs carry only an [`OpeningScheduleSelection`]. Both the honest prover
@@ -129,6 +158,7 @@ pub struct ValidatedScheduleCatalog {
     family_name: String,
     policy_digest: [u8; 32],
     catalog_digest: [u8; 32],
+    coverage: CatalogCoverage,
     rows_by_digest: Vec<ResolvedScheduleRow>,
     rows_by_key: Vec<(ScheduleLookupOrderKey, usize)>,
 }
@@ -195,11 +225,16 @@ impl ValidatedScheduleCatalog {
         }
 
         let policy_digest = policy_digest(policy);
-        let catalog_digest = catalog_digest(&family_name, policy_digest, &resolved);
+        let catalog_digest = catalog_digest(
+            &family_name,
+            policy_digest,
+            resolved.iter().map(|row| row.selection().row_digest),
+        );
         Ok(Self {
             family_name,
             policy_digest,
             catalog_digest,
+            coverage: CatalogCoverage::Complete,
             rows_by_digest: resolved,
             rows_by_key,
         })
@@ -269,21 +304,7 @@ impl ValidatedScheduleCatalog {
                             "invalid schedule artifact row {index}: {error}"
                         ))
                     })?;
-                // Validate root topology before deriving its profiles. The canonical
-                // row audit below checks the complete schedule once.
-                row.schedule.root.params.validate_group_topology()?;
-                let profiles = CommittedGroupBatchProfile {
-                    final_group: row.schedule.root.params.own_group().profile,
-                    precommitteds: row
-                        .schedule
-                        .root
-                        .params
-                        .precommitted_groups()
-                        .iter()
-                        .map(|group| group.profile)
-                        .collect(),
-                };
-                Ok((profiles, row.schedule))
+                row.into_profile_and_schedule()
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let catalog = Self::try_new(expected_family_name, rows, policy, ring_challenge_config)?;
@@ -298,6 +319,7 @@ impl ValidatedScheduleCatalog {
 
     /// Encode this validated catalog as the canonical versioned artifact.
     pub fn to_artifact_bytes(&self) -> Result<Vec<u8>, AkitaError> {
+        self.validate_complete()?;
         let artifact = ScheduleCatalogArtifactRefV1 {
             magic: ARTIFACT_MAGIC,
             version: ARTIFACT_VERSION,
@@ -310,6 +332,16 @@ impl ValidatedScheduleCatalog {
             },
         };
         encode_artifact(&artifact)
+    }
+
+    /// Reject a selected-row verifier view where a complete catalog is required.
+    pub fn validate_complete(&self) -> Result<(), AkitaError> {
+        match self.coverage {
+            CatalogCoverage::Complete => Ok(()),
+            CatalogCoverage::Selected { .. } => Err(AkitaError::InvalidSetup(
+                "selected-row verifier catalog cannot serve as a complete catalog".into(),
+            )),
+        }
     }
 
     /// Stable family label carried by the trusted artifact.
@@ -346,7 +378,8 @@ impl ValidatedScheduleCatalog {
         Ok(())
     }
 
-    /// Validated rows in canonical row-digest order.
+    /// Available audited rows in canonical row-digest order. A verifier view
+    /// omits rows whose identities are retained only in its catalog commitment.
     pub fn rows(&self) -> impl ExactSizeIterator<Item = &ResolvedScheduleRow> {
         self.rows_by_digest.iter()
     }
@@ -737,7 +770,7 @@ fn key_for_profiles(profiles: &CommittedGroupBatchProfile) -> ScheduleLookupKey 
 fn catalog_digest(
     family_name: &str,
     policy_digest: [u8; 32],
-    rows: &[ResolvedScheduleRow],
+    rows: impl ExactSizeIterator<Item = ScheduleRowDigest>,
 ) -> [u8; 32] {
     let mut bytes = Vec::with_capacity(32 + family_name.len() + rows.len() * 32 + 32);
     bytes.extend_from_slice(b"AKITA-TRUSTED-SCHEDULE-CATALOG-V1");
@@ -746,7 +779,7 @@ fn catalog_digest(
     bytes.extend_from_slice(&policy_digest);
     bytes.extend_from_slice(&(rows.len() as u64).to_le_bytes());
     for row in rows {
-        bytes.extend_from_slice(row.selection().row_digest.as_bytes());
+        bytes.extend_from_slice(row.as_bytes());
     }
     digest_descriptor_bytes(&bytes)
 }
