@@ -32,7 +32,6 @@ pub struct LabiniusRootShape {
     eta_a: u128,
     rank_a: u32,
     image_len: usize,
-    a_quotient_len: usize,
     parity_residual_bound: u128,
     honest_quotient_bound: u128,
     honest_carry_bound: u128,
@@ -186,10 +185,6 @@ impl LabiniusRootShape {
     pub const fn image_len(&self) -> usize {
         self.image_len
     }
-    /// A-quotient coefficient count `n_A * (D - 1)`.
-    pub const fn a_quotient_len(&self) -> usize {
-        self.a_quotient_len
-    }
     /// Direct parity residual coefficient bound `H`.
     pub const fn parity_residual_bound(&self) -> u128 {
         self.parity_residual_bound
@@ -290,13 +285,6 @@ fn derive_shape(
     let rank = usize::try_from(rank_a).map_err(|_| geometry_overflow())?;
     let image_len =
         checked::product([rank, fold_width, commitment_degree]).ok_or_else(geometry_overflow)?;
-    let a_quotient_len = checked::product([
-        rank,
-        commitment_degree
-            .checked_sub(1)
-            .ok_or_else(geometry_overflow)?,
-    ])
-    .ok_or_else(geometry_overflow)?;
     let bv = lower.unsigned_abs().max(upper.unsigned_abs());
     let parity_overflow = || AkitaError::InvalidSetup("LaBinius parity bound overflow".into());
     let parity_residual_bound = u128::try_from(scalar_degree)
@@ -330,7 +318,6 @@ fn derive_shape(
         eta_a,
         rank_a,
         image_len,
-        a_quotient_len,
         parity_residual_bound,
         honest_quotient_bound,
         honest_carry_bound,

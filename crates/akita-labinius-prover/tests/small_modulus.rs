@@ -28,7 +28,7 @@ where
             assert_eq!(case.layout.n_a(), 3);
             let setup = case.admitted.setup();
             let prepared = commit_binary_clear_prepared::<T, F, 648, MinusTrinomial>(
-                case.prepared.commit(),
+                &case.prepared,
                 setup,
                 &case.source,
             )
@@ -78,7 +78,7 @@ fn prepared_commitments_agree_on_all_ones_sources() {
             commit_binary_clear::<H, F, 648, MinusTrinomial>(case.admitted.setup(), &source)
                 .unwrap();
         let prepared = commit_binary_clear_prepared::<H, F, 648, MinusTrinomial>(
-            case.prepared.commit(),
+            &case.prepared,
             case.admitted.setup(),
             &source,
         )
@@ -93,7 +93,7 @@ fn prepared_commitments_agree_on_all_ones_sources() {
             )
             .unwrap(),
             commit_binary_clear_prepared::<BinaryField192, F, 648, MinusTrinomial>(
-                case.prepared.commit(),
+                &case.prepared,
                 case.admitted.setup(),
                 &source
             )
@@ -197,7 +197,7 @@ fn arbitrary_image_lift_compensated_by_carry_is_accepted() {
         r.case.commitment.images[0] = TrinomialRing::from_coefficients(coefficients).unwrap();
         r.case.refresh_image();
         r.a = a_relation_carry(
-            r.case.prepared.commit(),
+            &r.case.prepared,
             r.case.admitted.setup(),
             &r.case.commitment,
             &r.fold,
@@ -359,7 +359,7 @@ fn explicit_shared_prime_setup_cannot_claim_a_lifted_shape() {
     let commitment =
         commit_binary_clear::<H, F, 648, MinusTrinomial>(admitted.setup(), &source).unwrap();
     let image = akita_labinius_prover::lowered::flatten_image(&layout, &commitment).unwrap();
-    let prepared = akita_labinius_prover::PreparedRootMatrices::prepare(admitted.setup()).unwrap();
+    let prepared = akita_labinius_prover::PreparedCommitMatrix::prepare(admitted.setup()).unwrap();
     let point = vec![H::ZERO; 2];
     let (proof, claims) = akita_labinius_prover::prove_root_reduction_bytes(
         &admitted,

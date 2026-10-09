@@ -3,10 +3,8 @@
 //! The oracle supplies the table commitment and evaluation protocol; this
 //! module composes the admitted root, frontend and coefficient-field sumchecks.
 
-mod prepared;
 mod transparent;
 
-pub use prepared::PreparedRootMatrices;
 pub use transparent::TransparentRootProverOracle;
 
 use akita_algebra::{binary::field_switch::SwitchField, SmoothFftField, TrinomialModulus};
@@ -36,6 +34,7 @@ use crate::{
     lowered::{encode_witness, flatten_image, parity_quotient_and_carry},
     response_weights::{coefficient_weights, image_weights},
     root_sumcheck::{prove_product_rounds, ProductSumcheck},
+    PreparedCommitMatrix,
 };
 
 /// Prove a root reduction on the caller's channel, returning its opening claims.
@@ -54,7 +53,7 @@ use crate::{
 #[allow(clippy::too_many_arguments)]
 pub fn prove_root_reduction<H, F, const D: usize, M, O, S>(
     admitted: &AdmittedRootSetup<F, D, M>,
-    prepared: &PreparedRootMatrices<F, D, M>,
+    prepared: &PreparedCommitMatrix<F, D, M>,
     base: LabiniusDigitBase,
     source: &[H::Source],
     commitment: &BinaryClearCommitment<F, D, M>,
@@ -119,16 +118,8 @@ where
     info_span!("root_commit_response")
         .in_scope(|| oracle.commit_response(&layout, &digits, channel))?;
     let mut a_carry = if let Some(range) = layout.encoding().a_carry() {
-        info_span!("root_a_carry").in_scope(|| {
-            a_relation_carry(
-                prepared.commit(),
-                setup,
-                commitment,
-                &fold,
-                &response,
-                range,
-            )
-        })?
+        info_span!("root_a_carry")
+            .in_scope(|| a_relation_carry(prepared, setup, commitment, &fold, &response, range))?
     } else {
         Vec::new()
     };
@@ -146,8 +137,8 @@ where
         )
     })?;
     let image = flatten_image(&layout, commitment)?;
-    let ky = info_span!("root_image_weights")
-        .in_scope(|| image_weights(prepared.commit(), &layout, &public))?;
+    let ky =
+        info_span!("root_image_weights").in_scope(|| image_weights(prepared, &layout, &public))?;
     let mut y_y = image
         .iter()
         .zip(&ky)
@@ -163,7 +154,7 @@ where
     }
     let beta = channel.field_challenge(RootFieldSite::Beta)?;
     let kw = info_span!("root_witness_weights")
-        .in_scope(|| coefficient_weights(prepared.commit(), &layout, setup, &public))?;
+        .in_scope(|| coefficient_weights(prepared, &layout, setup, &public))?;
     let mut digit_factor = Vec::new();
     digit_factor
         .try_reserve_exact(public.digit_powers().len())
@@ -201,7 +192,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn prove_root_reduction_bytes<H, F, const D: usize, M, O>(
     admitted: &AdmittedRootSetup<F, D, M>,
-    prepared: &PreparedRootMatrices<F, D, M>,
+    prepared: &PreparedCommitMatrix<F, D, M>,
     base: LabiniusDigitBase,
     source: &[H::Source],
     commitment: &BinaryClearCommitment<F, D, M>,

@@ -11,7 +11,7 @@ use akita_labinius_prover::{
     a_carry_kernel::a_relation_carry,
     commit_binary_clear,
     lowered::{encode_witness, flatten_image, parity_quotient_and_carry},
-    prove_root_reduction_bytes, PreparedRootMatrices, TransparentRootProverOracle,
+    prove_root_reduction_bytes, PreparedCommitMatrix, TransparentRootProverOracle,
 };
 use akita_labinius_verifier::{
     endpoint::{fold_integer, left_expansion},
@@ -45,7 +45,7 @@ pub(crate) fn admitted(profile: LabiniusRootProfile, fold: u32) -> Setup {
 }
 pub(crate) struct Case<T: TestHost = H> {
     pub(crate) admitted: Setup,
-    pub(crate) prepared: PreparedRootMatrices<F, 648, MinusTrinomial>,
+    pub(crate) prepared: PreparedCommitMatrix<F, 648, MinusTrinomial>,
     pub(crate) base: LabiniusDigitBase,
     pub(crate) source: Vec<T::Source>,
     pub(crate) point: Vec<T>,
@@ -60,7 +60,7 @@ impl<T: TestHost> Case<T> {
         let setup = admitted.setup();
         let (source, point, value) = data::<T>(setup.source_len(), setup.num_vars());
         let commitment = commit_binary_clear::<T, F, 648, MinusTrinomial>(setup, &source).unwrap();
-        let prepared = PreparedRootMatrices::prepare(setup).unwrap();
+        let prepared = PreparedCommitMatrix::prepare(setup).unwrap();
         let layout = LoweredRootLayout::new(setup, admitted.shape(), base).unwrap();
         let image = flatten_image(&layout, &commitment).unwrap();
         Self {
@@ -145,7 +145,7 @@ impl RelationCase {
         )
         .unwrap();
         let a = a_relation_carry(
-            case.prepared.commit(),
+            &case.prepared,
             setup,
             &case.commitment,
             &fold,

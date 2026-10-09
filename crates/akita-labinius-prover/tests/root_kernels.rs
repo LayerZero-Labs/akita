@@ -12,7 +12,7 @@ use akita_labinius_prover::{
     lowered::{encode_witness, flatten_image, parity_quotient_and_carry},
     prove_root_reduction,
     root_sumcheck::{prove_product_rounds, ProductSumcheck},
-    PreparedRootMatrices, TransparentRootProverOracle,
+    PreparedCommitMatrix, TransparentRootProverOracle,
 };
 use akita_labinius_verifier::{
     channel::{
@@ -245,7 +245,7 @@ fn transform_cache_of_another_matrix_is_rejected_before_any_proof_byte() {
     for (fold, seed) in [(0, 0x32), (1, 0x32)] {
         let case = Case::<H>::new(BASES[1], 0);
         let foreign = admitted(fold, seed);
-        let prepared = PreparedRootMatrices::prepare(foreign.setup()).unwrap();
+        let prepared = PreparedCommitMatrix::prepare(foreign.setup()).unwrap();
         let mut oracle = CountingOracle {
             inner: TransparentRootProverOracle::new(&case.image),
             calls: 0,

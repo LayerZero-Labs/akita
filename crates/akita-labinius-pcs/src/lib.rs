@@ -34,6 +34,6 @@ pub type RootSetup =
 /// Prepared transform-domain root commitment matrix.
 pub type PreparedMatrix =
     akita_labinius_prover::PreparedCommitMatrix<F, 648, akita_algebra::MinusTrinomial>;
-/// Prepared root matrix caches for committing and for the root reduction.
+/// Prepared matrix transform cache for commitments and root reduction.
 pub type PreparedRoot =
-    akita_labinius_prover::PreparedRootMatrices<F, 648, akita_algebra::MinusTrinomial>;
+    akita_labinius_prover::PreparedCommitMatrix<F, 648, akita_algebra::MinusTrinomial>;

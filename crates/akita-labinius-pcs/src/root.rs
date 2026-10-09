@@ -83,7 +83,7 @@ impl<C: DigitConfig> RootPcsProver<C> {
         H::Source: Sync,
     {
         self.image
-            .commit::<H>(&self.admitted, self.prepared.commit(), source)
+            .commit::<H>(&self.admitted, &self.prepared, source)
     }
 
     /// Prepare a single-use oracle for a caller-owned root channel.

@@ -19,7 +19,6 @@ fn small_modulus_shape_and_digit_base_bounds_are_literal_fixtures() {
     assert_eq!(shape.rank_a(), 3);
     assert_eq!(shape.eta_a(), 24_116_880);
     assert_eq!(shape.image_len(), 497_664);
-    assert_eq!(shape.a_quotient_len(), 1941);
     assert_eq!(shape.a_carry_len(), 1944);
     assert_eq!(shape.a_residual_bound(), Some(23_346_480_637_983_191_040));
     assert_eq!(shape.honest_a_carry_bound(), Some(260_919_297_587));

@@ -27,7 +27,6 @@ fn golden_shape_and_largest_fold_width() {
             eta_a: 24_116_880,
             rank_a: 1,
             image_len: 165_888,
-            a_quotient_len: 647,
             parity_residual_bound: 86_973_099_520,
             honest_quotient_bound: 173_946_199_040,
             honest_carry_bound: 130_459_649_280,
@@ -45,7 +44,6 @@ fn golden_shape_and_largest_fold_width() {
     assert_eq!(shape.rank_a(), 1);
     assert_eq!(shape.eta_a(), 24_116_880);
     assert_eq!(shape.image_len(), 165_888);
-    assert_eq!(shape.a_quotient_len(), 647);
     assert_eq!(shape.parity_residual_bound(), 86_973_099_520);
     assert_eq!(shape.honest_quotient_bound(), 173_946_199_040);
     assert_eq!(shape.honest_carry_bound(), 130_459_649_280);

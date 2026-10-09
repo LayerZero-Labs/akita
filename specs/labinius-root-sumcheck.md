@@ -125,9 +125,9 @@ are owned by [the lowered relation](labinius-lowered-root.md). The sumcheck
 instances, degrees and digit factorization above are unchanged for both root
 profiles. Only the construction of the public coefficient weights changes.
 
-`PreparedRootMatrices` retains the `PreparedCommitMatrix` own-ring transform
-cache. There is no conjugate-ring transform cache. The response-weight kernel
-forms G^-1(u_i) through the verifier's common trace-map owner and performs:
+`PreparedCommitMatrix` owns the transform cache shared by commitments and root
+reduction weights. There is no conjugate-ring transform cache. The response-weight
+kernel forms G^-1(u_i) through the verifier's common trace-map owner and performs:
 
 1. n_A forward transforms of G^-1(u_i).
 2. For each response ring column j, n_A pointwise multiply-accumulates against
