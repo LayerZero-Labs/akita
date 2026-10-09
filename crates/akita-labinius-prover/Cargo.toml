@@ -43,6 +43,11 @@ name = "quotient_kernel"
 harness = false
 required-features = ["labinius"]
 
+[[bench]]
+name = "combined_kernel"
+harness = false
+required-features = ["labinius"]
+
 [features]
 default = ["transcript-blake2b"]
 parallel = ["dep:rayon", "akita-algebra/parallel", "jolt-field/parallel"]
