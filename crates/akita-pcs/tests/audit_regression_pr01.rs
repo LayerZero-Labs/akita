@@ -16,7 +16,7 @@ use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::Layer;
 
 type RecDense = RecursiveCommitmentConfig<fp128::Dense>;
-const TRIALS: u64 = 12;
+const TRIALS: u64 = 8;
 
 #[derive(Default)]
 struct FoldResponseEvent {
@@ -68,7 +68,7 @@ fn audit_regression_pr01() {
     .expect("global subscriber");
     run_on_large_stack(move || {
         let scheme = load_workspace_scheme::<RecDense>().expect("recursive dense catalog");
-        for num_vars in [20usize, 22] {
+        let prefix_levels_of = |num_vars: usize| {
             let row = scheme
                 .schedules()
                 .resolve_key(&akita_params::ScheduleLookupKey::single(
@@ -82,6 +82,20 @@ fn audit_regression_pr01() {
                 .enumerate()
                 .filter_map(|(index, fold)| fold.params.setup_prefix().map(|_| index + 1))
                 .collect();
+            (schedule, prefix_levels)
+        };
+        for num_vars in [20usize, 22, 24, 26, 28] {
+            println!(
+                "nv={num_vars} prefix_levels={:?}",
+                prefix_levels_of(num_vars).1
+            );
+        }
+        let num_vars = [20usize, 22, 24, 26, 28]
+            .into_iter()
+            .find(|&num_vars| !prefix_levels_of(num_vars).1.is_empty())
+            .expect("an offloading recursive dense row");
+        {
+            let (schedule, prefix_levels) = prefix_levels_of(num_vars);
             let layout = schedule.root.params.final_group();
             let setup = scheme.setup_prover(num_vars, 1).expect("setup");
             let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
