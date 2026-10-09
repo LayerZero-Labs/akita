@@ -59,7 +59,7 @@ fn full_first_profile_two_bit_digits() {
         proof.len()
     );
     if !akita_params::DEV_PROTOCOL {
-        assert_eq!(proof.len(), 93_454);
+        assert_eq!(proof.len(), 83_187);
     }
     let start = Instant::now();
     verifier
