@@ -52,7 +52,12 @@ required-features = ["labinius"]
 
 [features]
 default = ["transcript-blake2b"]
-parallel = ["dep:rayon", "akita-algebra/parallel", "jolt-field/parallel"]
+parallel = [
+  "dep:rayon",
+  "akita-algebra/parallel",
+  "akita-labinius-verifier/parallel",
+  "jolt-field/parallel",
+]
 labinius = [
   "akita-algebra/labinius-binary",
   "akita-algebra/labinius-trinomial",

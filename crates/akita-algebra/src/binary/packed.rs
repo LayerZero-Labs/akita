@@ -2,7 +2,15 @@
 
 use std::sync::OnceLock;
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 use super::{product, BinaryField162 as F};
+
+// Even-sized chunks preserve adjacent pairs and are large enough to retain
+// the selected SIMD backend's amortized reduction and allocation costs.
+#[cfg(feature = "parallel")]
+const PARALLEL_CHUNK: usize = 16_384;
 
 #[cfg(target_arch = "aarch64")]
 pub(super) mod arm;
@@ -106,8 +114,34 @@ impl PackedBinary162 {
     /// their products before reduction, then derives the linear coefficient as
     /// `current_claim + quadratic` in characteristic two.
     pub fn round_product(&self, rhs: &Self, current_claim: F) -> Option<[F; 3]> {
-        (self.len() == rhs.len() && self.len() >= 2)
-            .then(|| (kernels().round_product)(self, rhs, current_claim))
+        (self.len() == rhs.len() && self.len() >= 2).then(|| {
+            #[cfg(feature = "parallel")]
+            if self.len() > PARALLEL_CHUNK {
+                let round = self.words[0]
+                    .par_chunks(PARALLEL_CHUNK)
+                    .zip(self.words[1].par_chunks(PARALLEL_CHUNK))
+                    .zip(self.words[2].par_chunks(PARALLEL_CHUNK))
+                    .zip(rhs.words[0].par_chunks(PARALLEL_CHUNK))
+                    .zip(rhs.words[1].par_chunks(PARALLEL_CHUNK))
+                    .zip(rhs.words[2].par_chunks(PARALLEL_CHUNK))
+                    .map(|(((((a0, a1), a2), b0), b1), b2)| {
+                        let lhs = Self {
+                            words: [a0.to_vec(), a1.to_vec(), a2.to_vec()],
+                        };
+                        let rhs = Self {
+                            words: [b0.to_vec(), b1.to_vec(), b2.to_vec()],
+                        };
+                        (kernels().round_product)(&lhs, &rhs, F::ZERO)
+                    })
+                    .reduce(
+                        || [F::ZERO; 3],
+                        |a, b| [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
+                    );
+                // The claim belongs to the whole round, not each chunk.
+                return [round[0], current_claim + round[2], round[2]];
+            }
+            (kernels().round_product)(self, rhs, current_claim)
+        })
     }
 
     /// Fold adjacent evaluations at `r` and shrink to `ceil(len / 2)`.
@@ -116,6 +150,40 @@ impl PackedBinary162 {
     /// already terminal and are left unchanged.
     pub fn fold_in_place(&mut self, r: F) {
         if self.len() > 1 {
+            #[cfg(feature = "parallel")]
+            if self.len() > PARALLEL_CHUNK {
+                let new_len = self.len().div_ceil(2);
+                // Finish reading every input before copying any folded output:
+                // compacted output ranges overlap other chunks' input ranges.
+                let blocks: Vec<_> = self.words[0]
+                    .par_chunks(PARALLEL_CHUNK)
+                    .zip(self.words[1].par_chunks(PARALLEL_CHUNK))
+                    .zip(self.words[2].par_chunks(PARALLEL_CHUNK))
+                    .map(|((low, high), top)| {
+                        let mut block = Self {
+                            words: [low.to_vec(), high.to_vec(), top.to_vec()],
+                        };
+                        // A final one-entry chunk is an odd entry of this
+                        // nonterminal table, so the kernel folds it with zero.
+                        (kernels().fold_in_place)(&mut block, r);
+                        block
+                    })
+                    .collect();
+                let [low, high, top] = &mut self.words;
+                low.par_chunks_mut(PARALLEL_CHUNK / 2)
+                    .zip(high.par_chunks_mut(PARALLEL_CHUNK / 2))
+                    .zip(top.par_chunks_mut(PARALLEL_CHUNK / 2))
+                    .zip(blocks.into_par_iter())
+                    .for_each(|(((low, high), top), block)| {
+                        for (dst, src) in [low, high, top].into_iter().zip(block.words) {
+                            for (dst, value) in dst.iter_mut().zip(src) {
+                                *dst = value;
+                            }
+                        }
+                    });
+                self.truncate(new_len);
+                return;
+            }
             (kernels().fold_in_place)(self, r);
         }
     }
@@ -290,5 +358,7 @@ pub(super) fn portable_fold_in_place(values: &mut PackedBinary162, r: F) {
     fold_with(values, r, product::portable_multiply);
 }
 
+#[cfg(all(test, feature = "parallel"))]
+mod parallel_tests;
 #[cfg(test)]
 mod tests;

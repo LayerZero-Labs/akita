@@ -6,6 +6,8 @@ use akita_algebra::{
 use akita_challenges::BinaryChallenge;
 use akita_error::{checked, AkitaError};
 use akita_types::RelationPolynomial;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use super::{horner, powers, signed_field, zero_vec, LoweredRootLayout};
 use crate::{
@@ -97,6 +99,35 @@ impl<F: SmoothFftField> LoweredPublic<F> {
         let digit_powers = powers(digit_base, layout.response_layout().digit_depth())?;
         // Dense A-row weights intentionally use direct Horner evaluation.
         let mut abar = zero_vec(layout.m())?;
+        #[cfg(feature = "parallel")]
+        {
+            // Borrow field slices rather than the ring's modulus marker, which
+            // need not implement Sync. The validated matrix bounds this scratch.
+            let mut matrix_coefficients: Vec<&[F]> = Vec::new();
+            matrix_coefficients
+                .try_reserve_exact(setup.matrix().len())
+                .map_err(|_| AkitaError::InvalidProof)?;
+            matrix_coefficients.extend(
+                setup
+                    .matrix()
+                    .iter()
+                    .map(|element| element.coefficients().as_slice()),
+            );
+            abar.par_iter_mut().enumerate().try_for_each(
+                |(column, destination)| -> Result<(), AkitaError> {
+                    for (row, &weight) in gamma_powers.iter().take(layout.n_a()).enumerate() {
+                        let index = checked::mul_add(row, layout.m(), column)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let coefficients = matrix_coefficients
+                            .get(index)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        *destination += weight * horner(coefficients, challenges.alpha);
+                    }
+                    Ok(())
+                },
+            )?;
+        }
+        #[cfg(not(feature = "parallel"))]
         for (row, &weight) in gamma_powers.iter().take(layout.n_a()).enumerate() {
             for (column, destination) in abar.iter_mut().enumerate() {
                 let index =
@@ -111,6 +142,18 @@ impl<F: SmoothFftField> LoweredPublic<F> {
             .ok_or(AkitaError::InvalidProof)?;
         let binary_weights = equality_weights(row_point)?;
         let mut binary_rows = zero_vec(layout.scalar_rows())?;
+        #[cfg(feature = "parallel")]
+        binary_rows
+            .par_iter_mut()
+            .zip(&binary_weights)
+            .try_for_each(|(destination, &weight)| -> Result<(), AkitaError> {
+                *destination = horner(
+                    scalar_from_binary::<F>(weight)?.coefficients(),
+                    challenges.xi,
+                );
+                Ok(())
+            })?;
+        #[cfg(not(feature = "parallel"))]
         for (destination, &weight) in binary_rows.iter_mut().zip(&binary_weights) {
             *destination = horner(
                 scalar_from_binary::<F>(weight)?.coefficients(),
@@ -158,6 +201,21 @@ impl<F: SmoothFftField> LoweredPublic<F> {
             parity_rhs,
             c_pub: F::zero(),
         };
+        #[cfg(feature = "parallel")]
+        {
+            result.c_pub = (0..layout.m())
+                .into_par_iter()
+                .map(|j| -> Result<F, AkitaError> {
+                    let mut sum = F::zero();
+                    for t in 0..D {
+                        sum +=
+                            signed_field::<F>(layout.off(t)?) * result.coefficient_weight(j, t)?;
+                    }
+                    Ok(sum)
+                })
+                .try_reduce(F::zero, |left, right| Ok(left + right))?;
+        }
+        #[cfg(not(feature = "parallel"))]
         for j in 0..layout.m() {
             for t in 0..D {
                 result.c_pub +=
