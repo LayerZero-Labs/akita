@@ -1,4 +1,4 @@
-# LaBinius binary-root admission
+# LaBinius binary-root matrix and shape admission
 
 Status: active
 Book-chapter: book/src/foundations/security.md
@@ -96,16 +96,31 @@ Indeed only a quotient coefficient 81 positions higher can affect the next
 high coefficient. Those higher coefficients have already been assigned their
 original residual value. Consequently `|q_k| <= 2H`; Q has 161 coefficients.
 The remainder coefficient at `0 <= j <= 161` is
-`r_j - q_j - q_(j-81)`, ignoring quotient indices outside `[0,160]`. Bounding
-each quotient term by 2H gives `|remainder_j| <= 5H`. A valid F162 identity
-holds exactly when all these remainder coefficients are even: integer division
-commutes with reduction modulo two because the divisor is monic. Then K is
-half the remainder and is integral, with
+`r_j - q_j - q_(j-81)`, ignoring quotient indices outside `[0,160]`.
+Substituting the quotient formulas exposes a cancellation:
+
+```text
+rem_j = r_j - r_(j+162) + r_(j+243)    for   0 <= j <= 79
+rem_80 = r_80 - r_242
+rem_j = r_j - r_(j+81)                for  81 <= j <= 160
+rem_161 = r_161 - r_242.
+```
+
+For `81 <= j <= 160`, `q_j + q_(j-81) = r_(j+81)`; the two copies
+of `r_(j+162)` cancel. Thus the first 80 remainder coefficients have magnitude
+at most 3H, and every other coefficient at most 2H. A valid F162 identity holds
+exactly when all remainder coefficients are even: integer division commutes
+with reduction modulo two because the divisor is monic. Then K is half the
+remainder and integral, with
 
 ```text
 B_Q = 2H
-B_K = floor(5H/2).
+B_K = floor(3H/2).
 ```
+
+The independent BigInt long-division oracle checks all 162 closed-form
+remainder coefficients on random and extremal relation instances and arbitrary
+residual polynomials, including extrema that attain the 3H remainder bound.
 
 These are conservative honest construction bounds. They are not permission to
 use tighter accepted alphabets in a proof. `check_parity_no_wrap(B_Q', B_K')`
@@ -115,6 +130,82 @@ the issue's full accepted-envelope inequality
 ensures that a checked residual equality modulo P cannot conceal a nonzero
 integer coefficient. Rounded digit alphabets must pass their actual enforced
 magnitudes. An overflow rejects, as does equality at P.
+
+## Enforced signed digits and root witness lengths
+
+`LabiniusDigitBase` is a closed enum with digit widths `b=1,2,4` and stable tags
+0, 1, 2 respectively. Unknown tags reject. `LabiniusRootShape::derive_encoding`
+is the single derivation of the accepted integer ranges and witness lengths;
+it allocates no vectors. `LabiniusSignedDigitRange` exposes the enforced bit
+width e, digit count e/b, signed offset and both inclusive endpoints.
+The same signed map applies to response, parity quotient and parity carry:
+
+```text
+value = sum_(i < e/b) digit_i * 2^(b*i) - 2^(e-1)
+0 <= digit_i <= 2^b - 1
+accepted interval = [-2^(e-1), 2^(e-1)-1]
+enforced magnitude = offset = 2^(e-1).
+```
+
+The profile response interval must exactly equal that centered power-of-two
+interval, with e positive and divisible by b. The current profile has e_v=16
+for every supported base. For the quotient choose the smallest positive multiple
+of b satisfying `2^e_Q >= 2*B_Q+1`; choose e_K by the same rule from B_K.
+The +1 ensures the positive honest endpoint fits the smaller positive accepted
+endpoint. These are accepted power-of-two ranges, rather than the honest
+magnitudes. The derivation calls `check_parity_no_wrap` with offsets
+`2^(e_Q-1)` and `2^(e_K-1)` and exposes the checked total
+`H + 3*2^(e_Q-1) + 2*2^(e_K-1)`. A rounded envelope reaching P rejects even
+when the honest envelope would pass. Both paths use the same total formula.
+
+The natural digit vector W has three consecutive segments, in this order:
+
+| Segment | Natural digit length |
+| --- | --- |
+| Response | `m * D * (e_v/b)` |
+| Parity quotient | `(d-1) * (e_Q/b)` |
+| Parity carry | `d * (e_K/b)` |
+
+`LabiniusRootEncoding` exposes this ordered length array, its sum, the smallest
+padded log n with `2^n >=` that sum, and the analogous padded log of the image
+vector. The lowered relation owns segment-internal address order; it is not
+fixed here. Products, sums and padding use `akita_error::checked`; range and
+no-wrap computations use checked u128 arithmetic. Overflow rejects.
+
+Every position of the padded digit vector, including padding, is subject to
+the same b-bit alphabet check. Public relation weights are zero at every
+padding position, and the honest prover writes the zero digit there. Thus a
+padding position cannot contribute to any relation row. No selector polynomial
+or separate support proof is needed. Zero here means the unsigned digit value
+zero, not the lower endpoint of an entire signed integer map. The image vector
+is over the coefficient field and needs no range proof.
+
+At `(log_num_cells, log_fold_width, lambda_fold) = (22,8,128)`,
+`B_Q=173946199040` and `B_K=130459649280`. Rounding gives:
+
+| b | e_Q | e_K | Accepted no-wrap total | Natural W length | Padded log |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 39 | 38 | 1186484727296 | 42479763 | 26 |
+| 2 | 40 | 38 | 2011118448128 | 21239962 | 25 |
+| 4 | 40 | 40 | 2835752168960 | 10620062 | 24 |
+
+The image has 165888 coefficient-field elements and padded log 18.
+
+Tests exercise rounded rejection by deriving a P128 shape with a signed 32-bit
+response interval and `(log_num_cells, log_fold_width)=(22,0)`, then perturbing
+only its internal prime to P64. The honest total is 14591662792680407500,
+below P64; the b=1 rounded total is 19905910352977592366, above P64. The
+adjacent log-size 21 passes at b=1. This isolates the no-wrap gate: the perturbed
+larger shape cannot itself pass P64's certified SIS lookup.
+
+An exhaustive internal search over both supported primes, the covered centered
+response intervals and dyadic D648 geometries finds no certified shape whose
+honest envelope passes but rounded envelope fails. The nearest certified P64
+boundary has e_v=32, M=2^16, C=2^24, b=4 and rounded total
+1824239324833513472, still below `P64=18446744073709527913`. Wider response
+intervals exceed the certified norm cells; larger M exceeds certified widths;
+larger C violates deterministic honest response admission. This is test-only
+parameter exploration, not an additional public profile.
 
 ## Admission order and boundary fixture
 
@@ -129,8 +220,9 @@ The canonical derivation applies these gates in order:
 6. Derive image/quotient lengths and honest parity bounds with checked arithmetic.
 
 Caller-selected failures use `AkitaError::InvalidSetup`, matching neighbouring
-SIS admission. Actual parity range envelopes are checked separately once the
-caller chooses an encoding. The sole profile's eta is fixed below P; tests
+SIS admission. Actual parity range envelopes are checked by `derive_encoding` when the
+caller chooses a digit base, or by `check_parity_no_wrap` for another enforced
+envelope. The sole profile's eta is fixed below P; tests
 perturb internal fields to exercise the ledger boundary without exposing a
 runtime profile plugin.
 
@@ -168,7 +260,9 @@ binary reduction cover random, extremal, valid and invalid parity rows.
 ## Remaining protocol work
 
 This slice defines no schedule family, proof-size model, Fiat–Shamir ledger,
-proof encoding, successor-witness layout, planner integration, or root protocol.
-It does not claim complete PCS security admission. Those belong to the root
+proof wire grammar, segment-internal addresses, planner integration, or root
+protocol. The three digit-segment lengths above do not specify a complete
+successor witness. This is not protocol security admission and does not claim
+complete PCS security admission. Those belong to the root
 protocol and its composition with the ordinary tail. No unpublished paper or
 unlicensed reference implementation is needed for these formulas or tests.

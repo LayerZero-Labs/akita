@@ -63,6 +63,19 @@ fn integer_division(input: &[BigInt]) -> (Vec<BigInt>, Vec<BigInt>) {
     (quotient, remainder)
 }
 
+fn check_closed_form_remainder(input: &[BigInt], remainder: &[BigInt]) {
+    for (j, coefficient) in remainder.iter().enumerate() {
+        let expected = match j {
+            0..=79 => &input[j] - &input[j + 162] + &input[j + 243],
+            80 => &input[80] - &input[242],
+            81..=160 => &input[j] - &input[j + 81],
+            161 => &input[161] - &input[242],
+            _ => unreachable!("the remainder has degree below 162"),
+        };
+        assert_eq!(*coefficient, expected, "remainder coefficient {j}");
+    }
+}
+
 // A separate Boolean oracle computes each product directly in F2[X]/Phi162.
 // It never reads the integer residual or quotient.
 fn binary_product(lhs: &[i128], rhs: &[i128]) -> Vec<bool> {
@@ -143,6 +156,7 @@ fn check_oracles(instance: &Instance, log_m: u32, log_c: u32) -> bool {
     let h = BigInt::from(shape.parity_residual_bound());
     assert!(input.iter().all(|x| x >= &(-&h) && x <= &h));
     let (quotient, remainder) = integer_division(&input);
+    check_closed_form_remainder(&input, &remainder);
     let q_bound = BigInt::from(shape.honest_quotient_bound());
     assert_eq!(q_bound, &h * 2);
     assert!(quotient.iter().all(|x| x >= &(-&q_bound) && x <= &q_bound));
@@ -167,13 +181,61 @@ fn check_oracles(instance: &Instance, log_m: u32, log_c: u32) -> bool {
     }
     if all_even {
         let carry_bound = BigInt::from(shape.honest_carry_bound());
-        assert_eq!(carry_bound, &h * 5 / 2);
+        assert_eq!(carry_bound, &h * 3 / 2);
         for coefficient in remainder {
             let carry = coefficient / 2;
             assert!(carry >= -&carry_bound && carry <= carry_bound);
         }
     }
     all_even
+}
+
+#[test]
+fn arbitrary_residual_remainder_closed_form_matches_long_division() {
+    let mut rng = StdRng::seed_from_u64(0x0243_0162_0322);
+    let h = BigInt::from(100);
+    for _ in 0..32 {
+        let input: Vec<_> = (0..2 * D - 1)
+            .map(|_| BigInt::from(rng.gen_range(-100_i128..=100)))
+            .collect();
+        let (_, remainder) = integer_division(&input);
+        check_closed_form_remainder(&input, &remainder);
+        assert!(remainder.iter().all(|x| x >= &(-&h * 3) && x <= &(&h * 3)));
+    }
+
+    // Saturate each closed form separately, including every cancellation index.
+    // Even H makes the extremal remainder a valid even residual modulo Phi.
+    for j in 0..D {
+        for sign in [-1_i32, 1] {
+            let mut input = vec![BigInt::from(0); 2 * D - 1];
+            let signed_h = &h * sign;
+            input[j] = signed_h.clone();
+            let multiple = match j {
+                0..=79 => {
+                    input[j + 162] = -&signed_h;
+                    input[j + 243] = signed_h;
+                    3
+                }
+                80 | 161 => {
+                    input[242] = -signed_h;
+                    2
+                }
+                81..=160 => {
+                    input[j + 81] = -signed_h;
+                    2
+                }
+                _ => unreachable!("the remainder has degree below 162"),
+            };
+            let (_, remainder) = integer_division(&input);
+            check_closed_form_remainder(&input, &remainder);
+            assert_eq!(remainder[j], &h * sign * multiple);
+            assert!(remainder.iter().all(|x| x % 2 == BigInt::from(0)));
+            let carry_bound: BigInt = &h * 3_i32 / 2_i32;
+            assert!(remainder
+                .iter()
+                .all(|x| x / 2 >= -&carry_bound && x / 2 <= carry_bound));
+        }
+    }
 }
 
 fn random_instance(rng: &mut StdRng, m: usize, columns: usize) -> Instance {

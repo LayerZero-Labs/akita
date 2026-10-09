@@ -10,6 +10,8 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabiniusRootShape {
     profile: LabiniusRootProfile,
+    coefficient_prime: LabiniusCoefficientPrime,
+    response_interval: (i128, i128),
     num_cells: usize,
     fold_width: usize,
     scalars_per_column: usize,
@@ -62,14 +64,13 @@ impl LabiniusRootShape {
                 "LaBinius parity carry envelope is below the honest bound".into(),
             ));
         }
-        let total = enforced_quotient_bound
-            .checked_mul(3)
-            .and_then(|q| self.parity_residual_bound.checked_add(q))
-            .and_then(|hq| enforced_carry_bound.checked_mul(2)?.checked_add(hq))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("LaBinius parity no-wrap sum overflow".into())
-            })?;
-        if total >= self.profile.coefficient_prime().modulus() {
+        let total = parity_no_wrap_total(
+            self.parity_residual_bound,
+            enforced_quotient_bound,
+            enforced_carry_bound,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("LaBinius parity no-wrap sum overflow".into()))?;
+        if total >= self.coefficient_prime.modulus() {
             return Err(AkitaError::InvalidSetup(
                 "LaBinius parity envelopes do not satisfy H + 3*B_Q + 2*B_K < P".into(),
             ));
@@ -247,11 +248,13 @@ fn derive_shape(
         .checked_mul(2)
         .ok_or_else(parity_overflow)?;
     let honest_carry_bound = parity_residual_bound
-        .checked_mul(5)
+        .checked_mul(3)
         .ok_or_else(parity_overflow)?
         / 2;
     Ok(LabiniusRootShape {
         profile,
+        coefficient_prime: prime,
+        response_interval: interval,
         num_cells,
         fold_width,
         scalars_per_column,
@@ -275,3 +278,13 @@ mod parity_tests;
 #[cfg(test)]
 #[path = "root_shape_tests.rs"]
 mod tests;
+
+// One shared accepted-envelope formula for admission and exposed range totals.
+fn parity_no_wrap_total(h: u128, q: u128, k: u128) -> Option<u128> {
+    h.checked_add(q.checked_mul(3)?)?
+        .checked_add(k.checked_mul(2)?)
+}
+
+#[path = "root_encoding.rs"]
+mod root_encoding;
+pub use root_encoding::{LabiniusDigitBase, LabiniusRootEncoding, LabiniusSignedDigitRange};

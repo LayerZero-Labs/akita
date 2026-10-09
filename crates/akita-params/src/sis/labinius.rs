@@ -11,7 +11,9 @@ mod root_shape;
 mod width_table;
 
 pub use root_profile::LabiniusRootProfile;
-pub use root_shape::LabiniusRootShape;
+pub use root_shape::{
+    LabiniusDigitBase, LabiniusRootEncoding, LabiniusRootShape, LabiniusSignedDigitRange,
+};
 pub use width_table::{
     labinius_min_secure_rank, LabiniusWidthCell, LABINIUS_WIDTH_TABLE, LABINIUS_WIDTH_TABLE_DIGEST,
 };

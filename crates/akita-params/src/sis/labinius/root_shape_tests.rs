@@ -25,7 +25,7 @@ fn golden_shape_and_largest_fold_width() {
     assert_eq!(shape.a_quotient_len(), 647);
     assert_eq!(shape.parity_residual_bound(), 86_973_099_520);
     assert_eq!(shape.honest_quotient_bound(), 173_946_199_040);
-    assert_eq!(shape.honest_carry_bound(), 217_432_748_800);
+    assert_eq!(shape.honest_carry_bound(), 130_459_649_280);
     let maximum = (0..=22)
         .filter(|&log| LabiniusRootShape::derive(PROFILE, 22, log, 128).is_ok())
         .max()
