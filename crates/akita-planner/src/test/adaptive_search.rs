@@ -771,39 +771,50 @@ fn adaptive_search_rejects_missing_suffix_and_unsupported_role_dimensions() {
 fn adaptive_search_supports_direct_multi_chunk_policy() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
-    let mut policy = policy_of::<OneHot>();
-    policy.witness_chunk = akita_params::ChunkedWitnessCfg::d64_production();
-    let domain = RingDimensionSearchDomain::new([
-        CommitmentRingDims::uniform(64),
-        CommitmentRingDims::uniform(128),
-        CommitmentRingDims::uniform(256),
-    ])
-    .unwrap();
-    policy = policy_for_domain(policy, &domain);
-    let schedule = find_schedule(
-        onehot_group(16, 1),
-        &policy,
-        OneHot::committed_source_contract().unwrap(),
-        OneHot::ring_challenge_config,
-    )
-    .unwrap();
-    let lookup_key = akita_params::ScheduleLookupKey::single(onehot_group(16, 1));
-    assert_selected_grinding_edge_parity(&schedule, &lookup_key, &policy);
-    assert!(!schedule.schedule.recursive_folds.is_empty());
-    assert_eq!(schedule.schedule.root.params.witness_chunk.num_chunks, 8);
-    assert_eq!(
-        schedule.schedule.recursive_folds[0]
-            .params
-            .witness_chunk
-            .num_chunks,
-        8
-    );
-    assert!(schedule
-        .schedule
-        .recursive_folds
-        .iter()
-        .skip(1)
-        .all(|fold| fold.params.witness_chunk.num_chunks == 1));
+    for profile in [
+        akita_params::MultiChunkProfileId::W8R2,
+        akita_params::MultiChunkProfileId::W8R3,
+    ] {
+        let mut policy = policy_of::<OneHot>();
+        policy.witness_chunk = profile.cfg();
+        let domain = RingDimensionSearchDomain::new([
+            CommitmentRingDims::uniform(64),
+            CommitmentRingDims::uniform(128),
+            CommitmentRingDims::uniform(256),
+        ])
+        .unwrap();
+        policy = policy_for_domain(policy, &domain);
+        let schedule = find_schedule(
+            onehot_group(16, 1),
+            &policy,
+            OneHot::committed_source_contract().unwrap(),
+            OneHot::ring_challenge_config,
+        )
+        .unwrap();
+        let lookup_key = akita_params::ScheduleLookupKey::single(onehot_group(16, 1));
+        assert_selected_grinding_edge_parity(&schedule, &lookup_key, &policy);
+        let chunked_levels = profile.num_activated_levels();
+        assert!(schedule.schedule.num_fold_levels() > chunked_levels);
+        for (level, params) in std::iter::once(&schedule.schedule.root.params)
+            .chain(
+                schedule
+                    .schedule
+                    .recursive_folds
+                    .iter()
+                    .map(|fold| &fold.params),
+            )
+            .enumerate()
+        {
+            assert_eq!(
+                params.witness_chunk,
+                if level < chunked_levels {
+                    profile.cfg()
+                } else {
+                    akita_params::ChunkedWitnessCfg::default_non_chunked()
+                }
+            );
+        }
+    }
 }
 
 #[cfg(feature = "catalog-gen")]

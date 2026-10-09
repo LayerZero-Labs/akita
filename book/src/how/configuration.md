@@ -108,6 +108,20 @@ an error rather than panicking.
   `crates/akita-schedules/src/artifact.rs`.
 - `book/src/usage/profiling.md` and `.github/workflows/profile-bench.yml`.
 
+### Multi-chunk fold prefixes
+
+`ChunkedWitnessCfg::num_activated_levels` counts folds from the root at level
+0. The scheduler applies `num_chunks` to those leading folds and uses one
+chunk at every later fold. `MultiChunkProfileId` provides W2, W4, and W8
+profiles for R1, R2, and R3. For example, W4R3 keeps four response chunks at
+levels 0, 1, and 2, then switches to one chunk at level 3. The terminal step
+closes the remaining witness rather than adding another chunked fold.
+
+The fp128 R3 companions ship separate external artifacts, including W2R3, W4R3,
+and W8R3 recursive setup companions. Regression tests check the exact three-fold prefix
+and single-chunk suffix. They also check that changing the third fold's chunk
+count without recomputing its geometry fails catalog admission.
+
 ### Recursive setup catalogs
 
 Ordinary configuration catalogs use direct setup evaluation. The supported

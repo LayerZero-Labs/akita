@@ -47,6 +47,22 @@ pub struct OneHotMultiChunkW4R2;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DenseMultiChunk;
 
+/// Direct multi-chunk companion of [`OneHot`] using the W2R3 profile.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OneHotMultiChunkW2R3;
+
+/// Direct multi-chunk companion of [`OneHot`] using the W4R3 profile.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OneHotMultiChunkW4R3;
+
+/// Direct multi-chunk companion of [`OneHot`] using the W8R3 profile.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OneHotMultiChunkW8R3;
+
+/// Direct multi-chunk companion of [`Dense`] using the W8R3 profile.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DenseMultiChunkW8R3;
+
 /// Dense preset for witnesses known to fit an **unsigned 64-bit** magnitude
 /// inside the 128-bit field, i.e. `u64`-valued coefficients.
 ///
@@ -196,4 +212,103 @@ impl_multi_chunk_companion!(
 
 impl crate::recursive_commitment::RecursiveScheduleConfig for Dense {
     const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_dense_recursive";
+}
+
+impl_multi_chunk_companion!(
+    OneHotMultiChunkW2R3,
+    OneHot,
+    akita_params::MultiChunkProfileId::W2R3,
+    "fp128_onehot_multi_chunk_w2r3"
+);
+
+impl_multi_chunk_companion!(
+    OneHotMultiChunkW4R3,
+    OneHot,
+    akita_params::MultiChunkProfileId::W4R3,
+    "fp128_onehot_multi_chunk_w4r3"
+);
+
+impl_multi_chunk_companion!(
+    OneHotMultiChunkW8R3,
+    OneHot,
+    akita_params::MultiChunkProfileId::W8R3,
+    "fp128_onehot_multi_chunk_w8r3"
+);
+
+impl_multi_chunk_companion!(
+    DenseMultiChunkW8R3,
+    Dense,
+    akita_params::MultiChunkProfileId::W8R3,
+    "fp128_dense_multi_chunk_w8r3"
+);
+
+impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunkW2R3 {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive_multi_chunk_w2r3";
+}
+
+impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunkW4R3 {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive_multi_chunk_w4r3";
+}
+
+impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunkW8R3 {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive_multi_chunk_w8r3";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schedule_artifact_tests::mutated_row_admission_error;
+    use crate::{CommitmentConfig, RecursiveCommitmentConfig};
+
+    fn assert_r3_catalog<Cfg: CommitmentConfig>() {
+        let catalog =
+            crate::test_support::workspace_schedule_catalog::<Cfg>().expect("R3 schedule catalog");
+        let chunked = Cfg::chunked_witness_cfg();
+        assert_eq!(chunked.num_activated_levels, 3);
+        assert!(catalog.rows().next().is_some());
+        for row in catalog.rows() {
+            let schedule = row.schedule();
+            assert!(
+                schedule.recursive_folds.len() >= 3,
+                "R3 needs a single-chunk suffix"
+            );
+            for (level, params) in std::iter::once(&schedule.root.params)
+                .chain(schedule.recursive_folds.iter().map(|fold| &fold.params))
+                .enumerate()
+            {
+                assert_eq!(
+                    params.witness_chunk,
+                    if level < 3 {
+                        chunked
+                    } else {
+                        akita_params::ChunkedWitnessCfg::default_non_chunked()
+                    },
+                    "{} level {level}",
+                    Cfg::schedule_family_name(),
+                );
+            }
+            if Cfg::recursive_setup_planning() {
+                assert!(schedule
+                    .recursive_folds
+                    .iter()
+                    .any(|fold| fold.params.setup_prefix().is_some()));
+            }
+            let error = mutated_row_admission_error::<Cfg>(row, |schedule| {
+                schedule.recursive_folds[1].params.witness_chunk =
+                    akita_params::ChunkedWitnessCfg::default_non_chunked();
+            });
+            assert!(!error.to_string().is_empty());
+        }
+    }
+
+    #[test]
+    fn r3_catalogs_keep_exactly_three_leading_folds_multi_chunk() {
+        assert_r3_catalog::<OneHotMultiChunkW2R3>();
+        assert_r3_catalog::<OneHotMultiChunkW4R3>();
+        assert_r3_catalog::<OneHotMultiChunkW8R3>();
+        assert_r3_catalog::<DenseMultiChunkW8R3>();
+        assert_r3_catalog::<RecursiveCommitmentConfig<OneHotMultiChunkW2R3>>();
+        assert_r3_catalog::<RecursiveCommitmentConfig<OneHotMultiChunkW4R3>>();
+        assert_r3_catalog::<RecursiveCommitmentConfig<OneHotMultiChunkW8R3>>();
+    }
 }
