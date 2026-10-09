@@ -10,6 +10,7 @@ readme = "../../README.md"
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+rayon = { version = "1.10", optional = true }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
@@ -23,6 +24,7 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 
 [features]
 default = ["transcript-blake2b"]
+parallel = ["dep:rayon", "akita-algebra/parallel", "jolt-field/parallel"]
 labinius = [
   "akita-algebra/labinius-binary",
   "akita-algebra/labinius-trinomial",

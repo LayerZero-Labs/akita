@@ -155,6 +155,7 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "jolt-field",
+ "rayon",
 ]
 
 [[package]]
