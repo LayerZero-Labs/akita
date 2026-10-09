@@ -220,3 +220,39 @@ fn dense_recursive_artifacts_cover_benchmark_sizes_and_offload_setup() {
     check::<fp64::Dense>(&[21, 23, 25, 27, 29]);
     check::<fp128::Dense>(&[20, 22, 24, 26, 28]);
 }
+
+#[test]
+fn row_admission_reprices_terminal_z_payload_budget() {
+    let catalog = crate::test_support::workspace_schedule_catalog::<fp128::Dense>()
+        .expect("workspace schedule catalog");
+    let row = catalog
+        .rows()
+        .find(|row| {
+            row.schedule()
+                .terminal
+                .response_shape
+                .layout
+                .groups
+                .iter()
+                .any(|group| group.z_payload_bytes > 0)
+        })
+        .cloned()
+        .expect("catalog row with a terminal z payload budget");
+    let error = mutated_row_admission_error::<fp128::Dense>(&row, |schedule| {
+        let group = schedule
+            .terminal
+            .response_shape
+            .layout
+            .groups
+            .first_mut()
+            .expect("terminal response group");
+        group.z_payload_bytes = group
+            .z_payload_bytes
+            .checked_mul(128)
+            .expect("inflated budget fits usize");
+    });
+    assert!(
+        error.to_string().contains("z payload budget"),
+        "unexpected terminal payload budget error: {error}"
+    );
+}
