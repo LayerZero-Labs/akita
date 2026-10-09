@@ -1,14 +1,18 @@
 # LaBinius root sumchecks
 
-Status: implemented arithmetic kernels; root protocol integration is out of scope.
+Status: implemented arithmetic kernels; the enclosing composition is specified in
+[`labinius-root-reduction.md`](labinius-root-reduction.md).
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY in this document
 have the BCP 14 meanings defined by RFC 2119 and RFC 8174 when capitalized.
 
 ## Statement and conventions
 
-Let `F` be the coefficient prime field, with characteristic greater than 16.
-Both instances use `E = F`, without an extension field. Let `b` be 1, 2, or 4,
+Let `F` be the coefficient prime field. For the selected digit base `b`, its
+characteristic MUST be greater than `2^b + 1`: interpolation uses every node
+`0,...,2^b+1`, which MUST be distinct. Both supported coefficient primes
+satisfy this condition for every base. Both instances use `E = F`, without an
+extension field. Let `b` be 1, 2, or 4,
 and let `W` and `Y` be committed tables on `nu` and `mu` Boolean variables.
 The statement requires every `W(x)` to belong to `[0, 2^b)` and
 
@@ -66,12 +70,34 @@ protocol, and `ky_eval = K_Y~(rho')` is evaluated from the public weights.
 ## Binding order and soundness
 
 The root protocol MUST fix `W` and `Y` before drawing uniform `tau`.
-It MUST fix `W`, `tau`, `K_W`, and `s` before drawing uniform `beta`.
+It MUST fix `W`, `tau`, `K_W`, and `s` before drawing `beta`, which MUST be
+fresh, uniform conditional on the preceding transcript.
 It MUST bind all tables, public weights, points, and input claims before
 the round challenges. Each round message MUST precede its challenge.
-These kernels take the inputs explicitly; their channel adapters only supply
-sumcheck message contexts and uniform field challenges. They do not implement
-the enclosing statement binding order.
+These kernels take the inputs explicitly; their channel adapters supply
+sumcheck diagnostic contexts and field challenges. They do not implement the
+enclosing statement binding order. That order is specified in
+[`labinius-root-reduction.md`](labinius-root-reduction.md).
+
+Before the generic driver runs, both sides MUST absorb the same canonical
+instance header as public bytes. `bind_root_sumcheck_instance` is the single
+encoding authority. The header concatenates these fields, without lengths:
+
+| Field | Encoding |
+|---|---|
+| Domain | ASCII `akita/labinius/root-sumcheck-instance/v1` |
+| Kind | One byte: 0 combined, 1 product |
+| Invocation | Four bytes, unsigned little-endian |
+| Number of variables | Eight bytes, unsigned little-endian |
+| Digit base | One byte: 1, 2, or 4 combined; 0 product |
+
+The verifier replay entry points and prover `prove_combined_rounds` and
+`prove_product_rounds` entry points own this binding. It applies even when
+there are no rounds. The header binds the instance kind, invocation, dimension
+and combined alphabet to all subsequent challenges. Distinct invocation
+numbers alone separate nothing: diagnostic `ProtocolSiteId` records and
+message contexts are not absorbed. The enclosing session and this explicit
+header supply domain separation.
 
 If some Boolean `x*` has an invalid digit, then
 `Z(tau) = sum_x eq(tau,x) P_b(W(x))` is a nonzero multilinear polynomial in
@@ -82,7 +108,9 @@ For fixed `W`, it vanishes at uniform `tau` with probability at most
 Let `L = sum_x W(x) K_W(x)`. The combined claim requires
 `Z(tau) + beta*(L-s) = 0`. If `Z(tau) != 0` or `L != s`, at most one
 `beta` satisfies this equation, so the additional error is at most `1/|F|`.
-When `L=s` and `Z(tau) != 0`, no `beta` satisfies it.
+When `L=s` and `Z(tau) != 0`, no `beta` satisfies it. The claim `s` MUST
+already be fixed: for a nonzero realized `beta`, the adaptive claim
+`s = L + Z(tau)/beta` satisfies the equation and is not covered by this bound.
 
 Sumcheck contributes at most `nu*(2^b+1)/|F|` for the combined instance and
 `2*mu/|F|` for the product instance. These statements require the terminal
@@ -97,7 +125,8 @@ running claim. A combined round sends `2^b+1` field coefficients, for a total
 of `nu*(2^b+1)` coefficients. Product rounds send two coefficients, totaling
 `2*mu`. With canonical coefficient width `F::NUM_BYTES`, the round bodies
 occupy `nu*(2^b+1)*F::NUM_BYTES` and `2*mu*F::NUM_BYTES` bytes, respectively.
-Public claims and message contexts are absorbed rather than transmitted.
+Public claims and the instance header are absorbed rather than transmitted.
+Message contexts and site identifiers are diagnostic only; they absorb no bytes.
 There are no proof-supplied lengths. Replay returns the challenge point and
 final claim; it MUST be followed by the terminal check and, at the enclosing
 proof boundary, the channel's EOF check.
@@ -119,14 +148,19 @@ length-`2^mu` field tables and constant-size round workspace.
 
 ## Scope and validation
 
-The lowered relation, weight construction, enclosing transcript binding,
-commitments, polynomial openings, batching, wire encodings for the complete
-root, planner and schedule changes are outside this specification.
+The lowered relation and weight construction are specified separately. The
+complete root transcript binding, oracle seam, batching, and wire encodings
+are specified in [`labinius-root-reduction.md`](labinius-root-reduction.md).
+Polynomial commitment implementations, planner and schedule changes remain
+outside this specification.
 Zero-variable instances are permitted; their input claim is already terminal.
 
 `crates/akita-labinius-prover/tests/root_sumcheck.rs` exercises the real drivers
 through the local LaBinius adapters under both transcript backends, manual
 round loops, independent Boolean expansions, malformed constructors, excess
 degrees, terminal mutations, and test-only invalid-alphabet witnesses with
-an exactly satisfied linear relation. Existing clear-opening behavior is
-unchanged.
+an exactly satisfied linear relation, including byte 255. The companion
+`tests/root_sumcheck_binding.rs` checks every instance-header field, exhaustive
+one-variable digit tables at every interpolation node for all bases and both
+coefficient fields, and cancellation with a claim fixed before `beta`.
+Existing clear-opening behavior is unchanged.

@@ -5,6 +5,7 @@
 //! Public-table construction and statement binding belong to the enclosing
 //! protocol; these routines accept their values explicitly.
 
+use crate::channel::ClearChannel;
 use akita_algebra::fft::SmoothFftField;
 use akita_error::{checked, AkitaError};
 use akita_params::sis::labinius::LabiniusDigitBase;
@@ -12,6 +13,43 @@ use akita_sumcheck::{
     verify_sumcheck_rounds, SumcheckRoundResult, SumcheckShape, SumcheckVerifierChannel,
 };
 use jolt_field::ExtField;
+
+/// Public kind and digit alphabet of a root sumcheck instance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RootSumcheckInstance {
+    Combined(LabiniusDigitBase),
+    Product,
+}
+
+/// Absorb the canonical versioned instance identity before any round replay.
+///
+/// The header consists of the domain, kind byte (0 combined, 1 product),
+/// invocation as four little-endian bytes, dimension as eight little-endian
+/// bytes, and a digit-base byte (1, 2, 4 for combined; 0 for product).
+/// Diagnostic site identifiers do not bind any of these values themselves.
+pub fn bind_root_sumcheck_instance<C: ClearChannel>(
+    channel: &mut C,
+    kind: RootSumcheckInstance,
+    invocation: u32,
+    num_vars: usize,
+) -> Result<(), AkitaError> {
+    let dimension = u64::try_from(num_vars)
+        .map_err(|_| AkitaError::InvalidInput("root sumcheck dimension does not fit u64".into()))?;
+    let (tag, base) = match kind {
+        RootSumcheckInstance::Combined(base) => (0u8, base.bits() as u8),
+        RootSumcheckInstance::Product => (1u8, 0),
+    };
+    let mut header = Vec::new();
+    header.try_reserve_exact(64).map_err(|_| {
+        AkitaError::InvalidInput("root sumcheck instance header allocation failed".into())
+    })?;
+    header.extend_from_slice(b"akita/labinius/root-sumcheck-instance/v1");
+    header.push(tag);
+    header.extend_from_slice(&invocation.to_le_bytes());
+    header.extend_from_slice(&dimension.to_le_bytes());
+    header.push(base);
+    channel.public(&header)
+}
 
 /// Evaluate `P_b(w) = product_{a=0}^{2^b-1} (w-a)`.
 ///
@@ -93,14 +131,16 @@ pub fn verify_combined_rounds<'proof, F, C>(
 ) -> Result<SumcheckRoundResult<F>, AkitaError>
 where
     F: SmoothFftField + ExtField<F>,
-    C: SumcheckVerifierChannel<'proof, F>,
+    C: SumcheckVerifierChannel<'proof, F> + ClearChannel,
 {
-    verify_sumcheck_rounds::<F, F, C>(
+    let shape = combined_shape(num_vars, base)?;
+    bind_root_sumcheck_instance(
         channel,
+        RootSumcheckInstance::Combined(base),
         invocation,
-        combined_input_claim(beta, s),
-        combined_shape(num_vars, base)?,
-    )
+        num_vars,
+    )?;
+    verify_sumcheck_rounds::<F, F, C>(channel, invocation, combined_input_claim(beta, s), shape)
 }
 
 /// Replay product rounds; the caller must check the returned terminal claim.
@@ -112,7 +152,9 @@ pub fn verify_product_rounds<'proof, F, C>(
 ) -> Result<SumcheckRoundResult<F>, AkitaError>
 where
     F: SmoothFftField + ExtField<F>,
-    C: SumcheckVerifierChannel<'proof, F>,
+    C: SumcheckVerifierChannel<'proof, F> + ClearChannel,
 {
-    verify_sumcheck_rounds::<F, F, C>(channel, invocation, y_y, product_shape(num_vars)?)
+    let shape = product_shape(num_vars)?;
+    bind_root_sumcheck_instance(channel, RootSumcheckInstance::Product, invocation, num_vars)?;
+    verify_sumcheck_rounds::<F, F, C>(channel, invocation, y_y, shape)
 }

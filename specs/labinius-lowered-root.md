@@ -220,11 +220,12 @@ low 128 coordinates, using the binary coefficients of the field-switch
 identities. Establishing that these extracted objects satisfy all consumer
 semantics remains part of composition.
 
-Open obligations are the complete composition argument in
-[the field-switch specification](labinius-field-switch.md), binding the
-admitted-root identity of the [setup contract](labinius-setup-contract.md) into
-the root transcript, and Fiat–Shamir order, extraction and loss accounting.
-Arithmetic tests and shape admission alone do not resolve them.
+The [root reduction](labinius-root-reduction.md) binds the admitted-root
+identity and fixes the statement, witness and challenge order. Its conditional
+soundness ledger composes these arithmetic reductions. Complete frontend
+composition, knowledge extraction and its loss, the SIS reduction and
+Fiat–Shamir security remain open as recorded there. Arithmetic tests and shape
+admission alone do not resolve them.
 
 ## Regression evidence
 

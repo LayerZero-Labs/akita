@@ -6,8 +6,9 @@ use akita_labinius_prover::root_sumcheck::{CombinedRootSumcheck, ProductSumcheck
 use akita_labinius_verifier::{
     channel::{self, RootSumcheckProverChannel, RootSumcheckVerifierChannel},
     root_sumcheck::{
-        alphabet_polynomial, combined_input_claim, combined_shape, combined_terminal,
-        product_shape, product_terminal, verify_combined_rounds, verify_product_rounds,
+        alphabet_polynomial, bind_root_sumcheck_instance, combined_input_claim, combined_shape,
+        combined_terminal, product_shape, product_terminal, verify_combined_rounds,
+        verify_product_rounds, RootSumcheckInstance,
     },
 };
 use akita_params::sis::labinius::LabiniusDigitBase;
@@ -78,11 +79,23 @@ fn fixture<F: Field>(n: usize, base: LabiniusDigitBase, rng: &mut StdRng) -> Fix
     }
 }
 
+fn bind_shape<C: channel::ClearChannel>(channel: &mut C, shape: SumcheckShape) {
+    let kind = match shape.degree_bound() {
+        2 => RootSumcheckInstance::Product,
+        3 => RootSumcheckInstance::Combined(LabiniusDigitBase::Bits1),
+        5 => RootSumcheckInstance::Combined(LabiniusDigitBase::Bits2),
+        17 => RootSumcheckInstance::Combined(LabiniusDigitBase::Bits4),
+        _ => panic!("unexpected test shape"),
+    };
+    bind_root_sumcheck_instance(channel, kind, 7, shape.num_rounds()).unwrap();
+}
+
 fn prove<F: SmoothFftField, P: SumcheckInstanceProver<F>>(
     instance: &mut P,
     shape: SumcheckShape,
 ) -> (Vec<u8>, Vec<F>, F) {
     let mut state = channel::new_prover().unwrap();
+    bind_shape(&mut RootSumcheckProverChannel::new(&mut state), shape);
     let (point, claim) = prove_sumcheck::<F, F, _, _>(
         &mut InfallibleSumcheck(instance),
         &mut RootSumcheckProverChannel::new(&mut state),
@@ -99,6 +112,7 @@ fn replay<F: SmoothFftField>(
     claim: F,
 ) -> Result<(Vec<F>, F), AkitaError> {
     let mut state = channel::new_verifier(proof)?;
+    bind_shape(&mut RootSumcheckVerifierChannel::new(&mut state), shape);
     let result = verify_sumcheck_rounds::<F, F, _>(
         &mut RootSumcheckVerifierChannel::new(&mut state),
         7,
@@ -305,7 +319,7 @@ impl<F: SmoothFftField> SumcheckInstanceProver<F> for CheatingCombined<F> {
 fn alphabet_soundness<F: SmoothFftField>() {
     let mut rng = StdRng::seed_from_u64(0xbad_515);
     for base in BASES {
-        for invalid in [1u64 << base.bits(), 1_000_003] {
+        for invalid in [1u64 << base.bits(), 255, 1_000_003] {
             let mut f = fixture::<F>(2, base, &mut rng);
             f.w[1] = F::from_u64(invalid);
             f.s = dot(&f.w, &f.kw); // The linear relation is exactly satisfied.
@@ -537,6 +551,14 @@ fn constructor_and_terminal_rejections() {
             F::one(),
             F::zero(),
         ));
+        invalid(CombinedRootSumcheck::new(
+            base,
+            &[0, 255],
+            vec![F::one(); 2],
+            &[F::one()],
+            F::one(),
+            F::zero(),
+        ));
         assert!(matches!(
             combined_terminal(base, &[F::one()], &[], F::one(), F::one(), F::one()),
             Err(AkitaError::InvalidInput(_))
@@ -561,7 +583,7 @@ fn alphabet_polynomial_has_exact_digit_roots() {
             for digit in 0..1u64 << base.bits() {
                 assert_eq!(alphabet_polynomial(base, F::from_u64(digit)), F::zero());
             }
-            for invalid in [1u64 << base.bits(), 1_000_003] {
+            for invalid in [1u64 << base.bits(), 255, 1_000_003] {
                 let w = F::from_u64(invalid);
                 assert_ne!(alphabet_polynomial(base, w), F::zero());
                 assert_eq!(alphabet_polynomial(base, w), alphabet(base, w));

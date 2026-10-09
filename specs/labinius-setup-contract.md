@@ -77,5 +77,8 @@ This contract binds setup derivation and admission identities. It does not
 prove binding of a source, discharge protocol composition obligations, cover
 prepared or NTT-form matrices, or select the extension. The existing clear
 protocol consumes `setup()` and binds its existing clear identity; it does not
-automatically absorb the enclosing admitted-root identity. A caller needing
-that full identity MUST bind it explicitly in its own setup context.
+automatically absorb the enclosing admitted-root identity. The [root reduction](labinius-root-reduction.md) MUST absorb the full admitted
+identity before its frontend challenges. Its binding order is defined there;
+source extraction, the SIS reduction and Fiat–Shamir security remain open.
+Other callers needing that full identity MUST bind it explicitly in their own
+setup context.

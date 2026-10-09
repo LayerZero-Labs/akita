@@ -5,11 +5,15 @@
 //! and builds the lowered root witness ([`lowered`]). Setup admission lives in
 //! the verifier crate: these functions accept any admitted
 //! `BinaryClearSetup`, explicit or seed-derived.
+//! The [`root`] reduction returns two committed-table evaluation claims through an oracle seam.
 
 #![cfg(feature = "labinius")]
 
 pub mod lowered;
+pub mod root;
 pub mod root_sumcheck;
+
+pub use root::{prove_root_reduction, prove_root_reduction_bytes, TransparentRootProverOracle};
 
 use akita_algebra::{binary::field_switch::SwitchField, SmoothFftField, TrinomialModulus};
 use akita_challenges::BinaryChallengeSampler;

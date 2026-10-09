@@ -110,6 +110,56 @@ pub fn exchange_response<
     Ok(())
 }
 
+/// Exchange one canonical fixed-width little-endian coefficient field element.
+pub fn exchange_field<F: SmoothFftField, S: ClearChannel>(
+    channel: &mut S,
+    value: &mut F,
+) -> Result<(), AkitaError> {
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(F::NUM_BYTES)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    bytes.resize(F::NUM_BYTES, 0);
+    value.to_bytes_le(&mut bytes);
+    channel.message(&mut bytes)?;
+    *value = F::from_bytes_le_checked(&bytes).ok_or(AkitaError::InvalidProof)?;
+    Ok(())
+}
+
+/// Exchange a centered e-bit signed integer in unsigned offset form.
+/// This encoding enforces exactly the interval used by `LoweredPublic::new`.
+pub fn exchange_bounded_integer<S: ClearChannel>(
+    channel: &mut S,
+    value: &mut i128,
+    bits: u32,
+) -> Result<(), AkitaError> {
+    if bits == 0 || bits >= 128 {
+        return Err(AkitaError::InvalidInput(
+            "unsupported root integer width".into(),
+        ));
+    }
+    let offset = 1i128
+        .checked_shl(bits - 1)
+        .ok_or(AkitaError::InvalidProof)?;
+    let limit = 1u128.checked_shl(bits).ok_or(AkitaError::InvalidProof)?;
+    let encoded = value
+        .checked_add(offset)
+        .and_then(|x| u128::try_from(x).ok())
+        .filter(|&x| x < limit)
+        .ok_or(AkitaError::InvalidProof)?;
+    let width = checked::div_ceil(bits as usize, 8).ok_or(AkitaError::InvalidProof)?;
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&encoded.to_le_bytes());
+    channel.message(bytes.get_mut(..width).ok_or(AkitaError::InvalidProof)?)?;
+    // The initialized bytes beyond the wire width are zero for a valid input.
+    let decoded = u128::from_le_bytes(bytes);
+    if decoded >= limit {
+        return Err(AkitaError::InvalidProof);
+    }
+    *value = i128::try_from(decoded).map_err(|_| AkitaError::InvalidProof)? - offset;
+    Ok(())
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {

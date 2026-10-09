@@ -4,6 +4,7 @@
 //! standalone clear opening, which is a differential oracle; the seed-derived
 //! and SIS-admitted root setup ([`admitted`]); and the lowered root relation
 //! over the canonical response layout ([`lowered`]).
+//! [`root`] reduces binary openings to two committed-table evaluation claims.
 //!
 //! [`BinaryClearSetup::new`] takes an explicit matrix and checks geometry,
 //! fold entropy and integer no-wrap only: it performs no SIS width-table
@@ -30,6 +31,7 @@ pub mod endpoint;
 pub mod frontend;
 pub mod lowered;
 pub mod profile;
+pub mod root;
 pub mod root_sumcheck;
 pub mod source;
 
@@ -38,6 +40,10 @@ pub use channel::ClearChannel;
 pub use commitment::BinaryClearCommitment;
 pub use frontend::BinaryEvaluationClaim;
 pub use profile::BinaryClearSetup;
+pub use root::{
+    verify_root_reduction, verify_root_reduction_bytes, RootEvaluationClaims, RootProverOracle,
+    RootVerifierOracle,
+};
 
 use akita_algebra::{
     binary::{field_switch::SwitchField, BinaryField162 as B},

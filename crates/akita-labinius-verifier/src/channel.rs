@@ -181,3 +181,100 @@ where
         )
     }
 }
+
+/// Coefficient-field challenge locations in the root reduction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RootFieldSite {
+    Alpha,
+    Xi,
+    Gamma,
+    Tau(u32),
+    Beta,
+}
+
+/// A root channel draws exact uniform coefficient-field challenges.
+/// Sites identify diagnostics; the root grammar supplies cryptographic binding.
+pub trait RootChallengeChannel<F>: ClearChannel {
+    fn field_challenge(&mut self, site: RootFieldSite) -> Result<F, AkitaError>;
+}
+
+fn root_field_site(site: RootFieldSite) -> akita_transcript::ProtocolSiteId {
+    let (detail, round) = match site {
+        RootFieldSite::Alpha => (0, 0),
+        RootFieldSite::Xi => (1, 0),
+        RootFieldSite::Gamma => (2, 0),
+        RootFieldSite::Tau(round) => (3, round),
+        RootFieldSite::Beta => (4, 0),
+    };
+    akita_transcript::ProtocolSiteId {
+        family: 0x4c52_5244,
+        detail,
+        round,
+        ..akita_transcript::ProtocolSiteId::default()
+    }
+}
+
+/// Standalone root session; separate from the clear-opening session domain.
+pub fn new_root_prover() -> Result<akita_transcript::ProverChannel, AkitaError> {
+    akita_transcript::new_prover_channel(b"akita/labinius/root-reduction/v1", b"")
+}
+
+/// Standalone root replay session, bounded by the caller's proof slice.
+pub fn new_root_verifier(
+    proof: &[u8],
+) -> Result<akita_transcript::VerifierChannel<'_>, AkitaError> {
+    akita_transcript::new_verifier_channel(b"akita/labinius/root-reduction/v1", b"", proof)
+}
+
+impl ClearChannel for RootSumcheckProverChannel<'_> {
+    fn public(&mut self, bytes: &[u8]) -> Result<(), AkitaError> {
+        ClearChannel::public(self.state, bytes)
+    }
+    fn message(&mut self, bytes: &mut [u8]) -> Result<(), AkitaError> {
+        ClearChannel::message(self.state, bytes)
+    }
+    fn challenge_block(&mut self) -> Result<[u8; 32], AkitaError> {
+        ClearChannel::challenge_block(self.state)
+    }
+    fn fold_challenges(
+        &mut self,
+        sampler: &mut BinaryChallengeSampler,
+        label: &[u8],
+        count: usize,
+    ) -> Result<Vec<BinaryChallenge>, AkitaError> {
+        ClearChannel::fold_challenges(self.state, sampler, label, count)
+    }
+}
+impl ClearChannel for RootSumcheckVerifierChannel<'_, '_> {
+    fn public(&mut self, bytes: &[u8]) -> Result<(), AkitaError> {
+        ClearChannel::public(self.state, bytes)
+    }
+    fn message(&mut self, bytes: &mut [u8]) -> Result<(), AkitaError> {
+        ClearChannel::message(self.state, bytes)
+    }
+    fn challenge_block(&mut self) -> Result<[u8; 32], AkitaError> {
+        ClearChannel::challenge_block(self.state)
+    }
+    fn fold_challenges(
+        &mut self,
+        sampler: &mut BinaryChallengeSampler,
+        label: &[u8],
+        count: usize,
+    ) -> Result<Vec<BinaryChallenge>, AkitaError> {
+        ClearChannel::fold_challenges(self.state, sampler, label, count)
+    }
+}
+impl<F: akita_algebra::SmoothFftField + jolt_field::ExtField<F>> RootChallengeChannel<F>
+    for RootSumcheckProverChannel<'_>
+{
+    fn field_challenge(&mut self, site: RootFieldSite) -> Result<F, AkitaError> {
+        akita_transcript::ext_challenge::<F, F, _>(self.state, root_field_site(site))
+    }
+}
+impl<F: akita_algebra::SmoothFftField + jolt_field::ExtField<F>> RootChallengeChannel<F>
+    for RootSumcheckVerifierChannel<'_, '_>
+{
+    fn field_challenge(&mut self, site: RootFieldSite) -> Result<F, AkitaError> {
+        akita_transcript::ext_challenge::<F, F, _>(self.state, root_field_site(site))
+    }
+}

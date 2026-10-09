@@ -5,11 +5,16 @@
 
 use akita_algebra::SmoothFftField;
 use akita_error::{checked, AkitaError};
+use akita_labinius_verifier::channel::ClearChannel;
 use akita_labinius_verifier::root_sumcheck::{
-    alphabet_polynomial, combined_input_claim, combined_shape, product_shape,
+    alphabet_polynomial, bind_root_sumcheck_instance, combined_input_claim, combined_shape,
+    product_shape, RootSumcheckInstance,
 };
 use akita_params::sis::labinius::LabiniusDigitBase;
-use akita_sumcheck::SumcheckInstanceProver;
+use akita_sumcheck::{
+    prove_sumcheck, InfallibleSumcheck, SumcheckInstanceProver, SumcheckProverChannel,
+};
+use jolt_field::ExtField;
 use jolt_poly::UnivariatePoly;
 
 /// Combined alphabet-and-linear-relation instance over the coefficient field.
@@ -297,4 +302,53 @@ impl<F: SmoothFftField> SumcheckInstanceProver<F> for ProductSumcheck<F> {
         }
         self.next_round += 1;
     }
+}
+
+/// Bind the combined instance identity and prove its rounds on the channel.
+/// The returned claim still requires the terminal check and table opening.
+pub fn prove_combined_rounds<F, C>(
+    instance: &mut CombinedRootSumcheck<F>,
+    channel: &mut C,
+    invocation: u32,
+) -> Result<(Vec<F>, F), AkitaError>
+where
+    F: SmoothFftField + ExtField<F>,
+    C: SumcheckProverChannel<F> + ClearChannel,
+{
+    let num_vars = instance.num_rounds();
+    let shape = combined_shape(num_vars, instance.base)?;
+    bind_root_sumcheck_instance(
+        channel,
+        RootSumcheckInstance::Combined(instance.base),
+        invocation,
+        num_vars,
+    )?;
+    prove_sumcheck::<F, F, C, _>(
+        &mut InfallibleSumcheck(instance),
+        channel,
+        shape,
+        invocation,
+    )
+}
+
+/// Bind the product instance identity and prove its rounds on the channel.
+/// The returned claim still requires the terminal check and table opening.
+pub fn prove_product_rounds<F, C>(
+    instance: &mut ProductSumcheck<F>,
+    channel: &mut C,
+    invocation: u32,
+) -> Result<(Vec<F>, F), AkitaError>
+where
+    F: SmoothFftField + ExtField<F>,
+    C: SumcheckProverChannel<F> + ClearChannel,
+{
+    let num_vars = instance.num_rounds();
+    let shape = product_shape(num_vars)?;
+    bind_root_sumcheck_instance(channel, RootSumcheckInstance::Product, invocation, num_vars)?;
+    prove_sumcheck::<F, F, C, _>(
+        &mut InfallibleSumcheck(instance),
+        channel,
+        shape,
+        invocation,
+    )
 }
