@@ -360,8 +360,7 @@ mod tests {
     #[test]
     fn base_multiplier_matches_literal_oracle_at_genuine_extension_point() {
         use crate::offset_eq::eq_eval_at_index;
-        use crate::ring::eval_flat_ring_at_pows_fast;
-        use jolt_field::{Fp32, FpExt2, NegOneNr};
+        use jolt_field::{Fp32, FpExt2, MulBaseUnreduced, NegOneNr};
         type B = Fp32<251>;
         type X = FpExt2<B, NegOneNr>;
 
@@ -399,7 +398,7 @@ mod tests {
             evaluation + eq_eval_at_index(&point, 5 + witness_coefficient) * residue
         });
         assert_eq!(
-            eval_flat_ring_at_pows_fast(&multiplier, &functional),
+            MulBaseUnreduced::dot_base(&functional, &multiplier),
             expected
         );
     }

@@ -301,7 +301,7 @@ mod high_half_tests;
 mod tests {
     use super::*;
 
-    use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
+    use akita_algebra::ring::scalar_powers;
 
     use jolt_field::{Ext2, ExtField, Fp32, FpExt4, FpExt8, MulBaseUnreduced, Ring, Zero};
 
@@ -384,7 +384,7 @@ mod tests {
             point
                 .eval_position_at::<L>(0, &alpha_pows)
                 .expect("compact evaluation"),
-            eval_ring_at_pows_fast(&expected_ring, &alpha_pows)
+            MulBaseUnreduced::dot_base(&alpha_pows, expected_ring.coefficients())
         );
 
         let rhs = CyclotomicRing::from_coefficients(std::array::from_fn(|index| {

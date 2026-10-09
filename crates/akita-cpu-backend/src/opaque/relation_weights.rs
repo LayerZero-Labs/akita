@@ -24,7 +24,7 @@ pub(crate) enum RelationWeightDescription<E: Field> {
 use std::ops::Range;
 
 use akita_algebra::eq_poly::SplitEqEvals;
-use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
+use akita_algebra::ring::scalar_powers;
 use akita_error::AkitaError;
 use akita_params::{
     gadget_row_scalars, r_decomp_levels, CommittedGroupParams, OpeningClaimsLayout, OpeningMethod,
@@ -359,9 +359,9 @@ where
                 1,
                 1,
                 |coefficients| {
-                    Ok(vec![eval_flat_ring_at_pows_fast(
-                        coefficients,
+                    Ok(vec![MulBaseUnreduced::dot_base(
                         &group_alpha_pows_d,
+                        coefficients,
                     )])
                 },
             )?)
@@ -377,9 +377,9 @@ where
                 group_plan.witness.slice_count,
                 1,
                 |coefficients| {
-                    Ok(vec![eval_flat_ring_at_pows_fast(
-                        coefficients,
+                    Ok(vec![MulBaseUnreduced::dot_base(
                         &group_alpha_pows_b,
+                        coefficients,
                     )])
                 },
             )?)
@@ -429,9 +429,9 @@ where
                     1,
                     1,
                     |coefficients| {
-                        Ok(vec![eval_flat_ring_at_pows_fast(
-                            coefficients,
+                        Ok(vec![MulBaseUnreduced::dot_base(
                             &group_alpha_pows_a,
+                            coefficients,
                         )])
                     },
                 )

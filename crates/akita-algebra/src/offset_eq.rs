@@ -1320,14 +1320,26 @@ impl<F: Field> OffsetEqWindow<F> {
     ///
     /// Matches [`eq_eval_at_index`] exactly, including returning zero for
     /// out-of-domain indices.
-    #[inline]
+    #[inline(always)]
     pub fn eval(&self, index: usize) -> F {
+        let (eq_low, eq_high) = self.eval_factors(index);
+        if eq_low.is_zero() {
+            return F::zero();
+        }
+        eq_low * eq_high
+    }
+
+    /// The two factors whose product [`Self::eval`] returns, so a caller can
+    /// fold the product into a longer one. Both are zero whenever the low
+    /// factor is.
+    #[inline(always)]
+    pub fn eval_factors(&self, index: usize) -> (F, F) {
         let low = index & self.low_mask;
         // `low < 2^low_bits == eq_low.len()` by construction; the fallback keeps
         // the accessor panic-free without masking a real bug.
         let eq_low = self.eq_low.get(low).copied().unwrap_or_else(F::zero);
         if eq_low.is_zero() {
-            return F::zero();
+            return (F::zero(), F::zero());
         }
         let high = index >> self.low_bits;
         let eq_high = match &self.eq_high {
@@ -1336,7 +1348,7 @@ impl<F: Field> OffsetEqWindow<F> {
             Some(table) => table.get(high).copied().unwrap_or_else(F::zero),
             None => eq_eval_at_index(&self.high_challenges, high),
         };
-        eq_low * eq_high
+        (eq_low, eq_high)
     }
 
     /// Fill a contiguous physical-index interval.
