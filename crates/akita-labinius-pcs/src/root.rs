@@ -19,7 +19,7 @@ use akita_types::{AkitaVerifierSetup, CommittedGroup};
 use akita_verifier::AkitaVerifier;
 
 use crate::{
-    config::DigitConfig, ImageCommitOutput, ImageConfig, ImageProver, PreparedMatrix, RootSetup, F,
+    config::DigitConfig, ImageCommitOutput, ImageConfig, ImageProver, PreparedRoot, RootSetup, F,
 };
 use binding::{admit_catalogs, resolve_rows};
 use verifier::GroupedVerifier;
@@ -27,7 +27,7 @@ use verifier::GroupedVerifier;
 /// Prepared root, caller-trusted catalogs and one owning Akita CPU backend.
 pub struct RootPcsProver<C: DigitConfig> {
     admitted: RootSetup,
-    prepared: PreparedMatrix,
+    prepared: PreparedRoot,
     image: ImageProver,
     digits: AkitaCommitmentScheme<C>,
 }
@@ -59,7 +59,7 @@ impl<C: DigitConfig> RootPcsProver<C> {
             digit_row.schedule(),
             &digit_row.profiles().opening_layout()?,
         )?;
-        let prepared = PreparedMatrix::prepare(admitted.setup())?;
+        let prepared = PreparedRoot::prepare(admitted.setup())?;
         Ok(Self {
             admitted,
             prepared,
@@ -77,7 +77,7 @@ impl<C: DigitConfig> RootPcsProver<C> {
         H::Source: Sync,
     {
         self.image
-            .commit::<H>(&self.admitted, &self.prepared, source)
+            .commit::<H>(&self.admitted, self.prepared.commit(), source)
     }
 
     /// Prepare a single-use oracle for a caller-owned root channel.
@@ -102,6 +102,7 @@ impl<C: DigitConfig> RootPcsProver<C> {
         let mut oracle = self.oracle(committed)?;
         let (proof, _) = prove_root_reduction_bytes(
             &self.admitted,
+            &self.prepared,
             C::BASE,
             source,
             &committed.image,

@@ -1,7 +1,7 @@
 use akita_error::AkitaError;
 use akita_labinius_pcs::{
     config::{DigitConfig, Digits2},
-    F,
+    PreparedRoot, F,
 };
 use akita_labinius_prover::{lowered::flatten_image, prove_root_reduction_bytes};
 use akita_labinius_verifier::{
@@ -62,8 +62,10 @@ fn reduction_claims_are_actual_table_evaluations_and_oracles_are_single_use() {
         digits: Vec::new(),
         calls: Vec::new(),
     };
+    let prepared = PreparedRoot::prepare(case.root.setup()).unwrap();
     let (proof, claims) = prove_root_reduction_bytes(
         &case.root,
+        &prepared,
         Digits2::BASE,
         &case.source,
         &case.output.image,
