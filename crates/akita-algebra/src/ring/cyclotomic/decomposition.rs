@@ -71,6 +71,16 @@ impl BalancedSignedDigit for i16 {
 pub struct BalancedDecomposePow2Params<F: Field + CanonicalEncoding> {
     levels: usize,
     log_basis: u32,
+    // Read by the SIMD kernels' range assertions and the tests.
+    #[cfg_attr(
+        not(any(
+            test,
+            target_arch = "aarch64",
+            target_arch = "x86",
+            target_arch = "x86_64"
+        )),
+        expect(dead_code)
+    )]
     q: u128,
     threshold: u128,
     /// `H` as little-endian 192-bit words, added to residues `<= threshold`.
