@@ -89,6 +89,14 @@ cargo run -p akita-sis-estimator --release --features parallel \
   --example infinity_width_table -- --format rust-split --profile local-minimum
 ```
 
+The opt-in LaBinius runtime table is emitted from the certified checked-in CSV,
+without rerunning the lattice search:
+
+```bash
+cargo run -p akita-sis-estimator --no-default-features --features labinius-sis \
+  --example labinius_infinity_width_table -- --from-csv
+```
+
 Sage workflows in [`scripts/sis_golden/README.md`](scripts/sis_golden/README.md)
 remain useful for pinned-estimator goldens and Euclidean comparison artifacts,
 but must not overwrite the production L-infinity table.

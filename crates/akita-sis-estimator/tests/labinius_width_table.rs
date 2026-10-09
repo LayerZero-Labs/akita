@@ -1,12 +1,63 @@
 #![cfg(feature = "labinius-sis")]
 
+use akita_params::sis::labinius::{
+    LabiniusCoefficientPrime, LabiniusRingDegree, LabiniusWidthCell, LABINIUS_WIDTH_TABLE,
+    LABINIUS_WIDTH_TABLE_DIGEST,
+};
 use akita_sis_estimator::{
+    labinius_width_table::certified_rows,
     width_table::{validate_infinity_width_rows, InfinityWidthRow},
     AkitaModulusProfileId, SisSecurityPolicy,
 };
+use sha3::{Digest, Sha3_256};
 use std::collections::BTreeSet;
 
 const TABLE: &str = include_str!("../data/labinius_infinity_width.csv");
+
+#[test]
+fn runtime_cells_and_digest_match_the_certified_csv_in_both_directions() {
+    let rows = certified_rows().expect("certified CSV");
+    assert_eq!(rows.len(), 69);
+    assert_eq!(LABINIUS_WIDTH_TABLE.len(), rows.len());
+    let csv_cells = rows
+        .iter()
+        .map(|row| LabiniusWidthCell {
+            coefficient_prime: match row.modulus_profile {
+                AkitaModulusProfileId::Q64Offset23703 => LabiniusCoefficientPrime::P64Offset23703,
+                AkitaModulusProfileId::Q128OffsetA7F7 => LabiniusCoefficientPrime::P128OffsetA7F7,
+                other => panic!("unexpected modulus profile: {other:?}"),
+            },
+            ring_degree: match row.d {
+                162 => LabiniusRingDegree::D162,
+                324 => LabiniusRingDegree::D324,
+                648 => LabiniusRingDegree::D648,
+                486 => LabiniusRingDegree::D486,
+                972 => LabiniusRingDegree::D972,
+                1_944 => LabiniusRingDegree::D1944,
+                other => panic!("unexpected ring degree: {other}"),
+            },
+            rank: row.rank,
+            coeff_linf_bound: row.coeff_linf_bound,
+            max_width: row.max_width,
+        })
+        .collect::<BTreeSet<_>>();
+    let runtime_cells = LABINIUS_WIDTH_TABLE
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(csv_cells.len(), rows.len(), "CSV has duplicate cells");
+    assert_eq!(
+        runtime_cells.len(),
+        rows.len(),
+        "runtime has duplicate cells"
+    );
+    assert_eq!(csv_cells, runtime_cells, "runtime/CSV cell drift");
+    let digest: [u8; 32] = Sha3_256::digest(TABLE.as_bytes()).into();
+    assert_eq!(
+        LABINIUS_WIDTH_TABLE_DIGEST, digest,
+        "runtime/CSV digest drift"
+    );
+}
 
 #[test]
 fn checked_in_labinius_cells_have_exact_cutoffs_and_rejected_successors() {
