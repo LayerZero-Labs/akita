@@ -6,7 +6,7 @@ pub(crate) mod common;
 
 use akita_algebra::{binary::BinaryField128, MinusTrinomial};
 use akita_labinius_prover::{
-    commit_binary_clear, lowered::flatten_image, prove_root_reduction_bytes,
+    commit_binary_clear, lowered::flatten_image, prove_root_reduction_bytes, PreparedRootMatrices,
     TransparentRootProverOracle,
 };
 use akita_labinius_verifier::{
@@ -43,6 +43,7 @@ pub(crate) fn admitted(fold: u32, seed: u8) -> Setup {
 
 pub(crate) struct Case<T: TestHost = H> {
     pub(crate) admitted: Setup,
+    pub(crate) prepared: PreparedRootMatrices<F, 648, MinusTrinomial>,
     pub(crate) base: LabiniusDigitBase,
     pub(crate) source: Vec<T::Source>,
     pub(crate) point: Vec<T>,
@@ -60,8 +61,10 @@ impl<T: TestHost> Case<T> {
         let commitment = commit_binary_clear::<T, F, 648, MinusTrinomial>(setup, &source).unwrap();
         let layout = LoweredRootLayout::new(setup, admitted.shape(), base).unwrap();
         let image = flatten_image(&layout, &commitment).unwrap();
+        let prepared = PreparedRootMatrices::prepare(setup).unwrap();
         Self {
             admitted,
+            prepared,
             base,
             source,
             point,
@@ -76,6 +79,7 @@ impl<T: TestHost> Case<T> {
         let mut oracle = TransparentRootProverOracle::new(&self.image);
         let (proof, claims) = prove_root_reduction_bytes(
             &self.admitted,
+            &self.prepared,
             self.base,
             &self.source,
             &self.commitment,

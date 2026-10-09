@@ -13,6 +13,7 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 rayon = { version = "1.10", optional = true }
+tracing = "0.1"
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 akita-labinius-verifier = { version = "0.1.0", path = "../akita-labinius-verifier", default-features = false }
@@ -30,6 +31,21 @@ rand = "0.8"
 
 [[bench]]
 name = "commit_kernel"
+harness = false
+required-features = ["labinius"]
+
+[[bench]]
+name = "fold_kernel"
+harness = false
+required-features = ["labinius"]
+
+[[bench]]
+name = "quotient_kernel"
+harness = false
+required-features = ["labinius"]
+
+[[bench]]
+name = "combined_kernel"
 harness = false
 required-features = ["labinius"]
 
