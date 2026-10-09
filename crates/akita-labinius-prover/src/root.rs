@@ -20,7 +20,7 @@ use akita_labinius_verifier::{
     codec::{exchange_binary, exchange_field},
     endpoint::{left_expansion, verify_left_expansion},
     frontend::prove_frontend,
-    lowered::{image_weights_dense, witness_weights_dense, LoweredChallenges, LoweredPublic},
+    lowered::{image_weights_dense, LoweredChallenges, LoweredPublic},
     root::{bind_root_statement, exchange_root_auxiliary, RootEvaluationClaims, RootProverOracle},
     AdmittedRootSetup, BinaryClearCommitment,
 };
@@ -34,6 +34,7 @@ use crate::{
     fold_kernel::fold_integer,
     lowered::{encode_witness, flatten_image, parity_quotient_and_carry},
     quotient_kernel::{a_relation_quotients, ConjugateModulus},
+    response_weights::coefficient_weights,
     root_sumcheck::{prove_product_rounds, ProductSumcheck},
 };
 
@@ -154,9 +155,14 @@ where
     }
     let beta = channel.field_challenge(RootFieldSite::Beta)?;
     let kw =
-        info_span!("root_witness_weights").in_scope(|| witness_weights_dense(&layout, &public))?;
+        info_span!("root_witness_weights").in_scope(|| coefficient_weights(&layout, &public))?;
+    let mut digit_factor = Vec::new();
+    digit_factor
+        .try_reserve_exact(public.digit_powers().len())
+        .map_err(|_| AkitaError::InvalidInput("root digit-factor allocation failed".into()))?;
+    digit_factor.extend_from_slice(public.digit_powers());
     let combined_span = info_span!("root_combined_sumcheck").entered();
-    let mut combined = CombinedRootKernel::new(base, &digits, kw, &tau, beta, s)?;
+    let mut combined = CombinedRootKernel::new(base, &digits, digit_factor, kw, &tau, beta, s)?;
     let (response_point, _) = prove_combined_rounds(&mut combined, channel, 0)?;
     let (mut response_value, _) = combined
         .final_evaluations()

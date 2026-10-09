@@ -12,7 +12,7 @@ use akita_params::sis::labinius::LabiniusDigitBase;
 use akita_sumcheck::SumcheckInstanceProver;
 use combined_support::CombinedRootSumcheck;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion, Throughput};
-use jolt_field::{Prime128OffsetA7F7, Ring, Zero};
+use jolt_field::{One, Prime128OffsetA7F7, Ring, Zero};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 type F = Prime128OffsetA7F7;
@@ -53,7 +53,21 @@ fn benchmarks(criterion: &mut Criterion) {
         let digits: Vec<_> = (0..N)
             .map(|_| (rng.next_u32() % (1 << base.bits())) as u8)
             .collect();
-        let kw: Vec<_> = (0..N).map(|_| random(&mut rng)).collect();
+        let digit_depth = 16 / base.bits() as usize;
+        let digit_base = F::from_u64(1 << base.bits());
+        let mut power = F::one();
+        let digit_factor: Vec<_> = (0..digit_depth)
+            .map(|_| {
+                let value = power;
+                power *= digit_base;
+                value
+            })
+            .collect();
+        let compact: Vec<_> = (0..N / digit_depth).map(|_| random(&mut rng)).collect();
+        let kw: Vec<_> = compact
+            .iter()
+            .flat_map(|&coefficient| digit_factor.iter().map(move |&digit| digit * coefficient))
+            .collect();
         let tau: Vec<_> = (0..NU).map(|_| random(&mut rng)).collect();
         let challenges: Vec<_> = (0..NU).map(|_| random(&mut rng)).collect();
         let beta = random(&mut rng);
@@ -98,12 +112,13 @@ fn benchmarks(criterion: &mut Criterion) {
         });
         group.bench_function("kernel", |b| {
             b.iter_batched(
-                || kw.clone(),
-                |weights| {
+                || (digit_factor.clone(), compact.clone()),
+                |(digit_weights, weights)| {
                     let execute = || {
                         let prover = CombinedRootKernel::new(
                             base,
                             black_box(&digits),
+                            digit_weights,
                             weights,
                             &tau,
                             beta,
@@ -132,12 +147,13 @@ fn benchmarks(criterion: &mut Criterion) {
             ),
             |b| {
                 b.iter_batched(
-                    || kw.clone(),
-                    |weights| {
+                    || (digit_factor.clone(), compact.clone()),
+                    |(digit_weights, weights)| {
                         parallel_pool.install(|| {
                             let prover = CombinedRootKernel::new(
                                 base,
                                 black_box(&digits),
+                                digit_weights,
                                 weights,
                                 &tau,
                                 beta,

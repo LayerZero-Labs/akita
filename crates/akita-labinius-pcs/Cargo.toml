@@ -47,6 +47,7 @@ transcript-keccak = [
 parallel = [
   "akita-challenges/parallel",
   "akita-labinius-prover/parallel",
+  "akita-labinius-verifier/parallel",
   "akita-pcs/parallel",
   "akita-prover/parallel",
   "akita-cpu-backend/parallel",

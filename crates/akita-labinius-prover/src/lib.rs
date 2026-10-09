@@ -15,6 +15,7 @@ pub mod fold_kernel;
 pub mod limb_commit_kernel;
 pub mod lowered;
 pub mod quotient_kernel;
+pub mod response_weights;
 pub mod root;
 pub mod root_sumcheck;
 

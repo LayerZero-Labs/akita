@@ -3,17 +3,18 @@
 #[path = "lowered_support.rs"]
 mod support;
 
-use akita_algebra::{poly::multilinear_eval, MinusTrinomial};
+use akita_algebra::{binary::BinaryField162, poly::multilinear_eval, MinusTrinomial};
 use akita_labinius_prover::lowered::encode_witness;
 use akita_labinius_verifier::{
     lowered::{
         a_row_residual, check_lowered_clear, image_weight_mle, image_weights_dense,
-        parity_row_residual, witness_weight_mle, witness_weights_dense,
+        parity_row_residual, witness_weight_mle, witness_weights_dense, LoweredChallenges,
     },
-    AdmittedRootSetup,
+    source::{equality_weights, scalar_from_binary},
+    AdmittedRootSetup, BinaryEvaluationClaim,
 };
 use akita_types::proof::AkitaSetupSeed;
-use jolt_field::{One, Zero};
+use jolt_field::{One, Ring, Zero};
 use rand::{rngs::StdRng, SeedableRng};
 use support::*;
 
@@ -88,6 +89,134 @@ fn structured_weights_match_dense_at_random_and_boolean_points() {
         assert!(image_weight_mle(&case.layout, &public, &[]).is_err());
         eprintln!("weights {base:?}: {:?}", start.elapsed());
     }
+}
+
+/// Compare the cached public data with definitions that share no code with it.
+///
+/// The matrix contraction and the binary-row projections are recomputed as
+/// plain power sums, the response weights are rebuilt entry by entry, and the
+/// offset part of the public constant is isolated by zeroing every other
+/// input. Returns the honest constant and both dense weight tables per base.
+fn public_data_against_direct_definitions() -> Vec<(F, Vec<F>, Vec<F>)> {
+    let power_sum = |coefficients: &[F], point: F| {
+        let mut power = F::one();
+        coefficients.iter().fold(F::zero(), |sum, &coefficient| {
+            let term = coefficient * power;
+            power *= point;
+            sum + term
+        })
+    };
+    let powers = |point: F, len: usize| {
+        let mut power = F::one();
+        (0..len)
+            .map(|_| {
+                let current = power;
+                power *= point;
+                current
+            })
+            .collect::<Vec<_>>()
+    };
+    BASES
+        .into_iter()
+        .map(|base| {
+            let case = Case::new(base);
+            let layout = &case.layout;
+            let LoweredChallenges { alpha, xi, gamma } = case.challenges;
+            let (n_a, m, k) = (layout.n_a(), layout.m(), layout.k());
+            assert!(m > 1 && k > 1);
+            let alpha_powers = powers(alpha, layout.degree());
+            let xi_powers = powers(xi, layout.degree().div_ceil(k));
+            let gamma_powers = powers(gamma, n_a + 1);
+            let abar = (0..m)
+                .map(|j| {
+                    (0..n_a).fold(F::zero(), |sum, i| {
+                        let element = &case.setup.matrix()[i * m + j];
+                        sum + gamma_powers[i] * power_sum(element.coefficients(), alpha)
+                    })
+                })
+                .collect::<Vec<_>>();
+            let rows = equality_weights(&case.claim.point[..case.setup.row_vars()])
+                .unwrap()
+                .into_iter()
+                .map(|weight| {
+                    power_sum(scalar_from_binary::<F>(weight).unwrap().coefficients(), xi)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(rows.len(), layout.scalar_rows());
+            let weight = |j: usize, t: usize| {
+                abar[j] * alpha_powers[t]
+                    + gamma_powers[n_a]
+                        * signed(layout.sigma(t).unwrap())
+                        * xi_powers[t / k]
+                        * rows[j * k + t % k]
+            };
+
+            let public = case.public();
+            let kw = witness_weights_dense(layout, &public).unwrap();
+            let ky = image_weights_dense(layout, &public).unwrap();
+            let digit_count = layout.encoding().response().digit_count();
+            let digit_powers = powers(
+                F::from_u64(1 << layout.encoding().base().bits()),
+                digit_count,
+            );
+            let mut expected = vec![F::zero(); kw.len()];
+            let mut offset = F::zero();
+            for j in 0..m {
+                for t in 0..layout.degree() {
+                    assert_eq!(public.coefficient_weight(j, t).unwrap(), weight(j, t));
+                    offset += signed(layout.off(t).unwrap()) * weight(j, t);
+                    let address = digit_count * (t + layout.padded_coefficients() * j);
+                    for (l, &digit) in digit_powers.iter().enumerate() {
+                        expected[address + l] = digit * weight(j, t);
+                    }
+                }
+            }
+            assert_eq!(kw, expected);
+            assert!(public.coefficient_weight(m, 0).is_err());
+            assert!(public.coefficient_weight(0, layout.degree()).is_err());
+
+            let zero_rows = case
+                .qa
+                .iter()
+                .map(|row| vec![F::zero(); row.len()])
+                .collect::<Vec<_>>();
+            // The zero partial evaluations are consistent with a zero claim at
+            // the same point, so the binary rows are unchanged.
+            let zero_claim = BinaryEvaluationClaim {
+                point: case.claim.point.clone(),
+                value: BinaryField162::ZERO,
+            };
+            let offset_only = case
+                .public_with(
+                    &zero_claim,
+                    &vec![BinaryField162::ZERO; case.u.len()],
+                    &zero_rows,
+                    &vec![0; case.q.len()],
+                    &vec![0; case.k.len()],
+                )
+                .unwrap();
+            assert_eq!(offset_only.c_pub(), offset);
+            (public.c_pub(), kw, ky)
+        })
+        .collect()
+}
+
+#[test]
+fn public_data_matches_direct_definitions() {
+    public_data_against_direct_definitions();
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn public_data_is_the_same_in_one_and_three_thread_pools() {
+    let [one, three] = [1, 3].map(|threads| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+            .install(public_data_against_direct_definitions)
+    });
+    assert_eq!(one, three);
 }
 
 #[test]

@@ -10,6 +10,8 @@ use akita_algebra::ring::{
 };
 use akita_challenges::{BinaryChallenge, BinaryChallengeProfile};
 use akita_error::{checked, AkitaError};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use crate::commitment::{apply_matrix, BinaryClearCommitment};
 use crate::frontend::BinaryEvaluationClaim;
@@ -42,13 +44,25 @@ pub fn left_expansion<H: SwitchField>(
     result
         .try_reserve_exact(columns)
         .map_err(|_| AkitaError::InvalidInput("left expansion allocation failed".into()))?;
-    for words in source.chunks_exact(scalar_rows) {
-        let mut value = BinaryField162::ZERO;
-        for (&weight, &word) in weights.iter().zip(words) {
-            value += weight * embed_source::<H>(word);
-        }
-        result.push(value);
+    let column_value = |words: &[H::Source]| {
+        weights
+            .iter()
+            .zip(words)
+            .fold(BinaryField162::ZERO, |sum, (&weight, &word)| {
+                sum + weight * embed_source::<H>(word)
+            })
+    };
+    #[cfg(feature = "parallel")]
+    {
+        // Capacity and both dimensions were checked before parallel writes.
+        result.resize(columns, BinaryField162::ZERO);
+        result
+            .par_iter_mut()
+            .zip(source.par_chunks_exact(scalar_rows))
+            .for_each(|(destination, words)| *destination = column_value(words));
     }
+    #[cfg(not(feature = "parallel"))]
+    result.extend(source.chunks_exact(scalar_rows).map(column_value));
     Ok(result)
 }
 
