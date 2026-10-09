@@ -12,6 +12,7 @@
 pub mod combined_kernel;
 pub mod commit_kernel;
 pub mod fold_kernel;
+pub mod limb_commit_kernel;
 pub mod lowered;
 pub mod quotient_kernel;
 pub mod response_weights;
@@ -24,6 +25,7 @@ pub use root::{
 };
 
 pub use commit_kernel::{commit_binary_clear_prepared, PreparedCommitMatrix};
+pub use limb_commit_kernel::{commit_binary_clear_limb_prepared, PreparedLimbCommitMatrix};
 
 use akita_algebra::{binary::field_switch::SwitchField, SmoothFftField, TrinomialModulus};
 use akita_challenges::BinaryChallengeSampler;
