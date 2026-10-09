@@ -2,13 +2,15 @@
 
 #![cfg(feature = "labinius")]
 
+#[path = "../tests/combined_support.rs"]
+mod combined_support;
+
 use std::{hint::black_box, time::Duration};
 
-use akita_labinius_prover::{
-    combined_kernel::CombinedRootKernel, root_sumcheck::CombinedRootSumcheck,
-};
+use akita_labinius_prover::combined_kernel::CombinedRootKernel;
 use akita_params::sis::labinius::LabiniusDigitBase;
 use akita_sumcheck::SumcheckInstanceProver;
+use combined_support::CombinedRootSumcheck;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 use jolt_field::{Prime128OffsetA7F7, Ring, Zero};
 use rand::{rngs::StdRng, RngCore, SeedableRng};

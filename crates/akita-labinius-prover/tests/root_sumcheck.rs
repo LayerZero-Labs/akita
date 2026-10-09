@@ -1,8 +1,10 @@
 #![cfg(feature = "labinius")]
 
+mod combined_support;
+
 use akita_algebra::{poly::multilinear_eval, Prime64Offset23703, SmoothFftField};
 use akita_error::AkitaError;
-use akita_labinius_prover::root_sumcheck::{CombinedRootSumcheck, ProductSumcheck};
+use akita_labinius_prover::root_sumcheck::ProductSumcheck;
 use akita_labinius_verifier::{
     channel::{self, RootSumcheckProverChannel, RootSumcheckVerifierChannel},
     root_sumcheck::{
@@ -16,6 +18,7 @@ use akita_sumcheck::{
     prove_sumcheck, verify_sumcheck_rounds, InfallibleSumcheck, SumcheckInstanceProver,
     SumcheckShape,
 };
+use combined_support::CombinedRootSumcheck;
 use jolt_field::{CanonicalBytes, Field, One, Prime128OffsetA7F7, Ring, Zero};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use rand::{rngs::StdRng, RngCore, SeedableRng};

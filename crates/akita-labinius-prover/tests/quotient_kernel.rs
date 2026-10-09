@@ -1,5 +1,9 @@
 #![cfg(feature = "labinius")]
 
+#[path = "quotient_support.rs"]
+mod quotient_support;
+use quotient_support::a_relation_quotients as reference;
+
 #[path = "root_reduction_support.rs"]
 mod support;
 
@@ -11,7 +15,6 @@ use akita_challenges::{BinaryChallenge, BinaryChallengeSampler};
 use akita_error::AkitaError;
 use akita_labinius_prover::{
     commit_binary_clear,
-    lowered::a_relation_quotients as reference,
     quotient_kernel::{a_relation_quotients as kernel, ConjugateModulus, PreparedQuotientMatrix},
     PreparedCommitMatrix,
 };
