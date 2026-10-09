@@ -107,6 +107,7 @@ dependencies = [
  "akita-error",
  "akita-labinius-verifier",
  "akita-params",
+ "akita-types",
  "criterion",
  "jolt-field",
  "rand 0.8.8",
@@ -122,6 +123,7 @@ dependencies = [
  "akita-error",
  "akita-params",
  "akita-transcript",
+ "akita-types",
  "jolt-field",
 ]
 

@@ -33,7 +33,7 @@ orchestration lives in `akita-pcs`.
 | `akita-pcs` | Umbrella orchestration, examples, integration tests |
 | `akita-zk-verifier` (`dev`) | Verifier-side zero-knowledge building blocks (#120); no proof path depends on it |
 | `akita-zk-prover` (`dev`) | Prover-side zero-knowledge building blocks (#120); no proof path depends on it |
-| `akita-labinius-verifier` (`dev`) | Standalone clear binary opening admission, field-switch frontend, parsing, and direct endpoint checks (#45) |
+| `akita-labinius-verifier` (`dev`) | Seed-derived admitted root setup, standalone clear binary opening admission, field-switch frontend, parsing, and direct endpoint checks (#45) |
 | `akita-labinius-prover` (`dev`) | Binary source commitment and clear opening prover (#45); differential oracle with no production admission |
 
 ## Dependency Layers
@@ -65,6 +65,7 @@ graph TD
   LabiniusVerifier --> Error
   LabiniusVerifier --> Challenges
   LabiniusVerifier --> Params
+  LabiniusVerifier --> Types
   LabiniusVerifier --> Transcript
   LabiniusVerifier --> Field
   LabiniusProver --> LabiniusVerifier

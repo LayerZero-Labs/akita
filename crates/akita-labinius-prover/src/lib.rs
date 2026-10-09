@@ -1,12 +1,16 @@
-//! Standalone clear binary openings for the opt-in LaBinius differential oracle.
+//! Prover-side binary-root components for the opt-in LaBinius extension.
 //!
 //! This crate commits binary host words and proves their host-field multilinear
-//! evaluation. It performs no SIS lookup or production parameter admission,
-//! and the clear integer response provides no zero knowledge.
+//! evaluation with a clear integer response, which provides no zero knowledge,
+//! and builds the lowered root witness (`lowered`). Setup admission lives in
+//! the verifier crate: these functions accept any admitted
+//! `BinaryClearSetup`, explicit or seed-derived.
 
 #![cfg(feature = "labinius")]
 
 pub mod commit_kernel;
+pub mod lowered;
+
 pub use commit_kernel::{commit_binary_clear_prepared, PreparedCommitMatrix};
 
 use akita_algebra::{binary::field_switch::SwitchField, SmoothFftField, TrinomialModulus};

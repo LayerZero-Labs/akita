@@ -6,6 +6,10 @@ use super::{
     LabiniusRingDegree, LabiniusRootProfile, LabiniusSourceComparisonId, SourceOccurrenceBound,
 };
 
+#[path = "root_encoding.rs"]
+mod root_encoding;
+pub use root_encoding::{LabiniusDigitBase, LabiniusRootEncoding, LabiniusSignedDigitRange};
+
 /// Fully derived and SIS-admitted geometry for the direct binary-root baseline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabiniusRootShape {
@@ -272,19 +276,15 @@ fn derive_shape(
     })
 }
 
-#[cfg(test)]
-#[path = "parity_tests.rs"]
-mod parity_tests;
-#[cfg(test)]
-#[path = "root_shape_tests.rs"]
-mod tests;
-
 // One shared accepted-envelope formula for admission and exposed range totals.
 fn parity_no_wrap_total(h: u128, q: u128, k: u128) -> Option<u128> {
     h.checked_add(q.checked_mul(3)?)?
         .checked_add(k.checked_mul(2)?)
 }
 
-#[path = "root_encoding.rs"]
-mod root_encoding;
-pub use root_encoding::{LabiniusDigitBase, LabiniusRootEncoding, LabiniusSignedDigitRange};
+#[cfg(test)]
+#[path = "parity_tests.rs"]
+mod parity_tests;
+#[cfg(test)]
+#[path = "root_shape_tests.rs"]
+mod tests;
