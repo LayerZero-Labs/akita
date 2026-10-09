@@ -280,6 +280,15 @@ fn numerically_admitted_shape_can_exceed_the_matrix_materialization_budget() {
     assert!(matches!(outcome, Ok(Err(AkitaError::InvalidSetup(_)))));
 }
 
+#[test]
+fn first_real_profile_shape_fits_the_matrix_materialization_budget() {
+    let admitted = derive(22, 8, 128, 0x77);
+    let setup = admitted.setup();
+    assert_eq!(admitted.shape().rank_a(), 1);
+    assert_eq!((setup.n_a(), setup.m(), setup.columns()), (1, 4096, 256));
+    assert_eq!(setup.matrix().len() * 648, 2_654_208);
+}
+
 fn clear_roundtrip<H: TestHost>() {
     let admitted = derive(2, 0, 128, 0x81);
     let setup = admitted.setup();

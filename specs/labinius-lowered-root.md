@@ -169,6 +169,14 @@ quotient interpolation would require a separate algebra seam.
 These are obligations for the later proof protocol, not proof obligations
 discharged by these arithmetic helpers.
 
+The setup and statement, the evaluation claim, the left expansion U, the fold
+challenges and the image table Y (or a binding commitment to it) MUST be fixed
+and authenticated before alpha and xi are drawn, together with the witness
+messages each bullet names. Every one of these values enters the polynomials
+the challenges test: an image table chosen after alpha, for example, could be
+adjusted to satisfy a false A row. All evaluated rows MUST be fixed before
+gamma.
+
 - A false A polynomial row survives uniform alpha with probability at most
   `(2D-2)/|F|`, equal to `1294/|F|` at D648. QA and W must be fixed before alpha.
 - A parity polynomial row false modulo P survives uniform xi with probability
