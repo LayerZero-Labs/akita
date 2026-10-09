@@ -104,12 +104,15 @@ fn audit_regression_pr01() {
             for trial in 0..TRIALS {
                 let poly = make_dense_poly(num_vars, 0x5eed_0000 + trial);
                 let point = random_point(num_vars, 0x9e37_0000 + trial);
-                let openings = vec![opening_from_poly_for_layout(
-                    &poly,
-                    &point,
-                    &layout,
-                    BasisMode::Lagrange,
-                )];
+                let openings = vec![match layout.inner_commit_matrix_params().ring_dimension() {
+                    1024 => opening_from_poly_with_basis::<1024, _>(
+                        &poly,
+                        &point,
+                        &layout,
+                        BasisMode::Lagrange,
+                    ),
+                    _ => opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange),
+                }];
                 let akita_cpu_backend::CommitOutput {
                     committed_group: commitment,
                     private_handle: hint,
