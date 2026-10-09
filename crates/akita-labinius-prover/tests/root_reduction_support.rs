@@ -6,7 +6,7 @@ pub(crate) mod common;
 
 use akita_algebra::{binary::BinaryField128, MinusTrinomial};
 use akita_labinius_prover::{
-    commit_binary_clear, lowered::flatten_image, prove_root_reduction_bytes, PreparedRootMatrices,
+    commit_binary_clear, lowered::flatten_image, prove_root_reduction_bytes, PreparedCommitMatrix,
     TransparentRootProverOracle,
 };
 use akita_labinius_verifier::{
@@ -43,7 +43,7 @@ pub(crate) fn admitted(fold: u32, seed: u8) -> Setup {
 
 pub(crate) struct Case<T: TestHost = H> {
     pub(crate) admitted: Setup,
-    pub(crate) prepared: PreparedRootMatrices<F, 648, MinusTrinomial>,
+    pub(crate) prepared: PreparedCommitMatrix<F, 648, MinusTrinomial>,
     pub(crate) base: LabiniusDigitBase,
     pub(crate) source: Vec<T::Source>,
     pub(crate) point: Vec<T>,
@@ -55,13 +55,16 @@ pub(crate) struct Case<T: TestHost = H> {
 
 impl<T: TestHost> Case<T> {
     pub(crate) fn new(base: LabiniusDigitBase, fold: u32) -> Self {
-        let admitted = admitted(fold, 0x31);
+        Self::from_admitted(base, admitted(fold, 0x31))
+    }
+
+    pub(crate) fn from_admitted(base: LabiniusDigitBase, admitted: Setup) -> Self {
         let setup = admitted.setup();
         let (source, point, value) = data::<T>(setup.source_len(), setup.num_vars());
         let commitment = commit_binary_clear::<T, F, 648, MinusTrinomial>(setup, &source).unwrap();
         let layout = LoweredRootLayout::new(setup, admitted.shape(), base).unwrap();
         let image = flatten_image(&layout, &commitment).unwrap();
-        let prepared = PreparedRootMatrices::prepare(setup).unwrap();
+        let prepared = PreparedCommitMatrix::prepare(setup).unwrap();
         Self {
             admitted,
             prepared,
@@ -116,7 +119,6 @@ impl<T: TestHost> Case<T> {
             ),
             ("U", self.layout.columns() * 21),
             ("W", self.layout.witness_len()),
-            ("QA", self.layout.n_a() * 647 * 16),
             (
                 "Q",
                 encoding.parity_quotient_len() * (encoding.quotient().bits() as usize).div_ceil(8),

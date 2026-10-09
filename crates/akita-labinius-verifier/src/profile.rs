@@ -11,7 +11,8 @@ use akita_algebra::ring::{TrinomialModulus, TrinomialNttDomain, TrinomialRing};
 use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing};
 use akita_error::{checked, AkitaError};
 use akita_params::sis::labinius::{
-    checked_source_comparison_class_bound, LabiniusCoefficientPrime, LabiniusRingDegree,
+    checked_source_comparison_class_bound, LabiniusCoefficientPrime, LabiniusCommitmentModulus,
+    LabiniusDigitBase, LabiniusRingDegree, LabiniusRootShape, LabiniusSignedDigitRange,
     LabiniusSourceComparisonId, SourceOccurrenceBound,
 };
 
@@ -19,6 +20,7 @@ use akita_params::sis::labinius::{
 #[derive(Clone, Debug)]
 pub struct BinaryClearSetup<F, const D: usize, M: TrinomialModulus> {
     matrix: Vec<TrinomialRing<F, D, M>>,
+    a_offset_remainders: Vec<TrinomialRing<F, D, M>>,
     n_a: usize,
     m: usize,
     columns: usize,
@@ -32,6 +34,8 @@ pub struct BinaryClearSetup<F, const D: usize, M: TrinomialModulus> {
     coefficient_prime: LabiniusCoefficientPrime,
     ring_degree: LabiniusRingDegree,
     matrix_view_digest: [u8; 32],
+    commitment_modulus: LabiniusCommitmentModulus,
+    a_carry: Option<LabiniusSignedDigitRange>,
 }
 
 impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> BinaryClearSetup<F, D, M> {
@@ -118,24 +122,12 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> BinaryClearSetup<F,
                 "binary challenge profile fails fold budget".into(),
             ));
         }
-        TrinomialNttDomain::<F, D, M>::new()
+        crate::lowered::adjoint::trace_inverse_scale::<F>(D)?;
+        let domain = TrinomialNttDomain::<F, D, M>::new()
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
-        let mut header = Vec::new();
-        crate::codec::length_prefixed(&mut header, b"akita/labinius/clear-matrix-view/v1")?;
-        for dimension in [n_a, m, D] {
-            append_size(&mut header, dimension)?;
-        }
-        header.extend_from_slice(&M::MIDDLE_COEFFICIENT.to_le_bytes());
-        let coefficient_count = checked::product([matrix_len, D])
-            .ok_or_else(|| AkitaError::InvalidSetup("matrix coefficient count overflow".into()))?;
-        let mut coefficients = Vec::new();
-        coefficients
-            .try_reserve_exact(coefficient_count)
-            .map_err(|_| AkitaError::InvalidSetup("matrix digest allocation failed".into()))?;
-        for element in &matrix {
-            coefficients.extend_from_slice(element.coefficients());
-        }
-        let matrix_view_digest = crate::channel::matrix_digest(&header, &coefficients)?;
+        let a_offset_remainders = prepare_a_offset_remainders(&matrix, n_a, m, k, lower, &domain)?;
+        let matrix_view_digest =
+            matrix_view_digest(&matrix, n_a, m, LabiniusCommitmentModulus::CoefficientPrime)?;
         let diameter = u128::try_from(i128::from(upper) - i128::from(lower))
             .map_err(|_| AkitaError::InvalidSetup("response interval diameter overflow".into()))?;
         let occurrence = SourceOccurrenceBound::binary_extracted(
@@ -153,6 +145,7 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> BinaryClearSetup<F,
         )?;
         Ok(Self {
             matrix,
+            a_offset_remainders,
             n_a,
             m,
             columns,
@@ -166,12 +159,67 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> BinaryClearSetup<F,
             coefficient_prime,
             ring_degree,
             matrix_view_digest,
+            commitment_modulus: LabiniusCommitmentModulus::CoefficientPrime,
+            a_carry: None,
         })
+    }
+
+    // The seed-derived root constructor supplies the closed profile's modulus
+    // and carry admission. Explicit clear setups retain their original contract.
+    pub(crate) fn admit_root_modulus(
+        &mut self,
+        shape: &LabiniusRootShape,
+    ) -> Result<(), AkitaError> {
+        let modulus = shape.commitment_modulus();
+        if let Some(q0) = modulus.small_modulus() {
+            for coefficient in self.matrix.iter().flat_map(|entry| entry.coefficients()) {
+                if crate::commitment::canonical_coefficient(*coefficient)? >= u128::from(q0) {
+                    return Err(AkitaError::InvalidSetup(
+                        "small-modulus matrix coefficient is not reduced".into(),
+                    ));
+                }
+            }
+            let bound = u128::try_from(self.m)
+                .ok()
+                .and_then(|m| m.checked_mul(D as u128))
+                .and_then(|value| value.checked_mul(u128::from(q0 - 1)))
+                .and_then(|value| value.checked_mul(6))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("binary commitment lift bound overflow".into())
+                })?;
+            if bound >= self.coefficient_prime.modulus() {
+                return Err(AkitaError::InvalidSetup(
+                    "binary commitment lift wraps coefficient prime".into(),
+                ));
+            }
+            self.matrix_view_digest = matrix_view_digest(&self.matrix, self.n_a, self.m, modulus)?;
+            // The clear endpoint has no digit alphabet: use the smallest,
+            // one-bit carry interval admitted for this geometry.
+            self.a_carry = shape.derive_encoding(LabiniusDigitBase::Bits1)?.a_carry();
+        }
+        self.commitment_modulus = modulus;
+        Ok(())
+    }
+
+    /// Closed commitment modulus; explicit clear setups use the coefficient prime.
+    pub fn commitment_modulus(&self) -> LabiniusCommitmentModulus {
+        self.commitment_modulus
+    }
+
+    /// Integer carry interval enforced by the clear endpoint, if lifted.
+    /// The clear API has no digit base and uses the admitted one-bit interval.
+    pub fn a_carry(&self) -> Option<LabiniusSignedDigitRange> {
+        self.a_carry
     }
 
     /// Explicit row-major Ajtai matrix.
     pub fn matrix(&self) -> &[TrinomialRing<F, D, M>] {
         &self.matrix
+    }
+    /// Matrix-bound cached `H_i = (sum_j A_ij) * O` in the commitment ring.
+    /// `O[t]` is the signed-packing response offset, independent of digit base.
+    pub fn a_offset_remainders(&self) -> &[TrinomialRing<F, D, M>] {
+        &self.a_offset_remainders
     }
     /// Number of Ajtai matrix rows.
     pub fn n_a(&self) -> usize {
@@ -257,9 +305,81 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> BinaryClearSetup<F,
     }
 }
 
+// Keep [F; D] ring temporaries outside the public constructor's stack frame.
+// Only the geometry/resource-checked path may enter this setup cache builder.
+#[inline(never)]
+fn prepare_a_offset_remainders<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
+    matrix: &[TrinomialRing<F, D, M>],
+    n_a: usize,
+    m: usize,
+    k: usize,
+    lower: i64,
+    domain: &TrinomialNttDomain<F, D, M>,
+) -> Result<Vec<TrinomialRing<F, D, M>>, AkitaError> {
+    let offset = i128::from(lower)
+        .checked_neg()
+        .ok_or_else(|| AkitaError::InvalidSetup("response offset overflow".into()))?;
+    let offset_polynomial = TrinomialRing::from_coefficients(std::array::from_fn(|t| {
+        let positive = k == 1 || (t / k).is_multiple_of(2);
+        crate::lowered::signed_field::<F>(if positive { offset } else { offset - 1 })
+    }))
+    .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
+    let mut a_offset_remainders = Vec::new();
+    a_offset_remainders
+        .try_reserve_exact(n_a)
+        .map_err(|_| AkitaError::InvalidSetup("offset remainder allocation failed".into()))?;
+    let mut workspace = domain.workspace();
+    for row in matrix.chunks_exact(m) {
+        let mut sum = TrinomialRing::<F, D, M>::zero()
+            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
+        for entry in row {
+            sum += *entry;
+        }
+        a_offset_remainders.push(domain.multiply_with_workspace(
+            &sum,
+            &offset_polynomial,
+            &mut workspace,
+        ));
+    }
+    Ok(a_offset_remainders)
+}
+
 fn append_size(bytes: &mut Vec<u8>, value: usize) -> Result<(), AkitaError> {
     let value = u64::try_from(value)
         .map_err(|_| AkitaError::InvalidSetup("identity size conversion overflow".into()))?;
     bytes.extend_from_slice(&value.to_le_bytes());
     Ok(())
+}
+
+fn matrix_view_digest<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
+    matrix: &[TrinomialRing<F, D, M>],
+    n_a: usize,
+    m: usize,
+    modulus: LabiniusCommitmentModulus,
+) -> Result<[u8; 32], AkitaError> {
+    let mut header = Vec::new();
+    let domain: &[u8] = if modulus.small_modulus().is_some() {
+        b"akita/labinius/clear-matrix-view/reduced/v1"
+    } else {
+        b"akita/labinius/clear-matrix-view/v1"
+    };
+    crate::codec::length_prefixed(&mut header, domain)?;
+    if let Some(q0) = modulus.small_modulus() {
+        header.push(modulus.tag());
+        header.extend_from_slice(&q0.to_le_bytes());
+    }
+    for dimension in [n_a, m, D] {
+        append_size(&mut header, dimension)?;
+    }
+    header.extend_from_slice(&M::MIDDLE_COEFFICIENT.to_le_bytes());
+    let coefficient_count = checked::product([matrix.len(), D])
+        .ok_or_else(|| AkitaError::InvalidSetup("matrix coefficient count overflow".into()))?;
+    let mut coefficients = Vec::new();
+    coefficients
+        .try_reserve_exact(coefficient_count)
+        .map_err(|_| AkitaError::InvalidSetup("matrix digest allocation failed".into()))?;
+    for element in matrix {
+        coefficients.extend_from_slice(element.coefficients());
+    }
+    crate::channel::matrix_digest(&header, &coefficients)
 }

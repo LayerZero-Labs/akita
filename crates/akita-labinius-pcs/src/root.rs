@@ -40,6 +40,7 @@ impl<C: DigitConfig> RootPcsProver<C> {
         digit_schedules: TrustedScheduleCatalog<C>,
         setup: AkitaProverSetup<F>,
     ) -> Result<Self, AkitaError> {
+        crate::setup::ensure_supported_root(&admitted)?;
         setup
             .check()
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
@@ -83,7 +84,7 @@ impl<C: DigitConfig> RootPcsProver<C> {
         H::Source: Sync,
     {
         self.image
-            .commit::<H>(&self.admitted, self.prepared.commit(), source)
+            .commit::<H>(&self.admitted, &self.prepared, source)
     }
 
     /// Prepare a single-use oracle for a caller-owned root channel.
@@ -135,6 +136,7 @@ impl<C: DigitConfig> RootPcsVerifier<C> {
         digit_schedules: TrustedScheduleCatalog<C>,
         setup: AkitaVerifierSetup<F>,
     ) -> Result<Self, AkitaError> {
+        crate::setup::ensure_supported_root(&admitted)?;
         setup
             .check()
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;

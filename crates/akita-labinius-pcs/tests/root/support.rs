@@ -302,7 +302,6 @@ impl<C: TestDigits, H: Host> Case<C, H> {
             ("U", self.layout.columns() * 21),
             ("W length", 8),
             ("W commitment", commitment_len),
-            ("QA", self.layout.n_a() * 647 * 16),
             (
                 "Q",
                 encoding.parity_quotient_len() * (encoding.quotient().bits() as usize).div_ceil(8),

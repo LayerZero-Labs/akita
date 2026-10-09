@@ -4,6 +4,9 @@ Status: active
 Book-chapter: book/src/foundations/security.md
 Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 
+The second commitment-modulus profile and its conditional lift are specified in
+[`labinius-small-modulus-root.md`](labinius-small-modulus-root.md).
+
 ## Scope and profile
 
 The opt-in `labinius-sis` feature supplies a runtime certified-width lookup and
@@ -62,10 +65,11 @@ dominate the request. Missing coverage rejects. There is no interpolation,
 extrapolation or runtime lattice estimation. A stronger norm cell can admit a
 request at the same rank after one particular cell's norm boundary is crossed.
 
-The admitted image has `n_A * C * D` coefficients. Products in the A relation
-have degree at most `2D-2`; division by the monic degree-D cyclotomic polynomial
-therefore gives quotient degree at most `D-2`, or `n_A * (D-1)` coefficients
-(issue section 5).
+The admitted image has `n_A*C*D` coefficients. The root reduction tests the
+matrix-row remainder modulo the degree-D trinomial; each row has degree below
+D and tag 0 sends no auxiliary matrix-row witness. The relation and its
+`(D-1)/P` evaluation bound are owned by
+[the lowered relation](labinius-lowered-root.md#polynomial-rows).
 
 ## Direct parity quotient and carry
 
@@ -233,7 +237,7 @@ The canonical derivation applies these gates in order:
 3. Check the response interval and deterministic honest response envelope.
 4. Use the source-comparison ledger, including its `eta_A < P` check.
 5. Select the minimum dominating certified SIS rank; reject missing coverage.
-6. Derive image/quotient lengths and honest parity bounds with checked arithmetic.
+6. Derive image lengths and honest parity quotient/carry bounds with checked arithmetic.
 
 Caller-selected failures use `AkitaError::InvalidSetup`, matching neighbouring
 SIS admission. Actual parity range envelopes are checked by `derive_encoding` when the
@@ -244,7 +248,7 @@ runtime profile plugin.
 
 For `(log_num_cells, log_fold_width, lambda_fold) = (22,8,128)` the shape has
 `N=4194304`, `C=256`, `M=16384`, `m=4096`, `k=4`, `n_A=1`,
-`eta_A=24116880`, image length 165888, and A-quotient length 647.
+`eta_A=24116880` and image length 165888. The reduction has no A-quotient message.
 The direct residual bound is `162 * 2^29 + 256 * 46 = 86973099520`.
 At budget 128 the bounded-weight family supports at most 315 columns, so the
 largest admitted power-of-two fold width is 256 (log 8). Log 9 rejects at the

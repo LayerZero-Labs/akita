@@ -9,7 +9,7 @@ use akita_params::sis::{
     source_comparison_inf_norm,
 };
 use akita_sis_estimator::{
-    labinius_width_table::certified_rows,
+    labinius_width_table::{certified_rows, certified_small_modulus_rows},
     width_table::{
         generate_infinity_width_rows, validate_infinity_width_rows, InfinityWidthOrigin,
         InfinityWidthRow, InfinityWidthTableConfig, INFINITY_WIDTH_EVALUATOR_ID,
@@ -26,6 +26,22 @@ use std::{
 
 const DELTA_32: u64 = (1u64 << 32) - 1;
 const DELTA_16: u64 = (1u64 << 16) - 1;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TableKind {
+    SharedPrime,
+    SmallModulus,
+}
+
+impl TableKind {
+    fn from_profiles(profiles: &[AkitaModulusProfileId]) -> Self {
+        if profiles == [AkitaModulusProfileId::Q28Offset2103] {
+            Self::SmallModulus
+        } else {
+            Self::SharedPrime
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 struct SourceProfile {
@@ -86,6 +102,7 @@ struct Args {
     rust_output: PathBuf,
     from_csv: bool,
     profiles: Vec<AkitaModulusProfileId>,
+    table_kind: TableKind,
     dims: Vec<u32>,
     source_profiles: Vec<&'static str>,
     max_rank: u32,
@@ -96,10 +113,18 @@ struct Args {
 fn main() {
     let args = Args::parse();
     if args.from_csv {
-        let rows = certified_rows()
-            .unwrap_or_else(|error| fatal(&format!("CSV certificate validation failed: {error}")));
-        let csv = include_bytes!("../data/labinius_infinity_width.csv");
-        write_runtime_table(&args.rust_output, rows, csv);
+        let rows = if args.table_kind == TableKind::SmallModulus {
+            certified_small_modulus_rows()
+        } else {
+            certified_rows()
+        }
+        .unwrap_or_else(|error| fatal(&format!("CSV certificate validation failed: {error}")));
+        let csv: &[u8] = if args.table_kind == TableKind::SmallModulus {
+            include_bytes!("../data/labinius_small_modulus_infinity_width.csv")
+        } else {
+            include_bytes!("../data/labinius_infinity_width.csv")
+        };
+        write_runtime_table(&args.rust_output, args.table_kind, rows, csv);
         return;
     }
     let specs = selected_specs(&args);
@@ -130,14 +155,22 @@ fn main() {
     validate_infinity_width_rows(&rows)
         .unwrap_or_else(|error| fatal(&format!("certificate validation failed: {error}")));
 
+    if args.table_kind == TableKind::SmallModulus {
+        for row in &rows {
+            eprintln!("candidate {}", row.to_csv_record());
+        }
+    }
+    let certified_rows = rows
+        .iter()
+        .filter(|row| {
+            row.max_width > 0 && (!row.hit_cap || args.table_kind == TableKind::SmallModulus)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     let mut output = format!(
         "estimator_id,source_profile,scalar_degree,packing_degree,{}\n",
         InfinityWidthRow::csv_header()
     );
-    let certified_rows = rows
-        .iter()
-        .filter(|row| row.max_width > 0 && !row.hit_cap)
-        .collect::<Vec<_>>();
     for row in &certified_rows {
         let source = source_for_row(row.modulus_profile, row.d, row.coeff_linf_bound);
         output.push_str(&format!(
@@ -148,6 +181,8 @@ fn main() {
             row.to_csv_record()
         ));
     }
+    let runtime = runtime_table(args.table_kind, &certified_rows, output.as_bytes())
+        .unwrap_or_else(|error| fatal(&error));
     if let Some(parent) = args.output.parent() {
         fs::create_dir_all(parent)
             .unwrap_or_else(|error| fatal(&format!("create output directory failed: {error}")));
@@ -161,36 +196,90 @@ fn main() {
         started.elapsed().as_secs_f64()
     );
     eprintln!(
-        "omitted {} zero-width or cap-limited candidate row(s)",
+        "omitted {} unpublished candidate row(s)",
         rows.len() - certified_rows.len()
     );
-    let certified_rows = certified_rows.into_iter().cloned().collect::<Vec<_>>();
-    write_runtime_table(&args.rust_output, &certified_rows, output.as_bytes());
+    if let Some(parent) = args.rust_output.parent() {
+        fs::create_dir_all(parent)
+            .unwrap_or_else(|error| fatal(&format!("create runtime directory failed: {error}")));
+    }
+    fs::write(&args.rust_output, runtime).unwrap_or_else(|error| {
+        fatal(&format!(
+            "write {} failed: {error}",
+            args.rust_output.display()
+        ))
+    });
+    eprintln!(
+        "wrote {} certified runtime LaBinius cell(s) to {}",
+        certified_rows.len(),
+        args.rust_output.display()
+    );
 }
 
-fn runtime_table(rows: &[InfinityWidthRow], csv: &[u8]) -> String {
+fn runtime_table(kind: TableKind, rows: &[InfinityWidthRow], csv: &[u8]) -> Result<String, String> {
+    if rows.is_empty() {
+        return Err("no row was certified; both outputs were left unchanged".to_owned());
+    }
+    let small_modulus = kind == TableKind::SmallModulus;
     let mut rows = rows.iter().collect::<Vec<_>>();
     rows.sort_by_key(|row| {
         (
-            coefficient_prime(row.modulus_profile),
+            row.modulus_profile,
             row.d,
             row.rank,
             row.coeff_linf_bound,
             row.max_width,
         )
     });
-    let mut output = String::from(
+    let (source, column, modulus_type, cell_type, cell_import, table_name) = if small_modulus {
+        (
+            "labinius_small_modulus_infinity_width.csv",
+            "commitment_modulus",
+            "LabiniusCommitmentModulus",
+            "LabiniusSmallModulusWidthCell",
+            "{LabiniusSmallModulusWidthCell, LabiniusWidthCutoff}",
+            "LABINIUS_SMALL_MODULUS_WIDTH_TABLE",
+        )
+    } else {
+        (
+            "labinius_infinity_width.csv",
+            "coefficient_prime",
+            "LabiniusCoefficientPrime",
+            "LabiniusWidthCell",
+            "LabiniusWidthCell",
+            "LABINIUS_WIDTH_TABLE",
+        )
+    };
+    let mut output = format!(
         "// AUTO-GENERATED by labinius_infinity_width_table --from-csv -- do not edit by hand.\n\
-         // Source: crates/akita-sis-estimator/data/labinius_infinity_width.csv\n\n\
-         use super::width_table::LabiniusWidthCell;\n\
-         use super::{LabiniusCoefficientPrime, LabiniusRingDegree};\n\n\
+         // Source: crates/akita-sis-estimator/data/{source}\n\n\
+         use super::width_table::{cell_import};\n\
+         use super::{{{modulus_type}, LabiniusRingDegree}};\n\n\
          #[rustfmt::skip]\n\
-         pub const LABINIUS_WIDTH_TABLE: &[LabiniusWidthCell] = &[\n",
+         pub const {table_name}: &[{cell_type}] = &[\n",
     );
     for row in rows {
+        let modulus_variant = if small_modulus {
+            if row.modulus_profile != AkitaModulusProfileId::Q28Offset2103 {
+                return Err(format!(
+                    "modulus profile {:?} does not belong to the small-modulus table",
+                    row.modulus_profile
+                ));
+            }
+            "Q28Offset2103".to_owned()
+        } else {
+            format!("{:?}", coefficient_prime(row.modulus_profile)?)
+        };
+        let cutoff = if small_modulus {
+            format!(
+                ", cutoff: LabiniusWidthCutoff::{}",
+                if row.hit_cap { "SearchCap" } else { "Exact" }
+            )
+        } else {
+            String::new()
+        };
         output.push_str(&format!(
-            "    LabiniusWidthCell {{ coefficient_prime: LabiniusCoefficientPrime::{:?}, ring_degree: LabiniusRingDegree::{:?}, rank: {}, coeff_linf_bound: {}, max_width: {} }},\n",
-            coefficient_prime(row.modulus_profile),
+            "    {cell_type} {{ {column}: {modulus_type}::{modulus_variant}, ring_degree: LabiniusRingDegree::{:?}, rank: {}, coeff_linf_bound: {}, max_width: {}{cutoff} }},\n",
             ring_degree(row.d),
             row.rank,
             row.coeff_linf_bound,
@@ -199,9 +288,9 @@ fn runtime_table(rows: &[InfinityWidthRow], csv: &[u8]) -> String {
     }
     let digest: [u8; 32] = Sha3_256::digest(csv).into();
     output.push_str(&format!(
-        "];\n\n#[rustfmt::skip]\npub const LABINIUS_WIDTH_TABLE_DIGEST: [u8; 32] = {digest:?};\n"
+        "];\n\n#[rustfmt::skip]\npub const {table_name}_DIGEST: [u8; 32] = {digest:?};\n"
     ));
-    output
+    Ok(output)
 }
 
 fn ring_degree(degree: u32) -> LabiniusRingDegree {
@@ -216,12 +305,13 @@ fn ring_degree(degree: u32) -> LabiniusRingDegree {
     }
 }
 
-fn write_runtime_table(path: &Path, rows: &[InfinityWidthRow], csv: &[u8]) {
+fn write_runtime_table(path: &Path, kind: TableKind, rows: &[InfinityWidthRow], csv: &[u8]) {
+    let runtime = runtime_table(kind, rows, csv).unwrap_or_else(|error| fatal(&error));
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .unwrap_or_else(|error| fatal(&format!("create runtime directory failed: {error}")));
     }
-    fs::write(path, runtime_table(rows, csv))
+    fs::write(path, runtime)
         .unwrap_or_else(|error| fatal(&format!("write {} failed: {error}", path.display())));
     eprintln!(
         "wrote {} certified runtime LaBinius cell(s) to {}",
@@ -320,18 +410,20 @@ impl SourceProfile {
             occurrence.slack_operator_bound(),
         )
         .unwrap_or_else(|| fatal("source collision bound overflow"));
-        if eta >= coefficient_prime(modulus_profile).modulus() {
+        if num_bigint::BigUint::from(eta) >= modulus_profile.modulus() {
             fatal("source collision bound does not satisfy eta < P");
         }
         u64::try_from(eta).unwrap_or_else(|_| fatal("source collision bound exceeds u64"))
     }
 }
 
-fn coefficient_prime(profile: AkitaModulusProfileId) -> LabiniusCoefficientPrime {
+fn coefficient_prime(profile: AkitaModulusProfileId) -> Result<LabiniusCoefficientPrime, String> {
     match profile {
-        AkitaModulusProfileId::Q64Offset23703 => LabiniusCoefficientPrime::P64Offset23703,
-        AkitaModulusProfileId::Q128OffsetA7F7 => LabiniusCoefficientPrime::P128OffsetA7F7,
-        _ => fatal("LaBinius tables support only q64-labinius and q128"),
+        AkitaModulusProfileId::Q64Offset23703 => Ok(LabiniusCoefficientPrime::P64Offset23703),
+        AkitaModulusProfileId::Q128OffsetA7F7 => Ok(LabiniusCoefficientPrime::P128OffsetA7F7),
+        _ => Err(format!(
+            "modulus profile {profile:?} does not belong to the shared-prime table"
+        )),
     }
 }
 
@@ -346,6 +438,7 @@ impl Args {
                 AkitaModulusProfileId::Q64Offset23703,
                 AkitaModulusProfileId::Q128OffsetA7F7,
             ],
+            table_kind: TableKind::SharedPrime,
             dims: vec![162, 324, 648, 486, 972, 1_944],
             source_profiles: SOURCE_PROFILES
                 .iter()
@@ -355,6 +448,7 @@ impl Args {
             search_cap: None,
             use_default_coverage: true,
         };
+        let mut explicit = std::collections::BTreeSet::new();
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
             if arg == "--help" || arg == "-h" {
@@ -367,6 +461,7 @@ impl Args {
             let value = args
                 .next()
                 .unwrap_or_else(|| fatal(&format!("missing value for {arg}")));
+            explicit.insert(arg.clone());
             match arg.as_str() {
                 "--output" => parsed.output = PathBuf::from(value),
                 "--rust-output" => parsed.rust_output = PathBuf::from(value),
@@ -406,6 +501,34 @@ impl Args {
                 _ => fatal(&format!("unknown argument {arg}")),
             }
         }
+        parsed.table_kind = TableKind::from_profiles(&parsed.profiles);
+        if parsed
+            .profiles
+            .contains(&AkitaModulusProfileId::Q28Offset2103)
+        {
+            if parsed.table_kind != TableKind::SmallModulus {
+                fatal("q28-labinius must be selected alone");
+            }
+            if !explicit.contains("--output") {
+                parsed.output = PathBuf::from(
+                    "crates/akita-sis-estimator/data/labinius_small_modulus_infinity_width.csv",
+                );
+            }
+            if !explicit.contains("--rust-output") {
+                parsed.rust_output = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+                    "../akita-params/src/sis/labinius/generated_small_modulus_width_table.rs",
+                );
+            }
+            if !explicit.contains("--dims") {
+                parsed.dims = vec![648];
+            }
+            if !explicit.contains("--source-profiles") {
+                parsed.source_profiles = vec!["phi243-bounded-w46-delta16"];
+            }
+            if !explicit.contains("--max-rank") {
+                parsed.max_rank = 4;
+            }
+        }
         if parsed.profiles.is_empty()
             || parsed.dims.is_empty()
             || parsed.source_profiles.is_empty()
@@ -436,7 +559,7 @@ where
 
 fn usage(code: i32) -> ! {
     eprintln!(
-        "usage: labinius_infinity_width_table [--from-csv] [--rust-output PATH] [--output PATH] [--profiles q64-labinius,q128] [--dims 162,324,648,486,972,1944] [--source-profiles phi243-bounded-w46-delta16,phi243-fixed-w47-delta16,phi243-bounded-w46-delta32,phi243-fixed-w47-delta32,phi729-fixed-w25-delta16,phi729-fixed-w25-delta32] [--max-rank N] [--search-cap N]"
+        "usage: labinius_infinity_width_table [--from-csv] [--rust-output PATH] [--output PATH] [--profiles q64-labinius,q128 | q28-labinius] [--dims 162,324,648,486,972,1944] [--source-profiles phi243-bounded-w46-delta16,phi243-fixed-w47-delta16,phi243-bounded-w46-delta32,phi243-fixed-w47-delta32,phi729-fixed-w25-delta16,phi729-fixed-w25-delta32] [--max-rank N] [--search-cap N]"
     );
     process::exit(code);
 }
@@ -455,11 +578,99 @@ mod tests {
     fn checked_in_runtime_table_is_the_csv_generator_output() {
         assert_eq!(
             runtime_table(
+                TableKind::SharedPrime,
                 certified_rows().unwrap(),
                 include_bytes!("../data/labinius_infinity_width.csv"),
-            ),
+            )
+            .unwrap(),
             include_str!("../../akita-params/src/sis/labinius/generated_width_table.rs"),
         );
+    }
+
+    #[test]
+    fn small_modulus_runtime_table_is_the_csv_generator_output() {
+        assert_eq!(
+            runtime_table(
+                TableKind::SmallModulus,
+                certified_small_modulus_rows().unwrap(),
+                include_bytes!("../data/labinius_small_modulus_infinity_width.csv")
+            )
+            .unwrap(),
+            include_str!(
+                "../../akita-params/src/sis/labinius/generated_small_modulus_width_table.rs"
+            )
+        );
+    }
+
+    #[test]
+    fn empty_shared_prime_rows_are_rejected() {
+        assert_eq!(
+            runtime_table(TableKind::SharedPrime, &[], b"").unwrap_err(),
+            "no row was certified; both outputs were left unchanged"
+        );
+    }
+
+    #[test]
+    fn empty_small_modulus_rows_are_rejected() {
+        assert_eq!(
+            runtime_table(TableKind::SmallModulus, &[], b"").unwrap_err(),
+            "no row was certified; both outputs were left unchanged"
+        );
+    }
+
+    #[test]
+    fn shared_prime_table_rejects_small_modulus_rows() {
+        assert!(runtime_table(
+            TableKind::SharedPrime,
+            certified_small_modulus_rows().unwrap(),
+            include_bytes!("../data/labinius_small_modulus_infinity_width.csv"),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn small_modulus_table_rejects_shared_prime_rows() {
+        assert!(runtime_table(
+            TableKind::SmallModulus,
+            certified_rows().unwrap(),
+            include_bytes!("../data/labinius_infinity_width.csv"),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn table_kind_is_derived_from_selected_profiles() {
+        assert_eq!(
+            TableKind::from_profiles(&[AkitaModulusProfileId::Q28Offset2103]),
+            TableKind::SmallModulus
+        );
+        assert_eq!(
+            TableKind::from_profiles(&[
+                AkitaModulusProfileId::Q64Offset23703,
+                AkitaModulusProfileId::Q128OffsetA7F7,
+            ]),
+            TableKind::SharedPrime
+        );
+    }
+
+    #[test]
+    fn runtime_tables_export_only_the_selected_table_constant() {
+        let shared = runtime_table(
+            TableKind::SharedPrime,
+            certified_rows().unwrap(),
+            include_bytes!("../data/labinius_infinity_width.csv"),
+        )
+        .unwrap();
+        let small = runtime_table(
+            TableKind::SmallModulus,
+            certified_small_modulus_rows().unwrap(),
+            include_bytes!("../data/labinius_small_modulus_infinity_width.csv"),
+        )
+        .unwrap();
+        assert!(shared.contains("pub const LABINIUS_WIDTH_TABLE:"));
+        assert!(!shared.contains("pub const LABINIUS_SMALL_MODULUS_WIDTH_TABLE:"));
+        assert!(small.contains("pub const LABINIUS_SMALL_MODULUS_WIDTH_TABLE:"));
+        assert!(!small.contains("pub const LABINIUS_WIDTH_TABLE:"));
     }
 
     #[test]

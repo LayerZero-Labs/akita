@@ -7,18 +7,16 @@ use akita_config::{
     ensure_prover_schedule_fits_setup, policy_of, required_setup_prefix_slot_ids_for_schedule,
     CommitmentConfig, SetupRequirements, TrustedScheduleCatalog, ValidatedScheduleCatalog,
 };
-use akita_cpu_backend::AkitaProverSetup;
+use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
 use akita_error::AkitaError;
 use akita_labinius_pcs::{
-    DigitConfig, Digits2, ImageConfig, ImageEvaluation, ImageVerifier, RootPcsProver,
-    RootPcsVerifier, RootSetup, F,
+    DigitConfig, Digits2, ImageConfig, ImageEvaluation, ImageProver, ImageVerifier, PreparedMatrix,
+    RootPcsProver, RootPcsVerifier, RootSetup, F,
 };
 use akita_labinius_verifier::{channel::ClearChannel, lowered::LoweredRootLayout};
-use akita_params::{
-    CommittedGroupBatchProfile, CompressionChainPlan, GroupCommitPhaseParams, PolynomialGroupLayout,
-};
+use akita_params::{CommittedGroupBatchProfile, GroupCommitPhaseParams, PolynomialGroupLayout};
 use akita_serialization::Valid;
-use akita_types::{AkitaVerifierSetup, Commitment, CommittedGroup, RingVec};
+use akita_types::{AkitaVerifierSetup, CommittedGroup};
 use common::Recording;
 use jolt_field::Zero;
 use std::sync::OnceLock;
@@ -27,87 +25,46 @@ struct Fixture {
     root: RootSetup,
     layout: LoweredRootLayout,
     images: TrustedScheduleCatalog<ImageConfig>,
-    digits: TrustedScheduleCatalog<Digits2>,
     prover_setup: AkitaProverSetup<F>,
     verifier_setup: AkitaVerifierSetup<F>,
+    complete_verifier_setup: AkitaVerifierSetup<F>,
     image: CommittedGroup<F>,
+    proof: Vec<u8>,
 }
 
-#[derive(Clone, Copy)]
-enum OffloadedRole {
-    Image,
-    Digits,
-}
-
-fn fixture(role: OffloadedRole) -> &'static Fixture {
+fn fixture() -> &'static Fixture {
     static IMAGE: OnceLock<Fixture> = OnceLock::new();
-    static DIGITS: OnceLock<Fixture> = OnceLock::new();
-    let storage = match role {
-        OffloadedRole::Image => &IMAGE,
-        OffloadedRole::Digits => &DIGITS,
-    };
-    storage.get_or_init(|| {
+    IMAGE.get_or_init(|| {
         let root = RootSetup::derive(
             common::PROFILE,
-            12,
-            8,
+            5,
+            3,
             128,
             akita_types::AkitaSetupSeed::shake256_paged_v1([0x31; 32]),
         )
         .unwrap();
-        let layout = LoweredRootLayout::new(root.setup(), root.shape(), Digits2::BASE).unwrap();
+        let layout = LoweredRootLayout::new(root.setup(), root.shape(), common::BASES[1]).unwrap();
         let image_log = layout.image_log_len();
-        assert_eq!(image_log, 18);
+        assert_eq!(image_log, 13);
         let image_key =
             akita_params::ScheduleLookupKey::single(PolynomialGroupLayout::singleton(image_log));
-        let images = image_catalog(image_log, matches!(role, OffloadedRole::Image));
+        // The ordinary small fixtures use direct setup. Retain the audited
+        // recursive artifact's offloading edges for this scalar image row.
+        let images = image_opening_catalog(image_log);
         let image_row = images.resolve_key(&image_key).unwrap();
-        let key = akita_params::ScheduleLookupKey {
-            final_group: PolynomialGroupLayout::singleton(layout.witness_log_len()),
-            precommitteds: vec![image_row.profiles().final_group],
-        };
-        let digits = digit_catalog(&key, matches!(role, OffloadedRole::Digits));
-        let digit_row = digits.resolve_key(&key).unwrap();
-        let required = match role {
-            OffloadedRole::Image => image_row,
-            OffloadedRole::Digits => digit_row,
-        };
-        assert!(
-            !required_setup_prefix_slot_ids_for_schedule(
-                required.schedule(),
-                &required.profiles().opening_layout().unwrap(),
-            )
-            .unwrap()
-            .is_empty(),
-            "selected test row must offload setup"
-        );
-        let other = match role {
-            OffloadedRole::Image => digit_row,
-            OffloadedRole::Digits => image_row,
-        };
-        assert!(
-            required_setup_prefix_slot_ids_for_schedule(
-                other.schedule(),
-                &other.profiles().opening_layout().unwrap(),
-            )
-            .unwrap()
-            .is_empty(),
-            "the other selected row must not require prefixes"
-        );
-        let max = image_log.max(layout.witness_log_len());
-        let requirements = SetupRequirements::from_catalog(&images, max, 2)
-            .unwrap()
-            .union(SetupRequirements::from_catalog(&digits, max, 2).unwrap())
-            .unwrap();
+        let required = required_setup_prefix_slot_ids_for_schedule(
+            image_row.schedule(),
+            &image_row.profiles().opening_layout().unwrap(),
+        )
+        .unwrap();
+        assert!(!required.is_empty(), "selected test row must offload setup");
+        eprintln!("offloaded image log={image_log} required slots={required:#?}");
+        let requirements = SetupRequirements::from_catalog(&images, image_log, 1).unwrap();
         // Direct-config sizing intentionally does not enumerate offloaded slots.
         // Provision a correct seed and covering matrix with that empty registry.
         assert!(requirements.prefix_slot_ids().is_empty());
-        eprintln!(
-            "offloaded image log={image_log} required setup fields={}",
-            requirements.matrix_capacity().num_field_elements
-        );
         let prover_setup =
-            AkitaProverSetup::generate_with_capacity(max, 2, requirements.matrix_capacity())
+            AkitaProverSetup::generate_with_capacity(image_log, 1, requirements.matrix_capacity())
                 .unwrap();
         let verifier_setup = prover_setup
             .to_verifier_setup(requirements.matrix_capacity())
@@ -123,51 +80,51 @@ fn fixture(role: OffloadedRole) -> &'static Fixture {
             image_row
         )
         .unwrap());
-        let digit_row = digits.resolve_key(&key).unwrap();
-        assert!(TrustedScheduleCatalog::<Digits2>::verifier_admits(
-            verifier_setup.expanded(),
-            digit_row
-        )
-        .unwrap());
         ensure_prover_schedule_fits_setup::<ImageConfig>(
             &prover_setup.expanded,
             image_row.schedule(),
             &image_row.profiles().opening_layout().unwrap(),
         )
         .unwrap();
-        ensure_prover_schedule_fits_setup::<Digits2>(
-            &prover_setup.expanded,
-            digit_row.schedule(),
-            &digit_row.profiles().opening_layout().unwrap(),
-        )
-        .unwrap();
-        let profile = image_row.profiles().final_group;
-        let source = profile
-            .outer_slice_count
-            .complete_source_coefficients(
-                profile.outer.matrix.output_rank(),
-                profile.outer.matrix.ring_dimension(),
+        let mut complete_setup = prover_setup.clone();
+        let backend = CpuBackend::<F, F>::new(complete_setup.expanded.clone()).unwrap();
+        for (_, slot) in backend.export_setup_prefixes(&required).unwrap().iter() {
+            complete_setup.prefix_slots.insert(slot.clone()).unwrap();
+        }
+        let complete_verifier_setup = complete_setup
+            .to_verifier_setup(requirements.matrix_capacity())
+            .unwrap();
+        assert!(required
+            .iter()
+            .all(|id| complete_verifier_setup.prefix_slots().get(id).is_some()));
+        let prover = ImageProver::new(images.clone(), complete_setup).unwrap();
+        let prepared = PreparedMatrix::prepare(root.setup()).unwrap();
+        let output = prover
+            .commit::<BinaryField128>(&root, &prepared, &vec![0u128; root.setup().source_len()])
+            .unwrap();
+        output.committed_group.check().unwrap();
+        let point = vec![F::zero(); image_log];
+        let mut state = akita_transcript::new_prover_channel(b"missing-prefix/v1", b"").unwrap();
+        prover
+            .open_on_channel::<BinaryField128, _>(
+                &root,
+                &output,
+                ImageEvaluation {
+                    point: &point,
+                    value: F::zero(),
+                },
+                &mut state,
             )
             .unwrap();
-        let terminal = CompressionChainPlan::for_complete_source(
-            profile.outer.matrix.sis_table_key().modulus_profile,
-            source,
-        )
-        .unwrap()
-        .terminal_coefficients();
-        let image = CommittedGroup::new(
-            profile,
-            Commitment::new(RingVec::from_coeffs(vec![F::zero(); terminal])),
-        );
-        image.check().unwrap();
         Fixture {
             root,
             layout,
             images,
-            digits,
             prover_setup,
             verifier_setup,
-            image,
+            complete_verifier_setup,
+            image: output.committed_group,
+            proof: state.narg_string().to_vec(),
         }
     })
 }
@@ -316,6 +273,276 @@ fn image_catalog(log: usize, offloaded: bool) -> TrustedScheduleCatalog<ImageCon
     admit::<ImageConfig>(profiles, schedule)
 }
 
+fn image_opening_catalog(log: usize) -> TrustedScheduleCatalog<ImageConfig> {
+    let template = image_catalog(log, true);
+    let row = template.rows().next().unwrap();
+    let profiles = row.profiles().clone();
+    let mut schedule = row.schedule().clone();
+    // The source row's suffix cubes accept zero extension, but an honest CPU
+    // commitment also needs exact live block counts for each produced witness.
+    for index in 0..schedule.recursive_folds.len() {
+        let input = schedule.recursive_folds[index].input_witness_len;
+        let params = &mut schedule.recursive_folds[index].params;
+        let profile = &mut params.own_group_mut().profile;
+        let d = profile.inner.matrix.ring_dimension();
+        let rings = input.div_ceil(d);
+        let positions = profile.blocks.positions_per_block;
+        profile.blocks =
+            akita_params::BlockGeometry::new(rings, positions, rings.div_ceil(positions));
+        profile.group = PolynomialGroupLayout::singleton(
+            (rings * d).next_power_of_two().trailing_zeros() as usize,
+        );
+        let width = profile
+            .derive_slice_geometry()
+            .unwrap()
+            .physical_input_width();
+        profile.outer.matrix = akita_params::OuterCommitMatrixParams::try_new_with_min_rank(
+            profile.outer.matrix.sis_table_key(),
+            width,
+        )
+        .unwrap();
+        profile.validate_frozen_precommit(128).unwrap();
+        shared_opening_matrix(params);
+        repair_transitions(&mut schedule, &profiles);
+    }
+    admit::<ImageConfig>(profiles, schedule)
+}
+
+fn admit<C: CommitmentConfig>(
+    profiles: CommittedGroupBatchProfile,
+    schedule: akita_params::FoldSchedule,
+) -> TrustedScheduleCatalog<C> {
+    // Retain audited suffix cubes and their canonical zero extension, then
+    // re-audit every security bound, prefix domain and transition length.
+    TrustedScheduleCatalog::new(
+        ValidatedScheduleCatalog::try_new(
+            C::schedule_family_name(),
+            [(profiles, schedule)],
+            &policy_of::<C>(),
+            C::ring_challenge_config,
+        )
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn image_missing_setup_prefix_rejects_before_parent_activity() {
+    let f = fixture();
+    let verifier = ImageVerifier::new(f.images.clone(), f.verifier_setup.clone()).unwrap();
+    let complete = ImageVerifier::new(f.images.clone(), f.complete_verifier_setup.clone()).unwrap();
+    let point = vec![F::zero(); f.layout.image_log_len()];
+    // The same genuine commitment, statement and proof verify with all slots.
+    let state =
+        akita_transcript::new_verifier_channel(b"missing-prefix/v1", b"", &f.proof).unwrap();
+    let mut accepting = Recording::new(state);
+    complete
+        .verify_on_channel::<BinaryField128, _>(
+            &f.root,
+            &f.image,
+            ImageEvaluation {
+                point: &point,
+                value: F::zero(),
+            },
+            &mut accepting,
+        )
+        .unwrap();
+    accepting.inner.check_eof().unwrap();
+    assert_eq!(accepting.message_calls, 2);
+    assert!(!accepting.public.is_empty());
+    assert_eq!(accepting.draws.len(), 1);
+    // A missing slot must win even over a truncated length frame.
+    for proof in [&f.proof[..], &f.proof[..7]] {
+        let state =
+            akita_transcript::new_verifier_channel(b"missing-prefix/v1", b"", proof).unwrap();
+        let mut record = Recording::new(state);
+        assert!(matches!(
+            verifier.verify_on_channel::<BinaryField128, _>(
+                &f.root,
+                &f.image,
+                ImageEvaluation {
+                    point: &point,
+                    value: F::zero()
+                },
+                &mut record,
+            ),
+            Err(AkitaError::InvalidSetup(message)) if message.contains("planned setup-prefix slot is missing")
+        ));
+        assert!(record.public.is_empty());
+        assert!(record.messages.is_empty());
+        assert_eq!(record.message_calls, 0);
+        assert!(record.draws.is_empty());
+        let mut control =
+            akita_transcript::new_verifier_channel(b"missing-prefix/v1", b"", proof).unwrap();
+        assert_eq!(
+            record.challenge_block().unwrap(),
+            ClearChannel::challenge_block(&mut control).unwrap()
+        );
+    }
+}
+
+#[test]
+fn image_prover_missing_setup_prefix_rejects_before_parent_activity() {
+    let f = fixture();
+    let prover = ImageProver::new(f.images.clone(), f.prover_setup.clone()).unwrap();
+    let prepared = PreparedMatrix::prepare(f.root.setup()).unwrap();
+    let output = prover
+        .commit::<BinaryField128>(
+            &f.root,
+            &prepared,
+            &vec![0u128; f.root.setup().source_len()],
+        )
+        .unwrap();
+    assert_eq!(output.committed_group, f.image);
+    let point = vec![F::zero(); f.layout.image_log_len()];
+    let state = akita_transcript::new_prover_channel(b"missing-prefix/v1", b"").unwrap();
+    let mut record = Recording::new(state);
+    assert!(matches!(
+        prover.open_on_channel::<BinaryField128, _>(
+            &f.root,
+            &output,
+            ImageEvaluation { point: &point, value: F::zero() },
+            &mut record,
+        ),
+        Err(AkitaError::InvalidSetup(message)) if message.contains("planned setup-prefix slot is missing")
+    ));
+    assert!(record.public.is_empty());
+    assert!(record.messages.is_empty());
+    assert_eq!(record.message_calls, 0);
+    assert!(record.draws.is_empty());
+    let mut control = akita_transcript::new_prover_channel(b"missing-prefix/v1", b"").unwrap();
+    assert_eq!(
+        record.challenge_block().unwrap(),
+        control.challenge_block().unwrap()
+    );
+}
+
+struct RootFixture {
+    root: RootSetup,
+    images: TrustedScheduleCatalog<ImageConfig>,
+    digits: TrustedScheduleCatalog<Digits2>,
+    prover_setup: AkitaProverSetup<F>,
+    verifier_setup: AkitaVerifierSetup<F>,
+}
+
+#[derive(Clone, Copy)]
+enum OffloadedRole {
+    Image,
+    Digits,
+}
+
+fn root_fixture(role: OffloadedRole) -> &'static RootFixture {
+    static IMAGE: OnceLock<RootFixture> = OnceLock::new();
+    static DIGITS: OnceLock<RootFixture> = OnceLock::new();
+    let storage = match role {
+        OffloadedRole::Image => &IMAGE,
+        OffloadedRole::Digits => &DIGITS,
+    };
+    storage.get_or_init(|| {
+        let root = RootSetup::derive(
+            common::PROFILE,
+            12,
+            8,
+            128,
+            akita_types::AkitaSetupSeed::shake256_paged_v1([0x31; 32]),
+        )
+        .unwrap();
+        let layout = LoweredRootLayout::new(root.setup(), root.shape(), Digits2::BASE).unwrap();
+        let image_log = layout.image_log_len();
+        assert_eq!(image_log, 18);
+        let image_key =
+            akita_params::ScheduleLookupKey::single(PolynomialGroupLayout::singleton(image_log));
+        let images = image_catalog(image_log, matches!(role, OffloadedRole::Image));
+        let image_row = images.resolve_key(&image_key).unwrap();
+        let key = akita_params::ScheduleLookupKey {
+            final_group: PolynomialGroupLayout::singleton(layout.witness_log_len()),
+            precommitteds: vec![image_row.profiles().final_group],
+        };
+        let digits = digit_catalog(&key, matches!(role, OffloadedRole::Digits));
+        let digit_row = digits.resolve_key(&key).unwrap();
+        let required = match role {
+            OffloadedRole::Image => image_row,
+            OffloadedRole::Digits => digit_row,
+        };
+        assert!(
+            !required_setup_prefix_slot_ids_for_schedule(
+                required.schedule(),
+                &required.profiles().opening_layout().unwrap(),
+            )
+            .unwrap()
+            .is_empty(),
+            "selected test row must offload setup"
+        );
+        let other = match role {
+            OffloadedRole::Image => digit_row,
+            OffloadedRole::Digits => image_row,
+        };
+        assert!(
+            required_setup_prefix_slot_ids_for_schedule(
+                other.schedule(),
+                &other.profiles().opening_layout().unwrap(),
+            )
+            .unwrap()
+            .is_empty(),
+            "the other selected row must not require prefixes"
+        );
+        let max = image_log.max(layout.witness_log_len());
+        let requirements = SetupRequirements::from_catalog(&images, max, 2)
+            .unwrap()
+            .union(SetupRequirements::from_catalog(&digits, max, 2).unwrap())
+            .unwrap();
+        // Direct-config sizing intentionally does not enumerate offloaded slots.
+        // Provision a correct seed and covering matrix with that empty registry.
+        assert!(requirements.prefix_slot_ids().is_empty());
+        eprintln!(
+            "offloaded image log={image_log} required setup fields={}",
+            requirements.matrix_capacity().num_field_elements
+        );
+        let prover_setup =
+            AkitaProverSetup::generate_with_capacity(max, 2, requirements.matrix_capacity())
+                .unwrap();
+        let verifier_setup = prover_setup
+            .to_verifier_setup(requirements.matrix_capacity())
+            .unwrap();
+        assert!(prover_setup.prefix_slots.is_empty());
+        assert!(verifier_setup.prefix_slots().is_empty());
+        assert_eq!(
+            verifier_setup.prefix_slots().setup_seed(),
+            &verifier_setup.expanded().descriptor().setup_seed
+        );
+        assert!(TrustedScheduleCatalog::<ImageConfig>::verifier_admits(
+            verifier_setup.expanded(),
+            image_row
+        )
+        .unwrap());
+        let digit_row = digits.resolve_key(&key).unwrap();
+        assert!(TrustedScheduleCatalog::<Digits2>::verifier_admits(
+            verifier_setup.expanded(),
+            digit_row
+        )
+        .unwrap());
+        ensure_prover_schedule_fits_setup::<ImageConfig>(
+            &prover_setup.expanded,
+            image_row.schedule(),
+            &image_row.profiles().opening_layout().unwrap(),
+        )
+        .unwrap();
+        ensure_prover_schedule_fits_setup::<Digits2>(
+            &prover_setup.expanded,
+            digit_row.schedule(),
+            &digit_row.profiles().opening_layout().unwrap(),
+        )
+        .unwrap();
+        RootFixture {
+            root,
+            images,
+            digits,
+            prover_setup,
+            verifier_setup,
+        }
+    })
+}
+
 fn digit_catalog(
     key: &akita_params::ScheduleLookupKey,
     offloaded: bool,
@@ -375,56 +602,8 @@ fn digit_catalog(
     admit::<Digits2>(profiles, schedule)
 }
 
-fn admit<C: CommitmentConfig>(
-    profiles: CommittedGroupBatchProfile,
-    schedule: akita_params::FoldSchedule,
-) -> TrustedScheduleCatalog<C> {
-    // Retain audited suffix cubes and their canonical zero extension, then
-    // re-audit every security bound, prefix domain and transition length.
-    TrustedScheduleCatalog::new(
-        ValidatedScheduleCatalog::try_new(
-            C::schedule_family_name(),
-            [(profiles, schedule)],
-            &policy_of::<C>(),
-            C::ring_challenge_config,
-        )
-        .unwrap(),
-    )
-    .unwrap()
-}
-
-#[test]
-fn image_missing_setup_prefix_rejects_before_parent_activity() {
-    let f = fixture(OffloadedRole::Image);
-    let verifier = ImageVerifier::new(f.images.clone(), f.verifier_setup.clone()).unwrap();
-    let point = vec![F::zero(); f.layout.image_log_len()];
-    let state = akita_transcript::new_verifier_channel(b"missing-prefix/v1", b"", &[]).unwrap();
-    let mut record = Recording::new(state);
-    assert!(matches!(
-        verifier.verify_on_channel::<BinaryField128, _>(
-            &f.root,
-            &f.image,
-            ImageEvaluation {
-                point: &point,
-                value: F::zero()
-            },
-            &mut record,
-        ),
-        Err(AkitaError::InvalidSetup(message)) if message.contains("planned setup-prefix slot is missing")
-    ));
-    assert!(record.public.is_empty());
-    assert_eq!(record.message_calls, 0);
-    assert!(record.draws.is_empty());
-    let mut control =
-        akita_transcript::new_verifier_channel(b"missing-prefix/v1", b"", &[]).unwrap();
-    assert_eq!(
-        record.challenge_block().unwrap(),
-        ClearChannel::challenge_block(&mut control).unwrap()
-    );
-}
-
 fn reject_root_constructors(role: OffloadedRole) {
-    let f = fixture(role);
+    let f = root_fixture(role);
     // Neither constructor takes a channel: rejection occurs before an oracle
     // capable of absorbing public bytes or reading proof input is available.
     let state = akita_transcript::new_verifier_channel(b"missing-prefix/v1", b"", &[]).unwrap();

@@ -74,6 +74,7 @@ impl ImageProver {
     where
         H::Source: Sync,
     {
+        crate::setup::ensure_supported_root(admitted)?;
         let image = commit_binary_clear_prepared::<H, F, 648, akita_algebra::MinusTrinomial>(
             prepared,
             admitted.setup(),
@@ -111,6 +112,7 @@ impl ImageProver {
         evaluation: ImageEvaluation<'_>,
         channel: &mut S,
     ) -> Result<(), AkitaError> {
+        crate::setup::ensure_supported_root(admitted)?;
         let row = self
             .scheme
             .schedules()
@@ -122,6 +124,9 @@ impl ImageProver {
             row.schedule(),
             &row.profiles().opening_layout()?,
         )?;
+        crate::setup::ensure_setup_prefix_coverage(row, |id| {
+            self.setup.prefix_slots.get(id).is_some()
+        })?;
         let mut values = Vec::new();
         values
             .try_reserve_exact(1)
@@ -211,6 +216,7 @@ impl ImageVerifier {
         evaluation: ImageEvaluation<'_>,
         channel: &mut S,
     ) -> Result<(), AkitaError> {
+        crate::setup::ensure_supported_root(admitted)?;
         let row =
             self.verifier
                 .schedules()

@@ -18,30 +18,37 @@ Its setup, shape, seed, and derivation inputs are immutable public views.
 `derive_trinomial_matrix` MUST expand exactly `rows * columns * D` field
 elements with `derive_public_matrix_prefix::<F>`, passing the caller's
 `AkitaSetupSeed` unchanged. No additional domain separation is applied.
-The products MUST be checked before expansion. Coefficient `t` of `A[i,j]`
-MUST equal the public field element at
+The products MUST be checked before expansion. For tag 0, coefficient `t`
+of `A[i,j]` MUST equal the public field element at
 
 ```text
 (i * columns + j) * D + t,    0 <= t < D.
 ```
 
 This is `TrinomialASetupView::setup_address(i,j,t)` with setup offset zero:
-coefficients are contiguous, then columns, then rows. The matrix element at
+coefficients are contiguous, then columns, then rows. For tag 1, the canonical
+integer of that field element is reduced modulo q0 before storage; its
+reduced-view digest domain is specified in
+[the small-modulus contract](labinius-small-modulus-root.md#exact-auxiliary-message-grammar-and-matrix-identity). The matrix element at
 `i * columns + j` is the row-major element consumed by `apply_matrix`.
 For an admitted root, the matrix dimensions are `n_A` by `m`; `C` counts source
 columns and does not determine the matrix's column count.
 
 The matrix is one view of a shared public field prefix. A deployment MAY store
 the same prefix once for this view and ordinary Akita matrix views over the
-same coefficient field and seed. Each view is individually uniform under the
-seed expander's random-oracle assumption; no independence between views is
-assumed. Expanding a longer prefix MUST preserve every earlier coefficient.
+same coefficient field and seed. The shared-prime view is uniform under the
+seed expander's random-oracle assumption; tag 1 instead has the admitted
+reduction bias specified in the small-modulus contract. No independence between
+views is assumed. Expanding a longer prefix MUST preserve every earlier
+coefficient.
 
 This materialized API rejects zero dimensions, zero or odd degree, unsupported
 field descriptors, more than `MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS`
 coefficients, more than 64 MiB for either the flat prefix or matrix backing,
-or more than 64 KiB per ring element. These are host-resource limits, not
-limits on the public stream or the numerical shape admission. It MUST perform
+or more than 64 KiB per ring element. Tag 1 temporarily raises the prefix
+and matrix byte caps to 128 MiB; the small-modulus contract records the planned
+u32 storage and paged derivation needed to restore 64 MiB. These are
+host-resource limits, not limits on the public stream or the numerical shape admission. It MUST perform
 fallible reservation for the matrix and a flat-prefix allocation probe before
 calling the bounded, infallibly allocating expander. The probe is released
 before expansion; it cannot guarantee success against subsequent global

@@ -9,20 +9,23 @@
 
 #![cfg(feature = "labinius")]
 
+pub mod a_carry_kernel;
 pub mod combined_kernel;
 pub mod commit_kernel;
 pub mod fold_kernel;
+pub mod limb_commit_kernel;
 pub mod lowered;
-pub mod quotient_kernel;
+pub mod response_weights;
 pub mod root;
 pub mod root_sumcheck;
 
-pub use root::{
-    prove_root_reduction, prove_root_reduction_bytes, PreparedRootMatrices,
-    TransparentRootProverOracle,
-};
+pub use root::{prove_root_reduction, prove_root_reduction_bytes, TransparentRootProverOracle};
 
 pub use commit_kernel::{commit_binary_clear_prepared, PreparedCommitMatrix};
+pub use limb_commit_kernel::{
+    commit_binary_clear_limb_prepared, commit_binary_clear_small_modulus_prepared,
+    PreparedLimbCommitMatrix,
+};
 
 use akita_algebra::{binary::field_switch::SwitchField, SmoothFftField, TrinomialModulus};
 use akita_challenges::BinaryChallengeSampler;
@@ -31,7 +34,7 @@ use akita_labinius_verifier::{
     bind_statement,
     channel::{finish_prover, new_prover, ClearChannel},
     codec::{exchange_binary, exchange_response},
-    commitment::{apply_matrix, BinaryClearCommitment},
+    commitment::{apply_matrix, reduce_commitment_image, BinaryClearCommitment},
     endpoint::{fold_integer, left_expansion},
     frontend::prove_frontend,
     profile::BinaryClearSetup,
@@ -57,7 +60,9 @@ where
     let mut images = Vec::new();
     for column in 0..setup.columns() {
         let packed = pack_source_column::<H, F, D, M>(setup, source, column)?;
-        images.extend(apply_matrix(setup, &packed)?);
+        let mut column_image = apply_matrix(setup, &packed)?;
+        reduce_commitment_image(setup, &mut column_image)?;
+        images.extend(column_image);
     }
     Ok(BinaryClearCommitment { images })
 }

@@ -23,6 +23,8 @@ const INVOCATION: u32 = 37;
 
 struct Fixture<F> {
     digits: Vec<u8>,
+    digit_factor: Vec<F>,
+    compact: Vec<F>,
     kw: Vec<F>,
     tau: Vec<F>,
     beta: F,
@@ -33,21 +35,51 @@ fn random<F: Field>(rng: &mut StdRng) -> F {
     F::from_u128(u128::from(rng.next_u64()) | (u128::from(rng.next_u64()) << 64))
 }
 
+fn class_rounds(base: LabiniusDigitBase) -> usize {
+    match base {
+        LabiniusDigitBase::Bits1 => 4,
+        LabiniusDigitBase::Bits2 => 3,
+        LabiniusDigitBase::Bits4 => 2,
+    }
+}
+
 fn fixture<F: Field>(nu: usize, base: LabiniusDigitBase, rng: &mut StdRng) -> Fixture<F> {
+    fixture_with_factor(nu, nu.min(class_rounds(base)), base, rng)
+}
+
+fn fixture_with_factor<F: Field>(
+    nu: usize,
+    a: usize,
+    base: LabiniusDigitBase,
+    rng: &mut StdRng,
+) -> Fixture<F> {
     let digits: Vec<_> = (0..1usize << nu)
         .map(|_| (rng.next_u32() % (1 << base.bits())) as u8)
         .collect();
-    let kw: Vec<F> = digits.iter().map(|_| random(rng)).collect();
-    let s = digits.iter().zip(&kw).fold(F::zero(), |sum, (&w, &k)| {
-        sum + F::from_u64(u64::from(w)) * k
-    });
-    Fixture {
+    let digit_factor = (0..1usize << a).map(|_| random(rng)).collect();
+    let compact = (0..1usize << (nu - a)).map(|_| random(rng)).collect();
+    let mut f = Fixture {
         digits,
-        kw,
+        digit_factor,
+        compact,
+        kw: Vec::new(),
         tau: (0..nu).map(|_| random(rng)).collect(),
         beta: random(rng),
-        s,
-    }
+        s: F::zero(),
+    };
+    refresh_weights(&mut f);
+    f
+}
+
+fn refresh_weights<F: Field>(f: &mut Fixture<F>) {
+    f.kw = f
+        .compact
+        .iter()
+        .flat_map(|&coefficient| f.digit_factor.iter().map(move |&digit| digit * coefficient))
+        .collect();
+    f.s = f.digits.iter().zip(&f.kw).fold(F::zero(), |sum, (&w, &k)| {
+        sum + F::from_u64(u64::from(w)) * k
+    });
 }
 
 fn manual<F: SmoothFftField + Send + Sync>(
@@ -57,8 +89,16 @@ fn manual<F: SmoothFftField + Send + Sync>(
 ) {
     let mut reference =
         CombinedRootSumcheck::new(base, &f.digits, f.kw.clone(), &f.tau, f.beta, f.s).unwrap();
-    let mut kernel =
-        CombinedRootKernel::new(base, &f.digits, f.kw.clone(), &f.tau, f.beta, f.s).unwrap();
+    let mut kernel = CombinedRootKernel::new(
+        base,
+        &f.digits,
+        f.digit_factor.clone(),
+        f.compact.clone(),
+        &f.tau,
+        f.beta,
+        f.s,
+    )
+    .unwrap();
     assert_eq!(reference.num_rounds(), kernel.num_rounds());
     assert_eq!(reference.degree_bound(), kernel.degree_bound());
     assert_eq!(reference.input_claim(), kernel.input_claim());
@@ -106,8 +146,16 @@ fn transcripts<F: SmoothFftField + Send + Sync>(
 ) -> Vec<u8> {
     let mut reference =
         CombinedRootSumcheck::new(base, &f.digits, f.kw.clone(), &f.tau, f.beta, f.s).unwrap();
-    let mut kernel =
-        CombinedRootKernel::new(base, &f.digits, f.kw.clone(), &f.tau, f.beta, f.s).unwrap();
+    let mut kernel = CombinedRootKernel::new(
+        base,
+        &f.digits,
+        f.digit_factor.clone(),
+        f.compact.clone(),
+        &f.tau,
+        f.beta,
+        f.s,
+    )
+    .unwrap();
     let mut reference_state = channel::new_prover().unwrap();
     let mut kernel_state = channel::new_prover().unwrap();
     let reference_result = combined_support::prove_combined_rounds(
@@ -163,7 +211,7 @@ fn transcripts<F: SmoothFftField + Send + Sync>(
 fn differential<F: SmoothFftField + Send + Sync>() {
     let mut rng = StdRng::seed_from_u64(0xc0_6b_1e);
     for base in BASES {
-        // nu=16 also exercises all 65,536 buckets after the small-input cutoff.
+        // nu=16 also exercises larger packed classes through the direct path.
         for nu in (0..=13).chain([16]) {
             let f = fixture::<F>(nu, base, &mut rng);
             let challenges: Vec<_> = (0..nu).map(|_| random(&mut rng)).collect();
@@ -177,6 +225,32 @@ fn differential<F: SmoothFftField + Send + Sync>() {
 fn random_rounds_transcripts_and_terminal_checks_both_fields() {
     differential::<Prime64Offset23703>();
     differential::<Prime128OffsetA7F7>();
+}
+
+fn factor_shapes<F: SmoothFftField + Send + Sync>() {
+    let mut rng = StdRng::seed_from_u64(0x000f_ac70);
+    for base in BASES {
+        for a in 0..=8 {
+            let mut f = fixture_with_factor::<F>(8, a, base, &mut rng);
+            // Nontrivial digit factors and padded coefficient positions expose
+            // both the low-variable tensor order and zero compact entries.
+            for coefficient in f.compact.iter_mut().skip(1).step_by(3) {
+                *coefficient = F::zero();
+            }
+            refresh_weights(&mut f);
+            let challenges: Vec<_> = (0..8).map(|_| random(&mut rng)).collect();
+            manual(base, &f, &challenges);
+            transcripts(base, &f);
+            f.s += F::one();
+            manual(base, &f, &challenges);
+        }
+    }
+}
+
+#[test]
+fn digit_factor_shapes_and_padded_compact_entries_match_dense_reference() {
+    factor_shapes::<Prime64Offset23703>();
+    factor_shapes::<Prime128OffsetA7F7>();
 }
 
 fn extremal<F: SmoothFftField + Send + Sync>() {
@@ -198,8 +272,8 @@ fn extremal<F: SmoothFftField + Send + Sync>() {
                     }
                 };
             }
-            f.kw.fill(F::zero());
-            f.s = F::zero();
+            f.compact.fill(F::zero());
+            refresh_weights(&mut f);
             f.tau = (0..13).map(|i| F::from_u64((i % 2) as u64)).collect();
             let challenges: Vec<_> = (0..13)
                 .map(|i| match i % 3 {
@@ -235,8 +309,16 @@ fn false_claim<F: SmoothFftField + Send + Sync>() {
         // writing round zero; both instances must report the same error.
         let mut reference =
             CombinedRootSumcheck::new(base, &f.digits, f.kw.clone(), &f.tau, f.beta, f.s).unwrap();
-        let mut kernel =
-            CombinedRootKernel::new(base, &f.digits, f.kw.clone(), &f.tau, f.beta, f.s).unwrap();
+        let mut kernel = CombinedRootKernel::new(
+            base,
+            &f.digits,
+            f.digit_factor.clone(),
+            f.compact.clone(),
+            &f.tau,
+            f.beta,
+            f.s,
+        )
+        .unwrap();
         let mut reference_state = channel::new_prover().unwrap();
         let mut kernel_state = channel::new_prover().unwrap();
         let reference_result = combined_support::prove_combined_rounds(
@@ -317,8 +399,16 @@ fn rejection<F: SmoothFftField + Send + Sync>() {
             let reference =
                 CombinedRootSumcheck::new(base, &digits, kw.clone(), &tau, F::one(), F::zero())
                     .err();
-            let kernel =
-                CombinedRootKernel::new(base, &digits, kw, &tau, F::one(), F::zero()).err();
+            let kernel = CombinedRootKernel::new(
+                base,
+                &digits,
+                vec![F::one()],
+                kw,
+                &tau,
+                F::one(),
+                F::zero(),
+            )
+            .err();
             assert!(reference.is_some());
             assert_eq!(reference, kernel);
         }
@@ -331,29 +421,100 @@ fn constructor_rejections_match_including_validation_order() {
     rejection::<Prime128OffsetA7F7>();
 }
 
+fn factor_rejection<F: SmoothFftField + Send + Sync>() {
+    for base in BASES {
+        let invalid_geometry = CombinedRootSumcheck::new(
+            base,
+            &[0; 2],
+            vec![F::one()],
+            &[F::one()],
+            F::one(),
+            F::zero(),
+        )
+        .err();
+        assert!(invalid_geometry.is_some());
+        for (digit_factor, compact) in [
+            (vec![], vec![F::one(); 2]),
+            (vec![F::one(); 2], vec![]),
+            (vec![F::one(); 3], vec![F::one()]),
+            (vec![F::one()], vec![F::one(); 3]),
+            (vec![F::one()], vec![F::one()]),
+            (vec![F::one(); 2], vec![F::one(); 2]),
+            // a=2 exceeds nu=1, even with the smallest nonempty compact table.
+            (vec![F::one(); 4], vec![F::one()]),
+        ] {
+            for digits in [vec![0; 2], vec![255; 2]] {
+                assert_eq!(
+                    CombinedRootKernel::new(
+                        base,
+                        &digits,
+                        digit_factor.clone(),
+                        compact.clone(),
+                        &[F::one()],
+                        F::one(),
+                        F::zero(),
+                    )
+                    .err(),
+                    invalid_geometry,
+                    "base={base:?}, digit factor={}, compact={}",
+                    digit_factor.len(),
+                    compact.len(),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn malformed_factor_geometry_precedes_digit_validation() {
+    factor_rejection::<Prime64Offset23703>();
+    factor_rejection::<Prime128OffsetA7F7>();
+}
+
+#[cfg(feature = "parallel")]
+fn worker_counts<F: SmoothFftField + Send + Sync>(pools: &[rayon::ThreadPool]) {
+    let mut rng = StdRng::seed_from_u64(0x7a_70);
+    for base in BASES {
+        // nu=13 has 64 outer blocks, so all 64 workers are reserved; nu=8
+        // also covers bases with no admitted buckets in the larger pools.
+        for nu in [8, 13] {
+            for a in [
+                0,
+                class_rounds(base) - 1,
+                class_rounds(base),
+                class_rounds(base) + 1,
+            ] {
+                let f = fixture_with_factor::<F>(nu, a, base, &mut rng);
+                let challenges: Vec<_> = (0..nu).map(|_| random(&mut rng)).collect();
+                let mut serial_bytes = None;
+                for pool in pools {
+                    let bytes = pool.install(|| {
+                        manual(base, &f, &challenges);
+                        transcripts(base, &f)
+                    });
+                    if let Some(expected) = &serial_bytes {
+                        assert_eq!(expected, &bytes);
+                    } else {
+                        serial_bytes = Some(bytes);
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(feature = "parallel")]
 #[test]
 fn rayon_worker_counts_preserve_rounds_and_transcripts() {
-    let one = rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build()
-        .unwrap();
-    let four = rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build()
-        .unwrap();
-    let mut rng = StdRng::seed_from_u64(0x7a_70);
-    for base in BASES {
-        let f = fixture::<Prime128OffsetA7F7>(13, base, &mut rng);
-        let challenges: Vec<_> = (0..13).map(|_| random(&mut rng)).collect();
-        let serial_bytes = one.install(|| {
-            manual(base, &f, &challenges);
-            transcripts(base, &f)
-        });
-        let parallel_bytes = four.install(|| {
-            manual(base, &f, &challenges);
-            transcripts(base, &f)
-        });
-        assert_eq!(serial_bytes, parallel_bytes);
-    }
+    let pools: Vec<_> = [1, 3, 4, 64]
+        .into_iter()
+        .map(|threads| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap()
+        })
+        .collect();
+    worker_counts::<Prime64Offset23703>(&pools);
+    worker_counts::<Prime128OffsetA7F7>(&pools);
 }

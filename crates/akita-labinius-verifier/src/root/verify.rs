@@ -62,22 +62,16 @@ where
         setup.columns(),
     )?;
     oracle.bind_response(&layout, channel)?;
-    let quotient_len = layout.polynomial().quotient_coefficient_len()?;
-    let mut qa = Vec::new();
-    qa.try_reserve_exact(layout.n_a())
-        .map_err(|_| AkitaError::InvalidProof)?;
-    for _ in 0..layout.n_a() {
-        qa.push(zero_vec::<F>(quotient_len)?);
-    }
+    let mut ka = zero_vec(layout.encoding().a_carry_len())?;
     let mut q = zero_vec(layout.encoding().parity_quotient_len())?;
     let mut k = zero_vec(layout.encoding().parity_carry_len())?;
-    exchange_root_auxiliary(&layout, channel, &mut qa, &mut q, &mut k)?;
+    exchange_root_auxiliary(&layout, channel, &mut ka, &mut q, &mut k)?;
     let challenges = LoweredChallenges {
         alpha: channel.field_challenge(RootFieldSite::Alpha)?,
         xi: channel.field_challenge(RootFieldSite::Xi)?,
         gamma: channel.field_challenge(RootFieldSite::Gamma)?,
     };
-    let public = LoweredPublic::new(&layout, setup, &binary, &u, &fold, &qa, &q, &k, challenges)?;
+    let public = LoweredPublic::new(&layout, setup, &binary, &u, &fold, &ka, &q, &k, challenges)?;
     let mut y_y = F::zero();
     exchange_field(channel, &mut y_y)?;
     let s = public.c_pub() - y_y;

@@ -11,6 +11,28 @@ fn rejection(result: Result<LabiniusRootShape, AkitaError>, message: &str) {
 #[test]
 fn golden_shape_and_largest_fold_width() {
     let shape = LabiniusRootShape::derive(PROFILE, 22, 8, 128).unwrap();
+    assert_eq!(
+        shape,
+        LabiniusRootShape {
+            profile: PROFILE,
+            coefficient_prime: LabiniusCoefficientPrime::P128OffsetA7F7,
+            response_interval: (-32_768, 32_767),
+            num_cells: 4_194_304,
+            fold_width: 256,
+            scalars_per_column: 16_384,
+            ring_elements_per_column: 4096,
+            packing_degree: 4,
+            scalar_degree: 162,
+            commitment_degree: 648,
+            eta_a: 24_116_880,
+            rank_a: 1,
+            image_len: 165_888,
+            parity_residual_bound: 86_973_099_520,
+            honest_quotient_bound: 173_946_199_040,
+            honest_carry_bound: 130_459_649_280,
+            foreign_modulus_lift: None,
+        }
+    );
     assert_eq!(shape.profile(), PROFILE);
     assert_eq!(shape.num_cells(), 1 << 22);
     assert_eq!(shape.fold_width(), 256);
@@ -22,7 +44,6 @@ fn golden_shape_and_largest_fold_width() {
     assert_eq!(shape.rank_a(), 1);
     assert_eq!(shape.eta_a(), 24_116_880);
     assert_eq!(shape.image_len(), 165_888);
-    assert_eq!(shape.a_quotient_len(), 647);
     assert_eq!(shape.parity_residual_bound(), 86_973_099_520);
     assert_eq!(shape.honest_quotient_bound(), 173_946_199_040);
     assert_eq!(shape.honest_carry_bound(), 130_459_649_280);
@@ -91,6 +112,7 @@ fn ledger_no_wrap_boundary_is_exercised_through_the_canonical_derivation() {
         derive_shape(
             PROFILE,
             prime,
+            None,
             PROFILE.ring_degree(),
             &challenge,
             (lower, upper),

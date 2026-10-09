@@ -3,17 +3,18 @@
 #[path = "lowered_support.rs"]
 mod support;
 
-use akita_algebra::{poly::multilinear_eval, MinusTrinomial};
+use akita_algebra::{binary::BinaryField162, poly::multilinear_eval, MinusTrinomial};
 use akita_labinius_prover::lowered::encode_witness;
 use akita_labinius_verifier::{
     lowered::{
         a_row_residual, check_lowered_clear, image_weight_mle, image_weights_dense,
-        parity_row_residual, witness_weight_mle, witness_weights_dense,
+        parity_row_residual, witness_weight_mle, witness_weights_dense, LoweredChallenges,
     },
-    AdmittedRootSetup,
+    source::{equality_weights, scalar_from_binary},
+    AdmittedRootSetup, BinaryEvaluationClaim,
 };
 use akita_types::proof::AkitaSetupSeed;
-use jolt_field::{One, Zero};
+use jolt_field::{One, Ring, Zero};
 use rand::{rngs::StdRng, SeedableRng};
 use support::*;
 
@@ -23,7 +24,7 @@ fn honest_endpoints_and_lowered_relation_all_bases() {
         let start = std::time::Instant::now();
         let case = Case::new(base);
         case.verify().unwrap();
-        check_lowered_clear(&case.layout, &case.public(), &case.w, &case.y).unwrap();
+        check_lowered_clear(&case.layout, &case.public(), &case.setup, &case.w, &case.y).unwrap();
         eprintln!("honest {base:?}: {:?}", start.elapsed());
     }
 }
@@ -35,7 +36,7 @@ fn structured_weights_match_dense_at_random_and_boolean_points() {
         let start = std::time::Instant::now();
         let case = Case::new(base);
         let public = case.public();
-        let kw = witness_weights_dense(&case.layout, &public).unwrap();
+        let kw = witness_weights_dense(&case.layout, &public, &case.setup).unwrap();
         let ky = image_weights_dense(&case.layout, &public).unwrap();
         for _ in 0..3 {
             let rho = random_point(&mut rng, case.layout.witness_log_len());
@@ -90,6 +91,147 @@ fn structured_weights_match_dense_at_random_and_boolean_points() {
     }
 }
 
+/// Compare the cached public data with definitions that share no code with it.
+///
+/// The matrix contraction and the binary-row projections are recomputed as
+/// plain power sums, the response weights are rebuilt entry by entry, and the
+/// offset part of the public constant is isolated by zeroing every other
+/// input. Returns the honest constant and both dense weight tables per base.
+fn public_data_against_direct_definitions() -> Vec<(F, Vec<F>, Vec<F>)> {
+    let power_sum = |coefficients: &[F], point: F| {
+        let mut power = F::one();
+        coefficients.iter().fold(F::zero(), |sum, &coefficient| {
+            let term = coefficient * power;
+            power *= point;
+            sum + term
+        })
+    };
+    let powers = |point: F, len: usize| {
+        let mut power = F::one();
+        (0..len)
+            .map(|_| {
+                let current = power;
+                power *= point;
+                current
+            })
+            .collect::<Vec<_>>()
+    };
+    BASES
+        .into_iter()
+        .map(|base| {
+            let case = Case::new(base);
+            let layout = &case.layout;
+            let LoweredChallenges { alpha, xi, gamma } = case.challenges;
+            let (n_a, m, k) = (layout.n_a(), layout.m(), layout.k());
+            assert!(m > 1 && k > 1);
+            let xi_powers = powers(xi, layout.degree().div_ceil(k));
+            let gamma_powers = powers(gamma, n_a + 1);
+            // Definition by plain shifting and descending monic reduction;
+            // no trace maps, transforms, or production recurrence are used.
+            let wa = (0..m)
+                .map(|j| {
+                    (0..layout.degree())
+                        .map(|t| {
+                            (0..n_a).fold(F::zero(), |sum, i| {
+                                let mut shifted = vec![F::zero(); 2 * layout.degree() - 1];
+                                let a = case.setup.matrix()[i * m + j].coefficients();
+                                shifted[t..t + a.len()].copy_from_slice(a);
+                                for n in (layout.degree()..shifted.len()).rev() {
+                                    let leading = shifted[n];
+                                    shifted[n] = F::zero();
+                                    shifted[n - layout.degree()] -= leading;
+                                    shifted[n - layout.degree() / 2] += leading;
+                                }
+                                sum + gamma_powers[i]
+                                    * power_sum(&shifted[..layout.degree()], alpha)
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            let rows = equality_weights(&case.claim.point[..case.setup.row_vars()])
+                .unwrap()
+                .into_iter()
+                .map(|weight| {
+                    power_sum(scalar_from_binary::<F>(weight).unwrap().coefficients(), xi)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(rows.len(), layout.scalar_rows());
+            let weight = |j: usize, t: usize| {
+                wa[j][t]
+                    + gamma_powers[n_a]
+                        * signed(layout.sigma(t).unwrap())
+                        * xi_powers[t / k]
+                        * rows[j * k + t % k]
+            };
+
+            let public = case.public();
+            let kw = witness_weights_dense(layout, &public, &case.setup).unwrap();
+            let ky = image_weights_dense(layout, &public).unwrap();
+            let digit_count = layout.encoding().response().digit_count();
+            let digit_powers = powers(
+                F::from_u64(1 << layout.encoding().base().bits()),
+                digit_count,
+            );
+            let mut expected = vec![F::zero(); kw.len()];
+            let mut offset = F::zero();
+            for (j, matrix_weights) in wa.iter().enumerate() {
+                for (t, &matrix_weight) in matrix_weights.iter().enumerate() {
+                    assert_eq!(
+                        public.parity_coefficient_weight(j, t).unwrap(),
+                        weight(j, t) - matrix_weight
+                    );
+                    offset += signed(layout.off(t).unwrap()) * weight(j, t);
+                    let address = digit_count * (t + layout.padded_coefficients() * j);
+                    for (l, &digit) in digit_powers.iter().enumerate() {
+                        expected[address + l] = digit * weight(j, t);
+                    }
+                }
+            }
+            assert_eq!(kw, expected);
+            assert!(public.parity_coefficient_weight(m, 0).is_err());
+            assert!(public
+                .parity_coefficient_weight(0, layout.degree())
+                .is_err());
+
+            // The zero partial evaluations are consistent with a zero claim at
+            // the same point, so the binary rows are unchanged.
+            let zero_claim = BinaryEvaluationClaim {
+                point: case.claim.point.clone(),
+                value: BinaryField162::ZERO,
+            };
+            let offset_only = case
+                .public_with(
+                    &zero_claim,
+                    &vec![BinaryField162::ZERO; case.u.len()],
+                    &vec![0; case.q.len()],
+                    &vec![0; case.k.len()],
+                )
+                .unwrap();
+            assert_eq!(offset_only.c_pub(), offset);
+            (public.c_pub(), kw, ky)
+        })
+        .collect()
+}
+
+#[test]
+fn public_data_matches_direct_definitions() {
+    public_data_against_direct_definitions();
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn public_data_is_the_same_in_one_and_three_thread_pools() {
+    let [one, three] = [1, 3].map(|threads| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+            .install(public_data_against_direct_definitions)
+    });
+    assert_eq!(one, three);
+}
+
 #[test]
 fn batched_relation_decomposes_into_decoded_per_row_residuals() {
     for base in BASES {
@@ -98,19 +240,18 @@ fn batched_relation_decomposes_into_decoded_per_row_residuals() {
         response[0][0] += 1;
         response[7][161] -= 2;
         let w = encode_witness(&case.layout, &response).unwrap();
-        let mut qa = case.qa.clone();
-        qa[0][13] += F::one();
         let mut q = case.q.clone();
         q[17] += 1;
         let mut k = case.k.clone();
         k[19] -= 1;
-        let public = case.public_with(&case.claim, &case.u, &qa, &q, &k).unwrap();
-        let lhs = dot_digits(&w, &witness_weights_dense(&case.layout, &public).unwrap())
-            + dot(
-                &case.y,
-                &image_weights_dense(&case.layout, &public).unwrap(),
-            )
-            - public.c_pub();
+        let public = case.public_with(&case.claim, &case.u, &q, &k).unwrap();
+        let lhs = dot_digits(
+            &w,
+            &witness_weights_dense(&case.layout, &public, &case.setup).unwrap(),
+        ) + dot(
+            &case.y,
+            &image_weights_dense(&case.layout, &public).unwrap(),
+        ) - public.c_pub();
         let mut gamma_power = F::one();
         let mut residual = F::zero();
         for row in 0..case.setup.n_a() {
@@ -187,12 +328,15 @@ fn alphabet_checked_zero_weight_tails_remain_free() {
         let mut w = case.w.clone();
         let tail = 648 * case.layout.encoding().response().digit_count();
         w[tail] = (1 << base.bits()) - 1;
-        check_lowered_clear(&case.layout, &case.public(), &w, &case.y).unwrap();
+        check_lowered_clear(&case.layout, &case.public(), &case.setup, &w, &case.y).unwrap();
         w[tail] = 1 << base.bits();
-        assert!(check_lowered_clear(&case.layout, &case.public(), &w, &case.y).is_err());
+        assert!(
+            check_lowered_clear(&case.layout, &case.public(), &case.setup, &w, &case.y).is_err()
+        );
         assert!(check_lowered_clear(
             &case.layout,
             &case.public(),
+            &case.setup,
             &case.w[..case.w.len() - 1],
             &case.y
         )
@@ -200,6 +344,7 @@ fn alphabet_checked_zero_weight_tails_remain_free() {
         assert!(check_lowered_clear(
             &case.layout,
             &case.public(),
+            &case.setup,
             &case.w,
             &case.y[..case.y.len() - 1]
         )
@@ -235,9 +380,11 @@ fn seed_derived_admitted_setup_satisfies_the_lowered_relation() {
     for base in BASES {
         let case = Case::with_setup(base, admitted.shape().clone(), admitted.setup().clone());
         case.verify().unwrap();
-        check_lowered_clear(&case.layout, &case.public(), &case.w, &case.y).unwrap();
+        check_lowered_clear(&case.layout, &case.public(), &case.setup, &case.w, &case.y).unwrap();
         let mut w = case.w.clone();
         w[0] ^= 1;
-        assert!(check_lowered_clear(&case.layout, &case.public(), &w, &case.y).is_err());
+        assert!(
+            check_lowered_clear(&case.layout, &case.public(), &case.setup, &w, &case.y).is_err()
+        );
     }
 }

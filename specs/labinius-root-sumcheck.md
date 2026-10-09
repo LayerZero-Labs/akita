@@ -118,6 +118,46 @@ evaluations to correspond to the fixed tables; the kernels alone do not prove
 that correspondence. A union bound for these arithmetic reductions is
 `(nu + 1 + nu*(2^b+1) + 2*mu)/|F|`, apart from opening errors.
 
+## Adjoint-weight construction
+
+The remainder relation, trace maps, dense definition and terminal closed forms
+are owned by [the lowered relation](labinius-lowered-root.md). The sumcheck
+instances, degrees and digit factorization above are unchanged for both root
+profiles. Only the construction of the public coefficient weights changes.
+
+`PreparedCommitMatrix` owns the transform cache shared by commitments and root
+reduction weights. There is no conjugate-ring transform cache. The response-weight
+kernel forms G^-1(u_i) through the verifier's common trace-map owner and performs:
+
+1. n_A forward transforms of G^-1(u_i).
+2. For each response ring column j, n_A pointwise multiply-accumulates against
+   the cached transforms of A_ij, followed by one inverse transform and G.
+3. Addition of the unchanged parity coefficient weight, scaled by gamma^n_A.
+
+Column tasks use the Rayon pool behind `parallel`, with per-task transform
+workspaces and fallible reservations. They write directly into the compact
+`m*padded_coefficients` table passed to `CombinedRootKernel::new`; coefficient
+tails are zero. There is no intermediate dense `m*D` matrix-weight copy and
+no full digit-expanded weight table. The matrix part is traced by
+`root_a_weights`. At the first geometry the compact table has 4,194,304 field
+entries, or 64 MiB for 16-byte field elements. Transformed inputs and worker
+workspaces add O(n_A*D + workers*D) field storage, beyond the retained matrix
+cache and this table. At rank 3 the P-field matrix cache contains 7,962,624
+field entries, or 127,401,984 bytes; these slots belong to F_P, not F_q0.
+
+The product sumcheck's dense image-weight table uses C*n_A challenge products
+applied to G^-1(u_i), followed by G and negation. The shared verifier adjoint
+owner keeps this construction consistent with the dense reference. Products
+by weight-46 embedded challenges may use their sparse representation. The
+image table retains coefficient tails and final entry padding with zero
+weights; no separate rank tensor block is introduced.
+
+Tag 0 constructs no matrix-row auxiliary witness. Tag 1's `root_a_carry`
+phase uses the own-ring commitment cache to obtain the remainder, then centres
+its coefficients, checks integer divisibility by q0 and enforces the admitted
+carry range. This phase precedes alpha and does not build a quotient. The
+carry grammar and admission remain owned by the small-modulus specification.
+
 ## Messages and prover storage
 
 The generic driver omits the linear coefficient and reconstructs it from the
@@ -132,19 +172,27 @@ final claim; it MUST be followed by the terminal check and, at the enclosing
 proof boundary, the channel's EOF check.
 
 The combined prover evaluates both terms in one pass per round and interpolates
-at nodes `0,...,2^b+1`. Round zero uses a digit-pair lookup table with `2^(2b)`
-rows. Later rounds use folded field values. For `N=2^nu`, peak owned storage is
+at nodes `0,...,2^b+1`. It packs the input digits and delays lifting them to
+field elements for `r=min(nu,4/3/2)` rounds for one-, two-, and four-bit digits.
+Equality uses two suffix tensor factors. Response weights use the tensor of
+`digit_powers` (length `2^a`, occupying the lowest variables) and a compact
+coefficient table `cw` (length `N/2^a`, coefficient-low, ring-element-high).
+Padded coefficient positions in `cw` are zero. The prover never expands these
+weight factors into a length-`N` field table.
 
-```text
-(2N + max(1,N/2) + nu + 2^(2b)*(2^b+2))*size_of::<F>()
-    + N bytes + O(2^b) field workspace.
-```
+The first `a` challenges fold only the digit factor. Its final scalar is applied
+to `cw` in place, and subsequent rounds fold that table. For the first root
+profile, `a=r`: packed class buckets sum compact coefficients by class and
+remaining digit-pair position, then apply the digit factor once per bucket.
+Other factorizations use direct weight endpoint evaluation. Once the packed
+rounds finish, the lifted digit table has length `N/2^r`.
 
-This excludes caller-retained originals and excess capacities of supplied
-vectors. A dense field table at `nu=26` occupies 1 GiB when `F` occupies
-16 bytes; the two dense tables and equality suffix occupy 2.5 GiB, plus the
-digit copy and small lookup/workspace storage. The product prover owns two
-length-`2^mu` field tables and constant-size round workspace.
+The exact reservation bound, including worker buckets and small tables, is
+specified on `CombinedRootKernel`. At `nu=25`, two-bit digits, `a=3`, 16-byte
+field elements and one worker, it is 148,579,168 bytes (about 141.7 MiB),
+excluding caller-retained originals, allocator rounding and interpolation
+scratch. The two main field tables each occupy 64 MiB. The product prover owns
+two length-`2^mu` field tables and constant-size round workspace.
 
 ## Scope and validation
 

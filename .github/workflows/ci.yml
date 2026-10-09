@@ -119,6 +119,10 @@ jobs:
         run: cargo test -p akita-algebra --lib --no-default-features
       - name: Test binary arithmetic
         run: cargo test -p akita-algebra --lib --no-default-features --features labinius-binary binary
+      - name: Test parallel binary arithmetic
+        run: cargo test -p akita-algebra --lib --no-default-features --features labinius-binary,parallel binary
+      - name: Lint parallel binary arithmetic and benchmarks
+        run: cargo clippy -p akita-algebra --all-targets --no-default-features --features labinius-binary,parallel -- -D warnings
       - name: Lint binary arithmetic and benchmarks
         run: cargo clippy -p akita-algebra --all-targets --no-default-features --features labinius-binary -- -D warnings
 
@@ -486,6 +490,10 @@ jobs:
           components: clippy
       - name: Test opt-in clear openings
         run: cargo test -p akita-labinius-verifier -p akita-labinius-prover -p akita-labinius-pcs --no-default-features --features labinius,${{ matrix.backend }}
+      - name: Test parallel opt-in clear openings
+        run: cargo test -p akita-labinius-verifier -p akita-labinius-prover -p akita-labinius-pcs --no-default-features --features labinius,parallel,${{ matrix.backend }}
+      - name: Check parallel opt-in clear opening targets
+        run: cargo clippy -p akita-labinius-verifier -p akita-labinius-prover -p akita-labinius-pcs --all-targets --no-default-features --features labinius,parallel,${{ matrix.backend }} -- -D warnings
       - name: Check opt-in clear opening targets
         run: cargo clippy -p akita-labinius-verifier -p akita-labinius-prover -p akita-labinius-pcs --all-targets --no-default-features --features labinius,${{ matrix.backend }} -- -D warnings
       - name: Check unselected extension targets

@@ -4,6 +4,21 @@ use akita_config::{required_setup_prefix_slot_ids_for_schedule, ResolvedSchedule
 use akita_error::AkitaError;
 use akita_params::SetupPrefixSlotId;
 
+/// Admit only profiles supported by the image and grouped root catalogs.
+pub(crate) fn ensure_supported_root(admitted: &crate::RootSetup) -> Result<(), AkitaError> {
+    if admitted
+        .shape()
+        .commitment_modulus()
+        .small_modulus()
+        .is_some()
+    {
+        return Err(AkitaError::InvalidSetup(
+            "small-modulus LaBinius profile is not supported by the image or root PCS".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn ensure_setup_prefix_coverage(
     row: &ResolvedScheduleRow,
     contains: impl Fn(&SetupPrefixSlotId) -> bool,

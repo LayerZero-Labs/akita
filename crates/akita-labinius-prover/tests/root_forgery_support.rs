@@ -6,7 +6,6 @@ pub(crate) mod root_reduction_support;
 
 use self::root_reduction_support::{Case, F, H};
 use akita_algebra::MinusTrinomial;
-use akita_algebra::{embed_scalar, TrinomialRing};
 use akita_challenges::BinaryChallengeSampler;
 use akita_labinius_prover::{
     commit_binary_clear,
@@ -18,7 +17,7 @@ use akita_labinius_verifier::{
         RootSumcheckVerifierChannel,
     },
     codec::{exchange_binary, exchange_field},
-    endpoint::{fold_integer, left_expansion, pack_response, verify_left_expansion},
+    endpoint::{fold_integer, left_expansion, verify_left_expansion},
     frontend::{prove_frontend, verify_frontend},
     lowered::{image_weights_dense, witness_weights_dense, LoweredChallenges, LoweredPublic},
     root::{
@@ -29,7 +28,7 @@ use akita_labinius_verifier::{
         alphabet_polynomial, bind_root_sumcheck_instance, combined_shape, combined_terminal,
         product_shape, verify_combined_rounds, RootSumcheckInstance,
     },
-    source::{challenge_scalar, equality_weights},
+    source::equality_weights,
 };
 use akita_params::sis::labinius::LabiniusDigitBase;
 use akita_sumcheck::{prove_sumcheck, InfallibleSumcheck, SumcheckInstanceProver};
@@ -170,40 +169,6 @@ pub(crate) fn assemble(case: &mut Case, attack: Attack) -> Evidence {
     }
     // The commitment fixes raw bytes, including any chosen padding digit.
     ch.message(&mut digits).unwrap();
-    let packed = pack_response(setup, &response).unwrap();
-    let embedded: Vec<_> = fold
-        .iter()
-        .map(|c| {
-            embed_scalar::<F, 162, 648, MinusTrinomial>(&challenge_scalar(c).unwrap()).unwrap()
-        })
-        .collect();
-    let mut qa = Vec::new();
-    for row in 0..setup.n_a() {
-        let mut residual = vec![F::zero(); 1295];
-        for (a, v) in setup.matrix()[row * setup.m()..(row + 1) * setup.m()]
-            .iter()
-            .zip(&packed)
-        {
-            for (r, c) in residual
-                .iter_mut()
-                .zip(a.schoolbook_product_coefficients(v).unwrap())
-            {
-                *r += c;
-            }
-        }
-        for (col, c) in embedded.iter().enumerate() {
-            for (r, v) in residual.iter_mut().zip(
-                c.schoolbook_product_coefficients(&case.commitment.images[col * setup.n_a() + row])
-                    .unwrap(),
-            ) {
-                *r -= v;
-            }
-        }
-        let (_, quotient) =
-            TrinomialRing::<F, 648, MinusTrinomial>::reduce_product_with_quotient(&residual)
-                .unwrap();
-        qa.push(quotient);
-    }
     // Best integral carry even for a false parity row: long-divide the true
     // residual, then round odd remainder coefficients down instead of hiding it.
     let weights = equality_weights(&binary.point[..setup.row_vars()]).unwrap();
@@ -237,7 +202,7 @@ pub(crate) fn assemble(case: &mut Case, attack: Attack) -> Evidence {
         residual[degree - 81] -= leading;
     }
     let mut k: Vec<_> = residual[..162].iter().map(|v| v.div_euclid(2)).collect();
-    exchange_root_auxiliary(&case.layout, &mut ch, &mut qa, &mut q, &mut k).unwrap();
+    exchange_root_auxiliary(&case.layout, &mut ch, &mut [], &mut q, &mut k).unwrap();
     let challenges = LoweredChallenges {
         alpha: ch.field_challenge(RootFieldSite::Alpha).unwrap(),
         xi: ch.field_challenge(RootFieldSite::Xi).unwrap(),
@@ -249,7 +214,7 @@ pub(crate) fn assemble(case: &mut Case, attack: Attack) -> Evidence {
         &binary,
         &u,
         &fold,
-        &qa,
+        &[],
         &q,
         &k,
         challenges,
@@ -277,7 +242,7 @@ pub(crate) fn assemble(case: &mut Case, attack: Attack) -> Evidence {
             })
         })
         .collect();
-    let kw = witness_weights_dense(&case.layout, &public).unwrap();
+    let kw = witness_weights_dense(&case.layout, &public, setup).unwrap();
     let mut forged = Forged {
         w: digits.iter().map(|&d| F::from_u64(u64::from(d))).collect(),
         kw,
@@ -362,17 +327,16 @@ pub(crate) fn combined_terminal_matches(case: &Case, proof: &[u8]) -> bool {
         )
         .unwrap();
     oracle.bind_response(&case.layout, &mut ch).unwrap();
-    let mut qa = vec![vec![F::zero(); 647]; setup.n_a()];
     let mut q = vec![0; 161];
     let mut k = vec![0; 162];
-    exchange_root_auxiliary(&case.layout, &mut ch, &mut qa, &mut q, &mut k).unwrap();
+    exchange_root_auxiliary(&case.layout, &mut ch, &mut [], &mut q, &mut k).unwrap();
     let c = LoweredChallenges {
         alpha: ch.field_challenge(RootFieldSite::Alpha).unwrap(),
         xi: ch.field_challenge(RootFieldSite::Xi).unwrap(),
         gamma: ch.field_challenge(RootFieldSite::Gamma).unwrap(),
     };
     let public =
-        LoweredPublic::new(&case.layout, setup, &binary, &u, &fold, &qa, &q, &k, c).unwrap();
+        LoweredPublic::new(&case.layout, setup, &binary, &u, &fold, &[], &q, &k, c).unwrap();
     let mut y = F::zero();
     exchange_field(&mut ch, &mut y).unwrap();
     let tau: Vec<F> = (0..case.layout.witness_log_len())

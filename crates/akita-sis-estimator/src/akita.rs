@@ -14,6 +14,9 @@ pub enum AkitaModulusProfileId {
     Q32Offset99,
     /// `2^64 - 59`.
     Q64Offset59,
+    /// LaBinius commitment prime `2^28 - 2103`, distinct from its opening field.
+    #[cfg(feature = "labinius-sis")]
+    Q28Offset2103,
     /// LaBinius coefficient prime `2^64 - 23703`.
     ///
     /// This profile is available to the offline estimator. It is deliberately
@@ -36,6 +39,8 @@ impl AkitaModulusProfileId {
             "q32" | "Q32Offset99" => Ok(Self::Q32Offset99),
             "q64" | "Q64Offset59" => Ok(Self::Q64Offset59),
             #[cfg(feature = "labinius-sis")]
+            "q28-labinius" | "Q28Offset2103" => Ok(Self::Q28Offset2103),
+            #[cfg(feature = "labinius-sis")]
             "q64-labinius" | "Q64Offset23703" => Ok(Self::Q64Offset23703),
             "q128" | "Q128OffsetA7F7" => Ok(Self::Q128OffsetA7F7),
             _ => Err(EstimatorError::InvalidParameter {
@@ -52,6 +57,8 @@ impl AkitaModulusProfileId {
             Self::Q32Offset99 => akita_q32(),
             Self::Q64Offset59 => akita_q64(),
             #[cfg(feature = "labinius-sis")]
+            Self::Q28Offset2103 => BigUint::from(268_433_353u32),
+            #[cfg(feature = "labinius-sis")]
             Self::Q64Offset23703 => crate::params::labinius_q64(),
             Self::Q128OffsetA7F7 => akita_q128(),
         }
@@ -63,6 +70,8 @@ impl AkitaModulusProfileId {
         match self {
             Self::Q32Offset99 => "q32",
             Self::Q64Offset59 => "q64",
+            #[cfg(feature = "labinius-sis")]
+            Self::Q28Offset2103 => "q28-labinius",
             #[cfg(feature = "labinius-sis")]
             Self::Q64Offset23703 => "q64-labinius",
             Self::Q128OffsetA7F7 => "q128",
@@ -201,6 +210,24 @@ pub fn scalar_sis_from_ring_euclidean(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "labinius-sis")]
+    #[test]
+    fn small_commitment_modulus_has_an_exact_feature_gated_identity() {
+        let profile = AkitaModulusProfileId::Q28Offset2103;
+        assert_eq!(profile.label(), "q28-labinius");
+        assert_eq!(profile.modulus(), BigUint::from(268_433_353u32));
+        assert_eq!(
+            AkitaModulusProfileId::parse(profile.label()).unwrap(),
+            profile
+        );
+    }
+
+    #[cfg(not(feature = "labinius-sis"))]
+    #[test]
+    fn small_commitment_modulus_is_absent_without_the_feature() {
+        assert!(AkitaModulusProfileId::parse("q28-labinius").is_err());
+    }
 
     #[test]
     fn scalar_mapping_matches_golden_convention() {
