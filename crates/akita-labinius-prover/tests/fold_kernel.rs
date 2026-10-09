@@ -93,8 +93,7 @@ fn first_profile_reduced_rows_match_reference() {
     );
 }
 
-#[test]
-fn maximal_coefficient_and_maximum_weight_exercise_wide_lane_bound() {
+fn maximal_coefficient_case(columns: usize) {
     let profile = root_profile();
     let challenge = challenges(&profile, 512)
         .into_iter()
@@ -129,7 +128,15 @@ fn maximal_coefficient_and_maximum_weight_exercise_wide_lane_bound() {
             0
         }
     });
-    let columns = 2048;
+    assert_eq!(challenge.weight(), 46);
+    assert!(columns.is_power_of_two());
+    let weight_sum = challenge.weight() * columns;
+    if columns == 512 {
+        assert!(weight_sum <= i16::MAX as usize);
+        assert!(weight_sum * 2 > i16::MAX as usize);
+    } else {
+        assert!(weight_sum > i16::MAX as usize);
+    }
     let fold = vec![challenge; columns];
     for word in [word, u128::MAX] {
         let source = vec![word; columns];
@@ -140,7 +147,20 @@ fn maximal_coefficient_and_maximum_weight_exercise_wide_lane_bound() {
         );
     }
     let expected = reference::<F128>(&[word], 1, 1, &fold[..1], &profile).unwrap();
-    assert!(expected[0][target].unsigned_abs() * columns as u64 > i16::MAX as u64);
+    if weight_sum > i16::MAX as usize {
+        assert!(expected[0][target].unsigned_abs() * columns as u64 > i16::MAX as u64);
+    }
+}
+
+#[test]
+fn maximal_coefficient_and_maximum_weight_exercise_wide_lane_bound() {
+    // 512 is the largest power-of-two column count admitted for W46 lanes.
+    maximal_coefficient_case(512);
+}
+
+#[test]
+fn maximal_coefficient_and_maximum_weight_exercise_reference_fallback() {
+    maximal_coefficient_case(2048);
 }
 
 #[test]

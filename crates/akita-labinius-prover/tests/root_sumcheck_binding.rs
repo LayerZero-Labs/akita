@@ -1,9 +1,9 @@
 #![cfg(feature = "labinius")]
 
+mod combined_support;
+
 use akita_algebra::{Prime64Offset23703, SmoothFftField};
-use akita_labinius_prover::root_sumcheck::{
-    prove_combined_rounds, prove_product_rounds, CombinedRootSumcheck, ProductSumcheck,
-};
+use akita_labinius_prover::root_sumcheck::{prove_product_rounds, ProductSumcheck};
 use akita_labinius_verifier::{
     channel::{self, ClearChannel, RootSumcheckProverChannel, RootSumcheckVerifierChannel},
     root_sumcheck::{
@@ -13,6 +13,7 @@ use akita_labinius_verifier::{
 };
 use akita_params::sis::labinius::LabiniusDigitBase;
 use akita_sumcheck::SumcheckInstanceProver;
+use combined_support::{prove_combined_rounds, CombinedRootSumcheck};
 use jolt_field::{Field, One, Prime128OffsetA7F7, Ring, Zero};
 
 const BASES: [LabiniusDigitBase; 3] = [

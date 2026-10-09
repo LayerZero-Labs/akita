@@ -1,16 +1,16 @@
 #![cfg(feature = "labinius")]
 
+mod combined_support;
+
 use akita_algebra::{poly::multilinear_eval, Prime64Offset23703, SmoothFftField};
-use akita_labinius_prover::{
-    combined_kernel::{self, CombinedRootKernel},
-    root_sumcheck::{self, CombinedRootSumcheck},
-};
+use akita_labinius_prover::combined_kernel::{self, CombinedRootKernel};
 use akita_labinius_verifier::{
     channel::{self, RootSumcheckProverChannel, RootSumcheckVerifierChannel},
     root_sumcheck::{combined_terminal, verify_combined_rounds},
 };
 use akita_params::sis::labinius::LabiniusDigitBase;
 use akita_sumcheck::SumcheckInstanceProver;
+use combined_support::CombinedRootSumcheck;
 use jolt_field::{Field, Prime128OffsetA7F7};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -110,52 +110,53 @@ fn transcripts<F: SmoothFftField + Send + Sync>(
         CombinedRootKernel::new(base, &f.digits, f.kw.clone(), &f.tau, f.beta, f.s).unwrap();
     let mut reference_state = channel::new_prover().unwrap();
     let mut kernel_state = channel::new_prover().unwrap();
-    let reference_result = root_sumcheck::prove_combined_rounds(
+    let reference_result = combined_support::prove_combined_rounds(
         &mut reference,
         &mut RootSumcheckProverChannel::new(&mut reference_state),
         INVOCATION,
-    );
+    )
+    .expect("honest reference sumcheck succeeds");
     let kernel_result = combined_kernel::prove_combined_rounds(
         &mut kernel,
         &mut RootSumcheckProverChannel::new(&mut kernel_state),
         INVOCATION,
-    );
+    )
+    .expect("honest kernel sumcheck succeeds");
     assert_eq!(reference_result, kernel_result);
     let reference_bytes = channel::finish_prover(reference_state);
     let kernel_bytes = channel::finish_prover(kernel_state);
     assert_eq!(reference_bytes, kernel_bytes);
     assert_eq!(reference.final_evaluations(), kernel.final_evaluations());
-    if let Ok((point, claim)) = kernel_result {
-        let mut verifier = channel::new_verifier(&kernel_bytes).unwrap();
-        let replay = verify_combined_rounds(
-            &mut RootSumcheckVerifierChannel::new(&mut verifier),
-            INVOCATION,
-            f.tau.len(),
-            base,
-            f.beta,
-            f.s,
-        )
-        .unwrap();
-        assert_eq!(
-            (replay.challenges, replay.output_claim),
-            (point.clone(), claim)
-        );
-        channel::finish_verifier(verifier).unwrap();
-        let w: Vec<_> = f
-            .digits
-            .iter()
-            .map(|&digit| F::from_u64(u64::from(digit)))
-            .collect();
-        let evaluations = (
-            multilinear_eval(&w, &point).unwrap(),
-            multilinear_eval(&f.kw, &point).unwrap(),
-        );
-        assert_eq!(kernel.final_evaluations(), Some(evaluations));
-        assert_eq!(
-            claim,
-            combined_terminal(base, &f.tau, &point, f.beta, evaluations.0, evaluations.1).unwrap()
-        );
-    }
+    let (point, claim) = kernel_result;
+    let mut verifier = channel::new_verifier(&kernel_bytes).unwrap();
+    let replay = verify_combined_rounds(
+        &mut RootSumcheckVerifierChannel::new(&mut verifier),
+        INVOCATION,
+        f.tau.len(),
+        base,
+        f.beta,
+        f.s,
+    )
+    .unwrap();
+    assert_eq!(
+        (replay.challenges, replay.output_claim),
+        (point.clone(), claim)
+    );
+    channel::finish_verifier(verifier).unwrap();
+    let w: Vec<_> = f
+        .digits
+        .iter()
+        .map(|&digit| F::from_u64(u64::from(digit)))
+        .collect();
+    let evaluations = (
+        multilinear_eval(&w, &point).unwrap(),
+        multilinear_eval(&f.kw, &point).unwrap(),
+    );
+    assert_eq!(kernel.final_evaluations(), Some(evaluations));
+    assert_eq!(
+        claim,
+        combined_terminal(base, &f.tau, &point, f.beta, evaluations.0, evaluations.1).unwrap()
+    );
     kernel_bytes
 }
 
@@ -232,8 +233,28 @@ fn false_claim<F: SmoothFftField + Send + Sync>() {
         manual(base, &f, &challenges);
         // The shared engine rejects the inconsistent input claim before
         // writing round zero; both instances must report the same error.
-        let rejected_prefix = transcripts(base, &f);
+        let mut reference =
+            CombinedRootSumcheck::new(base, &f.digits, f.kw.clone(), &f.tau, f.beta, f.s).unwrap();
+        let mut kernel =
+            CombinedRootKernel::new(base, &f.digits, f.kw.clone(), &f.tau, f.beta, f.s).unwrap();
+        let mut reference_state = channel::new_prover().unwrap();
+        let mut kernel_state = channel::new_prover().unwrap();
+        let reference_result = combined_support::prove_combined_rounds(
+            &mut reference,
+            &mut RootSumcheckProverChannel::new(&mut reference_state),
+            INVOCATION,
+        );
+        let kernel_result = combined_kernel::prove_combined_rounds(
+            &mut kernel,
+            &mut RootSumcheckProverChannel::new(&mut kernel_state),
+            INVOCATION,
+        );
+        assert!(reference_result.is_err());
+        assert_eq!(reference_result, kernel_result);
+        let rejected_prefix = channel::finish_prover(kernel_state);
+        assert_eq!(channel::finish_prover(reference_state), rejected_prefix);
         assert!(rejected_prefix.is_empty());
+        assert_eq!(reference.final_evaluations(), kernel.final_evaluations());
         // Both provers produced the same proof bytes above. Compressed
         // round replay may reconstruct a polynomial using the false claim;
         // rejection therefore includes the authenticated terminal obligation.

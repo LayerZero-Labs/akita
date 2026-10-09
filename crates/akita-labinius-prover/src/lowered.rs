@@ -14,9 +14,7 @@
 )]
 
 mod parity;
-mod quotient;
 mod witness;
 
 pub use parity::parity_quotient_and_carry;
-pub use quotient::a_relation_quotients;
 pub use witness::{encode_witness, flatten_image};

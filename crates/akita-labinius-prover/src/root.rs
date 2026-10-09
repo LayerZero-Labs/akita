@@ -45,8 +45,8 @@ use crate::{
 ///
 /// The response fold, the A-relation quotient and the combined sumcheck run on
 /// the transform and bucket kernels; each returns exactly what its reference
-/// (`endpoint::fold_integer`, `lowered::a_relation_quotients`,
-/// `root_sumcheck::CombinedRootSumcheck`) returns, so the proof bytes do not
+/// (`endpoint::fold_integer` and the schoolbook quotient and dense combined
+/// sumcheck in shared test support) returns, so the proof bytes do not
 /// depend on which is used. A `prepared` cache of another matrix returns
 /// `InvalidSetup` before the channel or the oracle is touched.
 #[allow(clippy::too_many_arguments)]

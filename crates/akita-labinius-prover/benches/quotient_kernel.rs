@@ -2,6 +2,10 @@
 
 #![cfg(feature = "labinius")]
 
+#[path = "../tests/quotient_support.rs"]
+mod quotient_support;
+use quotient_support::a_relation_quotients as reference;
+
 use std::hint::black_box;
 use std::time::Duration;
 
@@ -13,7 +17,6 @@ use akita_challenges::{BinaryChallengeSampler, FoldDraw};
 use akita_error::AkitaError;
 use akita_labinius_prover::{
     commit_binary_clear_prepared,
-    lowered::a_relation_quotients as reference,
     quotient_kernel::{a_relation_quotients as kernel, PreparedQuotientMatrix},
     PreparedCommitMatrix,
 };

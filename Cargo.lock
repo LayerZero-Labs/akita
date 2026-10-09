@@ -131,6 +131,7 @@ dependencies = [
  "akita-labinius-verifier",
  "akita-params",
  "akita-sumcheck",
+ "akita-transcript",
  "akita-types",
  "criterion",
  "jolt-field",
