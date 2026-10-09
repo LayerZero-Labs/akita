@@ -778,6 +778,8 @@ fn edited_artifact<Cfg: CommitmentConfig>(edit: impl FnOnce(&mut serde_json::Val
     serde_json::to_vec_pretty(&value).expect("artifact JSON")
 }
 
+/// The first recursive fold's own ("final") group. It is the last entry: a
+/// setup prefix and precommitted groups precede it in canonical order.
 fn first_recursive_group(value: &mut serde_json::Value) -> &mut serde_json::Value {
     value["rows"]
         .as_array_mut()
@@ -788,7 +790,8 @@ fn first_recursive_group(value: &mut serde_json::Value) -> &mut serde_json::Valu
                 .as_array_mut()
                 .and_then(|folds| folds.first_mut())
         })
-        .map(|fold| &mut fold["params"]["groups"]["entries"][0])
+        .and_then(|fold| fold["params"]["groups"]["entries"].as_array_mut())
+        .and_then(|entries| entries.last_mut())
         .expect("a row with a recursive fold group")
 }
 
