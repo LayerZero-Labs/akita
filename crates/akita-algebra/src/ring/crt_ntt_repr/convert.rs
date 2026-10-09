@@ -38,7 +38,7 @@ pub(super) struct CenteredI16NttConverter<'a, W: PrimeWidth, const K: usize, con
 impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<'a, W, K, D> {
     pub(super) fn new(params: &'a CrtNttParamSet<W, K, D>, rhs: &[[i16; D]]) -> Self {
         #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
-        if crate::ntt::butterfly::inline_ntt64::<W, D>() {
+        if crate::ntt::butterfly::inline_ntt64::<W, D>(params.kernel_plan) {
             return Self {
                 params,
                 strategy: CenteredI16NttStrategy::Inline,

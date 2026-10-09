@@ -924,6 +924,9 @@ dependencies = [
 name = "jolt-inlines-blake2"
 version = "0.1.0"
 source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+dependencies = [
+ "digest 0.11.3",
+]
 
 [[package]]
 name = "jolt-inlines-keccak256"
