@@ -107,8 +107,10 @@ dependencies = [
  "akita-error",
  "akita-labinius-verifier",
  "akita-params",
+ "criterion",
  "jolt-field",
  "rand 0.8.8",
+ "rayon",
 ]
 
 [[package]]
