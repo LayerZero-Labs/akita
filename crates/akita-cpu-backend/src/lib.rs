@@ -26,8 +26,9 @@ pub use commitment::{
 };
 pub use opaque::standalone;
 pub use opaque::{
-    evaluate_root_polynomial, CpuBackend, PreparedCrtNttProfile, PreparedNttCacheMetric,
-    RootPolyMeta, RootPolyShape, RootPolynomialEvaluator,
+    evaluate_root_polynomial, CpuBackend, CpuExportPacket, CpuImportPacket, CpuPacketDescriptor,
+    CpuPacketSections, PreparedCrtNttProfile, PreparedNttCacheMetric, RootPolyMeta, RootPolyShape,
+    RootPolynomialEvaluator, SuccessorEncoding, SuccessorSection, SuccessorSectionDescriptor,
 };
 pub use opaque::{CommitOutput, CommitmentHandle, CpuSource, SourceHandle};
 pub use setup::AkitaProverSetup;

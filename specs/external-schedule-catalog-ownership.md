@@ -283,6 +283,12 @@ Setup tests prove that only eligible catalog rows contribute to matrix capacity
 and that grouped precommit matrices and recursive prefix slots are not omitted.
 PCS end-to-end tests receive explicit catalogs and retain current dense, one-hot,
 small-field, bounded-source, multi-chunk, grouped, and recursive coverage.
+The multi-chunk family registry also includes fp128 W2R3, W4R3, and W8R3
+one-hot companions, dense W8R3, and recursive setup companions for all three
+one-hot chunk widths. Their artifacts and
+catalog snapshot pin three leading multi-chunk folds and a single-chunk suffix;
+config admission tests reject changing the third fold's chunk count without
+recomputing its geometry.
 
 Serialization tests separately protect the 32-byte statement selection and the
 headerless proof body. Downstream envelope round trips do not count as proof-wire

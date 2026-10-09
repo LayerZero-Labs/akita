@@ -86,4 +86,8 @@ if [ "${pkg}" = "akita-prover" ]; then
     echo "CPU execution or witness storage leaked into generic prover contracts" >&2
     exit 1
   fi
+  if rg --line-number --glob '*.rs' '\b(PackedSignedDigits|PackedNegativeBinary|read_portable|import_encoded)\b' crates/akita-prover/src; then
+    echo "backend transfer readers or codecs leaked into generic prover code" >&2
+    exit 1
+  fi
 fi

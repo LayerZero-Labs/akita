@@ -100,7 +100,7 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
 pub struct ProverOpeningData<'a, E: Clone, G, F: Field> {
     opening_claims: OpeningClaims<'a, E, Commitment<F>>,
     opening_layout: OpeningClaimsLayout,
-    groups: Vec<G>,
+    pub(crate) groups: Vec<G>,
 }
 impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, CommitF> {
     pub(crate) fn from_parts(
@@ -147,16 +147,6 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
             .iter()
             .map(PolynomialGroupClaims::commitment)
             .collect()
-    }
-    pub(crate) fn map_groups<'b, Q>(
-        &'b self,
-        mut map: impl FnMut(&'b G) -> Q,
-    ) -> Result<ProverOpeningData<'a, PointF, Q, CommitF>, AkitaError> {
-        ProverOpeningData::from_parts(
-            self.opening_claims.clone(),
-            self.opening_layout.clone(),
-            self.groups.iter().map(&mut map).collect(),
-        )
     }
     pub(crate) fn append_to(
         &self,

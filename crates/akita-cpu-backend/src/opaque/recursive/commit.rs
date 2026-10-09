@@ -5,6 +5,31 @@ use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
+pub(crate) fn uses_tensor_source(
+    plan: &crate::opaque::ValidatedRecursiveWitnessCommitPlan,
+    degree: usize,
+) -> Result<bool, AkitaError> {
+    let terminal = matches!(
+        plan.parameters(),
+        crate::opaque::WitnessCommitmentParameters::Terminal(_)
+    );
+    match (terminal, plan.source_encoding()) {
+        (true, _) => Ok(degree != 1),
+        (false, Some(akita_params::CommittedSourceEncoding::CanonicalCoefficientTable)) => {
+            Ok(false)
+        }
+        (
+            false,
+            Some(akita_params::CommittedSourceEncoding::TensorSubfieldProjection {
+                extension_degree,
+            }),
+        ) if extension_degree == degree => Ok(true),
+        _ => Err(AkitaError::InvalidInput(
+            "invalid successor source encoding".into(),
+        )),
+    }
+}
+
 impl CpuWitnessHandle {
     pub(crate) fn from_cpu(
         inner: RecursiveWitnessFlat,
@@ -15,7 +40,7 @@ impl CpuWitnessHandle {
         let commitment_domain_len =
             akita_params::witness_commitment_domain_len(logical_len, commitment_ring_dimension)?;
         Ok(Self {
-            pending_successor: None,
+            phase: super::WitnessPhase::BuiltForFold(binding.fold_level()),
             relation_plan: None,
             manifest: crate::opaque::RecursiveWitnessManifest::try_new(
                 logical_len,
@@ -41,7 +66,7 @@ impl CpuWitnessHandle {
             ring_dim,
         )?;
         Ok(Self {
-            pending_successor: self.pending_successor,
+            phase: self.phase,
             relation_plan: self.relation_plan,
             manifest,
             binding: self.binding,
@@ -157,7 +182,7 @@ where
     > {
         let parent = witness.operation_binding();
         self.validate_binding(&parent)?;
-        if witness.pending_successor.is_some() {
+        if witness.phase != super::WitnessPhase::BuiltForFold(parent.fold_level()) {
             return Err(AkitaError::InvalidInput(
                 "witness already committed for its next level".into(),
             ));
@@ -210,27 +235,7 @@ where
             ));
         }
         witness = witness.align_for_commitment_ring_dim(plan.ring_dimension())?;
-        let terminal = matches!(
-            plan.parameters(),
-            crate::opaque::WitnessCommitmentParameters::Terminal(_)
-        );
-        let tensor = match (terminal, plan.source_encoding()) {
-            (true, _) => E::DEGREE != 1,
-            (false, Some(akita_params::CommittedSourceEncoding::CanonicalCoefficientTable)) => {
-                false
-            }
-            (
-                false,
-                Some(akita_params::CommittedSourceEncoding::TensorSubfieldProjection {
-                    extension_degree,
-                }),
-            ) if extension_degree == E::DEGREE => true,
-            _ => {
-                return Err(AkitaError::InvalidInput(
-                    "invalid successor source encoding".into(),
-                ))
-            }
-        };
+        let tensor = uses_tensor_source(plan, E::DEGREE)?;
         if tensor {
             dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -288,7 +293,10 @@ where
         };
         // One lineage identifies the next committed witness and its material.
         witness.set_operation_binding(parent.for_operation(successor.operation_id()));
-        witness.pending_successor = Some(successor.fold_level());
+        witness.phase = super::WitnessPhase::CommittedForSuccessor {
+            producer: parent.fold_level(),
+            successor: successor.fold_level(),
+        };
         Ok(crate::opaque::WitnessCommitmentOutput::new(
             binding, witness, material,
         ))
@@ -299,7 +307,12 @@ where
         let next = parent.fold_level().checked_add(1).ok_or_else(|| {
             AkitaError::Internal("admitted witness successor fold level overflow".into())
         })?;
-        if witness.pending_successor != Some(next) {
+        if witness.phase
+            != (super::WitnessPhase::CommittedForSuccessor {
+                producer: parent.fold_level(),
+                successor: next,
+            })
+        {
             return Err(AkitaError::InvalidInput(
                 "witness level transition requires its successor commitment".into(),
             ));
@@ -309,7 +322,7 @@ where
             .with_group(None);
         self.validate_binding(&binding)?;
         witness.set_operation_binding(binding);
-        witness.pending_successor = None;
+        witness.phase = super::WitnessPhase::ReadyInput(next);
         Ok(())
     }
 }

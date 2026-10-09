@@ -813,14 +813,18 @@ fn explicit_commitment_transfer_between_backends() {
         let prefixes = receiver
             .import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)
             .unwrap();
+        let mut registry = akita_prover::BackendRegistry::<Cfg>::new().unwrap();
+        let root = registry.register(&receiver, &prefixes).unwrap();
+        let mut route =
+            akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
         let proof = akita_prover::batched_prove::<Cfg, _>(
             setup.expanded.descriptor(),
-            &prefixes,
             scheme.schedules(),
-            &receiver,
+            &registry,
             prover_data,
             session,
             BasisMode::Lagrange,
+            &mut route,
         )
         .expect("heterogeneous prove");
         scheme

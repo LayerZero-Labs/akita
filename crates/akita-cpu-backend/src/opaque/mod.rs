@@ -25,6 +25,12 @@ mod source;
 pub mod standalone;
 pub(crate) mod sumcheck;
 
+mod transfer;
+pub use transfer::{
+    CpuExportPacket, CpuImportPacket, CpuPacketDescriptor, CpuPacketSections, SuccessorEncoding,
+    SuccessorSection, SuccessorSectionDescriptor,
+};
+
 #[cfg(test)]
 pub(crate) use crate::arithmetic::CyclicRowsComputeBackend;
 pub(crate) use crate::arithmetic::{tensor_pack_recursive_witness, RingSwitchRelationView};
@@ -81,7 +87,7 @@ pub(in crate::opaque) use recursive::{
 pub(crate) use recursive::{pad_compact_witness, LowBasisRangeCheckProver};
 pub(crate) use recursive::{
     CpuPreparedOpeningHandle, CpuRelationHandle, CpuStage1SessionHandle, CpuStage2SessionHandle,
-    CpuWitnessHandle, CpuWitnessOpeningHandle, RecursiveWitnessFlat,
+    CpuWitnessHandle, CpuWitnessOpeningHandle, RecursiveWitnessFlat, WitnessPhase,
 };
 pub(crate) use relation_weights::RelationWeightDescription;
 impl<F, E> crate::opaque::ProverHandleFamily<F, E> for crate::opaque::CpuBackend<F, E>
@@ -89,6 +95,10 @@ where
     F: Field + CanonicalEncoding + Send + Sync + 'static,
     E: Field + Send + Sync + 'static,
 {
+    fn instance_identity(&self) -> BackendInstanceIdentity {
+        BackendInstanceIdentity::new::<Self>(u128::from(self.owner_id()))
+    }
+
     type CommitmentHandle = CommitmentHandle<F, E>;
     type EorPreparationHandle = eor::CpuEorPreparation<F, E>;
     type EorSessionHandle = eor::CpuEorSession<E>;
@@ -658,7 +668,8 @@ where
         self.validate_binding(&parent)?;
         let (schedule, _) = parent.scope_lease().proof_plan()?;
         let terminal = &schedule.terminal;
-        if parent.fold_level() as usize != schedule.recursive_folds.len() + 1
+        if witness_handle.phase != WitnessPhase::ReadyInput(parent.fold_level())
+            || parent.fold_level() as usize != schedule.recursive_folds.len() + 1
             || plan.ring_dimension() != terminal.d_a()
             || plan.positions_per_block() != terminal.blocks.positions_per_block
             || plan.live_blocks() != terminal.blocks.live_blocks

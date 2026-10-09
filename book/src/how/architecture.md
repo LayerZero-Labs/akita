@@ -173,3 +173,97 @@ Opening batch kernels validate one authoritative challenge partition against eve
 source and return one aggregate witness per requested chunk. The protocol combines
 their `z` values into the global fold witness; non-fused backends reuse the public
 checked aggregator within each chunk.
+
+## Per-fold execution ownership
+
+The `batched_prove` API keeps one transcript while assigning each
+successor fold to a registered backend instance. A typed executor owns its local
+session and setup-prefix handles. The coordinator carries a public continuation
+(level, commitment binding, challenges, and openings) separately from an opaque,
+owner-tagged witness/material pair. Handle pairs and transfer packets are erased
+only at dispatch; all arithmetic kernels keep their associated handle types.
+
+## Backend routing
+
+Backend routing is always available through `batched_prove`; it requires no
+Cargo feature. A fold reduces a private witness to a smaller successor witness.
+Before preparing any executor, a caller-defined policy resolves the owner of
+every fold. Each producer commits its successor once. On a switch, the source
+exports a typed packet, a registered bridge converts it, and the destination
+imports local handles synchronously. The source finishes its sumchecks before
+the destination executes its fold. The terminal fold can have its own owner as
+well.
+
+Construct `BackendRegistry<Cfg>`, register each backend with its local
+`akita_prover::SetupPrefixProverRegistry`. Registration returns a `BackendId`.
+Pass the registry, typed opening inputs, and route to `batched_prove`.
+`FixedFoldRoute::new(vec![a, b, a])` assigns folds 0, 1, and 2 to those registry
+entries. Custom `FoldExecutionPolicy` implementations select every level through
+`choose_backend`, called once per level in order before preparation; its current
+owner is absent at level 0. Choices remain fixed throughout the proof. The
+registry dispatches the root to the selected executor, checks its commitment
+handle family, and validates that the handles belong to that instance. The route
+stores only IDs. Each instance supplies the prefix handles needed by its folds
+and successor commitments. Registration builds a union of public prefix slots
+and rejects conflicting public values for a shared slot ID. Public agreement is
+checked once for the immutable registrations; each selected executor must still
+have its required local handles. Registration also rejects duplicate instances;
+IDs from another registry reject. Route implementations own any cost model;
+Akita does not request or compare cost estimates.
+
+Backends implement `SuccessorExportKernel` and `SuccessorImportKernel` alongside
+ordinary typed kernels. Backend-provided conversions implement `SuccessorBridge`
+on `Edge<A, B>`. Register the bridge explicitly with
+`registry.register_bridge::<A, B>()?` before selecting a switch. Same-type
+instance switches (two `CpuBackend`s) still need
+`register_bridge::<CpuBackend<F, E>, CpuBackend<F, E>>()?`. Heterogeneous routes
+register each directed edge (for example `PrivateCpu` ↔ `CpuBackend`). For an
+application-owned converter, use `registry.register_bridge_with::<A,
+B>(convert)?`. It accepts a function or closure from `A::ExportPacket` and the
+handoff plan to `B::ImportPacket`, allowing applications to connect
+dependency-owned backends without implementing a foreign trait. Both
+registration APIs share the same type-pair key and reject duplicates. A missing
+bridge or foreign ID rejects before any executor is prepared. Only selected
+instances are prepared, and their prefix handles and fold capacities are checked
+before opening the transcript. Akita never silently reroutes a proof. A single
+instance needs no bridge: same-ID choices retain native handles without export,
+conversion, or import.
+
+The handoff is blocking: export a typed packet, convert it to the destination's
+packet, then validate and import both handles. Every import packet exposes
+`HandoffMetadata`: the identity of this transfer and the logical witness
+geometry. The destination checks this metadata against the handoff plan before
+adopting private payloads. The coordinator dispatches typed bridges without
+prescribing payload encoding. CPU self-edges share immutable packed witness and
+material storage. External bridges can construct
+`CpuImportPacket::new(descriptor, sections)` with packed or signed digits,
+canonical field coefficients, and compression sections described by
+`CpuPacketDescriptor`. These section types and encodings belong to
+`akita_cpu_backend`; other backend pairs can use their own packet formats. CPU
+exports provide `into_sections()` for conversion to another representation.
+Import checks section lengths, the admitted handoff, digit bounds, and canonical
+encodings. Portable packets carry logical witness digits only; CPU import
+derives the tensor representation when needed. Native CPU self-edges retain the
+private transformed cache through shared storage. For outer successors, import
+trusts that the bridge's inner rows and compression material reproduce the
+public commitment; it checks geometry and canonical encoding, and the verifier
+checks consistency. Terminal successors also cross-check the imported inner rows
+against the public fields. Switching retains the producer's handles until its
+sumchecks complete. The CPU scheme method uses this same prover with every level
+assigned to its supplied backend. Routing does not change the setup, commitment,
+transcript, or proof format.
+
+Before any proof computation, the coordinator calls `prepare_executor` on each
+selected backend to open its local proof session. It then calls `begin_fold` for
+every assigned level to validate that level and its successor commitment work
+before opening the transcript. Preparation does not require a backend to execute
+unassigned levels. All prepared sessions use `ProofScope` to finish on success
+or abort on failure, including scopes whose completion fails. A registry
+supports repeated proofs, with one active proof at a time.
+
+Implementation: `crates/akita-prover/src/protocol/prove/registry.rs`,
+`crates/akita-prover/src/protocol/prove/execution.rs`,
+`crates/akita-prover/src/backend/transfer.rs`, and
+`crates/akita-cpu-backend/src/opaque/transfer.rs`. Design record:
+`specs/dynamic-backend-bridges.md`. Regression coverage:
+`crates/akita-pcs/tests/dynamic_backends.rs`.

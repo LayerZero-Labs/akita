@@ -277,6 +277,13 @@ mod tests {
         audit::<fp128::OneHotMultiChunk>();
         audit::<fp128::OneHotMultiChunkW2R2>();
         audit::<fp128::OneHotMultiChunkW4R2>();
+        audit::<fp128::OneHotMultiChunkW2R3>();
+        audit::<fp128::OneHotMultiChunkW4R3>();
+        audit::<fp128::OneHotMultiChunkW8R3>();
+        audit::<fp128::DenseMultiChunkW8R3>();
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW2R3>>();
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW4R3>>();
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R3>>();
         audit::<fp64::Dense>();
         audit::<fp64::OneHot>();
         audit::<fp32::Dense>();

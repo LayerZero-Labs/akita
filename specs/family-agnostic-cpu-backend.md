@@ -47,7 +47,7 @@ prefix slots.
    after it recomputes the same source and commitment. Protected by
    `cpu_commit_matches_full_executor_state_after_outer_image_completion` in
    `crates/akita-cpu-backend/src/opaque/owned_commit.rs`.
-2. **Proving catalog.** `ProofAdmission::begin_proof::<Cfg>` receives the
+2. **Proving catalog.** `ProofAdmission::prepare_executor::<Cfg>` receives the
    proving catalog and requires the proof schedule to be one of its rows
    (`CpuBackend::validate_proof_configuration`). No backend state selects or
    narrows the row.
@@ -101,7 +101,7 @@ prefix slots.
   `&TrustedScheduleCatalog<Cfg>`. One backend commits groups from different
   families over the same `(F, E)` (`heterogeneous_group_types`,
   `bounded_dense_precommit_with_onehot_final_group`).
-- [x] `ProofAdmission::begin_proof::<Cfg>` and
+- [x] `ProofAdmission::prepare_executor::<Cfg>` and
   `AkitaCommitmentScheme::batched_prove` use the proving catalog, and the proof
   schedule must be one of its rows.
 - [x] Commitment handles record the admitting producer contract, readable
@@ -156,7 +156,7 @@ setup.
 `CpuBackend<F, E>` in `crates/akita-cpu-backend/src/opaque/backend.rs` owns the
 expanded setup, the setup-prefix cache, and backend identity. Row resolution
 moves to operation arguments. `commit` takes the producer catalog.
-`begin_proof`, reached through `batched_prove`, takes the proving catalog.
+`prepare_executor`, reached through `batched_prove`, takes the proving catalog.
 `CommittedSource` in `crates/akita-cpu-backend/src/opaque/owned.rs` stores the
 contract that `resolve_commit_params` admitted the sources under. External
 backends expose the same fact through the `CommitmentHandleMetadata` trait in

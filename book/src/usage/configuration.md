@@ -94,6 +94,17 @@ selected production workloads. These configurations divide the witness
 relation into exact chunks during the first folds. They let the prover spread
 large work across a controlled partition without changing the public claim.
 
+The profile name `W8R2` means eight chunks in the first two folds (levels 0 and
+1), followed by single-chunk folds. R3 extends that prefix to three folds
+(levels 0, 1, and 2). The fp128 presets `OneHotMultiChunkW2R3`,
+`OneHotMultiChunkW4R3`, and `OneHotMultiChunkW8R3` offer two, four, and eight
+chunks; `DenseMultiChunkW8R3` offers eight chunks for dense sources.
+`RecursiveCommitmentConfig<fp128::OneHotMultiChunkW2R3>`,
+`RecursiveCommitmentConfig<fp128::OneHotMultiChunkW4R3>`, and
+`RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R3>` combine each chunk
+width with recursive setup offloading. Each preset uses its own trusted schedule catalog;
+`OneHotMultiChunk` and `DenseMultiChunk` continue to use W8R2.
+
 Multi chunk configurations are deployment choices for measured large
 workloads. Begin with `Dense` or `OneHot`. Move to a multi chunk companion after
 profiling the complete host application and confirming that its trusted
