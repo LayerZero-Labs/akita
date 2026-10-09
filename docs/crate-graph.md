@@ -65,6 +65,7 @@ graph TD
   LabiniusVerifier --> Error
   LabiniusVerifier --> Challenges
   LabiniusVerifier --> Params
+  LabiniusVerifier --> Types
   LabiniusVerifier --> Transcript
   LabiniusVerifier --> Field
   LabiniusProver --> LabiniusVerifier

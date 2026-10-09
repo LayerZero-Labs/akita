@@ -120,6 +120,7 @@ dependencies = [
  "akita-error",
  "akita-params",
  "akita-transcript",
+ "akita-types",
  "jolt-field",
 ]
 

@@ -20,6 +20,7 @@ pub mod codec;
 pub mod commitment;
 pub mod endpoint;
 pub mod frontend;
+pub mod lowered;
 pub mod profile;
 pub mod source;
 

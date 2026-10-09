@@ -6,6 +6,8 @@
 
 #![cfg(feature = "labinius")]
 
+pub mod lowered;
+
 use akita_algebra::{binary::field_switch::SwitchField, SmoothFftField, TrinomialModulus};
 use akita_challenges::BinaryChallengeSampler;
 use akita_error::AkitaError;
