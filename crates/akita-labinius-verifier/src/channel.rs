@@ -216,14 +216,14 @@ fn root_field_site(site: RootFieldSite) -> akita_transcript::ProtocolSiteId {
 
 /// Standalone root session; separate from the clear-opening session domain.
 pub fn new_root_prover() -> Result<akita_transcript::ProverChannel, AkitaError> {
-    akita_transcript::new_prover_channel(b"akita/labinius/root-reduction/v1", b"")
+    akita_transcript::new_prover_channel(b"akita/labinius/root-reduction/v2", b"")
 }
 
 /// Standalone root replay session, bounded by the caller's proof slice.
 pub fn new_root_verifier(
     proof: &[u8],
 ) -> Result<akita_transcript::VerifierChannel<'_>, AkitaError> {
-    akita_transcript::new_verifier_channel(b"akita/labinius/root-reduction/v1", b"", proof)
+    akita_transcript::new_verifier_channel(b"akita/labinius/root-reduction/v2", b"", proof)
 }
 
 impl ClearChannel for RootSumcheckProverChannel<'_> {

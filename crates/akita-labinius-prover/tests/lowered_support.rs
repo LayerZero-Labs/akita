@@ -1,10 +1,6 @@
 #![cfg(feature = "labinius")]
 #![allow(dead_code)]
 
-#[path = "quotient_support.rs"]
-pub(crate) mod quotient_support;
-use quotient_support::a_relation_quotients;
-
 #[path = "common/mod.rs"]
 pub(crate) mod common;
 
@@ -98,7 +94,6 @@ pub(crate) struct Case {
     pub(crate) u: Vec<B>,
     pub(crate) fold: Vec<BinaryChallenge>,
     pub(crate) response: Vec<[i64; 162]>,
-    pub(crate) qa: Vec<Vec<F>>,
     pub(crate) q: Vec<i128>,
     pub(crate) k: Vec<i128>,
     pub(crate) w: Vec<u8>,
@@ -137,7 +132,6 @@ impl Case {
         )
         .unwrap();
         let layout = LoweredRootLayout::new(&setup, &shape, base).unwrap();
-        let qa = a_relation_quotients(&setup, &commitment, &fold, &response).unwrap();
         let (q, k) = parity_quotient_and_carry(&setup, &claim, &u, &fold, &response).unwrap();
         let w = encode_witness(&layout, &response).unwrap();
         let y = flatten_image(&layout, &commitment).unwrap();
@@ -157,7 +151,6 @@ impl Case {
             u,
             fold,
             response,
-            qa,
             q,
             k,
             w,
@@ -176,14 +169,13 @@ impl Case {
         )
     }
     pub(crate) fn public(&self) -> LoweredPublic<F> {
-        self.public_with(&self.claim, &self.u, &self.qa, &self.q, &self.k)
+        self.public_with(&self.claim, &self.u, &self.q, &self.k)
             .unwrap()
     }
     pub(crate) fn public_with(
         &self,
         claim: &BinaryEvaluationClaim,
         u: &[B],
-        qa: &[Vec<F>],
         q: &[i128],
         k: &[i128],
     ) -> Result<LoweredPublic<F>, AkitaError> {
@@ -193,7 +185,7 @@ impl Case {
             claim,
             u,
             &self.fold,
-            qa,
+            &[],
             q,
             k,
             self.challenges,

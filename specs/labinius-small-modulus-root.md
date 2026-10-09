@@ -14,13 +14,14 @@ The parameter layer supplies its typed commitment modulus, certified SIS
 envelopes. At `(22, 8, 128)` it admits rank 3. Opening-time objects stay over
 the 128-bit coefficient prime P.
 
-Commitment and quotient construction use the existing P-field transform
+Commitment and carry construction use the existing P-field transform
 kernels on the reduced matrix, followed by exact centred lifting. A dedicated
 small-prime kernel, planner integration and catalogs remain deferred.
 `akita-labinius-pcs` rejects this profile with `InvalidSetup` at root prover
 and verifier construction and at the image methods that accept an admitted
 root. Its image constructors do not take a root profile. The existing tag-0
-profile, table, identities, commitments and reduction proof bytes are unchanged.
+profile, table, setup identities and commitments are unchanged. Both profiles
+use the remainder-form root reduction and its v2 wire format.
 
 ## Notation
 
@@ -70,21 +71,26 @@ width 2^28 example misses the provisional 64-bit floor.
 ## Lifted relation
 
 
-The A row becomes an identity over `Z[Y]`, with every product unreduced:
+The A row is an identity in the quotient ring, with its integer remainder
+lifted into the opening field:
 
 ```text
-sum_j A_ij(Y) * p_j(Y) - sum_col iota(Ch_col)(Y) * T_(col,i)(Y)
-    = Phi_D(Y) * QA_i(Y) + q0 * KA_i(Y),        deg KA_i < D,  deg QA_i <= D - 2.
+rem_Phi_D(sum_j A_ij(Y)*p_j(Y) - sum_col iota(Ch_col)(Y)*T_(col,i)(Y))
+    = q0*KA_i(Y),                                      deg KA_i < D.
 ```
 
-`QA_i` is the integer quotient by the monic `Phi_D`; `q0 * KA_i` is the remainder, which for an honest prover is divisible by `q0` coefficientwise because the identity reduced modulo `(q0, Phi_D)` is the commitment relation. The verifier checks the identity in `F_P` at the existing challenge `alpha`:
+For an honest prover the integer remainder is divisible by q0 coefficientwise,
+because the identity modulo `(q0,Phi_D)` is the commitment relation. KA has D
+integers per row, sent in the clear and range-checked before alpha. Its
+encoding, range and transcript position are unchanged. The verifier evaluates
+this remainder identity in F_P using the same `u_i[t]=gamma^i*alpha^t` as tag 0.
+The public constant contains `sum_i gamma^i*q0*KA_i(alpha)`. The common
+remainder weights are owned by
+[the lowered relation](labinius-lowered-root.md#public-linear-relation).
 
-- `QA_i`: `D - 1` unconstrained elements of `F_P` per row, canonical encoding, sent before `alpha`, as today.
-- `KA_i`: new. `D` integers per row, sent in the clear before `alpha`, range-checked against the signed interval of `e_KA` bits, as the parity quotient and carry are today.
-- The public constant gains one term: `c_pub += sum_i gamma^i * q0 * KA_i(alpha)`.
-- `K_W` and `K_Y` are unchanged as formulas; `Abar_j` is computed from the reduced coefficients.
-
-The parity row, the alphabet check, the response table, both sumchecks and the oracle contract are unchanged.
+The parity row, alphabet check, response table, both sumchecks, their degrees,
+oracle contract and alpha/xi/gamma challenge order are unchanged. There is no
+matrix-quotient message or computation and no binary carry projection.
 
 ### Honest bound on the carry
 
@@ -107,9 +113,7 @@ Honest completeness: the prover can recover the remainder through `F_P` and cent
 
 Only `KA`. The two statements below are algebra; the security conclusion drawn from them is conditional and is stated separately.
 
-**`QA` needs no range check.** It needs its degree bound, canonical encoding and binding before `alpha`. Monic division commutes with reduction modulo `P`, and a polynomial of degree below `D` that is a multiple of `Phi_D` in `F_P[Y]` is zero; so an adaptive `QA_i` cannot change the remainder of the left side modulo `Phi_D`.
-
-**Cancellation lemma (no assumption on `T`).** Fix one table `Y*` over `F_P` (arbitrary elements, no integrality, not assumed of the form `[A b]`). Suppose three accepting children share `Y*` and the matrix, use challenges from the admitted family, and differ only in the fold challenge of column `col`: a base child with `(c, z, KA)` and two others with `(c', z', KA')`, `(c'', z'', KA'')`, each satisfying the exact polynomial A-row identity in `F_P[Y]` with its own alphabet-valid response and range-valid carry. Put `a = z - z'`, `s = c - c'`, `kappa = KA - KA'` and likewise `a2, s2, kappa2` for the second pair. Reducing modulo `Phi_D` and subtracting,
+**Cancellation lemma (no assumption on `T`).** Fix one table `Y*` over `F_P` (arbitrary elements, no integrality, not assumed of the form `[A b]`). Suppose three accepting children share `Y*` and the matrix, use challenges from the admitted family, and differ only in the fold challenge of column `col`: a base child with `(c, z, KA)` and two others with `(c', z', KA')`, `(c'', z'', KA'')`, each satisfying the exact remainder A-row identity in `R_P` with its own alphabet-valid response and range-valid carry. Put `a = z - z'`, `s = c - c'`, `kappa = KA - KA'` and likewise `a2, s2, kappa2` for the second pair. Reducing modulo `Phi_D` and subtracting,
 
 ```text
 s * Y*_col = nu,   s2 * Y*_col = nu2     in R_P^{n_A},
@@ -170,7 +174,6 @@ At `(log_num_cells, log_fold_width, lambda_fold) = (22,8,128)`:
 | H_A | 23346480637983191040 |
 | B_KA | 260919297587 |
 | Live image length | 497664 |
-| A-quotient length | 1941 |
 | A-carry length | 1944 |
 | Achieved bias bits | 79 |
 
@@ -182,13 +185,14 @@ At `(log_num_cells, log_fold_width, lambda_fold) = (22,8,128)`:
 
 ## Soundness ledger delta
 
-- The A-row polynomial identity test remains `(2D - 2)/|F|`.
+- The remainder A-row polynomial identity test has bound `(D - 1)/|F|`;
+  the complete ledger is owned by the root-reduction specification.
 - The implemented lift inequalities use e_KA rounded to the selected base.
 - SIS pricing uses q0, degree D and the admitted rank, plus the additive
   derivation bias. The width certificate rule is stated below. The generic
   estimate does not establish ring-ideal security or the open extraction and
   Fiat-Shamir composition theorem.
-- The auxiliary message binds QA and KA before alpha, using the exact grammar
+- The auxiliary message binds KA before alpha, using the exact grammar
   below. KA is checked as an integer before field embedding.
 - The closed profile and setup identity bind q0, the reduced derivation,
   carry-envelope rule and layout before challenges. Existing setup transcript
@@ -201,7 +205,6 @@ At `(log_num_cells, log_fold_width, lambda_fold) = (22,8,128)`:
 For tag 1, the auxiliary message has no count fields or framing:
 
 ```text
-QA[0][0..D-1], ..., QA[n_A-1][0..D-1]  : canonical F_P, 16 bytes each
 KA[0][0..D],   ..., KA[n_A-1][0..D]    : signed offset, ceil(e_KA/8) bytes each
 Q[0..161]                             : signed offset, ceil(e_Q/8) bytes each
 K[0..162]                             : signed offset, ceil(e_K/8) bytes each
@@ -210,9 +213,9 @@ K[0..162]                             : signed offset, ceil(e_K/8) bytes each
 Ranges above are half-open. KA is row-major, with exactly `n_A*D` integers.
 For any signed e-bit value x, the bytes encode `x + 2^(e-1)` little-endian;
 the value must lie in `[-2^(e-1), 2^(e-1)-1]`. An offset at least `2^e`,
-including any nonzero unused high bit, rejects. QA is unconstrained beyond
-canonical field encoding and its exact degree extent. All four sections
-precede alpha. Tag 0 omits KA entirely, including any empty-section framing.
+including any nonzero unused high bit, rejects. All three sections precede
+alpha: tag 1 sends `KA || Q || K`. Tag 0 sends `Q || K`, omitting KA entirely,
+including any empty-section framing.
 
 Let `LP(x) = u64_le(byte_length(x)) || x`. The reduced matrix-view digest
 uses the existing backend-specific `matrix_digest` construction: a fresh
@@ -246,12 +249,12 @@ unless twice this bound is strictly below P. Both commitment paths compute
 in R_P, centre each coefficient exactly, then take its integer remainder
 modulo q0 in `[0,q0)`.
 
-The root quotient kernel obtains the original-ring remainder and the
-conjugate-ring residual through the existing transforms. It centres the
-remainder under `6*H_A < P`, checks integer divisibility by q0, and range-checks
-KA using the selected digit base. Subtracting the remainder from the conjugate
-residual leaves the existing field QA recovery unchanged. Tag 0 retains its
-nonzero-remainder rejection.
+The root carry kernel obtains the own-ring remainder through the existing
+P-field commitment transforms. It centres the remainder under `6*H_A < P`,
+checks integer divisibility by q0, and range-checks KA using the selected digit
+base. No conjugate-ring transform is prepared. Tag 0 computes no matrix-row
+auxiliary witness; a source/commitment mismatch leaves an inconsistent sumcheck
+claim that verification rejects.
 
 The clear endpoint centres each coefficient of `A*z - sum_col ch_col*T_col`
 in R_P and checks integer divisibility by q0 and the admitted carry interval.
@@ -272,11 +275,14 @@ stored matrix for tag 1; tag 0 retains both 64 MiB caps. At rank 3 and m=4096
 the matrix is 127401984 bytes as field elements or 31850496 bytes as u32.
 A later storage change will derive the prefix in pages and store u32 entries,
 then return both caps to 64 MiB. These are two allocation caps, not a global
-verifier-memory cap. The padded setup-weight scratch vector separately has
-2^23 field elements, or 128 MiB. No storage representation change is implemented.
+verifier-memory cap. No matrix storage representation change is implemented.
 
-`LoweredPublic::new` and `witness_weight_mle` scan n_A*m*D coefficients,
-three times the current count at the sample geometry. Although reduced
+Setup preparation caches n_A ring elements H_i for the offset term, bound to
+the matrix and response interval as specified by the lowered relation.
+`LoweredPublic::new` does no matrix scan. `witness_weight_mle` scans n_A*m*D
+coefficients once into n_A*D accumulators; at rank 3 that is 7,962,624 live
+matrix coefficients and 1,944 accumulator coefficients. It does not allocate
+the 2^23-entry padded setup-weight reference table. Although reduced matrix
 coefficients fit in 28 bits, contractions still occur in F_P; no verifier
 multiplication cost or performance claim follows from the storage size.
 
@@ -394,7 +400,7 @@ overflow. Neither the original CSV nor its generated table changes.
 - Quotient batching with a new transcript order and parity-aware ledger.
 - Carry digits in response-table tails with a new address and weight contract.
 - Limb folding with centered lifting and signed packing.
-- A remainder relation without QA.
+- Binary projection of KA, with a separately specified transcript and carry admission.
 - Column-major image packing and its terminal weight evaluator. This retains
   the column tensor factor but changes rank/coefficient coordinates; no exact
   multiplication count is established.

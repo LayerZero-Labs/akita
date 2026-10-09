@@ -83,16 +83,17 @@ Let `Ch_col` be the integer polynomial of a validated fold challenge,
 The left expansion of u against the remaining claim coordinates is checked
 separately by the existing clear endpoint helper.
 
-For tag 0, the unreduced A rows over F are
+The A rows are reduced in `R=F[Y]/(Phi_D)` before evaluation:
 
 ```text
-sum_j A_ij(Y)*p_j(Y) - sum_col iota(Ch_col)(Y)*Y_(col,i)(Y)
-    = Phi_D(Y)*QA_i(Y).
+x_i = rem_Phi_D(sum_j A_ij*p_j - sum_col iota(Ch_col)*Y_(col,i));
+x_i = 0                  for tag 0;
+x_i = q0*KA_i            for tag 1.
 ```
 
-Every side has degree at most `2D-2`, and each clear QA row has exactly `D-1`
-coefficients. Tag 1 adds `q0*KA_i(Y)` to the right side, with D range-checked
-integers per row; the canonical auxiliary witness contains QA followed by KA.
+Each remainder has degree below D. Tag 0 has no auxiliary matrix-row message.
+Tag 1 sends exactly D range-checked carry integers per row. The integer lift
+and its admission conditions are owned by the small-modulus specification.
 The unreduced parity row over the integers is
 
 ```text
@@ -106,68 +107,155 @@ division gives Q and an even remainder; K is half that remainder.
 
 ## Public linear relation
 
-Fix explicit `alpha,xi,gamma` in F. Put `g=gamma^n_A` and
-`Abar_j=sum_i gamma^i*A_ij(alpha)`. Integers reduce into F, with negative x
-mapped to `-|x|`. Define the public weights and constant once as follows:
+Fix explicit `alpha,xi,gamma` in F. For both tags set
+`u_i[t]=gamma^i*alpha^t` and `g=gamma^n_A`. These are power-product weights,
+not independent random field coordinates. Write `<a,b>` for the coefficient
+dot product. Integers reduce into F, with negative x mapped to `-|x|`. Define
 
 ```text
-K_W(j,l,t) = 2^(b*l) * (Abar_j*alpha^t
-                      + g*sigma(t)*xi^s*B_(j*k+c)(xi)), t=s*k+c<D;
-K_Y(e,t)   = -gamma^i*iota(Ch_col)(alpha)*alpha^t, e=col*n_A+i, t<D;
-c_pub      = sum_(j,t<D) off(t)*(Abar_j*alpha^t
-                               + g*sigma(t)*xi^s*B_(j*k+c)(xi))
-             + sum_i gamma^i*Phi_D(alpha)*QA_i(alpha)
-             + g*(sum_col U_col(xi)*Ch_col(xi)
-                  + Phi(xi)*Q(xi) + 2*K(xi)).
+wA(j,t)      = sum_i <u_i, rem_Phi_D(A_ij*Y^t)>;
+wY(col,i,t)  = -<u_i, rem_Phi_D(iota(Ch_col)*Y^t)>;
+h(j,t)       = sigma(t)*xi^(t div k)*B_(j*k+t mod k)(xi);
+T_par        = sum_col U_col(xi)*Ch_col(xi) + Phi(xi)*Q(xi) + 2*K(xi);
+c_A          = 0                                  for tag 0;
+c_A          = sum_i gamma^i*q0*KA_i(alpha)        for tag 1;
+
+K_W[l + dc*(t + P_c*j)]       = 2^(b*l)*(wA(j,t) + g*h(j,t)), t<D;
+K_Y[t + P_c*(col*n_A+i)]      = wY(col,i,t),                t<D;
+c_pub = sum_(j,t<D) off(t)*(wA(j,t) + g*h(j,t)) + c_A + g*T_par.
 ```
 
-Weights are zero at all coefficient tails and image padding. For tag 1, c_pub additionally contains `sum_i gamma^i*q0*KA_i(alpha)`;
-K_W and K_Y use the same formulas with the reduced A coefficients. Acceptance is
+Weights are zero at coefficient tails and image-entry padding. No extra signed
+packing factor belongs on wA: p already carries that sign. Acceptance is
 `<W,K_W>+<Y,K_Y>=c_pub`, together with the alphabet and clear integer range checks.
-Subtracting c_pub gives precisely the gamma combination of the A-row residuals
-plus g times the parity-row residual. The offset has no effect on either public
-weight. `RelationPolynomial::evaluate_modulus_at` supplies both modulus values,
-using the degree-162 plus trinomial for Phi.
+Subtracting c_pub gives precisely `sum_i gamma^i*(x_i(alpha)-q0*KA_i(alpha))`
+for tag 1, or `sum_i gamma^i*x_i(alpha)` for tag 0, plus g times the unchanged
+parity-row residual. The offset has no effect on either public weight.
+`RelationPolynomial::evaluate_modulus_at` supplies Phi(xi) from the degree-162
+plus trinomial; no Phi_D(alpha) factor enters the matrix-row relation.
 
-`LoweredPublic` validates lengths and fold challenges, checks the left expansion
-and Q/K ranges (and KA for tag 1), and caches the row evaluations and powers. The dense weight path
-uses direct Horner evaluations of matrix coefficients, independently of the
-canonical setup-weight preparation path.
+### Cached setup offset
+
+The setup fixes `off(t)` through the response interval and packing degree,
+independently of digit base. Define in R
+
+```text
+S_i = sum_j A_ij;
+O   = sum_(t<D) off(t)*Y^t;
+H_i = rem_Phi_D(S_i*O).
+```
+
+`BinaryClearSetup` constructs and retains H_i in `a_offset_remainders` from
+its own matrix and interval.
+Its online matrix contribution to c_pub is `sum_i gamma^i*H_i(alpha)`.
+`LoweredPublic::new` validates lengths and fold challenges, checks the left
+expansion and Q/K ranges (and KA for tag 1), and caches powers, parity row
+evaluations and these H evaluations. It performs no matrix scan. A verification
+traverses the matrix once, at the response terminal below.
+
+### Dense definition
+
+For `0<=n<=2D-2`, let `rho(n)=(Y^n mod Phi_D)(alpha)`. Write
+`Phi_D=Y^D-c*Y^(D/2)+1`, so c=+1 for the minus trinomial and c=-1 for the plus
+trinomial. With h=D/2, the O(D) recurrence is
+
+```text
+rho(n) = alpha^n                       for n<D;
+rho(n) = c*rho(n-h) - rho(n-D)          for D<=n<=2D-2.
+<u_i, rem_Phi_D(a*Y^t)> = gamma^i*sum_(s<D) a[s]*rho(s+t).
+```
+
+This definition uses neither ring multiplication nor transforms. The dense
+response reference, `check_lowered_clear` and the reference root reduction
+use it. Dense image weights are tested against the same definition; their
+optimized construction uses the shared adjoint implementation below.
+
+### Trace-form adjoint
+
+The verifier crate owns `trace_gram_into`, `trace_gram_inverse` and
+`multiplication_adjoint` in `lowered/adjoint.rs` once;
+the prover uses that owner. Let `G[s][t]=Tr(Y^(s+t))` in the power basis of R.
+For `0<=n<=2D-2`, the nonzero traces are `Tr(Y^0)=2h`, `Tr(Y^h)=c*h`,
+`Tr(Y^(2h))=-h`, `Tr(Y^(3h))=-2c*h`. All others are zero. Consequently
+
+```text
+(G v)[0]   = 2h*v[0] + c*h*v[h];
+(G v)[h]   = c*h*v[0] - h*v[h];
+(G v)[r]   = c*h*v[h-r] - h*v[2h-r];
+(G v)[h+r] = -h*v[h-r] - 2c*h*v[2h-r],          1<=r<h.
+```
+
+Setup rejects with a typed error if 3h is not invertible in F. With
+`z=(3h)^-1`, the inverse map is
+
+```text
+v[0]     = (u[0] + c*u[h])*z;
+v[h]     = (c*u[0] - 2*u[h])*z;
+v[h-r]   = (2c*u[r] - u[h+r])*z;
+v[2h-r]  = -(u[r] + c*u[h+r])*z,               1<=r<h.
+```
+
+Both maps take O(D) operations. Trace associativity gives
+`<u, rem_Phi_D(a*y)>=<G(rem_Phi_D(a*G^-1(u))),y>`; equivalently,
+`M_a^T(u)=G(rem_Phi_D(a*G^-1(u)))`. Thus
+`wA(j,.)=G(sum_i A_ij*G^-1(u_i))` and
+`wY(col,i,.)=-G(iota(Ch_col)*G^-1(u_i))`, with products in R.
+The prover's transform schedule and compact-table memory are owned by
+[the root sumchecks](labinius-root-sumcheck.md#adjoint-weight-construction).
 
 ## Structured multilinear evaluation
 
-For the A part of the witness weight, the canonical `TrinomialASetupView` has
-rows n_A, columns m, zero offset and setup domain equal to the next power of two
-of `n_A*m*D`. `prepare(rho,alpha,[gamma^i],[2^(b*l)])` contracts the complete
-response point. The inner product of `materialize_setup_weights()` and the
-matrix coefficients at `setup_address(i,j,t)` gives the desired A contribution.
-The prepared modulus value is separate; no modulus factor belongs in this
-inner product. Matrix order is `i*m+j`, as in the existing matrix action.
-This verifier calculation costs linear time in the padded setup domain. A
-later protocol can replace it with a setup-contribution claim.
-
-Split rho into digit, component, scalar-coefficient and ring-element blocks,
-with lengths `log2(dc),log2(k),log2(P_c/k),log2(m)`. The parity contribution is
+Split the combined point into digit, coefficient and ring-element blocks
+`(rho_l,rho_t,rho_j)`. Set
 
 ```text
-g * (sum_l eq(rho_l,l)*2^(b*l))
+e_A = sum_(t<D) eq(rho_t,t)*Y^t;
+Abar_i = sum_j eq(rho_j,j)*A_ij;
+wA~(rho_t,rho_j) = sum_i <u_i, rem_Phi_D(Abar_i*e_A)>;
+gadget(rho_l) = sum_l eq(rho_l,l)*2^(b*l).
+```
+
+The canonical `TrinomialASetupView` has rows n_A, columns m, zero offset and
+setup domain the next power of two of `n_A*m*D`. Its prepared owner takes the
+response point's column block rho_j and dense rows
+`z_i[s]=<u_i,rem_Phi_D(Y^s*e_A)>`, incorporating the digit gadget in the
+prepared scale. Its weight at `setup_address(i,j,s)` is
+`gadget(rho_l)*eq(rho_j,j)*z_i[s]`, with padding zero. Matrix order is `i*m+j`.
+`materialize_setup_weights` remains the dense reference;
+`evaluate_setup_weight_at` evaluates this MLE without scanning the matrix.
+The implemented response terminal forms z with one transform adjoint for the
+common alpha-power vector, then scales it by each gamma power. The prepared
+owner contracts columns in one pass into n_A degree-D accumulators and dots
+them with z. It does not materialize the padded setup-weight table for this
+contraction. `witness_weight_mle` obtains its matrix contribution through this
+same owner. This is the closed form above by commutativity and linearity.
+
+For parity, split rho_t further into component and scalar-coefficient blocks,
+with lengths `log2(k),log2(P_c/k)`. Its unchanged terminal contribution is
+
+```text
+g * gadget(rho_l)
   * (sum_(s<162) eq(rho_s,s)*sigma_s*xi^s)
   * Btilde(rho_c,rho_j).
 ```
 
-Btilde extends the table `r=c+k*j -> B_r(xi)`. Computing that table costs
-`O(M_rows*d)` field operations. Restricting s to its natural degree makes the
-coefficient tails zero. The image weight factors as
+Btilde extends `r=c+k*j -> B_r(xi)`. Computing that table costs
+`O(M_rows*d)` field operations. Restricting s to its natural degree makes
+coefficient tails zero.
+
+At the product point `(rho'_t,rho'_e)`, define
 
 ```text
-(sum_(t<D) eq(rho_t,t)*alpha^t)
-  * MLE_(e padded)(-gamma^i*iota(Ch_col)(alpha)).
+e_Y = sum_(t<D) eq(rho'_t,t)*Y^t;
+cbar_i = sum_col eq(rho'_e,col*n_A+i)*iota(Ch_col);
+K_Y~(rho') = -sum_i <u_i, rem_Phi_D(cbar_i*e_Y)>.
 ```
 
-The production A quotient constructor uses the original and conjugate
-trinomial transforms. The tests independently use schoolbook products and
-monic division; tag 1 also has an arbitrary-precision integer oracle that
-checks the transmitted QA and KA without the production weights.
+This contracts the flat entry index directly, including rank-three padding.
+Neither terminal uses the former alpha-power factorization of matrix or image
+weights. Dense and terminal routes are tested against schoolbook reduction.
+The arbitrary-precision integer oracle checks the transmitted KA for tag 1
+and a zero remainder modulo P for tag 0.
 
 ## Witness binding order
 
@@ -177,8 +265,8 @@ messages in the following order. Exact byte grammar is owned by the
 
 | Profile | Before alpha | Before xi | Before gamma |
 | --- | --- | --- | --- |
-| Tag 0 | Y, W, U, folds, QA, Q, K | Same messages and alpha | All evaluated rows |
-| Tag 1 | Y, W, U, folds, QA, KA, Q, K | Same messages and alpha | All evaluated rows |
+| Tag 0 | Y, W, U, folds, Q, K | Same messages and alpha | All evaluated rows |
+| Tag 1 | Y, W, U, folds, KA, Q, K | Same messages and alpha | All evaluated rows |
 
 ## Conditional soundness and challenge order
 
@@ -193,10 +281,10 @@ the challenges test: an image table chosen after alpha, for example, could be
 adjusted to satisfy a false A row. All evaluated rows MUST be fixed before
 gamma.
 
-- A false A polynomial row survives uniform alpha with probability at most
-  `(2D-2)/|F|`, equal to `1294/|F|` at D648. QA and W must be fixed before alpha; tag 1 also fixes KA before alpha.
-  The degree bound is unchanged. Its derivation-bias and extraction ledger delta
-  are recorded only in the small-modulus specification.
+- A false remainder row survives uniform alpha with probability at most
+  `(D-1)/|F|`, equal to `647/|F|` at D648. W must be fixed before alpha;
+  tag 1 also fixes KA before alpha. Its derivation-bias and extraction ledger
+  delta are recorded only in the small-modulus specification.
 - A parity polynomial row false modulo P survives uniform xi with probability
   at most `322/|F|`. W, Q and K must be fixed before xi. If it instead holds as
   a polynomial identity modulo P, the alphabet, clear range checks and admitted
@@ -205,7 +293,7 @@ gamma.
   and Phi gives the F162 parity equation.
 - Once the evaluated rows are fixed, batching by uniform gamma adds at most
   `n_A/|F|`. The combined union bound is at most
-  `(2D-2+322+n_A)/|F|`, before other protocol losses.
+  `(D-1+322+n_A)/|F|`, before other protocol losses.
 - An in-alphabet nonzero digit in a tail or padding position does not change
   acceptance: its weight is zero. Out-of-alphabet tails still reject.
 
@@ -253,7 +341,7 @@ The lowered integration tests exercise all three digit bases at the small
 admitted `(log_num_cells,log_fold_width,lambda_fold)=(4,1,128)` geometry, over
 both an explicit random matrix and a seed-derived admitted setup.
 They compare honest clear endpoints, dense and structured weights, decoded
-residual batching, independently computed integer and field quotients,
-complemented digits, both interval endpoints, malformed inputs and zero-weight
+remainder residual batching, independently computed integer carries,
+trace-map inverses and schoolbook adjoints for both trinomials, complemented digits, both interval endpoints, malformed inputs and zero-weight
 tails. These checks support implementation agreement with the relation above;
 they do not add a proof protocol.

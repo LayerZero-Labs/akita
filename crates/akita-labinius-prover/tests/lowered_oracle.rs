@@ -112,14 +112,12 @@ fn independent_integer_and_schoolbook_oracles_match_every_witness_coefficient() 
                     *a -= b;
                 }
             }
-            let mut qa = vec![F::zero(); 647];
             for t in (648..1295).rev() {
-                qa[t - 648] = residual[t];
-                residual[t - 648] -= qa[t - 648];
-                residual[t - 324] += qa[t - 648];
+                let leading = residual[t];
+                residual[t - 648] -= leading;
+                residual[t - 324] += leading;
                 residual[t] = F::zero();
             }
-            assert_eq!(qa, case.qa[row]);
             assert!(residual.iter().all(|&r| r == F::zero()));
         }
         for (e, image) in case.commitment.images.iter().enumerate() {
@@ -140,13 +138,12 @@ mod lifted;
 
 /// Arbitrary-precision schoolbook check of the transmitted lifted A rows.
 ///
-/// Nothing here goes through the production transforms, the quotient kernel or
+/// Nothing here goes through the production transforms, the carry kernel or
 /// the public weights: the unreduced row is an integer convolution, the division
-/// by the monic modulus is the descending elimination, and both the quotient
-/// (modulo the opening prime) and the remainder (`q0` times the carry, over the
-/// integers) are compared with what the prover sent.
+/// by the monic modulus is descending elimination, and the integer remainder
+/// (`q0` times the carry) is compared with what the prover sent.
 #[test]
-fn arbitrary_precision_lifted_oracle_checks_transmitted_qa_and_ka_rows() {
+fn arbitrary_precision_lifted_oracle_checks_transmitted_ka_rows() {
     use jolt_field::CanonicalBytes;
     use num_bigint::BigInt;
     const D: usize = 648;
@@ -160,7 +157,6 @@ fn arbitrary_precision_lifted_oracle_checks_transmitted_qa_and_ka_rows() {
     for base in lifted::BASES {
         let case = lifted::Case::new(base, 1);
         let (packed, fold, a) = lifted::transmitted_relation(&case);
-        let p = BigInt::from(lifted::SMALL.coefficient_prime().modulus());
         let (rank, width) = (case.layout.n_a(), case.layout.m());
         assert_eq!(rank, 3);
         let matrix = case.admitted.setup().matrix();
@@ -168,8 +164,7 @@ fn arbitrary_precision_lifted_oracle_checks_transmitted_qa_and_ka_rows() {
         assert_eq!(matrix.len(), rank * width);
         assert_eq!(packed.len(), width);
         assert_eq!(images.len(), fold.len() * rank);
-        assert_eq!(a.quotients.len(), rank);
-        assert_eq!(a.carry.len(), rank * D);
+        assert_eq!(a.len(), rank * D);
         for i in 0..rank {
             let mut residual = vec![zero.clone(); 2 * D - 1];
             for (j, response) in packed.iter().enumerate() {
@@ -193,23 +188,12 @@ fn arbitrary_precision_lifted_oracle_checks_transmitted_qa_and_ka_rows() {
                     }
                 }
             }
-            let mut quotient = vec![zero.clone(); D - 1];
             for t in (D..residual.len()).rev() {
                 let leading = std::mem::replace(&mut residual[t], zero.clone());
                 residual[t - D] -= &leading;
                 residual[t - D / 2] += &leading;
-                quotient[t - D] = leading;
             }
-            assert_eq!(a.quotients[i].len(), D - 1);
-            for (s, (computed, &sent)) in quotient.iter().zip(&a.quotients[i]).enumerate() {
-                let reduced = ((computed % &p) + &p) % &p;
-                assert_eq!(
-                    reduced,
-                    canonical(sent),
-                    "{base:?}: QA row {i}, coefficient {s}"
-                );
-            }
-            let carry = &a.carry[i * D..(i + 1) * D];
+            let carry = &a[i * D..(i + 1) * D];
             for (t, (remainder, &sent)) in residual.iter().zip(carry).enumerate() {
                 assert_eq!(
                     *remainder,

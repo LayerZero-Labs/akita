@@ -43,7 +43,7 @@ where
     }
     let layout = LoweredRootLayout::new(setup, admitted.shape(), base)?;
     let mut domain = Vec::new();
-    codec::length_prefixed(&mut domain, b"akita/labinius/root-reduction/v1")?;
+    codec::length_prefixed(&mut domain, b"akita/labinius/root-reduction/v2")?;
     channel.public(&domain)?;
     channel.public(&admitted.identity_bytes::<H>()?)?;
     channel.public(&[base.tag()])?;

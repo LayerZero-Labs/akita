@@ -17,8 +17,10 @@ use akita_labinius_verifier::{
 use akita_params::sis::labinius::{
     LabiniusCoefficientPrime as Prime, LabiniusRingDegree as Degree,
 };
-use jolt_field::One;
-use support::quotient_support::a_relation_quotients;
+use jolt_field::Ring;
+#[path = "a_relation_support.rs"]
+mod a_relation_support;
+use a_relation_support::a_relation_remainders;
 use support::*;
 
 #[test]
@@ -38,9 +40,13 @@ fn differential_response_image_and_public_expansion_mutations_reject() {
         )
         .is_err());
         let y = flatten_image(&case.layout, &commitment).unwrap();
-        assert!(check_lowered_clear(&case.layout, &public, &case.w, &y).is_err());
+        assert!(check_lowered_clear(&case.layout, &public, &case.setup, &case.w, &y).is_err());
         assert!(
-            a_relation_quotients(&case.setup, &commitment, &case.fold, &case.response).is_err()
+            a_relation_remainders(&case.setup, &commitment, &case.fold, &case.response)
+                .unwrap()
+                .iter()
+                .flatten()
+                .any(|x| *x != F::from_u64(0))
         );
         for delta in [1, 2] {
             let mut response = case.response.clone();
@@ -61,9 +67,13 @@ fn differential_response_image_and_public_expansion_mutations_reject() {
             )
             .is_err());
             let w = encode_witness(&case.layout, &response).unwrap();
-            assert!(check_lowered_clear(&case.layout, &public, &w, &case.y).is_err());
+            assert!(check_lowered_clear(&case.layout, &public, &case.setup, &w, &case.y).is_err());
             assert!(
-                a_relation_quotients(&case.setup, &case.commitment, &case.fold, &response).is_err()
+                a_relation_remainders(&case.setup, &case.commitment, &case.fold, &response)
+                    .unwrap()
+                    .iter()
+                    .flatten()
+                    .any(|x| *x != F::from_u64(0))
             );
         }
         // Keep the left-expansion check unchanged, isolating parity's U term.
@@ -84,8 +94,8 @@ fn differential_response_image_and_public_expansion_mutations_reject() {
             &case.response
         )
         .is_err());
-        let public = case.public_with(&claim, &u, &case.qa, &q, &k).unwrap();
-        assert!(check_lowered_clear(&case.layout, &public, &case.w, &case.y).is_err());
+        let public = case.public_with(&claim, &u, &q, &k).unwrap();
+        assert!(check_lowered_clear(&case.layout, &public, &case.setup, &case.w, &case.y).is_err());
         assert!(
             parity_quotient_and_carry(&case.setup, &claim, &u, &case.fold, &case.response).is_err()
         );
@@ -96,19 +106,18 @@ fn differential_response_image_and_public_expansion_mutations_reject() {
 fn clear_quotient_carry_and_alphabet_mutations_reject() {
     for base in BASES {
         let case = Case::new(base);
-        let check = |qa: &[Vec<F>], q: &[i128], k: &[i128]| {
-            let public = case.public_with(&case.claim, &case.u, qa, q, k).unwrap();
-            assert!(check_lowered_clear(&case.layout, &public, &case.w, &case.y).is_err());
+        let check = |q: &[i128], k: &[i128]| {
+            let public = case.public_with(&case.claim, &case.u, q, k).unwrap();
+            assert!(
+                check_lowered_clear(&case.layout, &public, &case.setup, &case.w, &case.y).is_err()
+            );
         };
-        let mut qa = case.qa.clone();
-        qa[0][0] += F::one();
-        check(&qa, &case.q, &case.k);
         let mut q = case.q.clone();
         q[0] += 1;
-        check(&case.qa, &q, &case.k);
+        check(&q, &case.k);
         let mut k = case.k.clone();
         k[0] += 1;
-        check(&case.qa, &case.q, &k);
+        check(&case.q, &k);
         for family in [0, 1] {
             let interval = if family == 0 {
                 case.layout.encoding().quotient().interval()
@@ -124,32 +133,29 @@ fn clear_quotient_carry_and_alphabet_mutations_reject() {
                     k[0] = outside;
                 }
                 assert!(matches!(
-                    case.public_with(&case.claim, &case.u, &case.qa, &q, &k),
+                    case.public_with(&case.claim, &case.u, &q, &k),
                     Err(AkitaError::InvalidProof)
                 ));
             }
         }
         let mut w = case.w.clone();
         w[0] = 1 << base.bits();
-        assert!(check_lowered_clear(&case.layout, &case.public(), &w, &case.y).is_err());
-        let mut qa = case.qa.clone();
-        qa[0].pop();
+        assert!(
+            check_lowered_clear(&case.layout, &case.public(), &case.setup, &w, &case.y).is_err()
+        );
         assert!(case
-            .public_with(&case.claim, &case.u, &qa, &case.q, &case.k)
+            .public_with(&case.claim, &case.u, &case.q[..160], &case.k)
             .is_err());
         assert!(case
-            .public_with(&case.claim, &case.u, &case.qa, &case.q[..160], &case.k)
-            .is_err());
-        assert!(case
-            .public_with(&case.claim, &case.u, &case.qa, &case.q, &case.k[..161])
+            .public_with(&case.claim, &case.u, &case.q, &case.k[..161])
             .is_err());
         let mut public_claim = case.claim.clone();
         public_claim.point.pop();
         assert!(case
-            .public_with(&public_claim, &case.u, &case.qa, &case.q, &case.k)
+            .public_with(&public_claim, &case.u, &case.q, &case.k)
             .is_err());
         assert!(case
-            .public_with(&case.claim, &case.u[..1], &case.qa, &case.q, &case.k)
+            .public_with(&case.claim, &case.u[..1], &case.q, &case.k)
             .is_err());
     }
 }
@@ -181,8 +187,6 @@ fn packed_component_cancellation_keeps_prime_but_breaks_parity() {
         case.u.fill(B::ZERO);
         case.claim.point = vec![B::ONE, B::ZERO, B::ZERO, B::ZERO];
         case.claim.value = B::ZERO;
-        case.qa = a_relation_quotients(&case.setup, &case.commitment, &case.fold, &case.response)
-            .unwrap();
         (case.q, case.k) = parity_quotient_and_carry(
             &case.setup,
             &case.claim,
@@ -204,9 +208,9 @@ fn packed_component_cancellation_keeps_prime_but_breaks_parity() {
         .unwrap();
         assert!(image.iter().all(|x| *x == TrinomialRing::zero().unwrap()));
         assert_eq!(
-            a_relation_quotients(&case.setup, &case.commitment, &case.fold, &case.response)
+            a_relation_remainders(&case.setup, &case.commitment, &case.fold, &case.response)
                 .unwrap(),
-            case.qa
+            vec![vec![F::from_u64(0); 648]; case.setup.n_a()]
         );
         assert!(case.verify().is_err());
         assert!(parity_quotient_and_carry(
@@ -218,7 +222,7 @@ fn packed_component_cancellation_keeps_prime_but_breaks_parity() {
         )
         .is_err());
         let w = encode_witness(&case.layout, &case.response).unwrap();
-        assert!(check_lowered_clear(&case.layout, &public, &w, &case.y).is_err());
+        assert!(check_lowered_clear(&case.layout, &public, &case.setup, &w, &case.y).is_err());
     }
 }
 

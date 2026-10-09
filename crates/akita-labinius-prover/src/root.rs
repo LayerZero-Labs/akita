@@ -9,7 +9,7 @@ mod transparent;
 pub use prepared::PreparedRootMatrices;
 pub use transparent::TransparentRootProverOracle;
 
-use akita_algebra::{binary::field_switch::SwitchField, SmoothFftField};
+use akita_algebra::{binary::field_switch::SwitchField, SmoothFftField, TrinomialModulus};
 use akita_challenges::BinaryChallengeSampler;
 use akita_error::AkitaError;
 use akita_labinius_verifier::{
@@ -20,7 +20,7 @@ use akita_labinius_verifier::{
     codec::{exchange_binary, exchange_field},
     endpoint::{left_expansion, verify_left_expansion},
     frontend::prove_frontend,
-    lowered::{image_weights_dense, LoweredChallenges, LoweredPublic},
+    lowered::{LoweredChallenges, LoweredPublic},
     root::{bind_root_statement, exchange_root_auxiliary, RootEvaluationClaims, RootProverOracle},
     AdmittedRootSetup, BinaryClearCommitment,
 };
@@ -30,11 +30,11 @@ use jolt_field::{ExtField, WithPacking};
 use tracing::info_span;
 
 use crate::{
+    a_carry_kernel::a_relation_carry,
     combined_kernel::{prove_combined_rounds, CombinedRootKernel},
     fold_kernel::fold_integer,
     lowered::{encode_witness, flatten_image, parity_quotient_and_carry},
-    quotient_kernel::{a_relation_quotients, ConjugateModulus},
-    response_weights::coefficient_weights,
+    response_weights::{coefficient_weights, image_weights},
     root_sumcheck::{prove_product_rounds, ProductSumcheck},
 };
 
@@ -44,12 +44,13 @@ use crate::{
 /// Response coefficients outside the admitted interval return an error without
 /// retrying challenges. The last call discharges the returned table evaluations.
 ///
-/// The response fold, the A-relation quotient and the combined sumcheck run on
-/// the transform and bucket kernels; each returns exactly what its reference
-/// (`endpoint::fold_integer` and the schoolbook quotient and dense combined
-/// sumcheck in shared test support) returns, so the proof bytes do not
-/// depend on which is used. A `prepared` cache of another matrix returns
-/// `InvalidSetup` before the channel or the oracle is touched.
+/// The response fold and combined sumcheck use transform and compact-table
+/// kernels with the same proof bytes as their schoolbook and dense references.
+/// A `prepared` cache of another matrix returns `InvalidSetup` before the
+/// channel or oracle is touched. A commitment that does not match `source` is
+/// a caller error: tag 0 does no matrix-row work before challenges; its
+/// inconsistent sumcheck claim can be detected by the sumcheck driver during
+/// proving, and false rows are rejected by verification.
 #[allow(clippy::too_many_arguments)]
 pub fn prove_root_reduction<H, F, const D: usize, M, O, S>(
     admitted: &AdmittedRootSetup<F, D, M>,
@@ -65,7 +66,7 @@ pub fn prove_root_reduction<H, F, const D: usize, M, O, S>(
 where
     H: SwitchField,
     F: SmoothFftField + ExtField<F> + WithPacking,
-    M: ConjugateModulus,
+    M: TrinomialModulus + Send + Sync,
     O: RootProverOracle<F>,
     S: RootChallengeChannel<F> + SumcheckProverChannel<F>,
 {
@@ -117,30 +118,36 @@ where
         info_span!("root_encode_witness").in_scope(|| encode_witness(&layout, &response))?;
     info_span!("root_commit_response")
         .in_scope(|| oracle.commit_response(&layout, &digits, channel))?;
-    let mut qa = info_span!("root_a_quotients").in_scope(|| {
-        a_relation_quotients(
-            prepared.commit(),
-            prepared.quotient(),
-            setup,
-            commitment,
-            &fold,
-            &response,
-            layout.encoding().a_carry(),
-        )
-    })?;
+    let mut a_carry = if let Some(range) = layout.encoding().a_carry() {
+        info_span!("root_a_carry").in_scope(|| {
+            a_relation_carry(
+                prepared.commit(),
+                setup,
+                commitment,
+                &fold,
+                &response,
+                range,
+            )
+        })?
+    } else {
+        Vec::new()
+    };
     let (mut q, mut k) = info_span!("root_parity")
         .in_scope(|| parity_quotient_and_carry(setup, &binary, &u, &fold, &response))?;
-    exchange_root_auxiliary(&layout, channel, &mut qa, &mut q, &mut k)?;
+    exchange_root_auxiliary(&layout, channel, &mut a_carry, &mut q, &mut k)?;
     let challenges = LoweredChallenges {
         alpha: channel.field_challenge(RootFieldSite::Alpha)?,
         xi: channel.field_challenge(RootFieldSite::Xi)?,
         gamma: channel.field_challenge(RootFieldSite::Gamma)?,
     };
     let public = info_span!("root_lowered_public").in_scope(|| {
-        LoweredPublic::new(&layout, setup, &binary, &u, &fold, &qa, &q, &k, challenges)
+        LoweredPublic::new(
+            &layout, setup, &binary, &u, &fold, &a_carry, &q, &k, challenges,
+        )
     })?;
     let image = flatten_image(&layout, commitment)?;
-    let ky = info_span!("root_image_weights").in_scope(|| image_weights_dense(&layout, &public))?;
+    let ky = info_span!("root_image_weights")
+        .in_scope(|| image_weights(prepared.commit(), &layout, &public))?;
     let mut y_y = image
         .iter()
         .zip(&ky)
@@ -155,8 +162,8 @@ where
         tau.push(channel.field_challenge(RootFieldSite::Tau(site))?);
     }
     let beta = channel.field_challenge(RootFieldSite::Beta)?;
-    let kw =
-        info_span!("root_witness_weights").in_scope(|| coefficient_weights(&layout, &public))?;
+    let kw = info_span!("root_witness_weights")
+        .in_scope(|| coefficient_weights(prepared.commit(), &layout, setup, &public))?;
     let mut digit_factor = Vec::new();
     digit_factor
         .try_reserve_exact(public.digit_powers().len())
@@ -205,7 +212,7 @@ pub fn prove_root_reduction_bytes<H, F, const D: usize, M, O>(
 where
     H: SwitchField,
     F: SmoothFftField + ExtField<F> + WithPacking,
-    M: ConjugateModulus,
+    M: TrinomialModulus + Send + Sync,
     O: RootProverOracle<F>,
 {
     let mut state = new_root_prover()?;

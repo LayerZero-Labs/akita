@@ -3,13 +3,15 @@
 //! This defines public linear weights and checks a clear digit table. It does
 //! not bind challenges, commit tables, or implement a probabilistic proof.
 
-mod a_relation;
+pub(crate) mod adjoint;
 mod check;
 mod layout;
 mod public;
 mod weights;
 
-pub use a_relation::{ARelationAuxiliary, ARelationRows};
+pub use adjoint::{
+    multiplication_adjoint, remainder_evaluations, trace_gram_into, trace_gram_inverse,
+};
 pub use check::{a_row_residual, check_lowered_clear, parity_row_residual};
 pub use layout::LoweredRootLayout;
 pub use public::{LoweredChallenges, LoweredPublic};

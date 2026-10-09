@@ -118,6 +118,46 @@ evaluations to correspond to the fixed tables; the kernels alone do not prove
 that correspondence. A union bound for these arithmetic reductions is
 `(nu + 1 + nu*(2^b+1) + 2*mu)/|F|`, apart from opening errors.
 
+## Adjoint-weight construction
+
+The remainder relation, trace maps, dense definition and terminal closed forms
+are owned by [the lowered relation](labinius-lowered-root.md). The sumcheck
+instances, degrees and digit factorization above are unchanged for both root
+profiles. Only the construction of the public coefficient weights changes.
+
+`PreparedRootMatrices` retains the `PreparedCommitMatrix` own-ring transform
+cache. There is no conjugate-ring transform cache. The response-weight kernel
+forms G^-1(u_i) through the verifier's common trace-map owner and performs:
+
+1. n_A forward transforms of G^-1(u_i).
+2. For each response ring column j, n_A pointwise multiply-accumulates against
+   the cached transforms of A_ij, followed by one inverse transform and G.
+3. Addition of the unchanged parity coefficient weight, scaled by gamma^n_A.
+
+Column tasks use the Rayon pool behind `parallel`, with per-task transform
+workspaces and fallible reservations. They write directly into the compact
+`m*padded_coefficients` table passed to `CombinedRootKernel::new`; coefficient
+tails are zero. There is no intermediate dense `m*D` matrix-weight copy and
+no full digit-expanded weight table. The matrix part is traced by
+`root_a_weights`. At the first geometry the compact table has 4,194,304 field
+entries, or 64 MiB for 16-byte field elements. Transformed inputs and worker
+workspaces add O(n_A*D + workers*D) field storage, beyond the retained matrix
+cache and this table. At rank 3 the P-field matrix cache contains 7,962,624
+field entries, or 127,401,984 bytes; these slots belong to F_P, not F_q0.
+
+The product sumcheck's dense image-weight table uses C*n_A challenge products
+applied to G^-1(u_i), followed by G and negation. The shared verifier adjoint
+owner keeps this construction consistent with the dense reference. Products
+by weight-46 embedded challenges may use their sparse representation. The
+image table retains coefficient tails and final entry padding with zero
+weights; no separate rank tensor block is introduced.
+
+Tag 0 constructs no matrix-row auxiliary witness. Tag 1's `root_a_carry`
+phase uses the own-ring commitment cache to obtain the remainder, then centres
+its coefficients, checks integer divisibility by q0 and enforces the admitted
+carry range. This phase precedes alpha and does not build a quotient. The
+carry grammar and admission remain owned by the small-modulus specification.
+
 ## Messages and prover storage
 
 The generic driver omits the linear coefficient and reconstructs it from the

@@ -1,9 +1,9 @@
-//! Independent schoolbook A-relation quotient for tests and benchmark baselines.
+//! Independent schoolbook matrix-row remainders and integer carries for tests.
 
 #![cfg(feature = "labinius")]
 #![allow(dead_code)]
 
-use akita_algebra::{embed_scalar, SmoothFftField, TrinomialModulus, TrinomialRing};
+use akita_algebra::{embed_scalar, SmoothFftField, TrinomialModulus};
 use akita_challenges::BinaryChallenge;
 use akita_error::{checked, AkitaError};
 use akita_labinius_verifier::{
@@ -11,13 +11,9 @@ use akita_labinius_verifier::{
     source::challenge_scalar,
 };
 
-/// Divide each unreduced A-row identity by its monic trinomial modulus.
-///
-/// The returned rows have exactly `D - 1` coefficients. A nonzero reduced
-/// residual rejects. Schoolbook products preserve the unreduced degree; the
-/// public transform API does not expose mutable or constructible NTT slots for
-/// division on a shifted evaluation set.
-pub(crate) fn a_relation_quotients<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
+/// Form unreduced products and reduce their row residuals by descending division.
+/// This reference computes no trace map or transform.
+pub(crate) fn a_relation_remainders<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
     setup: &BinaryClearSetup<F, D, M>,
     commitment: &BinaryClearCommitment<F, D, M>,
     fold_challenges: &[BinaryChallenge],
@@ -52,8 +48,8 @@ pub(crate) fn a_relation_quotients<F: SmoothFftField, const D: usize, M: Trinomi
     let product_len = checked::product([2, D])
         .and_then(|length| length.checked_sub(1))
         .ok_or(AkitaError::InvalidProof)?;
-    let mut quotients = Vec::new();
-    quotients
+    let mut remainders = Vec::new();
+    remainders
         .try_reserve_exact(setup.n_a())
         .map_err(|_| AkitaError::InvalidProof)?;
     for row in 0..setup.n_a() {
@@ -87,17 +83,38 @@ pub(crate) fn a_relation_quotients<F: SmoothFftField, const D: usize, M: Trinomi
                 *accumulator -= coefficient;
             }
         }
-        let (remainder, quotient) =
-            TrinomialRing::<F, D, M>::reduce_product_with_quotient(&residual)
-                .map_err(|_| AkitaError::InvalidProof)?;
-        if remainder
-            .coefficients()
-            .iter()
-            .any(|value| !value.is_zero())
-        {
-            return Err(AkitaError::InvalidProof);
+        for degree in (D..product_len).rev() {
+            let coefficient = residual[degree];
+            residual[degree - D] -= coefficient;
+            residual[degree - D / 2] -= F::from_i64(i64::from(M::MIDDLE_COEFFICIENT)) * coefficient;
         }
-        quotients.push(quotient);
+        residual.truncate(D);
+        remainders.push(residual);
     }
-    Ok(quotients)
+    Ok(remainders)
+}
+
+/// Independently center the field remainder and divide its coefficients over Z.
+pub(crate) fn a_relation_carry<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
+    setup: &BinaryClearSetup<F, D, M>,
+    commitment: &BinaryClearCommitment<F, D, M>,
+    fold_challenges: &[BinaryChallenge],
+    response: &[[i64; 162]],
+    range: akita_params::sis::labinius::LabiniusSignedDigitRange,
+) -> Result<Vec<i128>, AkitaError> {
+    let q0 = i128::from(setup.commitment_modulus().small_modulus().ok_or_else(|| {
+        AkitaError::InvalidSetup("A carry requires a small commitment modulus".into())
+    })?);
+    let (lower, upper) = range.interval();
+    a_relation_remainders(setup, commitment, fold_challenges, response)?
+        .into_iter()
+        .flatten()
+        .map(|coefficient| {
+            let lifted = akita_labinius_verifier::commitment::centered_coefficient(coefficient)?;
+            if lifted % q0 != 0 || lifted / q0 < lower || lifted / q0 > upper {
+                return Err(AkitaError::InvalidProof);
+            }
+            Ok(lifted / q0)
+        })
+        .collect()
 }

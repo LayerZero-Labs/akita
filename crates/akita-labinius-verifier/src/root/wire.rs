@@ -17,18 +17,12 @@ pub fn root_reduction_wire_size<H: SwitchField>(
     ])
     .ok_or_else(invalid)?;
     let coefficient_bytes = checked::div_ceil(coefficient_bits, 8).ok_or_else(invalid)?;
-    let quotient_degree = shape
-        .commitment_degree()
-        .checked_sub(1)
-        .ok_or_else(invalid)?;
-    let rank = usize::try_from(shape.rank_a()).map_err(|_| invalid())?;
     let frontend =
         checked::product([H::ROWS, core::mem::size_of::<H::Source>()]).ok_or_else(invalid)?;
     let frontend_rounds = checked::mul_add(n, 2, 1)
         .and_then(|count| checked::product([count, 21]))
         .ok_or_else(invalid)?;
     let u = checked::product([21, shape.fold_width()]).ok_or_else(invalid)?;
-    let qa = checked::product([rank, quotient_degree, coefficient_bytes]).ok_or_else(invalid)?;
     let ka = if let Some(range) = encoding.a_carry() {
         checked::div_ceil(range.bits() as usize, 8)
             .and_then(|width| checked::product([encoding.a_carry_len(), width]))
@@ -54,7 +48,6 @@ pub fn root_reduction_wire_size<H: SwitchField>(
         frontend,
         frontend_rounds,
         u,
-        qa,
         ka,
         q,
         k,

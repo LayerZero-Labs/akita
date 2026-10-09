@@ -20,6 +20,7 @@ use akita_params::sis::labinius::{
 #[derive(Clone, Debug)]
 pub struct BinaryClearSetup<F, const D: usize, M: TrinomialModulus> {
     matrix: Vec<TrinomialRing<F, D, M>>,
+    a_offset_remainders: Vec<TrinomialRing<F, D, M>>,
     n_a: usize,
     m: usize,
     columns: usize,
@@ -121,8 +122,10 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> BinaryClearSetup<F,
                 "binary challenge profile fails fold budget".into(),
             ));
         }
-        TrinomialNttDomain::<F, D, M>::new()
+        crate::lowered::adjoint::trace_inverse_scale::<F>(D)?;
+        let domain = TrinomialNttDomain::<F, D, M>::new()
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
+        let a_offset_remainders = prepare_a_offset_remainders(&matrix, n_a, m, k, lower, &domain)?;
         let matrix_view_digest =
             matrix_view_digest(&matrix, n_a, m, LabiniusCommitmentModulus::CoefficientPrime)?;
         let diameter = u128::try_from(i128::from(upper) - i128::from(lower))
@@ -142,6 +145,7 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> BinaryClearSetup<F,
         )?;
         Ok(Self {
             matrix,
+            a_offset_remainders,
             n_a,
             m,
             columns,
@@ -211,6 +215,11 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> BinaryClearSetup<F,
     /// Explicit row-major Ajtai matrix.
     pub fn matrix(&self) -> &[TrinomialRing<F, D, M>] {
         &self.matrix
+    }
+    /// Matrix-bound cached `H_i = (sum_j A_ij) * O` in the commitment ring.
+    /// `O[t]` is the signed-packing response offset, independent of digit base.
+    pub fn a_offset_remainders(&self) -> &[TrinomialRing<F, D, M>] {
+        &self.a_offset_remainders
     }
     /// Number of Ajtai matrix rows.
     pub fn n_a(&self) -> usize {
@@ -294,6 +303,45 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> BinaryClearSetup<F,
         }
         Ok(bytes)
     }
+}
+
+// Keep [F; D] ring temporaries outside the public constructor's stack frame.
+// Only the geometry/resource-checked path may enter this setup cache builder.
+#[inline(never)]
+fn prepare_a_offset_remainders<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
+    matrix: &[TrinomialRing<F, D, M>],
+    n_a: usize,
+    m: usize,
+    k: usize,
+    lower: i64,
+    domain: &TrinomialNttDomain<F, D, M>,
+) -> Result<Vec<TrinomialRing<F, D, M>>, AkitaError> {
+    let offset = i128::from(lower)
+        .checked_neg()
+        .ok_or_else(|| AkitaError::InvalidSetup("response offset overflow".into()))?;
+    let offset_polynomial = TrinomialRing::from_coefficients(std::array::from_fn(|t| {
+        let positive = k == 1 || (t / k).is_multiple_of(2);
+        crate::lowered::signed_field::<F>(if positive { offset } else { offset - 1 })
+    }))
+    .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
+    let mut a_offset_remainders = Vec::new();
+    a_offset_remainders
+        .try_reserve_exact(n_a)
+        .map_err(|_| AkitaError::InvalidSetup("offset remainder allocation failed".into()))?;
+    let mut workspace = domain.workspace();
+    for row in matrix.chunks_exact(m) {
+        let mut sum = TrinomialRing::<F, D, M>::zero()
+            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
+        for entry in row {
+            sum += *entry;
+        }
+        a_offset_remainders.push(domain.multiply_with_workspace(
+            &sum,
+            &offset_polynomial,
+            &mut workspace,
+        ));
+    }
+    Ok(a_offset_remainders)
 }
 
 fn append_size(bytes: &mut Vec<u8>, value: usize) -> Result<(), AkitaError> {

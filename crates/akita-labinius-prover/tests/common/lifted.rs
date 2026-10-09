@@ -8,15 +8,14 @@ use akita_algebra::{
 use akita_challenges::{BinaryChallenge, BinaryChallengeSampler};
 use akita_error::AkitaError;
 use akita_labinius_prover::{
+    a_carry_kernel::a_relation_carry,
     commit_binary_clear,
     lowered::{encode_witness, flatten_image, parity_quotient_and_carry},
-    prove_root_reduction_bytes,
-    quotient_kernel::a_relation_quotients,
-    PreparedRootMatrices, TransparentRootProverOracle,
+    prove_root_reduction_bytes, PreparedRootMatrices, TransparentRootProverOracle,
 };
 use akita_labinius_verifier::{
     endpoint::{fold_integer, left_expansion},
-    lowered::{ARelationAuxiliary, LoweredChallenges, LoweredPublic, LoweredRootLayout},
+    lowered::{LoweredChallenges, LoweredPublic, LoweredRootLayout},
     root::{verify_root_reduction_bytes, RootEvaluationClaims, TransparentRootVerifierOracle},
     AdmittedRootSetup, BinaryClearCommitment, BinaryEvaluationClaim,
 };
@@ -102,14 +101,13 @@ impl<T: TestHost> Case<T> {
             proof,
         )
     }
-    pub(crate) fn a_wire(&self) -> (usize, usize, usize) {
+    pub(crate) fn a_wire(&self) -> (usize, usize) {
         let start = T::ROWS * size_of::<T::Source>()
             + (2 * self.point.len() + 1) * 21
             + self.layout.columns() * 21
             + self.layout.witness_len();
-        let qa_bytes = self.layout.n_a() * 647 * 16;
         let ka_width = self.layout.encoding().a_carry().unwrap().bits().div_ceil(8) as usize;
-        (start, start + qa_bytes, ka_width)
+        (start, ka_width)
     }
 }
 pub(crate) struct RelationCase {
@@ -118,7 +116,7 @@ pub(crate) struct RelationCase {
     pub(crate) u: Vec<B>,
     pub(crate) fold: Vec<BinaryChallenge>,
     pub(crate) response: Vec<[i64; 162]>,
-    pub(crate) a: ARelationAuxiliary<F>,
+    pub(crate) a: Vec<i128>,
     pub(crate) q: Vec<i128>,
     pub(crate) k: Vec<i128>,
     pub(crate) w: Vec<u8>,
@@ -146,14 +144,13 @@ impl RelationCase {
             setup.profile(),
         )
         .unwrap();
-        let a = a_relation_quotients(
+        let a = a_relation_carry(
             case.prepared.commit(),
-            case.prepared.quotient(),
             setup,
             &case.commitment,
             &fold,
             &response,
-            case.layout.encoding().a_carry(),
+            case.layout.encoding().a_carry().unwrap(),
         )
         .unwrap();
         let (q, k) = parity_quotient_and_carry(setup, &claim, &u, &fold, &response).unwrap();
@@ -176,7 +173,7 @@ impl RelationCase {
             challenges,
         }
     }
-    pub(crate) fn public(&self, a: &ARelationAuxiliary<F>) -> Result<LoweredPublic<F>, AkitaError> {
+    pub(crate) fn public(&self, a: &[i128]) -> Result<LoweredPublic<F>, AkitaError> {
         LoweredPublic::new(
             &self.case.layout,
             self.case.admitted.setup(),
@@ -195,7 +192,7 @@ impl RelationCase {
 /// from the transparent response digits. The oracle receives transmitted KA.
 pub(crate) fn transmitted_relation(
     case: &Case,
-) -> (Vec<Vec<i128>>, Vec<BinaryChallenge>, ARelationAuxiliary<F>) {
+) -> (Vec<Vec<i128>>, Vec<BinaryChallenge>, Vec<i128>) {
     use akita_labinius_verifier::{
         channel::{self, ClearChannel, RootSumcheckVerifierChannel},
         codec::exchange_binary,
@@ -243,10 +240,7 @@ pub(crate) fn transmitted_relation(
                 .collect()
         })
         .collect();
-    let mut a = ARelationAuxiliary {
-        quotients: vec![vec![F::from_u64(0); 647]; 3],
-        carry: vec![0; 1944],
-    };
+    let mut a = vec![0; case.layout.encoding().a_carry_len()];
     exchange_root_auxiliary(
         &case.layout,
         &mut ch,

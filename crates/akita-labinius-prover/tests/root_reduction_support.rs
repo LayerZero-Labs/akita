@@ -55,7 +55,10 @@ pub(crate) struct Case<T: TestHost = H> {
 
 impl<T: TestHost> Case<T> {
     pub(crate) fn new(base: LabiniusDigitBase, fold: u32) -> Self {
-        let admitted = admitted(fold, 0x31);
+        Self::from_admitted(base, admitted(fold, 0x31))
+    }
+
+    pub(crate) fn from_admitted(base: LabiniusDigitBase, admitted: Setup) -> Self {
         let setup = admitted.setup();
         let (source, point, value) = data::<T>(setup.source_len(), setup.num_vars());
         let commitment = commit_binary_clear::<T, F, 648, MinusTrinomial>(setup, &source).unwrap();
@@ -116,7 +119,6 @@ impl<T: TestHost> Case<T> {
             ),
             ("U", self.layout.columns() * 21),
             ("W", self.layout.witness_len()),
-            ("QA", self.layout.n_a() * 647 * 16),
             (
                 "Q",
                 encoding.parity_quotient_len() * (encoding.quotient().bits() as usize).div_ceil(8),

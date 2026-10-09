@@ -6,8 +6,8 @@ mod support;
 use akita_algebra::{binary::BinaryField192, MinusTrinomial, TrinomialRing};
 use akita_error::AkitaError;
 use akita_labinius_prover::{
-    commit_binary_clear, commit_binary_clear_prepared, prove_binary_clear_bytes,
-    quotient_kernel::a_relation_quotients,
+    a_carry_kernel::a_relation_carry, commit_binary_clear, commit_binary_clear_prepared,
+    prove_binary_clear_bytes,
 };
 use akita_labinius_verifier::{
     lowered::{a_row_residual, check_lowered_clear},
@@ -106,7 +106,14 @@ fn lifted_relation_rejects_each_changed_witness_and_both_carry_range_ends() {
     for base in BASES {
         let r = RelationCase::new(base);
         let public = r.public(&r.a).unwrap();
-        check_lowered_clear(&r.case.layout, &public, &r.w, &r.case.image).unwrap();
+        check_lowered_clear(
+            &r.case.layout,
+            &public,
+            r.case.admitted.setup(),
+            &r.w,
+            &r.case.image,
+        )
+        .unwrap();
         for row in 0..3 {
             assert_eq!(
                 a_row_residual(
@@ -124,12 +131,12 @@ fn lifted_relation_rejects_each_changed_witness_and_both_carry_range_ends() {
         let (lo, hi) = r.case.layout.encoding().a_carry().unwrap().interval();
         for value in [lo, hi] {
             let mut a = r.a.clone();
-            a.carry[0] = value;
+            a[0] = value;
             assert!(r.public(&a).is_ok(), "inclusive carry endpoint");
         }
         for value in [lo - 1, hi + 1] {
             let mut a = r.a.clone();
-            a.carry[0] = value;
+            a[0] = value;
             assert!(
                 matches!(r.public(&a), Err(AkitaError::InvalidProof)),
                 "carry interval {value}"
@@ -137,31 +144,42 @@ fn lifted_relation_rejects_each_changed_witness_and_both_carry_range_ends() {
         }
         for row in 0..3 {
             let mut a = r.a.clone();
-            a.carry[648 * row] += 1;
+            a[648 * row] += 1;
             let p = r.public(&a).unwrap();
             assert_eq!(
-                check_lowered_clear(&r.case.layout, &p, &r.w, &r.case.image),
-                Err(AkitaError::InvalidProof)
-            );
-            let mut a = r.a.clone();
-            a.quotients[row][0] += F::one();
-            let p = r.public(&a).unwrap();
-            assert_eq!(
-                check_lowered_clear(&r.case.layout, &p, &r.w, &r.case.image),
+                check_lowered_clear(
+                    &r.case.layout,
+                    &p,
+                    r.case.admitted.setup(),
+                    &r.w,
+                    &r.case.image
+                ),
                 Err(AkitaError::InvalidProof)
             );
         }
         let mut image = r.case.image.clone();
         image[0] += F::one();
         assert_eq!(
-            check_lowered_clear(&r.case.layout, &public, &r.w, &image),
+            check_lowered_clear(
+                &r.case.layout,
+                &public,
+                r.case.admitted.setup(),
+                &r.w,
+                &image
+            ),
             Err(AkitaError::InvalidProof)
         );
         let mut response = r.response.clone();
         response[0][0] += 1;
         let w = akita_labinius_prover::lowered::encode_witness(&r.case.layout, &response).unwrap();
         assert_eq!(
-            check_lowered_clear(&r.case.layout, &public, &w, &r.case.image),
+            check_lowered_clear(
+                &r.case.layout,
+                &public,
+                r.case.admitted.setup(),
+                &w,
+                &r.case.image
+            ),
             Err(AkitaError::InvalidProof)
         );
     }
@@ -178,26 +196,25 @@ fn arbitrary_image_lift_compensated_by_carry_is_accepted() {
         coefficients[0] += F::from_u128(q0 as u128);
         r.case.commitment.images[0] = TrinomialRing::from_coefficients(coefficients).unwrap();
         r.case.refresh_image();
-        r.a = a_relation_quotients(
+        r.a = a_relation_carry(
             r.case.prepared.commit(),
-            r.case.prepared.quotient(),
             r.case.admitted.setup(),
             &r.case.commitment,
             &r.fold,
             &r.response,
-            r.case.layout.encoding().a_carry(),
+            r.case.layout.encoding().a_carry().unwrap(),
         )
         .unwrap();
-        assert_eq!(r.a.quotients, original.quotients);
-        let mut expected = original.carry.clone();
+        let mut expected = original.clone();
         for term in r.fold[0].terms() {
             let s = usize::from(term.position);
             expected[4 * s] -= i128::from(term.coefficient) * if s % 2 == 0 { 1 } else { -1 };
         }
-        assert_eq!(r.a.carry, expected);
+        assert_eq!(r.a, expected);
         check_lowered_clear(
             &r.case.layout,
             &r.public(&r.a).unwrap(),
+            r.case.admitted.setup(),
             &r.w,
             &r.case.image,
         )
@@ -210,14 +227,35 @@ fn arbitrary_image_lift_compensated_by_carry_is_accepted() {
 fn ka_wire_tampering_truncation_extension_and_unused_bits_reject() {
     let case = Case::<H>::new(BASES[0], 1);
     let (proof, _) = case.prove();
-    let (qa, ka, width) = case.a_wire();
+    let (ka, width) = case.a_wire();
     let bits = case.layout.encoding().a_carry().unwrap().bits();
-    for position in [qa, ka, ka + 648 * width, ka + 1296 * width] {
+    for position in [ka, ka + 648 * width, ka + 1296 * width] {
         let mut changed = proof.clone();
         changed[position] ^= 1;
         assert!(
             matches!(case.verify(&changed), Err(AkitaError::InvalidProof)),
             "wire {position}"
+        );
+    }
+    let (lo, hi) = case.layout.encoding().a_carry().unwrap().interval();
+    for value in [lo - 1, hi + 1] {
+        let offset = value.wrapping_sub(lo) as u128;
+        let mut changed = proof.clone();
+        changed[ka..ka + width].copy_from_slice(&offset.to_le_bytes()[..width]);
+        assert!(
+            matches!(case.verify(&changed), Err(AkitaError::InvalidProof)),
+            "wire range {value}"
+        );
+    }
+    let q_start = ka + width * case.layout.encoding().a_carry_len();
+    let q_width = case.layout.encoding().quotient().bits().div_ceil(8) as usize;
+    let k_start = q_start + q_width * case.layout.encoding().parity_quotient_len();
+    for position in [q_start, k_start] {
+        let mut changed = proof.clone();
+        changed[position] ^= 1;
+        assert!(
+            matches!(case.verify(&changed), Err(AkitaError::InvalidProof)),
+            "auxiliary {position}"
         );
     }
     assert_ne!(bits % 8, 0);
@@ -310,7 +348,7 @@ fn explicit_shared_prime_setup_cannot_claim_a_lifted_shape() {
             &claim,
             &[B::ZERO],
             &fold,
-            &vec![vec![F::from_u64(0); 647]; 3],
+            &[],
             &[0; 161],
             &[0; 162],
             challenges
@@ -357,4 +395,25 @@ fn explicit_shared_prime_setup_cannot_claim_a_lifted_shape() {
     let clear =
         prove_binary_clear_bytes(admitted.setup(), &source, &commitment, &point, H::ZERO).unwrap();
     verify_binary_clear_bytes(admitted.setup(), &commitment, &point, H::ZERO, &clear).unwrap();
+}
+
+#[test]
+fn first_lifted_profile_reduction_wire_sizes_are_pinned() {
+    let shape =
+        akita_params::sis::labinius::LabiniusRootShape::derive(support::SMALL, 22, 8, 128).unwrap();
+    for (base, h128, h192) in [
+        (BASES[0], 21_640, 21_128),
+        (BASES[1], 22_392, 21_880),
+        (BASES[2], 26_920, 26_408),
+    ] {
+        assert_eq!(
+            akita_labinius_verifier::root::root_reduction_wire_size::<H>(&shape, base).unwrap(),
+            h128
+        );
+        assert_eq!(
+            akita_labinius_verifier::root::root_reduction_wire_size::<BinaryField192>(&shape, base)
+                .unwrap(),
+            h192
+        );
+    }
 }

@@ -6,11 +6,10 @@ mod support;
 use akita_algebra::binary::{field_switch::SwitchField, BinaryField162, BinaryField192};
 use akita_error::AkitaError;
 use akita_params::sis::labinius::LabiniusDigitBase;
-use jolt_field::CanonicalBytes;
-use support::{common::TestHost, Case, F, H};
+use support::{common::TestHost, Case, H};
 
 #[test]
-fn every_sumcheck_round_and_qa_element_rejects_a_flipped_bit() {
+fn every_sumcheck_round_and_remaining_auxiliary_region_rejects_a_flipped_bit() {
     // A fold logarithm of zero gives the smallest admitted fold width, one.
     let case = Case::<H>::new(LabiniusDigitBase::Bits1, 0);
     let (proof, _, _) = case.prove();
@@ -24,19 +23,18 @@ fn every_sumcheck_round_and_qa_element_rejects_a_flipped_bit() {
         );
     }
     let regions = case.regions();
-    let (_, start, length) = regions.iter().find(|(name, _, _)| *name == "QA").unwrap();
-    assert_eq!(length % F::NUM_BYTES, 0);
-    assert_eq!(
-        length / F::NUM_BYTES,
-        case.layout.n_a() * case.layout.polynomial().quotient_coefficient_len().unwrap()
-    );
-    for element in 0..length / F::NUM_BYTES {
-        let mut changed = proof.clone();
-        changed[start + element * F::NUM_BYTES] ^= 1;
-        assert!(
-            matches!(case.verify(&changed), Err(AkitaError::InvalidProof)),
-            "accepted tampered QA element {element}"
-        );
+    for (name, start, length) in regions
+        .iter()
+        .filter(|(name, _, _)| matches!(*name, "Q" | "K"))
+    {
+        for position in [*start, start + length / 2, start + length - 1] {
+            let mut changed = proof.clone();
+            changed[position] ^= 1;
+            assert!(
+                matches!(case.verify(&changed), Err(AkitaError::InvalidProof)),
+                "accepted tampered {name} at {position}"
+            );
+        }
     }
 }
 
@@ -44,12 +42,12 @@ fn every_sumcheck_round_and_qa_element_rejects_a_flipped_bit() {
 fn every_region_and_round_boundary_and_adjacent_prefix_rejects() {
     let case = Case::<H>::new(LabiniusDigitBase::Bits1, 0);
     let (proof, _, _) = case.prove();
-    // This fixture has a 64 KiB response table and an 80,574-byte proof.
-    // Every strict prefix would require 80,574 replays, repeatedly absorbing
+    // This fixture has a 64 KiB response table and an 70,222-byte proof.
+    // Every strict prefix would require 70,222 replays, repeatedly absorbing
     // the image and parsing the response: gigabytes of work in this one test.
     // Cover all region/round boundaries and one byte on either side instead.
     assert_eq!(case.layout.witness_len(), 65_536);
-    assert_eq!(proof.len(), 80_574);
+    assert_eq!(proof.len(), 70_222);
     let mut boundaries = vec![0, proof.len()];
     for (_, start, length) in case.regions() {
         boundaries.extend([start, start + length]);

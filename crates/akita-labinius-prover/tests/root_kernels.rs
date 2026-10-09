@@ -1,9 +1,10 @@
 #![cfg(feature = "labinius")]
 
+mod a_relation_support;
 mod combined_support;
-mod quotient_support;
 mod root_reduction_support;
 
+use a_relation_support::a_relation_carry;
 use akita_algebra::binary::BinaryField192;
 use akita_challenges::{BinaryChallenge, BinaryChallengeSampler};
 use akita_error::AkitaError;
@@ -30,14 +31,14 @@ use akita_labinius_verifier::{
 use akita_sumcheck::{SumcheckProverChannel, SumcheckRole};
 use combined_support::{prove_combined_rounds, CombinedRootSumcheck};
 use jolt_field::Zero;
-use quotient_support::a_relation_quotients;
 use root_reduction_support::{admitted, common::TestHost, Case, BASES, F, H};
 use std::cell::Cell;
 
 /// The reduction composed from the schoolbook fold, the long-division
-/// quotients and the dense combined sumcheck, with no transform cache.
+/// parity division and dense rho-reference weights, with no transform cache.
 fn reference<T: TestHost>(
     case: &Case<T>,
+    legacy_domain: bool,
 ) -> Result<(Vec<u8>, RootEvaluationClaims<F>), AkitaError> {
     let setup = case.admitted.setup();
     if case.source.len() != setup.source_len() {
@@ -47,8 +48,19 @@ fn reference<T: TestHost>(
         });
     }
     let mut oracle = TransparentRootProverOracle::new(&case.image);
-    let mut state = new_root_prover()?;
-    let mut ch = RootSumcheckProverChannel::new(&mut state);
+    let mut state = if legacy_domain {
+        akita_transcript::new_prover_channel(
+            concat!("akita/labinius/root-reduction/v", "1").as_bytes(),
+            b"",
+        )?
+    } else {
+        new_root_prover()?
+    };
+    let mut ch = CountingChannel {
+        inner: RootSumcheckProverChannel::new(&mut state),
+        operations: Cell::new(0),
+        legacy_domain,
+    };
     let layout = bind_root_statement(
         &case.admitted,
         case.base,
@@ -91,15 +103,20 @@ fn reference<T: TestHost>(
     }
     let digits = encode_witness(&layout, &response)?;
     oracle.commit_response(&layout, &digits, &mut ch)?;
-    let mut qa = a_relation_quotients(setup, &case.commitment, &fold, &response)?;
+    let mut carry = match layout.encoding().a_carry() {
+        Some(range) => a_relation_carry(setup, &case.commitment, &fold, &response, range)?,
+        None => Vec::new(),
+    };
     let (mut q, mut k) = parity_quotient_and_carry(setup, &binary, &u, &fold, &response)?;
-    exchange_root_auxiliary(&layout, &mut ch, &mut qa, &mut q, &mut k)?;
+    exchange_root_auxiliary(&layout, &mut ch, &mut carry, &mut q, &mut k)?;
     let challenges = LoweredChallenges {
         alpha: ch.field_challenge(RootFieldSite::Alpha)?,
         xi: ch.field_challenge(RootFieldSite::Xi)?,
         gamma: ch.field_challenge(RootFieldSite::Gamma)?,
     };
-    let public = LoweredPublic::new(&layout, setup, &binary, &u, &fold, &qa, &q, &k, challenges)?;
+    let public = LoweredPublic::new(
+        &layout, setup, &binary, &u, &fold, &carry, &q, &k, challenges,
+    )?;
     let image = flatten_image(&layout, &case.commitment)?;
     let ky = image_weights_dense(&layout, &public)?;
     let mut y_y = image
@@ -116,7 +133,7 @@ fn reference<T: TestHost>(
         tau.push(ch.field_challenge(RootFieldSite::Tau(site))?);
     }
     let beta = ch.field_challenge(RootFieldSite::Beta)?;
-    let kw = witness_weights_dense(&layout, &public)?;
+    let kw = witness_weights_dense(&layout, &public, setup)?;
     let mut combined = CombinedRootSumcheck::new(case.base, &digits, kw, &tau, beta, s)?;
     let (response_point, _) = prove_combined_rounds(&mut combined, &mut ch, 0)?;
     let (mut response_value, _) = combined
@@ -140,26 +157,87 @@ fn reference<T: TestHost>(
     Ok((finish_prover(state), claims))
 }
 
-fn kernels_match_reference<T: TestHost>() {
-    for base in BASES {
-        for fold in [0, 1] {
-            let case = Case::<T>::new(base, fold);
-            let (expected, expected_claims) = reference(&case).unwrap();
-            let (proof, claims, _) = case.prove();
-            assert_eq!(proof, expected, "{base:?} fold {fold}");
-            assert_eq!(claims.response_point, expected_claims.response_point);
-            assert_eq!(claims.response_value, expected_claims.response_value);
-            assert_eq!(claims.image_point, expected_claims.image_point);
-            assert_eq!(claims.image_value, expected_claims.image_value);
-            case.verify(&proof).unwrap();
-        }
+fn kernels_match_reference<T: TestHost>(
+    small: bool,
+    base: akita_params::sis::labinius::LabiniusDigitBase,
+    fold: u32,
+) {
+    use akita_params::sis::labinius::LabiniusRootProfile;
+    let profile = if small {
+        LabiniusRootProfile::D648P128Q28BoundedW46Delta16
+    } else {
+        LabiniusRootProfile::D648P128BoundedW46Delta16
+    };
+    {
+        let setup = root_reduction_support::Setup::derive(
+            profile,
+            4,
+            fold,
+            128,
+            akita_types::proof::AkitaSetupSeed::shake256_paged_v1([0x31; 32]),
+        )
+        .unwrap();
+        let case = Case::<T>::from_admitted(base, setup);
+        let (expected, expected_claims) = reference(&case, false).unwrap();
+        let (proof, claims, _) = case.prove();
+        assert_eq!(proof, expected, "{base:?} fold {fold}");
+        assert_eq!(claims, expected_claims);
+        case.verify(&proof).unwrap();
     }
 }
 
+// Split the same hosts, fold widths and bases across bounded debug cases.
+macro_rules! equivalence_case {
+    ($name:ident, $small:expr, $base:expr) => {
+        mod $name {
+            use super::*;
+            #[test]
+            fn host128_fold0() {
+                kernels_match_reference::<H>($small, $base, 0);
+            }
+            #[test]
+            fn host128_fold1() {
+                kernels_match_reference::<H>($small, $base, 1);
+            }
+            #[test]
+            fn host192_fold0() {
+                kernels_match_reference::<BinaryField192>($small, $base, 0);
+            }
+            #[test]
+            fn host192_fold1() {
+                kernels_match_reference::<BinaryField192>($small, $base, 1);
+            }
+        }
+    };
+}
+equivalence_case!(
+    kernel_reduction_emits_the_reference_proof_bytes_for_both_hosts,
+    false,
+    BASES[1]
+);
+equivalence_case!(one_bit_kernel_reduction_matches_reference, false, BASES[0]);
+equivalence_case!(four_bit_kernel_reduction_matches_reference, false, BASES[2]);
+equivalence_case!(
+    lifted_kernel_reduction_emits_the_reference_proof_bytes_for_both_hosts,
+    true,
+    BASES[1]
+);
+equivalence_case!(
+    one_bit_lifted_kernel_reduction_matches_reference,
+    true,
+    BASES[0]
+);
+equivalence_case!(
+    four_bit_lifted_kernel_reduction_matches_reference,
+    true,
+    BASES[2]
+);
+
 #[test]
-fn kernel_reduction_emits_the_reference_proof_bytes_for_both_hosts() {
-    kernels_match_reference::<H>();
-    kernels_match_reference::<BinaryField192>();
+fn previous_reduction_domain_does_not_verify() {
+    let case = Case::<H>::new(BASES[1], 0);
+    let (proof, _) = reference(&case, true).unwrap();
+    assert!(matches!(case.verify(&proof), Err(AkitaError::InvalidProof)));
 }
 
 #[test]
@@ -176,6 +254,7 @@ fn transform_cache_of_another_matrix_is_rejected_before_any_proof_byte() {
         let mut channel = CountingChannel {
             inner: RootSumcheckProverChannel::new(&mut state),
             operations: Cell::new(0),
+            legacy_domain: false,
         };
         let result = prove_root_reduction(
             &case.admitted,
@@ -199,12 +278,23 @@ fn transform_cache_of_another_matrix_is_rejected_before_any_proof_byte() {
 struct CountingChannel<'state> {
     inner: RootSumcheckProverChannel<'state>,
     operations: Cell<usize>,
+    legacy_domain: bool,
 }
 
 impl ClearChannel for CountingChannel<'_> {
     fn public(&mut self, bytes: &[u8]) -> Result<(), AkitaError> {
         self.operations.set(self.operations.get() + 1);
-        self.inner.public(bytes)
+        let mut domain = Vec::new();
+        akita_labinius_verifier::codec::length_prefixed(
+            &mut domain,
+            b"akita/labinius/root-reduction/v2",
+        )?;
+        if self.legacy_domain && bytes == domain {
+            *domain.last_mut().unwrap() = b'1';
+            self.inner.public(&domain)
+        } else {
+            self.inner.public(bytes)
+        }
     }
 
     fn message(&mut self, bytes: &mut [u8]) -> Result<(), AkitaError> {

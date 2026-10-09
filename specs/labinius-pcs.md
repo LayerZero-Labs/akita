@@ -65,6 +65,11 @@ Enabling `labinius` makes the extension available; selecting these types and
 catalogs selects the extension. Without that feature the crate exports nothing.
 No feature enables or forwards `dev-protocol`.
 
+The entry points that accept an admitted root explicitly reject the tag-1
+small-modulus profile with `AkitaError::InvalidSetup`. Reduction-level support
+does not supply its image/grouped catalogs or PCS integration; that scope is
+owned by [the small-modulus specification](labinius-small-modulus-root.md).
+
 ## Digit configurations and storage
 
 | Configuration | Base b | Signed source bits | Opening bound | Stable family |
@@ -153,6 +158,13 @@ If R is `root_reduction_wire_size`, K the exact serialized W size, and A the
 actual grouped Akita proof size, the complete standalone proof size is
 `R + 8 + K + 8 + A`. Public binding bytes and session challenges contribute
 zero proof bytes. There is one grouped proof, with no separate Y proof.
+The reduction's v2 remainder relation removes 10,352 bytes at the first rank-1
+geometry, with every other component in this formula held fixed. Applied to
+the two-bit full-profile baseline of 93,454 bytes, that fixed-component delta
+predicts 83,102 bytes. The actual grouped size A can change with the new
+transcript: its Golomb–Rice terminal payload and grinding nonces have variable
+lengths. The root PCS and nested-opening domain labels remain v1; the enclosing root-reduction
+session and its public domain label are v2.
 
 ## Conditional guarantees and exclusions
 

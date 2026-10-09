@@ -9,9 +9,10 @@ use crate::{endpoint::pack_response, BinaryClearCommitment, BinaryClearSetup};
 
 /// Check the full digit alphabet and the one batched clear linear relation.
 /// In-alphabet tail digits and image padding have zero public weights.
-pub fn check_lowered_clear<F: SmoothFftField>(
+pub fn check_lowered_clear<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
     layout: &LoweredRootLayout,
     public: &LoweredPublic<F>,
+    setup: &BinaryClearSetup<F, D, M>,
     witness_digits: &[u8],
     image: &[F],
 ) -> Result<(), AkitaError> {
@@ -25,7 +26,7 @@ pub fn check_lowered_clear<F: SmoothFftField>(
     {
         return Err(AkitaError::InvalidProof);
     }
-    let witness_weights = witness_weights_dense(layout, public)?;
+    let witness_weights = witness_weights_dense(layout, public, setup)?;
     let image_weights = image_weights_dense(layout, public)?;
     let witness_sum = witness_digits
         .iter()
@@ -43,7 +44,7 @@ pub fn check_lowered_clear<F: SmoothFftField>(
     Ok(())
 }
 
-/// One unreduced A-row identity evaluated at alpha, on decoded scalar integers.
+/// One remainder A-row identity evaluated at alpha, on decoded scalar integers.
 pub fn a_row_residual<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
     layout: &LoweredRootLayout,
     public: &LoweredPublic<F>,
@@ -62,25 +63,33 @@ pub fn a_row_residual<F: SmoothFftField, const D: usize, M: TrinomialModulus>(
     }
     let alpha = public.challenges.alpha;
     let packed = pack_response(setup, response)?;
-    let mut residual = F::zero();
+    let mut remainder = akita_algebra::ring::TrinomialRing::<F, D, M>::zero()
+        .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
     for (j, p) in packed.iter().enumerate() {
         let index = checked::mul_add(row, layout.m(), j).ok_or(AkitaError::InvalidProof)?;
         let a = setup.matrix().get(index).ok_or(AkitaError::InvalidProof)?;
-        residual += horner(a.coefficients(), alpha) * horner(p.coefficients(), alpha);
+        remainder += a
+            .schoolbook_mul(p)
+            .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
     }
-    for (col, &challenge) in public.embedded_challenges.iter().enumerate() {
+    for (col, challenge) in public.embedded_challenges.iter().enumerate() {
         let index = checked::mul_add(col, layout.n_a(), row).ok_or(AkitaError::InvalidProof)?;
         let image = commitment
             .images
             .get(index)
             .ok_or(AkitaError::InvalidProof)?;
-        residual -= challenge * horner(image.coefficients(), alpha);
+        let challenge = akita_algebra::ring::TrinomialRing::from_coefficients(
+            challenge
+                .as_slice()
+                .try_into()
+                .map_err(|_| AkitaError::InvalidProof)?,
+        )
+        .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+        remainder -= challenge
+            .schoolbook_mul(image)
+            .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
     }
-    residual -= layout.polynomial().evaluate_modulus_at(alpha)?
-        * *public
-            .a_quotient_evaluations
-            .get(row)
-            .ok_or(AkitaError::InvalidProof)?;
+    let mut residual = horner(remainder.coefficients(), alpha);
     if layout.encoding().a_carry().is_some() {
         residual -= *public
             .a_carry_terms

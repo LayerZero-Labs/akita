@@ -50,9 +50,9 @@ fn completeness_every_base_and_both_shapes_for_both_hosts() {
 fn first_real_profile_wire_sizes_are_pinned_without_materializing_its_matrix() {
     let shape = LabiniusRootShape::derive(PROFILE, 22, 8, 128).unwrap();
     for (base, host128, host192) in [
-        (LabiniusDigitBase::Bits1, 22_208, 21_696),
-        (LabiniusDigitBase::Bits2, 22_960, 22_448),
-        (LabiniusDigitBase::Bits4, 27_488, 26_976),
+        (LabiniusDigitBase::Bits1, 11_856, 11_344),
+        (LabiniusDigitBase::Bits2, 12_608, 12_096),
+        (LabiniusDigitBase::Bits4, 17_136, 16_624),
     ] {
         assert_eq!(
             root_reduction_wire_size::<H>(&shape, base).unwrap(),
@@ -146,6 +146,14 @@ fn reduction_and_clear_opening_agree_on_honest_and_false_statements() {
         ),
         Err(AkitaError::InvalidProof)
     ));
+    let mut prover_oracle = TransparentRootProverOracle::new(&other_image);
+    // The generic sumcheck driver also detects an inconsistent input claim.
+    // The malicious driver in root_adversarial emits the false rounds and
+    // demonstrates verifier rejection without an A-row precheck.
+    assert!(matches!(prove_root_reduction_bytes(
+        &case.admitted, &case.prepared, case.base, &case.source,
+        &other_commitment, &case.point, case.value, &mut prover_oracle,
+    ), Err(AkitaError::InvalidInput(message)) if message == "sumcheck round polynomial does not match its input claim"));
 }
 
 #[test]
@@ -186,7 +194,7 @@ fn noncanonical_field_and_out_of_range_integer_encodings_reject() {
     let case = Case::<H>::new(LabiniusDigitBase::Bits1, 1);
     let (proof, _, _) = case.prove();
     let regions = case.regions();
-    for name in ["QA", "y_Y", "w_eval", "y_eval", "combined", "product"] {
+    for name in ["y_Y", "w_eval", "y_eval", "combined", "product"] {
         let (_, start, _) = regions
             .iter()
             .find(|(region, _, _)| *region == name)

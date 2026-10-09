@@ -42,7 +42,7 @@ harness = false
 required-features = ["labinius"]
 
 [[bench]]
-name = "quotient_kernel"
+name = "response_weights"
 harness = false
 required-features = ["labinius"]
 

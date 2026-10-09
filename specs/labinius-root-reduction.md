@@ -80,7 +80,7 @@ contributes none. These oracles MUST NOT be described as a succinct PCS.
 ## Transcript and wire grammar
 
 The session domain and the first absorbed public message are
-`akita/labinius/root-reduction/v1`. The public domain message is length-prefixed
+`akita/labinius/root-reduction/v2`. The public domain message is length-prefixed
 with a u64 little-endian byte count. Setup identity is exactly
 `admitted.identity_bytes::<H>()`; it binds the profile, certified rank,
 derivation inputs, seed and nested matrix-view identity. The base tag is one
@@ -104,12 +104,12 @@ public message. Public messages and challenges occupy zero proof bytes.
 
 | Step | Actor and value | Encoding and proof length | Site or label |
 | --- | --- | --- | --- |
-| 1 | pub: domain, admitted identity, base tag, image commitment, r, t | Length-prefixed domain; canonical admitted identity; tag; oracle binding; low-coordinate-first host words | `akita/labinius/root-reduction/v1`, statement binding |
+| 1 | pub: domain, admitted identity, base tag, image commitment, r, t | Length-prefixed domain; canonical admitted identity; tag; oracle binding; low-coordinate-first host words | `akita/labinius/root-reduction/v2`, statement binding |
 | 2 | P: partials; V: batching point; P/V: frontend rounds; P: terminal source value | `h*w_H` partial bytes; a uniform B coordinates; n rounds of two B coefficients; one B terminal; total `h*w_H+(2n+1)*21` | Existing `prove_frontend` / `verify_frontend` order |
 | 3 | P: left expansion U | C canonical B elements; `21*C` bytes; `verify_left_expansion` MUST pass | Left expansion message |
 | 4 | V: fold challenges | C challenges from the admitted binary sampler; profile, count and label absorbed before its root draw | `akita/labinius/root-fold/v1` |
 | 5 | Oracle: response commitment | Scheme-dependent; transparent oracle sends `2^nu` bytes | Response binding call |
-| 6 | P: QA, optional KA, Q, K | `n_A*(D-1)*f` canonical F bytes; tag 1 adds `n_A*D*ceil(e_KA/8)` offset bytes; then `(d-1)*q` and `d*k_Q` offset bytes | Clear lowered witness messages; exact KA grammar in [small-modulus spec](labinius-small-modulus-root.md#exact-auxiliary-message-grammar-and-matrix-identity) |
+| 6 | P: optional KA, Q, K | Tag 1 sends `n_A*D*ceil(e_KA/8)` offset bytes; then both tags send `(d-1)*q` and `d*k_Q` offset bytes | Clear lowered witness messages; exact KA grammar in [small-modulus spec](labinius-small-modulus-root.md#exact-auxiliary-message-grammar-and-matrix-identity) |
 | 7 | V: alpha, xi, gamma | Three fresh F draws at distinct sites, in that order | `LRRD`, details 0 (alpha), 1 (xi), 2 (gamma) |
 | 8 | P: y_Y | One canonical F element, f bytes; define `s=c_pub-y_Y` | Image weighted-sum message |
 | 9 | V: tau, beta | nu fresh F coordinates, lowest index bit first, then one fresh F beta | `LRRD`, detail 3 / round i (tau_i), detail 4 (beta) |
@@ -121,9 +121,11 @@ public message. Public messages and challenges occupy zero proof bytes.
 
 The prover MUST compute `fold_integer` and reject without retry if any
 coefficient leaves the admitted interval; it then calls `encode_witness`.
-The same response determines QA, Q and K, and tag-1 KA. The verifier builds `LoweredPublic`
-only after receiving these messages and drawing alpha, xi and gamma. The
-combined terminal MUST equal
+The same response determines Q and K, and tag-1 KA. The verifier builds `LoweredPublic`
+only after receiving these messages and drawing alpha, xi and gamma.
+Tag 0 computes no matrix-row auxiliary witness. Passing a commitment that
+mismatches the source is a caller error; the resulting inconsistent sumcheck
+claim rejects during verification. The combined terminal MUST equal
 `combined_terminal(base,tau,rho,beta,w_eval,kw)` with
 `kw=witness_weight_mle(layout,public,setup,rho)`. The product terminal MUST
 equal `product_terminal(y_eval,ky)` with
@@ -166,7 +168,7 @@ finite support family S, embedded in B by parity, rather than uniformly from B.
 | Frontend batching point, a B coordinates | Setup, image commitment, host statement and partials | An incorrect fixed partial vector has a nonzero multilinear discrepancy; total degree at most a | `a/|B|` |
 | Frontend round `z_i` in B | Partials, batching point and previous rounds; this round's two coefficients | A false degree-two product-sumcheck transition matches at a random point | `2/|B|` per round, `2n/|B|` total |
 | Fold challenge vector | Setup, image commitment, binary claim and all U | Conditional fold comparison: a nonzero B-linear discrepancy has at most one family member per conditioned coordinate because parity is injective; union over C coordinates | `C/|S|`; extraction and its loss remain open |
-| alpha in F | Y, W commitment, U, folds and QA/Q/K (plus tag-1 KA) | A false unreduced A row has degree at most `2D-2`; choose one false row, with no n_A factor | `(2D-2)/P` |
+| alpha in F | Y, W commitment, U, folds and Q/K (plus tag-1 KA) | A false remainder row has degree at most `D-1`; choose one false row, with no n_A factor | `(D-1)/P` |
 | xi in F | Same fixed witness messages, and alpha | A false parity residual modulo P has degree at most `2d-2=322` | `322/P` |
 | gamma in F | All row polynomials and their alpha/xi evaluations | A nonzero combination of n_A A evaluations and the parity evaluation has degree at most n_A | `n_A/P` |
 | tau, nu F coordinates | W, Y, public weights, c_pub and y_Y, hence s | An invalid digit makes `Z(tau)=sum_x eq(tau,x) P_b(W(x))` a nonzero multilinear polynomial of total degree at most nu | `nu/P` |
@@ -175,10 +177,10 @@ finite support family S, embedded in B by parity, rather than uniformly from B.
 | Product round `rho'_i` in F | Tables, weights, y_Y, completed combined instance, w_eval, header and current round message | Degree at most two per round | `2/P` per round; `2mu/P` total |
 | Oracle challenges | Both commitments and both output claims | Binding and evaluation errors of the selected oracle | `epsilon_bind+epsilon_eval` |
 
-The degree bounds follow from multiplication of degree-D-minus-one A, response
-and image polynomials, and degree-d-minus-one parity polynomials. A monic
-trinomial times a length-D-minus-one quotient has the same maximum degree
-`2D-2`; Phi times Q has degree 322. Gamma combines n_A A rows with its final
+The matrix relation is reduced modulo Phi_D before evaluation, so each
+remainder residual has degree at most D-1, including tag 1's carry term.
+The unreduced parity residual still has degree 322: Phi times Q has that
+maximum degree. Gamma combines n_A A rows with its final
 power `gamma^n_A` on the parity row. Characteristic MUST exceed `2^b+1` so
 combined interpolation at distinct nodes `0..=2^b+1` is defined.
 
@@ -190,7 +192,7 @@ claim s MUST be fixed before beta: for nonzero beta an adaptive choice
 Define
 
 ```text
-E_lowered = [2D-2 + 322 + n_A + nu + 1 + nu*(2^b+1) + 2mu] / P;
+E_lowered = [D-1 + 322 + n_A + nu + 1 + nu*(2^b+1) + 2mu] / P;
 E_frontend = (a+2n) / 2^162;
 E_accounted = E_frontend + C/|S| + E_lowered
               + epsilon_bind + epsilon_eval.
@@ -217,9 +219,9 @@ F192 uses a=8; their accounted values agree at the displayed precision.
 
 | b | nu | Numerator of E_lowered | Lowered bits | Accounted bits, F128 | Accounted bits, F192 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 26 | 1758 | 117.220281 | 117.219614 | 117.219614 |
-| 2 | 25 | 1804 | 117.183016 | 117.182367 | 117.182367 |
-| 4 | 24 | 2086 | 116.973477 | 116.972915 | 116.972915 |
+| 1 | 26 | 1111 | 117.882357 | 117.881303 | 117.881303 |
+| 2 | 25 | 1157 | 117.823827 | 117.822815 | 117.822815 |
+| 4 | 24 | 1439 | 117.509149 | 117.508335 | 117.508335 |
 
 The 128-bit fold allocation and certified SIS profile do not imply a 128-bit
 bound for this union: polynomial identity tests over the 128-bit coefficient
@@ -282,32 +284,32 @@ admitted profiles additionally enforce the deterministic envelope
 the out-of-interval probability zero. Allocation failure and malformed caller
 input are execution errors rather than probabilistic completeness losses.
 
-Let `h=H::ROWS`, `dc=e_v/b`, `P_c=next_power_of_two(D)`, and
-`A_pad=next_power_of_two(n_A*m*D)`. Excluding the oracle, the verifier performs
-these operations; counts describe field work and omit hashing and decoding:
+Let `h=H::ROWS`, `dc=e_v/b` and `P_c=next_power_of_two(D)`. Excluding the
+oracle, the verifier performs these operations; counts describe field work
+and omit hashing and decoding:
 
 | Work | Operation count or bound |
 | --- | --- |
 | Frontend reconstruction and rounds | h host-source contributions, a B batching coordinates, n degree-two evaluations; tensor terminal `O(n*h)` B multiplications and `O(n*h^2)` binary XORs |
 | Left expansion | Equality expansion and C B multiply-adds; `O(C)` B operations |
-| Public A contractions and quotients | `n_A*m*D` Horner steps, `n_A*(D-1)` quotient Horner steps, and `n_A*m` row-batching multiply-adds |
-| Public parity and challenge lifts | `k*m*d` binary-row Horner steps; C embedded degree-D and two degree-d Horner evaluations; `(2d-1)` Q/K Horner steps |
-| Public constant | `m*D` coefficient-weight/offset contributions, n_A quotient contributions, powers of lengths D, d, n_A+1 and dc |
+| Public parity and challenge lifts | `k*m*d` binary-row Horner steps; C lifted challenges and two degree-d Horner evaluations; `(2d-1)` Q/K Horner steps |
+| Public constant | `n_A*D` cached-H Horner steps, factored parity-offset contributions over d+k*m, and optional `n_A*D` KA Horner steps; no matrix traversal |
 | Combined replay and terminal | nu degree-`2^b+1` evaluations, an O(nu) equality evaluation and `2^b` alphabet factors |
 | Product replay and terminal | mu degree-two evaluations and one multiplication |
-| Response structured weight | Canonical setup-weight preparation/materialization on A_pad entries and `n_A*m*D` matrix multiply-adds; parity contractions over dc, d and k*m entries |
-| Image structured weight | D coefficient contractions and C*n_A image-entry contractions |
+| Response structured weight | One matrix pass with `n_A*m*D` multiply-adds into `n_A*D` coefficients, one common coefficient-point adjoint and row-factor contractions; unchanged parity contractions over dc, d and k*m entries |
+| Image structured weight | `C*n_A*w` sparse challenge accumulations, then n_A ring products and evaluations |
 
-For the current scalar `eq_eval_at_index` loops, the parity part of the
-response structured evaluator costs
-`O(dc*log(dc)+d*log(P_c/k)+k*m*log(k*m))` F operations after the public binary
-rows are cached. The A part costs `O(A_pad+n_A*m*D)` F work and O(A_pad)
-workspace. The image structured evaluator costs
-`O(D*log(P_c)+C*n_A*(mu-log(P_c)))` F operations and constant extra workspace.
-Neither structured evaluation scans the response table of `2^nu` entries.
-Public construction still scans the materialized setup and scalar rows; this
-slice makes no sublinear setup-verifier claim. Transparent oracle discharge
-adds direct MLE work linear in `2^nu+2^mu`, outside these reduction counts.
+For the scalar `eq_eval_at_index` loops, the parity terminal costs
+`O(dc*log(dc)+d*log(P_c/k)+k*m*log(k*m))` F operations after public binary
+rows are cached. The matrix terminal uses O(n_A*D+m) field workspace rather
+than a padded setup-weight table. A schoolbook terminal product takes O(D^2)
+field work; transform multiplication takes O(D log D). Equality expansions
+and the trace maps add linear workspace. Neither structured terminal scans
+the response table of `2^nu` entries. Setup preparation derives the cached
+H rows once; online public construction scans the scalar rows but no matrix.
+The response terminal still scans the materialized setup once, so this slice
+makes no sublinear setup-verifier claim. Transparent oracle discharge adds
+MLE work linear in `2^nu+2^mu`, outside these reduction counts.
 
 ## Exact reduction wire size
 
@@ -315,7 +317,7 @@ The exact reduction-owned byte count, excluding oracle bytes, is
 
 ```text
 h*w_H + (2n+1)*21 + 21*C
-+ f*n_A*(D-1) + (d-1)*ceil(e_Q/8) + d*ceil(e_K/8)
++ (d-1)*ceil(e_Q/8) + d*ceil(e_K/8)
 + [tag 1 only: n_A*D*ceil(e_KA/8)]
 + f*[3 + nu*(2^b+1) + 2mu].
 ```
@@ -332,7 +334,6 @@ For tag 0 at the first real geometry, Q/K byte widths are both five for every ba
 | Frontend partials, F192 | 1536 | 1536 | 1536 |
 | Frontend round bodies and source terminal | 945 | 945 | 945 |
 | U | 5376 | 5376 | 5376 |
-| QA | 10352 | 10352 | 10352 |
 | Q | 805 | 805 | 805 |
 | K | 810 | 810 | 810 |
 | y_Y | 16 | 16 | 16 |
@@ -340,8 +341,14 @@ For tag 0 at the first real geometry, Q/K byte widths are both five for every ba
 | w_eval | 16 | 16 | 16 |
 | Product round bodies | 576 | 576 | 576 |
 | y_eval | 16 | 16 | 16 |
-| **Total F128** | **22208** | **22960** | **27488** |
-| **Total F192** | **21696** | **22448** | **26976** |
+| **Total F128** | **11856** | **12608** | **17136** |
+| **Total F192** | **11344** | **12096** | **16624** |
+
+At the same geometry tag 1 has rank 3, mu=20 and 9,720 KA bytes for every
+base. Its reduction-only F128 totals are 21,640 / 22,392 / 26,920 bytes for
+b=1,2,4; F192 totals are 21,128 / 21,880 / 26,408 bytes. These include the
+64-byte product-round increase from mu=18 to mu=20. Before this wire change,
+the tag-1 totals were larger by 31,056 matrix-quotient bytes.
 
 The transparent oracle adds respectively 67108864, 33554432 and 16777216
 response bytes at this profile. The 262144 image coefficients are absorbed

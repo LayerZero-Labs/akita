@@ -19,6 +19,7 @@ fn honest_sequence_agrees_with_the_lowered_checker_at_transcript_challenges() {
             check_lowered_clear(
                 &case.layout,
                 &evidence.public,
+                case.admitted.setup(),
                 &evidence.digits,
                 &case.image,
             )
@@ -55,7 +56,8 @@ fn nonzero_in_alphabet_padding_tail_accepts_the_full_root_proof() {
         let evidence = assemble(&mut case, Attack::NonzeroTail);
         let tail = 648 * case.layout.encoding().response().digit_count();
         assert_eq!(evidence.digits[tail], (1 << base.bits()) - 1);
-        let weights = witness_weights_dense(&case.layout, &evidence.public).unwrap();
+        let weights =
+            witness_weights_dense(&case.layout, &evidence.public, case.admitted.setup()).unwrap();
         assert!(
             weights[tail].is_zero(),
             "the selected tail must have zero relation weight"
@@ -63,6 +65,7 @@ fn nonzero_in_alphabet_padding_tail_accepts_the_full_root_proof() {
         check_lowered_clear(
             &case.layout,
             &evidence.public,
+            case.admitted.setup(),
             &evidence.digits,
             &case.image,
         )
@@ -78,7 +81,13 @@ fn invalid_alphabet_is_rejected_by_the_combined_terminal_for_each_base() {
         let mut case = Case::new(base, 1);
         let e = assemble(&mut case, Attack::BadDigit);
         assert_eq!(
-            check_lowered_clear(&case.layout, &e.public, &e.digits, &case.image),
+            check_lowered_clear(
+                &case.layout,
+                &e.public,
+                case.admitted.setup(),
+                &e.digits,
+                &case.image
+            ),
             Err(AkitaError::InvalidProof)
         );
         assert!(a_row_residual(
@@ -103,7 +112,7 @@ fn invalid_alphabet_is_rejected_by_the_combined_terminal_for_each_base() {
 }
 
 #[test]
-fn individual_rows_are_mandatory_even_with_best_recomputed_quotients() {
+fn individual_rows_are_mandatory_in_remainder_form() {
     for base in BASES {
         for attack in [Attack::ParityOnly, Attack::AOnly] {
             let mut case = Case::new(base, 1);
@@ -121,7 +130,13 @@ fn individual_rows_are_mandatory_even_with_best_recomputed_quotients() {
             assert_eq!(a.is_zero(), attack == Attack::AOnly);
             assert_eq!(parity.is_zero(), attack == Attack::ParityOnly);
             assert_eq!(
-                check_lowered_clear(&case.layout, &e.public, &e.digits, &case.image),
+                check_lowered_clear(
+                    &case.layout,
+                    &e.public,
+                    case.admitted.setup(),
+                    &e.digits,
+                    &case.image
+                ),
                 Err(AkitaError::InvalidProof)
             );
             assert!(
@@ -140,7 +155,14 @@ fn wrong_image_sum_compensated_in_s_fails_the_combined_terminal() {
         let e = assemble(&mut case, Attack::WrongY);
         // The tables satisfy the honest lowered relation; only y_Y and hence
         // the compensating s are false, fixed before tau and beta.
-        check_lowered_clear(&case.layout, &e.public, &e.digits, &case.image).unwrap();
+        check_lowered_clear(
+            &case.layout,
+            &e.public,
+            case.admitted.setup(),
+            &e.digits,
+            &case.image,
+        )
+        .unwrap();
         assert!(!combined_terminal_matches(&case, &e.proof));
         assert_eq!(case.verify(&e.proof), Err(AkitaError::InvalidProof));
     }
