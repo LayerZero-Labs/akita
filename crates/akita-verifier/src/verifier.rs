@@ -63,11 +63,13 @@ where
     /// A single-proof verifier, such as a recursion guest, prepares only the
     /// selected row's terminal matrix. `trusted_terminal_cache` optionally
     /// supplies that matrix as a scalar Q128 artifact from
-    /// [`crate::build_riscv64_terminal_ntt_cache`] instead of transforming it.
-    /// The artifact format checks its setup and schedule identities, geometry,
-    /// lengths, and residue ranges. It cannot prove that the transformed
-    /// payload was derived from the named setup seed, so callers must bind the
-    /// bytes to trusted setup provisioning or to the verifier program identity.
+    /// [`crate::build_riscv64_terminal_ntt_cache`]. The artifact's setup and
+    /// schedule identities, geometry, lengths, and residue ranges are checked,
+    /// and by default its payload is rebuilt from the setup matrix and must
+    /// match, which costs as much as preparing the matrix. With the
+    /// `program-bound-terminal-cache` feature the payload is not rebuilt; enable
+    /// it only in a verifier program, such as a zkVM guest, whose artifact
+    /// bytes are part of the program identity.
     ///
     /// When the catalog has no such row or `setup` does not support it, the
     /// verifier admits nothing and rejects every proof.

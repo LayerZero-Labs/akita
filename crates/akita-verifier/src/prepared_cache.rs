@@ -126,10 +126,13 @@ impl TerminalNttCache {
         Ok(Self { entries })
     }
 
-    /// Install one trusted scalar Q128 artifact as the only entry.
+    /// Install one scalar Q128 artifact as the only entry.
     ///
     /// The artifact must carry the setup and schedule identities and exactly
-    /// the geometry of `requirement`.
+    /// the geometry of `requirement`. Its payload is then checked to be the
+    /// transform of the setup's terminal matrix prefix, unless the
+    /// `program-bound-terminal-cache` feature makes the artifact part of the
+    /// trusted verifier program.
     pub(crate) fn install_trusted<F: Field + CanonicalEncoding>(
         setup: &AkitaVerifierSetup<F>,
         requirement: TerminalNttCacheRequirement,
@@ -159,6 +162,16 @@ impl TerminalNttCache {
                             .into(),
                     ));
                 }
+                // The cache is the terminal A matrix at verification time, so
+                // its identity and shape checks are not enough on their own.
+                #[cfg(not(feature = "program-bound-terminal-cache"))]
+                akita_types::check_riscv64_scalar_q128_cache_derivation::<F, D>(
+                    artifact,
+                    setup
+                        .expanded()
+                        .shared_matrix()
+                        .ring_view::<D>(1, requirement.prefix_len)?,
+                )?;
                 Ok::<_, AkitaError>(TerminalNttEntry {
                     requirement,
                     cache_bytes: prepared.cache_bytes(),
@@ -297,6 +310,30 @@ mod tests {
             TerminalNttCache::install_trusted(&setup, requirement, selection.row_digest, &artifact)
                 .expect("install terminal cache");
         assert!(installed.cache_bytes() > 0);
+
+        // Change the final payload residue to a different in-range value: the
+        // identities and geometry still match, but the payload no longer
+        // transforms the setup matrix.
+        let mut altered = artifact.clone();
+        let end = altered.len();
+        if metadata.tail_prefix_len > 0 {
+            let raw = i16::from_le_bytes([altered[end - 2], altered[end - 1]]);
+            let changed = if raw > 0 { raw - 1 } else { raw + 1 };
+            altered[end - 2..].copy_from_slice(&changed.to_le_bytes());
+        } else {
+            let raw = i32::from_le_bytes(altered[end - 4..].try_into().expect("residue"));
+            let changed = if raw > 0 { raw - 1 } else { raw + 1 };
+            altered[end - 4..].copy_from_slice(&changed.to_le_bytes());
+        }
+        let altered_install =
+            TerminalNttCache::install_trusted(&setup, requirement, selection.row_digest, &altered);
+        #[cfg(not(feature = "program-bound-terminal-cache"))]
+        assert!(
+            matches!(&altered_install, Err(AkitaError::InvalidSetup(message)) if message.contains("not the transform")),
+            "an altered payload must not install: {altered_install:?}"
+        );
+        #[cfg(feature = "program-bound-terminal-cache")]
+        assert!(altered_install.is_ok());
 
         let other_row = ScheduleRowDigest::from_bytes([0xa5; 32]);
         assert!(matches!(

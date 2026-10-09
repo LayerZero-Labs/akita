@@ -45,4 +45,8 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 akita-serialization = { path = "../../../crates/akita-serialization" }
 akita-types = { path = "../../../crates/akita-types" }
 akita-params = { path = "../../../crates/akita-params" }
-akita-verifier = { path = "../../../crates/akita-verifier", default-features = false }
+# The terminal cache is compiled into the guest ELF by `build.rs`, so the guest
+# trusts it as part of its program identity instead of rebuilding it.
+akita-verifier = { path = "../../../crates/akita-verifier", default-features = false, features = [
+  "program-bound-terminal-cache",
+] }

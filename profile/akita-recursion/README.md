@@ -249,13 +249,15 @@ the exact payload length, every residue range, and the setup and schedule
 identities, and that the geometry matches the selected row, before installing
 it. A mismatch returns status code `1`.
 
-`AkitaVerifier::for_selection` documents the supplied cache as trusted because
-the header cannot prove that the transformed payload came from the named setup
-seed. The recursion
-host establishes that provenance by deriving the cache from a strictly decoded
+The header cannot prove that the transformed payload came from the named setup
+seed, so by default `AkitaVerifier::for_selection` rebuilds a supplied cache
+from the setup matrix and rejects any residue that differs. The guest enables
+the `akita-verifier` feature `program-bound-terminal-cache`, which skips that
+rebuild, because the cache bytes are part of its program identity. The recursion
+host establishes their provenance by deriving the cache from a strictly decoded
 setup and verifying the proof through the decoded cache before it starts Jolt.
-Code that loads an external cache must provide an equivalent trusted setup
-installation boundary.
+A verifier that loads an external cache at run time keeps the default and pays
+the rebuild.
 
 If no prepared cache path is present at build time, the generated static value
 is `None`. `AkitaVerifier::for_selection` then prepares the terminal matrix from
