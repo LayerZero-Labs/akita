@@ -142,23 +142,23 @@ impl<F: SmoothFftField> LoweredPublic<F> {
             .ok_or(AkitaError::InvalidProof)?;
         let binary_weights = equality_weights(row_point)?;
         let mut binary_rows = zero_vec(layout.scalar_rows())?;
+        let binary_row = |weight| -> Result<F, AkitaError> {
+            Ok(horner(
+                scalar_from_binary::<F>(weight)?.coefficients(),
+                challenges.xi,
+            ))
+        };
         #[cfg(feature = "parallel")]
         binary_rows
             .par_iter_mut()
             .zip(&binary_weights)
             .try_for_each(|(destination, &weight)| -> Result<(), AkitaError> {
-                *destination = horner(
-                    scalar_from_binary::<F>(weight)?.coefficients(),
-                    challenges.xi,
-                );
+                *destination = binary_row(weight)?;
                 Ok(())
             })?;
         #[cfg(not(feature = "parallel"))]
         for (destination, &weight) in binary_rows.iter_mut().zip(&binary_weights) {
-            *destination = horner(
-                scalar_from_binary::<F>(weight)?.coefficients(),
-                challenges.xi,
-            );
+            *destination = binary_row(weight)?;
         }
         let mut embedded_challenges = zero_vec(layout.columns())?;
         let mut u_challenge_sum = F::zero();
@@ -201,27 +201,23 @@ impl<F: SmoothFftField> LoweredPublic<F> {
             parity_rhs,
             c_pub: F::zero(),
         };
-        #[cfg(feature = "parallel")]
-        {
-            result.c_pub = (0..layout.m())
-                .into_par_iter()
-                .map(|j| -> Result<F, AkitaError> {
-                    let mut sum = F::zero();
-                    for t in 0..D {
-                        sum +=
-                            signed_field::<F>(layout.off(t)?) * result.coefficient_weight(j, t)?;
-                    }
-                    Ok(sum)
-                })
-                .try_reduce(F::zero, |left, right| Ok(left + right))?;
-        }
-        #[cfg(not(feature = "parallel"))]
-        for j in 0..layout.m() {
+        let column_offset = |j| -> Result<F, AkitaError> {
+            let mut sum = F::zero();
             for t in 0..D {
-                result.c_pub +=
-                    signed_field::<F>(layout.off(t)?) * result.coefficient_weight(j, t)?;
+                sum += signed_field::<F>(layout.off(t)?) * result.coefficient_weight(j, t)?;
             }
-        }
+            Ok(sum)
+        };
+        #[cfg(feature = "parallel")]
+        let offset = (0..layout.m())
+            .into_par_iter()
+            .map(column_offset)
+            .try_reduce(F::zero, |left, right| Ok(left + right))?;
+        #[cfg(not(feature = "parallel"))]
+        let offset = (0..layout.m()).try_fold(F::zero(), |sum, j| {
+            Ok::<F, AkitaError>(sum + column_offset(j)?)
+        })?;
+        result.c_pub = offset;
         let modulus = layout.polynomial().evaluate_modulus_at(challenges.alpha)?;
         for (&weight, &quotient) in result
             .gamma_powers

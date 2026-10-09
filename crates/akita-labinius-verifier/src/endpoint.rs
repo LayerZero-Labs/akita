@@ -44,6 +44,14 @@ pub fn left_expansion<H: SwitchField>(
     result
         .try_reserve_exact(columns)
         .map_err(|_| AkitaError::InvalidInput("left expansion allocation failed".into()))?;
+    let column_value = |words: &[H::Source]| {
+        weights
+            .iter()
+            .zip(words)
+            .fold(BinaryField162::ZERO, |sum, (&weight, &word)| {
+                sum + weight * embed_source::<H>(word)
+            })
+    };
     #[cfg(feature = "parallel")]
     {
         // Capacity and both dimensions were checked before parallel writes.
@@ -51,23 +59,10 @@ pub fn left_expansion<H: SwitchField>(
         result
             .par_iter_mut()
             .zip(source.par_chunks_exact(scalar_rows))
-            .for_each(|(destination, words)| {
-                *destination = weights
-                    .iter()
-                    .zip(words)
-                    .fold(BinaryField162::ZERO, |sum, (&weight, &word)| {
-                        sum + weight * embed_source::<H>(word)
-                    });
-            });
+            .for_each(|(destination, words)| *destination = column_value(words));
     }
     #[cfg(not(feature = "parallel"))]
-    for words in source.chunks_exact(scalar_rows) {
-        let mut value = BinaryField162::ZERO;
-        for (&weight, &word) in weights.iter().zip(words) {
-            value += weight * embed_source::<H>(word);
-        }
-        result.push(value);
-    }
+    result.extend(source.chunks_exact(scalar_rows).map(column_value));
     Ok(result)
 }
 
