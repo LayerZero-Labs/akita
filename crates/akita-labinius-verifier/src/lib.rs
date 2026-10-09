@@ -30,6 +30,7 @@ pub mod endpoint;
 pub mod frontend;
 pub mod lowered;
 pub mod profile;
+pub mod root_sumcheck;
 pub mod source;
 
 pub use admitted::{derive_trinomial_matrix, AdmittedRootSetup};

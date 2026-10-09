@@ -89,3 +89,95 @@ pub fn new_verifier(proof: &[u8]) -> Result<akita_transcript::VerifierChannel<'_
 pub fn finish_verifier(channel: akita_transcript::VerifierChannel<'_>) -> Result<(), AkitaError> {
     channel.check_eof()
 }
+
+/// Borrow the existing prover channel for coefficient-field root sumchecks.
+///
+/// This adapter only transports rounds and samples their field challenges. The
+/// enclosing protocol must bind its statement and select distinct invocation
+/// identifiers before using the generic sumcheck drivers.
+pub struct RootSumcheckProverChannel<'state> {
+    state: &'state mut akita_transcript::ProverChannel,
+}
+
+impl<'state> RootSumcheckProverChannel<'state> {
+    pub fn new(state: &'state mut akita_transcript::ProverChannel) -> Self {
+        Self { state }
+    }
+}
+
+/// Borrow the existing verifier channel for coefficient-field root sumchecks.
+pub struct RootSumcheckVerifierChannel<'state, 'proof> {
+    state: &'state mut akita_transcript::VerifierChannel<'proof>,
+}
+
+impl<'state, 'proof> RootSumcheckVerifierChannel<'state, 'proof> {
+    pub fn new(state: &'state mut akita_transcript::VerifierChannel<'proof>) -> Self {
+        Self { state }
+    }
+}
+
+fn root_sumcheck_site(
+    invocation: u32,
+    round: u32,
+    role: akita_sumcheck::SumcheckRole,
+) -> akita_transcript::ProtocolSiteId {
+    akita_transcript::ProtocolSiteId {
+        // "LRSC": a diagnostic family separate from the Akita stage sumchecks.
+        family: 0x4c52_5343,
+        invocation,
+        round,
+        detail: role as u32,
+        ..akita_transcript::ProtocolSiteId::default()
+    }
+}
+
+impl<F> akita_sumcheck::SumcheckProverChannel<F> for RootSumcheckProverChannel<'_>
+where
+    F: akita_algebra::fft::SmoothFftField + jolt_field::ExtField<F>,
+{
+    fn state_mut(&mut self) -> &mut akita_transcript::ProverChannel {
+        self.state
+    }
+
+    fn sumcheck_site(
+        &self,
+        invocation: u32,
+        round: u32,
+        role: akita_sumcheck::SumcheckRole,
+    ) -> akita_transcript::ProtocolSiteId {
+        root_sumcheck_site(invocation, round, role)
+    }
+
+    fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<F, AkitaError> {
+        akita_transcript::ext_challenge::<F, F, _>(
+            self.state,
+            root_sumcheck_site(invocation, round, akita_sumcheck::SumcheckRole::Challenge),
+        )
+    }
+}
+
+impl<'proof, F> akita_sumcheck::SumcheckVerifierChannel<'proof, F>
+    for RootSumcheckVerifierChannel<'_, 'proof>
+where
+    F: akita_algebra::fft::SmoothFftField + jolt_field::ExtField<F>,
+{
+    fn state_mut(&mut self) -> &mut akita_transcript::VerifierChannel<'proof> {
+        self.state
+    }
+
+    fn sumcheck_site(
+        &self,
+        invocation: u32,
+        round: u32,
+        role: akita_sumcheck::SumcheckRole,
+    ) -> akita_transcript::ProtocolSiteId {
+        root_sumcheck_site(invocation, round, role)
+    }
+
+    fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<F, AkitaError> {
+        akita_transcript::ext_challenge::<F, F, _>(
+            self.state,
+            root_sumcheck_site(invocation, round, akita_sumcheck::SumcheckRole::Challenge),
+        )
+    }
+}
