@@ -71,8 +71,8 @@ table; not succinct; no hiding**. Image binding absorbs every canonical
 coefficient of the padded Y table as public bytes in table order. Response
 binding sends exactly one byte per W entry. It fixes those bytes without
 checking their alphabet, so the combined sumcheck enforces that condition.
-Discharge evaluates both tables directly with
-`akita_algebra::poly::multilinear_eval` and compares with the output claims.
+Discharge evaluates the response from digit bytes in chunks and the image with
+`akita_algebra::poly::multilinear_eval`, then compares with the output claims.
 The image table is public input, so this absorption contributes no proof bytes.
 The transparent response message contributes `2^nu` proof bytes; discharge
 contributes none. These oracles MUST NOT be described as a succinct PCS.

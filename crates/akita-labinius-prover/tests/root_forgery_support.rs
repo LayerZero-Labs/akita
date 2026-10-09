@@ -40,6 +40,7 @@ use jolt_poly::UnivariatePoly;
 pub(crate) enum Attack {
     Honest,
     BadDigit,
+    NonzeroTail,
     ParityOnly,
     AOnly,
     WrongY,
@@ -164,7 +165,10 @@ pub(crate) fn assemble(case: &mut Case, attack: Attack) -> Evidence {
     if attack == Attack::BadDigit {
         digits[648 * case.layout.encoding().response().digit_count()] = 255;
     }
-    // The commitment fixes raw bytes, including an invalid padding digit.
+    if attack == Attack::NonzeroTail {
+        digits[648 * case.layout.encoding().response().digit_count()] = (1 << case.base.bits()) - 1;
+    }
+    // The commitment fixes raw bytes, including any chosen padding digit.
     ch.message(&mut digits).unwrap();
     let packed = pack_response(setup, &response).unwrap();
     let embedded: Vec<_> = fold

@@ -17,6 +17,7 @@ use akita_labinius_verifier::{
 use akita_params::sis::labinius::{LabiniusDigitBase, LabiniusRootProfile};
 use akita_types::proof::AkitaSetupSeed;
 use common::{data, TestHost};
+use jolt_field::CanonicalBytes;
 
 pub(crate) type F = jolt_field::Prime128OffsetA7F7;
 pub(crate) type H = BinaryField128;
@@ -138,5 +139,28 @@ impl<T: TestHost> Case<T> {
                 region
             })
             .collect()
+    }
+
+    /// Each compressed coefficient-field round message in wire order.
+    pub(crate) fn round_messages(&self) -> Vec<(&'static str, usize, usize, usize)> {
+        let regions = self.regions();
+        let mut messages = Vec::new();
+        for (name, rounds, coefficients) in [
+            (
+                "combined",
+                self.layout.witness_log_len(),
+                (1usize << self.base.bits()) + 1,
+            ),
+            ("product", self.layout.image_log_len(), 2),
+        ] {
+            let (_, start, len) = regions
+                .iter()
+                .find(|(region, _, _)| *region == name)
+                .unwrap();
+            let width = coefficients * F::NUM_BYTES;
+            assert_eq!(*len, rounds * width);
+            messages.extend((0..rounds).map(|round| (name, round, start + round * width, width)));
+        }
+        messages
     }
 }

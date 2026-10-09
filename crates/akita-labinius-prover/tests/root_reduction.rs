@@ -81,39 +81,45 @@ fn reduction_and_clear_opening_agree_on_honest_and_false_statements() {
     let (root, _, _) = case.prove();
     case.verify(&root).unwrap();
     let wrong_value = case.value + H::ONE;
-    assert!(
-        verify_binary_clear_bytes(setup, &case.commitment, &case.point, wrong_value, &clear)
-            .is_err()
-    );
+    assert!(matches!(
+        verify_binary_clear_bytes(setup, &case.commitment, &case.point, wrong_value, &clear),
+        Err(AkitaError::InvalidProof)
+    ));
     let mut oracle = TransparentRootVerifierOracle::new(&case.image);
-    assert!(verify_root_reduction_bytes(
-        &case.admitted,
-        case.base,
-        &case.point,
-        wrong_value,
-        &mut oracle,
-        &root
-    )
-    .is_err());
-    assert!(prove_binary_clear_bytes(
-        setup,
-        &case.source,
-        &case.commitment,
-        &case.point,
-        wrong_value
-    )
-    .is_err());
+    assert!(matches!(
+        verify_root_reduction_bytes(
+            &case.admitted,
+            case.base,
+            &case.point,
+            wrong_value,
+            &mut oracle,
+            &root
+        ),
+        Err(AkitaError::InvalidProof)
+    ));
+    assert!(matches!(
+        prove_binary_clear_bytes(
+            setup,
+            &case.source,
+            &case.commitment,
+            &case.point,
+            wrong_value
+        ),
+        Err(AkitaError::InvalidInput(_))
+    ));
     let mut oracle = TransparentRootProverOracle::new(&case.image);
-    assert!(prove_root_reduction_bytes(
-        &case.admitted,
-        case.base,
-        &case.source,
-        &case.commitment,
-        &case.point,
-        wrong_value,
-        &mut oracle
-    )
-    .is_err());
+    assert!(matches!(
+        prove_root_reduction_bytes(
+            &case.admitted,
+            case.base,
+            &case.source,
+            &case.commitment,
+            &case.point,
+            wrong_value,
+            &mut oracle
+        ),
+        Err(AkitaError::InvalidInput(_))
+    ));
     let mut other_source = case.source.clone();
     other_source[0] ^= 1;
     let other_commitment = akita_labinius_prover::commit_binary_clear::<H, F, 648, MinusTrinomial>(
@@ -121,22 +127,24 @@ fn reduction_and_clear_opening_agree_on_honest_and_false_statements() {
         &other_source,
     )
     .unwrap();
-    assert!(
-        verify_binary_clear_bytes(setup, &other_commitment, &case.point, case.value, &clear)
-            .is_err()
-    );
+    assert!(matches!(
+        verify_binary_clear_bytes(setup, &other_commitment, &case.point, case.value, &clear),
+        Err(AkitaError::InvalidProof)
+    ));
     let other_image =
         akita_labinius_prover::lowered::flatten_image(&case.layout, &other_commitment).unwrap();
     let mut oracle = TransparentRootVerifierOracle::new(&other_image);
-    assert!(verify_root_reduction_bytes(
-        &case.admitted,
-        case.base,
-        &case.point,
-        case.value,
-        &mut oracle,
-        &root
-    )
-    .is_err());
+    assert!(matches!(
+        verify_root_reduction_bytes(
+            &case.admitted,
+            case.base,
+            &case.point,
+            case.value,
+            &mut oracle,
+            &root
+        ),
+        Err(AkitaError::InvalidProof)
+    ));
 }
 
 #[test]
@@ -147,7 +155,10 @@ fn every_distinct_wire_message_region_rejects_a_flipped_bit() {
         assert!(len > 0);
         let mut changed = proof.clone();
         changed[start] ^= 1;
-        assert!(case.verify(&changed).is_err(), "accepted tampered {name}");
+        assert!(
+            matches!(case.verify(&changed), Err(AkitaError::InvalidProof)),
+            "accepted tampered {name}"
+        );
     }
     // Y is public transcript input, so its coefficient byte is changed in the statement.
     let mut image = case.image.clone();
@@ -156,15 +167,17 @@ fn every_distinct_wire_message_region_rejects_a_flipped_bit() {
     coefficient[0] ^= 1;
     image[0] = F::from_bytes_le_checked(&coefficient).unwrap();
     let mut oracle = TransparentRootVerifierOracle::new(&image);
-    assert!(verify_root_reduction_bytes(
-        &case.admitted,
-        case.base,
-        &case.point,
-        case.value,
-        &mut oracle,
-        &proof
-    )
-    .is_err());
+    assert!(matches!(
+        verify_root_reduction_bytes(
+            &case.admitted,
+            case.base,
+            &case.point,
+            case.value,
+            &mut oracle,
+            &proof
+        ),
+        Err(AkitaError::InvalidProof)
+    ));
 }
 
 #[test]
@@ -172,7 +185,7 @@ fn noncanonical_field_and_out_of_range_integer_encodings_reject() {
     let case = Case::<H>::new(LabiniusDigitBase::Bits1, 1);
     let (proof, _, _) = case.prove();
     let regions = case.regions();
-    for name in ["QA", "y_Y", "w_eval", "y_eval"] {
+    for name in ["QA", "y_Y", "w_eval", "y_eval", "combined", "product"] {
         let (_, start, _) = regions
             .iter()
             .find(|(region, _, _)| *region == name)
@@ -181,7 +194,7 @@ fn noncanonical_field_and_out_of_range_integer_encodings_reject() {
         changed[*start..*start + 16]
             .copy_from_slice(&PROFILE.coefficient_prime().modulus().to_le_bytes());
         assert!(
-            case.verify(&changed).is_err(),
+            matches!(case.verify(&changed), Err(AkitaError::InvalidProof)),
             "accepted noncanonical {name}"
         );
     }
@@ -198,7 +211,7 @@ fn noncanonical_field_and_out_of_range_integer_encodings_reject() {
         let mut changed = proof.clone();
         changed[*start + width - 1] |= 1 << (bits % 8);
         assert!(
-            case.verify(&changed).is_err(),
+            matches!(case.verify(&changed), Err(AkitaError::InvalidProof)),
             "accepted out-of-range {name}"
         );
     }
@@ -210,61 +223,71 @@ fn setup_base_point_value_and_image_owner_are_statement_bound() {
     let (proof, _, _) = case.prove();
     let changed_setup = admitted(1, 0x32);
     let mut oracle = TransparentRootVerifierOracle::new(&case.image);
-    assert!(verify_root_reduction_bytes(
-        &changed_setup,
-        case.base,
-        &case.point,
-        case.value,
-        &mut oracle,
-        &proof
-    )
-    .is_err());
-    for base in [LabiniusDigitBase::Bits1, LabiniusDigitBase::Bits4] {
-        let mut oracle = TransparentRootVerifierOracle::new(&case.image);
-        assert!(verify_root_reduction_bytes(
-            &case.admitted,
-            base,
+    assert!(matches!(
+        verify_root_reduction_bytes(
+            &changed_setup,
+            case.base,
             &case.point,
             case.value,
             &mut oracle,
             &proof
-        )
-        .is_err());
+        ),
+        Err(AkitaError::InvalidProof)
+    ));
+    for base in [LabiniusDigitBase::Bits1, LabiniusDigitBase::Bits4] {
+        let mut oracle = TransparentRootVerifierOracle::new(&case.image);
+        assert!(matches!(
+            verify_root_reduction_bytes(
+                &case.admitted,
+                base,
+                &case.point,
+                case.value,
+                &mut oracle,
+                &proof
+            ),
+            Err(AkitaError::InvalidProof)
+        ));
     }
     let mut changed_point = case.point.clone();
     changed_point[0] += H::ONE;
     let mut oracle = TransparentRootVerifierOracle::new(&case.image);
-    assert!(verify_root_reduction_bytes(
-        &case.admitted,
-        case.base,
-        &changed_point,
-        case.value,
-        &mut oracle,
-        &proof
-    )
-    .is_err());
+    assert!(matches!(
+        verify_root_reduction_bytes(
+            &case.admitted,
+            case.base,
+            &changed_point,
+            case.value,
+            &mut oracle,
+            &proof
+        ),
+        Err(AkitaError::InvalidProof)
+    ));
     let mut oracle = TransparentRootVerifierOracle::new(&case.image);
-    assert!(verify_root_reduction_bytes(
-        &case.admitted,
-        case.base,
-        &case.point,
-        case.value + H::ONE,
-        &mut oracle,
-        &proof
-    )
-    .is_err());
+    assert!(matches!(
+        verify_root_reduction_bytes(
+            &case.admitted,
+            case.base,
+            &case.point,
+            case.value + H::ONE,
+            &mut oracle,
+            &proof
+        ),
+        Err(AkitaError::InvalidProof)
+    ));
     let mut changed_image = case.image.clone();
     changed_image[0] += F::one();
     let mut oracle = TransparentRootVerifierOracle::new(&changed_image);
-    assert!(verify_root_reduction_bytes(
-        &case.admitted,
-        case.base,
-        &case.point,
-        case.value,
-        &mut oracle,
-        &proof
-    )
-    .is_err());
+    assert!(matches!(
+        verify_root_reduction_bytes(
+            &case.admitted,
+            case.base,
+            &case.point,
+            case.value,
+            &mut oracle,
+            &proof
+        ),
+        Err(AkitaError::InvalidProof)
+    ));
 }
 
 struct WrongTableOracle<'a> {
@@ -317,15 +340,17 @@ fn oracle_answers_from_either_different_table_reject_at_discharge() {
             discharge_reached: false,
             change_image,
         };
-        assert!(verify_root_reduction_bytes(
-            &case.admitted,
-            case.base,
-            &case.point,
-            case.value,
-            &mut oracle,
-            &proof
-        )
-        .is_err());
+        assert!(matches!(
+            verify_root_reduction_bytes(
+                &case.admitted,
+                case.base,
+                &case.point,
+                case.value,
+                &mut oracle,
+                &proof
+            ),
+            Err(AkitaError::InvalidProof)
+        ));
         assert!(
             oracle.discharge_reached,
             "rejected before the oracle answered a different table"
@@ -349,20 +374,23 @@ fn malformed_proofs_return_errors_without_panicking() {
     for prefix in prefixes {
         let result = std::panic::catch_unwind(|| case.verify(&proof[..prefix]));
         assert!(
-            matches!(result, Ok(Err(_))),
+            matches!(result, Ok(Err(AkitaError::InvalidProof))),
             "prefix {prefix} accepted or panicked"
         );
     }
     let mut trailing = proof.clone();
     trailing.push(0);
-    assert!(case.verify(&trailing).is_err());
+    assert!(matches!(
+        case.verify(&trailing),
+        Err(AkitaError::InvalidProof)
+    ));
     let mut rng = StdRng::seed_from_u64(0xbad_147);
     for _ in 0..16 {
         let mut random = vec![0u8; proof.len()];
         rng.fill_bytes(&mut random);
         assert!(matches!(
             std::panic::catch_unwind(|| case.verify(&random)),
-            Ok(Err(_))
+            Ok(Err(AkitaError::InvalidProof))
         ));
     }
 }
