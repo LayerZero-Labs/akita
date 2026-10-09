@@ -184,8 +184,8 @@ Steps 1-4 live in `frontend.rs` and return
 `BinaryEvaluationClaim { point: z, value: t_prime }`. This is an obligation to
 open the binary source against its original commitment, not an accepted
 opening by itself. The later mixed-root integration can consume this boundary
-without changing the host-field reduction. This PR supplies only the clear
-source-opening consumer.
+without changing the host-field reduction. The standalone crates supply only
+the clear source-opening consumer.
 
 ## Validation
 
