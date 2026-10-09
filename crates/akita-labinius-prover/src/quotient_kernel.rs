@@ -10,8 +10,8 @@
 )]
 
 use akita_algebra::{
-    binary::BinaryField128, embed_scalar, MinusTrinomial, PlusTrinomial, SmoothFftField,
-    TrinomialModulus, TrinomialNtt, TrinomialNttDomain, TrinomialRing,
+    embed_scalar, MinusTrinomial, PlusTrinomial, SmoothFftField, TrinomialModulus, TrinomialNtt,
+    TrinomialNttDomain, TrinomialRing,
 };
 use akita_challenges::BinaryChallenge;
 use akita_error::{checked, AkitaError};
@@ -19,12 +19,11 @@ use akita_labinius_verifier::{
     endpoint::pack_response, profile::BinaryClearSetup, source::challenge_scalar,
     BinaryClearCommitment,
 };
-use akita_params::sis::labinius::{LabiniusCoefficientPrime, LabiniusRingDegree};
 use jolt_field::WithPacking;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::{commit_binary_clear_prepared, PreparedCommitMatrix};
+use crate::PreparedCommitMatrix;
 
 mod sealed {
     pub trait Sealed {}
@@ -53,23 +52,17 @@ type ColumnWork<'a, F, const D: usize, M> = (
     (&'a TrinomialRing<F, D, M>, &'a [TrinomialRing<F, D, M>]),
 );
 
-/// Reusable conjugate transform of A and binding data for both prepared matrices.
-///
-/// The public commitment cache has no shape or digest accessor. A one-column
-/// zero-source setup lets its canonical checked entry point validate those
-/// private fields without doing work proportional to the original column count.
+/// Reusable conjugate-ring transform of A, bound to the matrix it came from.
 pub struct PreparedQuotientMatrix<F, const D: usize, M: ConjugateModulus> {
     domain: TrinomialNttDomain<F, D, M::Conjugate>,
     matrix: Vec<TrinomialNtt<F, D, M::Conjugate>>,
-    binding_setup: BinaryClearSetup<F, D, M>,
-    zero_source: Vec<u128>,
     n_a: usize,
     m: usize,
     digest: [u8; 32],
 }
 
 impl<F: SmoothFftField, const D: usize, M: ConjugateModulus> PreparedQuotientMatrix<F, D, M> {
-    /// Transform the matrix in the conjugate ring and prepare binding validation.
+    /// Transform every matrix entry once in the conjugate ring.
     pub fn prepare(setup: &BinaryClearSetup<F, D, M>) -> Result<Self, AkitaError> {
         let domain = TrinomialNttDomain::new()
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
@@ -77,73 +70,39 @@ impl<F: SmoothFftField, const D: usize, M: ConjugateModulus> PreparedQuotientMat
         matrix
             .try_reserve_exact(setup.matrix().len())
             .map_err(|_| AkitaError::InvalidSetup("conjugate matrix allocation failed".into()))?;
-        let mut coefficients = Vec::new();
-        coefficients
-            .try_reserve_exact(setup.matrix().len())
-            .map_err(|_| AkitaError::InvalidSetup("binding matrix allocation failed".into()))?;
         let mut workspace = domain.workspace();
         for element in setup.matrix() {
             let conjugate = TrinomialRing::from_coefficients(*element.coefficients())
                 .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
             matrix.push(domain.forward_with_workspace(&conjugate, &mut workspace));
-            coefficients.push(*element);
         }
-        let prime = match F::MODULUS_BITS {
-            64 => LabiniusCoefficientPrime::P64Offset23703,
-            128 => LabiniusCoefficientPrime::P128OffsetA7F7,
-            _ => {
-                return Err(AkitaError::InvalidSetup(
-                    "unsupported coefficient prime".into(),
-                ))
-            }
-        };
-        let degree = match D {
-            162 => LabiniusRingDegree::D162,
-            324 => LabiniusRingDegree::D324,
-            648 => LabiniusRingDegree::D648,
-            _ => return Err(AkitaError::InvalidSetup("unsupported ring degree".into())),
-        };
-        let binding_setup = BinaryClearSetup::new(
-            coefficients,
-            setup.n_a(),
-            setup.m(),
-            1,
-            setup.lower(),
-            setup.upper(),
-            0,
-            setup.profile().clone(),
-            prime,
-            degree,
-        )?;
-        let mut zero_source = Vec::new();
-        zero_source
-            .try_reserve_exact(setup.scalar_rows())
-            .map_err(|_| AkitaError::InvalidSetup("binding source allocation failed".into()))?;
-        zero_source.resize(setup.scalar_rows(), 0);
         Ok(Self {
             domain,
             matrix,
-            binding_setup,
-            zero_source,
             n_a: setup.n_a(),
             m: setup.m(),
             digest: *setup.matrix_view_digest(),
         })
     }
 
-    /// Cached payload bytes, including the coefficient matrix and zero source
-    /// needed for commitment-cache binding. Excludes plans and Vec metadata;
-    /// the public transform API does not expose plan or workspace heap sizes.
+    /// Bytes of transformed matrix field coefficients. Excludes plans and Vec
+    /// metadata; the transform API does not expose plan or workspace heap sizes.
     pub fn prepared_bytes(&self) -> Result<usize, AkitaError> {
-        checked::sum([
-            checked::product([self.matrix.len(), D, size_of::<F>()])
-                .ok_or_else(|| AkitaError::InvalidSetup("matrix size overflow".into()))?,
-            checked::product([self.binding_setup.matrix().len(), D, size_of::<F>()])
-                .ok_or_else(|| AkitaError::InvalidSetup("binding matrix size overflow".into()))?,
-            checked::product([self.zero_source.len(), size_of::<u128>()])
-                .ok_or_else(|| AkitaError::InvalidSetup("binding source size overflow".into()))?,
-        ])
-        .ok_or_else(|| AkitaError::InvalidSetup("prepared payload size overflow".into()))
+        checked::product([self.matrix.len(), D, size_of::<F>()])
+            .ok_or_else(|| AkitaError::InvalidSetup("prepared payload size overflow".into()))
+    }
+
+    /// Reject a setup whose matrix shape or digest differs from the cached one.
+    pub(crate) fn check_setup(&self, setup: &BinaryClearSetup<F, D, M>) -> Result<(), AkitaError> {
+        if self.n_a != setup.n_a()
+            || self.m != setup.m()
+            || self.digest != *setup.matrix_view_digest()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "prepared quotient matrix does not match setup".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -196,19 +155,8 @@ where
     checked::product([2, D])
         .and_then(|length| length.checked_sub(1))
         .ok_or(AkitaError::InvalidProof)?;
-    if prepared_quotient.n_a != setup.n_a()
-        || prepared_quotient.m != setup.m()
-        || prepared_quotient.digest != *setup.matrix_view_digest()
-    {
-        return Err(AkitaError::InvalidSetup(
-            "prepared quotient matrix does not match setup".into(),
-        ));
-    }
-    commit_binary_clear_prepared::<BinaryField128, F, D, M>(
-        prepared_commit,
-        &prepared_quotient.binding_setup,
-        &prepared_quotient.zero_source,
-    )?;
+    prepared_quotient.check_setup(setup)?;
+    prepared_commit.check_setup(setup)?;
     let domain = prepared_commit.domain();
     let conjugate = &prepared_quotient.domain;
     let mut lhs = Vec::new();

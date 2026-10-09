@@ -111,6 +111,7 @@ fn reduction_and_clear_opening_agree_on_honest_and_false_statements() {
     assert!(matches!(
         prove_root_reduction_bytes(
             &case.admitted,
+            &case.prepared,
             case.base,
             &case.source,
             &case.commitment,

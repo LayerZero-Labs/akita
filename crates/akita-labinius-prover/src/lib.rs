@@ -17,7 +17,10 @@ pub mod quotient_kernel;
 pub mod root;
 pub mod root_sumcheck;
 
-pub use root::{prove_root_reduction, prove_root_reduction_bytes, TransparentRootProverOracle};
+pub use root::{
+    prove_root_reduction, prove_root_reduction_bytes, PreparedRootMatrices,
+    TransparentRootProverOracle,
+};
 
 pub use commit_kernel::{commit_binary_clear_prepared, PreparedCommitMatrix};
 

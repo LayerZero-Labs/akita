@@ -137,6 +137,7 @@ dependencies = [
  "jolt-poly",
  "rand 0.8.8",
  "rayon",
+ "tracing",
 ]
 
 [[package]]
