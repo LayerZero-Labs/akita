@@ -17,8 +17,8 @@ This document is the normative definition of the lowered statement. The
 [clear opening](labinius-clear-opening.md),
 [root admission](labinius-root-admission.md) and
 [field switch](labinius-field-switch.md) specifications give its surrounding
-contracts. The encoding object's historical aggregate length accessors describe
-a different address map; the lowered relation uses only its range metadata.
+contracts. `LabiniusRootEncoding` supplies the enforced ranges and the response
+and image table lengths; this document fixes the relation over those tables.
 
 ## Geometry and admission
 
@@ -204,7 +204,8 @@ Compare two extracted occurrences `(a,s)` and `(a',s')` over the integers using
 `s'*a-s*a'`. Its infinity norm is at most
 `eta_A=4*Gamma_inf*Delta<P`, and its A image vanishes modulo P. Either this is
 a nonzero short kernel vector, excluded under the SIS assumption at the admitted
-rank and a suitable A setup contract, or it is zero over the integers and the
+rank for a matrix derived under the [setup contract](labinius-setup-contract.md),
+or it is zero over the integers and the
 rational sources agree. Modulo-two projection then authenticates the shared
 F162 source. The host claim is recovered by projecting this source onto its
 low 128 coordinates, using the binary coefficients of the field-switch
@@ -212,14 +213,16 @@ identities. Establishing that these extracted objects satisfy all consumer
 semantics remains part of composition.
 
 Open obligations are the complete composition argument in
-[the field-switch specification](labinius-field-switch.md), the setup contract
-for A, and Fiat–Shamir order, extraction and loss accounting. Arithmetic tests
-and shape admission alone do not resolve them.
+[the field-switch specification](labinius-field-switch.md), binding the
+admitted-root identity of the [setup contract](labinius-setup-contract.md) into
+the root transcript, and Fiat–Shamir order, extraction and loss accounting.
+Arithmetic tests and shape admission alone do not resolve them.
 
 ## Regression evidence
 
 The lowered integration tests exercise all three digit bases at the small
-admitted `(log_num_cells,log_fold_width,lambda_fold)=(4,1,128)` geometry.
+admitted `(log_num_cells,log_fold_width,lambda_fold)=(4,1,128)` geometry, over
+both an explicit random matrix and a seed-derived admitted setup.
 They compare honest clear endpoints, dense and structured weights, decoded
 residual batching, independently computed integer and field quotients,
 complemented digits, both interval endpoints, malformed inputs and zero-weight
