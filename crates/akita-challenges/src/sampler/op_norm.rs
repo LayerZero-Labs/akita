@@ -418,14 +418,19 @@ fn build_tables(d: usize, q: u32) -> (Vec<i128>, Vec<i128>, i128) {
     let mut base_cos = vec![0i128; two_d];
     let mut base_sin = vec![0i128; two_d];
     let mut eps_root: i128 = 0;
+    // Reflected angles share the same certified first-octant enclosure.
+    let first_octant: Vec<_> = (0..=d / 4)
+        .map(|r| {
+            let phi_lo = fdiv(pi_lo * r as i128, d as i128);
+            let phi_hi = cdiv(pi_hi * r as i128, d as i128);
+            (taylor_cos((phi_lo, phi_hi)), taylor_sin((phi_lo, phi_hi)))
+        })
+        .collect();
 
     for t in 0..two_d {
         let (r, swap, cos_sign, sin_sign) = octant_reduce(t, d);
-        // phi = pi * r / d, enclosed at TRIG_SCALE; phi in [0, pi/4].
-        let phi_lo = fdiv(pi_lo * r as i128, d as i128);
-        let phi_hi = cdiv(pi_hi * r as i128, d as i128);
-        let cos_phi = taylor_cos((phi_lo, phi_hi));
-        let sin_phi = taylor_sin((phi_lo, phi_hi));
+        // octant_reduce bounds r by d/4 for every degree.
+        let (cos_phi, sin_phi) = first_octant[r];
         let (cos_a, sin_a) = if swap {
             (sin_phi, cos_phi)
         } else {
