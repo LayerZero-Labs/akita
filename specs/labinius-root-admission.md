@@ -180,8 +180,9 @@ it chooses, the no-wrap condition uses the enforced offsets
 
 `LabiniusRootEncoding` exposes the padded coefficient length, response table
 length and log length, parity integer counts, and image table length and log
-length. Products and padding use `akita_error::checked`; range and no-wrap
-computations use checked u128 arithmetic. Overflow rejects.
+length. Coefficient padding uses checked integer rounding, products and log
+rounding use `akita_error::checked`, and range and no-wrap computations use
+checked u128 arithmetic. Overflow rejects.
 
 Every position of the response table, including coefficient positions `t >= D`
 and any positions above the natural extent, is subject to the same b-bit
@@ -275,9 +276,10 @@ binary reduction cover random, extremal, valid and invalid parity rows.
 ## Remaining protocol work
 
 This slice defines no schedule family, proof-size model, Fiat–Shamir ledger,
-proof wire grammar, segment-internal addresses, planner integration, or root
-protocol. The lengths above fix the committed table's size but not the relation
-over it. This is not protocol security admission and does not claim
+proof wire grammar, representation of the parity quotient and carry, planner
+integration, or root protocol. The response table's address rule and the
+lengths above fix the committed table's size and index order but not the
+relation over it. This is not protocol security admission and does not claim
 complete PCS security admission. Those belong to the root
 protocol and its composition with the ordinary tail. No unpublished paper or
 unlicensed reference implementation is needed for these formulas or tests.
