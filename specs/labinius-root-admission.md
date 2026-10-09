@@ -4,6 +4,9 @@ Status: active
 Book-chapter: book/src/foundations/security.md
 Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 
+The second commitment-modulus profile and its conditional lift are specified in
+[`labinius-small-modulus-root.md`](labinius-small-modulus-root.md).
+
 ## Scope and profile
 
 The opt-in `labinius-sis` feature supplies a runtime certified-width lookup and

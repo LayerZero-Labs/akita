@@ -6,7 +6,9 @@ use akita_algebra::{
     ring::{TrinomialModulus, TrinomialRing},
 };
 use akita_error::{checked, AkitaError};
-use akita_params::sis::labinius::{LabiniusRootProfile, LabiniusRootShape};
+use akita_params::sis::labinius::{
+    LabiniusCommitmentModulus, LabiniusRootProfile, LabiniusRootShape,
+};
 use akita_types::proof::{
     derive_public_matrix_prefix, AkitaSetupSeed, PublicMatrixDerivation,
     MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
@@ -119,6 +121,11 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> AdmittedRootSetup<F
         lambda_fold: u32,
         seed: AkitaSetupSeed,
     ) -> Result<Self, AkitaError> {
+        if profile.commitment_modulus() != LabiniusCommitmentModulus::CoefficientPrime {
+            return Err(AkitaError::InvalidSetup(
+                "LaBinius foreign commitment modulus protocol is not implemented".into(),
+            ));
+        }
         let shape = LabiniusRootShape::derive(profile, log_num_cells, log_fold_width, lambda_fold)?;
         let n_a = usize::try_from(shape.rank_a())
             .map_err(|_| AkitaError::InvalidSetup("root rank conversion overflow".into()))?;
@@ -213,5 +220,28 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> AdmittedRootSetup<F
         crate::codec::length_prefixed(&mut bytes, &clear)
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
         Ok(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_algebra::MinusTrinomial;
+    use jolt_field::Prime128OffsetA7F7;
+
+    #[test]
+    fn small_commitment_modulus_rejects_before_protocol_admission() {
+        let result = AdmittedRootSetup::<Prime128OffsetA7F7, 648, MinusTrinomial>::derive(
+            LabiniusRootProfile::D648P128Q28BoundedW46Delta16,
+            22,
+            8,
+            128,
+            AkitaSetupSeed::shake256_paged_v1([0x28; 32]),
+        );
+        assert!(matches!(
+            result,
+            Err(AkitaError::InvalidSetup(message))
+                if message.contains("foreign commitment modulus protocol is not implemented")
+        ));
     }
 }

@@ -2,15 +2,21 @@ use akita_challenges::BinaryChallengeProfile;
 use akita_error::{checked, AkitaError};
 
 use super::{
-    checked_source_comparison_class_bound, labinius_min_secure_rank, LabiniusCoefficientPrime,
+    checked_source_comparison_class_bound, labinius_min_secure_rank,
+    labinius_small_modulus_min_secure_rank, LabiniusCoefficientPrime, LabiniusCommitmentModulus,
     LabiniusRingDegree, LabiniusRootProfile, LabiniusSourceComparisonId, SourceOccurrenceBound,
 };
+
+#[path = "foreign_modulus_lift.rs"]
+mod foreign_modulus_lift;
+pub use foreign_modulus_lift::LABINIUS_MIN_DERIVATION_BIAS_BITS;
+use foreign_modulus_lift::{derive_foreign_modulus_lift, ForeignModulusLift};
 
 #[path = "root_encoding.rs"]
 mod root_encoding;
 pub use root_encoding::{LabiniusDigitBase, LabiniusRootEncoding, LabiniusSignedDigitRange};
 
-/// Fully derived and SIS-admitted geometry for the direct binary-root baseline.
+/// Fully derived and SIS-admitted geometry for a closed binary-root profile.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabiniusRootShape {
     profile: LabiniusRootProfile,
@@ -30,6 +36,7 @@ pub struct LabiniusRootShape {
     parity_residual_bound: u128,
     honest_quotient_bound: u128,
     honest_carry_bound: u128,
+    foreign_modulus_lift: Option<ForeignModulusLift>,
 }
 
 impl LabiniusRootShape {
@@ -43,6 +50,7 @@ impl LabiniusRootShape {
         derive_shape(
             profile,
             profile.coefficient_prime(),
+            profile.commitment_modulus().small_modulus(),
             profile.ring_degree(),
             &profile.challenge_profile()?,
             profile.response_interval(),
@@ -78,6 +86,58 @@ impl LabiniusRootShape {
             return Err(AkitaError::InvalidSetup(
                 "LaBinius parity envelopes do not satisfy H + 3*B_Q + 2*B_K < P".into(),
             ));
+        }
+        Ok(())
+    }
+
+    /// Commitment modulus, independent of the opening coefficient prime.
+    pub const fn commitment_modulus(&self) -> LabiniusCommitmentModulus {
+        self.profile.commitment_modulus()
+    }
+
+    /// Honest unreduced A-row residual bound `H_A` for a foreign-modulus lift.
+    pub fn a_residual_bound(&self) -> Option<u128> {
+        self.foreign_modulus_lift
+            .as_ref()
+            .map(|lift| lift.residual_bound)
+    }
+
+    /// Honest A-row carry magnitude `B_KA`, when the primes differ.
+    pub fn honest_a_carry_bound(&self) -> Option<u128> {
+        self.foreign_modulus_lift
+            .as_ref()
+            .map(|lift| lift.honest_carry_bound)
+    }
+
+    /// A-row carry integers `n_A * D`, or zero when the primes coincide.
+    pub fn a_carry_len(&self) -> usize {
+        self.foreign_modulus_lift
+            .as_ref()
+            .map_or(0, |lift| lift.carry_len)
+    }
+
+    /// Largest `t` satisfying `n_A * m * D * q0 * 2^t <= 4P`.
+    /// This is a bound on derivation bias, not total composed security.
+    pub fn derivation_bias_bits(&self) -> Option<u32> {
+        self.foreign_modulus_lift
+            .as_ref()
+            .map(|lift| lift.bias_bits)
+    }
+
+    /// Extracted A-row difference bound `B_nu` for the enforced carry bits.
+    /// Rejects a range that omits either honest carry endpoint.
+    pub fn a_carry_difference_bound(&self, enforced_bits: u32) -> Result<Option<u128>, AkitaError> {
+        self.foreign_modulus_lift
+            .as_ref()
+            .map(|lift| lift.difference_bound(enforced_bits))
+            .transpose()
+    }
+
+    /// Enforce honest carry endpoint inclusion and extraction no-wrap for the
+    /// actual digit-base-rounded bit width. Shared-prime profiles need no lift.
+    pub fn check_a_carry_no_wrap(&self, enforced_bits: u32) -> Result<(), AkitaError> {
+        if let Some(lift) = &self.foreign_modulus_lift {
+            lift.check_no_wrap(self.coefficient_prime.modulus(), enforced_bits)?;
         }
         Ok(())
     }
@@ -150,6 +210,7 @@ impl LabiniusRootShape {
 fn derive_shape(
     profile: LabiniusRootProfile,
     prime: LabiniusCoefficientPrime,
+    small_modulus: Option<u32>,
     degree: LabiniusRingDegree,
     challenge: &BinaryChallengeProfile,
     interval: (i128, i128),
@@ -219,12 +280,12 @@ fn derive_shape(
         },
         &[occurrence],
     )?;
-    let rank_a = labinius_min_secure_rank(
-        prime,
-        degree,
-        eta_a,
-        u64::try_from(ring_elements_per_column).map_err(|_| geometry_overflow())?,
-    )
+    let width = u64::try_from(ring_elements_per_column).map_err(|_| geometry_overflow())?;
+    let rank_a = if small_modulus.is_some() {
+        labinius_small_modulus_min_secure_rank(profile.commitment_modulus(), degree, eta_a, width)
+    } else {
+        labinius_min_secure_rank(prime, degree, eta_a, width)
+    }
     .ok_or_else(|| AkitaError::InvalidSetup("LaBinius root has no certified SIS cell".into()))?;
     let rank = usize::try_from(rank_a).map_err(|_| geometry_overflow())?;
     let image_len =
@@ -255,7 +316,7 @@ fn derive_shape(
         .checked_mul(3)
         .ok_or_else(parity_overflow)?
         / 2;
-    Ok(LabiniusRootShape {
+    let mut shape = LabiniusRootShape {
         profile,
         coefficient_prime: prime,
         response_interval: interval,
@@ -273,7 +334,12 @@ fn derive_shape(
         parity_residual_bound,
         honest_quotient_bound,
         honest_carry_bound,
-    })
+        foreign_modulus_lift: None,
+    };
+    if let Some(q) = small_modulus {
+        shape.foreign_modulus_lift = Some(derive_foreign_modulus_lift(&shape, q, challenge)?);
+    }
+    Ok(shape)
 }
 
 // One shared accepted-envelope formula for admission and exposed range totals.

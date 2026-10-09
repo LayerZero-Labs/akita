@@ -22,7 +22,7 @@ fn closed_profile_tags_and_exact_parameters() {
             profile.identity_bytes().unwrap()
         );
     }
-    for tag in 1..=u8::MAX {
+    for tag in 2..=u8::MAX {
         assert!(matches!(
             LabiniusRootProfile::from_tag(tag),
             Err(AkitaError::InvalidSetup(_))
@@ -46,6 +46,7 @@ fn identity_binds_each_field_independently() {
             p.ring_degree(),
             c.identity_bytes(),
             p.response_interval(),
+            None,
             LABINIUS_WIDTH_TABLE_DIGEST,
         ),
         encode_identity(
@@ -55,6 +56,7 @@ fn identity_binds_each_field_independently() {
             p.ring_degree(),
             c.identity_bytes(),
             p.response_interval(),
+            None,
             LABINIUS_WIDTH_TABLE_DIGEST,
         ),
         encode_identity(
@@ -64,6 +66,7 @@ fn identity_binds_each_field_independently() {
             p.ring_degree(),
             c.identity_bytes(),
             p.response_interval(),
+            None,
             LABINIUS_WIDTH_TABLE_DIGEST,
         ),
         encode_identity(
@@ -73,6 +76,7 @@ fn identity_binds_each_field_independently() {
             LabiniusRingDegree::D324,
             c.identity_bytes(),
             p.response_interval(),
+            None,
             LABINIUS_WIDTH_TABLE_DIGEST,
         ),
         encode_identity(
@@ -82,6 +86,7 @@ fn identity_binds_each_field_independently() {
             p.ring_degree(),
             altered_challenge.identity_bytes(),
             p.response_interval(),
+            None,
             LABINIUS_WIDTH_TABLE_DIGEST,
         ),
         encode_identity(
@@ -91,6 +96,7 @@ fn identity_binds_each_field_independently() {
             p.ring_degree(),
             c.identity_bytes(),
             (-32_767, 32_767),
+            None,
             LABINIUS_WIDTH_TABLE_DIGEST,
         ),
         encode_identity(
@@ -100,6 +106,7 @@ fn identity_binds_each_field_independently() {
             p.ring_degree(),
             c.identity_bytes(),
             (-32_768, 32_768),
+            None,
             LABINIUS_WIDTH_TABLE_DIGEST,
         ),
         encode_identity(
@@ -109,6 +116,7 @@ fn identity_binds_each_field_independently() {
             p.ring_degree(),
             c.identity_bytes(),
             p.response_interval(),
+            None,
             digest,
         ),
     ];
@@ -148,4 +156,52 @@ fn root_profile_identity_matches_hand_assembled_stable_fixture() {
             .unwrap(),
         expected
     );
+}
+
+#[test]
+fn existing_identity_digest_is_the_base_commit_literal() {
+    use sha3::{Digest, Sha3_256};
+    let old = LabiniusRootProfile::D648P128BoundedW46Delta16;
+    let new = LabiniusRootProfile::D648P128Q28BoundedW46Delta16;
+    let digest: [u8; 32] = Sha3_256::digest(old.identity_bytes().unwrap()).into();
+    assert_eq!(
+        digest,
+        [
+            207, 31, 247, 89, 41, 150, 77, 88, 189, 124, 4, 204, 43, 83, 250, 0, 17, 166, 14, 148,
+            32, 194, 221, 202, 124, 103, 52, 68, 224, 75, 21, 112
+        ]
+    );
+    assert_ne!(old.identity_bytes().unwrap(), new.identity_bytes().unwrap());
+    assert_eq!(old.tag(), 0);
+    assert_eq!(new.tag(), 1);
+    assert_eq!(
+        old.commitment_modulus(),
+        LabiniusCommitmentModulus::CoefficientPrime
+    );
+    assert_eq!(
+        new.commitment_modulus(),
+        LabiniusCommitmentModulus::Q28Offset2103
+    );
+    assert_eq!(new.commitment_modulus().small_modulus(), Some(268_433_353));
+    assert_eq!(new.commitment_modulus().label(), "q28-2103");
+    assert_eq!(old.commitment_modulus().tag(), 0);
+    assert_eq!(new.commitment_modulus().tag(), 1);
+    assert_eq!(old.commitment_modulus().small_modulus(), None);
+}
+
+#[test]
+fn small_identity_binds_modulus_and_its_separate_table_digest() {
+    let old = LabiniusRootProfile::D648P128BoundedW46Delta16
+        .identity_bytes()
+        .unwrap();
+    let new = LabiniusRootProfile::D648P128Q28BoundedW46Delta16
+        .identity_bytes()
+        .unwrap();
+    let mut expected = old;
+    expected[31] = 1; // Profile tag follows the 31-byte domain.
+    expected.truncate(expected.len() - 32);
+    expected.push(1);
+    expected.extend_from_slice(&268_433_353u32.to_le_bytes());
+    expected.extend_from_slice(&LABINIUS_SMALL_MODULUS_WIDTH_TABLE_DIGEST);
+    assert_eq!(new, expected);
 }

@@ -113,3 +113,51 @@ fn cells_have_canonical_numeric_degree_order_without_duplicates() {
         assert!(key(&pair[0]) < key(&pair[1]));
     }
 }
+
+#[test]
+fn small_modulus_search_cap_cells_admit_only_the_certified_prefix() {
+    let q = super::LabiniusCommitmentModulus::Q28Offset2103;
+    let degree = LabiniusRingDegree::D648;
+    let bound = 24_116_880;
+    let cap = 6_400_000_000_000;
+    for width in [1, 4096, 1 << 28, cap] {
+        assert_eq!(
+            labinius_small_modulus_min_secure_rank(q, degree, bound, width),
+            Some(3)
+        );
+    }
+    assert_eq!(
+        labinius_small_modulus_min_secure_rank(q, degree, bound, cap + 1),
+        None
+    );
+    assert_eq!(
+        labinius_small_modulus_min_secure_rank(q, degree, bound + 1, 1),
+        None
+    );
+    assert_eq!(
+        labinius_small_modulus_min_secure_rank(q, LabiniusRingDegree::D324, bound, 1),
+        None
+    );
+    assert_eq!(
+        labinius_small_modulus_min_secure_rank(
+            super::LabiniusCommitmentModulus::CoefficientPrime,
+            degree,
+            bound,
+            1
+        ),
+        None
+    );
+    assert_eq!(LABINIUS_SMALL_MODULUS_WIDTH_TABLE.len(), 2);
+    for (cell, rank) in LABINIUS_SMALL_MODULUS_WIDTH_TABLE.iter().zip([3, 4]) {
+        assert_eq!(cell.rank, rank);
+        assert_eq!(cell.commitment_modulus, q);
+        assert_eq!(cell.ring_degree, degree);
+        assert_eq!(cell.coeff_linf_bound, 24_116_880);
+        assert_eq!(cell.max_width, cap);
+        assert_eq!(cell.cutoff, LabiniusWidthCutoff::SearchCap);
+    }
+    use super::super::{LabiniusRootProfile, LabiniusRootShape};
+    assert!(matches!(LabiniusRootShape::derive(
+        LabiniusRootProfile::D648P128Q28BoundedW46Delta16, 53, 8, 128),
+        Err(akita_error::AkitaError::InvalidSetup(message)) if message.contains("no certified SIS cell")));
+}
