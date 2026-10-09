@@ -15,6 +15,13 @@ pub struct RootEvaluationClaims<F> {
 /// Implementations MUST bind the exact image table before frontend challenges,
 /// bind a response table before coefficient challenges, and authenticate both
 /// evaluations with their own soundness error. Every method runs exactly once.
+///
+/// Both bindings MUST fix every table entry, padding included, in the layout's
+/// table order and over the reduction's coefficient field `F`. `discharge`
+/// runs after both evaluation messages, so every opening challenge it draws
+/// follows them. A scheme that lets the two claims refer to different tables
+/// does not satisfy this trait. The normative statement is the "Oracle
+/// contract" section of `specs/labinius-root-reduction.md`.
 pub trait RootVerifierOracle<F: SmoothFftField> {
     fn bind_image<S: ClearChannel>(
         &mut self,
@@ -36,6 +43,10 @@ pub trait RootVerifierOracle<F: SmoothFftField> {
 /// Prover boundary matching the verifier's three oracle call sites.
 /// The response commitment MUST fix the supplied digit bytes; the evaluation
 /// proof MUST refer to the same response and image owners that were bound.
+///
+/// The obligations of [`RootVerifierOracle`] apply to the matching prover
+/// calls: the same coefficient field, the same table order, every padding
+/// entry bound, and no opening challenge before both evaluation messages.
 pub trait RootProverOracle<F: SmoothFftField> {
     fn bind_image<S: ClearChannel>(
         &mut self,

@@ -127,6 +127,9 @@ where
     let (mut response_value, _) = combined
         .final_evaluations()
         .ok_or(AkitaError::InvalidProof)?;
+    // The combined tables are the largest allocation of the reduction; release
+    // them before the product rounds and the oracle discharge.
+    drop(combined);
     exchange_field(channel, &mut response_value)?;
     let mut product = ProductSumcheck::new(image, ky, y_y)?;
     let (image_point, _) = prove_product_rounds(&mut product, channel, 1)?;

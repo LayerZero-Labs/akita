@@ -28,11 +28,6 @@ impl<'image, F> TransparentRootProverOracle<'image, F> {
         }
     }
 
-    /// Public image coefficients in table order, including padding.
-    pub fn image(&self) -> &[F] {
-        self.image
-    }
-
     /// Committed response bytes, available after response binding.
     pub fn response(&self) -> &[u8] {
         &self.response

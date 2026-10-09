@@ -5,7 +5,7 @@
 //! and builds the lowered root witness (`lowered`). Setup admission lives in
 //! the verifier crate: these functions accept any admitted
 //! `BinaryClearSetup`, explicit or seed-derived.
-//! The [`root`] reduction returns two committed-table evaluation claims through an oracle seam.
+//! The `root` reduction returns two committed-table evaluation claims through an oracle seam.
 
 #![cfg(feature = "labinius")]
 
