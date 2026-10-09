@@ -39,9 +39,9 @@ pub struct ImageEvaluation<'a> {
 
 /// Caller-trusted catalog, Akita setup and owning CPU backend for image openings.
 pub struct ImageProver {
-    scheme: AkitaCommitmentScheme<ImageConfig>,
-    setup: AkitaProverSetup<F>,
-    backend: CpuBackend<F, F>,
+    pub(crate) scheme: AkitaCommitmentScheme<ImageConfig>,
+    pub(crate) setup: AkitaProverSetup<F>,
+    pub(crate) backend: CpuBackend<F, F>,
 }
 
 impl ImageProver {
@@ -222,6 +222,9 @@ impl ImageVerifier {
                 "image row does not fit verifier setup".into(),
             ));
         }
+        crate::setup::ensure_setup_prefix_coverage(row, |id| {
+            self.verifier.setup().prefix_slots().get(id).is_some()
+        })?;
         let bound = bind_image_statement::<H, S>(
             admitted,
             self.verifier.setup().expanded().descriptor(),

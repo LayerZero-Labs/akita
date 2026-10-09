@@ -7,6 +7,18 @@ use akita_config::{policy_of, CommitmentConfig, ResolvedScheduleRow};
 use akita_error::{checked, AkitaError};
 use akita_labinius_verifier::channel::ClearChannel;
 use akita_params::ScheduleLookupKey;
+use akita_serialization::AkitaSerialize;
+
+pub(crate) fn canonical_bytes<T: AkitaSerialize>(value: &T) -> Result<Vec<u8>, AkitaError> {
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(value.compressed_size())
+        .map_err(|_| AkitaError::InvalidProof)?;
+    value
+        .serialize_compressed(&mut bytes)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    Ok(bytes)
+}
 
 /// Absorb `u64_le(byte_length(bytes)) || bytes` as public data.
 pub fn public_length_prefixed<S: ClearChannel>(

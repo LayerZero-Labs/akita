@@ -119,6 +119,8 @@ dependencies = [
  "akita-types",
  "akita-verifier",
  "jolt-field",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

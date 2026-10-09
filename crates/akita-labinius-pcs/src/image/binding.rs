@@ -5,7 +5,7 @@ use akita_config::{transcript_instance_descriptor, CommitmentConfig, TrustedSche
 use akita_error::AkitaError;
 use akita_labinius_verifier::{channel::ClearChannel, lowered::LoweredRootLayout};
 use akita_params::{sis::labinius::LabiniusDigitBase, BasisMode, ScheduleLookupKey};
-use akita_serialization::{AkitaSerialize, Valid};
+use akita_serialization::Valid;
 use akita_types::{
     AkitaSetupDescriptor, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
@@ -13,7 +13,7 @@ use jolt_field::{CanonicalBytes, CanonicalEncoding};
 
 use super::ImageEvaluation;
 use crate::{
-    session::{public_length_prefixed, NestedOpeningSession},
+    session::{canonical_bytes, public_length_prefixed, NestedOpeningSession},
     ImageConfig, RootSetup, F,
 };
 
@@ -84,20 +84,8 @@ pub(super) fn bind_image_statement<'a, H: SwitchField, S: ClearChannel>(
         BasisMode::Lagrange,
     )?;
     let identity = admitted.identity_bytes::<H>()?;
-    let mut setup_bytes = Vec::new();
-    setup_bytes
-        .try_reserve_exact(setup.compressed_size())
-        .map_err(|_| AkitaError::InvalidProof)?;
-    setup
-        .serialize_compressed(&mut setup_bytes)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    let mut commitment_bytes = Vec::new();
-    commitment_bytes
-        .try_reserve_exact(commitment.compressed_size())
-        .map_err(|_| AkitaError::InvalidProof)?;
-    commitment
-        .serialize_compressed(&mut commitment_bytes)
-        .map_err(|_| AkitaError::InvalidProof)?;
+    let setup_bytes = canonical_bytes(setup)?;
+    let commitment_bytes = canonical_bytes(commitment)?;
     let image_log = u32::try_from(layout.image_log_len()).map_err(|_| AkitaError::InvalidProof)?;
     let image_len = u64::try_from(layout.image_len()).map_err(|_| AkitaError::InvalidProof)?;
     let field = akita_params::field_modulus_be_bytes::<F>()?;

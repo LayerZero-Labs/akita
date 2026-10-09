@@ -35,7 +35,7 @@ orchestration lives in `akita-pcs`.
 | `akita-zk-prover` (`dev`) | Prover-side zero-knowledge building blocks (#120); no proof path depends on it |
 | `akita-labinius-verifier` (`dev`) | Seed-derived admitted root setup, clear binary opening checks, lowered root relation, and root reduction to two committed-table evaluation claims (#45) |
 | `akita-labinius-prover` (`dev`) | Binary source commitment, clear opening prover, lowered root witness, root sumcheck kernels, and root reduction prover with transparent differential oracle (#45) |
-| `akita-labinius-pcs` (`dev`) | Opt-in dense image-table commitments and nested Akita evaluation openings on caller-owned clear channels (#45) |
+| `akita-labinius-pcs` (`dev`) | Opt-in binary evaluation commitments through the root reduction and one grouped Akita opening; image-only channel openings (#45) |
 
 ## Dependency Layers
 
@@ -79,7 +79,7 @@ graph TD
   LabiniusPcs --> Field
   LabiniusPcs -. tests only .-> Planner
   LabiniusPcs -. tests only .-> Transcript
-  LabiniusPcs -. tests only .-> Challenges
+  LabiniusPcs --> Challenges
 
   LabiniusVerifier --> Algebra
   LabiniusVerifier --> Error
