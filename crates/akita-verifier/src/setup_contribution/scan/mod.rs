@@ -3,7 +3,7 @@ mod reduced;
 
 use super::*;
 use akita_algebra::cfg_try_fold_reduce;
-use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
+use akita_algebra::ring::scalar_powers;
 use group::evaluate_base_ring_direct;
 use reduced::evaluate_groups_reduced;
 
@@ -348,12 +348,15 @@ where
                     })?;
                 }
             }
-            let mut term = E::zero();
-            for (ring, weight) in setup.iter().zip(weights) {
-                if !weight.is_zero() {
-                    term += eval_ring_at_pows_fast(ring, base_pows) * weight;
-                }
-            }
+            // Rows with a zero weight contribute nothing; the rest go
+            // through the shared-powers kernel in one call.
+            let (rows, weights): (Vec<&[F]>, Vec<E>) = setup
+                .iter()
+                .zip(weights)
+                .filter(|(_, weight)| !weight.is_zero())
+                .map(|(ring, weight)| (ring.coefficients().as_slice(), weight))
+                .unzip();
+            let term = E::weighted_dot_base_rows(&rows, &weights, base_pows);
             Ok(acc + term)
         },
         |lhs, rhs| Ok(lhs + rhs)
