@@ -138,82 +138,86 @@ fn independent_integer_and_schoolbook_oracles_match_every_witness_coefficient() 
 #[path = "common/lifted.rs"]
 mod lifted;
 
+/// Arbitrary-precision schoolbook check of the transmitted lifted A rows.
+///
+/// Nothing here goes through the production transforms, the quotient kernel or
+/// the public weights: the unreduced row is an integer convolution, the division
+/// by the monic modulus is the descending elimination, and both the quotient
+/// (modulo the opening prime) and the remainder (`q0` times the carry, over the
+/// integers) are compared with what the prover sent.
 #[test]
 fn arbitrary_precision_lifted_oracle_checks_transmitted_qa_and_ka_rows() {
     use jolt_field::CanonicalBytes;
-    use std::{
-        fmt::Write as _,
-        io::Write as _,
-        process::{Command, Stdio},
-    };
-    fn canonical(value: lifted::F) -> u128 {
+    use num_bigint::BigInt;
+    const D: usize = 648;
+    fn canonical(value: lifted::F) -> BigInt {
         let mut bytes = [0u8; 16];
         value.to_bytes_le(&mut bytes);
-        u128::from_le_bytes(bytes)
+        BigInt::from(u128::from_le_bytes(bytes))
     }
-    fn line<T: std::fmt::Display>(input: &mut String, values: impl IntoIterator<Item = T>) {
-        for value in values {
-            write!(input, "{value} ").unwrap();
-        }
-        input.push('\n');
-    }
+    let q0 = BigInt::from(268_433_353u32);
+    let zero = BigInt::from(0);
     for base in lifted::BASES {
         let case = lifted::Case::new(base, 1);
         let (packed, fold, a) = lifted::transmitted_relation(&case);
-        let mut input = format!(
-            "{} 268433353 648 3 {} {}\n",
-            lifted::SMALL.coefficient_prime().modulus(),
-            case.layout.m(),
-            case.layout.columns()
-        );
-        for matrix in case.admitted.setup().matrix() {
-            line(
-                &mut input,
-                matrix.coefficients().iter().copied().map(canonical),
-            );
-        }
-        for row in packed {
-            line(&mut input, row);
-        }
-        for image in &case.commitment.images {
-            line(
-                &mut input,
-                image.coefficients().iter().copied().map(canonical),
-            );
-        }
-        for challenge in fold {
-            let mut coefficients = vec![0i128; 648];
-            for term in challenge.terms() {
-                let s = usize::from(term.position);
-                coefficients[4 * s] =
-                    i128::from(term.coefficient) * if s % 2 == 0 { 1 } else { -1 };
+        let p = BigInt::from(lifted::SMALL.coefficient_prime().modulus());
+        let (rank, width) = (case.layout.n_a(), case.layout.m());
+        assert_eq!(rank, 3);
+        let matrix = case.admitted.setup().matrix();
+        let images = &case.commitment.images;
+        assert_eq!(matrix.len(), rank * width);
+        assert_eq!(packed.len(), width);
+        assert_eq!(images.len(), fold.len() * rank);
+        assert_eq!(a.quotients.len(), rank);
+        assert_eq!(a.carry.len(), rank * D);
+        for i in 0..rank {
+            let mut residual = vec![zero.clone(); 2 * D - 1];
+            for (j, response) in packed.iter().enumerate() {
+                assert_eq!(response.len(), D);
+                for (t, &entry) in matrix[i * width + j].coefficients().iter().enumerate() {
+                    let entry = canonical(entry);
+                    for (s, &coefficient) in response.iter().enumerate() {
+                        residual[t + s] += &entry * coefficient;
+                    }
+                }
             }
-            line(&mut input, coefficients);
+            for (col, challenge) in fold.iter().enumerate() {
+                let image = images[col * rank + i].coefficients();
+                for term in challenge.terms() {
+                    // The degree-162 challenge embeds through Z -> -Y^4.
+                    let position = usize::from(term.position);
+                    let sign = if position % 2 == 0 { 1i128 } else { -1 };
+                    let scale = i128::from(term.coefficient) * sign;
+                    for (s, &value) in image.iter().enumerate() {
+                        residual[4 * position + s] -= canonical(value) * scale;
+                    }
+                }
+            }
+            let mut quotient = vec![zero.clone(); D - 1];
+            for t in (D..residual.len()).rev() {
+                let leading = std::mem::replace(&mut residual[t], zero.clone());
+                residual[t - D] -= &leading;
+                residual[t - D / 2] += &leading;
+                quotient[t - D] = leading;
+            }
+            assert_eq!(a.quotients[i].len(), D - 1);
+            for (s, (computed, &sent)) in quotient.iter().zip(&a.quotients[i]).enumerate() {
+                let reduced = ((computed % &p) + &p) % &p;
+                assert_eq!(
+                    reduced,
+                    canonical(sent),
+                    "{base:?}: QA row {i}, coefficient {s}"
+                );
+            }
+            let carry = &a.carry[i * D..(i + 1) * D];
+            for (t, (remainder, &sent)) in residual.iter().zip(carry).enumerate() {
+                assert_eq!(
+                    *remainder,
+                    &q0 * sent,
+                    "{base:?}: KA row {i}, coefficient {t}"
+                );
+            }
+            assert!(residual[D..].iter().all(|value| *value == zero));
         }
-        for q in a.quotients {
-            line(&mut input, q.into_iter().map(canonical));
-        }
-        for k in a.carry.chunks_exact(648) {
-            line(&mut input, k);
-        }
-        let mut child = Command::new("python3")
-            .args(["-c", include_str!("lifted_integer_oracle.py")])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(input.as_bytes())
-            .unwrap();
-        let output = child.wait_with_output().unwrap();
-        assert!(
-            output.status.success(),
-            "{base:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
     }
 }
