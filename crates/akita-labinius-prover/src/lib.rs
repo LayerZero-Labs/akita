@@ -13,6 +13,7 @@ pub mod a_carry_kernel;
 pub mod combined_kernel;
 pub mod commit_kernel;
 pub mod fold_kernel;
+pub mod limb_commit_kernel;
 pub mod lowered;
 pub mod response_weights;
 pub mod root;
@@ -21,6 +22,10 @@ pub mod root_sumcheck;
 pub use root::{prove_root_reduction, prove_root_reduction_bytes, TransparentRootProverOracle};
 
 pub use commit_kernel::{commit_binary_clear_prepared, PreparedCommitMatrix};
+pub use limb_commit_kernel::{
+    commit_binary_clear_limb_prepared, commit_binary_clear_small_modulus_prepared,
+    PreparedLimbCommitMatrix,
+};
 
 use akita_algebra::{binary::field_switch::SwitchField, SmoothFftField, TrinomialModulus};
 use akita_challenges::BinaryChallengeSampler;

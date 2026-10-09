@@ -37,6 +37,11 @@ harness = false
 required-features = ["labinius"]
 
 [[bench]]
+name = "limb_commit_kernel"
+harness = false
+required-features = ["labinius"]
+
+[[bench]]
 name = "fold_kernel"
 harness = false
 required-features = ["labinius"]

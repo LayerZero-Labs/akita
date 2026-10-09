@@ -119,6 +119,21 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> PreparedCommitMatri
     }
 }
 
+/// Check the common packed-source length contract before allocation.
+pub(crate) fn check_source_len(expected: usize, actual: usize) -> Result<(), AkitaError> {
+    if actual != expected {
+        return Err(AkitaError::InvalidSize { expected, actual });
+    }
+    Ok(())
+}
+
+/// Admit the common signed-interleaving geometry for one source element.
+pub(crate) fn source_element_rank<const D: usize>(words: usize) -> Result<usize, AkitaError> {
+    checked::exact_div(D, 162)
+        .filter(|k| matches!(k, 1 | 2 | 4) && words == *k)
+        .ok_or_else(|| AkitaError::InvalidInput("source element geometry mismatch".into()))
+}
+
 /// Pack exactly one group of `k` source words directly into signed coefficients.
 ///
 /// `D = 162 * k`, with `k` in `{1, 2, 4}`. Coefficient `s * k + c` is
@@ -127,9 +142,7 @@ impl<F: SmoothFftField, const D: usize, M: TrinomialModulus> PreparedCommitMatri
 pub fn pack_binary_element_i8<H: SwitchField, const D: usize>(
     words: &[H::Source],
 ) -> Result<[i8; D], AkitaError> {
-    let k = checked::exact_div(D, 162)
-        .filter(|k| matches!(k, 1 | 2 | 4) && words.len() == *k)
-        .ok_or_else(|| AkitaError::InvalidInput("source element geometry mismatch".into()))?;
+    let k = source_element_rank::<D>(words.len())?;
     let mut coefficients = [0i8; D];
     for (component, &word) in words.iter().enumerate() {
         let bytes = embed_source::<H>(word).to_bytes();
@@ -160,12 +173,7 @@ where
     F: SmoothFftField + WithPacking,
     M: TrinomialModulus + Send + Sync,
 {
-    if source.len() != setup.source_len() {
-        return Err(AkitaError::InvalidSize {
-            expected: setup.source_len(),
-            actual: source.len(),
-        });
-    }
+    check_source_len(setup.source_len(), source.len())?;
     prepared.check_setup(setup)?;
     let image_count = checked::product([setup.columns(), setup.n_a()])
         .ok_or_else(|| AkitaError::InvalidSetup("commitment size overflow".into()))?;

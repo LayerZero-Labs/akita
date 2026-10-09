@@ -211,7 +211,7 @@ fn transcripts<F: SmoothFftField + Send + Sync>(
 fn differential<F: SmoothFftField + Send + Sync>() {
     let mut rng = StdRng::seed_from_u64(0xc0_6b_1e);
     for base in BASES {
-        // nu=16 also exercises all 65,536 buckets after the small-input cutoff.
+        // nu=16 also exercises larger packed classes through the direct path.
         for nu in (0..=13).chain([16]) {
             let f = fixture::<F>(nu, base, &mut rng);
             let challenges: Vec<_> = (0..nu).map(|_| random(&mut rng)).collect();
@@ -472,39 +472,32 @@ fn malformed_factor_geometry_precedes_digit_validation() {
 }
 
 #[cfg(feature = "parallel")]
-fn worker_counts<F: SmoothFftField + Send + Sync>() {
-    let one = rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build()
-        .unwrap();
-    let three = rayon::ThreadPoolBuilder::new()
-        .num_threads(3)
-        .build()
-        .unwrap();
-    let four = rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build()
-        .unwrap();
+fn worker_counts<F: SmoothFftField + Send + Sync>(pools: &[rayon::ThreadPool]) {
     let mut rng = StdRng::seed_from_u64(0x7a_70);
     for base in BASES {
-        for a in [
-            0,
-            class_rounds(base) - 1,
-            class_rounds(base),
-            class_rounds(base) + 1,
-        ] {
-            let f = fixture_with_factor::<F>(13, a, base, &mut rng);
-            let challenges: Vec<_> = (0..13).map(|_| random(&mut rng)).collect();
-            let serial_bytes = one.install(|| {
-                manual(base, &f, &challenges);
-                transcripts(base, &f)
-            });
-            for pool in [&three, &four] {
-                let parallel_bytes = pool.install(|| {
-                    manual(base, &f, &challenges);
-                    transcripts(base, &f)
-                });
-                assert_eq!(serial_bytes, parallel_bytes);
+        // nu=13 has 64 outer blocks, so all 64 workers are reserved; nu=8
+        // also covers bases with no admitted buckets in the larger pools.
+        for nu in [8, 13] {
+            for a in [
+                0,
+                class_rounds(base) - 1,
+                class_rounds(base),
+                class_rounds(base) + 1,
+            ] {
+                let f = fixture_with_factor::<F>(nu, a, base, &mut rng);
+                let challenges: Vec<_> = (0..nu).map(|_| random(&mut rng)).collect();
+                let mut serial_bytes = None;
+                for pool in pools {
+                    let bytes = pool.install(|| {
+                        manual(base, &f, &challenges);
+                        transcripts(base, &f)
+                    });
+                    if let Some(expected) = &serial_bytes {
+                        assert_eq!(expected, &bytes);
+                    } else {
+                        serial_bytes = Some(bytes);
+                    }
+                }
             }
         }
     }
@@ -513,6 +506,15 @@ fn worker_counts<F: SmoothFftField + Send + Sync>() {
 #[cfg(feature = "parallel")]
 #[test]
 fn rayon_worker_counts_preserve_rounds_and_transcripts() {
-    worker_counts::<Prime64Offset23703>();
-    worker_counts::<Prime128OffsetA7F7>();
+    let pools: Vec<_> = [1, 3, 4, 64]
+        .into_iter()
+        .map(|threads| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap()
+        })
+        .collect();
+    worker_counts::<Prime64Offset23703>(&pools);
+    worker_counts::<Prime128OffsetA7F7>(&pools);
 }

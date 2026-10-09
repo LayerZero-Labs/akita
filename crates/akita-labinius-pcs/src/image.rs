@@ -124,6 +124,9 @@ impl ImageProver {
             row.schedule(),
             &row.profiles().opening_layout()?,
         )?;
+        crate::setup::ensure_setup_prefix_coverage(row, |id| {
+            self.setup.prefix_slots.get(id).is_some()
+        })?;
         let mut values = Vec::new();
         values
             .try_reserve_exact(1)
