@@ -190,6 +190,24 @@ fn existing_identity_digest_is_the_base_commit_literal() {
 }
 
 #[test]
+fn small_identity_digest_is_a_literal() {
+    // Independent of the generated table digest constant: regenerating the
+    // small-modulus table changes this identity and must fail here.
+    use sha3::{Digest, Sha3_256};
+    let identity = LabiniusRootProfile::D648P128Q28BoundedW46Delta16
+        .identity_bytes()
+        .unwrap();
+    let digest: [u8; 32] = Sha3_256::digest(identity).into();
+    assert_eq!(
+        digest,
+        [
+            154, 226, 234, 231, 114, 38, 215, 0, 157, 72, 77, 215, 193, 215, 124, 124, 78, 205,
+            190, 116, 77, 217, 48, 56, 132, 231, 232, 157, 188, 49, 143, 49
+        ]
+    );
+}
+
+#[test]
 fn small_identity_binds_modulus_and_its_separate_table_digest() {
     let old = LabiniusRootProfile::D648P128BoundedW46Delta16
         .identity_bytes()
