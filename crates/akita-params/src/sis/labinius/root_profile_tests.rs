@@ -116,3 +116,36 @@ fn identity_binds_each_field_independently() {
         assert_ne!(variant, original);
     }
 }
+
+#[test]
+fn root_profile_identity_matches_hand_assembled_stable_fixture() {
+    let prime = 340282366920938463463374607427473266697u128;
+    assert_eq!(prime, u128::MAX - (1u128 << 32) + 22538);
+    let challenge =
+        BinaryChallengeProfile::bounded_weight(BinaryScalarRing::Cyclotomic243, 46).unwrap();
+    let digest: Vec<u8> = "0586ee6294846d118d1e6ef364f10c40f8e5678f135f11dcde42b0fb61a89bfd"
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect();
+    assert_eq!(digest.len(), 32);
+
+    let mut expected = b"akita/labinius/root-profile/v1\0".to_vec();
+    expected.extend_from_slice(&[0, 0]); // Profile tag, then scalar-ring tag.
+    expected.extend_from_slice(&prime.to_le_bytes());
+    expected.extend_from_slice(&648u32.to_le_bytes());
+    for &byte in challenge.identity_bytes() {
+        expected.extend_from_slice(&[1, byte]);
+    }
+    expected.push(0);
+    expected.extend_from_slice(&(-32768i128).to_le_bytes());
+    expected.extend_from_slice(&32767i128.to_le_bytes());
+    expected.extend_from_slice(&digest);
+
+    assert_eq!(
+        LabiniusRootProfile::D648P128BoundedW46Delta16
+            .identity_bytes()
+            .unwrap(),
+        expected
+    );
+}
