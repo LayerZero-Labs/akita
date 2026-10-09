@@ -112,5 +112,62 @@ fn setup_rejects_a_mismatched_field_profile_before_materialization() {
     assert!(error.to_string().contains("does not match field modulus"));
 }
 
+#[test]
+fn verifier_setup_prefix_registry_is_authenticated_only_by_recomputation() {
+    use akita_types::{AkitaVerifierSetup, RingVec, SetupPrefixVerifierRegistry};
+    use jolt_field::One;
+    type Recursive = akita_config::RecursiveCommitmentConfig<fp128::Dense>;
+
+    // Prefix commitments run ring-dispatch arithmetic that needs the
+    // backend's enlarged fixture stack in debug builds.
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let catalog = akita_config::test_support::workspace_schedule_catalog::<Recursive>()
+                .expect("recursive dense catalog");
+            let requirements = SetupRequirements::from_catalog::<Recursive>(&catalog, 26, 1)
+                .expect("recursive dense requirements");
+            assert!(!requirements.prefix_slot_ids().is_empty());
+            let prover = new_prover_setup::<TestF>(&requirements).expect("prover setup");
+            let capacity = SetupMatrixCapacity {
+                num_field_elements: prover.expanded.shared_matrix().num_field_elements(),
+            };
+            let derived = prover.to_verifier_setup(capacity).expect("verifier setup");
+            assert!(derived.prefix_registry_authenticated());
+
+            let mut bytes = Vec::new();
+            derived.serialize_compressed(&mut bytes).unwrap();
+            let decoded = AkitaVerifierSetup::<TestF>::deserialize_compressed_exact(&bytes, &())
+                .expect("strict decode");
+            assert!(!decoded.prefix_registry_authenticated());
+            let authenticated =
+                authenticate_verifier_setup_prefixes(decoded.clone()).expect("honest registry");
+            assert!(authenticated.prefix_registry_authenticated());
+            assert_eq!(authenticated, derived);
+
+            let mut registry = SetupPrefixVerifierRegistry::new(
+                decoded.expanded().descriptor().setup_seed.clone(),
+            );
+            for (index, (_, slot)) in decoded.prefix_slots().iter().enumerate() {
+                let mut slot = slot.clone();
+                if index == 0 {
+                    let mut coeffs = slot.commitment.rows[0].coeffs().to_vec();
+                    coeffs[0] += TestF::one();
+                    slot.commitment.rows[0] = RingVec::from_coeffs(coeffs);
+                }
+                registry.insert(slot).expect("structurally valid slot");
+            }
+            let altered = AkitaVerifierSetup::from_parts(decoded.expanded().clone(), registry)
+                .expect("structurally valid setup");
+            assert!(matches!(
+                authenticate_verifier_setup_prefixes(altered),
+                Err(AkitaError::InvalidSetup(_))
+            ));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 #[cfg(feature = "disk-persistence")]
 mod disk_persistence;

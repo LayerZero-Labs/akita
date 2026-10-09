@@ -255,10 +255,19 @@ provenance or move setup work into per-proof verification.
 
 The public-matrix disk cache checks its identity, shape, field encoding, and
 every coefficient against the deterministic stream when it is loaded. The
-setup-prefix registry checks encoding, identity, geometry, and required-slot
-completeness. It does not currently recompute each stored commitment or verify
-a derivation certificate. The current registry is therefore structurally
-validated, not fully provenance validated.
+prover-side setup-prefix registry cache is recomputed against that matrix when
+it is loaded, and a cache file whose commitments differ is rewritten.
+
+A verifier setup decoded from bytes checks its registry's encoding, identity,
+and geometry only, so its registry is structurally validated, not provenance
+validated. `AkitaVerifierSetup` records this as an in-process, non-serialized
+authentication marker that decoding and `from_parts` leave unset. Verifiers do
+not admit schedule rows that offload setup contributions unless the marker is
+set. The marker is set by recomputation (`akita_setup::authenticate_verifier_setup_prefixes`,
+or derivation from a backend-validated prover setup) or explicitly by a caller
+that authenticated the registry against its own trust root
+(`assume_prefix_registry_authenticated`). The recursion guest uses the explicit
+form, because its setup is public input that the outer verifier must pin.
 
 The compact `ValidatedVerifierSetup` boundary and certificate chain are
 explicitly deferred. Until they exist, a deployment that loads a persisted

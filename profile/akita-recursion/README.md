@@ -190,8 +190,14 @@ overrides for those values.
    setup decoding; the host binary sets
    `AKITA_RECURSION_TRUSTED_BENCHMARK_ARTIFACT=1` before Jolt compiles the
    benchmark RISC-V ELF, because this pinned Jolt SDK hard-codes the guest
-   feature list to `guest`. A production recursion circuit must use strict
-   setup validation or bind an externally checked setup commitment.
+   feature list to `guest`. A production recursion circuit must bind an
+   externally checked digest of the complete verifier setup, including its
+   setup-prefix registry. Strict decoding rederives the public matrix from its
+   seed, but it cannot authenticate the setup-prefix commitments that the
+   recursive cases use: recomputing them means committing a large public
+   prefix, which the guest does not do. Both guest decoders therefore treat the
+   registry as authenticated by the blob's provenance, and the outer verifier
+   must check that the blob's setup is the expected one.
 
 ## Trusted field decode
 

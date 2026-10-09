@@ -79,6 +79,11 @@ impl<F: Field> AkitaProverSetup<F> {
     /// materialized matrix prefix. Verifier setup also initializes a
     /// non-serialized lazy terminal NTT-prefix cache.
     ///
+    /// The verifier registry is authenticated only when this setup's registry
+    /// was produced or recomputed by a CPU backend in this process. A registry
+    /// decoded from bytes is copied unauthenticated, so verifiers reject rows
+    /// that offload setup contributions until it is recomputed.
+    ///
     /// # Errors
     ///
     /// Returns an error if `matrix_capacity` is empty or exceeds the prover
@@ -128,7 +133,12 @@ impl<F: Field> AkitaProverSetup<F> {
         for slot in self.prefix_slots.verifier_slots() {
             prefix_slots.insert(slot)?;
         }
-        AkitaVerifierSetup::from_parts(expanded, prefix_slots)
+        let setup = AkitaVerifierSetup::from_parts(expanded, prefix_slots)?;
+        Ok(if self.prefix_slots.is_backend_validated() {
+            setup.assume_prefix_registry_authenticated()
+        } else {
+            setup
+        })
     }
 }
 
