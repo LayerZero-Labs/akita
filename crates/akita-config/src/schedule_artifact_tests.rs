@@ -220,3 +220,46 @@ fn dense_recursive_artifacts_cover_benchmark_sizes_and_offload_setup() {
     check::<fp64::Dense>(&[21, 23, 25, 27, 29]);
     check::<fp128::Dense>(&[20, 22, 24, 26, 28]);
 }
+
+/// Audit regression Pl-02: the group-level checks applied to a setup-prefix
+/// group compare its inner digit depth only against an upper bound.
+#[test]
+fn audit_regression_pl02() {
+    type Rec = RecursiveCommitmentConfig<fp128::OneHot>;
+    let catalog =
+        crate::test_support::workspace_schedule_catalog::<Rec>().expect("recursive catalog");
+    let prefix = catalog
+        .rows()
+        .flat_map(|row| row.schedule().recursive_folds.iter())
+        .find_map(|fold| fold.params.setup_prefix().copied())
+        .expect("catalog setup prefix");
+    let field_bits = prefix
+        .profile
+        .inner
+        .matrix
+        .sis_modulus_profile()
+        .field_bits();
+    let full_width = akita_params::sis::compute_num_digits_field_width(
+        field_bits,
+        prefix.profile.inner.digits.log_basis,
+    );
+    assert_eq!(prefix.profile.inner.digits.num_digits, full_width);
+
+    let mut reduced = prefix;
+    reduced.profile.inner.digits.num_digits = 1;
+    reduced.profile.inner.matrix = reduced
+        .profile
+        .inner
+        .matrix
+        .try_with_input_width(reduced.profile.blocks.positions_per_block)
+        .expect("reduced A width");
+    let validate = reduced.validate();
+    let slot_check = reduced
+        .slot_id()
+        .map(|id| akita_serialization::Valid::check(&id));
+    println!(
+        "full_width={full_width} reduced_depth=1 validate={validate:?} slot_check={slot_check:?}"
+    );
+    assert!(validate.is_ok());
+    assert!(matches!(slot_check, Some(Ok(()))));
+}
