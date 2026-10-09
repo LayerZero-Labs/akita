@@ -2,7 +2,7 @@
 //!
 //! This crate commits binary host words and proves their host-field multilinear
 //! evaluation with a clear integer response, which provides no zero knowledge,
-//! and builds the lowered root witness ([`lowered`]). Setup admission lives in
+//! and builds the lowered root witness (`lowered`). Setup admission lives in
 //! the verifier crate: these functions accept any admitted
 //! `BinaryClearSetup`, explicit or seed-derived.
 
