@@ -163,7 +163,7 @@ fn transcripts<F: SmoothFftField + Send + Sync>(
 fn differential<F: SmoothFftField + Send + Sync>() {
     let mut rng = StdRng::seed_from_u64(0xc0_6b_1e);
     for base in BASES {
-        // nu=16 also exercises all 65,536 buckets after the small-input cutoff.
+        // nu=16 also exercises larger packed classes through the direct path.
         for nu in (0..=13).chain([16]) {
             let f = fixture::<F>(nu, base, &mut rng);
             let challenges: Vec<_> = (0..nu).map(|_| random(&mut rng)).collect();
@@ -332,28 +332,42 @@ fn constructor_rejections_match_including_validation_order() {
 }
 
 #[cfg(feature = "parallel")]
-#[test]
-fn rayon_worker_counts_preserve_rounds_and_transcripts() {
-    let one = rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build()
-        .unwrap();
-    let four = rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build()
-        .unwrap();
+fn worker_counts<F: SmoothFftField + Send + Sync>(pools: &[rayon::ThreadPool]) {
     let mut rng = StdRng::seed_from_u64(0x7a_70);
     for base in BASES {
-        let f = fixture::<Prime128OffsetA7F7>(13, base, &mut rng);
-        let challenges: Vec<_> = (0..13).map(|_| random(&mut rng)).collect();
-        let serial_bytes = one.install(|| {
-            manual(base, &f, &challenges);
-            transcripts(base, &f)
-        });
-        let parallel_bytes = four.install(|| {
-            manual(base, &f, &challenges);
-            transcripts(base, &f)
-        });
-        assert_eq!(serial_bytes, parallel_bytes);
+        // nu=13 has 64 outer blocks, so all 64 workers are reserved; nu=8
+        // also covers bases with no admitted buckets in the larger pools.
+        for nu in [8, 13] {
+            let f = fixture::<F>(nu, base, &mut rng);
+            let challenges: Vec<_> = (0..nu).map(|_| random(&mut rng)).collect();
+            let mut serial_bytes = None;
+            for pool in pools {
+                let bytes = pool.install(|| {
+                    manual(base, &f, &challenges);
+                    transcripts(base, &f)
+                });
+                if let Some(expected) = &serial_bytes {
+                    assert_eq!(expected, &bytes);
+                } else {
+                    serial_bytes = Some(bytes);
+                }
+            }
+        }
     }
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn rayon_worker_counts_preserve_rounds_and_transcripts() {
+    let pools: Vec<_> = [1, 4, 64]
+        .into_iter()
+        .map(|threads| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap()
+        })
+        .collect();
+    worker_counts::<Prime64Offset23703>(&pools);
+    worker_counts::<Prime128OffsetA7F7>(&pools);
 }
