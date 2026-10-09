@@ -43,6 +43,11 @@ harness = false
 required-features = ["labinius-trinomial"]
 
 [[bench]]
+name = "trinomial_limb"
+harness = false
+required-features = ["labinius-trinomial"]
+
+[[bench]]
 name = "ntt_comparison"
 harness = false
 required-features = ["labinius-trinomial"]
