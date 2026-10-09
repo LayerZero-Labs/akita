@@ -85,6 +85,7 @@ jobs:
           scripts/check-crate-deps.sh akita-zk-prover
           scripts/check-crate-deps.sh akita-labinius-verifier
           scripts/check-crate-deps.sh akita-labinius-prover
+          scripts/check-crate-deps.sh akita-labinius-pcs
 
   labinius-trinomial:
     name: LaBinius trinomial arithmetic and relation bridge

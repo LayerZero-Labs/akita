@@ -2,7 +2,7 @@
 
 use std::arch::aarch64::{uint64x2_t, vdupq_n_u64, veorq_u64, vmull_p64};
 
-use super::{fold_with, PackedBinary162};
+use super::{fold_with, LimbView};
 use crate::binary::{product, BinaryField162 as F};
 
 // Keep the six Karatsuba products in vector registers until the entire round
@@ -39,8 +39,8 @@ fn finish(sums: [uint64x2_t; 6]) -> F {
 
 #[target_feature(enable = "aes")]
 pub(super) unsafe fn round_product(
-    lhs: &PackedBinary162,
-    rhs: &PackedBinary162,
+    lhs: &LimbView<&[u64]>,
+    rhs: &LimbView<&[u64]>,
     current_claim: F,
 ) -> [F; 3] {
     let mut constant = [vdupq_n_u64(0); 6];
@@ -52,7 +52,8 @@ pub(super) unsafe fn round_product(
         let da = a0 + lhs.element(index + 1);
         let db = b0 + rhs.element(index + 1);
         // SAFETY: this function requires PMULL; the public boundary validated
-        // equal lengths, and both entries are within each private limb array.
+        // matching table lengths, LimbView::new checks equal limb lengths,
+        // and index..index + 2 stays within every limb.
         unsafe {
             accumulate(&mut constant, a0, b0);
             accumulate(&mut quadratic, da, db);
@@ -75,7 +76,7 @@ pub(super) unsafe fn round_product(
 }
 
 #[target_feature(enable = "aes")]
-pub(super) unsafe fn fold_in_place(values: &mut PackedBinary162, r: F) {
+pub(super) unsafe fn fold_in_place(values: &mut LimbView<&mut [u64]>, r: F) {
     fold_with(values, r, |a, b| {
         // SAFETY: the enclosing function carries the same target feature.
         unsafe { product::arm_multiply(a, b) }

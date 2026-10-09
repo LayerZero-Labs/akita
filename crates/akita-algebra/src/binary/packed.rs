@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use super::{product, BinaryField162 as F};
 
 // Even-sized chunks preserve adjacent pairs and are large enough to retain
-// the selected SIMD backend's amortized reduction and allocation costs.
+// the selected SIMD backend's amortized reduction costs.
 #[cfg(feature = "parallel")]
 const PARALLEL_CHUNK: usize = 16_384;
 
@@ -19,8 +19,40 @@ pub(super) mod x86;
 #[cfg(target_arch = "x86_64")]
 pub(super) mod x86_512;
 
-type RoundKernel = fn(&PackedBinary162, &PackedBinary162, F) -> [F; 3];
-type FoldKernel = fn(&mut PackedBinary162, F);
+type RoundKernel = fn(&LimbView<&[u64]>, &LimbView<&[u64]>, F) -> [F; 3];
+// Fold the first ceil(n/2) entries without changing the view length.
+type FoldKernel = fn(&mut LimbView<&mut [u64]>, F);
+
+/// Borrowed limbs with equal lengths, established once at construction.
+struct LimbView<T> {
+    words: [T; 3],
+}
+
+impl<T: AsRef<[u64]>> LimbView<T> {
+    fn new(words: [T; 3]) -> Self {
+        assert_eq!(words[0].as_ref().len(), words[1].as_ref().len());
+        assert_eq!(words[0].as_ref().len(), words[2].as_ref().len());
+        Self { words }
+    }
+
+    fn len(&self) -> usize {
+        self.words[0].as_ref().len()
+    }
+
+    #[inline(always)]
+    fn element(&self, index: usize) -> F {
+        F(self.words.each_ref().map(|words| words.as_ref()[index]))
+    }
+}
+
+impl<T: AsRef<[u64]> + AsMut<[u64]>> LimbView<T> {
+    #[inline(always)]
+    fn set_element(&mut self, index: usize, value: F) {
+        for (dst, word) in self.words.iter_mut().zip(value.to_words()) {
+            dst.as_mut()[index] = word;
+        }
+    }
+}
 
 /// An owning, reusable structure-of-arrays buffer of binary field elements.
 ///
@@ -125,12 +157,8 @@ impl PackedBinary162 {
                     .zip(rhs.words[1].par_chunks(PARALLEL_CHUNK))
                     .zip(rhs.words[2].par_chunks(PARALLEL_CHUNK))
                     .map(|(((((a0, a1), a2), b0), b1), b2)| {
-                        let lhs = Self {
-                            words: [a0.to_vec(), a1.to_vec(), a2.to_vec()],
-                        };
-                        let rhs = Self {
-                            words: [b0.to_vec(), b1.to_vec(), b2.to_vec()],
-                        };
+                        let lhs = LimbView::new([a0, a1, a2]);
+                        let rhs = LimbView::new([b0, b1, b2]);
                         (kernels().round_product)(&lhs, &rhs, F::ZERO)
                     })
                     .reduce(
@@ -140,7 +168,11 @@ impl PackedBinary162 {
                 // The claim belongs to the whole round, not each chunk.
                 return [round[0], current_claim + round[2], round[2]];
             }
-            (kernels().round_product)(self, rhs, current_claim)
+            (kernels().round_product)(
+                &LimbView::new(self.words.each_ref().map(|words| words.as_slice())),
+                &LimbView::new(rhs.words.each_ref().map(|words| words.as_slice())),
+                current_claim,
+            )
         })
     }
 
@@ -152,39 +184,36 @@ impl PackedBinary162 {
         if self.len() > 1 {
             #[cfg(feature = "parallel")]
             if self.len() > PARALLEL_CHUNK {
-                let new_len = self.len().div_ceil(2);
-                // Finish reading every input before copying any folded output:
-                // compacted output ranges overlap other chunks' input ranges.
-                let blocks: Vec<_> = self.words[0]
-                    .par_chunks(PARALLEL_CHUNK)
-                    .zip(self.words[1].par_chunks(PARALLEL_CHUNK))
-                    .zip(self.words[2].par_chunks(PARALLEL_CHUNK))
-                    .map(|((low, high), top)| {
-                        let mut block = Self {
-                            words: [low.to_vec(), high.to_vec(), top.to_vec()],
-                        };
-                        // A final one-entry chunk is an odd entry of this
-                        // nonterminal table, so the kernel folds it with zero.
-                        (kernels().fold_in_place)(&mut block, r);
-                        block
-                    })
-                    .collect();
+                let old_len = self.len();
                 let [low, high, top] = &mut self.words;
-                low.par_chunks_mut(PARALLEL_CHUNK / 2)
-                    .zip(high.par_chunks_mut(PARALLEL_CHUNK / 2))
-                    .zip(top.par_chunks_mut(PARALLEL_CHUNK / 2))
-                    .zip(blocks.into_par_iter())
-                    .for_each(|(((low, high), top), block)| {
-                        for (dst, src) in [low, high, top].into_iter().zip(block.words) {
-                            for (dst, value) in dst.iter_mut().zip(src) {
-                                *dst = value;
-                            }
-                        }
+                low.par_chunks_mut(PARALLEL_CHUNK)
+                    .zip(high.par_chunks_mut(PARALLEL_CHUNK))
+                    .zip(top.par_chunks_mut(PARALLEL_CHUNK))
+                    .for_each(|((low, high), top)| {
+                        // Even chunk widths preserve pairs; a final singleton
+                        // is nonterminal table input and must fold with zero.
+                        (kernels().fold_in_place)(&mut LimbView::new([low, high, top]), r);
                     });
-                self.truncate(new_len);
+                // All chunks have finished reading before compaction. For
+                // chunk k of even width C and live length L <= C/2, its
+                // destination ends at k*C/2 + L <= (k+1)*C/2 <= (k+1)*C,
+                // the next source's start. Ascending copies therefore cannot
+                // overwrite any later live source; copy_within handles self-overlap.
+                for source in (PARALLEL_CHUNK..old_len).step_by(PARALLEL_CHUNK) {
+                    let live = (old_len - source).min(PARALLEL_CHUNK).div_ceil(2);
+                    for words in &mut self.words {
+                        words.copy_within(source..source + live, source / 2);
+                    }
+                }
+                self.truncate(old_len.div_ceil(2));
                 return;
             }
-            (kernels().fold_in_place)(self, r);
+            let new_len = self.len().div_ceil(2);
+            (kernels().fold_in_place)(
+                &mut LimbView::new(self.words.each_mut().map(|words| words.as_mut_slice())),
+                r,
+            );
+            self.truncate(new_len);
         }
     }
 
@@ -195,14 +224,6 @@ impl PackedBinary162 {
             self.words[1][index],
             self.words[2][index],
         ])
-    }
-
-    #[inline(always)]
-    fn set_element(&mut self, index: usize, value: F) {
-        let words = value.to_words();
-        for (dst, word) in self.words.iter_mut().zip(words) {
-            dst[index] = word;
-        }
     }
 
     fn truncate(&mut self, len: usize) {
@@ -229,11 +250,14 @@ fn detect() -> PackedKernels {
     {
         return PackedKernels {
             round_product: |a, b, current_claim| {
-                // SAFETY: this closure is installed only after detecting PMULL.
+                // SAFETY: PMULL was detected. LimbView::new checks equal limb
+                // lengths; the public round caller checks matching table lengths.
+                // Backend loops bound offsets by view.len().
                 unsafe { arm::round_product(a, b, current_claim) }
             },
             fold_in_place: |values, r| {
-                // SAFETY: this closure is installed only after detecting PMULL.
+                // SAFETY: PMULL was detected. LimbView::new checks equal limb
+                // lengths; the backend bounds every access by view.len().
                 unsafe { arm::fold_in_place(values, r) }
             },
         };
@@ -247,7 +271,9 @@ fn detect() -> PackedKernels {
         {
             return PackedKernels {
                 round_product: |a, b, claim| {
-                    // SAFETY: all required wide-vector features were detected.
+                    // SAFETY: required features were detected. LimbView::new checks
+                    // equal limb lengths; the public round caller checks matching
+                    // table lengths. Backend loops bound offsets by view.len().
                     unsafe {
                         if a.len() >= 8 {
                             x86_512::round_product_vec4(a, b, claim)
@@ -257,7 +283,8 @@ fn detect() -> PackedKernels {
                     }
                 },
                 fold_in_place: |values, r| {
-                    // SAFETY: all required wide-vector features were detected.
+                    // SAFETY: required features were detected. LimbView::new checks
+                    // equal limb lengths; backend loops bound offsets by view.len().
                     unsafe {
                         if values.len() >= 8 {
                             x86_512::fold_in_place_vec4(values, r)
@@ -273,22 +300,28 @@ fn detect() -> PackedKernels {
         {
             return PackedKernels {
                 round_product: |a, b, current_claim| {
-                    // SAFETY: all required vector features were detected.
+                    // SAFETY: required features were detected. LimbView::new checks
+                    // equal limb lengths; the public round caller checks matching
+                    // table lengths. Backend loops bound offsets by view.len().
                     unsafe { x86::round_product_vec2(a, b, current_claim) }
                 },
                 fold_in_place: |values, r| {
-                    // SAFETY: all required vector features were detected.
+                    // SAFETY: required features were detected. LimbView::new checks
+                    // equal limb lengths; backend loops bound offsets by view.len().
                     unsafe { x86::fold_in_place_vec2(values, r) }
                 },
             };
         }
         return PackedKernels {
             round_product: |a, b, current_claim| {
-                // SAFETY: this closure is installed only after detecting PCLMUL.
+                // SAFETY: PCLMUL was detected. LimbView::new checks equal limb
+                // lengths; the public round caller checks matching table lengths.
+                // Backend loops bound offsets by view.len().
                 unsafe { x86::round_product(a, b, current_claim) }
             },
             fold_in_place: |values, r| {
-                // SAFETY: this closure is installed only after detecting PCLMUL.
+                // SAFETY: PCLMUL was detected. LimbView::new checks equal limb
+                // lengths; the backend bounds every access by view.len().
                 unsafe { x86::fold_in_place(values, r) }
             },
         };
@@ -305,9 +338,9 @@ fn xor_product(sum: &mut [u64; 6], product: [u64; 6]) {
     }
 }
 
-pub(super) fn round_product_with(
-    lhs: &PackedBinary162,
-    rhs: &PackedBinary162,
+fn round_product_with(
+    lhs: &LimbView<&[u64]>,
+    rhs: &LimbView<&[u64]>,
     current_claim: F,
     product_fn: impl Fn(F, F) -> [u64; 6],
 ) -> [F; 3] {
@@ -330,7 +363,7 @@ pub(super) fn round_product_with(
     [constant, current_claim + quadratic, quadratic]
 }
 
-pub(super) fn fold_with(values: &mut PackedBinary162, r: F, multiply: impl Fn(F, F) -> F) {
+fn fold_with(values: &mut LimbView<&mut [u64]>, r: F, multiply: impl Fn(F, F) -> F) {
     let old_len = values.len();
     let new_len = old_len.div_ceil(2);
     for output in 0..new_len {
@@ -343,18 +376,17 @@ pub(super) fn fold_with(values: &mut PackedBinary162, r: F, multiply: impl Fn(F,
         };
         values.set_element(output, even + multiply(even + odd, r));
     }
-    values.truncate(new_len);
 }
 
-pub(super) fn portable_round_product(
-    lhs: &PackedBinary162,
-    rhs: &PackedBinary162,
+fn portable_round_product(
+    lhs: &LimbView<&[u64]>,
+    rhs: &LimbView<&[u64]>,
     current_claim: F,
 ) -> [F; 3] {
     round_product_with(lhs, rhs, current_claim, product::portable_product)
 }
 
-pub(super) fn portable_fold_in_place(values: &mut PackedBinary162, r: F) {
+fn portable_fold_in_place(values: &mut LimbView<&mut [u64]>, r: F) {
     fold_with(values, r, product::portable_multiply);
 }
 
