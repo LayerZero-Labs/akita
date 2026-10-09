@@ -383,7 +383,9 @@ dependencies = [
  "akita-challenges 0.1.0",
  "akita-error 0.1.0",
  "akita-params 0.1.0",
+ "postcard",
  "serde",
+ "serde_bytes",
  "serde_json",
 ]
 
