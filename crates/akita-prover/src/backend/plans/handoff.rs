@@ -141,10 +141,7 @@ impl<F: Field + CanonicalEncoding> ValidatedSuccessorHandoffPlan<'_, F> {
     }
     /// Check packet identity and witness geometry independently of its representation.
     pub fn validate_metadata(&self, metadata: &HandoffMetadata) -> Result<(), AkitaError> {
-        if metadata.handoff != self.handoff
-            || metadata.manifest != self.manifest()?
-            || self.layout.live_coeff_len() != self.commitment.logical_len()
-        {
+        if metadata.handoff != self.handoff || metadata.manifest != self.manifest()? {
             return Err(AkitaError::InvalidInput(
                 "successor export differs from its handoff plan".into(),
             ));

@@ -579,9 +579,9 @@ where
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[inline(never)]
-pub(in crate::protocol::prove) fn prove_fold<Cfg, B>(
+pub(in crate::protocol::prove) fn prove_fold<F, E, B>(
     expanded: &akita_types::AkitaSetupDescriptor,
-    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
+    prefix_slots: &SetupPrefixProverRegistry<F, B::CommitmentHandle>,
     backend: &B,
     session: &B::ProofSessionHandle,
     grinding: &mut akita_types::ProverGrinding<'_>,
@@ -590,42 +590,43 @@ pub(in crate::protocol::prove) fn prove_fold<Cfg, B>(
     next_params: FoldSuccessorParams<'_>,
     expected_output_witness_len: usize,
     next_witness_binding: akita_params::NextWitnessBindingPolicy,
-    prepared_fold: PreparedFold<Cfg::Field, Cfg::ExtField, B::WitnessHandle>,
-    handoff: &mut super::registry::FoldHandoff<'_, '_, '_, Cfg>,
-) -> Result<
-    ProveLevelOutput<Cfg::Field, Cfg::ExtField, B::CommitmentMaterialHandle, B::WitnessHandle>,
-    AkitaError,
->
+    prepared_fold: PreparedFold<F, E, B::WitnessHandle>,
+    handoff: impl FnOnce(
+        &RingRelationInstance<F>,
+        &crate::backend::ValidatedRecursiveWitnessCommitPlan,
+        &NextWitnessState<F>,
+        &B::WitnessHandle,
+        &B::CommitmentMaterialHandle,
+    ) -> Result<(), AkitaError>,
+) -> Result<ProveLevelOutput<F, E, B::CommitmentMaterialHandle, B::WitnessHandle>, AkitaError>
 where
-    Cfg: akita_config::CommitmentConfig,
-    Cfg::Field:
-        Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
-    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>
-        + ExtField<Cfg::Field>
+    F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
+    E: FpExtEncoding<F>
+        + ExtField<F>
         + Unreduced
         + Fold
         + Ring
-        + MulBaseUnreduced<Cfg::Field>
+        + MulBaseUnreduced<F>
         + AkitaSerialize
         + 'static,
-    B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
+    B: ProverBackend<F, E> + 'static,
 {
     let opening_batch = prepared_fold.instance.opening_batch().clone();
-    let challenge_field_bits = Cfg::Field::MODULUS_BITS
+    let challenge_field_bits = F::MODULUS_BITS
         .checked_mul(
-            u32::try_from(Cfg::ExtField::DEGREE)
+            u32::try_from(E::DEGREE)
                 .map_err(|_| AkitaError::Internal("extension degree exceeds u32".into()))?,
         )
         .ok_or_else(|| AkitaError::Internal("challenge field bit width overflow".into()))?;
     let relation_geometry = lp.relation_address_geometry(
         &opening_batch,
-        Cfg::ExtField::DEGREE,
+        E::DEGREE,
         next_params.inner_ring_dimension(),
         expected_output_witness_len,
     )?;
     let level_layout = akita_params::nonterminal_level_layout(
-        Cfg::Field::MODULUS_BITS,
+        F::MODULUS_BITS,
         challenge_field_bits,
         lp,
         relation_geometry,
@@ -649,7 +650,7 @@ where
         witness_handle: mut next_witness,
         binding: next_commitment_binding,
         commitment_material_handle,
-    } = commit_next_witness::<Cfg::Field, Cfg::ExtField, B>(
+    } = commit_next_witness::<F, E, B>(
         backend,
         grinding,
         fold_level,
@@ -658,11 +659,7 @@ where
         next_witness_binding,
         witness_handle,
     )?;
-    handoff.handoff_successor(
-        backend,
-        session,
-        level,
-        lp,
+    handoff(
         &instance,
         &commit_plan,
         &next_commitment_binding,
@@ -676,7 +673,7 @@ where
         backend.proof_context(session, fold_level)?,
     );
     let next_opening_source_len = committed_witness_len / next_opening_ring_dim;
-    let ring_switch = ring_switch_finalize::<Cfg::Field, Cfg::ExtField, B>(
+    let ring_switch = ring_switch_finalize::<F, E, B>(
         &consumer_ctx,
         &instance,
         grinding,
@@ -716,7 +713,7 @@ where
     let relation_rhs_layout = relation_range_image_plan
         .relation_witness_geometry()
         .rhs_layout();
-    let relation_claim = relation_claim_from_compressed_rhs_extension::<Cfg::Field, Cfg::ExtField>(
+    let relation_claim = relation_claim_from_compressed_rhs_extension::<F, E>(
         relation_rhs_layout,
         &rs.tau1,
         rs.alpha,
@@ -726,7 +723,7 @@ where
         point: stage1_point,
         range_image_evaluation,
         physical_l2,
-    } = prove_stage1::<Cfg::Field, Cfg::ExtField, _>(
+    } = prove_stage1::<F, E, _>(
         &consumer_ctx,
         grinding,
         fold_level,
@@ -734,25 +731,23 @@ where
         lp,
         &relation_range_image_plan,
     )?;
-    let physical_l2 =
-        prepare_physical_l2_batch::<Cfg::Field, Cfg::ExtField>(grinding, level, physical_l2)?;
-    let compression =
-        prepare_stage2_compression::<Cfg::Field, Cfg::ExtField, _>(grinding, level, &mut rs)?;
-    let batching_coeff = grinding.grinded_ext_challenge::<Cfg::Field, Cfg::ExtField>(
-        akita_params::GrindingSite::Stage2Batch { level: fold_level },
+    let physical_l2 = prepare_physical_l2_batch::<F, E>(grinding, level, physical_l2)?;
+    let compression = prepare_stage2_compression::<F, E, _>(grinding, level, &mut rs)?;
+    let batching_coeff =
+        grinding.grinded_ext_challenge::<F, E>(akita_params::GrindingSite::Stage2Batch {
+            level: fold_level,
+        })?;
+    let (linear_terms, scalar_opening_claim) = prepare_relation_sumcheck::<F, E, _>(
+        lp,
+        &opening_batch,
+        opening_semantics,
+        &relation_groups,
+        &evaluation_trace_claim_coefficients,
+        evaluation_trace_claim,
+        evaluation_trace_basis,
+        &relation_range_image_plan,
+        &rs,
     )?;
-    let (linear_terms, scalar_opening_claim) =
-        prepare_relation_sumcheck::<Cfg::Field, Cfg::ExtField, _>(
-            lp,
-            &opening_batch,
-            opening_semantics,
-            &relation_groups,
-            &evaluation_trace_claim_coefficients,
-            evaluation_trace_claim,
-            evaluation_trace_basis,
-            &relation_range_image_plan,
-            &rs,
-        )?;
     let relation_address_geometry = rs.relation_address_geometry;
     let tau1 = rs.tau1.clone();
     let alpha = rs.alpha;
@@ -762,19 +757,14 @@ where
         .kind()
     {
         OpeningFamily::SubringCoefficientPacking(_) => evaluation_trace_claim_coefficients.clone(),
-        OpeningFamily::EvaluationTrace(_) => row_coefficients.clone().unwrap_or_else(|| {
-            instance
-                .gamma()
-                .iter()
-                .copied()
-                .map(Cfg::ExtField::lift_base)
-                .collect()
-        }),
+        OpeningFamily::EvaluationTrace(_) => row_coefficients
+            .clone()
+            .unwrap_or_else(|| instance.gamma().iter().copied().map(E::lift_base).collect()),
     };
     let Stage2ProveOutput {
         challenges: sumcheck_challenges,
         witness_evaluation: w_eval,
-    } = prove_stage2::<Cfg::Field, Cfg::ExtField, _>(
+    } = prove_stage2::<F, E, _>(
         &consumer_ctx,
         level,
         grinding,
@@ -800,9 +790,9 @@ where
             groups: &relation_groups,
         },
     )?;
-    akita_types::stage2_w_eval::<Cfg::Field, Cfg::ExtField, _>(grinding, fold_level, w_eval)?;
+    akita_types::stage2_w_eval::<F, E, _>(grinding, fold_level, w_eval)?;
     let stage3_sumcheck_proof = match next_params.recursive() {
-        Some(next_fold_params) => prove_stage3::<Cfg::Field, Cfg::ExtField, _>(
+        Some(next_fold_params) => prove_stage3::<F, E, _>(
             consumer,
             session,
             level,

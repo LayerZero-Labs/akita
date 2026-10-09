@@ -24,7 +24,7 @@ pub use handles::{
     AcceptedFoldHandle, CommitmentHandleMetadata, OpeningSource, RecursiveWitnessHandle,
     RecursiveWitnessManifest, RelationWitnessMetadata, SourceMetadata,
 };
-pub use identity::ProofContext;
+pub use identity::{BackendInstanceIdentity, ProofContext};
 pub use messages::{
     FoldProbeDiagnostics, FoldProbeOutcome, NextWitnessBindingMessage, PreparedGroupOpening,
     PreparedRelationHandle, RecursiveWitnessBuildStart, RecursiveWitnessFoldInput,

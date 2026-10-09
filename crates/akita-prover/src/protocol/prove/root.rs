@@ -122,7 +122,7 @@ where
         next_params.inner_ring_dimension(),
         false,
     )?;
-    prove_fold::<Cfg, B>(
+    prove_fold::<Cfg::Field, Cfg::ExtField, B>(
         expanded,
         prefix_slots,
         backend,
@@ -134,6 +134,18 @@ where
         schedule.root.output_witness_len,
         next_binding,
         prepared,
-        handoff,
+        |relation, commitment, binding, witness, material| {
+            handoff.handoff_successor(
+                backend,
+                proof_session,
+                0,
+                &schedule.root.params,
+                relation,
+                commitment,
+                binding,
+                witness,
+                material,
+            )
+        },
     )
 }

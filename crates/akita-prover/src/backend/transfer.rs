@@ -2,23 +2,6 @@
 use super::{OpaqueProverConsumer, RecursiveWitnessManifest, ValidatedSuccessorHandoffPlan};
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
-use std::any::TypeId;
-
-/// Native identities are namespaced by implementation, never compared as bare counters.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BackendInstanceIdentity {
-    implementation: TypeId,
-    instance: u128,
-}
-
-impl BackendInstanceIdentity {
-    pub fn new<B: 'static>(instance: u128) -> Self {
-        Self {
-            implementation: TypeId::of::<B>(),
-            instance,
-        }
-    }
-}
 
 /// Backend-independent identity and geometry of a committed successor.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -55,8 +38,6 @@ pub trait SuccessorExportKernel<F: Field + CanonicalEncoding, E: Field>:
 {
     type ExportPacket: Send + 'static;
 
-    fn instance_identity(&self) -> BackendInstanceIdentity;
-
     fn export_successor(
         &self,
         session: &Self::ProofSessionHandle,
@@ -66,7 +47,7 @@ pub trait SuccessorExportKernel<F: Field + CanonicalEncoding, E: Field>:
     ) -> Result<Self::ExportPacket, AkitaError>;
 }
 
-/// Validates a destination packet and publishes a fresh local handle pair.
+/// Validates packet metadata against the handoff plan and publishes a fresh local handle pair.
 pub trait SuccessorImportKernel<F: Field + CanonicalEncoding, E: Field>:
     OpaqueProverConsumer<F, E>
 {

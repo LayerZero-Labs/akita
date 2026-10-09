@@ -18,7 +18,7 @@ use jolt_field::{
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{
     any::{Any, TypeId},
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{BTreeMap, HashMap},
 };
 
@@ -33,6 +33,7 @@ pub struct BackendId {
 
 /// Caller-selected registry entries for every fold, including the root.
 pub trait FoldExecutionPolicy {
+    /// Called once per level, in order, before any executor is prepared.
     /// `current` is absent at level 0 and identifies the producer at later levels.
     fn choose_backend(
         &mut self,
@@ -114,22 +115,14 @@ pub(super) type ExecutionContinuation<Cfg> = (
 pub(super) trait Executor<Cfg: CommitmentConfig> {
     fn identity(&self) -> BackendInstanceIdentity;
     fn backend_type_id(&self) -> TypeId;
-    #[allow(clippy::too_many_arguments)]
     fn root(
         &self,
-        id: BackendId,
-        registry: &BackendRegistry<'_, Cfg>,
-        policy: &mut dyn FoldExecutionPolicy,
-        request: &ProofRequest<'_, Cfg>,
+        handoff: &mut FoldHandoff<'_, '_, '_, Cfg>,
         grinding: &mut ProverGrinding<'_>,
         claims: &OpeningClaims<'_, Cfg::ExtField, Commitment<Cfg::Field>>,
         handles: &dyn Any,
         basis: BasisMode,
     ) -> Result<ExecutionContinuation<Cfg>, AkitaError>;
-    fn validate_prefixes(
-        &self,
-        requirements: &FoldExecutionRequirements<'_>,
-    ) -> Result<(), AkitaError>;
     fn prepare_executor(&self, request: &ProofRequest<'_, Cfg>) -> Result<(), AkitaError>;
     fn begin_fold(&self, request: &ProofRequest<'_, Cfg>, level: usize) -> Result<(), AkitaError>;
     fn import_packet(
@@ -138,13 +131,9 @@ pub(super) trait Executor<Cfg: CommitmentConfig> {
         plan: &ValidatedSuccessorHandoffPlan<'_, Cfg::Field>,
         packet: Box<dyn Any + Send>,
     ) -> Result<ResidentSuccessor, AkitaError>;
-    #[allow(clippy::too_many_arguments)]
     fn recursive(
         &self,
-        id: BackendId,
-        registry: &BackendRegistry<'_, Cfg>,
-        policy: &mut dyn FoldExecutionPolicy,
-        request: &ProofRequest<'_, Cfg>,
+        handoff: &mut FoldHandoff<'_, '_, '_, Cfg>,
         grinding: &mut ProverGrinding<'_>,
         public: FoldPublicState<Cfg::Field, Cfg::ExtField>,
         resident: ResidentSuccessor,
@@ -172,14 +161,14 @@ pub(super) struct TypedExecutor<
     pub(super) session: RefCell<Option<ProofScope<'a, B>>>,
 }
 
-/// Reusable instances and setup resources; all sessions are prepared before proving.
+/// Reusable instances and setup resources; selected sessions are prepared before proving.
 pub struct BackendRegistry<'a, Cfg: CommitmentConfig> {
     identity: u64,
     pub(super) slots: Vec<Box<dyn Executor<Cfg> + 'a>>,
     bridges: HashMap<(TypeId, TypeId), Box<ErasedBridge<Cfg>>>,
     pub(super) public_prefixes:
         BTreeMap<SetupPrefixSlotId, &'a SetupPrefixVerifierSlot<Cfg::Field>>,
-    pub(super) active: std::cell::Cell<bool>,
+    pub(super) active: Cell<bool>,
 }
 
 impl<'a, Cfg> BackendRegistry<'a, Cfg>
@@ -205,7 +194,7 @@ where
             slots: Vec::new(),
             bridges: HashMap::new(),
             public_prefixes: BTreeMap::new(),
-            active: std::cell::Cell::new(false),
+            active: Cell::new(false),
         })
     }
     /// Register a directed edge. Distinct instances of the same type need an edge too.
@@ -245,7 +234,6 @@ where
                     AkitaError::InvalidInput("bridge export packet family mismatch".into())
                 })?;
                 let packet = convert(*export, plan)?;
-                plan.validate_metadata(packet.metadata())?;
                 dst.import_packet(id, plan, Box::new(packet))
             }),
         );
@@ -312,6 +300,20 @@ impl<Cfg: CommitmentConfig> BackendRegistry<'_, Cfg> {
             .map(|slot| slot.as_ref())
             .ok_or_else(|| AkitaError::InvalidInput("backend ID is not registered".into()))
     }
+
+    pub(super) fn bridge(
+        &self,
+        source: BackendId,
+        destination: BackendId,
+    ) -> Result<&ErasedBridge<Cfg>, AkitaError> {
+        let key = (
+            self.slot(source)?.backend_type_id(),
+            self.slot(destination)?.backend_type_id(),
+        );
+        self.bridges.get(&key).map(Box::as_ref).ok_or_else(|| {
+            AkitaError::InvalidInput("no bridge registered for selected backend types".into())
+        })
+    }
 }
 
 type ErasedBridge<Cfg> = dyn Fn(
@@ -323,9 +325,9 @@ type ErasedBridge<Cfg> = dyn Fn(
 
 pub(super) struct FoldHandoff<'r, 'a, 'p, Cfg: CommitmentConfig> {
     pub(super) registry: &'r BackendRegistry<'a, Cfg>,
-    pub(super) policy: &'r mut dyn FoldExecutionPolicy,
     pub(super) request: &'r ProofRequest<'p, Cfg>,
     pub(super) current: BackendId,
+    pub(super) next: BackendId,
     pub(super) adopted: Option<ResidentSuccessor>,
 }
 
@@ -386,18 +388,10 @@ impl<Cfg: CommitmentConfig> FoldHandoff<'_, '_, '_, Cfg> {
         Cfg::Field: CanonicalEncoding,
         B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
     {
-        let requirements =
-            FoldExecutionRequirements::new(self.request.schedule, self.request.layout, level + 1)?;
-        let selected = self
-            .policy
-            .choose_backend(Some(self.current), &requirements)?;
-        let destination = self.registry.slot(selected)?;
-        if selected == self.current {
-            destination.validate_prefixes(&requirements)?;
-            backend.begin_fold(session, &requirements)?;
+        if self.next == self.current {
             return Ok(());
         }
-        destination.begin_fold(self.request, level + 1)?;
+        let destination = self.registry.slot(self.next)?;
         let layout = relation.segment_layout(producer, None)?;
         if layout.live_coeff_len() != commitment.logical_len() {
             return Err(AkitaError::Internal(
@@ -419,15 +413,9 @@ impl<Cfg: CommitmentConfig> FoldHandoff<'_, '_, '_, Cfg> {
                 }
             },
         };
-        let bridge = self
-            .registry
-            .bridges
-            .get(&(TypeId::of::<B>(), destination.backend_type_id()))
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("no bridge registered for selected backend types".into())
-            })?;
+        let bridge = self.registry.bridge(self.current, self.next)?;
         let export = backend.export_successor(session, witness, material, &plan)?;
-        self.adopted = Some(bridge(Box::new(export), destination, selected, &plan)?);
+        self.adopted = Some(bridge(Box::new(export), destination, self.next, &plan)?);
         Ok(())
     }
 }

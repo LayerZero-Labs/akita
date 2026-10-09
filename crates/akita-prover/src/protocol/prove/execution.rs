@@ -41,10 +41,7 @@ where
     }
     fn root(
         &self,
-        id: BackendId,
-        registry: &BackendRegistry<'_, Cfg>,
-        policy: &mut dyn FoldExecutionPolicy,
-        request: &ProofRequest<'_, Cfg>,
+        handoff: &mut FoldHandoff<'_, '_, '_, Cfg>,
         grinding: &mut ProverGrinding<'_>,
         claims: &OpeningClaims<'_, Cfg::ExtField, Commitment<Cfg::Field>>,
         handles: &dyn Any,
@@ -61,13 +58,7 @@ where
             .session
             .try_borrow_mut()
             .map_err(|_| AkitaError::InvalidInput("root executor re-entry".into()))?;
-        let mut handoff = FoldHandoff {
-            registry,
-            policy,
-            request,
-            current: id,
-            adopted: None,
-        };
+        let request = handoff.request;
         let state = root::prove_root::<Cfg, B>(
             request.setup,
             self.prefixes,
@@ -82,15 +73,27 @@ where
                 .session(),
             grinding,
             basis,
-            &mut handoff,
+            handoff,
         )?
         .next_state;
         handoff.complete(self.backend, state)
     }
-    fn validate_prefixes(
-        &self,
-        requirements: &FoldExecutionRequirements<'_>,
-    ) -> Result<(), AkitaError> {
+    fn prepare_executor(&self, request: &ProofRequest<'_, Cfg>) -> Result<(), AkitaError> {
+        let mut session = self
+            .session
+            .try_borrow_mut()
+            .map_err(|_| AkitaError::InvalidInput("backend executor re-entry".into()))?;
+        let prepared = self.backend.prepare_executor(
+            request.setup,
+            request.schedules,
+            request.schedule,
+            request.layout,
+        )?;
+        *session = Some(ProofScope::admitted(self.backend, prepared));
+        Ok(())
+    }
+    fn begin_fold(&self, request: &ProofRequest<'_, Cfg>, level: usize) -> Result<(), AkitaError> {
+        let requirements = FoldExecutionRequirements::new(request.schedule, request.layout, level)?;
         let schedule = requirements.schedule();
         let current = if requirements.level() == 0 {
             Some(&schedule.root.params)
@@ -111,25 +114,6 @@ where
                 })?;
             }
         }
-        Ok(())
-    }
-    fn prepare_executor(&self, request: &ProofRequest<'_, Cfg>) -> Result<(), AkitaError> {
-        let mut session = self
-            .session
-            .try_borrow_mut()
-            .map_err(|_| AkitaError::InvalidInput("backend executor re-entry".into()))?;
-        let prepared = self.backend.prepare_executor(
-            request.setup,
-            request.schedules,
-            request.schedule,
-            request.layout,
-        )?;
-        *session = Some(ProofScope::admitted(self.backend, prepared));
-        Ok(())
-    }
-    fn begin_fold(&self, request: &ProofRequest<'_, Cfg>, level: usize) -> Result<(), AkitaError> {
-        let requirements = FoldExecutionRequirements::new(request.schedule, request.layout, level)?;
-        self.validate_prefixes(&requirements)?;
         let session = self
             .session
             .try_borrow_mut()
@@ -167,10 +151,7 @@ where
     }
     fn recursive(
         &self,
-        id: BackendId,
-        registry: &BackendRegistry<'_, Cfg>,
-        policy: &mut dyn FoldExecutionPolicy,
-        request: &ProofRequest<'_, Cfg>,
+        handoff: &mut FoldHandoff<'_, '_, '_, Cfg>,
         grinding: &mut ProverGrinding<'_>,
         public: FoldPublicState<Cfg::Field, Cfg::ExtField>,
         resident: ResidentSuccessor,
@@ -180,14 +161,8 @@ where
             AkitaError::InvalidInput("backend executor re-entry during fold".into())
         })?;
         let (witness_handle, commitment_material) =
-            resident.into_pair::<B::WitnessHandle, B::CommitmentMaterialHandle>(id)?;
-        let mut handoff = FoldHandoff {
-            registry,
-            policy,
-            request,
-            current: id,
-            adopted: None,
-        };
+            resident.into_pair::<B::WitnessHandle, B::CommitmentMaterialHandle>(handoff.current)?;
+        let request = handoff.request;
         let state = suffix::prove_recursive_step::<Cfg, B>(
             request.setup,
             self.prefixes,
@@ -204,7 +179,7 @@ where
                 .ok_or_else(|| AkitaError::InvalidInput("executor was not admitted".into()))?
                 .session(),
             index,
-            &mut handoff,
+            handoff,
         )?;
         handoff.complete(self.backend, state)
     }
@@ -281,16 +256,30 @@ where
 {
     let (resolved, claims, grinding_plan, descriptor_bytes) =
         root::resolve_root::<Cfg, H>(expanded, schedules, opening, basis)?;
-    let requirements =
-        FoldExecutionRequirements::new(resolved.schedule(), claims.opening_layout(), 0)?;
-    let root_id = policy.choose_backend(None, &requirements)?;
-    let root_executor = registry.slot(root_id)?;
     if registry.active.replace(true) {
         return Err(AkitaError::InvalidInput(
             "backend registry already has an active proof".into(),
         ));
     }
     let _guard = RegistryProofGuard(registry);
+    let mut owners = Vec::with_capacity(resolved.schedule().num_fold_levels());
+    let mut selected = vec![false; registry.slots.len()];
+    for level in 0..resolved.schedule().num_fold_levels() {
+        let requirements =
+            FoldExecutionRequirements::new(resolved.schedule(), claims.opening_layout(), level)?;
+        let current = owners.last().copied();
+        let owner = policy.choose_backend(current, &requirements)?;
+        registry.slot(owner)?;
+        if let Some(previous) = current.filter(|previous| *previous != owner) {
+            registry.bridge(previous, owner)?;
+        }
+        selected[owner.slot] = true;
+        owners.push(owner);
+    }
+    let root_id = *owners
+        .first()
+        .ok_or_else(|| AkitaError::Internal("proof schedule has no fold levels".into()))?;
+    let root_executor = registry.slot(root_id)?;
     let identity = NEXT_PROOF
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
         .map_err(|_| AkitaError::Internal("proof identity exhausted".into()))?;
@@ -301,17 +290,27 @@ where
         layout: claims.opening_layout(),
         identity,
     };
-    for executor in &registry.slots {
-        executor.prepare_executor(&request)?;
+    for (executor, selected) in registry.slots.iter().zip(&selected) {
+        if *selected {
+            executor.prepare_executor(&request)?;
+        }
     }
-    root_executor.begin_fold(&request, 0)?;
+    for (level, owner) in owners.iter().enumerate() {
+        registry.slot(*owner)?.begin_fold(&request, level)?;
+    }
+    let mut handoff = FoldHandoff {
+        registry,
+        request: &request,
+        current: root_id,
+        next: *owners
+            .get(1)
+            .ok_or_else(|| AkitaError::Internal("proof schedule has no successor fold".into()))?,
+        adopted: None,
+    };
     let channel = akita_transcript::new_prover_channel(transcript_session, &descriptor_bytes)?;
     let mut grinding = ProverGrinding::new(channel, &grinding_plan);
     let (mut public, mut resident) = root_executor.root(
-        root_id,
-        registry,
-        policy,
-        &request,
+        &mut handoff,
         &mut grinding,
         claims.opening_claims(),
         &claims.groups,
@@ -319,11 +318,12 @@ where
     )?;
     for index in 0..request.schedule.recursive_folds.len() {
         let owner = resident.owner;
+        handoff.current = owner;
+        handoff.next = *owners
+            .get(index + 2)
+            .ok_or_else(|| AkitaError::Internal("resolved route has no successor fold".into()))?;
         (public, resident) = registry.slot(owner)?.recursive(
-            owner,
-            registry,
-            policy,
-            &request,
+            &mut handoff,
             &mut grinding,
             public,
             resident,
@@ -341,8 +341,10 @@ where
         ));
     }
     let proof = grinding.finish()?;
-    for slot in &registry.slots {
-        slot.finish()?;
+    for (slot, selected) in registry.slots.iter().zip(selected) {
+        if selected {
+            slot.finish()?;
+        }
     }
     Ok(proof)
 }

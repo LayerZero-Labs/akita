@@ -1,7 +1,7 @@
 //! Private backend identity and independent proof lifetimes.
 use akita_error::AkitaError;
 use akita_prover::backend::{ProofContext, ProofScopeId};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -71,8 +71,7 @@ struct ProofState {
     active: AtomicBool,
     group_counts: Arc<[usize]>,
     commitments: Mutex<HashMap<(u32, usize), u128>>,
-
-    prepared_levels: Mutex<std::collections::HashSet<usize>>,
+    prepared_levels: Mutex<HashSet<usize>>,
     plan: Option<(
         Arc<akita_params::FoldSchedule>,
         akita_params::OpeningClaimsLayout,
@@ -89,8 +88,7 @@ impl ScopeLease {
                 active: AtomicBool::new(true),
                 group_counts: vec![usize::MAX].into(),
                 commitments: Mutex::new(HashMap::new()),
-
-                prepared_levels: Mutex::new(std::collections::HashSet::new()),
+                prepared_levels: Mutex::new(HashSet::new()),
                 plan: None,
             }),
         }
@@ -338,8 +336,7 @@ impl BackendIdentity {
                 active: AtomicBool::new(true),
                 group_counts: group_counts.into(),
                 commitments: Mutex::new(HashMap::new()),
-
-                prepared_levels: Mutex::new(std::collections::HashSet::new()),
+                prepared_levels: Mutex::new(HashSet::new()),
                 plan,
             }),
         })

@@ -151,70 +151,6 @@ struct CpuSuccessorStorage<F: Field> {
     source: OperationBinding,
 }
 
-impl<F: Field + CanonicalEncoding> CpuSuccessorStorage<F> {
-    fn read(
-        &self,
-        section: SuccessorSection,
-        offset: usize,
-        output: &mut [u8],
-    ) -> Result<(), AkitaError> {
-        self.source.scope_lease().validate(
-            self.source.scope_id(),
-            self.source.fold_level(),
-            None,
-        )?;
-        let end = checked::sum([offset, output.len()])
-            .ok_or_else(|| AkitaError::InvalidInput("successor section range overflow".into()))?;
-        let bytes = match section {
-            SuccessorSection::LogicalDigits => Some(self.logical.packed_digits().encoded_bytes()),
-            SuccessorSection::CompressionDigits(index) => Some(
-                self.compression
-                    .as_ref()
-                    .and_then(|c| c.witness().stages().get(index))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidInput("compression digit section is absent".into())
-                    })?
-                    .bytes(),
-            ),
-            _ => None,
-        };
-        if let Some(bytes) = bytes {
-            output.copy_from_slice(bytes.get(offset..end).ok_or_else(|| {
-                AkitaError::InvalidInput("successor read is outside its section".into())
-            })?);
-            return Ok(());
-        }
-        if !offset.is_multiple_of(F::NUM_BYTES) || !output.len().is_multiple_of(F::NUM_BYTES) {
-            return Err(AkitaError::InvalidInput(
-                "field section read is not coefficient aligned".into(),
-            ));
-        }
-        let fields = match section {
-            SuccessorSection::InnerRows => self
-                .inner
-                .rows()
-                .first()
-                .ok_or_else(|| AkitaError::InvalidInput("inner rows are absent".into()))?
-                .coeffs(),
-            SuccessorSection::CompressionQuotient(index) => self
-                .compression
-                .as_ref()
-                .and_then(|c| c.quotients())
-                .and_then(|q| q.get(index))
-                .ok_or_else(|| AkitaError::InvalidInput("compression quotient is absent".into()))?
-                .coeffs(),
-            _ => return Err(AkitaError::InvalidInput("unknown field section".into())),
-        };
-        let fields = fields
-            .get(offset / F::NUM_BYTES..end / F::NUM_BYTES)
-            .ok_or_else(|| AkitaError::InvalidInput("field read is outside its section".into()))?;
-        for (field, bytes) in fields.iter().zip(output.chunks_exact_mut(F::NUM_BYTES)) {
-            field.to_bytes_le(bytes);
-        }
-        Ok(())
-    }
-}
-
 /// Encoded sections accepted by the public CPU import constructor.
 pub type CpuPacketSections = Vec<(SuccessorSection, Vec<u8>)>;
 
@@ -236,6 +172,9 @@ pub struct CpuImportPacket<F: Field> {
 impl<F: Field> CpuImportPacket<F> {
     /// Check section presence, uniqueness, and byte lengths. Adoption additionally
     /// checks the admitted plan, canonical encodings, and witness digit bounds.
+    /// Inner rows and compression material are trusted to reproduce the public
+    /// outer commitment; import checks their shape and encoding, and the verifier
+    /// checks commitment consistency. Terminal rows are cross-checked on import.
     pub fn new(
         descriptor: CpuPacketDescriptor,
         sections: CpuPacketSections,
@@ -263,22 +202,13 @@ impl<F: Field> CpuImportPacket<F> {
         })
     }
 
-    fn read(
-        &self,
-        section: SuccessorSection,
-        offset: usize,
-        output: &mut [u8],
-    ) -> Result<(), AkitaError> {
-        let end = checked::sum([offset, output.len()])
-            .ok_or_else(|| AkitaError::InvalidInput("CPU packet range overflow".into()))?;
-        let bytes = self
+    fn take_section(&mut self, section: SuccessorSection) -> Result<Vec<u8>, AkitaError> {
+        let index = self
             .sections
             .iter()
-            .find(|(s, _)| *s == section)
-            .and_then(|(_, bytes)| bytes.get(offset..end))
-            .ok_or_else(|| AkitaError::InvalidInput("CPU packet section range is absent".into()))?;
-        output.copy_from_slice(bytes);
-        Ok(())
+            .position(|(s, _)| *s == section)
+            .ok_or_else(|| AkitaError::InvalidInput("CPU packet section is absent".into()))?;
+        Ok(self.sections.swap_remove(index).1)
     }
 }
 impl<F: Field + Send + Sync + 'static> SuccessorImportPacket for CpuImportPacket<F> {
@@ -308,16 +238,60 @@ fn encode_sections<F: Field + CanonicalEncoding>(
     descriptor: &CpuPacketDescriptor,
     storage: &CpuSuccessorStorage<F>,
 ) -> Result<CpuPacketSections, AkitaError> {
+    storage.source.scope_lease().validate(
+        storage.source.scope_id(),
+        storage.source.fold_level(),
+        None,
+    )?;
     descriptor
         .sections
         .iter()
         .map(|section| {
-            let mut bytes = Vec::new();
-            bytes
-                .try_reserve_exact(section.bytes)
-                .map_err(|_| AkitaError::InvalidInput("CPU packet allocation failed".into()))?;
-            bytes.resize(section.bytes, 0);
-            storage.read(section.section, 0, &mut bytes)?;
+            let bytes = match section.section {
+                SuccessorSection::LogicalDigits => {
+                    storage.logical.packed_digits().encoded_bytes().to_vec()
+                }
+                SuccessorSection::CompressionDigits(index) => storage
+                    .compression
+                    .as_ref()
+                    .and_then(|c| c.witness().stages().get(index))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput("compression digit section is absent".into())
+                    })?
+                    .bytes()
+                    .to_vec(),
+                field_section => {
+                    let fields = match field_section {
+                        SuccessorSection::InnerRows => storage
+                            .inner
+                            .rows()
+                            .first()
+                            .ok_or_else(|| {
+                                AkitaError::InvalidInput("inner rows are absent".into())
+                            })?
+                            .coeffs(),
+                        SuccessorSection::CompressionQuotient(index) => storage
+                            .compression
+                            .as_ref()
+                            .and_then(|c| c.quotients())
+                            .and_then(|q| q.get(index))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidInput("compression quotient is absent".into())
+                            })?
+                            .coeffs(),
+                        _ => return Err(AkitaError::InvalidInput("unknown field section".into())),
+                    };
+                    let mut bytes = Vec::new();
+                    bytes.try_reserve_exact(section.bytes).map_err(|_| {
+                        AkitaError::InvalidInput("CPU packet allocation failed".into())
+                    })?;
+                    bytes.resize(section.bytes, 0);
+                    for (field, output) in fields.iter().zip(bytes.chunks_exact_mut(F::NUM_BYTES)) {
+                        field.to_bytes_le(output);
+                    }
+                    bytes
+                }
+            };
             Ok((section.section, bytes))
         })
         .collect()
@@ -331,9 +305,8 @@ where
 {
     fn convert(
         packet: CpuExportPacket<F>,
-        plan: &ValidatedSuccessorHandoffPlan<'_, F>,
+        _plan: &ValidatedSuccessorHandoffPlan<'_, F>,
     ) -> Result<CpuImportPacket<F>, AkitaError> {
-        packet.descriptor.validate(plan)?;
         Ok(CpuImportPacket {
             descriptor: packet.descriptor,
             sections: Vec::new(),
@@ -386,9 +359,6 @@ where
     E: ExtField<F> + Send + Sync + 'static,
 {
     type ExportPacket = CpuExportPacket<F>;
-    fn instance_identity(&self) -> BackendInstanceIdentity {
-        BackendInstanceIdentity::new::<Self>(u128::from(self.owner_id()))
-    }
 
     fn export_successor(
         &self,
@@ -496,7 +466,6 @@ where
             },
             sections,
         };
-        descriptor.validate(plan)?;
         Ok(CpuExportPacket {
             descriptor,
             storage,
@@ -556,13 +525,7 @@ where
                 let (logical, inner, compression) = read_portable::<F>(plan, &mut packet)?;
                 (logical, None, inner, compression)
             };
-        let tensor = matches!(
-            plan.commitment().source_encoding(),
-            Some(akita_params::CommittedSourceEncoding::TensorSubfieldProjection { .. })
-        ) || (matches!(
-            plan.commitment().parameters(),
-            WitnessCommitmentParameters::Terminal(_)
-        ) && E::DEGREE != 1);
+        let tensor = super::recursive::uses_tensor_source(plan.commitment(), E::DEGREE)?;
         if tensor && committed.is_none() {
             committed = Some(akita_params::dispatch_for_field!(
                 akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
@@ -617,17 +580,12 @@ fn read_digits<F: Field>(
             ))
         }
     };
-    let index = packet
-        .sections
-        .iter()
-        .position(|(section, _)| *section == descriptor.section)
-        .ok_or_else(|| AkitaError::InvalidInput("logical section is missing".into()))?;
-    let (_, bytes) = packet.sections.swap_remove(index);
+    let bytes = packet.take_section(descriptor.section)?;
     PackedSignedDigits::import_encoded(descriptor.coefficients, bit_width, bytes)
 }
 
 fn read_fields<F: Field + CanonicalEncoding>(
-    packet: &CpuImportPacket<F>,
+    packet: &mut CpuImportPacket<F>,
     section: SuccessorSection,
     coefficients: usize,
     ring: usize,
@@ -636,24 +594,11 @@ fn read_fields<F: Field + CanonicalEncoding>(
     fields
         .try_reserve_exact(coefficients)
         .map_err(|_| AkitaError::InvalidInput("successor field allocation failed".into()))?;
-    let mut buffer = vec![
-        0u8;
-        checked::product([4096, F::NUM_BYTES]).ok_or_else(|| {
-            AkitaError::InvalidInput("field staging size overflow".into())
-        })?
-    ];
-    for start in (0..coefficients).step_by(4096) {
-        let count = (coefficients - start).min(4096);
-        let bytes = checked::product([count, F::NUM_BYTES])
-            .ok_or_else(|| AkitaError::InvalidInput("field read size overflow".into()))?;
-        let offset = checked::product([start, F::NUM_BYTES])
-            .ok_or_else(|| AkitaError::InvalidInput("field read offset overflow".into()))?;
-        packet.read(section, offset, &mut buffer[..bytes])?;
-        for bytes in buffer[..bytes].chunks_exact(F::NUM_BYTES) {
-            fields.push(F::from_bytes_le_checked(bytes).ok_or_else(|| {
-                AkitaError::InvalidInput("noncanonical successor field coefficient".into())
-            })?);
-        }
+    let bytes = packet.take_section(section)?;
+    for coefficient in bytes.chunks_exact(F::NUM_BYTES) {
+        fields.push(F::from_bytes_le_checked(coefficient).ok_or_else(|| {
+            AkitaError::InvalidInput("noncanonical successor field coefficient".into())
+        })?);
     }
     RingVec::from_coeffs_with_ring_dim(fields, ring)
 }
@@ -731,8 +676,7 @@ fn read_portable<F: Field + CanonicalEncoding>(
             let mut stages = Vec::with_capacity(chain.maps().len());
             let mut quotients = Vec::new();
             for (index, map) in chain.maps().iter().enumerate() {
-                let mut bytes = vec![0; map.packed_digit_bytes()];
-                packet.read(SuccessorSection::CompressionDigits(index), 0, &mut bytes)?;
+                let bytes = packet.take_section(SuccessorSection::CompressionDigits(index))?;
                 stages.push(PackedNegativeBinary::from_bytes(*map, bytes)?);
                 if mode == RingRelationMode::QuotientLift {
                     quotients.push(read_fields(

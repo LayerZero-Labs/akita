@@ -90,7 +90,7 @@ where
         step.output_witness_len,
         next_params.inner_ring_dimension(),
     )?;
-    let output = prove_fold::<Cfg, B>(
+    let output = prove_fold::<Cfg::Field, Cfg::ExtField, B>(
         expanded,
         prefix_slots,
         backend,
@@ -102,7 +102,19 @@ where
         step.output_witness_len,
         next_binding,
         prepared,
-        handoff,
+        |relation, commitment, binding, witness, material| {
+            handoff.handoff_successor(
+                backend,
+                session,
+                level,
+                &step.params,
+                relation,
+                commitment,
+                binding,
+                witness,
+                material,
+            )
+        },
     )?;
     Ok(output.next_state)
 }

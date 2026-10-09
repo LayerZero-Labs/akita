@@ -95,6 +95,10 @@ where
     F: Field + CanonicalEncoding + Send + Sync + 'static,
     E: Field + Send + Sync + 'static,
 {
+    fn instance_identity(&self) -> BackendInstanceIdentity {
+        BackendInstanceIdentity::new::<Self>(u128::from(self.owner_id()))
+    }
+
     type CommitmentHandle = CommitmentHandle<F, E>;
     type EorPreparationHandle = eor::CpuEorPreparation<F, E>;
     type EorSessionHandle = eor::CpuEorSession<E>;

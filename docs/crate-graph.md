@@ -227,5 +227,4 @@ Successor export/import contracts and directed `Edge<A, B>` bridges live in
 `akita-prover`. The CPU backend exposes typed packets and a checked public import
 constructor. The generic coordinator erases packets only for bridge dispatch;
 packet encoding and conversion belong to backend implementations. PCS integration
-tests implement external bridges using the public CPU packet API. No separate
-transfer crate or global endpoint registry is needed.
+tests implement external bridges using the public CPU packet API.

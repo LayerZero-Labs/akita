@@ -38,6 +38,7 @@ pub(crate) enum Fault {
     #[default]
     None,
     Preparation,
+    BeginFold,
     Export,
     Import,
     SourceStage1,
@@ -53,6 +54,8 @@ pub(crate) struct PrivateCpu {
     pub(crate) aborted: Cell<usize>,
     pub(crate) folds: Cell<usize>,
     pub(crate) imports: Cell<usize>,
+    pub(crate) exports: Cell<usize>,
+    pub(crate) commitments: Cell<usize>,
 }
 impl PrivateCpu {
     pub(crate) fn new(inner: Cpu) -> Self {
@@ -64,6 +67,8 @@ impl PrivateCpu {
             aborted: Cell::new(0),
             folds: Cell::new(0),
             imports: Cell::new(0),
+            exports: Cell::new(0),
+            commitments: Cell::new(0),
         }
     }
     fn fail(&self, fault: Fault) -> Result<(), AkitaError> {
@@ -126,6 +131,10 @@ impl ProofScopeConsumer for PrivateCpu {
     }
 }
 impl ProverHandleFamily<F, E> for PrivateCpu {
+    fn instance_identity(&self) -> BackendInstanceIdentity {
+        BackendInstanceIdentity::new::<Self>(self as *const Self as usize as u128)
+    }
+
     type CommitmentHandle = OwnedCommitment;
     type EorPreparationHandle = <Cpu as ProverHandleFamily<F, E>>::EorPreparationHandle;
     type EorSessionHandle = <Cpu as ProverHandleFamily<F, E>>::EorSessionHandle;
@@ -160,6 +169,7 @@ impl ProofAdmission<F, E> for PrivateCpu {
         session: &Self::ProofSessionHandle,
         requirements: &FoldExecutionRequirements<'_>,
     ) -> Result<(), AkitaError> {
+        self.fail(Fault::BeginFold)?;
         self.inner.begin_fold(session, requirements)?;
         self.folds.set(self.folds.get() + 1);
         Ok(())
@@ -261,6 +271,7 @@ impl OpaqueWitnessCommitKernel<F, E> for PrivateCpu {
         WitnessCommitmentOutput<F, Self::WitnessHandle, Self::CommitmentMaterialHandle>,
         AkitaError,
     > {
+        self.commitments.set(self.commitments.get() + 1);
         self.inner
             .commit_witness(witness_handle.0, plan)
             .map(|output| {
@@ -518,9 +529,7 @@ impl OpaqueStage3Kernel<F, E> for PrivateCpu {
 
 impl SuccessorExportKernel<F, E> for PrivateCpu {
     type ExportPacket = CpuImportPacket<F>;
-    fn instance_identity(&self) -> BackendInstanceIdentity {
-        BackendInstanceIdentity::new::<Self>(self as *const Self as usize as u128)
-    }
+
     fn export_successor(
         &self,
         session: &Self::ProofSessionHandle,
@@ -528,6 +537,7 @@ impl SuccessorExportKernel<F, E> for PrivateCpu {
         material: &Self::CommitmentMaterialHandle,
         plan: &ValidatedSuccessorHandoffPlan<'_, F>,
     ) -> Result<Self::ExportPacket, AkitaError> {
+        self.exports.set(self.exports.get() + 1);
         self.fail(Fault::Export)?;
         let export = self
             .inner
@@ -559,10 +569,9 @@ impl SuccessorImportKernel<F, E> for PrivateCpu {
 impl SuccessorBridge<PrivateCpu, Cpu, F, E> for Edge<PrivateCpu, Cpu> {
     fn convert(
         packet: CpuImportPacket<F>,
-        plan: &ValidatedSuccessorHandoffPlan<'_, F>,
+        _plan: &ValidatedSuccessorHandoffPlan<'_, F>,
     ) -> Result<CpuImportPacket<F>, AkitaError> {
         // Exercise a bridge building CPU imports using only its public section API.
-        plan.validate_metadata(packet.metadata())?;
         let (descriptor, sections) = packet.into_sections()?;
         CpuImportPacket::new(descriptor, sections)
     }

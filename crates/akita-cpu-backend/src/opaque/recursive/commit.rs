@@ -5,6 +5,31 @@ use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
+pub(crate) fn uses_tensor_source(
+    plan: &crate::opaque::ValidatedRecursiveWitnessCommitPlan,
+    degree: usize,
+) -> Result<bool, AkitaError> {
+    let terminal = matches!(
+        plan.parameters(),
+        crate::opaque::WitnessCommitmentParameters::Terminal(_)
+    );
+    match (terminal, plan.source_encoding()) {
+        (true, _) => Ok(degree != 1),
+        (false, Some(akita_params::CommittedSourceEncoding::CanonicalCoefficientTable)) => {
+            Ok(false)
+        }
+        (
+            false,
+            Some(akita_params::CommittedSourceEncoding::TensorSubfieldProjection {
+                extension_degree,
+            }),
+        ) if extension_degree == degree => Ok(true),
+        _ => Err(AkitaError::InvalidInput(
+            "invalid successor source encoding".into(),
+        )),
+    }
+}
+
 impl CpuWitnessHandle {
     pub(crate) fn from_cpu(
         inner: RecursiveWitnessFlat,
@@ -210,27 +235,7 @@ where
             ));
         }
         witness = witness.align_for_commitment_ring_dim(plan.ring_dimension())?;
-        let terminal = matches!(
-            plan.parameters(),
-            crate::opaque::WitnessCommitmentParameters::Terminal(_)
-        );
-        let tensor = match (terminal, plan.source_encoding()) {
-            (true, _) => E::DEGREE != 1,
-            (false, Some(akita_params::CommittedSourceEncoding::CanonicalCoefficientTable)) => {
-                false
-            }
-            (
-                false,
-                Some(akita_params::CommittedSourceEncoding::TensorSubfieldProjection {
-                    extension_degree,
-                }),
-            ) if extension_degree == E::DEGREE => true,
-            _ => {
-                return Err(AkitaError::InvalidInput(
-                    "invalid successor source encoding".into(),
-                ))
-            }
-        };
+        let tensor = uses_tensor_source(plan, E::DEGREE)?;
         if tensor {
             dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Inner),

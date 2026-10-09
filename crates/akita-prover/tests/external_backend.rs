@@ -45,6 +45,13 @@ impl<F: Field + CanonicalEncoding> CommitmentRelationMaterial<F> for Handle {
     }
 }
 impl<F: Field + CanonicalEncoding, E: Field> ProverHandleFamily<F, E> for ExternalBackend<F, E> {
+    fn instance_identity(&self) -> BackendInstanceIdentity
+    where
+        Self: 'static,
+    {
+        BackendInstanceIdentity::new::<Self>(0)
+    }
+
     type CommitmentHandle = Handle;
     type EorPreparationHandle = ();
     type EorSessionHandle = ();
@@ -77,9 +84,7 @@ impl<F: Field + CanonicalEncoding, E: Field + 'static> SuccessorExportKernel<F, 
     for ExternalBackend<F, E>
 {
     type ExportPacket = ExternalExport;
-    fn instance_identity(&self) -> BackendInstanceIdentity {
-        BackendInstanceIdentity::new::<Self>(0)
-    }
+
     fn export_successor(
         &self,
         _: &Self::ProofSessionHandle,

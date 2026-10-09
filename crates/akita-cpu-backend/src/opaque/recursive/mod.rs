@@ -9,6 +9,7 @@ mod relation_witness;
 mod witness;
 
 pub(crate) use crate::opaque::sumcheck::digit_range;
+pub(crate) use commit::uses_tensor_source;
 
 #[cfg(test)]
 pub(crate) use digit_range::direct_range_leaf::pad_compact_witness;

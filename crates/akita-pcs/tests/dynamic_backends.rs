@@ -1,6 +1,8 @@
 //! The dynamic one-hot example, checked as a bounded integration test.
 
 mod common;
+#[path = "dynamic_backends/portable.rs"]
+mod portable;
 #[path = "dynamic_backends/private_cpu.rs"]
 mod private_cpu;
 
@@ -8,7 +10,11 @@ use akita_config::{proof_optimized::fp128, unit_onehot_source_chunk_size};
 use akita_cpu_backend::{CpuBackend, OneHotPoly};
 use akita_error::AkitaError;
 use akita_params::{lagrange_weights, BasisMode};
-use akita_pcs::{batched_prove, BackendRegistry, FixedFoldRoute, SelectedProverOpeningData};
+use akita_pcs::{
+    batched_prove, BackendId, BackendRegistry, FixedFoldRoute, FoldExecutionPolicy,
+    SelectedProverOpeningData,
+};
+use akita_prover::backend::FoldExecutionRequirements;
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::CanonicalEncoding;
 
@@ -21,6 +27,27 @@ use private_cpu::{Fault, PrivateCpu};
 const NUM_VARS: usize = 15;
 const NUM_POLYS: usize = 4;
 const DOMAIN: &[u8] = b"akita/test/dynamic-onehot/v1";
+
+struct RecordingRoute<'a> {
+    route: FixedFoldRoute,
+    source: &'a PrivateCpu,
+    owners: Vec<BackendId>,
+}
+
+impl FoldExecutionPolicy for RecordingRoute<'_> {
+    fn choose_backend(
+        &mut self,
+        current: Option<BackendId>,
+        requirements: &FoldExecutionRequirements<'_>,
+    ) -> Result<BackendId, AkitaError> {
+        assert_eq!(requirements.level(), self.owners.len());
+        assert_eq!(current, self.owners.last().copied());
+        assert_eq!(self.source.admitted.get(), 0);
+        let owner = self.route.choose_backend(current, requirements)?;
+        self.owners.push(owner);
+        Ok(owner)
+    }
+}
 
 #[test]
 fn dynamic_onehot_matches_homogeneous_proof() {
@@ -80,17 +107,62 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
     let mut registry = BackendRegistry::<Cfg>::new()?;
     let private_id = registry.register(&private, &prefixes_private)?;
     let cpu_id = registry.register(&cpu, &prefixes_cpu)?;
-    registry.register_bridge::<PrivateCpu, CpuBackend<F, E>>()?;
-    registry.register_bridge::<CpuBackend<F, E>, PrivateCpu>()?;
     let levels = resolved.schedule().num_fold_levels();
     assert!(levels >= 3, "the route must exercise both directed bridges");
 
+    if check_failures {
+        let mut foreign = BackendRegistry::<Cfg>::new()?;
+        let foreign_id = foreign.register(&cpu, &prefixes_cpu)?;
+        for (owners, expected) in [
+            (
+                vec![private_id; levels - 1],
+                "fixed backend route is shorter than the schedule",
+            ),
+            (
+                {
+                    let mut route = vec![private_id; levels];
+                    route[levels - 1] = foreign_id;
+                    route
+                },
+                "backend ID belongs to another registry",
+            ),
+            (
+                {
+                    let mut route = vec![private_id; levels];
+                    route[levels - 1] = cpu_id;
+                    route
+                },
+                "no bridge registered for selected backend types",
+            ),
+        ] {
+            let error = batched_prove(
+                setup.expanded.descriptor(),
+                scheme.schedules(),
+                &registry,
+                opening()?,
+                DOMAIN,
+                BasisMode::Lagrange,
+                &mut FixedFoldRoute::new(owners),
+            )
+            .unwrap_err();
+            assert!(matches!(error, AkitaError::InvalidInput(message) if message == expected));
+            assert_eq!(private.admitted.get(), 0);
+            assert_eq!(private.commitments.get(), 0);
+        }
+    }
+    registry.register_bridge::<PrivateCpu, CpuBackend<F, E>>()?;
+    registry.register_bridge::<CpuBackend<F, E>, PrivateCpu>()?;
+
     // Alternate owners: PrivateCpu on even folds, stock CPU on odd folds.
-    let mut route = FixedFoldRoute::new(
-        (0..levels)
-            .map(|level| if level % 2 == 0 { private_id } else { cpu_id })
-            .collect(),
-    );
+    let mut route = RecordingRoute {
+        route: FixedFoldRoute::new(
+            (0..levels)
+                .map(|level| if level % 2 == 0 { private_id } else { cpu_id })
+                .collect(),
+        ),
+        source: &private,
+        owners: Vec::new(),
+    };
     let proof = batched_prove(
         setup.expanded.descriptor(),
         scheme.schedules(),
@@ -100,7 +172,10 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
         BasisMode::Lagrange,
         &mut route,
     )?;
+    assert_eq!(route.owners.len(), levels);
 
+    let exports = private.exports.get();
+    let imports = private.imports.get();
     let reference = batched_prove(
         setup.expanded.descriptor(),
         scheme.schedules(),
@@ -111,6 +186,8 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
         &mut FixedFoldRoute::new(vec![private_id; levels]),
     )?;
     assert_eq!(proof, reference);
+    assert_eq!(private.exports.get(), exports);
+    assert_eq!(private.imports.get(), imports);
 
     let verifier = scheme.verifier(scheme.setup_verifier(&setup)?)?;
     let statement = GroupBatchStatement::new(
@@ -130,11 +207,14 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
         let mut registry = BackendRegistry::<Cfg>::new()?;
         let source_id = registry.register(&private, &prefixes_private)?;
         let destination_id = registry.register(&destination, &prefixes_destination)?;
-        registry.register(&unused, &prefixes_unused)?;
+        let unused_id = registry.register(&unused, &prefixes_unused)?;
         registry.register_bridge_with::<PrivateCpu, PrivateCpu>(|packet, _| Ok(packet))?;
-        let prove = || {
+        let prove = |include_unused| {
             let mut owners = vec![destination_id; levels];
             owners[0] = source_id;
+            if include_unused {
+                owners[levels - 1] = unused_id;
+            }
             batched_prove(
                 setup.expanded.descriptor(),
                 scheme.schedules(),
@@ -146,9 +226,15 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
             )
         };
         let backends = [&private, &destination, &unused];
-        // Preparation includes unused executors; finishing stops at the first error.
+        // Unselected executors must not be admitted, even if they would fail admission.
+        unused.fault.set(Fault::Preparation);
+        assert_eq!(prove(false)?, reference);
+        assert_eq!(unused.admitted.get(), 0);
+        unused.fault.set(Fault::None);
+        // Finishing stops at the first error and aborts every remaining selected scope.
         for (fault, target) in [
-            (Fault::Preparation, &unused),
+            (Fault::Preparation, &destination),
+            (Fault::BeginFold, &destination),
             (Fault::Export, &private),
             (Fault::Import, &destination),
             (Fault::SourceStage1, &private),
@@ -158,12 +244,17 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
             let before = backends.map(|b| (b.admitted.get(), b.finished.get(), b.aborted.get()));
             let folds = private.folds.get();
             let imports = destination.imports.get();
+            let commitments = private.commitments.get();
             target.fault.set(fault);
-            let error = prove().unwrap_err();
+            let error = prove(fault == Fault::Finish).unwrap_err();
             assert!(matches!(error, AkitaError::InvalidInput(message)
                 if message == format!("injected {fault:?} failure")));
             for (index, backend) in backends.iter().enumerate() {
-                let prepared = usize::from(fault != Fault::Preparation || index < 2);
+                let prepared = usize::from(
+                    index == 0
+                        || (index == 1 && fault != Fault::Preparation)
+                        || (index == 2 && fault == Fault::Finish),
+                );
                 let finished = usize::from(fault == Fault::Finish && index == 0);
                 assert_eq!(backend.admitted.get() - before[index].0, prepared);
                 assert_eq!(backend.finished.get() - before[index].1, finished);
@@ -172,15 +263,21 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
             if fault == Fault::Preparation {
                 assert_eq!(private.folds.get(), folds);
             }
+            if matches!(fault, Fault::Preparation | Fault::BeginFold) {
+                assert_eq!(private.commitments.get(), commitments);
+            }
             if matches!(fault, Fault::SourceStage1 | Fault::DestinationOpening) {
                 assert_eq!(destination.imports.get(), imports + 1);
             }
             target.fault.set(Fault::None);
             let finished = backends.map(|b| b.finished.get());
             let aborted = backends.map(|b| b.aborted.get());
-            assert_eq!(prove()?, reference);
+            assert_eq!(prove(fault == Fault::Finish)?, reference);
             for (index, backend) in backends.iter().enumerate() {
-                assert_eq!(backend.finished.get(), finished[index] + 1);
+                assert_eq!(
+                    backend.finished.get(),
+                    finished[index] + usize::from(index < 2 || fault == Fault::Finish)
+                );
                 assert_eq!(backend.aborted.get(), aborted[index]);
                 assert_eq!(
                     backend.admitted.get(),

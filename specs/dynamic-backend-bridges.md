@@ -6,9 +6,7 @@
 | Created       | 2026-10-07                                       |
 | Status        | implemented                                      |
 | PR            | [#193](https://github.com/LayerZero-Labs/akita/pull/193) |
-| Supersedes    | opaque endpoint-id successor handoff             |
-| Superseded-by |                                                  |
-| Book-chapter  | book/src/usage/feature-flags.md                  |
+| Book-chapter  | book/src/how/architecture.md                  |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**,
 and **MAY** in this document are to be interpreted as described in BCP 14 when,
@@ -16,13 +14,11 @@ and only when, they appear in all capitals.
 
 ## Summary
 
-Akita can assign each fold level of one proof to a different registered prover
-backend. Earlier handoff used an opaque export capability and a global endpoint
-registry with byte-section `read` pulls. That coupled destinations to a shared
-pull API and made external backends reconstruct CPU-private layouts through
-`akita-backend-transfer`. This change replaces that path with typed export and
-import packets plus app-registered `Edge<A, B>` bridges. The protocol still
-routes by `BackendId`; packet conversion is keyed only by backend **types**.
+Previously, one backend executed every fold of a proof. Akita now assigns each
+fold level to a registered prover backend while keeping homogeneous proof bytes
+unchanged. Typed export and import packets carry the private continuation through
+application-registered bridges. Routing uses instance `BackendId`s; packet
+conversion is keyed by backend types.
 
 ## Intent
 
@@ -43,24 +39,24 @@ Allow one `batched_prove` call to execute successive folds on different
 | --- | --- |
 | `BackendRegistry` | Registers backend instances and type-keyed bridges |
 | `BackendId` | Runtime owner of a fold level |
-| `FoldExecutionPolicy` | Chooses the next `BackendId` (e.g. `FixedFoldRoute`) |
+| `FoldExecutionPolicy` | Resolves all fold owners before preparation (e.g. `FixedFoldRoute`) |
 | `SuccessorExportKernel` | Source backend → owned `ExportPacket` |
 | `SuccessorImportKernel` | Destination backend ← `ImportPacket` → local handles |
 | `HandoffMetadata` | Packet identity and witness geometry, independent of encoding |
 | `SuccessorBridge` on `Edge<A, B>` or application converter | `A::ExportPacket` → `B::ImportPacket` |
-| `FoldHandoff` | After successor commit, same-id `begin_fold` or export→convert→import |
+| `FoldHandoff` | After successor commit, retain local handles or export→convert→import to the resolved next owner |
 | `CpuExportPacket` / `CpuImportPacket` | Public CPU sectioned IR |
 
 ### Invariants
 
 1. **Same-instance short-circuit.** When the policy selects the current
    `BackendId`, the coordinator MUST NOT export, convert, or import. It MUST
-   call `begin_fold` on that instance only. Protected by homogeneous routes in
-   `crates/akita-pcs/tests/dynamic_backends.rs`.
+   prepare that fold on its selected instance before proving. Protected by
+   homogeneous routes in `crates/akita-pcs/tests/dynamic_backends.rs`.
 2. **Bridge required on type switch.** When the selected id differs from the
    current id, the registry MUST look up
    `(TypeId::of::<Src>(), TypeId::of::<Dst>())`. A missing bridge MUST reject
-   the route before export.
+   the route before any executor is prepared.
 3. **Type-keyed, not id-keyed, bridges.** `register_bridge::<A, B>()` registers
    one directed conversion for all instances of those types. Distinct instances
    of the same type (two `CpuBackend`s) still NEED
@@ -70,9 +66,9 @@ Allow one `batched_prove` call to execute successive folds on different
    come from dependencies. Both APIs share the same key and reject duplicates.
 4. **Handoff precedes producer sumchecks.** After the producer commits the
    successor witness, `FoldHandoff::handoff_successor` MUST run before that
-   producer's stage-1/2/3 work. The destination MAY begin its fold during
-   handoff; it MUST NOT run fold sumchecks until `batched_prove` dispatches it
-   via `resident.owner`.
+   producer's stage-1/2/3 work. Every selected fold MUST be prepared before the
+   transcript is opened; the destination MUST NOT run fold sumchecks until
+   `batched_prove` dispatches it via `resident.owner`.
 5. **Wire invariance.** Routing MUST NOT change setup, commitment, proof, or
    transcript bytes relative to a same-schedule homogeneous proof. Protected by
    byte-equality checks against a homogeneous reference in `dynamic_backends.rs`.
@@ -82,6 +78,10 @@ Allow one `batched_prove` call to execute successive folds on different
    encodings, and digit bounds. Portable digit payloads MUST contain only logical
    witness digits; CPU import MUST derive any tensor representation locally.
    Native CPU self-edges MAY share the private CPU-produced transformed cache.
+   Portable outer successors trust the bridge to supply inner rows and compression
+   material consistent with the public commitment; import validates geometry and
+   canonicity, while the verifier checks commitment consistency. Terminal imports
+   MUST also cross-check the imported inner rows against the public fields.
 7. **Session isolation.** Export borrows the live producer session; import runs
    on the destination executor's prepared session. The coordinator MUST NOT
    re-enter the producer's executor slot for export.
@@ -90,10 +90,15 @@ Allow one `batched_prove` call to execute successive folds on different
    without changing the registry. This establishes public agreement for the
    lifetime of the immutable registrations; selected executors MUST retain
    local handles for their fold and successor-commit work.
-9. **Packet format ownership.** The coordinator MUST validate `HandoffMetadata`
-   without interpreting private payloads. CPU imports MUST additionally validate
+9. **Packet format ownership.** The destination MUST validate `HandoffMetadata`
+   against the admitted plan before adoption. CPU imports MUST additionally validate
    `CpuPacketDescriptor` section encodings and lengths before allocation or
    decoding. Other backends MAY use packets without portable byte sections.
+10. **Eager route validation.** The coordinator MUST call the policy once per
+    level, in order, before preparing executors. It MUST validate every selected
+    ID and every required bridge, prepare only selected instances, and validate
+    their local prefix handles and fold capacity before opening the transcript.
+    Policy choices are fixed for the proof; they cannot depend on fold progress.
 
 ### Non-Goals
 
@@ -107,10 +112,8 @@ Allow one `batched_prove` call to execute successive folds on different
 
 ### Acceptance Criteria
 
-- [x] `OpaqueSuccessorExport`, endpoint ids, and `akita-backend-transfer` are
-  removed from the successor path.
 - [x] Backends implement `SuccessorExportKernel` and `SuccessorImportKernel`
-  instead of a combined opaque transfer kernel.
+  to exchange committed successor state.
 - [x] `Edge<A, B>: SuccessorBridge` or an application callback supplies `convert`;
   both registration APIs use the same coordinator path
   (`export_successor` → `convert` → `import_successor`).
@@ -122,15 +125,20 @@ Allow one `batched_prove` call to execute successive folds on different
 - [x] Integration test `dynamic_backends.rs` alternates `PrivateCpu` and
   `CpuBackend` with both directed bridges registered.
 - [x] Book usage documents `register_bridge` and packet handoff
-  (`book/src/usage/feature-flags.md`).
+  (`book/src/how/architecture.md`).
 
 ### Testing Strategy
 
 - `crates/akita-pcs/tests/dynamic_backends.rs` — four one-hot polynomials,
-  PrivateCpu ↔ CPU routing through portable packets, homogeneous proof-byte
-  equality, and verification. This test replaces the standalone example.
+  PrivateCpu → CPU routing through portable packets and CPU → PrivateCpu routing
+  through the native CPU edge, homogeneous proof-byte equality, and verification.
 - `crates/akita-prover/tests/external_backend.rs` — external backend still
   compiles against the new kernels (stub export/import).
+- `crates/akita-pcs/tests/dynamic_backends/portable.rs` — portable fp32 tensor
+  successors and offloaded setup with executor-local prefixes, checked against
+  verified homogeneous proof bytes. Missing local prefixes reject before transfer.
+- `dynamic_backend_failures_cleanup_and_retry` — eager route rejection,
+  preparation and handoff failures, cleanup, and reuse of the same registry.
 
 ### Performance
 
@@ -145,13 +153,14 @@ proofs are the gate.
 
 ```text
 batched_prove
-  └─ policy.choose_backend → BackendId
+  └─ resolve all owners; validate IDs and bridges
+  └─ prepare selected executors and their assigned folds
   └─ registry.slot(owner).root / .recursive / .terminal
-        └─ prove_fold(..., &mut FoldHandoff)
+        └─ prove_fold(..., handoff callback)
               ├─ commit successor witness
               ├─ FoldHandoff::handoff_successor
-              │     ├─ same BackendId → begin_fold only
-              │     └─ else Edge::<Src,Dst>::transfer
+              │     ├─ same BackendId → retain local handles
+              │     └─ else registered typed converter
               │           export → convert → import → ResidentSuccessor
               └─ producer sumchecks
   └─ next fold uses resident.owner
@@ -180,33 +189,31 @@ the coordinator. Packets are the shared IR; bridges are the typed adapters.
 
 ### Alternatives Considered
 
-1. **Opaque endpoint + `SuccessorEndpoint::read`.** Rejected for external CPU
-   adopt: destinations pulled bytes through a global registry and decoded
-   inside CPU import, forcing every source to implement the pull API.
+1. **Global byte-section pull registry.** Rejected: destinations would pull bytes
+   through a shared API, forcing every source to implement that representation.
 2. **Exporter builds destination handles (`ExportToward<B>`).** Rejected:
    sources would depend on every destination type (orphan-rule and N×M
    coupling). Applications instead register a backend-provided `Edge<A, B>`
    bridge or supply their own typed converter without implementing a foreign trait.
-3. **`SuccessorHandoff` trait seam for fold.** Removed; only `FoldHandoff`
-   existed. Fold now takes `&mut FoldHandoff` from `registry.rs`.
+3. **Configuration-aware fold hook.** Rejected: the fold needs only field and
+   handle types. A caller-owned callback runs after commitment and captures
+   routing state outside the protocol fold.
 
 ## Documentation
 
-- Book usage: `book/src/usage/feature-flags.md` (Backend routing) — keep as the
+- Book usage: `book/src/how/architecture.md` (Backend routing) — keep as the
   integrator narrative; update Implementation paths to include `registry.rs`.
-- This spec — design record and acceptance list for the typed-bridge cutover.
+- This spec — design record and acceptance list for the per-fold backend routing.
 - No verifier-contract or schedule-artifact changes.
 
 ## Execution
 
-Shipped on branch `codex/dynamic-backend-bridges`. Follow-ups MAY include
-auto-registering `Edge<B, B>` on `register` for ergonomics, and folding more of
-this narrative into a dedicated Book architecture subsection if routing grows
-beyond the feature-flags page.
+Implemented on branch `codex/dynamic-backend-bridges`. Follow-ups MAY include
+auto-registering `Edge<B, B>` on `register` for ergonomics.
 
 ## References
 
-- Book: [`book/src/usage/feature-flags.md`](../book/src/usage/feature-flags.md)
+- Book: [`book/src/how/architecture.md`](../book/src/how/architecture.md)
 - Related: [`specs/opaque-prover-consumer.md`](opaque-prover-consumer.md),
   [`specs/family-agnostic-cpu-backend.md`](family-agnostic-cpu-backend.md)
 - Tests: `crates/akita-pcs/tests/dynamic_backends.rs`
