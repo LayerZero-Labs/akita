@@ -236,6 +236,8 @@ impl<F: SmoothFftField> LoweredPublic<F> {
     pub fn c_pub(&self) -> F {
         self.c_pub
     }
+    /// Digit factors of the response weights: entry `l` is `(2^b)^l` for digit
+    /// width `b`, one entry per response digit, lowest digit first.
     pub fn digit_powers(&self) -> &[F] {
         &self.digit_powers
     }
@@ -256,6 +258,14 @@ impl<F: SmoothFftField> LoweredPublic<F> {
             .copied()
             .ok_or(AkitaError::InvalidProof)
     }
+    /// Weight of coefficient `t` of response row `j` before the digit factor:
+    /// `Abar_j * alpha^t + g * sigma(t) * xi^(t / k) * B_(j * k + t % k)(xi)`.
+    ///
+    /// The response weight at digit `l` is this value times `digit_powers()[l]`.
+    /// Requires `j < m` and `t < degree`; any other index is
+    /// [`AkitaError::InvalidProof`]. Padded coefficients `t >= degree` have
+    /// weight zero and are not served here, so a table over the padded
+    /// coefficient domain must supply those zeros itself.
     pub fn coefficient_weight(&self, j: usize, t: usize) -> Result<F, AkitaError> {
         let k = self.layout.k();
         let row = checked::mul_add(j, k, t % k).ok_or(AkitaError::InvalidProof)?;
