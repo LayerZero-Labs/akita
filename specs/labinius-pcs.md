@@ -47,8 +47,11 @@ Both catalogs MUST be provisioned on one setup. Constructors compute
 `SetupRequirements::from_catalog` at the setup's capacity bounds and `union`
 the requirements, then require the setup matrix to cover that union. They
 also resolve the exact selected image and grouped rows and check their setup
-admission and coverage of every required setup-prefix slot before any parent
-channel operation or proof byte is read. Both constructors check the selected
+admission and coverage of every required setup-prefix slot before preparing
+prover or verifier state, any parent channel operation or reading proof bytes.
+Both constructors require each selected key's variable count and total
+polynomial count, including precommitted groups, to fit the setup's logical
+capacity even when the physical matrix is large enough. Both check the selected
 scalar image row and the grouped digit row that is replayed. Slot requirements
 come from `required_setup_prefix_slot_ids_for_schedule`, independently of the
 conditional prefix enumeration in `SetupRequirements::from_catalog`. Missing

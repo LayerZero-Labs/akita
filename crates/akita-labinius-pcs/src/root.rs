@@ -21,7 +21,7 @@ use akita_verifier::AkitaVerifier;
 use crate::{
     config::DigitConfig, ImageCommitOutput, ImageConfig, ImageProver, PreparedRoot, RootSetup, F,
 };
-use binding::{admit_catalogs, resolve_rows};
+use binding::admit_catalogs;
 use verifier::GroupedVerifier;
 
 /// Prepared root, caller-trusted catalogs and one owning Akita CPU backend.
@@ -42,13 +42,12 @@ impl<C: DigitConfig> RootPcsProver<C> {
         setup
             .check()
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
-        admit_catalogs(
+        let (image_row, digit_row) = admit_catalogs(
             &admitted,
             &image_schedules,
             &digit_schedules,
-            setup.expanded.descriptor(),
+            &setup.expanded,
         )?;
-        let (image_row, digit_row) = resolve_rows(&admitted, &image_schedules, &digit_schedules)?;
         for row in [image_row, digit_row] {
             crate::setup::ensure_setup_prefix_coverage(row, |id| {
                 setup.prefix_slots.get(id).is_some()
@@ -137,24 +136,16 @@ impl<C: DigitConfig> RootPcsVerifier<C> {
         setup
             .check()
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
-        admit_catalogs(
+        let (image_row, digit_row) = admit_catalogs(
             &admitted,
             &image_schedules,
             &digit_schedules,
-            setup.expanded().descriptor(),
+            setup.expanded(),
         )?;
-        let (image_row, digit_row) = resolve_rows(&admitted, &image_schedules, &digit_schedules)?;
         for row in [image_row, digit_row] {
             crate::setup::ensure_setup_prefix_coverage(row, |id| {
                 setup.prefix_slots().get(id).is_some()
             })?;
-        }
-        if !TrustedScheduleCatalog::<ImageConfig>::verifier_admits(setup.expanded(), image_row)?
-            || !TrustedScheduleCatalog::<C>::verifier_admits(setup.expanded(), digit_row)?
-        {
-            return Err(AkitaError::InvalidSetup(
-                "root PCS rows do not fit verifier setup".into(),
-            ));
         }
         Ok(Self {
             admitted,

@@ -9,6 +9,8 @@ mod binding;
 mod common;
 #[path = "root/oracle.rs"]
 mod oracle;
+#[path = "root/setup.rs"]
+mod setup;
 #[path = "root/support.rs"]
 mod support;
 

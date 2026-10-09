@@ -19,8 +19,8 @@ use akita_params::{
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
-    AkitaSetupDescriptor, Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims, RingVec,
+    AkitaExpandedSetup, AkitaSetupDescriptor, Commitment, CommittedGroup, GroupBatchStatement,
+    OpeningClaims, PolynomialGroupClaims, RingVec,
 };
 use jolt_field::{CanonicalBytes, Zero};
 
@@ -67,13 +67,23 @@ pub(super) fn resolve_rows<'a, C: DigitConfig>(
     Ok((image_row, grouped))
 }
 
-pub(super) fn admit_catalogs<C: DigitConfig>(
+pub(super) fn admit_catalogs<'a, C: DigitConfig>(
     admitted: &RootSetup,
-    image: &TrustedScheduleCatalog<ImageConfig>,
-    digits: &TrustedScheduleCatalog<C>,
-    setup: &AkitaSetupDescriptor,
-) -> Result<(), AkitaError> {
-    resolve_rows(admitted, image, digits)?;
+    image: &'a TrustedScheduleCatalog<ImageConfig>,
+    digits: &'a TrustedScheduleCatalog<C>,
+    setup: &AkitaExpandedSetup<F>,
+) -> Result<(&'a ResolvedScheduleRow, &'a ResolvedScheduleRow), AkitaError> {
+    let (image_row, digit_row) = resolve_rows(admitted, image, digits)?;
+    // Catalog sizing filters out keys beyond the logical capacity. Admit the
+    // selected keys explicitly, including the precommitted Y in the grouped row.
+    if !TrustedScheduleCatalog::<ImageConfig>::verifier_admits(setup, image_row)?
+        || !TrustedScheduleCatalog::<C>::verifier_admits(setup, digit_row)?
+    {
+        return Err(AkitaError::InvalidSetup(
+            "root PCS rows do not fit verifier setup".into(),
+        ));
+    }
+    let setup = setup.descriptor();
     let requirements =
         SetupRequirements::from_catalog(image, setup.max_num_vars, setup.max_num_batched_polys)?
             .union(SetupRequirements::from_catalog(
@@ -86,7 +96,7 @@ pub(super) fn admit_catalogs<C: DigitConfig>(
             "Akita setup does not cover the catalog union".into(),
         ));
     }
-    Ok(())
+    Ok((image_row, digit_row))
 }
 
 /// Ask the serializer for its fixed header and the compression owner for its
