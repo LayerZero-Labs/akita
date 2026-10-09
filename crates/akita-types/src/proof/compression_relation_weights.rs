@@ -414,7 +414,7 @@ impl<E: Field> CompressionRelationWeights<E> {
                 let (eq_low, eq_high) = high_equality.1.eval_factors(high_index);
                 *term = [event.scalar, low_factor, eq_low, eq_high];
             }
-            evaluation += E::sum_of_products4(&terms[..batch.len()]);
+            evaluation += E::sum_of_products(&terms[..batch.len()]);
         }
         Ok(evaluation)
     }
