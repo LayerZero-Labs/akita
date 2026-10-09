@@ -1,9 +1,20 @@
 //! LaBinius binary-source SIS identities and exact collision accounting.
 //!
-//! This module deliberately stops at the security-table boundary. It does not
-//! make any binary ring a native Akita runtime ring and it does not admit a
-//! schedule. Challenge sampling and its certified multiplication bound belong
-//! to `akita-challenges`; callers pass that bound here explicitly.
+//! The opt-in root profile and shape admit binary root geometry against the
+//! certified runtime width table and exact challenge/response bounds. This does
+//! not select a protocol or admit a complete schedule. Challenge sampling and
+//! its certified multiplication bound belong to `akita-challenges`.
+
+mod generated_width_table;
+mod root_profile;
+mod root_shape;
+mod width_table;
+
+pub use root_profile::LabiniusRootProfile;
+pub use root_shape::LabiniusRootShape;
+pub use width_table::{
+    labinius_min_secure_rank, LabiniusWidthCell, LABINIUS_WIDTH_TABLE, LABINIUS_WIDTH_TABLE_DIGEST,
+};
 
 use akita_error::AkitaError;
 
