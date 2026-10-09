@@ -9,7 +9,28 @@ unsafe fn mul(a: int32x4_t, w: int32x4_t, q: int32x4_t, p: int32x4_t) -> int32x4
     // SAFETY: Register operations only. Centered twiddle quotients have
     // magnitude <=2^30, excluding the SQRDMULH saturating MIN*MIN case.
     // Wrapping low products recover the exact bounded signed remainder.
-    unsafe { vmlsq_s32(vmulq_s32(a, w), vqrdmulhq_s32(a, q), p) }
+    // Assembly touches only registers. Early output constraints keep both
+    // outputs distinct from every input: a must survive the first MUL.
+    // The three instructions access no memory, stack, or condition flags.
+    // The value equals `vmlsq_s32(vmulq_s32(a, w), vqrdmulhq_s32(a, q), p)`;
+    // written with those intrinsics, the signed bit transform measured about
+    // 8% slower on an Apple M4 Max, so the instruction order is fixed here.
+    unsafe {
+        let result;
+        std::arch::asm!(
+            "mul {result:v}.4s, {a:v}.4s, {w:v}.4s",
+            "sqrdmulh {correction:v}.4s, {a:v}.4s, {q:v}.4s",
+            "mls {result:v}.4s, {correction:v}.4s, {p:v}.4s",
+            result = out(vreg) result,
+            correction = out(vreg) _,
+            a = in(vreg) a,
+            w = in(vreg) w,
+            q = in(vreg) q,
+            p = in(vreg) p,
+            options(pure, nomem, nostack, preserves_flags),
+        );
+        result
+    }
 }
 
 #[inline(always)]
