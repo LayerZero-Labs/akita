@@ -284,4 +284,92 @@ mod tests {
         audit::<crate::RecursiveCommitmentConfig<fp128::OneHot>>();
         audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>();
     }
+
+    /// Audit regression T-01: compares the RingSwitchAlpha proof-of-work target
+    /// with the degree of the native A-row identity that the same alpha tests.
+    #[test]
+    fn audit_regression_t01() {
+        use crate::proof_optimized::{fp32, fp64};
+
+        fn audit<Cfg: CommitmentConfig>(rows_below: &mut Vec<String>, rows_total: &mut usize)
+        where
+            Cfg::Field: CanonicalEncoding,
+            Cfg::ExtField: ExtField<Cfg::Field>,
+        {
+            let order = ChallengeFieldOrder::from_field(
+                <Cfg::Field as CanonicalEncoding>::MODULUS_BITS,
+                Cfg::EXT_DEGREE,
+                Cfg::sis_modulus_profile().modulus(),
+            )
+            .unwrap();
+            let field_bits =
+                (Cfg::sis_modulus_profile().modulus() as f64).log2() * Cfg::EXT_DEGREE as f64;
+            let catalog = crate::test_support::workspace_schedule_catalog::<Cfg>()
+                .expect("workspace schedule catalog");
+            for (row_index, row) in catalog.rows().enumerate() {
+                let layout = row.profiles().opening_layout().expect("opening layout");
+                let plan = derive_transcript_grinding_plan::<Cfg>(row.schedule(), &layout)
+                    .expect("complete grinding plan");
+                for run in plan.runs() {
+                    let GrindingSite::RingSwitchAlpha { level } = run.site() else {
+                        continue;
+                    };
+                    *rows_total += 1;
+                    let params = if level == 0 {
+                        &row.schedule().root.params
+                    } else {
+                        &row.schedule().recursive_folds
+                            [usize::try_from(level - 1).expect("fold level fits usize")]
+                        .params
+                    };
+                    let d_a = params.d_a();
+                    let a_row_loss = u64::try_from(2 * d_a - 1).unwrap();
+                    let required_bits = akita_params::grind_bits_for_loss(a_row_loss, order)
+                        .expect("A-row target fits the grinding policy");
+                    if run.grind_bits() < required_bits {
+                        let achieved =
+                            field_bits + f64::from(run.grind_bits()) - (a_row_loss as f64).log2();
+                        rows_below.push(format!(
+                            "{} row {row_index} level {level}: d_A={d_a} plan_loss={} plan_g={} \
+                             a_row_loss={a_row_loss} required_g={required_bits} \
+                             achieved_per_query_bits={achieved:.3}",
+                            Cfg::schedule_family_name(),
+                            run.loss_factor(),
+                            run.grind_bits(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        let mut rows_below = Vec::new();
+        let mut rows_total = 0usize;
+        audit::<fp128::Dense>(&mut rows_below, &mut rows_total);
+        audit::<fp128::DenseBounded>(&mut rows_below, &mut rows_total);
+        audit::<fp128::DenseMultiChunk>(&mut rows_below, &mut rows_total);
+        audit::<fp128::OneHot>(&mut rows_below, &mut rows_total);
+        audit::<fp128::OneHotMultiChunk>(&mut rows_below, &mut rows_total);
+        audit::<fp128::OneHotMultiChunkW2R2>(&mut rows_below, &mut rows_total);
+        audit::<fp128::OneHotMultiChunkW4R2>(&mut rows_below, &mut rows_total);
+        audit::<fp64::Dense>(&mut rows_below, &mut rows_total);
+        audit::<fp64::OneHot>(&mut rows_below, &mut rows_total);
+        audit::<fp32::Dense>(&mut rows_below, &mut rows_total);
+        audit::<fp32::OneHot>(&mut rows_below, &mut rows_total);
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHot>>(&mut rows_below, &mut rows_total);
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>(
+            &mut rows_below,
+            &mut rows_total,
+        );
+        for line in &rows_below {
+            println!("{line}");
+        }
+        println!(
+            "RingSwitchAlpha sites: {rows_total}; below the 2*d_A-1 A-row target: {}",
+            rows_below.len()
+        );
+        assert!(
+            !rows_below.is_empty(),
+            "every RingSwitchAlpha site prices the native A-row identity"
+        );
+    }
 }
