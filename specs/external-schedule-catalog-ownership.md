@@ -443,6 +443,25 @@ Serde, bincode, postcard, or a Jolt-specific blob may frame that tuple. Such
 framing is not Akita proof serialization and MUST NOT be pulled into the core
 proof type merely to simplify one integration.
 
+### Selected-row verifier views
+
+A verifier that checks proofs against a few rows can load a view instead of the
+JSON catalog. `ValidatedScheduleCatalog::to_verifier_view` emits a canonical
+postcard encoding of the magic, protocol epoch, policy digest, family name, the
+complete ordered row-digest list, and the schedules of the selected rows.
+`from_verifier_view` bounds the bytes (the identity list plus one row's budget)
+before decoding, requires a strictly increasing identity list, audits each
+carried row exactly as the JSON loader does, requires each carried row's
+recomputed digest to be in the list, recomputes the catalog digest from the
+list, and rejects any encoding that does not re-encode to the same bytes.
+
+A view is as trusted as its bytes. It reproduces the full catalog's digest, but
+it does not authenticate the omitted identities: an application that needs the
+full catalog's identity must pin the view bytes or bind the catalog digest into
+its own statement, as Jolt's transcript does. A view never sizes a setup and
+never re-exports as a JSON catalog; `validate_complete` rejects it where a
+complete catalog is required.
+
 ### Deferred authenticated recursion layer
 
 Supplying a complete full catalog as untrusted guest input does not establish
