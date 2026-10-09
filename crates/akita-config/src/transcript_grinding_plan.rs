@@ -136,6 +136,60 @@ mod tests {
         }
     }
 
+    /// The verifier reads exactly these degrees from the wire, so the plan must
+    /// price every Stage 2, Stage 3, and EOR round at the same constants.
+    #[test]
+    fn sumcheck_round_losses_use_the_wire_degree_constants() {
+        use crate::proof_optimized::{fp32, fp64};
+        use akita_params::{
+            SumcheckProtocol, EXTENSION_OPENING_REDUCTION_DEGREE, SETUP_SUMCHECK_DEGREE,
+            STAGE2_SUMCHECK_DEGREE,
+        };
+
+        fn audit<Cfg: CommitmentConfig>(seen: &mut [bool; 3])
+        where
+            Cfg::Field: CanonicalEncoding,
+            Cfg::ExtField: ExtField<Cfg::Field>,
+        {
+            let catalog = crate::test_support::workspace_schedule_catalog::<Cfg>()
+                .expect("workspace schedule catalog");
+            for row in catalog.rows() {
+                let layout = row.profiles().opening_layout().expect("opening layout");
+                let plan = derive_transcript_grinding_plan::<Cfg>(row.schedule(), &layout)
+                    .expect("grinding plan");
+                for run in plan.runs() {
+                    let GrindingSite::SumcheckRound { protocol, .. } = run.site() else {
+                        continue;
+                    };
+                    let (slot, degree) = match protocol {
+                        SumcheckProtocol::Stage2 => (0, STAGE2_SUMCHECK_DEGREE),
+                        SumcheckProtocol::Stage3 => (1, SETUP_SUMCHECK_DEGREE),
+                        SumcheckProtocol::ExtensionOpeningReduction => {
+                            (2, EXTENSION_OPENING_REDUCTION_DEGREE)
+                        }
+                        _ => continue,
+                    };
+                    seen[slot] = true;
+                    assert_eq!(
+                        run.loss_factor(),
+                        u64::try_from(degree).unwrap(),
+                        "{protocol:?} round priced away from its wire degree"
+                    );
+                }
+            }
+        }
+
+        let mut seen = [false; 3];
+        audit::<fp128::OneHot>(&mut seen);
+        audit::<fp64::Dense>(&mut seen);
+        audit::<fp32::Dense>(&mut seen);
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHot>>(&mut seen);
+        assert_eq!(
+            seen, [true; 3],
+            "every priced sumcheck protocol is exercised"
+        );
+    }
+
     #[test]
     fn exact_field_orders_price_pseudo_mersenne_deficits() {
         fn check<Cfg: CommitmentConfig>()

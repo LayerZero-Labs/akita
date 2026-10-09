@@ -188,7 +188,7 @@ pub fn nonterminal_level_layout(
         challenge_field_bytes,
         opening_payload_coeffs: lp.opening_payload_geometry()?.transmitted_coefficients(),
         stage1_shape,
-        stage2_sumcheck: akita_sumcheck::SumcheckShape::new(rounds, 3)?,
+        stage2_sumcheck: akita_sumcheck::SumcheckShape::new(rounds, crate::STAGE2_SUMCHECK_DEGREE)?,
         next_outer_payload_coeffs,
         next_witness_evaluations: 1,
     })

@@ -284,7 +284,7 @@ fn append_nonterminal(
         level,
         stage: 0,
         rounds,
-        degree: 3,
+        degree: crate::STAGE2_SUMCHECK_DEGREE,
     })?;
     if let FoldSuccessor::Recursive(successor) = successor {
         if let Some(prefix) = successor.setup_prefix() {
@@ -294,7 +294,7 @@ fn append_nonterminal(
                 level,
                 stage: 0,
                 rounds: prefix.profile.group.num_vars(),
-                degree: 2,
+                degree: crate::SETUP_SUMCHECK_DEGREE,
             })?;
         }
     }
@@ -376,7 +376,7 @@ fn append_eor(
         level,
         stage: 0,
         rounds: layout.max_num_vars() - split_bits,
-        degree: 2,
+        degree: crate::EXTENSION_OPENING_REDUCTION_DEGREE,
     })?;
     Ok(())
 }

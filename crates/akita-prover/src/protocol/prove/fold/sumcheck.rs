@@ -578,7 +578,7 @@ where
     let (sumcheck_challenges, claim) = akita_sumcheck::prove_sumcheck::<F, E, _, _>(
         &mut kernel,
         &mut channel,
-        akita_sumcheck::SumcheckShape::new(num_rounds, 3)?,
+        akita_sumcheck::SumcheckShape::new(num_rounds, akita_params::STAGE2_SUMCHECK_DEGREE)?,
         0,
     )?;
     let final_output =
