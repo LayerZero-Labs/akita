@@ -33,6 +33,8 @@ orchestration lives in `akita-pcs`.
 | `akita-pcs` | Umbrella orchestration, examples, integration tests |
 | `akita-zk-verifier` (`dev`) | Verifier-side zero-knowledge building blocks (#120); no proof path depends on it |
 | `akita-zk-prover` (`dev`) | Prover-side zero-knowledge building blocks (#120); no proof path depends on it |
+| `akita-labinius-verifier` (`dev`) | Seed-derived admitted root setup, lowered root relation, and verification of the root reduction of a binary or prime evaluation claim to evaluation claims on committed tables; no proof path depends on it |
+| `akita-labinius-prover` (`dev`) | Binary source commitment, lowered root witness, root sumcheck kernels, and the root reduction prover with a transparent test oracle; no proof path depends on it |
 
 ## Dependency Layers
 
@@ -56,6 +58,24 @@ graph TD
   Cpu["akita-cpu-backend"]
   Setup["akita-setup"]
   Pcs["akita-pcs"]
+  LabiniusVerifier["akita-labinius-verifier (dev)"]
+  LabiniusProver["akita-labinius-prover (dev)"]
+
+  LabiniusVerifier --> Algebra
+  LabiniusVerifier --> Error
+  LabiniusVerifier --> Sumcheck
+  LabiniusVerifier --> Challenges
+  LabiniusVerifier --> Params
+  LabiniusVerifier --> Types
+  LabiniusVerifier --> Transcript
+  LabiniusVerifier --> Field
+  LabiniusProver --> LabiniusVerifier
+  LabiniusProver --> Algebra
+  LabiniusProver --> Error
+  LabiniusProver --> Sumcheck
+  LabiniusProver --> Challenges
+  LabiniusProver --> Params
+  LabiniusProver --> Field
 
   Algebra --> Error
   Algebra --> Field

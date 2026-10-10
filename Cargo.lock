@@ -99,6 +99,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-labinius-prover"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-challenges",
+ "akita-error",
+ "akita-labinius-verifier",
+ "akita-params",
+ "akita-sumcheck",
+ "akita-transcript",
+ "akita-types",
+ "criterion",
+ "jolt-field",
+ "jolt-poly",
+ "rand 0.8.8",
+ "rayon",
+ "tracing",
+]
+
+[[package]]
+name = "akita-labinius-verifier"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-challenges",
+ "akita-error",
+ "akita-params",
+ "akita-sumcheck",
+ "akita-transcript",
+ "akita-types",
+ "jolt-field",
+ "rayon",
+]
+
+[[package]]
 name = "akita-metal"
 version = "0.1.0"
 dependencies = [

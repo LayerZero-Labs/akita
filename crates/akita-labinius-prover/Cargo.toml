@@ -1,0 +1,82 @@
+[package]
+name = "akita-labinius-prover"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "Apache-2.0 OR MIT"
+description = "Opt-in LaBinius root reduction prover for Akita"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+
+[dependencies]
+akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-error = { version = "0.1.0", path = "../akita-error" }
+akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
+rayon = { version = "1.10", optional = true }
+tracing = "0.1"
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
+akita-labinius-verifier = { version = "0.1.0", path = "../akita-labinius-verifier", default-features = false }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c7c2d08d5bb0c7c80501f29f723e595af7fcff3c", default-features = false, features = [
+  "asm",
+  "solinas",
+] }
+
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "c7c2d08d5bb0c7c80501f29f723e595af7fcff3c", default-features = false }
+
+[dev-dependencies]
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+criterion = { version = "0.8", features = ["html_reports"] }
+rand = "0.8"
+
+[[bench]]
+name = "limb_commit_kernel"
+harness = false
+required-features = ["labinius"]
+
+[[bench]]
+name = "fold_kernel"
+harness = false
+required-features = ["labinius"]
+
+[[bench]]
+name = "response_weights"
+harness = false
+required-features = ["labinius"]
+
+[[bench]]
+name = "combined_kernel"
+harness = false
+required-features = ["labinius"]
+
+[features]
+default = ["transcript-blake2b"]
+parallel = [
+  "dep:rayon",
+  "akita-algebra/parallel",
+  "akita-labinius-verifier/parallel",
+  "jolt-field/parallel",
+]
+labinius = [
+  "akita-algebra/labinius-binary",
+  "akita-algebra/labinius-trinomial",
+  "akita-challenges/labinius-challenges",
+  "akita-params/labinius-sis",
+  "akita-labinius-verifier/labinius",
+]
+transcript-blake2b = [
+  "akita-sumcheck/transcript-blake2b",
+  "akita-challenges/transcript-blake2b",
+  "akita-params/transcript-blake2b",
+  "akita-labinius-verifier/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-sumcheck/transcript-keccak",
+  "akita-challenges/transcript-keccak",
+  "akita-params/transcript-keccak",
+  "akita-labinius-verifier/transcript-keccak",
+]
+
+[lints]
+workspace = true
