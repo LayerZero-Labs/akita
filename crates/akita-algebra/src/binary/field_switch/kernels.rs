@@ -3,10 +3,15 @@
 use std::sync::OnceLock;
 
 use akita_error::AkitaError;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use super::{SwitchField, F};
 
 const TILE: usize = 64;
+// Whole tiles preserve the backend preconditions for all full chunks.
+#[cfg(feature = "parallel")]
+pub(super) const PARALLEL_CHUNK: usize = 16_384;
 
 #[derive(Clone, Copy)]
 enum PartialBackend {
@@ -80,6 +85,22 @@ pub(super) fn partials<H: SwitchField>(
     weights: &[H],
 ) -> Result<Vec<H::Source>, AkitaError> {
     debug_assert_eq!(source.len(), weights.len());
+    #[cfg(feature = "parallel")]
+    if source.len() > PARALLEL_CHUNK {
+        return source
+            .par_chunks(PARALLEL_CHUNK)
+            .zip(weights.par_chunks(PARALLEL_CHUNK))
+            .map(|(source, weights)| partials::<H>(source, weights))
+            .try_reduce(
+                || vec![H::Source::default(); 1 << H::BATCH_BITS],
+                |mut sum, terms| {
+                    for (sum, term) in sum.iter_mut().zip(terms) {
+                        *sum ^= term;
+                    }
+                    Ok(sum)
+                },
+            );
+    }
     if source.len() >= TILE && source.len().is_multiple_of(TILE) {
         let bits: Option<[u128; 192]> = match selected().partials {
             PartialBackend::Portable => None,
@@ -132,6 +153,18 @@ pub(super) fn coefficients<H: SwitchField>(
     output: [&mut [u64]; 3],
 ) {
     debug_assert!(output.iter().all(|words| words.len() == weights.len()));
+    #[cfg(feature = "parallel")]
+    if weights.len() > PARALLEL_CHUNK {
+        let [low, high, top] = output;
+        low.par_chunks_mut(PARALLEL_CHUNK)
+            .zip(high.par_chunks_mut(PARALLEL_CHUNK))
+            .zip(top.par_chunks_mut(PARALLEL_CHUNK))
+            .zip(weights.par_chunks(PARALLEL_CHUNK))
+            .for_each(|(((low, high), top), weights)| {
+                coefficients::<H>(weights, rows, [low, high, top]);
+            });
+        return;
+    }
     if weights.len() >= TILE && weights.len().is_multiple_of(TILE) {
         match selected().coefficients {
             CoefficientBackend::Portable => {}

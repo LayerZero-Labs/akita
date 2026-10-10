@@ -1,4 +1,4 @@
-use super::{portable_fold_in_place, portable_round_product, PackedBinary162};
+use super::{portable_fold_in_place, portable_round_product, LimbView, PackedBinary162};
 use crate::binary::{tests::oracle, BinaryField162 as F};
 
 fn sample_values(len: usize, mut state: u64) -> Vec<F> {
@@ -113,12 +113,14 @@ fn packed_round_coefficients_and_hardware_match_oracle() {
     for len in [2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 33, 63, 64, 65] {
         let packed_lhs = PackedBinary162::from_scalars(&lhs[..len]);
         let packed_rhs = PackedBinary162::from_scalars(&rhs[..len]);
+        let lhs_view = LimbView::new(packed_lhs.words.each_ref().map(|words| words.as_slice()));
+        let rhs_view = LimbView::new(packed_rhs.words.each_ref().map(|words| words.as_slice()));
         let claim = oracle_claim(&lhs[..len], &rhs[..len]);
         let expected = oracle_round(&lhs[..len], &rhs[..len]);
         assert_eq!(expected[1] + expected[2], claim);
         assert_eq!(packed_lhs.round_product(&packed_rhs, claim), Some(expected));
         assert_eq!(
-            portable_round_product(&packed_lhs, &packed_rhs, claim),
+            portable_round_product(&lhs_view, &rhs_view, claim),
             expected
         );
 
@@ -126,35 +128,57 @@ fn packed_round_coefficients_and_hardware_match_oracle() {
         if std::arch::is_aarch64_feature_detected!("aes")
             && std::arch::is_aarch64_feature_detected!("pmull")
         {
-            // SAFETY: the feature checks establish PMULL support.
+            // SAFETY: features establish PMULL; LimbView::new checks equal
+            // limbs, and both views were packed from the same-length slices.
             assert_eq!(
-                unsafe { super::arm::round_product(&packed_lhs, &packed_rhs, claim) },
+                unsafe { super::arm::round_product(&lhs_view, &rhs_view, claim) },
                 expected
             );
         }
         #[cfg(target_arch = "x86_64")]
         if std::arch::is_x86_feature_detected!("pclmulqdq") {
-            // SAFETY: the feature check establishes PCLMUL support.
+            // SAFETY: features establish PCLMUL; LimbView::new checks equal
+            // limbs, and both views were packed from the same-length slices.
             assert_eq!(
-                unsafe { super::x86::round_product(&packed_lhs, &packed_rhs, claim) },
+                unsafe { super::x86::round_product(&lhs_view, &rhs_view, claim) },
                 expected
             );
+            let r = lhs[len / 2];
+            let mut folded = packed_lhs.clone();
+            // SAFETY: PCLMUL was detected; LimbView::new checks equal limb
+            // lengths, and fold_with bounds every access by that length.
+            unsafe {
+                super::x86::fold_in_place(
+                    &mut LimbView::new(folded.words.each_mut().map(|words| words.as_mut_slice())),
+                    r,
+                )
+            };
+            folded.truncate(len.div_ceil(2));
+            assert_eq!(folded.to_scalars(), oracle_fold(&lhs[..len], r));
         }
         #[cfg(target_arch = "x86_64")]
         if std::arch::is_x86_feature_detected!("pclmulqdq")
             && std::arch::is_x86_feature_detected!("avx2")
             && std::arch::is_x86_feature_detected!("vpclmulqdq")
         {
-            // SAFETY: the feature checks establish every vector requirement.
+            // SAFETY: features establish every vector requirement; LimbView::new
+            // checks equal limbs, and both operands have length len.
             assert_eq!(
-                unsafe { super::x86::round_product_vec2(&packed_lhs, &packed_rhs, claim) },
+                unsafe { super::x86::round_product_vec2(&lhs_view, &rhs_view, claim) },
                 expected
             );
             let r = lhs[len / 2];
             let expected_fold = oracle_fold(&lhs[..len], r);
             let mut folded = packed_lhs.clone();
-            // SAFETY: the feature checks establish every vector requirement.
-            unsafe { super::x86::fold_in_place_vec2(&mut folded, r) };
+            // SAFETY: features establish every vector requirement; LimbView::new
+            // checks equal limbs, and both operands have length len.
+            unsafe {
+                super::x86::fold_in_place_vec2(
+                    &mut LimbView::new(folded.words.each_mut().map(|words| words.as_mut_slice())),
+                    r,
+                )
+            };
+            folded.truncate(len.div_ceil(2));
             assert_eq!(folded.to_scalars(), expected_fold);
         }
     }
@@ -185,7 +209,16 @@ fn packed_full_round_sequence_matches_scalar_oracle() {
             claim = expected[0] + oracle(expected[1], r) + oracle(expected[2], r_squared);
 
             let mut portable_lhs = packed_lhs.clone();
-            portable_fold_in_place(&mut portable_lhs, r);
+            portable_fold_in_place(
+                &mut LimbView::new(
+                    portable_lhs
+                        .words
+                        .each_mut()
+                        .map(|words| words.as_mut_slice()),
+                ),
+                r,
+            );
+            portable_lhs.truncate(lhs.len().div_ceil(2));
             lhs = oracle_fold(&lhs, r);
             rhs = oracle_fold(&rhs, r);
             packed_lhs.fold_in_place(r);

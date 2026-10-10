@@ -1,6 +1,6 @@
 //! Four-lane AVX-512/VPCLMUL kernels over the same adjacent-pair packed layout.
 
-use super::{x86::product_words, PackedBinary162};
+use super::{x86::product_words, LimbView};
 use crate::binary::{product, BinaryField162 as F};
 use std::arch::x86_64::*;
 
@@ -20,11 +20,12 @@ unsafe fn product_vectors(a: [__m512i; 3], b: [__m512i; 3]) -> [__m512i; 6] {
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-unsafe fn load_eight(values: &PackedBinary162, index: usize) -> [__m512i; 3] {
+unsafe fn load_eight<T: AsRef<[u64]>>(values: &LimbView<T>, index: usize) -> [__m512i; 3] {
     std::array::from_fn(|word| {
         // SAFETY: callers establish that eight elements beginning at `index`
-        // exist, and unaligned loads accept the Vec allocation's alignment.
-        unsafe { _mm512_loadu_si512(values.words[word].as_ptr().add(index).cast()) }
+        // exist in every limb: LimbView::new checks equal lengths. Offsets
+        // index..index + 8 stay within that length; loads are unaligned.
+        unsafe { _mm512_loadu_si512(values.words[word].as_ref().as_ptr().add(index).cast()) }
     })
 }
 
@@ -124,15 +125,17 @@ fn xor_words(sum: &mut [u64; 6], terms: [u64; 6]) {
 
 #[target_feature(enable = "avx512f,avx512bw,pclmulqdq,vpclmulqdq")]
 pub(super) unsafe fn round_product_vec4(
-    lhs: &PackedBinary162,
-    rhs: &PackedBinary162,
+    lhs: &LimbView<&[u64]>,
+    rhs: &LimbView<&[u64]>,
     current_claim: F,
 ) -> [F; 3] {
     let zero = _mm512_setzero_si512();
     let mut sums = [[zero; 6]; 2];
     let mut index = 0;
     while index + 7 < lhs.len() {
-        // SAFETY: the loop condition establishes eight available elements.
+        // SAFETY: LimbView::new checks equal limb lengths; the round caller
+        // checks matching table lengths. The loop bounds index..index + 8
+        // within both views; this function enables all required features.
         unsafe {
             let a = load_eight(lhs, index);
             let b = load_eight(rhs, index);
@@ -166,9 +169,8 @@ pub(super) unsafe fn round_product_vec4(
 }
 
 #[target_feature(enable = "avx512f,avx512bw,pclmulqdq,vpclmulqdq")]
-pub(super) unsafe fn fold_in_place_vec4(values: &mut PackedBinary162, r: F) {
+pub(super) unsafe fn fold_in_place_vec4(values: &mut LimbView<&mut [u64]>, r: F) {
     let old_len = values.len();
-    let new_len = old_len.div_ceil(2);
     let scalar_r = r;
     let r = r.to_words().map(|word| {
         _mm512_set_epi64(
@@ -184,7 +186,11 @@ pub(super) unsafe fn fold_in_place_vec4(values: &mut PackedBinary162, r: F) {
     });
     let mut input = 0;
     while input + 7 < old_len {
-        // SAFETY: the loop condition establishes eight available elements.
+        // SAFETY: LimbView::new checks equal limb lengths. The loop bounds
+        // input..input + 8 within every limb. All inputs are loaded before
+        // stores; output = input/2 and output + 4 <= input + 8 <= old_len,
+        // so stores stay in bounds and cannot overwrite unread input.
+        // This function enables all required features.
         unsafe {
             let loaded = load_eight(values, input);
             let even = loaded.map(|v| low_words(v));
@@ -215,5 +221,4 @@ pub(super) unsafe fn fold_in_place_vec4(values: &mut PackedBinary162, r: F) {
         );
         input += 2;
     }
-    values.truncate(new_len);
 }

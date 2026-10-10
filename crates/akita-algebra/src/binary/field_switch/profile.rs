@@ -13,10 +13,18 @@ mod sealed {
 /// Sealed to F128/F128 and F64/F192. This is a coordinate contract for the
 /// switch, not an implementation of the odd-characteristic field interface.
 pub trait SwitchField:
-    sealed::Sealed + Copy + Default + Eq + Add<Output = Self> + AddAssign + Mul<Output = Self>
+    sealed::Sealed
+    + Copy
+    + Default
+    + Eq
+    + Send
+    + Sync
+    + Add<Output = Self>
+    + AddAssign
+    + Mul<Output = Self>
 {
     /// Source coefficients: polynomial bits in `u128` (F128) or `u64` (F64).
-    type Source: Copy + Default + Eq + BitXorAssign + Into<u128> + TryFrom<u128>;
+    type Source: Copy + Default + Eq + Send + Sync + BitXorAssign + Into<u128> + TryFrom<u128>;
     /// Number of live binary basis coordinates.
     const ROWS: usize;
     /// Number of F162 batching coordinates, including canonical row padding.
