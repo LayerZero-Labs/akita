@@ -18,7 +18,10 @@ pub use chain::CompressionChainPlan;
 pub const MAX_COMPRESSION_INPUT_BYTES: usize = 8 * 1024;
 
 /// Exact terminal payload target for the current compression ladder.
-pub const COMPRESSION_TARGET_BYTES: usize = 128;
+///
+/// A rank-one map can stay below the 169-bit SIS gate only at twice the ring
+/// dimension the retired 128-bit ladder used, so its terminal image doubles.
+pub const COMPRESSION_TARGET_BYTES: usize = 256;
 
 /// Exact number of maps in every compression chain.
 pub const COMPRESSION_MAP_COUNT: usize = 2;
@@ -38,7 +41,7 @@ pub const COMPRESSION_MAP_COUNT: usize = 2;
     serde::Deserialize,
 )]
 pub enum CommitmentPayloadMode {
-    /// Prove the two-map compression relation and transmit its 128-byte terminal payload.
+    /// Prove the two-map compression relation and transmit its 256-byte terminal payload.
     #[default]
     Compressed,
     /// Omit compression witnesses/rows and transmit the native B/D image.
@@ -188,23 +191,24 @@ impl CommitmentPayloadGeometry {
 /// Stable identity of the commitment-compression protocol.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CompressionPolicyId {
-    /// Two-map exact monotone cutover with a minimum two-fold compressed prefix.
+    /// Two-map exact monotone cutover with a minimum two-fold compressed prefix
+    /// and a 256-byte terminal image.
     #[default]
-    NegativeBinaryTwoMapExactMonotoneCutover8KiBV3,
+    NegativeBinaryTwoMapExactMonotoneCutover8KiBV4,
 }
 
 impl CompressionPolicyId {
     /// Stable descriptor tag for this policy.
     pub const fn tag(self) -> u8 {
         match self {
-            Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV3 => 3,
+            Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV4 => 4,
         }
     }
 
     /// Parse the stable descriptor tag.
     pub const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
-            3 => Some(Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV3),
+            4 => Some(Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV4),
             _ => None,
         }
     }
@@ -212,8 +216,8 @@ impl CompressionPolicyId {
     /// Descriptive policy name used in reports and generated metadata.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV3 => {
-                "NegativeBinaryTwoMapExactMonotoneCutover8KiBV3"
+            Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV4 => {
+                "NegativeBinaryTwoMapExactMonotoneCutover8KiBV4"
             }
         }
     }
@@ -221,19 +225,19 @@ impl CompressionPolicyId {
 
 /// The only compression policy supported by this protocol epoch.
 pub const COMPRESSION_POLICY: CompressionPolicyId =
-    CompressionPolicyId::NegativeBinaryTwoMapExactMonotoneCutover8KiBV3;
+    CompressionPolicyId::NegativeBinaryTwoMapExactMonotoneCutover8KiBV4;
 
 /// The two compression-only ring dimensions for one modulus profile.
 ///
 /// These dimensions are not A/B/D commitment-matrix dimensions. In
-/// particular, the q128 ladder deliberately uses D=16 and D=8 while every
+/// particular, the q128 ladder deliberately uses D=32 and D=16 while every
 /// commitment matrix is admitted only at D>=64.
 #[must_use]
 pub const fn compression_ring_dimensions(profile: SisModulusProfileId) -> [usize; 2] {
     match profile {
-        SisModulusProfileId::Q128OffsetA7F7 => [16, 8],
-        SisModulusProfileId::Q64Offset59 => [32, 16],
-        SisModulusProfileId::Q32Offset99 => [64, 32],
+        SisModulusProfileId::Q128OffsetA7F7 => [32, 16],
+        SisModulusProfileId::Q64Offset59 => [64, 32],
+        SisModulusProfileId::Q32Offset99 => [128, 64],
     }
 }
 
@@ -676,19 +680,19 @@ mod tests {
 
     #[test]
     fn packed_length_padding_and_typed_dimension_are_checked() {
-        let map = CompressionMapPlan::new(SisModulusProfileId::Q32Offset99, 1, 32, 1).unwrap();
+        let map = CompressionMapPlan::new(SisModulusProfileId::Q32Offset99, 1, 64, 1).unwrap();
         assert!(PackedNegativeBinary::from_bytes(map, vec![]).is_err());
         assert!(PackedNegativeBinary::from_bytes(map, vec![0; 5]).is_err());
         let packed = PackedNegativeBinary::from_bytes(map, vec![0; 4]).unwrap();
-        assert!(packed.expand_rows::<64>().is_err());
+        assert!(packed.expand_rows::<128>().is_err());
     }
 
     #[test]
     fn ladder_geometry_and_complete_image_bound_are_checked() {
         for (profile, field_bytes, dimensions) in [
-            (SisModulusProfileId::Q128OffsetA7F7, 16, [16, 8]),
-            (SisModulusProfileId::Q64Offset59, 8, [32, 16]),
-            (SisModulusProfileId::Q32Offset99, 4, [64, 32]),
+            (SisModulusProfileId::Q128OffsetA7F7, 16, [32, 16]),
+            (SisModulusProfileId::Q64Offset59, 8, [64, 32]),
+            (SisModulusProfileId::Q32Offset99, 4, [128, 64]),
         ] {
             let plan = CompressionChainPlan::for_complete_source(
                 profile,
@@ -718,7 +722,10 @@ mod tests {
             );
             assert_eq!(plan.policy(), COMPRESSION_POLICY);
             assert_eq!(plan.source_bytes(), MAX_COMPRESSION_INPUT_BYTES);
-            assert_eq!(plan.terminal_coefficients() * field_bytes, 128);
+            assert_eq!(
+                plan.terminal_coefficients() * field_bytes,
+                COMPRESSION_TARGET_BYTES
+            );
             assert_eq!(
                 plan,
                 CompressionChainPlan::new(
@@ -755,8 +762,8 @@ mod tests {
             CommitmentPayloadGeometry::for_mode(CommitmentPayloadMode::Compressed, profile, 4, 16)
                 .unwrap();
         assert_eq!(compressed.source_coefficients(), 64);
-        assert_eq!(compressed.transmitted_coefficients(), 8);
-        assert_eq!(compressed.transcript_ring_dimension(), 8);
+        assert_eq!(compressed.transmitted_coefficients(), 16);
+        assert_eq!(compressed.transcript_ring_dimension(), 16);
 
         let raw = CommitmentPayloadGeometry::for_mode(CommitmentPayloadMode::Raw, profile, 4, 16)
             .unwrap();
@@ -773,8 +780,8 @@ mod tests {
         let profile = SisModulusProfileId::Q128OffsetA7F7;
         assert!(CompressionMapPlan::new(profile, 0, 16, 1).is_err());
         assert!(CompressionMapPlan::new(profile, 64, 16, 2).is_err());
-        assert!(CompressionMapPlan::new(profile, 10_000, 8, 1).is_err());
-        assert!(CompressionMapPlan::new(profile, 64, 32, 1).is_err());
+        assert!(CompressionMapPlan::new(profile, 10_000, 16, 1).is_err());
+        assert!(CompressionMapPlan::new(profile, 64, 64, 1).is_err());
 
         let plan = CompressionChainPlan::for_complete_source(profile, 64).unwrap();
         let wrong_continuation =

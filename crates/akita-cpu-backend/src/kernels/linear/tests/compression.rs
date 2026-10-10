@@ -69,12 +69,12 @@ fn schoolbook_cyclic_digit_product<F: Field + Ring, const D: usize>(
 
 #[test]
 fn compression_batch_matches_schoolbook_across_the_rank_one_ladders() {
-    assert_compression_batch::<Prime128OffsetA7F7, 8>();
     assert_compression_batch::<Prime128OffsetA7F7, 16>();
-    assert_compression_batch::<Prime64Offset59, 16>();
+    assert_compression_batch::<Prime128OffsetA7F7, 32>();
     assert_compression_batch::<Prime64Offset59, 32>();
-    assert_compression_batch::<Prime32Offset99, 32>();
+    assert_compression_batch::<Prime64Offset59, 64>();
     assert_compression_batch::<Prime32Offset99, 64>();
+    assert_compression_batch::<Prime32Offset99, 128>();
 }
 
 #[test]

@@ -377,21 +377,21 @@ macro_rules! __protocol_dispatch_policy {
                 outer: [64, 128, 256]
                 opening: [64, 128, 256]
                 ntt: [16, 32, 64, 128, 256, 512, 1024]
-                compression: [8, 16]
+                compression: [16, 32]
             }
             Fp64: {
                 inner: [64, 128, 256, 512, 1024, 2048]
                 outer: [64, 128, 256]
                 opening: [64, 128, 256]
                 ntt: [32, 64, 128, 256, 512, 1024, 2048]
-                compression: [16, 32]
+                compression: [32, 64]
             }
             Fp32: {
                 inner: [64, 128, 256, 512, 1024, 2048]
                 outer: [64, 128, 256]
                 opening: [64, 128, 256]
                 ntt: [64, 128, 256, 512, 1024, 2048]
-                compression: [32, 64]
+                compression: [64, 128]
             }
         }
     };

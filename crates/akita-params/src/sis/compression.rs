@@ -22,12 +22,12 @@ pub struct CompressionSisCell {
 
 /// Six rank-one cells: `(profile, ring_dimension, sis_max_width)`.
 const COMPRESSION_SIS_CELLS: &[(SisModulusProfileId, u32, u64)] = &[
-    (SisModulusProfileId::Q128OffsetA7F7, 8, 508),
-    (SisModulusProfileId::Q128OffsetA7F7, 16, 7_077),
-    (SisModulusProfileId::Q64Offset59, 16, 254),
-    (SisModulusProfileId::Q64Offset59, 32, 3_538),
-    (SisModulusProfileId::Q32Offset99, 32, 127),
-    (SisModulusProfileId::Q32Offset99, 64, 1_769),
+    (SisModulusProfileId::Q128OffsetA7F7, 16, 2_400),
+    (SisModulusProfileId::Q128OffsetA7F7, 32, 60_460),
+    (SisModulusProfileId::Q64Offset59, 32, 1_200),
+    (SisModulusProfileId::Q64Offset59, 64, 30_230),
+    (SisModulusProfileId::Q32Offset99, 64, 600),
+    (SisModulusProfileId::Q32Offset99, 128, 15_115),
 ];
 
 /// Enumerate the exact production compression coverage cells.
@@ -97,23 +97,23 @@ mod tests {
         }
 
         assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 64, 1).is_none());
-        assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 32, 1).is_none());
-        assert!(compression_sis_cell(SisModulusProfileId::Q64Offset59, 8, 1).is_none());
-        assert!(compression_sis_cell(SisModulusProfileId::Q64Offset59, 64, 1).is_none());
-        assert!(compression_sis_cell(SisModulusProfileId::Q32Offset99, 16, 1).is_none());
-        assert!(compression_sis_cell(SisModulusProfileId::Q32Offset99, 128, 1).is_none());
-        assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 8, 2).is_none());
+        assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 8, 1).is_none());
+        assert!(compression_sis_cell(SisModulusProfileId::Q64Offset59, 16, 1).is_none());
+        assert!(compression_sis_cell(SisModulusProfileId::Q64Offset59, 128, 1).is_none());
+        assert!(compression_sis_cell(SisModulusProfileId::Q32Offset99, 32, 1).is_none());
+        assert!(compression_sis_cell(SisModulusProfileId::Q32Offset99, 256, 1).is_none());
+        assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 16, 2).is_none());
         assert_eq!(
-            compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 16, 1)
+            compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 32, 1)
                 .expect("first q128 map")
                 .sis_max_width,
-            7_077
+            60_460
         );
         assert_eq!(
-            compression_sis_cell(SisModulusProfileId::Q32Offset99, 32, 1)
+            compression_sis_cell(SisModulusProfileId::Q32Offset99, 64, 1)
                 .expect("terminal q32 map")
                 .sis_max_width,
-            127
+            600
         );
     }
 
