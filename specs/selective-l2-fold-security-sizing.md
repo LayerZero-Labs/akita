@@ -1063,7 +1063,8 @@ public row digest selects the exact expanded schedule for verification.
 
 ## Euclidean SIS table
 
-The L2 route uses a separate 128-bit quantum ADPS16 table. It does not reuse the
+The L2 route uses a separate quantum ADPS16 table at the production SIS
+policy target, now 169 bits ([`sis-nist-level3-policy`](sis-nist-level3-policy.md)). It does not reuse the
 coefficient Linf table and does not use the retired BDGL16 Euclidean profile.
 
 The table domain is:
@@ -1075,7 +1076,7 @@ collision keys:   powers of two from 2^1 through 2^84
 ```
 
 For each profile, dimension, rank, and collision bucket, generation records the
-largest secure A width and rejected successor evidence at the 128-bit
+largest secure A width and rejected successor evidence at the policy
 boundary. Generated Rust rows carry a digest. Schedule validation requires the
 current digest.
 

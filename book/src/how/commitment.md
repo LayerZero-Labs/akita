@@ -158,19 +158,20 @@ $\mathbf u$. Two rank-one maps form the compression chain. Each map
 decomposes its input coefficients into digits in $\{-1,0\}$, packs those
 digits into its native ring, and applies its public matrix. The digit weights
 are positive powers of two, interpreted in the base field. The first map
-produces 256 bytes and the second produces the 128-byte payload $p_F$.
+produces 512 bytes and the second produces the 256-byte payload $p_F$.
 The complete source image must fit within 8 KiB.
 
 The ring dimensions are profile-owned:
 
 | Modulus profile | First map | Second map |
 | --- | ---: | ---: |
-| q128 | 16 | 8 |
-| q64 | 32 | 16 |
-| q32 | 64 | 32 |
+| q128 | 32 | 16 |
+| q64 | 64 | 32 |
+| q32 | 128 | 64 |
 
-These smaller rings belong to compression. A, B, and D retain their own
-dimensions, each at least 64. Repacking coefficients between these rings is
+These rings belong to compression. A, B, and D retain their own
+dimensions, each at least 64; the q32 ladder reuses two of those dimensions
+with its own rank-one matrices. Repacking coefficients between these rings is
 a specified coefficient map, so it must not be treated as an arbitrary ring
 homomorphism. The [physical fold relations](./proving/akita-fold-realizations.md)
 explain how the proof checks recomposition and every compression map.

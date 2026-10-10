@@ -29,7 +29,8 @@ policy and the checker use the same live set in
 | [`runtime-ring-cutover`](../../../specs/runtime-ring-cutover.md) | implemented | Normative runtime ring contract cited by the architecture chapter. |
 | [`selective-l2-fold-security-sizing`](../../../specs/selective-l2-fold-security-sizing.md) | implemented | Current security sizing source; deferred alternatives remain recorded. |
 | [`setup-offloading-planner`](../../../specs/setup-offloading-planner.md) | implemented | Current recursive setup selection policy and external artifact contract. |
-| [`sis-quantum128-scalar-n-table`](../../../specs/sis-quantum128-scalar-n-table.md) | implemented | Current 128-bit SIS security policy source. |
+| [`sis-nist-level3-policy`](../../../specs/sis-nist-level3-policy.md) | active | Current 169-bit (NIST category 3) SIS target and compression ladder. |
+| [`sis-quantum128-scalar-n-table`](../../../specs/sis-quantum128-scalar-n-table.md) | implemented | SIS estimator, certificate, and table design; its 128-bit target is superseded. |
 | [`structured-e-term`](../../../specs/structured-e-term.md) | implemented | Current structured verifier E-term contract. |
 | [`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md) | active | Merged implementation still has an unresolved proof blocker. |
 | [`transcript-grinding`](../../../specs/transcript-grinding.md) | implemented | Defines the current proof-of-work and fold-response grinding policy. |

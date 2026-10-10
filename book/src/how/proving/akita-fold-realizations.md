@@ -149,9 +149,9 @@ finish defining the physical rows for compressed payloads.
 In compressed mode, the prover still computes the same semantic commitments,
 but does not transmit $\mathbf u$ or $\mathbf v_D$. Instead, it decomposes each
 one, recommits the resulting blocks through a two-map chain, and sends one
-fixed 128-byte terminal payload for each chain. In the illustrative q128
+fixed 256-byte terminal payload for each chain. In the illustrative q128
 example developed below, this replaces a 1024-byte semantic outer commitment
-by the 128-byte payload $p_F$. The two commitment relations follow parallel
+by the 256-byte payload $p_F$. The two commitment relations follow parallel
 chains:
 
 $$
@@ -233,7 +233,7 @@ commitment matrix maps a short witness to a semantic commitment consisting of
 a vector of ring elements. The raw realization places that complete
 commitment in the proof. The compressed realization instead recommits it using
 rank-one matrices over progressively smaller rings, producing a commitment
-chain whose terminal payload is exactly 128 bytes.
+chain whose terminal payload is exactly 256 bytes.
 
 ### Why recommit?
 
@@ -398,7 +398,9 @@ Module-SIS security bounds.
 
 The current protocol therefore uses a fixed, profile-specific ladder of
 exactly two certified rank-one maps. The ladder accepts a complete source of
-at most 8 KiB and terminates at exactly 128 bytes.
+at most 8 KiB and terminates at exactly 256 bytes. The terminal is 256 rather
+than 128 bytes because of the 169-bit SIS target: a 128-byte terminal would
+need a rank-one map wider than that target admits at its ring dimension.
 
 For the semantic commitment $\mathbf u\in R_{d_B}^{n_B}$, flatten its
 $n_B$ ring coordinates into $n_Bd_B$ field coefficients. Balanced base-$2$
@@ -466,27 +468,27 @@ The production compression dimensions are fixed by the modulus profile:
 
 | Profile | First ring $d_1$ | First image | Terminal ring $d_2$ | Terminal payload |
 |---|---:|---:|---:|---:|
-| q128 | $16$ | 256 bytes | $8$ | 128 bytes |
-| q64 | $32$ | 256 bytes | $16$ | 128 bytes |
-| q32 | $64$ | 256 bytes | $32$ | 128 bytes |
+| q128 | $32$ | 512 bytes | $16$ | 256 bytes |
+| q64 | $64$ | 512 bytes | $32$ | 256 bytes |
+| q32 | $128$ | 512 bytes | $64$ | 256 bytes |
 
 For the q128 example above, the complete chain is
 
 $$
 \underbrace{u\in R_{64}}_{1024\ \text{bytes}}
 \xrightarrow{\text{}}
-\underbrace{\boldsymbol\xi_{F,1}\in R_{16}^{512}}_{\text{base-2 digit blocks}}
+\underbrace{\boldsymbol\xi_{F,1}\in R_{32}^{256}}_{\text{base-2 digit blocks}}
 \overset{\mathbf F_1}{\longrightarrow}
-\underbrace{u^{(1)}\in R_{16}}_{256\ \text{bytes}}
+\underbrace{u^{(1)}\in R_{32}}_{512\ \text{bytes}}
 \xrightarrow{\text{}}
-\underbrace{\boldsymbol\xi_{F,2}\in R_8^{256}}_{\text{base-2 digit blocks}}
+\underbrace{\boldsymbol\xi_{F,2}\in R_{16}^{256}}_{\text{base-2 digit blocks}}
 \overset{\mathbf F_2}{\longrightarrow}
-\underbrace{p_F\in R_8}_{128\ \text{bytes}}.
+\underbrace{p_F\in R_{16}}_{256\ \text{bytes}}.
 $$
 
 The widths count the small-ring elements needed to hold all balanced base-$2$
-digits: $w_1=64\cdot128/16=512$ and
-$w_2=16\cdot128/8=256$.
+digits: $w_1=64\cdot128/32=256$ and
+$w_2=32\cdot128/16=256$.
 
 The schedule's payload mode determines whether these chains are present at a
 particular recursive level, according to the planner-selected transition

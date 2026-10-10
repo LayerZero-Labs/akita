@@ -181,7 +181,7 @@ Their representations depend on the schedule:
 | Opening payload | $p_H$, the end of the D-image compression chain | D image $\mathbf v_D$ |
 | Recursive successor binding | Successor's $p_F$ | Successor's $\mathbf u$ |
 
-Every compressed payload in this table is 128 bytes. Raw payload lengths
+Every compressed payload in this table is 256 bytes. Raw payload lengths
 follow the selected matrix geometry. The successor's payload mode determines
 the outgoing binding, so it need not match the current fold's mode at a
 transition.
