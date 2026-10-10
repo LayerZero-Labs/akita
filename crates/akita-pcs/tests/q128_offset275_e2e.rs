@@ -15,7 +15,8 @@ use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;
 use akita_params::{
     lagrange_weights, BasisMode, CommittedGroupBatchProfile, GroupCommitPhaseParams,
-    PolynomialGroupLayout, ScheduleLookupKey, SisModulusProfileId,
+    InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout, ScheduleLookupKey,
+    SisModulusProfileId,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
@@ -223,24 +224,83 @@ macro_rules! committed_group {
 }
 
 #[test]
-fn commitment_decode_binds_the_profile_to_the_exact_field_modulus() {
+fn commitment_binds_the_profile_to_the_exact_field_modulus() {
     on_large_stack(|| {
         // Tag 3 on the 2^128 - 275 field.
+        let offset275 = committed_group!(Offset275Dense, planned_catalog());
         assert_decode_rejects_profile(
-            &committed_group!(Offset275Dense, planned_catalog()),
+            &offset275,
             SisModulusProfileId::Q128Offset275,
             SisModulusProfileId::Q128OffsetA7F7,
         );
+        assert_check_rejects_profile(&offset275, SisModulusProfileId::Q128OffsetA7F7);
         // Tag 5 on the A7F7 field.
+        let a7f7 = committed_group!(
+            fp128::Dense,
+            akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>().unwrap()
+        );
         assert_decode_rejects_profile(
-            &committed_group!(
-                fp128::Dense,
-                akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>().unwrap()
-            ),
+            &a7f7,
             SisModulusProfileId::Q128OffsetA7F7,
             SisModulusProfileId::Q128Offset275,
         );
+        assert_check_rejects_profile(&a7f7, SisModulusProfileId::Q128Offset275);
     });
+}
+
+/// Rebuilds the inner matrix, the outer matrix, and both matrices of an
+/// in-memory commitment under `other`, and requires `check` and serialization
+/// to reject each result. The rebuilt matrices keep their geometry and their
+/// SIS bounds, because the two profiles share rows.
+fn assert_check_rejects_profile<F>(commitment: &CommittedGroup<F>, other: SisModulusProfileId)
+where
+    F: Field + CanonicalEncoding + Valid + AkitaSerialize,
+{
+    let inner = commitment.profile().inner.matrix;
+    let outer = commitment.profile().outer.matrix;
+    let other_inner = InnerCommitMatrixParams::try_new(
+        inner.security_policy(),
+        inner.sis_table_key().unwrap().table_digest,
+        other,
+        inner.output_rank(),
+        inner.input_width(),
+        inner.coeff_linf_bound().unwrap(),
+        inner.ring_dimension(),
+    )
+    .unwrap();
+    let other_outer = OuterCommitMatrixParams::try_new(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        other,
+        outer.output_rank(),
+        outer.input_width(),
+        outer.coeff_linf_bound(),
+        outer.ring_dimension(),
+    )
+    .unwrap();
+
+    for (swap_inner, swap_outer) in [(true, true), (true, false), (false, true)] {
+        let mut mismatched = commitment.clone();
+        if swap_inner {
+            mismatched.profile.inner.matrix = other_inner;
+        }
+        if swap_outer {
+            mismatched.profile.outer.matrix = other_outer;
+        }
+        for error in [
+            mismatched.check().unwrap_err(),
+            mismatched
+                .serialize_uncompressed(&mut Vec::new())
+                .unwrap_err(),
+        ] {
+            assert!(
+                error
+                    .to_string()
+                    .contains("SIS modulus profile does not match the field"),
+                "{error}"
+            );
+        }
+    }
 }
 
 /// Rewrites the inner tag, the outer tag, and both tags of a serialized
