@@ -238,6 +238,7 @@ where
         fn read_matrix_fields<R: Read>(
             reader: &mut R,
             expected_role: SisMatrixRole,
+            field_modulus: u128,
         ) -> Result<MatrixFields, SerializationError> {
             let modulus_tag =
                 u8::deserialize_with_mode(&mut *reader, Compress::No, Validate::Yes, &())?;
@@ -248,6 +249,13 @@ where
             let modulus_profile = SisModulusProfileId::from_tag(modulus_tag).ok_or_else(|| {
                 SerializationError::InvalidData("unknown SIS modulus-profile tag".into())
             })?;
+            // The frozen-precommit validation below compares bit widths, which
+            // two profiles can share. Bind the exact modulus here.
+            if !modulus_profile.matches_modulus(field_modulus) {
+                return Err(SerializationError::InvalidData(
+                    "committed-group SIS modulus profile does not match the field".into(),
+                ));
+            }
             let policy = SisSecurityPolicyId::from_tag(policy_tag).ok_or_else(|| {
                 SerializationError::InvalidData("unknown SIS security-policy tag".into())
             })?;
@@ -279,6 +287,8 @@ where
             ))
         }
 
+        let field_modulus = akita_params::field_modulus::<F>()
+            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         let version = u8::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
         if version != GroupCommitPhaseParams::VERSION {
             return Err(SerializationError::InvalidData(format!(
@@ -297,7 +307,7 @@ where
             u32::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
         let num_digits_inner = read_usize(&mut reader)?;
         let (a_policy, a_digest, a_modulus, n_a, a_width, a_coeff_linf_bound, inner_ring_dimension) =
-            read_matrix_fields(&mut reader, SisMatrixRole::Inner)?;
+            read_matrix_fields(&mut reader, SisMatrixRole::Inner, field_modulus)?;
         let inner_commit_matrix = InnerCommitMatrixParams::try_new(
             a_policy,
             a_digest,
@@ -319,7 +329,7 @@ where
             u32::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
         let num_digits_outer = read_usize(&mut reader)?;
         let (b_policy, b_digest, b_modulus, n_b, b_width, b_coeff_linf_bound, outer_ring_dimension) =
-            read_matrix_fields(&mut reader, SisMatrixRole::Outer)?;
+            read_matrix_fields(&mut reader, SisMatrixRole::Outer, field_modulus)?;
         let outer_commit_matrix = OuterCommitMatrixParams::try_new(
             b_policy,
             b_digest,

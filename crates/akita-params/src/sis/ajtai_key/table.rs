@@ -151,6 +151,13 @@ pub enum SisModulusProfileId {
     /// Representative q = 2^128 - (2^32 - 22537).
     #[default]
     Q128OffsetA7F7,
+    /// q = 2^128 - 275, the modulus of `jolt_field::Prime128Offset275`.
+    ///
+    /// No preset in this repository selects it. It owns no generated rows:
+    /// [`Self::row_owner`] resolves its lookups to the
+    /// [`Self::Q128OffsetA7F7`] rows. `specs/sis-quantum128-scalar-n-table.md`
+    /// states why the rows are shared and when that is sound.
+    Q128Offset275,
 }
 
 impl SisModulusProfileId {
@@ -160,6 +167,7 @@ impl SisModulusProfileId {
             Self::Q32Offset99 => 4_294_967_197,
             Self::Q64Offset59 => 18_446_744_073_709_551_557,
             Self::Q128OffsetA7F7 => 340_282_366_920_938_463_463_374_607_427_473_266_697,
+            Self::Q128Offset275 => 340_282_366_920_938_463_463_374_607_431_768_211_181,
         }
     }
 
@@ -174,6 +182,11 @@ impl SisModulusProfileId {
             Self::Q32Offset99 => 1,
             Self::Q64Offset59 => 2,
             Self::Q128OffsetA7F7 => 3,
+            // Tag 4 is unassigned and no profile ever used it. It is skipped so
+            // that this tag stays one above the descriptor tag in
+            // `descriptor_bytes::sis_modulus_profile_tag`, which skips the slot
+            // of the retired Q16 profile.
+            Self::Q128Offset275 => 5,
         }
     }
 
@@ -183,6 +196,7 @@ impl SisModulusProfileId {
             1 => Some(Self::Q32Offset99),
             2 => Some(Self::Q64Offset59),
             3 => Some(Self::Q128OffsetA7F7),
+            5 => Some(Self::Q128Offset275),
             _ => None,
         }
     }
@@ -193,12 +207,27 @@ impl SisModulusProfileId {
             Self::Q32Offset99 => "Q32Offset99",
             Self::Q64Offset59 => "Q64Offset59",
             Self::Q128OffsetA7F7 => "Q128OffsetA7F7",
+            Self::Q128Offset275 => "Q128Offset275",
         }
     }
 
     /// Validate an exact field modulus against this profile.
     pub const fn matches_modulus(self, modulus: u128) -> bool {
         self.modulus() == modulus
+    }
+
+    /// Profile whose SIS rows price this profile.
+    ///
+    /// A profile with generated cells owns its rows. A profile without them
+    /// names the profile whose rows it reads. Every lookup into generated or
+    /// hand-audited SIS rows resolves the profile here first, so this match
+    /// is the only place that states which profiles share rows.
+    pub const fn row_owner(self) -> Self {
+        match self {
+            Self::Q32Offset99 => Self::Q32Offset99,
+            Self::Q64Offset59 => Self::Q64Offset59,
+            Self::Q128OffsetA7F7 | Self::Q128Offset275 => Self::Q128OffsetA7F7,
+        }
     }
 }
 
@@ -329,7 +358,7 @@ fn sis_max_widths(
     if table_digest != SisTableDigest::CURRENT {
         return None;
     }
-    generated_sis_max_widths(policy, modulus_profile, d, coeff_linf_bound)
+    generated_sis_max_widths(policy, modulus_profile.row_owner(), d, coeff_linf_bound)
 }
 
 /// Minimum generated SIS-secure module rank that supports `width` ring columns
