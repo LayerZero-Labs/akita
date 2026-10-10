@@ -225,123 +225,6 @@ fn generate(artifact_root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Check the sample mixed-bound row before generating or using prime openings.
-fn probe_three_group<P: FieldFamily>(artifact_root: &Path) -> Result<(), String> {
-    let text = |error: AkitaError| error.to_string();
-    let geometry = *SUPPORTED_GEOMETRIES
-        .iter()
-        .find(|geometry| geometry.log_num_cells == 22)
-        .ok_or("sample geometry is not supported")?;
-    // Probe against the binary catalog even before the prime artifacts exist.
-    let tables = DigitTables::for_geometry::<P>(geometry).map_err(text)?;
-    let directory = artifact_root.join(if akita_params::DEV_PROTOCOL {
-        "schedules-labinius-dev"
-    } else {
-        "schedules-labinius"
-    });
-    let bytes = fs::read(directory.join(format!("{}.aks", P::Digits::schedule_family_name())))
-        .map_err(|error| error.to_string())?;
-    let digits = TrustedScheduleCatalog::<P::Digits>::from_artifact_bytes(&bytes).map_err(text)?;
-    let policy = policy_of::<P::Digits>();
-    let binary_key = tables.response_key(&digits, None).map_err(text)?;
-    let binary_row = digits.resolve_key(&binary_key).map_err(text)?;
-    let binary_bound =
-        akita_schedules::expanded_schedule_proof_bound(&binary_key, binary_row.schedule(), &policy)
-            .map_err(text)?;
-    eprintln!(
-        "{} (22, 8): binary proof bound={binary_bound}",
-        P::Digits::schedule_family_name()
-    );
-    let element_log_len = tables.element_log_len;
-    let element_group = tables.element_key().final_group;
-    let started = Instant::now();
-    let element_schedule = scalar::<P::Elements>(element_group).map_err(text)?;
-    let element_profile =
-        GroupCommitPhaseParams::try_from_params(element_group, &element_schedule.root.params)
-            .map_err(text)?;
-    let elements = ValidatedScheduleCatalog::try_new(
-        P::Elements::schedule_family_name(),
-        vec![(
-            CommittedGroupBatchProfile {
-                final_group: element_profile,
-                precommitteds: Vec::new(),
-            },
-            element_schedule,
-        )],
-        &policy_of::<P::Elements>(),
-        P::Elements::ring_challenge_config,
-    )
-    .map_err(text)?;
-    TrustedScheduleCatalog::<P::Elements>::new(elements).map_err(text)?;
-    eprintln!(
-        "{} nv={element_log_len} scalar planned and admitted in {:.2?}",
-        P::Elements::schedule_family_name(),
-        started.elapsed()
-    );
-    let image_profile = digits
-        .resolve_key(&tables.image_key())
-        .map_err(text)?
-        .profiles()
-        .final_group;
-    let request = GroupedGenerationRequest::new(
-        binary_key.final_group,
-        vec![
-            PrecommittedProducer::try_new(
-                image_profile,
-                P::Digits::committed_source_contract().map_err(text)?,
-            )
-            .map_err(text)?,
-            PrecommittedProducer::try_new(
-                element_profile,
-                P::Elements::committed_source_contract().map_err(text)?,
-            )
-            .map_err(text)?,
-        ],
-    );
-    let started = Instant::now();
-    let planned = akita_planner::find_adapted_schedule(
-        digits
-            .resolve_key(&tables.scalar_response_key())
-            .map_err(text)?,
-        &request,
-        P::Digits::committed_source_contract().map_err(text)?,
-        &policy,
-        P::Digits::ring_challenge_config,
-    )
-    .map_err(text)?;
-    let grouped_catalog = ValidatedScheduleCatalog::try_new(
-        P::Digits::schedule_family_name(),
-        vec![(
-            CommittedGroupBatchProfile {
-                final_group: GroupCommitPhaseParams::try_from_params(
-                    request.key().final_group,
-                    &planned.schedule.root.params,
-                )
-                .map_err(text)?,
-                precommitteds: request.key().precommitteds,
-            },
-            planned.schedule.clone(),
-        )],
-        &policy,
-        P::Digits::ring_challenge_config,
-    )
-    .map_err(text)?;
-    TrustedScheduleCatalog::<P::Digits>::new(grouped_catalog).map_err(text)?;
-    let prime_bound =
-        akita_schedules::expanded_schedule_proof_bound(&request.key(), &planned.schedule, &policy)
-            .map_err(text)?;
-    eprintln!("{} (22, 8): three-group proof bound={prime_bound}, binary bound={binary_bound}, ratio={:.4}, planned in {:.2?}",
-        P::Digits::schedule_family_name(), prime_bound as f64 / binary_bound as f64, started.elapsed());
-    if prime_bound
-        > akita_error::checked::product([2, binary_bound]).ok_or("proof bound overflow")?
-    {
-        return Err(format!(
-            "three-group proof bound {prime_bound} exceeds twice binary bound {binary_bound}"
-        ));
-    }
-    Ok(())
-}
-
 fn check_files(generated: &Path, tracked: &Path) -> Result<(), String> {
     for entry in fs::read_dir(generated).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
@@ -374,14 +257,6 @@ fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
     let tracked = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../artifacts");
     match args.next().as_deref() {
-        Some("--probe-three-group") if args.next().is_none() => {
-            let outcomes = [
-                probe_three_group::<Family64>(&tracked),
-                probe_three_group::<Family128>(&tracked),
-            ];
-            let failures: Vec<_> = outcomes.into_iter().filter_map(Result::err).collect();
-            if failures.is_empty() { Ok(()) } else { Err(failures.join("\n")) }
-        }
         Some("--output-dir") => {
             let destination = args.next().ok_or("--output-dir requires a path")?;
             if args.next().is_some() {
@@ -403,7 +278,7 @@ fn run() -> Result<(), String> {
         }
         None => generate(&tracked),
         _ => Err(
-            "usage: gen_labinius_schedule_artifacts [--output-dir <artifact-root> | --check | --probe-three-group]"
+            "usage: gen_labinius_schedule_artifacts [--output-dir <artifact-root> | --check]"
                 .into(),
         ),
     }
