@@ -26,7 +26,9 @@ shape, made where a proof field enters
 
 `derive_trinomial_matrix::<P>` MUST expand exactly `rows * columns * D` field
 elements with `derive_public_matrix_prefix::<P>`, passing the caller's
-`AkitaSetupSeed` unchanged. No additional domain separation is applied. `P`
+`AkitaSetupSeed` unchanged. No domain separation is applied at this layer; the
+PCS composition separates the seed before the call
+([matrix seed and stream field](#matrix-seed-and-stream-field)). `P`
 names the stream field being reduced; it is a method-level parameter of
 `AdmittedRootSetup::derive` and not part of the setup's type. The products
 MUST be checked before expansion. Coefficient `t` of `A[i,j]` MUST equal the
@@ -45,11 +47,12 @@ The matrix element at `i * columns + j` is the row-major element consumed by
 For an admitted root, the matrix dimensions are `n_A` by `m`; `C` counts source
 columns and does not determine the matrix's column count.
 
-The matrix is one view of a shared public field prefix. A deployment MAY store
-the same prefix once for this view and ordinary Akita matrix views over the
-same stream field and seed. The reduced view has the reduction bias the
-derivation-bias check admits. No independence between views is assumed.
-Expanding a longer prefix MUST preserve every earlier coefficient.
+The matrix is a reduced view of the public field prefix of its seed over `P`.
+The reduced view has the reduction bias the derivation-bias check admits.
+Expanding a longer prefix MUST preserve every earlier coefficient. Given the
+seed and field of an ordinary Akita setup, this derivation returns a reduced
+copy of a prefix of that setup's matrix, and nothing may treat the two as
+independent. The PCS composition never passes such a seed.
 
 This materialized API rejects zero dimensions, zero or odd degree, unsupported
 field descriptors, more than `MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS`
@@ -60,6 +63,35 @@ fallible reservation for the matrix and a flat-prefix allocation probe before
 calling the bounded, infallibly allocating expander. The probe is released
 before expansion; it cannot guarantee success against subsequent global
 allocator exhaustion. Setup failures MUST return `AkitaError::InvalidSetup`.
+
+## Matrix seed and stream field
+
+`akita_labinius_pcs::derive_root_setup` is the derivation of the PCS
+composition, for every proof-field family. Given a geometry and the
+`AkitaSetupSeed` of the nested Akita setup, it MUST compute
+
+```text
+matrix_seed = Blake2b-256(LP(b"akita/labinius/root-matrix-seed/v1") || LP(nested_seed))
+```
+
+with `LP` as defined under [canonical identity](#canonical-identity),
+`nested_seed` in its canonical compressed encoding (the derivation tag byte,
+then the 32 seed bytes) and the digest of `akita_params::digest_descriptor_bytes`.
+It MUST then call `AdmittedRootSetup::derive::<Prime128Offset275>` with a seed
+that has the nested seed's derivation algorithm and `matrix_seed` as its bytes.
+
+The stream field is `2^128 - 275` whichever field the proof uses. A 64-bit
+stream fails the derivation-bias check at every geometry
+([root admission](labinius-root-admission.md#derivation-bias)), so the 64-bit
+family cannot reduce its own field's stream. A fixed stream field also gives
+one matrix, and therefore one clear image, for both families. The label keeps
+the matrix stream apart from the stream that expands the nested setup: with
+the nested seed itself, the 128-bit family's root matrix would be a prefix of
+its nested Akita setup matrix reduced modulo `q`.
+
+The seed bytes of the admitted identity (item 8 below) are `matrix_seed`. The
+nested seed is bound by the nested Akita setup descriptor, which the PCS
+composition absorbs separately.
 
 ## Canonical identity
 

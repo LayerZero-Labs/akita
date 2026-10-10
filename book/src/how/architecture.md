@@ -30,10 +30,12 @@ orchestration lives in `akita-pcs`.
 | `akita-pcs` | Umbrella crate: `AkitaCommitmentScheme`, re-exports, examples, benches, integration tests |
 | `akita-labinius-verifier` (`dev`) | Opt-in LaBinius extension: admitted root setup, lowered root relation, and verification of the root reduction |
 | `akita-labinius-prover` (`dev`) | Opt-in LaBinius extension: binary source commitment, lowered root witness, and the root reduction prover |
+| `akita-labinius-pcs` (`dev`) | Opt-in LaBinius extension: a polynomial commitment for a binary source that discharges the root reduction's claims with a nested Akita proof; ships its own schedule catalogs |
 
 **Dependency graph and ownership rules:** [`docs/crate-graph.md`](../../../docs/crate-graph.md).
 CI enforces one-way boundaries via `scripts/check-crate-deps.sh`.
 The LaBinius prover crate depends on its verifier crate, never the reverse.
+The LaBinius PCS crate depends on both and on `akita-pcs`.
 No Akita proof-path crate depends on this opt-in extension.
 
 Key structural facts:
