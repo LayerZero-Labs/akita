@@ -412,9 +412,9 @@ mod tests {
         );
         assert_eq!(ntt_min_ring_d(ProtocolRingDispatchTierId::Fp128), 16);
         for (field_tier, dimensions) in [
-            (ProtocolRingDispatchTierId::Fp128, [16, 8]),
-            (ProtocolRingDispatchTierId::Fp64, [32, 16]),
-            (ProtocolRingDispatchTierId::Fp32, [64, 32]),
+            (ProtocolRingDispatchTierId::Fp128, [32, 16]),
+            (ProtocolRingDispatchTierId::Fp64, [64, 32]),
+            (ProtocolRingDispatchTierId::Fp32, [128, 64]),
         ] {
             assert!(dimensions
                 .into_iter()

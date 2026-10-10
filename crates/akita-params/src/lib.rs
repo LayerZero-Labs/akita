@@ -27,10 +27,11 @@ pub mod wire_limits;
 pub mod witness;
 pub use commitment_slicing::{CommitmentSliceCount, CommitmentSliceGeometry};
 pub use compression::{
-    compression_ring_dimensions, CommitmentPayloadGeometry, CommitmentPayloadMode,
-    CommitmentPayloadPhase, CompressionChainPlan, CompressionChainWitness, CompressionMapPlan,
-    CompressionPolicyId, CompressionTerminalPayload, PackedNegativeBinary, COMPRESSION_MAP_COUNT,
-    COMPRESSION_POLICY, COMPRESSION_TARGET_BYTES, MAX_COMPRESSION_INPUT_BYTES,
+    compression_ring_dimensions, compression_source_ring_dimension_supported,
+    CommitmentPayloadGeometry, CommitmentPayloadMode, CommitmentPayloadPhase, CompressionChainPlan,
+    CompressionChainWitness, CompressionMapPlan, CompressionPolicyId, CompressionTerminalPayload,
+    PackedNegativeBinary, COMPRESSION_MAP_COUNT, COMPRESSION_POLICY, COMPRESSION_TARGET_BYTES,
+    MAX_COMPRESSION_INPUT_BYTES,
 };
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use descriptor_bytes::{

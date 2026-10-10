@@ -48,6 +48,21 @@ impl CommittedGroupParams {
         if !self.payload_mode.is_compressed() {
             return Ok(true);
         }
+        let outer_profile = self.outer().matrix.sis_modulus_profile();
+        if !crate::compression_source_ring_dimension_supported(
+            outer_profile,
+            self.role_dims().d_b(),
+        ) || !crate::compression_source_ring_dimension_supported(
+            self.open().matrix.sis_modulus_profile(),
+            self.role_dims().d_d(),
+        ) || self.preceding_group_iter().any(|group| {
+            !crate::compression_source_ring_dimension_supported(
+                group.profile.outer.matrix.sis_modulus_profile(),
+                group.profile.outer.matrix.ring_dimension(),
+            )
+        }) {
+            return Ok(false);
+        }
         let final_outer = self.outer_slice_count().complete_source_coefficients(
             self.outer().matrix.output_rank(),
             self.role_dims().d_b(),

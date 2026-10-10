@@ -451,31 +451,28 @@ fn q128_exact_cache_matches_ring_arithmetic_at_all_ifma_dimensions() {
 }
 
 #[test]
-fn protocol_selector_rejects_compression_only_q128_d8_while_compression_prep_succeeds() {
+fn compression_selector_rejects_the_retired_q128_d8_map_and_prepares_the_terminal_d16_map() {
     assert!(matches!(
         select_crt_ntt_params::<Prime128OffsetA7F7, 8>(),
         Err(AkitaError::InvalidSetup(_))
     ));
     assert!(matches!(
         select_compression_crt_ntt_params::<Prime128OffsetA7F7, 8>(),
-        Ok(ProtocolCrtNttParams::Q128(_))
-    ));
-    let flat = flat_zeros::<Prime128OffsetA7F7, 8>(1);
-    let cache = prepare_compression_ntt_cache(flat.ring_view::<8>(1, 1).expect("matrix view"))
-        .expect("compression-only D8 cache");
-    assert!(cache.has_cyclic());
-    let reduced =
-        prepare_reduced_compression_ntt_cache(flat.ring_view::<8>(1, 1).expect("matrix view"))
-            .expect("reduced compression-only D8 cache");
-    assert!(reduced.has_negacyclic());
-    assert!(!reduced.has_cyclic());
-    assert!(matches!(
-        prepare_ntt_cache(
-            flat.ring_view::<8>(1, 1).expect("matrix view"),
-            NttCacheMode::BothTransforms,
-        ),
         Err(AkitaError::InvalidSetup(_))
     ));
+    assert!(matches!(
+        select_compression_crt_ntt_params::<Prime128OffsetA7F7, 16>(),
+        Ok(ProtocolCrtNttParams::Q128(_))
+    ));
+    let flat = flat_zeros::<Prime128OffsetA7F7, 16>(1);
+    let cache = prepare_compression_ntt_cache(flat.ring_view::<16>(1, 1).expect("matrix view"))
+        .expect("terminal D16 compression cache");
+    assert!(cache.has_cyclic());
+    let reduced =
+        prepare_reduced_compression_ntt_cache(flat.ring_view::<16>(1, 1).expect("matrix view"))
+            .expect("reduced terminal D16 compression cache");
+    assert!(reduced.has_negacyclic());
+    assert!(!reduced.has_cyclic());
 }
 
 #[test]

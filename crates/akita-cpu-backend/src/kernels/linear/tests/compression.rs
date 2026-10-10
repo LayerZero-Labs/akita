@@ -80,7 +80,7 @@ fn compression_batch_matches_schoolbook_across_the_rank_one_ladders() {
 #[test]
 fn compression_batch_rejects_mixed_shapes_and_non_binary_digits() {
     type F = Prime128OffsetA7F7;
-    const D: usize = 8;
+    const D: usize = 16;
     let flat = FlatMatrix::from_ring_slice(&[CyclotomicRing::<F, D>::one(); 4]);
     let slot = prepare_compression_ntt_cache(flat.ring_view::<D>(1, 4).expect("matrix"))
         .expect("compression NTT profile");

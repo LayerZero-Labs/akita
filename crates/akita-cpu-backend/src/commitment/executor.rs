@@ -904,7 +904,7 @@ mod tests {
         .unwrap();
         executor.compression.as_mut().unwrap().capabilities =
             CompressionOperationCapabilities::new(
-                StageDimensionCapabilities::new(vec![32, 16]).unwrap(),
+                StageDimensionCapabilities::new(vec![64, 32]).unwrap(),
                 vec![akita_params::RingRelationMode::ReducedEvaluation],
             )
             .unwrap();
@@ -1090,7 +1090,7 @@ mod tests {
                 compression_owner,
                 compression_context,
                 CompressionOperationCapabilities::new(
-                    StageDimensionCapabilities::new(vec![32, 16]).unwrap(),
+                    StageDimensionCapabilities::new(vec![64, 32]).unwrap(),
                     vec![akita_params::RingRelationMode::QuotientLift],
                 )
                 .unwrap(),
@@ -1179,7 +1179,7 @@ mod tests {
                 compression_owner,
                 compression_context,
                 CompressionOperationCapabilities::new(
-                    StageDimensionCapabilities::new(vec![32, 16]).unwrap(),
+                    StageDimensionCapabilities::new(vec![64, 32]).unwrap(),
                     vec![akita_params::RingRelationMode::QuotientLift],
                 )
                 .unwrap(),

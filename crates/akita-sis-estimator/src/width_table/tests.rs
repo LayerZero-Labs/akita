@@ -107,15 +107,15 @@ fn work_results_round_trip_and_bind_the_planned_item() {
         profile: config.profile,
         max_costs: Some(InfinityWidthPolicyCosts {
             adps16_quantum: InfinityWidthCertificate {
-                rop: CostValue::finite_log2(130.123_456_789_012_35),
-                beta: Some(490),
+                rop: CostValue::finite_log2(171.123_456_789_012_35),
+                beta: Some(646),
                 zeta: Some(2),
             },
         }),
         next_costs: Some(InfinityWidthPolicyCosts {
             adps16_quantum: InfinityWidthCertificate {
-                rop: CostValue::finite_log2(127.0),
-                beta: Some(479),
+                rop: CostValue::finite_log2(168.0),
+                beta: Some(634),
                 zeta: Some(3),
             },
         }),
@@ -127,7 +127,8 @@ fn work_results_round_trip_and_bind_the_planned_item() {
     let other = InfinityWidthWorkItem { rank: 2, ..item };
     assert!(decoded.validate_for_work_item(other, &config).is_err());
 
-    let below_target = f64::from_bits(128.0_f64.to_bits() - 1);
+    let target = config.policy.adps16_quantum_constraint().minimum_log2_rop;
+    let below_target = f64::from_bits(target.to_bits() - 1);
     for rop in [
         CostValue::finite_log2(below_target),
         CostValue::ProvenAboveTarget(crate::cost::LogCost::new(below_target)),
@@ -138,7 +139,7 @@ fn work_results_round_trip_and_bind_the_planned_item() {
         assert_eq!(decoded, near_target);
         assert!(!security_met(
             decoded.max_costs.as_ref().unwrap().adps16_quantum.rop,
-            128.0
+            target
         ));
         assert!(decoded.validate_for_work_item(item, &config).is_err());
     }
@@ -232,14 +233,24 @@ fn generation_filters_to_production_and_documented_diagnostic_cells() {
         16,
         1
     ));
+    assert!(!scalar_origin_is_canonical(
+        AkitaModulusProfileId::Q128OffsetA7F7,
+        8,
+        1
+    ));
+    assert!(scalar_origin_is_canonical(
+        AkitaModulusProfileId::Q128OffsetA7F7,
+        64,
+        1
+    ));
     assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q64Offset59,
-        16,
+        128,
         1
     ));
     assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q32Offset99,
-        32,
+        256,
         1
     ));
     assert!(scalar_origin_is_canonical(

@@ -141,27 +141,36 @@ impl CommitmentPayloadGeometry {
         let source_coefficients = source_rows
             .checked_mul(source_ring_dimension)
             .ok_or_else(|| AkitaError::InvalidSetup("commitment payload shape overflow".into()))?;
-        let (transmitted_coefficients, transcript_ring_dimension) =
-            if let Some(plan) = compression_plan {
-                if plan.source_coefficients() != source_coefficients {
-                    return Err(AkitaError::InvalidSetup(
-                        "commitment payload source disagrees with compression plan".into(),
+        let (transmitted_coefficients, transcript_ring_dimension) = if let Some(plan) =
+            compression_plan
+        {
+            if plan.source_coefficients() != source_coefficients {
+                return Err(AkitaError::InvalidSetup(
+                    "commitment payload source disagrees with compression plan".into(),
+                ));
+            }
+            if !compression_source_ring_dimension_supported(
+                plan.modulus_profile(),
+                source_ring_dimension,
+            ) {
+                return Err(AkitaError::InvalidSetup(
+                        "commitment payload ring dimension is not a multiple of the first compression map dimension".into(),
                     ));
-                }
-                (
-                    plan.terminal_coefficients(),
-                    plan.maps()
-                        .last()
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "commitment compression plan has no terminal map".into(),
-                            )
-                        })?
-                        .ring_dimension(),
-                )
-            } else {
-                (source_coefficients, source_ring_dimension)
-            };
+            }
+            (
+                plan.terminal_coefficients(),
+                plan.maps()
+                    .last()
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "commitment compression plan has no terminal map".into(),
+                        )
+                    })?
+                    .ring_dimension(),
+            )
+        } else {
+            (source_coefficients, source_ring_dimension)
+        };
         Ok(Self {
             source_coefficients,
             transmitted_coefficients,
@@ -239,6 +248,19 @@ pub const fn compression_ring_dimensions(profile: SisModulusProfileId) -> [usize
         SisModulusProfileId::Q64Offset59 => [64, 32],
         SisModulusProfileId::Q32Offset99 => [128, 64],
     }
+}
+
+/// Whether a native B/D ring dimension can feed the profile's compression ladder.
+///
+/// Recomposition rebuilds every source ring element from whole first-map digit
+/// blocks, so the first ladder dimension must divide the source dimension. The
+/// q32 ladder starts at D=128 and therefore excludes D=64 sources.
+#[must_use]
+pub const fn compression_source_ring_dimension_supported(
+    profile: SisModulusProfileId,
+    source_ring_dimension: usize,
+) -> bool {
+    source_ring_dimension.is_multiple_of(compression_ring_dimensions(profile)[0])
 }
 
 const fn profile_field_bits(profile: SisModulusProfileId) -> usize {
@@ -661,11 +683,11 @@ mod tests {
     #[test]
     fn packing_is_bit_major_and_expansion_padding_is_zero() {
         type F = Prime32Offset99;
-        let map = CompressionMapPlan::new(SisModulusProfileId::Q32Offset99, 3, 32, 1).unwrap();
+        let map = CompressionMapPlan::new(SisModulusProfileId::Q32Offset99, 3, 64, 1).unwrap();
         let values = [F::zero(), -F::one(), -F::from_u64(2)];
         let packed = PackedNegativeBinary::from_coefficients(map, &values).unwrap();
         assert_eq!(packed.bytes()[0] & 0b0011_1111, 0b0010_0010);
-        let rows = packed.expand_rows::<32>().unwrap();
+        let rows = packed.expand_rows::<64>().unwrap();
         assert!(rows
             .as_flattened()
             .iter()
