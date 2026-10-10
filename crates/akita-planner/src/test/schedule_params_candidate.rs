@@ -930,10 +930,11 @@ fn guided_root_slice_survives_grouped_local_pruning() {
     use akita_params::ScheduleLookupKey;
 
     let mut policy = policy_of::<Dense>();
-    policy.selection_policy =
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6;
+    // Only the V5 root prunes slices locally: there the root's padded
+    // first-direct setup leads the objective.
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
     let dimensions = CommitmentRingDims {
-        inner: 256,
+        inner: 1024,
         outer: 128,
         opening: 64,
     };
@@ -941,9 +942,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
         PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 64)
             .expect("valid final packing opening")
             .expect("final packing geometry");
-    // Under the 169-bit tables the grouped local frontier at nv24 keeps every
-    // feasible guided slice; at nv22 it still drops one.
-    let scalar_key = ScheduleLookupKey::single(PolynomialGroupLayout::new(22, 2));
+    let scalar_key = ScheduleLookupKey::single(PolynomialGroupLayout::new(20, 2));
     let scalar = crate::planner::root_level_candidates_with_fresh_preparation(
         &scalar_key,
         Dense::committed_source_contract().unwrap(),
