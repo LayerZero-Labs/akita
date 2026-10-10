@@ -136,7 +136,7 @@ impl IncomingWidthFixture {
         })
         .unwrap()
         .into_iter()
-        .find(|params| params.blocks().positions_per_block == 2048)
+        .find(|params| params.blocks().positions_per_block == 512)
         .unwrap();
         let (terminal, terminal_bytes) = try_terminal_direct_suffix_cost(
             &policy,
@@ -525,7 +525,8 @@ fn memo_key_has_a_bounded_inline_size() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn contracting_chunk_search_matches_unpruned_complete_objective() {
-    for num_chunks in [2, 8] {
+    // Under the 169-bit tables W2 first recurses at nv20 and W8 already at nv17.
+    for (num_chunks, num_vars) in [(2, 20), (8, 18)] {
         let mut policy = policy_of::<OneHot>();
         policy.witness_chunk = akita_params::ChunkedWitnessCfg {
             num_chunks,
@@ -542,7 +543,7 @@ fn contracting_chunk_search_matches_unpruned_complete_objective() {
             crate::SelectionPolicyId::for_policy(policy.recursive_setup_planning);
         policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
         policy.inner_basis_range.1 = policy.inner_basis_range.0;
-        let key = PolynomialGroupLayout::singleton(20);
+        let key = PolynomialGroupLayout::singleton(num_vars);
         let lookup_key = ScheduleLookupKey::single(key);
         let selected = crate::planner::find_schedule(
             &lookup_key,
