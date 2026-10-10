@@ -16,8 +16,8 @@ use akita_labinius_verifier::{
 use akita_params::{BasisMode, CompressionChainPlan, GroupCommitPhaseParams, SetupPrefixSlotId};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::{
-    AkitaSetupDescriptor, Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims, RingVec,
+    instance_descriptor::SetupSection, AkitaSetupDescriptor, Commitment, CommittedGroup,
+    GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, RingVec,
 };
 use jolt_field::{ExtField, Zero};
 
@@ -177,8 +177,9 @@ pub(crate) fn exchange_commitment<P: FieldFamily, S: ClearChannel>(
 /// Absorb the statement that owns the image table.
 ///
 /// The reduction has already absorbed the root setup's identity and the field
-/// pair. This adds the nested Akita setup, the schedule family and the image
-/// commitment, whose encoding carries its commitment profile.
+/// pair. This adds the nested Akita setup's stable identity without provisioned
+/// capacity, the schedule family and the image commitment, whose encoding
+/// carries its commitment profile.
 pub(crate) fn bind_image<P: FieldFamily, S: ClearChannel>(
     expected: &LoweredRootLayout,
     layout: &LoweredRootLayout,
@@ -192,7 +193,13 @@ pub(crate) fn bind_image<P: FieldFamily, S: ClearChannel>(
     }
     commitment.check().map_err(|_| AkitaError::InvalidProof)?;
     public_length_prefixed(channel, STATEMENT_DOMAIN)?;
-    public_length_prefixed(channel, &canonical_bytes(setup)?)?;
+    let setup_identity = SetupSection::from_parts(
+        P::Digits::decomposition(),
+        P::Digits::sis_modulus_profile(),
+        &setup.setup_seed,
+    )
+    .map_err(|_| AkitaError::InvalidProof)?;
+    public_length_prefixed(channel, &canonical_bytes(&setup_identity)?)?;
     public_length_prefixed(channel, P::Digits::schedule_family_name().as_bytes())?;
     public_length_prefixed(channel, &canonical_bytes(commitment)?)
 }

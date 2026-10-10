@@ -178,6 +178,8 @@ is modified by this generator.
 supports binary openings; `Some` additionally supports prime and combined
 openings. Constructors do not load artifacts or run a planner. The caller
 trusts the catalogs and setup.
+A prover setup and a verifier setup of different provisioned capacity with
+the same seed interoperate when both cover the selected rows.
 
 Before opening or reading proof bytes, each constructor checks the setup
 with `Valid::check`, derives the root setup from the nested descriptor's
@@ -206,9 +208,9 @@ does not encode which application-level functional the caller intended.
 outer channel. Such callers MUST run the reduction over that root and the
 family's field pair, choose the oracle mode matching `RootStatement::mode`,
 and enforce their own EOF. A missing element catalog when a prime mode is
-requested is `InvalidSetup`. The outer transcript binds the setup descriptor
-but not prefix-registry payloads, so the caller MUST install prefix
-commitments with the required setup provenance.
+requested is `InvalidSetup`. The outer transcript binds the setup identity
+and neither provisioned capacity nor prefix-registry payloads, so the caller
+MUST install prefix commitments with the required setup provenance.
 
 Without `labinius` the crate exports nothing and activates no LaBinius
 dependency feature. No feature of this crate forwards `dev-protocol`.
@@ -229,15 +231,17 @@ accessing the channel.
 
 | Call | Timing and operation | Bytes or check |
 | --- | --- | --- |
-| `bind_image` | Before the frontend; check layout, first precommitted profile, and commitment | `public`: `LP("akita/labinius/pcs/v1")`, `LP(canonical compressed AkitaSetupDescriptor)`, `LP(digit schedule family name)`, `LP(canonical compressed Y CommittedGroup)` |
+| `bind_image` | Before the frontend; check layout, first precommitted profile, and commitment | `public`: `LP("akita/labinius/pcs/v1")`, `LP(canonical compressed SetupSection)`, `LP(digit schedule family name)`, `LP(canonical compressed Y CommittedGroup)` |
 | `commit_prime_opening` / `bind_prime_opening` | Only with a prime claim; after image binding and before fold challenges | One `message`: canonical uP `CommittedGroup`, exactly Kp bytes, with the three-group row's second precommitted profile |
 | `commit_response` / `bind_response` | After fold challenges and before alpha, xi, gamma | One `message`: canonical W `CommittedGroup`, exactly Kw bytes, with the selected row's final profile |
 | `discharge` | After all returned evaluations; form `[Y,W]` or `[Y,uP,W]` | `public`: `LP(transcript_instance_descriptor::<F,P::Digits>(..., Lagrange))`, then all point coordinates followed by values, canonical compressed E elements, in group order |
 | Session derivation | After descriptor and claims | `public`: `LP("akita/labinius/pcs-opening-session/v1")`; one outer `challenge_block`; session string is that label followed by the 32-byte block |
 | Grouped opening | Akita `batched_prove` / `batched_verify`, Lagrange basis | Two `message`s: u64 little-endian nested proof length, then nested proof bytes |
 
-The descriptor covers the selected row, setup, decomposition, opening layout,
-basis, and nested grinding plan. Since it has no points or values,
+The setup section binds decomposition, SIS modulus profile, compression
+policy, setup-seed digest, and protocol features.
+The descriptor covers the selected row, setup, opening layout, basis, and
+nested grinding plan. Since it has no points or values,
 `discharge` absorbs every claim separately from the actual grouped statement,
 including the converted prime claim when present. The prime commitment is
 already in the outer transcript as its canonical message. The grouped proof
@@ -318,7 +322,10 @@ It locates proof sections from the bytes exchanged by the oracle rather than
 reimplementing the reduction wire grammar. The reduction's own tests cover
 its individual proof-of-work nonces. The binary test pins one complete proof
 digest per shipped family and protocol selection. The binary tests construct
-the prover and verifier for every supported geometry on both families with
+an oversized prover and a narrowed verifier with the same seed for a combined
+opening at geometry 16 on `Family64`, checking acceptance and byte equality
+with the exact setup's proof. They construct the prover and verifier for every
+supported geometry on both families with
 both catalogs selected, and reject nested setups with undersized descriptor
 capacities. The **LaBinius PCS** CI job tests the parallel opt-in PCS under
 the dev protocol as well as the main protocol for both transcript backends.
