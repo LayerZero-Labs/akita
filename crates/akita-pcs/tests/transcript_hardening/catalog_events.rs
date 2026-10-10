@@ -457,12 +457,14 @@ where
     }
 }
 
-/// The fp64 dense 26- and 28-variable single-polynomial rows share every other
-/// key field, but the 28-variable row switches to physical L2 one level
-/// earlier. Both fit the cap, so both must be proved.
+/// The fp128 bounded-dense 24- and 26-variable single-polynomial rows share
+/// every other key field, but their norm routes differ at one level. Both fit
+/// the cap, so both must be proved. (Under the 169-bit tables the fp64 dense
+/// rows that used to show this no longer differ.)
 #[test]
-fn norm_route_separates_fp64_dense_single_polynomial_rows() {
-    let scheme = load_workspace_scheme::<fp64::Dense>().expect("workspace schedule catalog");
+fn norm_route_separates_single_polynomial_rows() {
+    let scheme =
+        load_workspace_scheme::<fp128::DenseBounded>().expect("workspace schedule catalog");
     let single = |num_vars: usize| {
         scheme
             .schedules()
@@ -473,9 +475,9 @@ fn norm_route_separates_fp64_dense_single_polynomial_rows() {
                     && profiles.final_group.group.num_polynomials() == 1
                     && profiles.final_group.group.num_vars() == num_vars
             })
-            .unwrap_or_else(|| panic!("fp64 dense {num_vars}-variable row"))
+            .unwrap_or_else(|| panic!("fp128 bounded dense {num_vars}-variable row"))
     };
-    let (small, large) = (single(26), single(28));
+    let (small, large) = (single(24), single(26));
     assert!(log_committed_coeffs(large) <= MAX_LOG_COMMITTED_COEFFS);
     let (small_shape, large_shape) = (schedule_shape(small), schedule_shape(large));
     assert_ne!(small_shape, large_shape);
