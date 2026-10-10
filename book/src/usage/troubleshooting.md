@@ -73,7 +73,9 @@ registry. It does not store backend NTT caches.
 Cache entries use versioned filenames, and prefix registry names include a
 digest of the setup requirements: the capacity bound and the sorted setup
 prefix slot ids. Old, truncated, corrupt, or mismatched entries
-are not accepted as current setup. Akita logs the load failure and regenerates
+are not accepted as current setup. Loading recomputes the cached setup prefix
+commitments against the public matrix and rewrites a registry file whose
+commitments differ. Akita logs the load failure and regenerates
 the setup. If saving the replacement fails, Akita logs a warning and continues
 with the in-memory setup.
 

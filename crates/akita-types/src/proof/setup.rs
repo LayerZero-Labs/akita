@@ -117,13 +117,34 @@ pub struct AkitaExpandedSetup<F: Field> {
 ///     setup.prefix_slots = other.prefix_slots;
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Setup-prefix provenance
+///
+/// Decoding and [`Self::from_parts`] check the registry's structure and seed
+/// binding only; they never recompute a prefix commitment. A setup therefore
+/// starts with an unauthenticated registry, and verifiers do not admit
+/// schedule rows that offload setup contributions to it. A setup becomes
+/// usable for those rows only through [`Self::assume_prefix_registry_authenticated`],
+/// called by code that recomputed every commitment from the public stream or
+/// that authenticated the exact registry bytes against an external trust root.
+#[derive(Debug, Clone)]
 pub struct AkitaVerifierSetup<F: Field> {
     /// Expanded matrix stage used for verification.
     expanded: Arc<AkitaExpandedSetup<F>>,
     /// Public setup-prefix commitment metadata for setup-claim offloading.
     prefix_slots: SetupPrefixVerifierRegistry<F>,
+    /// Whether every prefix commitment is known to match the public stream.
+    /// In-process capability only: never serialized and ignored by equality.
+    prefix_registry_authenticated: bool,
 }
+
+impl<F: Field> PartialEq for AkitaVerifierSetup<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.expanded == other.expanded && self.prefix_slots == other.prefix_slots
+    }
+}
+
+impl<F: Field> Eq for AkitaVerifierSetup<F> {}
 
 impl<F: Field> AkitaVerifierSetup<F> {
     /// Borrow the immutable expanded matrix stage.
@@ -140,8 +161,8 @@ impl<F: Field> AkitaVerifierSetup<F> {
     ///
     /// This constructor binds the registry to the public matrix identity. It
     /// does not prove that each stored prefix commitment was derived from that
-    /// matrix. Callers loading external registries must establish that
-    /// provenance at their setup-installation boundary.
+    /// matrix, so the result has an unauthenticated registry; see the
+    /// type-level documentation.
     pub fn from_parts(
         expanded: Arc<AkitaExpandedSetup<F>>,
         prefix_slots: SetupPrefixVerifierRegistry<F>,
@@ -154,7 +175,29 @@ impl<F: Field> AkitaVerifierSetup<F> {
         Ok(Self {
             expanded,
             prefix_slots,
+            prefix_registry_authenticated: false,
         })
+    }
+
+    /// Whether every setup-prefix commitment is known to match the public stream.
+    #[must_use]
+    pub fn prefix_registry_authenticated(&self) -> bool {
+        self.prefix_registry_authenticated
+    }
+
+    /// Mark the setup-prefix registry as authentic.
+    ///
+    /// The caller asserts that every stored commitment equals the commitment
+    /// to its slot's prefix of the public stream named by the setup seed.
+    /// Establish that either by recomputing each commitment (the prover-side
+    /// setup crate does this for registries it derives or loads) or by
+    /// authenticating the exact registry bytes against a trust root the
+    /// deployment controls, such as a pinned digest or the verifier program
+    /// identity. Structural decoding alone does not establish it.
+    #[must_use]
+    pub fn assume_prefix_registry_authenticated(mut self) -> Self {
+        self.prefix_registry_authenticated = true;
+        self
     }
 }
 
@@ -580,6 +623,9 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()>> Akit
     }
 }
 
+/// Structural validation: re-derives the public matrix from the seed and checks
+/// the setup-prefix registry's shape and seed binding. It does not recompute
+/// prefix commitments and does not authenticate the registry.
 impl<F: Field + CanonicalEncoding + Valid> Valid for AkitaVerifierSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
@@ -748,6 +794,7 @@ mod tests {
                 ),
             ),
             prefix_slots,
+            prefix_registry_authenticated: false,
         };
 
         let mut bytes = Vec::new();
@@ -757,6 +804,17 @@ mod tests {
 
         assert_eq!(decoded.prefix_slots.len(), 1);
         assert_eq!(decoded, setup);
+        // Strict decoding accepts any well-formed commitment payload (this one
+        // is all zeros), so it must not authenticate the registry.
+        assert!(!decoded.prefix_registry_authenticated());
+        let authenticated = setup.clone().assume_prefix_registry_authenticated();
+        assert!(authenticated.prefix_registry_authenticated());
+        assert_eq!(authenticated, decoded);
+        let mut reencoded = Vec::new();
+        authenticated
+            .serialize_compressed(&mut reencoded)
+            .expect("serialize");
+        assert_eq!(reencoded, bytes);
 
         for suffix in [0, 0xa5] {
             let mut suffixed = bytes.clone();
@@ -811,6 +869,7 @@ mod tests {
                 ),
             ),
             prefix_slots: SetupPrefixVerifierRegistry::new(setup_seed),
+            prefix_registry_authenticated: false,
         };
 
         let mut bytes = Vec::new();
@@ -835,6 +894,7 @@ mod tests {
                 ),
             ),
             prefix_slots: SetupPrefixVerifierRegistry::new(setup_seed),
+            prefix_registry_authenticated: false,
         };
 
         let mut bytes = Vec::new();

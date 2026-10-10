@@ -334,6 +334,16 @@ mod tests {
                     .unwrap();
                 assert_eq!(decoded, artifacts);
                 assert!(!decoded.is_backend_validated());
+                let mut merged = crate::commitment::SetupPrefixProverRegistry::<F>::new(
+                    artifacts.setup_seed().clone(),
+                );
+                merged.extend(artifacts.clone()).unwrap();
+                assert!(merged.is_backend_validated());
+                let mut merged_decoded = crate::commitment::SetupPrefixProverRegistry::<F>::new(
+                    artifacts.setup_seed().clone(),
+                );
+                merged_decoded.extend(decoded.clone()).unwrap();
+                assert!(!merged_decoded.is_backend_validated());
                 let second = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
                 let imported_first = first
                     .import_setup_prefixes(&decoded, std::slice::from_ref(&id))

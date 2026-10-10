@@ -228,13 +228,12 @@ fn combined_recursive_prefix_registry_persists_and_serves_each_family() {
                 // Load directly: `new_prover_setup` would hide a failed load by
                 // regenerating the same deterministic material.
                 let loaded = load_prover_setup::<TestF>(&combined)
-                    .expect("complete combined cache must load without regeneration");
+                    .expect("complete combined cache must load without rewriting");
                 assert_eq!(loaded.expanded, generated.expanded);
                 assert_eq!(loaded.prefix_slots, generated.prefix_slots);
 
-                // One backend imports each family's own slots from the decoded
-                // registry. Decoded artifacts are not backend-validated, so
-                // import recomputes each one and compares it.
+                // One backend imports each family's own slots from the loaded
+                // registry, which the loader recomputed against the matrix.
                 let backend =
                     akita_cpu_backend::CpuBackend::<TestF, TestF>::new(loaded.expanded.clone())
                         .unwrap();
@@ -260,6 +259,90 @@ fn combined_recursive_prefix_registry_persists_and_serves_each_family() {
                     .expect("loader must repair the incomplete combined registry");
                 assert_eq!(repaired.prefix_slots, generated.prefix_slots);
                 assert_eq!(persisted_slot_ids(), combined.prefix_slot_ids());
+
+                remove_cached();
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    });
+}
+
+#[test]
+fn altered_prefix_registry_cache_is_recomputed_and_rewritten() {
+    use akita_types::RingVec;
+    use jolt_field::One;
+    type Recursive = akita_config::RecursiveCommitmentConfig<fp128::Dense>;
+
+    with_test_cache_dir("altered-prefix-registry", || {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let requirements = SetupRequirements::from_catalog::<Recursive>(
+                    &akita_config::test_support::workspace_schedule_catalog::<Recursive>()
+                        .expect("recursive dense catalog"),
+                    26,
+                    1,
+                )
+                .expect("recursive dense requirements");
+                assert!(!requirements.prefix_slot_ids().is_empty());
+                let registry_path = get_prefix_registry_storage_path::<TestF>(&requirements)
+                    .expect("registry path");
+                let matrix_path =
+                    get_public_matrix_storage_path::<TestF>(&sample_akita_setup_seed())
+                        .expect("matrix path");
+                let remove_cached = || {
+                    let _ = fs::remove_file(&registry_path);
+                    let _ = fs::remove_file(&matrix_path);
+                };
+                let persisted = || {
+                    let mut reader =
+                        std::io::BufReader::new(fs::File::open(&registry_path).unwrap());
+                    SetupPrefixProverRegistry::<TestF>::deserialize_with_mode(
+                        &mut reader,
+                        Compress::Yes,
+                        Validate::Yes,
+                        &(),
+                    )
+                    .unwrap()
+                };
+                remove_cached();
+                let generated = new_prover_setup::<TestF>(&requirements).expect("cold setup");
+
+                // Persist a well-formed registry whose first commitment differs.
+                let mut altered = SetupPrefixProverRegistry::new(
+                    generated.expanded.descriptor().setup_seed.clone(),
+                );
+                for (index, (_, slot)) in generated.prefix_slots.iter().enumerate() {
+                    let mut slot = slot.clone();
+                    if index == 0 {
+                        let mut coeffs = slot.commitment.rows[0].coeffs().to_vec();
+                        coeffs[0] += TestF::one();
+                        slot.commitment.rows[0] = RingVec::from_coeffs(coeffs);
+                    }
+                    altered.insert(slot).expect("structurally valid slot");
+                }
+                save_prover_setup::<TestF>(
+                    &AkitaProverSetup {
+                        expanded: generated.expanded.clone(),
+                        prefix_slots: altered.clone(),
+                    },
+                    &requirements,
+                )
+                .unwrap();
+                assert_eq!(persisted(), altered);
+
+                let loaded = load_prover_setup::<TestF>(&requirements)
+                    .expect("loader recomputes the registry");
+                assert_eq!(loaded.prefix_slots, generated.prefix_slots);
+                assert_eq!(persisted(), generated.prefix_slots);
+                let capacity = SetupMatrixCapacity {
+                    num_field_elements: loaded.expanded.shared_matrix().num_field_elements(),
+                };
+                assert!(loaded
+                    .to_verifier_setup(capacity)
+                    .expect("verifier setup")
+                    .prefix_registry_authenticated());
 
                 remove_cached();
             })

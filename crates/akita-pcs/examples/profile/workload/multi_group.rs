@@ -35,11 +35,9 @@ where
         .map(|prefix| prefix.slot_id().expect("setup prefix group"))
         .filter(|id| setup.prefix_slots.get(id).is_none())
         .collect::<Vec<_>>();
-    let artifacts = backend.export_setup_prefixes(&ids)?;
-    for (_, slot) in artifacts.iter() {
-        setup.prefix_slots.insert(slot.clone())?;
-    }
-    Ok(())
+    setup
+        .prefix_slots
+        .extend(backend.export_setup_prefixes(&ids)?)
 }
 
 /// Setup-contribution mode selected by the benchmark case.

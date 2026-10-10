@@ -14,6 +14,9 @@ Akita has three main trust boundaries:
 Validated deserialization is the default for bytes that cross a trust boundary.
 Unchecked deserialization is reserved for internal buffers whose producer and shape have already been validated in the same trust domain.
 
+Validated deserialization of a verifier setup rederives the public matrix from its seed, but it checks the setup-prefix registry only structurally.
+Those prefix commitments are the only link between a setup-offloading schedule row and the public matrix, so verifiers admit such rows only when the registry is authenticated: recomputed from the public stream (`akita_setup::authenticate_verifier_setup_prefixes`, or a verifier setup derived in-process from a backend-validated prover setup), or bound to an external trust root the deployment controls and asserted with `AkitaVerifierSetup::assume_prefix_registry_authenticated`.
+
 ## Verifier No-Panic Boundary
 
 Verifier-facing execution must be panic-free for malformed public inputs.

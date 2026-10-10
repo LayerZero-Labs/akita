@@ -741,6 +741,10 @@ where
             )?),
             prefix_slots,
         )
+        // The guest cannot recompute setup-prefix commitments. The blob is
+        // Jolt public input, so the outer verifier authenticates the registry
+        // by checking the exact blob setup it expects (see the README).
+        .map(AkitaVerifierSetup::assume_prefix_registry_authenticated)
         .map_err(|err| SerializationError::InvalidData(err.to_string()))
     }
 
