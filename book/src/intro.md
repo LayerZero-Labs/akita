@@ -4,8 +4,10 @@ Akita is a lattice-based polynomial commitment scheme, or PCS, implemented in
 Rust. Akita lets a prover commit to a large table and later prove an evaluation
 of the multilinear polynomial represented by that table. The verifier checks
 the proof without receiving the whole table. Akita uses transparent setup, so
-it needs no trusted ceremony. Its production parameters provide 128-bit
-post-quantum security under Module-SIS.
+it needs no trusted ceremony. Its production parameters target 128 bits: the
+Module-SIS binding is priced with a lattice attack model under a quantum cost,
+and the Fiat-Shamir challenges are priced in the classical random-oracle model.
+[Security status](#security-status) states what each target covers.
 
 Akita's small proofs are one of its strongest advantages. Current production
 benchmarks produce opening proofs of roughly 65 to 80 KB. This contrasts with
@@ -178,6 +180,38 @@ The [How it works](./how/how-it-works.md) section follows the complete protocol
 from configuration through setup, commitment, folding, and verification. The
 [security model](./how/security.md) gives the exact Module-SIS assumptions and
 parameter checks.
+
+## Security status
+
+Akita's 128-bit target is a statement about two concrete models. It is not an
+end-to-end post-quantum security proof.
+
+- **Module-SIS binding.** Two generated tables price the binding, both at a
+  128-bit target with the ADPS16 quantum cost model: a coefficient-$L_\infty$
+  table, from a scalarized infinity-norm LGSA estimate, and a Euclidean table
+  for selective-$L_2$ folds, which prices the collision's $L_2$ length. Each
+  estimate prices one known attack family on a scalarized instance. It does
+  not price attacks that exploit ring or module structure, CRT splitting,
+  subfield projection, or role-specific matrix structure, and it does not show
+  that every quantum attack costs at least $2^{128}$.
+- **Fiat-Shamir.** Transcript checks are analyzed in the classical
+  random-oracle model. Sparse fold-challenge addresses have a proved 128-bit
+  per-address rate, because every accepted challenge set has at least
+  $2^{128}$ elements. Each typed field challenge is priced so that its local
+  algebraic loss meets a 128-bit per-query rate, with proof-of-work where
+  needed. Extending that rate to the complete extraction tree also requires,
+  at every field site, a proof that its full-tree debit is at most the local
+  loss, or a target raised to price the debit. That field-address ledger is
+  not yet implemented. The total over an attacker's query budget grows with
+  the budget and is not reported per schedule row. The
+  [binding chapter](./foundations/pcs-and-binding.md#from-the-fold-bound-to-a-security-claim)
+  and the [grinding specification](../../specs/transcript-grinding.md)
+  give the accounting.
+- **Quantum adversaries against the transcript hash.** Akita has no
+  quantum-random-oracle analysis. Generic quantum search finds an event of
+  probability $2^{-128}$ per query with about $2^{64}$ quantum oracle queries,
+  so the classical 128-bit Fiat-Shamir target does not by itself give 128-bit
+  soundness against an adversary that queries the hash on a quantum computer.
 
 ## Built as a complete system
 

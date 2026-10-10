@@ -2,8 +2,8 @@
 
 One canonical security narrative: the hardness assumption, how Ajtai ranks
 connect to security bits, the weak-binding fold price, and the current SIS table
-model. Keep the marketing claim separate from audited reality. See
-[Introduction → Security status](../intro.md#security-status-honest).
+model. [Introduction → Security status](../intro.md#security-status) states
+what the 128-bit target covers.
 
 ## SIS / MSIS and Ajtai sizing
 
@@ -129,6 +129,11 @@ estimator at verification time.
 The production rule is the ADPS16 quantum LGSA model with a 128-bit target. It
 is an attack-cost model, not a physical resource estimate or an unqualified
 post-quantum security proof.
+
+The quantum cost applies to the SIS tables only. Fiat-Shamir challenge spaces
+and grinding are sized for a 128-bit per-address rate in the classical
+random-oracle model, and Akita has no quantum-random-oracle analysis. See
+[Introduction → Security status](../intro.md#security-status).
 
 The conventional `0.2650 * beta` quantum Core-SVP cost is deliberate. Akita
 previously evaluated the newer idealized BCSS23 `0.2563 * beta` sieve as an

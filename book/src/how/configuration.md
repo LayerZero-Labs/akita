@@ -244,8 +244,9 @@ small. It then multiplies the source estimate by the challenge squared energy,
 a 1.03 model envelope, and a `40/39` response allowance. If the model envelope
 bounds the conditional mean, Markov's inequality gives at least `1/40`
 acceptance probability on each independent attempt. The protocol permits 4096
-attempts, so the resulting exhaustion bound for one response is below
-`2^-149`.
+attempts, so the probability that every attempt misses the energy cap is below
+`2^-149`. This bounds the energy predicate only; response admission also
+checks the digit range, and terminal admission the Golomb-Rice payload budget.
 
 The 1.03 factor covers approximations in the normal, field digit, challenge
 covariance, and finite mixing models. It is an empirical completeness margin,
