@@ -129,16 +129,20 @@ impl TerminalNttCache {
     /// Install one scalar Q128 artifact as the only entry.
     ///
     /// The artifact must carry the setup and schedule identities and exactly
-    /// the geometry of `requirement`. Its payload is then checked to be the
-    /// transform of the setup's terminal matrix prefix, unless the
-    /// `program-bound-terminal-cache` feature makes the artifact part of the
-    /// trusted verifier program.
-    pub(crate) fn install_trusted<F: Field + CanonicalEncoding>(
+    /// the geometry of `requirement`. A [`TerminalCacheArtifact::Supplied`]
+    /// payload is then checked to be the transform of the setup's terminal
+    /// matrix prefix; a program-bound payload is part of the verifier program.
+    pub(crate) fn install_artifact<F: Field + CanonicalEncoding>(
         setup: &AkitaVerifierSetup<F>,
         requirement: TerminalNttCacheRequirement,
         schedule_row_digest: ScheduleRowDigest,
-        artifact: &[u8],
+        artifact: TerminalCacheArtifact<'_>,
     ) -> Result<Self, AkitaError> {
+        let (artifact, check_derivation) = match artifact {
+            TerminalCacheArtifact::Supplied(bytes) => (bytes, true),
+            #[cfg(feature = "program-bound-terminal-cache")]
+            TerminalCacheArtifact::ProgramBound(bytes) => (bytes, false),
+        };
         let expected_binding = PreparedVerifierNttCacheBinding {
             setup_seed_digest: setup_seed_digest(&setup.expanded().descriptor.setup_seed).map_err(
                 |error| AkitaError::InvalidSetup(format!("setup seed identity: {error}")),
@@ -164,14 +168,15 @@ impl TerminalNttCache {
                 }
                 // The cache is the terminal A matrix at verification time, so
                 // its identity and shape checks are not enough on their own.
-                #[cfg(not(feature = "program-bound-terminal-cache"))]
-                akita_types::check_riscv64_scalar_q128_cache_derivation::<F, D>(
-                    artifact,
-                    setup
-                        .expanded()
-                        .shared_matrix()
-                        .ring_view::<D>(1, requirement.prefix_len)?,
-                )?;
+                if check_derivation {
+                    akita_types::check_riscv64_scalar_q128_cache_derivation::<F, D>(
+                        artifact,
+                        setup
+                            .expanded()
+                            .shared_matrix()
+                            .ring_view::<D>(1, requirement.prefix_len)?,
+                    )?;
+                }
                 Ok::<_, AkitaError>(TerminalNttEntry {
                     requirement,
                     cache_bytes: prepared.cache_bytes(),
@@ -206,11 +211,26 @@ impl TerminalNttCache {
     }
 }
 
+/// A prepared terminal cache artifact from [`build_riscv64_terminal_ntt_cache`],
+/// with the trust its caller places in it.
+#[derive(Clone, Copy, Debug)]
+pub enum TerminalCacheArtifact<'a> {
+    /// Bytes loaded at run time. The verifier rebuilds the payload from the
+    /// setup matrix and rejects any residue that differs.
+    Supplied(&'a [u8]),
+    /// Bytes compiled into the verifier program, such as a zkVM guest's ELF,
+    /// so the program identity already binds them. They are installed without
+    /// rebuilding.
+    #[cfg(feature = "program-bound-terminal-cache")]
+    ProgramBound(&'static [u8]),
+}
+
 /// Build the scalar Q128 prepared terminal cache consumed by a RISC V verifier.
 ///
 /// The returned bytes are derived performance state. They are not canonical
-/// setup bytes and must be bound to the verifier program or another trusted
-/// setup installation boundary before use.
+/// setup bytes. Pass them back as [`TerminalCacheArtifact::Supplied`], or as
+/// `TerminalCacheArtifact::ProgramBound` when the verifier program compiles
+/// them in.
 pub fn build_riscv64_terminal_ntt_cache<F: Field + CanonicalEncoding>(
     setup: &AkitaVerifierSetup<F>,
     schedule: &FoldSchedule,
@@ -306,9 +326,13 @@ mod tests {
         assert_eq!(metadata.width, requirement.width);
         assert_eq!(metadata.binding.schedule_row_digest, selection.row_digest);
 
-        let installed =
-            TerminalNttCache::install_trusted(&setup, requirement, selection.row_digest, &artifact)
-                .expect("install terminal cache");
+        let installed = TerminalNttCache::install_artifact(
+            &setup,
+            requirement,
+            selection.row_digest,
+            TerminalCacheArtifact::Supplied(&artifact),
+        )
+        .expect("install terminal cache");
         assert!(installed.cache_bytes() > 0);
 
         // Change the final payload residue to a different in-range value: the
@@ -325,19 +349,35 @@ mod tests {
             let changed = if raw > 0 { raw - 1 } else { raw + 1 };
             altered[end - 4..].copy_from_slice(&changed.to_le_bytes());
         }
-        let altered_install =
-            TerminalNttCache::install_trusted(&setup, requirement, selection.row_digest, &altered);
-        #[cfg(not(feature = "program-bound-terminal-cache"))]
+        // A supplied payload is rebuilt whatever features are unified into the
+        // build; only an explicitly program-bound payload skips the rebuild.
+        let altered_install = TerminalNttCache::install_artifact(
+            &setup,
+            requirement,
+            selection.row_digest,
+            TerminalCacheArtifact::Supplied(&altered),
+        );
         assert!(
             matches!(&altered_install, Err(AkitaError::InvalidSetup(message)) if message.contains("not the transform")),
             "an altered payload must not install: {altered_install:?}"
         );
         #[cfg(feature = "program-bound-terminal-cache")]
-        assert!(altered_install.is_ok());
+        assert!(TerminalNttCache::install_artifact(
+            &setup,
+            requirement,
+            selection.row_digest,
+            TerminalCacheArtifact::ProgramBound(Box::leak(altered.into_boxed_slice())),
+        )
+        .is_ok());
 
         let other_row = ScheduleRowDigest::from_bytes([0xa5; 32]);
         assert!(matches!(
-            TerminalNttCache::install_trusted(&setup, requirement, other_row, &artifact),
+            TerminalNttCache::install_artifact(
+                &setup,
+                requirement,
+                other_row,
+                TerminalCacheArtifact::Supplied(&artifact)
+            ),
             Err(AkitaError::InvalidSetup(_))
         ));
         let narrower = TerminalNttCacheRequirement {
@@ -345,7 +385,12 @@ mod tests {
             ..requirement
         };
         assert!(matches!(
-            TerminalNttCache::install_trusted(&setup, narrower, selection.row_digest, &artifact),
+            TerminalNttCache::install_artifact(
+                &setup,
+                narrower,
+                selection.row_digest,
+                TerminalCacheArtifact::Supplied(&artifact)
+            ),
             Err(AkitaError::InvalidSetup(_))
         ));
     }

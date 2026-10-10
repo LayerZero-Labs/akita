@@ -50,10 +50,9 @@ transcript-keccak = [
   "akita-params/transcript-keccak",
 ]
 benchmark-support = []
-# Trust `AkitaVerifier::for_selection` terminal cache artifacts as part of the
-# verifier program instead of re-deriving them from the setup matrix. Enable it
-# only in a verifier program, such as a zkVM guest, whose artifact bytes are
-# compiled into the program identity.
+# Add `TerminalCacheArtifact::ProgramBound` for terminal cache bytes compiled
+# into the verifier program, such as a zkVM guest, which are installed without
+# re-deriving them. `Supplied` caches are always re-derived.
 program-bound-terminal-cache = []
 parallel = [
   "dep:rayon",

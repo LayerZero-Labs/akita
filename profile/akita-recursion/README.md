@@ -250,10 +250,14 @@ identities, and that the geometry matches the selected row, before installing
 it. A mismatch returns status code `1`.
 
 The header cannot prove that the transformed payload came from the named setup
-seed, so by default `AkitaVerifier::for_selection` rebuilds a supplied cache
-from the setup matrix and rejects any residue that differs. The guest enables
-the `akita-verifier` feature `program-bound-terminal-cache`, which skips that
-rebuild, because the cache bytes are part of its program identity. The recursion
+seed, so `AkitaVerifier::for_selection` rebuilds a
+`TerminalCacheArtifact::Supplied` cache from the setup matrix and rejects any
+residue that differs. The guest passes its compiled-in bytes as
+`TerminalCacheArtifact::ProgramBound` (behind the `akita-verifier` feature
+`program-bound-terminal-cache`), which skips that rebuild because the cache
+bytes are part of its program identity. The host's own preflight passes
+`Supplied` and keeps the rebuild even though Cargo unifies the guest's
+feature into its build. The recursion
 host establishes their provenance by deriving the cache from a strictly decoded
 setup and verifying the proof through the decoded cache before it starts Jolt.
 A verifier that loads an external cache at run time keeps the default and pays

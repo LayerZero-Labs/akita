@@ -93,13 +93,15 @@ cargo run -p akita-pcs \
 
 | Feature | Purpose |
 | --- | --- |
-| `program-bound-terminal-cache` (`akita-verifier`) | Installs a terminal NTT cache artifact passed to `AkitaVerifier::for_selection` without rebuilding it from the setup matrix |
+| `program-bound-terminal-cache` (`akita-verifier`) | Adds `TerminalCacheArtifact::ProgramBound`, which installs a terminal NTT cache compiled into the verifier program without rebuilding it from the setup matrix |
 
-By default the verifier rebuilds a supplied terminal cache from the setup's
-public matrix and rejects one whose payload differs, because the cache is the
-terminal A matrix during verification. Enable this feature only in a verifier
-program, such as a zkVM guest, that compiles the cache bytes into its own
-program identity.
+`AkitaVerifier::for_selection` rebuilds a `TerminalCacheArtifact::Supplied`
+cache from the setup's public matrix and rejects one whose payload differs,
+because the cache is the terminal A matrix during verification. The feature
+only adds the `ProgramBound(&'static [u8])` variant; each caller chooses the
+trust per call, so enabling the feature through Cargo feature unification does
+not change what a `Supplied` cache must pass. Use `ProgramBound` only for bytes
+the verifier program compiles in, such as a zkVM guest's `include_bytes!`.
 
 ## Profile CI features
 
