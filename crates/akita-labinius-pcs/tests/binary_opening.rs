@@ -142,7 +142,6 @@ fn oversized_prover_and_narrowed_verifier_preserve_proof_bytes() {
     let prover_elements = setup.expanded.descriptor().num_field_elements;
     let verifier_elements = verifier_setup.expanded().descriptor().num_field_elements;
     assert_ne!(prover_elements, verifier_elements);
-    eprintln!("setup num_field_elements: prover={prover_elements}, verifier={verifier_elements}");
     let prover = Prover::<Family64>::new(
         geometry(16),
         shipped.digits.clone(),
