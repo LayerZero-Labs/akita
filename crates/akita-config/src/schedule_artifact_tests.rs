@@ -220,3 +220,44 @@ fn dense_recursive_artifacts_cover_benchmark_sizes_and_offload_setup() {
     check::<fp64::Dense>(&[21, 23, 25, 27, 29]);
     check::<fp128::Dense>(&[20, 22, 24, 26, 28]);
 }
+
+#[test]
+fn row_admission_pins_terminal_z_wire_parameters_to_the_cap() {
+    use crate::proof_optimized::fp32;
+
+    fn check<Cfg: CommitmentConfig>(linf: bool) {
+        let row = crate::test_support::workspace_schedule_catalog::<Cfg>()
+            .expect("workspace schedule catalog")
+            .rows()
+            .find(|row| {
+                row.schedule().terminal.response_shape.layout.groups[0]
+                    .z_linf_cap
+                    .is_some()
+                    == linf
+            })
+            .cloned()
+            .expect("row with the requested terminal route");
+        let group = row.schedule().terminal.response_shape.layout.groups[0];
+        group
+            .validate_canonical_z_wire()
+            .expect("generated terminal wire parameters are canonical");
+
+        let inflate: fn(&mut FoldSchedule) = |schedule| {
+            let group = &mut schedule.terminal.response_shape.layout.groups[0];
+            group.z_payload_bytes = group.z_payload_bytes.checked_mul(128).unwrap();
+        };
+        let widen: fn(&mut FoldSchedule) = |schedule| {
+            schedule.terminal.response_shape.layout.groups[0].z_rice_low_bits += 1;
+        };
+        for mutate in [inflate, widen] {
+            let error = mutated_row_admission_error::<Cfg>(&row, mutate);
+            assert!(
+                error.to_string().contains("not canonical"),
+                "unexpected admission error: {error}"
+            );
+        }
+    }
+
+    check::<fp128::OneHot>(false);
+    check::<fp32::OneHot>(true);
+}

@@ -515,7 +515,11 @@ fn audit_terminal(
             "terminal response shape has invalid wire parameters or exceeds the matrix-certified cap",
         ));
     }
-    Ok(())
+    // The verifier reserves and reads up to `z_payload_bytes` from the proof,
+    // so the budget must be the canonical one for the cap, not artifact data.
+    group
+        .validate_canonical_z_wire()
+        .map_err(|error| invalid(label, &error.to_string()))
 }
 
 /// Re-audit one complete expanded row against the policy the verifier trusts.
