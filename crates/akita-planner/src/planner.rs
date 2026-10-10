@@ -439,7 +439,7 @@ pub(crate) fn root_level_candidates_for_prepared_producers(
             }
             slice_candidates.push(candidate_params);
         }
-        for candidate_params in crate::schedule_params::prune_locally_unprofitable_slices(
+        for candidate_params in crate::schedule_params::prune_root_slices_by_first_direct_setup(
             policy,
             &opening_batch,
             slice_candidates,

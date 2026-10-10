@@ -585,28 +585,33 @@ pub(crate) type RingChallengeConfigFn<'a> =
 
 pub(crate) type LayoutCandidateScore = (usize, usize, usize, usize);
 
-/// For setup-primary planning, retain every slice that reaches the best local
-/// setup objective before witness sizing and suffix recursion. Equal setup
-/// candidates can still differ in proof size or the complete descriptor.
-pub(crate) fn prune_locally_unprofitable_slices(
+/// Retain the root slices that reach the smallest padded first-direct setup.
+///
+/// Under [`crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5`]
+/// the root is the first direct edge, so its padded setup capacity is the
+/// leading objective coordinate and a root slice with a larger capacity can
+/// never win. Equal-capacity slices can still differ in proof size or the
+/// complete descriptor, so all of them are kept.
+///
+/// No other level or objective admits this pruning. A recursive fold's setup
+/// enters the V5 objective only as a tie-breaker after proof bytes and work,
+/// and the V6 envelope is the maximum over every level, so another level can
+/// tie it while a larger-setup slice wins on proof bytes.
+pub(crate) fn prune_root_slices_by_first_direct_setup(
     policy: &PlannerPolicy,
     opening_layout: &OpeningClaimsLayout,
     candidates: Vec<CommittedGroupParams>,
 ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
-    if candidates.len() <= 1 {
+    if candidates.len() <= 1
+        || policy.selection_policy
+            != crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
+    {
         return Ok(candidates);
     }
     let mut best_setup = None;
     let mut retained = Vec::new();
     for params in candidates {
-        let setup_score = match policy.selection_policy {
-            crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => {
-                padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?)
-            }
-            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
-                padded_setup_prefix_len(level_setup_field_elements(&params)?)
-            }
-        };
+        let setup_score = padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?);
         match best_setup.map(|best| setup_score.cmp(&best)) {
             None | Some(std::cmp::Ordering::Less) => {
                 best_setup = Some(setup_score);

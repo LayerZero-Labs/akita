@@ -523,8 +523,7 @@ fn memo_key_has_a_bounded_inline_size() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn contracting_chunk_search_matches_unpruned_complete_objective() {
-    // Under the 169-bit tables W2 first recurses at nv20 and W8 already at nv17.
-    for (num_chunks, num_vars) in [(2, 20), (8, 18)] {
+    for (num_chunks, num_vars) in [(2, 20), (8, 20)] {
         let mut policy = policy_of::<OneHot>();
         policy.witness_chunk = akita_params::ChunkedWitnessCfg {
             num_chunks,

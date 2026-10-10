@@ -495,11 +495,7 @@ impl RecursiveCandidateContext<'_, '_> {
                             mode_slices.push(params);
                         }
                     }
-                    for params in crate::schedule_params::prune_locally_unprofitable_slices(
-                        policy,
-                        &search.opening_layout,
-                        mode_slices,
-                    )? {
+                    for params in mode_slices {
                         let relation_mode = *transition;
                         let Some((score, params, next_witness_len)) =
                             finalize_recursive_level_candidate(policy, search, params)?
@@ -707,12 +703,7 @@ fn append_selective_l2_candidates(
                 sliced.push(params);
             }
         }
-        let retained_slices = crate::schedule_params::prune_locally_unprofitable_slices(
-            policy,
-            &search.opening_layout,
-            sliced,
-        )?;
-        for params in retained_slices {
+        for params in sliced {
             let Some((_, params, next_witness_len)) =
                 finalize_recursive_level_candidate(policy, search, params)?
             else {
