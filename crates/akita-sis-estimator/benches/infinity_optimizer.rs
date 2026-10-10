@@ -394,6 +394,7 @@ fn family_label(family: AkitaModulusProfileId) -> &'static str {
         #[cfg(feature = "labinius-sis")]
         AkitaModulusProfileId::Q25Plus14561 => "q25-labinius",
         AkitaModulusProfileId::Q128OffsetA7F7 => "q128",
+        AkitaModulusProfileId::Q128Offset275 => "q128_offset275",
     }
 }
 

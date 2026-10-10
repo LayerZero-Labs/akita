@@ -73,7 +73,7 @@ pub fn sis_l2_table_key_for_collision_sq(
         return None;
     }
     let collision_l2_sq = ceil_supported_l2_collision_sq(collision_l2_sq)?;
-    generated_l2_sis_max_widths(modulus_profile, ring_dimension, collision_l2_sq)?;
+    generated_l2_sis_max_widths(modulus_profile.row_owner(), ring_dimension, collision_l2_sq)?;
     Some(SisL2TableKey {
         policy,
         table_digest,
@@ -96,8 +96,11 @@ pub fn min_secure_l2_rank(key: SisL2TableKey, width: u64) -> Option<usize> {
     {
         return None;
     }
-    let widths =
-        generated_l2_sis_max_widths(key.modulus_profile, key.ring_dimension, key.collision_l2_sq)?;
+    let widths = generated_l2_sis_max_widths(
+        key.modulus_profile.row_owner(),
+        key.ring_dimension,
+        key.collision_l2_sq,
+    )?;
     widths
         .iter()
         .position(|&max_width| width <= max_width)

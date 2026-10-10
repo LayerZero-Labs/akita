@@ -66,6 +66,7 @@ fn euclidean_width_goldens_match_checked_in_l2_table() {
                 panic!("LaBinius Q25 has no native Euclidean runtime profile")
             }
             AkitaModulusProfileId::Q128OffsetA7F7 => SisModulusProfileId::Q128OffsetA7F7,
+            AkitaModulusProfileId::Q128Offset275 => SisModulusProfileId::Q128Offset275,
         };
         let key = sis_l2_table_key_for_collision_sq(
             DEFAULT_SIS_SECURITY_POLICY,

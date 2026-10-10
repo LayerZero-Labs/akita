@@ -83,12 +83,36 @@ impl<F: Field> CommittedGroup<F> {
     }
 }
 
+/// Reject a profile whose A or B matrix names a SIS modulus profile other than
+/// the modulus of `F`.
+///
+/// `GroupCommitPhaseParams::validate_frozen_precommit` compares bit widths,
+/// which two profiles can share.
+fn check_exact_field_modulus<F: Field + CanonicalEncoding>(
+    profile: &GroupCommitPhaseParams,
+) -> Result<(), SerializationError> {
+    let field_modulus = akita_params::field_modulus::<F>()
+        .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
+    for matrix_profile in [
+        profile.inner.matrix.sis_modulus_profile(),
+        profile.outer.matrix.sis_modulus_profile(),
+    ] {
+        if !matrix_profile.matches_modulus(field_modulus) {
+            return Err(SerializationError::InvalidData(
+                "committed-group SIS modulus profile does not match the field".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl<F: Field + CanonicalEncoding + Valid> Valid for CommittedGroup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         let field_bits = F::MODULUS_BITS;
         self.profile
             .validate_frozen_precommit(field_bits)
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
+        check_exact_field_modulus::<F>(&self.profile)?;
         self.commitment.check()?;
         let source_coefficients = self
             .profile
@@ -360,6 +384,7 @@ where
         descriptor
             .validate_frozen_precommit(field_bits)
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
+        check_exact_field_modulus::<F>(&descriptor)?;
         let source_coefficients = descriptor
             .outer_slice_count
             .complete_source_coefficients(
