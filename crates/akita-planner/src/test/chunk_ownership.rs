@@ -344,14 +344,15 @@ fn frontier_source_block_len_preserves_the_unpruned_complete_winner() {
         .collect::<Vec<_>>();
     // Under the 169-bit tables the narrower consumer is also locally cheaper,
     // so no real pair in this fixture family shows the reversal this frontier
-    // key prevents. Give the wider suffix the narrower cost minus one work
-    // element. Its params, source width, and so its predecessor padding are
-    // unchanged; only the suffix-local order flips.
+    // key prevents. Lower only the wider suffix's work to one element below the
+    // narrower one. Its params, proof bytes, grinding, and source width (and so
+    // its predecessor padding) are unchanged; only the suffix-local order flips.
     let narrower_cost = suffixes[0].cost;
     assert!(narrower_cost.strictly_better(suffixes[1].cost));
+    assert_eq!(narrower_cost.proof_bytes(), suffixes[1].cost.proof_bytes());
     suffixes[1].cost = ProofCost {
         work_elements: narrower_cost.work_elements - 1,
-        ..narrower_cost
+        ..suffixes[1].cost
     };
     let first = suffixes[0].folds.first().unwrap();
     let second = suffixes[1].folds.first().unwrap();
