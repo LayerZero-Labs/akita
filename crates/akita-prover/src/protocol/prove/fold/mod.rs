@@ -700,7 +700,7 @@ where
         || level_layout.stage2_sumcheck()
             != akita_sumcheck::SumcheckShape::new(
                 relation_geometry.relation_point_variable_count(),
-                3,
+                akita_params::STAGE2_SUMCHECK_DEGREE,
             )?
     {
         return Err(AkitaError::Internal(

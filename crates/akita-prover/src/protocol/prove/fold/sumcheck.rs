@@ -578,7 +578,7 @@ where
     let (sumcheck_challenges, claim) = akita_sumcheck::prove_sumcheck::<F, E, _, _>(
         &mut kernel,
         &mut channel,
-        akita_sumcheck::SumcheckShape::new(num_rounds, 3)?,
+        akita_sumcheck::SumcheckShape::new(num_rounds, akita_params::STAGE2_SUMCHECK_DEGREE)?,
         0,
     )?;
     let final_output =
@@ -770,7 +770,7 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage2Kern
         self.rounds
     }
     fn degree_bound(&self) -> usize {
-        3
+        akita_params::STAGE2_SUMCHECK_DEGREE
     }
     fn input_claim(&self) -> E {
         self.claim

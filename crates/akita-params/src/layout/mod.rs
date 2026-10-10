@@ -50,7 +50,7 @@ pub use proof_size::{
     padded_boolean_opening_vars, sumcheck_rounds, terminal_response_bytes,
     terminal_response_max_bytes, terminal_response_planner_bytes,
     try_extension_opening_reduction_level_bytes, EXTENSION_OPENING_REDUCTION_DEGREE,
-    SETUP_SUMCHECK_DEGREE,
+    SETUP_SUMCHECK_DEGREE, STAGE2_SUMCHECK_DEGREE,
 };
 pub use relation_address::{CompressionRelationAddressGeometry, RelationAddressGeometry};
 pub use relation_layout::{

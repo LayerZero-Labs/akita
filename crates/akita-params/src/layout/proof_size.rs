@@ -10,6 +10,9 @@ pub const EXTENSION_OPENING_REDUCTION_DEGREE: usize = 2;
 /// Degree bound for the setup-product sumcheck (`S(lambda, y) * omega(lambda) * alpha(y)`).
 pub const SETUP_SUMCHECK_DEGREE: usize = 2;
 
+/// Degree bound for the Stage 2 relation sumcheck round polynomial.
+pub const STAGE2_SUMCHECK_DEGREE: usize = 3;
+
 /// Field element size in bytes for a field with `field_bits` bits.
 pub fn field_bytes(field_bits: u32) -> usize {
     (field_bits as usize).div_ceil(8)
