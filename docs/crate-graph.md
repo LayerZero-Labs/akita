@@ -228,3 +228,9 @@ including that `akita-prover` and `akita-verifier` source does not name
 `akita-schedules`, not `akita-planner`; only the planner's optional catalog
 generation path adds the reverse configuration dependency. Add new forbidden
 edges there whenever a crate gets split further.
+
+Successor export/import contracts and directed `Edge<A, B>` bridges live in
+`akita-prover`. The CPU backend exposes typed packets and a checked public import
+constructor. The generic coordinator erases packets only for bridge dispatch;
+packet encoding and conversion belong to backend implementations. PCS integration
+tests implement external bridges using the public CPU packet API.

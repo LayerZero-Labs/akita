@@ -63,7 +63,7 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize + Send + Sync + 'static,
     E: Field + jolt_field::ExtField<F> + Send + Sync + 'static,
 {
-    fn begin_proof<Cfg>(
+    fn prepare_executor<Cfg>(
         &self,
         setup: &AkitaSetupDescriptor,
         schedules: &TrustedScheduleCatalog<Cfg>,
@@ -86,36 +86,95 @@ where
         plan.validate_structure()?;
         plan.validate_nonterminal_opening_execution(E::DEGREE)?;
         plan.root.params.validate_opening_batch(layout)?;
-        let required = akita_params::setup_matrix_field_elements_for_schedule(plan)?;
-        if required > prepared.expanded.shared_matrix.as_field_slice().len() {
-            return Err(AkitaError::InvalidSetup(
-                "proof plan exceeds backend setup capacity".into(),
-            ));
-        }
-        for parameters in std::iter::once(&plan.root.params)
-            .chain(plan.recursive_folds.iter().map(|fold| &fold.params))
-        {
-            parameters.witness_chunk.validate()?;
-            for group in parameters.groups() {
-                akita_params::validate_role_dims_for_field::<F>(
-                    group.role_dims(parameters.open().matrix.ring_dimension()),
-                )?;
-            }
-        }
-        akita_params::dispatch_for_field!(
-            akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
-            F,
-            plan.terminal.d_a(),
-            |D| {
-                let _ = D;
-                Ok::<(), AkitaError>(())
-            }
-        )?;
         let proof = self.owner().begin_proof(plan, layout)?;
         Ok(CpuProofSessionHandle::new(
             std::sync::Arc::clone(self.owner()),
             proof,
         ))
+    }
+
+    fn begin_fold(
+        &self,
+        session: &Self::ProofSessionHandle,
+        requirements: &akita_prover::backend::FoldExecutionRequirements<'_>,
+    ) -> Result<(), AkitaError> {
+        let scope = session.validate_owner(self.owner())?;
+        let (schedule, layout) = scope.proof_plan()?;
+        if schedule.as_ref() != requirements.schedule() || layout != *requirements.root_layout() {
+            return Err(AkitaError::InvalidInput(
+                "fold preparation differs from admitted proof".into(),
+            ));
+        }
+        let level = requirements.level();
+        let mut required = 0;
+        if requirements.is_terminal() {
+            akita_params::accumulate_terminal_matrix_field_elements(
+                &schedule.terminal,
+                &mut required,
+            )?;
+            akita_params::dispatch_for_field!(
+                akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
+                F,
+                schedule.terminal.d_a(),
+                |D| {
+                    let _ = D;
+                    Ok::<(), AkitaError>(())
+                }
+            )?;
+        } else {
+            let params = if level == 0 {
+                &schedule.root.params
+            } else {
+                &schedule
+                    .recursive_folds
+                    .get(level - 1)
+                    .ok_or_else(|| AkitaError::InvalidInput("prepared fold is missing".into()))?
+                    .params
+            };
+            akita_params::accumulate_matrix_field_elements_for_level(params, &mut required)?;
+            params.witness_chunk.validate()?;
+            for group in params.groups() {
+                akita_params::validate_role_dims_for_field::<F>(
+                    group.role_dims(params.open().matrix.ring_dimension()),
+                )?;
+            }
+            let successor = match schedule.recursive_folds.get(level) {
+                Some(next) => {
+                    // Stage 3 uses the successor setup prefix, but never its opening matrix.
+                    if let Some(id) = next
+                        .params
+                        .setup_prefix()
+                        .and_then(|prefix| prefix.slot_id())
+                    {
+                        required =
+                            required.max(akita_params::setup_prefix_slot_field_elements(&id)?);
+                    }
+                    crate::commitment::CommitmentExecutionPlan::for_recursive(
+                        &next.params,
+                        level,
+                        1,
+                    )?
+                }
+                None => crate::commitment::CommitmentExecutionPlan::for_terminal(
+                    &schedule.terminal,
+                    level,
+                )?,
+            };
+            required = required.max(successor.max_setup_field_elements()?);
+        }
+        if required
+            > self
+                .prepared()?
+                .expanded
+                .shared_matrix
+                .as_field_slice()
+                .len()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "assigned fold exceeds backend setup capacity".into(),
+            ));
+        }
+        scope.prepare_level(level)
     }
 
     fn proof_context(

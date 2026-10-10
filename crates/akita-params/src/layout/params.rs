@@ -510,6 +510,14 @@ impl CommittedGroupParams {
         self.groups.as_slice()
     }
 
+    /// Widest balanced basis emitted into this producer's recursive witness.
+    pub fn witness_log_basis(&self) -> u32 {
+        self.groups()
+            .iter()
+            .flat_map(|group| [group.log_basis_outer(), group.log_basis_open()])
+            .fold(self.open().digits.log_basis, u32::max)
+    }
+
     /// One group of this fold's opening batch, as a concrete group.
     ///
     /// Formerly returned `&dyn LevelParamsLike`, because the final group was the

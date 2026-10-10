@@ -18,7 +18,7 @@ mod tests;
 pub(crate) use coefficient_packing::suffix_witness_coefficient_packing_partials;
 pub(crate) use handles_and_relation::{
     CpuPreparedOpeningHandle, CpuRelationHandle, CpuWitnessHandle, CpuWitnessOpeningHandle,
-    OpaqueRecursiveWitness, RecursiveWitnessFlat,
+    OpaqueRecursiveWitness, RecursiveWitnessFlat, WitnessPhase,
 };
 pub(crate) use opening_and_flat::{SuffixWitnessBatchView, SuffixWitnessView};
 pub(in crate::opaque) use recursive_kernels::prepare_recursive_witness_opening;

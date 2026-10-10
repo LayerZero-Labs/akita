@@ -4,7 +4,10 @@ use jolt_field::Field;
 use std::marker::PhantomData;
 use std::ops::Range;
 
+mod handoff;
 mod relation;
+
+pub use handoff::*;
 pub use relation::{
     EvaluationTraceDescription, PhysicalL2WeightRequest, RelationWeightRequest,
     Stage2OpeningDescription, ValidatedRelationSessionPlan,

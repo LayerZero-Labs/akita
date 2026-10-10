@@ -810,7 +810,10 @@ fn witness_level_transition_requires_one_successor_commitment() {
     );
     assert_eq!(witness.operation_binding().fold_level(), 0);
     // Only successful commitment execution grants this private authorization.
-    witness.pending_successor = Some(1);
+    witness.phase = crate::opaque::WitnessPhase::CommittedForSuccessor {
+        producer: 0,
+        successor: 1,
+    };
     <CpuBackend as OpaqueWitnessCommitKernel<F, E>>::advance_witness_level(&backend, &mut witness)
         .unwrap();
     assert_eq!(witness.operation_binding().fold_level(), 1);

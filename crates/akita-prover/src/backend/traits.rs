@@ -13,6 +13,11 @@ where
     F: Field + CanonicalEncoding,
     E: Field,
 {
+    /// Identity of the instance that owns this handle family.
+    fn instance_identity(&self) -> super::BackendInstanceIdentity
+    where
+        Self: 'static;
+
     type CommitmentHandle: super::CommitmentHandleMetadata + Clone + Send + Sync + 'static;
     type EorPreparationHandle: Send;
     type EorSessionHandle: Send;

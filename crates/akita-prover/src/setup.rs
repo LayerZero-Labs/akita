@@ -30,6 +30,10 @@ impl<F: Field, H> Default for SetupPrefixProverRegistry<F, H> {
 }
 
 impl<F: Field, H> SetupPrefixProverRegistry<F, H> {
+    pub fn public_slots(&self) -> impl Iterator<Item = &SetupPrefixVerifierSlot<F>> {
+        self.slots.values().map(|slot| &slot.public)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.slots.is_empty()
     }

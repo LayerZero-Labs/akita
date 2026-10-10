@@ -1,5 +1,22 @@
 //! Public operation context. Backends validate it against their private sessions.
 use super::ProofScopeId;
+use std::any::TypeId;
+
+/// Native identities are namespaced by implementation, never compared as bare counters.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BackendInstanceIdentity {
+    implementation: TypeId,
+    instance: u128,
+}
+
+impl BackendInstanceIdentity {
+    pub fn new<B: 'static>(instance: u128) -> Self {
+        Self {
+            implementation: TypeId::of::<B>(),
+            instance,
+        }
+    }
+}
 
 /// Public identity and schedule position; this request confers no ownership.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

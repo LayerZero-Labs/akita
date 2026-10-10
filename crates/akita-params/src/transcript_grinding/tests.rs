@@ -194,21 +194,24 @@ fn plan_encoding_covers_every_discriminator() {
 }
 
 #[test]
-fn ring_switch_loss_uses_the_opening_polynomial_dimension() {
-    assert_eq!(
-        ring_switch_alpha_loss_factor(OpeningMethod::EvaluationTrace, 64).unwrap(),
-        127
-    );
-    assert_eq!(
-        ring_switch_alpha_loss_factor(
+fn ring_switch_loss_uses_the_native_inner_ring_dimension() {
+    let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
+    for (inner_dimension, expected_loss, expected_bits) in
+        [(64, 127, 7), (128, 255, 8), (256, 511, 9), (1024, 2047, 11)]
+    {
+        for method in [
+            OpeningMethod::EvaluationTrace,
             OpeningMethod::SubringCoefficientPacking {
-                challenge_subring_dimension: 16,
+                challenge_subring_dimension: 64,
             },
-            64,
-        )
-        .unwrap(),
-        31
-    );
+        ] {
+            let loss = ring_switch_alpha_loss_factor(method, inner_dimension).unwrap();
+            assert_eq!(loss, expected_loss);
+            assert_eq!(grind_bits_for_loss(loss, order).unwrap(), expected_bits);
+            assert!(ring_switch_alpha_loss_factor(method, 0).is_err());
+            assert!(ring_switch_alpha_loss_factor(method, usize::MAX).is_err());
+        }
+    }
 }
 
 #[test]
