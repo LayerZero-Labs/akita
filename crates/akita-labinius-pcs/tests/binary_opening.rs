@@ -5,7 +5,8 @@
 mod common;
 
 use akita_config::SetupRequirements;
-use akita_error::AkitaError;
+use akita_cpu_backend::AkitaProverSetup;
+use akita_error::{checked, AkitaError};
 use akita_labinius_pcs::{
     family::{tables::shipped_catalog, Family128, Family64, FieldFamily},
     shipped::{ShippedCatalogError, SupportedGeometry, SUPPORTED_GEOMETRIES},
@@ -115,6 +116,64 @@ fn fp128_opening_is_accepted_and_every_change_is_rejected() {
     opening_is_accepted_and_every_change_is_rejected::<Family128>();
 }
 
+/// Setup provisioning affects neither acceptance nor complete proof bytes.
+#[test]
+fn oversized_prover_and_narrowed_verifier_preserve_proof_bytes() {
+    let exact = Case::<Family64>::new(16, RootOpeningMode::Both);
+    let shipped = shipped_catalog::<Family64>(geometry(16), &artifacts()).unwrap();
+    let requirements = shipped
+        .tables
+        .setup_requirements::<Family64>(&shipped.digits, Some(&shipped.elements))
+        .unwrap();
+    let mut setup = akita_pcs::new_prover_setup(&requirements).unwrap();
+    let mut capacity = requirements.matrix_capacity();
+    capacity.num_field_elements = checked::product([capacity.num_field_elements, 2]).unwrap();
+    // Enlarge the seed-derived matrix while retaining the required prefix registry.
+    setup.expanded = AkitaProverSetup::generate_with_capacity(
+        requirements.max_num_vars(),
+        requirements.max_num_batched_polys(),
+        capacity,
+    )
+    .unwrap()
+    .expanded;
+    let verifier_setup = setup
+        .to_verifier_setup(requirements.matrix_capacity())
+        .unwrap();
+    let prover_elements = setup.expanded.descriptor().num_field_elements;
+    let verifier_elements = verifier_setup.expanded().descriptor().num_field_elements;
+    assert_ne!(prover_elements, verifier_elements);
+    let prover = Prover::<Family64>::new(
+        geometry(16),
+        shipped.digits.clone(),
+        Some(shipped.elements.clone()),
+        setup,
+    )
+    .unwrap();
+    let verifier = Verifier::<Family64>::new(
+        geometry(16),
+        shipped.digits,
+        Some(shipped.elements),
+        verifier_setup,
+    )
+    .unwrap();
+    let committed = prover.commit::<H>(&exact.source).unwrap();
+    let proof = prover
+        .open::<H>(&exact.source, &committed, &exact.statement())
+        .unwrap();
+    assert!(
+        verifier
+            .verify::<H>(&committed.commitment, &exact.statement(), &proof)
+            .is_ok(),
+        "the narrowed verifier must accept the oversized prover's proof"
+    );
+    let exact_committed = exact.prover.commit::<H>(&exact.source).unwrap();
+    let exact_proof = exact
+        .prover
+        .open::<H>(&exact.source, &exact_committed, &exact.statement())
+        .unwrap();
+    assert_eq!(proof, exact_proof);
+}
+
 /// Both families construct every supported geometry with both catalogs selected.
 #[test]
 fn every_supported_geometry_constructs_prover_and_verifier_for_both_families() {
@@ -209,13 +268,13 @@ fn binary_proof_bytes_are_pinned_for_both_families() {
     }
     let expected = if akita_params::DEV_PROTOCOL {
         (
-            "11029db75032d95c1ade4a0f868b05796e21b811bd64cff4b8e24385aa113293",
-            "2635ea4d40a4fa269fed27f4c49109e27174c203731644f04b9103e3c29ae25e",
+            "203f73fab1aa95a3748a97392072715c4a4ff4e8a5411540d6b5157dd319d4b7",
+            "d910a7c83f1c487ab3f5b30ed533278b19d3c5c6648500599d11ff126853c428",
         )
     } else {
         (
-            "19c08bbf71e5566c23c8da9d87fa6a8baa164b981f2794b142c75957cdeb78ec",
-            "eb4d420ce70c9586aa241a147953ef5ff2c43b34bf77dd46c1298629e254ed9b",
+            "71ad15ec894246122b7e6e69f8730ba606fd3ec782962da9fff17832d1b64ac2",
+            "400d2b65d59cf7ca5135d7303e4f426da8ef275d57252f3093ac26b2910e00d7",
         )
     };
     assert_eq!(

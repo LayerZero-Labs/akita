@@ -90,7 +90,7 @@ the nested seed itself, the 128-bit family's root matrix would be a prefix of
 its nested Akita setup matrix reduced modulo `q`.
 
 The seed bytes of the admitted identity (item 8 below) are `matrix_seed`. The
-nested seed is bound by the nested Akita setup descriptor, which the PCS
+nested seed is bound by the nested Akita setup identity, which the PCS
 composition absorbs separately.
 
 ## Canonical identity
