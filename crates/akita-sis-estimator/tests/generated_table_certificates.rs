@@ -91,7 +91,7 @@ fn checked_in_runtime_widths() -> BTreeMap<RuntimeKey, Vec<u64>> {
     widths
 }
 
-fn boundary_certificate(
+fn estimate_boundary(
     row: &InfinityWidthRow,
     width: u64,
     config: &EstimateConfig,
@@ -109,7 +109,7 @@ fn boundary_certificate(
         .into()
 }
 
-fn assert_same_certificate(
+fn assert_same_boundary(
     row: &InfinityWidthRow,
     width: u64,
     recorded: &InfinityWidthCertificate,
@@ -124,11 +124,18 @@ fn assert_same_certificate(
     };
     assert!(
         same_cost && recorded.beta == recomputed.beta && recorded.zeta == recomputed.zeta,
-        "{} d={} rank={} bound={} width={width}: recorded {recorded:?}, estimator now gives {recomputed:?}",
+        "{} d={} rank={} bound={} width={width}: recorded (rop {:?}, beta {:?}, zeta {:?}), \
+         estimator now gives (rop {:?}, beta {:?}, zeta {:?})",
         row.modulus_profile.label(),
         row.d,
         row.rank,
         row.coeff_linf_bound,
+        recorded.rop,
+        recorded.beta,
+        recorded.zeta,
+        recomputed.rop,
+        recomputed.beta,
+        recomputed.zeta,
     );
 }
 
@@ -280,11 +287,11 @@ fn production_boundaries_reproduce_their_certificates() {
     assert!(samples.iter().any(|row| row.max_width == 0));
     for row in samples {
         if let Some(accepted) = &row.max_costs {
-            assert_same_certificate(
+            assert_same_boundary(
                 row,
                 row.max_width,
                 &accepted.adps16_quantum,
-                &boundary_certificate(row, row.max_width, &config),
+                &estimate_boundary(row, row.max_width, &config),
             );
         }
         let width = rejected_successor_width(row);
@@ -292,11 +299,11 @@ fn production_boundaries_reproduce_their_certificates() {
             .next_costs
             .as_ref()
             .expect("exact cutoff records its rejected successor");
-        assert_same_certificate(
+        assert_same_boundary(
             row,
             width,
             &rejected.adps16_quantum,
-            &boundary_certificate(row, width, &config),
+            &estimate_boundary(row, width, &config),
         );
     }
 }
