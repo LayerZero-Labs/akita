@@ -19,6 +19,10 @@
 )]
 
 pub mod backend;
+
+pub use execution::{BackendId, BackendRegistry, FixedFoldRoute, FoldExecutionPolicy};
+
+pub use protocol::execution;
 mod opening;
 pub mod protocol;
 mod setup;
@@ -37,7 +41,7 @@ pub use backend::{
 };
 pub use opening::{ProverOpeningData, SelectedProverOpeningData};
 pub use protocol::{
-    batched_prove, ProveLevelOutput, RecursiveSuffixOutcome, RingRelationInstance,
-    RingRelationProver, RingSwitchOutput, SuffixProverState,
+    batched_prove, ProveLevelOutput, RingRelationInstance, RingRelationProver, RingSwitchOutput,
+    SuffixProverState,
 };
 pub use setup::{PreparedSetupPrefix, SetupPrefixProverRegistry};

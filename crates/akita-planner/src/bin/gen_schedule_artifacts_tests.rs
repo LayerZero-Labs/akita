@@ -165,6 +165,18 @@ fn every_grouped_artifact_precommit_has_a_shipped_scalar_producer() {
             "fp128_onehot_recursive_multi_chunk_w8r2",
             "fp128_onehot_multi_chunk",
         ),
+        (
+            "fp128_onehot_recursive_multi_chunk_w2r3",
+            "fp128_onehot_multi_chunk_w2r3",
+        ),
+        (
+            "fp128_onehot_recursive_multi_chunk_w4r3",
+            "fp128_onehot_multi_chunk_w4r3",
+        ),
+        (
+            "fp128_onehot_recursive_multi_chunk_w8r3",
+            "fp128_onehot_multi_chunk_w8r3",
+        ),
     ] {
         let recursive = catalogs
             .get(recursive_family)

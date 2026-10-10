@@ -103,11 +103,9 @@ where
             >,
     {
         let inner = state.inner_relation_material(plan.inner(), source_count)?;
-        inner.validate_relation_material(plan.inner(), source_count)?;
         let compression = match (plan.compression(), plan.relation_mode()) {
             (Some(compression), Some(mode)) => {
                 let material = state.outer_compression_material(compression, mode)?;
-                material.validate_compression_material(compression, mode)?;
                 Some(material)
             }
             (None, None) => None,
@@ -117,6 +115,36 @@ where
                 ));
             }
         };
+        Self::from_material(inner, compression, plan, source_count)
+    }
+
+    pub(in crate::opaque) fn transfer_parts(
+        &self,
+    ) -> (
+        crate::commitment::InnerRelationStateMaterial<F>,
+        Option<crate::commitment::PortableCompressionState<F>>,
+    ) {
+        (self.inner.clone(), self.compression.clone())
+    }
+
+    pub(in crate::opaque) fn from_material(
+        inner: crate::commitment::InnerRelationStateMaterial<F>,
+        compression: Option<crate::commitment::PortableCompressionState<F>>,
+        plan: &crate::commitment::CommitmentExecutionPlan,
+        source_count: usize,
+    ) -> Result<Self, AkitaError> {
+        inner.validate_relation_material(plan.inner(), source_count)?;
+        match (&compression, plan.compression(), plan.relation_mode()) {
+            (Some(material), Some(chain), Some(mode)) => {
+                material.validate_compression_material(chain, mode)?
+            }
+            (None, None, None) => {}
+            _ => {
+                return Err(AkitaError::InvalidInput(
+                    "adopted compression material differs from successor plan".into(),
+                ))
+            }
+        }
         let metadata = crate::opaque::CommitmentMaterialMetadata::try_new(
             inner.ring_dimension(),
             source_count,

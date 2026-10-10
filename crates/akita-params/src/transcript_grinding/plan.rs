@@ -443,6 +443,70 @@ mod tests {
     }
 
     #[test]
+    fn ring_switch_prices_the_largest_native_inner_ring_across_groups() {
+        for groups in 1..=3 {
+            for final_dimension in [64, 512] {
+                for method in [
+                    crate::OpeningMethod::EvaluationTrace,
+                    crate::OpeningMethod::SubringCoefficientPacking {
+                        challenge_subring_dimension: 64,
+                    },
+                ] {
+                    let (mut current, layout) =
+                        crate::test_fixtures::address_oracle_fixture(groups);
+                    crate::test_fixtures::retarget_group_role_dims(
+                        &mut current,
+                        final_dimension,
+                        64,
+                    );
+                    let mut preceding = current.precommitted_groups().to_vec();
+                    for group in preceding
+                        .iter_mut()
+                        .chain(std::iter::once(current.own_group_mut()))
+                    {
+                        group.opening.opening_method = method;
+                        let challenge_dimension = match method {
+                            crate::OpeningMethod::EvaluationTrace => {
+                                group.profile.inner.matrix.ring_dimension()
+                            }
+                            crate::OpeningMethod::SubringCoefficientPacking {
+                                challenge_subring_dimension,
+                            } => challenge_subring_dimension,
+                        };
+                        group.opening.fold_challenge_config =
+                            SparseChallengeConfig::production_for_ring_dim(challenge_dimension)
+                                .unwrap();
+                    }
+                    current.set_precommitted_groups(preceding).unwrap();
+                    let successor = params(128);
+                    let mut runs = Vec::new();
+                    append_nonterminal(
+                        &mut |run| {
+                            runs.push(run);
+                            Ok(())
+                        },
+                        ChallengeFieldOrder::from_full_capacity(128).unwrap(),
+                        1,
+                        0,
+                        &current,
+                        7,
+                        &layout,
+                        FoldSuccessor::Recursive(&successor),
+                    )
+                    .unwrap();
+                    let alpha = runs
+                        .iter()
+                        .find(|run| matches!(run.site(), GrindingSite::RingSwitchAlpha { .. }))
+                        .unwrap();
+                    let largest_dimension = final_dimension.max(if groups > 1 { 128 } else { 64 });
+                    assert_eq!(alpha.loss_factor(), (2 * largest_dimension - 1) as u64);
+                    assert_eq!(alpha.grind_bits(), largest_dimension.ilog2() as u8 + 1);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn stage_rounds_follow_successor_padded_relation_domain() {
         let current = params(64);
         let successor = params(128);

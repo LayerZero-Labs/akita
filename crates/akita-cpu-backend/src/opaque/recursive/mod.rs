@@ -9,6 +9,7 @@ mod relation_witness;
 mod witness;
 
 pub(crate) use crate::opaque::sumcheck::digit_range;
+pub(crate) use commit::uses_tensor_source;
 
 #[cfg(test)]
 pub(crate) use digit_range::direct_range_leaf::pad_compact_witness;
@@ -18,7 +19,7 @@ pub(crate) use witness::cpu_extension_opening_session_from_witnesses;
 pub(crate) use witness::OpaqueRecursiveWitness;
 pub(crate) use witness::{
     CpuPreparedOpeningHandle, CpuRelationHandle, CpuStage1SessionHandle, CpuStage2SessionHandle,
-    CpuWitnessHandle, CpuWitnessOpeningHandle, RecursiveWitnessFlat,
+    CpuWitnessHandle, CpuWitnessOpeningHandle, RecursiveWitnessFlat, WitnessPhase,
 };
 
 pub(in crate::opaque) use witness::prepare_recursive_witness_opening;

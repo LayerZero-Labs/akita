@@ -36,29 +36,25 @@ pub(crate) struct ExtensionOpeningReduction<E: Field> {
     pub(crate) final_factors: Vec<E>,
 }
 
+pub mod execution;
 mod fold;
 mod fold_kernels;
 mod opening_reduction;
+mod registry;
 mod root;
 mod suffix;
 
+pub use execution::batched_prove;
 pub(in crate::protocol::prove) use fold::{prepare_fold, prove_fold, PreparedFold};
 pub(in crate::protocol) use fold_kernels::*;
 pub(crate) use opening_reduction::*;
-pub use root::batched_prove;
+pub(crate) use suffix::FoldPublicState;
 pub use suffix::SuffixProverState;
 
 /// Output from a single prove level, used to extend proof wire data and state.
 pub struct ProveLevelOutput<F: Field, E: Field, MaterialHandle, WitnessHandle> {
     /// Suffix prover state for the next level.
     pub next_state: SuffixProverState<F, E, MaterialHandle, WitnessHandle>,
-}
-
-/// Outcome of the recursive fold suffix after the root level.
-pub struct RecursiveSuffixOutcome {
-    /// Total fold-level count reached, including the root level and the
-    /// terminal level.
-    pub num_levels: usize,
 }
 
 pub(in crate::protocol::prove) struct Stage3ProveOutput<E: Field> {

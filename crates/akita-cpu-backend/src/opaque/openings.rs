@@ -92,6 +92,11 @@ where
                         )?
                     }
                     OpeningSource::Witness(witness) => {
+                        if witness.phase != WitnessPhase::ReadyInput(context.fold_level()) {
+                            return Err(AkitaError::InvalidInput(
+                                "witness opening requires a ready input at this level".into(),
+                            ));
+                        }
                         self.validate_binding(&witness.operation_binding())?;
                         binding.validate_lineage(&witness.operation_binding())?;
                         let (schedule, _) = binding.scope_lease().proof_plan()?;

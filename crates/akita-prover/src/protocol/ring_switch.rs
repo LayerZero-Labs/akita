@@ -10,7 +10,8 @@ use jolt_field::{CanonicalEncoding, Field, MulBaseUnreduced, Ring};
 
 pub(crate) enum NextWitnessState<F: Field> {
     OuterPayload(akita_types::RingVec<F>),
-    TerminalInnerState,
+    // Only the dynamic handoff needs these already-published fields.
+    TerminalInnerState(crate::backend::TerminalTFieldsMessage<F>),
 }
 
 /// D-agnostic output of the ring switch protocol, containing everything

@@ -1,29 +1,30 @@
 use super::*;
 use akita_types::GrindingReplay;
 use jolt_field::AdditiveGroup;
-/// Prover state carried between suffix fold levels.
-pub struct SuffixProverState<F: Field, E: Field, MaterialHandle, WitnessHandle> {
-    /// Current committed suffix witness representation.
-    pub(crate) witness_handle: WitnessHandle,
-    /// Transcript-bound public state for the current suffix witness.
+/// Transcript-derived continuation; no backend-private storage.
+pub(crate) struct FoldPublicState<F: Field, E: Field> {
+    pub(crate) level: usize,
     pub(crate) binding: NextWitnessState<F>,
-    /// Consumer-owned commitment material transported without interpretation.
-    pub(crate) commitment_material: MaterialHandle,
-    /// Sumcheck challenges that become the next suffix opening point.
     pub(crate) sumcheck_challenges: Vec<E>,
-    /// Claimed opening of the logical witness at `sumcheck_challenges`.
     pub(crate) opening: E,
-    /// Optional setup-prefix opening carried from the previous stage-3 proof.
     pub(crate) setup_prefix_opening: Option<(Vec<E>, E)>,
 }
 
+/// Native handles retained for the next fold.
+pub struct SuffixProverState<F: Field, E: Field, MaterialHandle, WitnessHandle> {
+    pub(crate) public: FoldPublicState<F, E>,
+    pub(crate) witness_handle: WitnessHandle,
+    pub(crate) commitment_material: MaterialHandle,
+}
+
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prove_suffix<Cfg, B>(
+#[allow(clippy::type_complexity)]
+pub(super) fn prove_recursive_step<Cfg, B>(
     expanded: &akita_types::AkitaSetupDescriptor,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
     backend: &B,
     grinding: &mut akita_types::ProverGrinding<'_>,
-    mut current_state: SuffixProverState<
+    current_state: SuffixProverState<
         Cfg::Field,
         Cfg::ExtField,
         B::CommitmentMaterialHandle,
@@ -31,7 +32,12 @@ pub(super) fn prove_suffix<Cfg, B>(
     >,
     schedule: &FoldSchedule,
     session: &B::ProofSessionHandle,
-) -> Result<RecursiveSuffixOutcome, AkitaError>
+    index: usize,
+    handoff: &mut super::registry::FoldHandoff<'_, '_, '_, Cfg>,
+) -> Result<
+    SuffixProverState<Cfg::Field, Cfg::ExtField, B::CommitmentMaterialHandle, B::WitnessHandle>,
+    AkitaError,
+>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
@@ -44,74 +50,77 @@ where
         + MulBaseUnreduced<Cfg::Field>
         + AkitaSerialize
         + 'static,
-    B: ProverBackend<Cfg::Field, Cfg::ExtField>,
+    B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
 {
-    for (index, step) in schedule.recursive_folds.iter().enumerate() {
-        let level = index + 1;
-        if current_state.witness_handle.manifest().logical_len() != step.input_witness_len {
-            return Err(AkitaError::Internal(
-                "recursive suffix witness length differs from scheduled input".into(),
-            ));
-        }
-        let (next_params, next_binding) = schedule.recursive_folds.get(index + 1).map_or(
-            (
-                fold::FoldSuccessorParams::Terminal(&schedule.terminal),
-                akita_params::NextWitnessBindingPolicy::TerminalInnerState,
-            ),
-            |next| {
-                (
-                    fold::FoldSuccessorParams::Recursive(next),
-                    akita_params::NextWitnessBindingPolicy::OuterPayload,
-                )
-            },
-        );
-        let prepared = prepare_suffix::<Cfg::Field, Cfg::ExtField, B>(
-            backend,
-            prefix_slots,
-            grinding,
-            current_state,
-            level,
-            &step.params,
-            session,
-            step.output_witness_len,
-            next_params.inner_ring_dimension(),
-        )?;
-        let output = prove_fold::<Cfg::Field, Cfg::ExtField, B>(
-            expanded,
-            prefix_slots,
-            backend,
-            session,
-            grinding,
-            level,
-            &step.params,
-            next_params,
-            step.output_witness_len,
-            next_binding,
-            prepared,
-        )?;
-        current_state = output.next_state;
-    }
-    if current_state.witness_handle.manifest().logical_len() != schedule.terminal.input_witness_len
-    {
-        return Err(AkitaError::Internal(
-            "terminal suffix witness length differs from scheduled input".into(),
+    let step = schedule
+        .recursive_folds
+        .get(index)
+        .ok_or_else(|| AkitaError::InvalidInput("recursive step is outside the schedule".into()))?;
+    let level = index + 1;
+    if current_state.public.level != level {
+        return Err(AkitaError::InvalidInput(
+            "suffix continuation belongs to another level".into(),
         ));
     }
-    prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, B>(
+    if current_state.witness_handle.manifest().logical_len() != step.input_witness_len {
+        return Err(AkitaError::Internal(
+            "recursive suffix witness length differs from scheduled input".into(),
+        ));
+    }
+    let (next_params, next_binding) = schedule.recursive_folds.get(index + 1).map_or(
+        (
+            fold::FoldSuccessorParams::Terminal(&schedule.terminal),
+            akita_params::NextWitnessBindingPolicy::TerminalInnerState,
+        ),
+        |next| {
+            (
+                fold::FoldSuccessorParams::Recursive(next),
+                akita_params::NextWitnessBindingPolicy::OuterPayload,
+            )
+        },
+    );
+    let prepared = prepare_suffix::<Cfg::Field, Cfg::ExtField, B>(
         backend,
+        prefix_slots,
         grinding,
-        schedule.recursive_folds.len() + 1,
         current_state,
-        &schedule.terminal,
+        level,
+        &step.params,
         session,
+        step.output_witness_len,
+        next_params.inner_ring_dimension(),
     )?;
-    Ok(RecursiveSuffixOutcome {
-        num_levels: schedule.num_fold_levels(),
-    })
+    let output = prove_fold::<Cfg::Field, Cfg::ExtField, B>(
+        expanded,
+        prefix_slots,
+        backend,
+        session,
+        grinding,
+        level,
+        &step.params,
+        next_params,
+        step.output_witness_len,
+        next_binding,
+        prepared,
+        |relation, commitment, binding, witness, material| {
+            handoff.handoff_successor(
+                backend,
+                session,
+                level,
+                &step.params,
+                relation,
+                commitment,
+                binding,
+                witness,
+                material,
+            )
+        },
+    )?;
+    Ok(output.next_state)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prove_terminal_suffix<F, E, B>(
+pub(super) fn prove_terminal_suffix<F, E, B>(
     backend: &B,
     grinding: &mut akita_types::ProverGrinding<'_>,
     level: usize,
@@ -134,20 +143,30 @@ where
 {
     let SuffixProverState {
         witness_handle,
-        binding,
         commitment_material,
-        sumcheck_challenges,
-        opening,
-        setup_prefix_opening,
-        ..
+        public:
+            FoldPublicState {
+                level: carried_level,
+                binding,
+                sumcheck_challenges,
+                opening,
+                setup_prefix_opening,
+            },
     } = current_state;
+    if carried_level != level
+        || witness_handle.manifest().logical_len() != scheduled.input_witness_len
+    {
+        return Err(AkitaError::InvalidInput(
+            "terminal continuation differs from its scheduled level".into(),
+        ));
+    }
     if setup_prefix_opening.is_some() {
         return Err(AkitaError::Internal(
             "terminal fold cannot receive a setup-prefix opening".into(),
         ));
     }
     match binding {
-        NextWitnessState::TerminalInnerState => {}
+        NextWitnessState::TerminalInnerState(_) => {}
         NextWitnessState::OuterPayload(_) => {
             return Err(AkitaError::Internal(
                 "terminal suffix received an outer-payload binding".into(),
@@ -400,11 +419,15 @@ where
 {
     let SuffixProverState {
         witness_handle,
-        binding,
         commitment_material: witness_material,
-        sumcheck_challenges,
-        opening,
-        setup_prefix_opening,
+        public:
+            FoldPublicState {
+                binding,
+                sumcheck_challenges,
+                opening,
+                setup_prefix_opening,
+                ..
+            },
     } = current_state;
     let geometry = level_params.outer_payload_geometry()?;
     let commitment = match binding {

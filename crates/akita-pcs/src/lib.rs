@@ -76,3 +76,7 @@ pub use jolt_field::{
     PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 pub use scheme::AkitaCommitmentScheme;
+
+pub use akita_prover::{
+    batched_prove, BackendId, BackendRegistry, FixedFoldRoute, FoldExecutionPolicy,
+};
