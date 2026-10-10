@@ -52,7 +52,9 @@ impl std::hash::Hash for UnprunedState {
 
 pub(super) const MAX_ORACLE_SUFFIX_STATES: usize = 2_000_000;
 pub(super) const MAX_ORACLE_COMPLETE_SCHEDULES: usize = 1_000_000;
-pub(super) const MAX_ORACLE_RECURSION_DEPTH: usize = 4;
+// The 169-bit SIS tables add a fold to small chunked schedules, so the
+// reference oracle must reach five recursive folds.
+pub(super) const MAX_ORACLE_RECURSION_DEPTH: usize = 5;
 
 #[derive(Default)]
 struct OracleWork {

@@ -871,8 +871,10 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
     ])
     .unwrap();
     policy = policy_for_domain(policy, &domain);
+    // nv17 is the smallest size with an admitted schedule below the exact
+    // setup of its selected schedule under the 169-bit tables.
     let selected = find_schedule(
-        onehot_group(16, 1),
+        onehot_group(17, 1),
         &policy,
         OneHot::committed_source_contract().unwrap(),
         OneHot::ring_challenge_config,
@@ -883,7 +885,7 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
     policy.setup_field_budget = Some(exact_fields);
 
     let budgeted = find_schedule(
-        onehot_group(16, 1),
+        onehot_group(17, 1),
         &policy,
         OneHot::committed_source_contract().unwrap(),
         OneHot::ring_challenge_config,
@@ -896,7 +898,7 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
     let smaller_budget = exact_fields - 1;
     policy.setup_field_budget = Some(smaller_budget);
     let tighter = find_schedule(
-        onehot_group(16, 1),
+        onehot_group(17, 1),
         &policy,
         OneHot::committed_source_contract().unwrap(),
         OneHot::ring_challenge_config,
