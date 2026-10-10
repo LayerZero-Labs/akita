@@ -108,9 +108,9 @@ fp32_dense_recursive	a45392a4435806ac707a8807f7f8c88470c8ed7eb09c038347f1c9d61a6
 fp32_dense_recursive	b5b88448fc23c992d9ea4d11109ffd8ade3fba09381c753ad1de63b3aedf9373	26x1	-	Quantum169BitADPS16	Q32Offset99	169.070000	root fold final group A	linf:53477172	2048	1	512
 fp32_onehot	1aca339c8777b6728f28e4536068cfffc69d0d6c7580dbf4cd53e7645d6815cf	16x1	-	Quantum169BitADPS16	Q32Offset99	169.070000	root fold final group A	linf:12852	1024	1	16
 fp32_onehot	1b793aca4f1d7d4f1e4109fceacc76bd9857e088983df7ea76add5bcca541a2e	20x1	14x1	Quantum169BitADPS16	Q32Offset99	169.070000	root fold precommitted group 0 A	linf:12852	1024	1	8
+fp32_onehot	47ee93c512105edf4ff6fd771d4e9787291945d337b259716acd1f7db64a53ec	14x1	-	Quantum169BitADPS16	Q32Offset99	169.070000	root fold final group A	linf:12852	1024	1	8
 fp32_onehot	562c814b59f67934418d3ba4e6b5f701d7390d9cbb48d4baad724c26fb0efd01	28x1	-	Quantum169BitADPS16	Q32Offset99	169.070000	root fold final group A	linf:835380	2048	1	512
 fp32_onehot	69e7246f655187b814795d765e5dfae5ac7eb1417a13ad09938a69a3551cf605	20x1	-	Quantum169BitADPS16	Q32Offset99	169.070000	root fold final group A	linf:104244	1024	1	64
-fp32_onehot	75e3fbd79c3413cc2d1eb6181892c265b67767ec7abbbd3b423f11e013002c6c	16x2	-	Quantum169BitADPS16	Q32Offset99	169.070000	root fold final group A	linf:12852	1024	1	32
 fp32_onehot	943752349d0799ebf80cc9dcf304e650aebfd972501940b2b2df33c4c8308c6d	34x1	-	Quantum169BitADPS16	Q32Offset99	169.070000	root fold final group A	linf:835380	2048	1	8192
+fp32_onehot	a0652c632ddb6615c51ed87ac56e91df85215a1a84cf4e733763042e5e7c083c	16x2	-	Quantum169BitADPS16	Q32Offset99	169.070000	root fold final group A	linf:12852	1024	1	32
 fp32_onehot	b34da254edf34da244eab66a816b50951224aebb58141224b7704f2313542f01	30x1	-	Quantum169BitADPS16	Q32Offset99	169.070000	root fold final group A	linf:835380	2048	1	1024
-fp32_onehot	edb570d40d07295b83c673d3d806691b784839fa86c1ba2ca7396954194b7a87	14x1	-	Quantum169BitADPS16	Q32Offset99	169.070000	root fold final group A	linf:12852	1024	1	8
