@@ -28,8 +28,15 @@
 //! so they are called here directly.
 //!
 //! Soundness uses only the enforced digit interval. The tail threshold is a
-//! completeness bound for the honest prover, and it models the signs of the
-//! challenge coefficients as independent and uniform given their supports.
+//! completeness bound for the honest prover. The bound takes the signs of all
+//! `C * w` challenge monomials as independent and uniform. The sign rule derives
+//! a challenge's signs from its support alone. With that rule modelled as a
+//! random oracle, the premise holds exactly when the `C` supports are pairwise
+//! distinct. `derive` therefore requires the fold budget `|S| >= C * 2^lambda_fold`.
+//! The supports are independent and uniform over the family, so the probability
+//! that two coincide is at most `C * (C - 1) / (2 * |S|)`
+//! `<= (C - 1) / 2^(lambda_fold + 1)`. The abort bound holds up to that additive
+//! term.
 //!
 //! The response search is Akita's fold-response run, a bounded rejection
 //! search with no proof-of-work target; its nonce width is
@@ -65,13 +72,25 @@ pub struct LabiniusFoldResponse {
 impl LabiniusFoldResponse {
     /// Derive the response admission for `fold_columns` binary columns of
     /// `matrix_width` ring elements each.
+    ///
+    /// Requires the challenge family to meet the fold budget
+    /// `|S| >= fold_columns * 2^lambda_fold`. The returned abort-probability pair
+    /// is the bound given pairwise distinct supports; add the support-collision
+    /// term described in the module documentation for the unconditional bound.
     pub fn derive(
         challenge: &BinaryChallengeProfile,
         fold_columns: usize,
         matrix_width: usize,
         ring_degree: LabiniusRingDegree,
+        lambda_fold: u32,
     ) -> Result<Self, AkitaError> {
         let overflow = || AkitaError::InvalidSetup("LaBinius fold response bound overflow".into());
+        let columns = u64::try_from(fold_columns).map_err(|_| overflow())?;
+        if !challenge.meets_budget(columns, lambda_fold) {
+            return Err(AkitaError::InvalidSetup(
+                "LaBinius fold response challenge profile does not meet fold budget".into(),
+            ));
+        }
         let degree = usize::try_from(ring_degree.degree()).map_err(|_| overflow())?;
         if checked::exact_div(degree, challenge.scalar_ring().degree()).is_none() {
             return Err(AkitaError::InvalidSetup(
@@ -167,7 +186,9 @@ impl LabiniusFoldResponse {
     }
 
     /// Upper bound `(numerator, denominator)` on the probability that one
-    /// honest attempt leaves the accepted interval.
+    /// honest attempt leaves the accepted interval, given pairwise distinct
+    /// supports. Add the support-collision term described in the module
+    /// documentation for the unconditional bound.
     pub const fn abort_probability_bound(&self) -> (u32, u32) {
         self.abort_probability_bound
     }
