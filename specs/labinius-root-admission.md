@@ -57,14 +57,16 @@ proportional to the geometry.
 The challenge profile supplies `w = 46` (coefficient L1 and squared L2 bound)
 and the multiplication bound `Gamma = 2w = 92`. Its exact support cardinality
 must satisfy `|S| >= C * 2^lambda_fold`, through
-`BinaryChallengeProfile::meets_budget`. This budget is caller allocated and is
+`BinaryChallengeProfile::meets_budget`, which `LabiniusFoldResponse::derive`
+checks before any norm arithmetic. This budget is caller allocated and is
 separate from the 128-bit quantum ADPS16 policy of the width table. At budget
 128 the family supports at most 315 columns, so the widest admitted
 power-of-two fold is 256 (log 8).
 
 ## Fold response
 
-`LabiniusFoldResponse::derive(challenge, C, m, degree)` states one binary fold
+`LabiniusFoldResponse::derive(challenge, C, m, degree, lambda_fold)` rejects a
+family below the fold budget, then states one binary fold
 `z = sum_{i < C} c_i * s_i` in the inputs of Akita's fold-response cap
 ([`fold-linf-rejection.md`](fold-linf-rejection.md),
 `crates/akita-params/src/sis/fold_linf_cap.rs`) and calls it. It derives no
@@ -107,11 +109,17 @@ bound is zero. Otherwise the cap is smaller than the worst case by design:
 `C * Gamma = 23552` at the sample geometry. Completeness is then
 probabilistic, and the honest prover searches a fold-response nonce as
 specified in [the clear opening](labinius-clear-opening.md#fold-response-nonce).
-Akita's tail bound conditions on the challenge supports and uses independent
-uniform signs. This family derives its signs from the support
-(`BinarySignRule::Shake256V1`), so the bound and the abort probability apply
-to it only with that map modelled as a random function: they are a
-completeness estimate. Soundness uses only the enforced interval.
+Akita's tail bound conditions on the challenge supports and takes the signs of
+all `C * w` challenge monomials as independent and uniform. This family derives
+a challenge's signs from its support alone (`BinarySignRule::Shake256V1`), so
+two columns that draw one support receive one challenge. With that map
+modelled as a random function, the premise holds exactly when the C supports
+are pairwise distinct. The supports are independent and uniform over the
+family, and the fold budget gives `|S| >= C * 2^lambda_fold`, so two of them
+coincide with probability at most
+`C * (C - 1) / (2 * |S|) <= (C - 1) / 2^(lambda_fold + 1)`. The abort bound
+holds up to that additive term, which is why `derive` requires the budget. The
+bound is a completeness estimate. Soundness uses only the enforced interval.
 
 ## Rank
 
@@ -388,8 +396,9 @@ any proof prime:
 
 1. Represent both powers of two; check ring and scalar compatibility and
    exact, positive packing and column divisions.
-2. Check the challenge family's exact fold budget.
-3. Derive the fold response: cap, digit count, interval and `eta_A`.
+2. Check the challenge family's exact fold budget, in
+   `LabiniusFoldResponse::derive`.
+3. Derive the fold response there: cap, digit count, interval and `eta_A`.
 4. Select the minimum dominating certified rank; reject missing coverage.
 5. Derive `H`, `B_Q`, `B_K` and `B_KA` with checked arithmetic.
 
