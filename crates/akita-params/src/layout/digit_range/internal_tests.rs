@@ -7,7 +7,7 @@ use crate::sis::{
 #[test]
 fn compact_route_shape_matches_materialized_shapes_and_rejects_bad_norms() {
     let key = SisL2TableKey {
-        policy: SisSecurityPolicyId::Quantum128BitADPS16,
+        policy: SisSecurityPolicyId::Quantum169BitADPS16,
         table_digest: SisL2TableDigest::CURRENT,
         modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
         ring_dimension: 64,

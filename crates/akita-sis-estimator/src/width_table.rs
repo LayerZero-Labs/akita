@@ -114,7 +114,7 @@ pub const D128_SEARCH_CAP: u64 = DEFAULT_SEARCH_CAP;
 /// Search domain recorded for production boundary certificates.
 pub const PRODUCTION_CERTIFICATE_DOMAIN: &str = concat!(
     "proven-pruned beta from 40 to the capped Euclidean baseline, ",
-    "with ADPS16 best-cost and 128-bit decision lower-bound early stops; ",
+    "with ADPS16 best-cost and 169-bit decision lower-bound early stops; ",
     "for each visited beta, ",
     "every pre-stable LGSA dimension plus both stable-tail endpoints, ",
     "plus both sides of any active-dimension probability transition, ",
@@ -287,7 +287,7 @@ impl Default for InfinityWidthTableConfig {
             ring_dims: RING_DIMS.to_vec(),
             coeff_linf_bounds: COEFF_LINF_BOUNDS.clone(),
             max_rank: DEFAULT_MAX_RANK,
-            policy: SisSecurityPolicy::Quantum128BitADPS16,
+            policy: SisSecurityPolicy::Quantum169BitADPS16,
             search_cap: None,
             profile: InfinityWidthProfile::LocalMinimum,
             progress_every: None,
@@ -305,7 +305,7 @@ pub fn is_production_infinity_width_table_config(config: &InfinityWidthTableConf
         && same_set(&config.ring_dims, RING_DIMS.as_slice())
         && same_set(&config.coeff_linf_bounds, &COEFF_LINF_BOUNDS)
         && config.max_rank == DEFAULT_MAX_RANK
-        && config.policy == SisSecurityPolicy::Quantum128BitADPS16
+        && config.policy == SisSecurityPolicy::Quantum169BitADPS16
         && config.search_cap.is_none()
         && config.profile == InfinityWidthProfile::LocalMinimum
         && config.explicit_origins.is_none()
@@ -1084,7 +1084,7 @@ fn parse_csv_record(record: &str) -> Result<InfinityWidthRow> {
         );
     }
     let policy = match fields[0] {
-        "Quantum128BitADPS16" => SisSecurityPolicy::Quantum128BitADPS16,
+        "Quantum169BitADPS16" => SisSecurityPolicy::Quantum169BitADPS16,
         _ => return invalid_config("work_result", "unknown SIS policy label"),
     };
     let modulus_profile = AkitaModulusProfileId::parse(fields[1])?;
