@@ -6,7 +6,9 @@ use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
 use akita_types::AkitaVerifierSetup;
 use jolt_field::CanonicalEncoding;
 
-use crate::prepared_cache::{terminal_ntt_cache_requirement, TerminalNttCache};
+use crate::prepared_cache::{
+    terminal_ntt_cache_requirement, TerminalCacheArtifact, TerminalNttCache,
+};
 
 /// An Akita verifier bound to one verifier setup and one trusted catalog.
 ///
@@ -61,13 +63,15 @@ where
     /// Admit only `selection`, when `setup` supports it.
     ///
     /// A single-proof verifier, such as a recursion guest, prepares only the
-    /// selected row's terminal matrix. `trusted_terminal_cache` optionally
-    /// supplies that matrix as a scalar Q128 artifact from
-    /// [`crate::build_riscv64_terminal_ntt_cache`] instead of transforming it.
-    /// The artifact format checks its setup and schedule identities, geometry,
-    /// lengths, and residue ranges. It cannot prove that the transformed
-    /// payload was derived from the named setup seed, so callers must bind the
-    /// bytes to trusted setup provisioning or to the verifier program identity.
+    /// selected row's terminal matrix. `terminal_cache` optionally supplies
+    /// that matrix as a scalar Q128 artifact from
+    /// [`crate::build_riscv64_terminal_ntt_cache`]. The artifact's setup and
+    /// schedule identities, geometry, lengths, and residue ranges are always
+    /// checked. A [`TerminalCacheArtifact::Supplied`] payload is also rebuilt
+    /// from the setup matrix and must match, which costs as much as preparing
+    /// the matrix. `TerminalCacheArtifact::ProgramBound`, available with the
+    /// `program-bound-terminal-cache` feature, skips that rebuild for bytes the
+    /// verifier program compiles in.
     ///
     /// When the catalog has no such row or `setup` does not support it, the
     /// verifier admits nothing and rejects every proof.
@@ -81,7 +85,7 @@ where
         setup: AkitaVerifierSetup<Cfg::Field>,
         schedules: TrustedScheduleCatalog<Cfg>,
         selection: OpeningScheduleSelection,
-        trusted_terminal_cache: Option<&[u8]>,
+        terminal_cache: Option<TerminalCacheArtifact<'_>>,
     ) -> Result<Self, AkitaError> {
         let row = match schedules.resolve_selection(selection) {
             Ok(row) if TrustedScheduleCatalog::<Cfg>::verifier_admits(setup.expanded(), row)? => {
@@ -89,7 +93,7 @@ where
             }
             _ => None,
         };
-        let (admitted, terminal_ntt) = match (row, trusted_terminal_cache) {
+        let (admitted, terminal_ntt) = match (row, terminal_cache) {
             (Some(row), None) => (
                 vec![selection.row_digest],
                 TerminalNttCache::prepare(
@@ -99,7 +103,7 @@ where
             ),
             (Some(row), Some(artifact)) => (
                 vec![selection.row_digest],
-                TerminalNttCache::install_trusted(
+                TerminalNttCache::install_artifact(
                     &setup,
                     terminal_ntt_cache_requirement(row.schedule())?,
                     selection.row_digest,
@@ -231,7 +235,7 @@ mod tests {
             assert!(all.admitted_rows().windows(2).all(|pair| pair[0] < pair[1]));
             assert!(all.terminal_ntt_cache_bytes() > 0);
 
-            for artifact in [None, Some(artifact.as_slice())] {
+            for artifact in [None, Some(TerminalCacheArtifact::Supplied(&artifact))] {
                 let one = AkitaVerifier::for_selection(
                     setup.clone(),
                     catalog.clone(),
@@ -270,7 +274,12 @@ mod tests {
                 build_riscv64_terminal_ntt_cache(&few_vars, &schedule, selection.row_digest)
                     .expect("terminal cache artifact");
             assert!(matches!(
-                AkitaVerifier::for_selection(few_vars, catalog, selection, Some(&artifact)),
+                AkitaVerifier::for_selection(
+                    few_vars,
+                    catalog,
+                    selection,
+                    Some(TerminalCacheArtifact::Supplied(&artifact))
+                ),
                 Err(AkitaError::InvalidSetup(_))
             ));
         });

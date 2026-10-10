@@ -347,6 +347,72 @@ pub fn decode_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: u
     Ok((metadata, PreparedNttCache(prepared)))
 }
 
+/// Check that a scalar Q128 artifact transforms exactly `matrix`.
+///
+/// [`decode_riscv64_scalar_q128_cache`] checks identity and well-formedness
+/// only. This rebuilds the artifact from `matrix` with the artifact's own
+/// geometry and binding and compares every residue modulo its prime, so it
+/// accepts any representative an encoder chose and rejects any other payload.
+/// Its cost is that of building the artifact.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when the artifact is malformed or its
+/// payload is not the transform of `matrix`.
+pub fn check_riscv64_scalar_q128_cache_derivation<F: Field + CanonicalEncoding, const D: usize>(
+    bytes: &[u8],
+    matrix: RingMatrixView<'_, F, D>,
+) -> Result<(), AkitaError> {
+    let metadata = prepared_verifier_ntt_cache_metadata(bytes)?;
+    let expected = build_riscv64_scalar_q128_cache_artifact(
+        matrix,
+        metadata.width,
+        metadata.rhs_abs_bound,
+        metadata.binding,
+    )?;
+    let mismatch = || invalid("prepared cache payload is not the transform of the setup matrix");
+    if expected.len() != bytes.len() || expected.get(..HEADER_BYTES) != bytes.get(..HEADER_BYTES) {
+        return Err(mismatch());
+    }
+    let ProtocolCrtNttParams::Q128(params) = select_crt_ntt_params::<F, D>()? else {
+        return Err(invalid(
+            "RISC V scalar Q128 cache requires a Q128 protocol field",
+        ));
+    };
+    let mut cursor = HEADER_BYTES;
+    for _ in 0..metadata.base_prefix_len {
+        for prime in &params.primes {
+            for _ in 0..D {
+                let actual = i32::from_le_bytes(read_array(bytes, cursor)?);
+                let rebuilt = i32::from_le_bytes(read_array(&expected, cursor)?);
+                if (i64::from(actual) - i64::from(rebuilt)).rem_euclid(i64::from(prime.p)) != 0 {
+                    return Err(mismatch());
+                }
+                cursor = cursor
+                    .checked_add(4)
+                    .ok_or_else(|| invalid("prepared cache cursor overflow"))?;
+            }
+        }
+    }
+    for _ in 0..metadata.tail_prefix_len {
+        for _ in 0..D {
+            let actual = i16::from_le_bytes(read_array(bytes, cursor)?);
+            let rebuilt = i16::from_le_bytes(read_array(&expected, cursor)?);
+            if (i32::from(actual) - i32::from(rebuilt)).rem_euclid(i32::from(I16_TAIL_PRIME.p)) != 0
+            {
+                return Err(mismatch());
+            }
+            cursor = cursor
+                .checked_add(2)
+                .ok_or_else(|| invalid("prepared cache cursor overflow"))?;
+        }
+    }
+    if cursor != bytes.len() {
+        return Err(mismatch());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

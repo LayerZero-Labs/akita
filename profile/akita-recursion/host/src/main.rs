@@ -19,10 +19,10 @@ use std::time::Instant;
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_params::BasisMode;
 use akita_recursion_glue::{read_blob_case, AkitaJoltCase, AkitaJoltInputs, MAX_JOLT_BLOB_BYTES};
-use akita_types::{prepared_verifier_ntt_cache_metadata};
-use akita_params::{BasisMode};
-use akita_verifier::{build_riscv64_terminal_ntt_cache, AkitaVerifier};
+use akita_types::prepared_verifier_ntt_cache_metadata;
+use akita_verifier::{build_riscv64_terminal_ntt_cache, AkitaVerifier, TerminalCacheArtifact};
 use clap::Parser;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -192,7 +192,7 @@ macro_rules! strict_fp128_preflight {
             decoded.verifier_setup.clone(),
             schedules.clone(),
             decoded.schedule_selection,
-            Some(&cache),
+            Some(TerminalCacheArtifact::Supplied(&cache)),
         )
         .map_err(|err| format!("prepared verifier cache self-check failed: {err}"))?
         .batched_verify(
