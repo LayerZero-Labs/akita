@@ -112,8 +112,12 @@ fn degenerate_and_mismatched_folds_are_rejected() {
     assert!(LabiniusFoldResponse::derive(&challenge, 0, 4_096, degree, 0).is_err());
     assert!(LabiniusFoldResponse::derive(&challenge, 256, 0, degree, 0).is_err());
     assert!(LabiniusFoldResponse::derive(&challenge, 256, usize::MAX, degree, 0).is_err());
+    // One column: the one-member family meets the budget and reaches the norms.
     let zero = profile(BinaryScalarRing::Cyclotomic243, 0);
-    assert!(LabiniusFoldResponse::derive(&zero, 256, 4_096, degree, 0).is_err());
+    assert!(matches!(
+        LabiniusFoldResponse::derive(&zero, 1, 4_096, degree, 0),
+        Err(AkitaError::InvalidSetup(message)) if message.contains("nonzero challenge")
+    ));
     let other_ring = profile(BinaryScalarRing::Cyclotomic729, 46);
     assert!(LabiniusFoldResponse::derive(&other_ring, 256, 4_096, degree, 0).is_err());
 }
