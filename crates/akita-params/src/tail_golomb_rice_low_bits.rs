@@ -15,7 +15,7 @@ pub fn wire_rice_low_bits(cap: u128) -> u32 {
 
 /// Cap low-bit widths whose [`wire_rice_low_bits`] equals `wire_rice_low_bits`.
 ///
-/// The wire width drops [`OFFLINE_RICE_LOW_BITS_DELTA`] bits and saturates at
+/// The wire width drops a fixed two-bit offline delta and saturates at
 /// zero, so a nonzero wire width names exactly one cap width.
 #[must_use]
 pub fn cap_rice_low_bits_for_wire(wire_rice_low_bits: u32) -> std::ops::RangeInclusive<u32> {
