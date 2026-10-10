@@ -733,8 +733,11 @@ and MUST NOT be presented as established results:
   it.
 - Fiat–Shamir security in the random-oracle model for this multi-round protocol,
   including the seed expander, indexed fold substreams and oracle composition.
-- A concrete binding and evaluation-sound polynomial commitment scheme and
-  any setup-contribution opening replacing the materialized matrix scan.
+- The binding and evaluation soundness of the polynomial commitment scheme
+  behind the oracle. [The PCS composition](labinius-pcs.md) instantiates the
+  oracle with a nested Akita opening and inherits Akita's guarantees; it
+  proves none of them.
+- Any setup-contribution opening replacing the materialized matrix scan.
 
 The root transcript closes admitted-identity absorption and the order of
 statement, witness and challenge binding. It does not close those remaining

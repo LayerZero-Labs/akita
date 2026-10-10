@@ -22,6 +22,7 @@ members = [
   "crates/akita-zk-verifier",
   "crates/akita-labinius-verifier",
   "crates/akita-labinius-prover",
+  "crates/akita-labinius-pcs",
 ]
 # `profile/akita-recursion/` is a standalone sub-workspace: it pins its own
 # `rust-toolchain.toml` (channel 1.95 + RISC-V targets) and applies Jolt's
