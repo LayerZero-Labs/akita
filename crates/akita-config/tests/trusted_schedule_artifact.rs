@@ -630,8 +630,8 @@ fn recursive_prefix_slot_id_fixture() {
     assert_eq!(
         multichunk,
         (
-            3,
-            "0ea09bafa95cc857b27075caefeaa5dda6c8fb07ade9216198aac783c6384a59".to_string(),
+            2,
+            "3409f71ed207efe55f7eeab29bf12e4bcf87928808f8832ed9a702547ad5ec58".to_string(),
         )
     );
 }

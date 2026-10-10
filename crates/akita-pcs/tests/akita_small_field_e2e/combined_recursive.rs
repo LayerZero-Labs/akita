@@ -126,10 +126,22 @@ fn fp32_combined_setup_proves_recursive_and_onehot_families() {
         let point = (0..MAX_NV)
             .map(|i| E::from_u64((i as u64).wrapping_mul(3).wrapping_add(1)))
             .collect::<Vec<_>>();
-        let weights = lagrange_weights::<E>(&point).expect("weights");
-        let expected = (0..n)
-            .map(|i| weights[i] * E::lift_base(evals[i]))
-            .fold(E::from_u64(0), |a, b| a + b);
+        // The table `7 i + 13` is affine in the index bits, so its opening is
+        // `13 + 7 * sum_k 2^k * r_k`, where `r_k` is the coordinate weighting
+        // index bit `k`. A two-variable probe fixes that bit order without
+        // materializing 2^28 Lagrange weights.
+        let probe = lagrange_weights::<E>(&[E::from_u64(2), E::from_u64(3)]).expect("probe");
+        let low_bit_is_first_coordinate =
+            probe[1] == E::from_u64(2) * (E::from_u64(1) - E::from_u64(3));
+        let weighted_index = (0..MAX_NV).fold(E::from_u64(0), |sum, bit| {
+            let coordinate = if low_bit_is_first_coordinate {
+                point[bit]
+            } else {
+                point[MAX_NV - 1 - bit]
+            };
+            sum + E::from_u64(1 << bit) * coordinate
+        });
+        let expected = E::from_u64(13) + E::from_u64(7) * weighted_index;
         commit_prove_verify(
             &recursive_scheme,
             &setup,
