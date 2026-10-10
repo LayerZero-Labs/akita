@@ -38,8 +38,6 @@ pub use config::{
 pub use cost::{CostValue, LatticeCost, LogCost};
 pub use error::{EstimatorError, Result};
 pub use numeric::{NumericBackend, NumericConfig, Probability};
-#[cfg(feature = "labinius-sis")]
-pub use params::labinius_q64;
 pub use params::{akita_q128, akita_q32, akita_q64, Bound, SisNorm, SisParameters};
 pub use schedule_security::{
     estimate_schedule_security, ScheduleSecurityEstimate, ScheduleSisBound,
