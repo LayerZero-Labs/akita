@@ -185,8 +185,9 @@ uP[t + P_c*col] = 0                                for D<=t<P_c.
 
 The table has `P_c*C` entries, `enc.prime_table_log_len()` in logarithm, and
 no padding columns. The prover's `lowered::prime_left_opening` is the one
-function that builds it: every set source bit adds or subtracts one `e_j`,
-so the cost is one addition in E per set bit, with columns independent.
+function that builds it: shared subset sums cost 255 additions in E per full
+group of eight `e_j`, each column and component uses 128 additions per group,
+and packing signs are applied once per slot, with columns independent.
 Entries are arbitrary elements of E. No alphabet or range is checked on
 them, and the coefficient tails carry no weight and are not constrained.
 
