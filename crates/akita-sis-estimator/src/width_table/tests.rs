@@ -88,9 +88,9 @@ fn work_identifiers_track_semantics_but_not_progress_output() {
 #[cfg(feature = "labinius-sis")]
 fn explicit_staged_origins_do_not_become_production_coverage() {
     let origin = InfinityWidthOrigin {
-        modulus_profile: AkitaModulusProfileId::Q64Offset23703,
-        d: 162,
-        coeff_linf_bound: 1_580_547_964_560,
+        modulus_profile: AkitaModulusProfileId::Q25Plus14561,
+        d: 648,
+        coeff_linf_bound: 1_506_960,
     };
     let config = InfinityWidthTableConfig {
         profiles: vec![origin.modulus_profile],

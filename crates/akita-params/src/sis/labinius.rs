@@ -1,37 +1,57 @@
 //! LaBinius binary-source SIS identities and exact collision accounting.
 //!
-//! This module deliberately stops at the security-table boundary. It does not
-//! make any binary ring a native Akita runtime ring and it does not admit a
-//! schedule. Challenge sampling and its certified multiplication bound belong
-//! to `akita-challenges`; callers pass that bound here explicitly.
+//! The opt-in root profile and shape admit binary root geometry against the
+//! certified runtime width table and exact challenge/response bounds. This does
+//! not select a protocol or admit a complete schedule. Challenge sampling and
+//! its certified multiplication bound belong to `akita-challenges`.
+
+mod commitment_lift;
+mod fold_response;
+mod generated_commitment_prime_width_table;
+mod proof_prime;
+mod root_profile;
+mod root_shape;
+mod width_table;
+
+pub use commitment_lift::{labinius_image_digit_bound, LabiniusCommitmentLift};
+pub use fold_response::{LabiniusFoldResponse, LABINIUS_BALANCED_LOG_BASIS};
+pub use proof_prime::{check_labinius_proof_prime_units, labinius_proof_prime_residue_degree};
+pub use root_profile::LabiniusRootProfile;
+pub use root_shape::{
+    LabiniusRootEncoding, LabiniusRootShape, LabiniusSignedRange, LABINIUS_MIN_DERIVATION_BIAS_BITS,
+};
+pub use width_table::{
+    labinius_min_secure_rank, LabiniusWidthCell, LabiniusWidthCutoff,
+    LABINIUS_COMMITMENT_PRIME_WIDTH_TABLE, LABINIUS_COMMITMENT_PRIME_WIDTH_TABLE_DIGEST,
+};
 
 use akita_error::AkitaError;
 
 use super::norm_bound::source_comparison_inf_norm;
 
-/// Coefficient prime used by a staged binary-source SIS cell.
+/// Closed commitment moduli. The proof prime is not part of this identity: it
+/// is admitted separately by [`LabiniusRootShape::derive_encoding`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum LabiniusCoefficientPrime {
-    /// `2^64 - 23703`.
-    P64Offset23703,
-    /// Existing Akita prime `2^128 - (2^32 - 22537)`.
-    P128OffsetA7F7,
+pub enum LabiniusCommitmentModulus {
+    /// The prime `2^25 + 14561 = 1 + 23328 * 1439`, which splits the conductors
+    /// 1944, 3888, 5832 and 7776.
+    ///
+    /// Its certified cells are [`LABINIUS_COMMITMENT_PRIME_WIDTH_TABLE`].
+    Q25Plus14561,
 }
 
-impl LabiniusCoefficientPrime {
-    /// Exact prime modulus.
-    pub const fn modulus(self) -> u128 {
+impl LabiniusCommitmentModulus {
+    /// Exact prime modulus `q`.
+    pub const fn modulus(self) -> u32 {
         match self {
-            Self::P64Offset23703 => 18_446_744_073_709_527_913,
-            Self::P128OffsetA7F7 => 340_282_366_920_938_463_463_374_607_427_473_266_697,
+            Self::Q25Plus14561 => 33_568_993,
         }
     }
 
-    /// Stable offline table label.
+    /// Stable profile label.
     pub const fn label(self) -> &'static str {
         match self {
-            Self::P64Offset23703 => "p64-23703",
-            Self::P128OffsetA7F7 => "p128-a7f7",
+            Self::Q25Plus14561 => "q25+14561",
         }
     }
 }
@@ -87,8 +107,8 @@ impl LabiniusRingDegree {
 /// source class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LabiniusSourceComparisonId {
-    /// Coefficient prime.
-    pub coefficient_prime: LabiniusCoefficientPrime,
+    /// Commitment modulus `q` of the SIS instance.
+    pub commitment_modulus: LabiniusCommitmentModulus,
     /// Actual binary commitment ring.
     pub ring_degree: LabiniusRingDegree,
     /// Versioned digest of the matrix view/addressing semantics.
@@ -140,7 +160,7 @@ impl SourceOccurrenceBound {
 }
 
 /// Compare two occurrences only when their source semantics and matrix view
-/// are identical, and enforce the integer no-wrap condition `eta < P`.
+/// are identical, and enforce the integer no-wrap condition `eta < q`.
 pub fn checked_source_comparison_bound(
     left_id: LabiniusSourceComparisonId,
     left: SourceOccurrenceBound,
@@ -159,9 +179,9 @@ pub fn checked_source_comparison_bound(
         right.slack_operator_bound,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("binary source collision bound overflow".into()))?;
-    if eta >= left_id.coefficient_prime.modulus() {
+    if eta >= u128::from(left_id.commitment_modulus.modulus()) {
         return Err(AkitaError::InvalidSetup(format!(
-            "binary source collision bound {eta} does not satisfy eta < P"
+            "binary source collision bound {eta} does not satisfy eta < q"
         )));
     }
     Ok(eta)
@@ -195,9 +215,9 @@ pub fn checked_source_comparison_class_bound(
 mod tests {
     use super::*;
 
-    fn identity(prime: LabiniusCoefficientPrime) -> LabiniusSourceComparisonId {
+    fn identity() -> LabiniusSourceComparisonId {
         LabiniusSourceComparisonId {
-            coefficient_prime: prime,
+            commitment_modulus: LabiniusCommitmentModulus::Q25Plus14561,
             ring_degree: LabiniusRingDegree::D648,
             matrix_view_digest: [7; 32],
         }
@@ -215,29 +235,19 @@ mod tests {
 
     #[test]
     fn two_extractions_match_four_gamma_times_the_interval_diameter() {
-        let extracted = SourceOccurrenceBound::binary_extracted(92, (1u128 << 32) - 1)
-            .expect("bounded extraction");
-        let eta = checked_source_comparison_bound(
-            identity(LabiniusCoefficientPrime::P64Offset23703),
-            extracted,
-            identity(LabiniusCoefficientPrime::P64Offset23703),
-            extracted,
-        )
-        .expect("no-wrap collision");
-        assert_eq!(eta, 4 * 92 * ((1u128 << 32) - 1));
+        let extracted =
+            SourceOccurrenceBound::binary_extracted(92, 4_095).expect("bounded extraction");
+        let eta = checked_source_comparison_bound(identity(), extracted, identity(), extracted)
+            .expect("no-wrap collision");
+        assert_eq!(eta, 4 * 92 * 4_095);
     }
 
     #[test]
     fn canonical_reference_has_unit_slack_without_an_extra_factor_two() {
         let extracted = SourceOccurrenceBound::binary_extracted(94, 1_000).unwrap();
         let canonical = SourceOccurrenceBound::canonical_reference(1);
-        let eta = checked_source_comparison_bound(
-            identity(LabiniusCoefficientPrime::P64Offset23703),
-            extracted,
-            identity(LabiniusCoefficientPrime::P64Offset23703),
-            canonical,
-        )
-        .unwrap();
+        let eta =
+            checked_source_comparison_bound(identity(), extracted, identity(), canonical).unwrap();
         assert_eq!(eta, 1_000 + 188);
     }
 
@@ -254,29 +264,22 @@ mod tests {
             },
         ];
         assert_eq!(
-            checked_source_comparison_class_bound(
-                identity(LabiniusCoefficientPrime::P64Offset23703),
-                &class,
-            ),
+            checked_source_comparison_class_bound(identity(), &class,),
             Ok(1_001)
         );
-        assert!(checked_source_comparison_class_bound(
-            identity(LabiniusCoefficientPrime::P64Offset23703),
-            &[],
-        )
-        .is_err());
+        assert!(checked_source_comparison_class_bound(identity(), &[],).is_err());
     }
 
     #[test]
     fn mismatched_views_and_the_exact_no_wrap_boundary_are_rejected() {
         let occurrence = SourceOccurrenceBound::binary_extracted(2, 3).unwrap();
-        let id = identity(LabiniusCoefficientPrime::P64Offset23703);
+        let id = identity();
         let mut other = id;
         other.matrix_view_digest[0] ^= 1;
         assert!(checked_source_comparison_bound(id, occurrence, other, occurrence,).is_err());
 
         let zero = SourceOccurrenceBound::canonical_reference(0);
-        let modulus = id.coefficient_prime.modulus();
+        let modulus = u128::from(id.commitment_modulus.modulus());
         assert_eq!(
             checked_source_comparison_bound(
                 id,

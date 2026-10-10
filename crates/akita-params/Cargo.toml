@@ -24,7 +24,7 @@ blake2 = "0.11.0"
 sha3 = "0.12.0"
 
 [features]
-labinius-sis = []
+labinius-sis = ["akita-challenges/labinius-challenges"]
 # Selects the dev protocol: every wire-format change `dev` carries that `main`
 # does not, together. Off by default. Schedules priced for it live in
 # `artifacts/schedules-dev`. See docs/branches.md.
