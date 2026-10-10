@@ -164,13 +164,22 @@ parameter change, and it is not part of this spec.
 ### Acceptance criteria
 
 - [x] The calibration example reproduces the published ML-DSA Core-SVP figures.
-- [ ] `generated_sis_table`, `generated_l2_sis_table`, and the compression
+- [x] `generated_sis_table`, `generated_l2_sis_table`, and the compression
       cells are regenerated under `Quantum169BitADPS16`.
-- [ ] Every checked-in schedule artifact is regenerated, and
+- [x] Every checked-in schedule artifact is regenerated, and
       `catalog_security --check` passes.
 - [ ] The CI test pass is green.
-- [ ] Proof size and runtime are measured against `main`.
+- [x] Proof size and runtime are measured against `main`.
 
 ### Performance
 
-See [the evidence report](evidence/sis-nist-level3-catalog.md).
+[`evidence/sis-nist-level3/`](evidence/sis-nist-level3/README.md) holds the
+complete catalog comparison and the measured profile benchmark against `main`.
+
+- Catalog: all 115 rows plan. 111 rows grow their proof by 4% to 25% (median
+  +14.9%, about +10 KB). Four small recursive rows (fp128 dense nv20, fp32
+  dense nv20 to nv24) keep their setup bucket and accept 190 KB to 320 KB
+  proofs.
+- Measured, 13 profile cases: proof +4% to +17% (median +16.5%), prove time
+  -5% to +23% (median +2.7%), verify time within about 10% (median under
+  1.5%).
