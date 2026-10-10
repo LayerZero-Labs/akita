@@ -171,7 +171,10 @@ The ring dimensions are profile-owned:
 
 These rings belong to compression. A, B, and D retain their own
 dimensions, each at least 64; the q32 ladder reuses two of those dimensions
-with its own rank-one matrices. Repacking coefficients between these rings is
+with its own rank-one matrices. Recomposition rebuilds every B or D ring
+element from whole first-map digit blocks, so a compressed image's ring
+dimension must be a multiple of the first map's. The planner therefore
+compresses q32 B and D images only at dimension 128 or above. Repacking coefficients between these rings is
 a specified coefficient map, so it must not be treated as an arbitrary ring
 homomorphism. The [physical fold relations](./proving/akita-fold-realizations.md)
 explain how the proof checks recomposition and every compression map.
