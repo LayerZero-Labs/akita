@@ -116,6 +116,10 @@ jobs:
         run: cargo test -p akita-algebra --lib --no-default-features
       - name: Test binary arithmetic
         run: cargo test -p akita-algebra --lib --no-default-features --features labinius-binary binary
+      - name: Test parallel binary arithmetic
+        run: cargo test -p akita-algebra --lib --no-default-features --features labinius-binary,parallel binary
+      - name: Lint parallel binary arithmetic and benchmarks
+        run: cargo clippy -p akita-algebra --all-targets --no-default-features --features labinius-binary,parallel -- -D warnings
       - name: Lint binary arithmetic and benchmarks
         run: cargo clippy -p akita-algebra --all-targets --no-default-features --features labinius-binary -- -D warnings
 

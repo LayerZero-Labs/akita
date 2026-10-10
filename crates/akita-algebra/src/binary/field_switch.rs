@@ -5,6 +5,8 @@
 //! source, layout, host claim and partials before sampling batching challenges.
 
 use akita_error::{checked, AkitaError};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use super::{BinaryField162 as F, PackedBinary162};
 #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
@@ -110,6 +112,27 @@ pub fn partial_evaluations<H: SwitchField>(
         });
     }
     equality_scratch.resize(source.len(), H::ZERO);
+    #[cfg(feature = "parallel")]
+    if source.len() > kernels::PARALLEL_CHUNK {
+        // A table index splits into low bits within a chunk and high bits
+        // selecting the chunk. Their equality weights multiply exactly.
+        let (low_point, high_point) = point.split_at(kernels::PARALLEL_CHUNK.ilog2() as usize);
+        let mut low_weights = vec![H::ZERO; kernels::PARALLEL_CHUNK];
+        let mut high_weights = vec![H::ZERO; source.len() / kernels::PARALLEL_CHUNK];
+        H::equality_weights(low_point, &mut low_weights);
+        H::equality_weights(high_point, &mut high_weights);
+        equality_scratch
+            .par_chunks_mut(kernels::PARALLEL_CHUNK)
+            .zip(high_weights.into_par_iter())
+            .for_each(|(chunk, high)| {
+                for (dst, &low) in chunk.iter_mut().zip(&low_weights) {
+                    *dst = low * high;
+                }
+            });
+    } else {
+        H::equality_weights(point, equality_scratch);
+    }
+    #[cfg(not(feature = "parallel"))]
     H::equality_weights(point, equality_scratch);
     Ok(SwitchPartials {
         values: kernels::partials::<H>(source, equality_scratch)?,
@@ -202,5 +225,7 @@ pub fn transparent_weight<H: SwitchField>(
         .fold(F::ZERO, |sum, (&value, row)| sum + value * row))
 }
 
+#[cfg(all(test, feature = "parallel"))]
+mod parallel_tests;
 #[cfg(test)]
 mod tests;

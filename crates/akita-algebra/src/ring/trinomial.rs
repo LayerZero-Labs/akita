@@ -13,6 +13,12 @@ use jolt_field::{Field, Packed, WithPacking};
 
 use crate::fft::{field_pow, primitive_nth_root, FftWorkspace, SmoothDomain, SmoothFftField};
 
+mod limb;
+pub use limb::{TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots};
+
+mod remainder;
+pub use remainder::shifted_remainder_evaluations;
+
 mod sealed {
     pub trait Sealed {}
 }
@@ -54,6 +60,11 @@ impl TrinomialModulus for MinusTrinomial {
 /// Failure to construct or operate on a checked trinomial arithmetic shape.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TrinomialError {
+    /// Malformed small-prime limb input or mismatched limb provenance.
+    LimbInput {
+        /// Rejected input condition.
+        reason: &'static str,
+    },
     /// A trinomial degree must be positive and even.
     InvalidDegree {
         /// Rejected degree.
@@ -106,6 +117,7 @@ pub enum TrinomialError {
 impl fmt::Display for TrinomialError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::LimbInput { reason } => write!(formatter, "invalid trinomial limb input: {reason}"),
             Self::InvalidDegree { degree } => {
                 write!(formatter, "trinomial degree {degree} must be positive and even")
             }
