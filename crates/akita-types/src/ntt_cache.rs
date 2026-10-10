@@ -284,7 +284,7 @@ pub fn centered_quotient_requires_i16_tail(
         SisModulusProfileId::Q64Offset59 => {
             CrtCapacity::from_prime_moduli(Q64_PRIMES.map(|prime| prime.p as u128))
         }
-        SisModulusProfileId::Q128OffsetA7F7 => {
+        SisModulusProfileId::Q128OffsetA7F7 | SisModulusProfileId::Q128Offset275 => {
             CrtCapacity::from_prime_moduli(q128_primes().map(|prime| prime.p as u128))
         }
     };

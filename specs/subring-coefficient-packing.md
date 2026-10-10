@@ -802,6 +802,12 @@ candidate admission. The implementation MUST NOT add a per-candidate unit
 certificate, registry, or planner gate. A future production field profile or
 challenge family must establish the same LS18 condition during review.
 
+`Q128Offset275`, with `q = 2^128 - 275`, is a second exact 128-bit profile.
+No preset in this repository selects it. It satisfies the same condition with
+`ell = 2`, because `q = 5 mod 8`. The test
+`crates/akita-challenges/tests/q128_offset275_ls18.rs` checks the congruence
+and the shortness bound for it.
+
 If `delta(Y)` is a unit in `S`, then `delta(X^(k h))` is a unit in `R`: the
 subring embedding maps the inverse of `delta` to an A ring inverse. The same
 `delta` is also a unit after scalar extension to `C`.

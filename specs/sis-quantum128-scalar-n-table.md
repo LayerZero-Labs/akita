@@ -52,7 +52,8 @@ tag `1`; unsupported policy tags and table identities fail closed.
 The implementation pinned by this specification uses ADPS16 quantum exponent
 `0.2650`, LGSA shape, coefficient `L-infinity` norm, target `128.0`, maximum
 module rank `20`, and a per-cell search cap of `6_400_000_000_000`. The exact
-modulus profiles are `Q32Offset99`, `Q64Offset59`, and `Q128OffsetA7F7`.
+modulus profiles with generated cells are `Q32Offset99`, `Q64Offset59`, and
+`Q128OffsetA7F7`.
 Production arithmetic otherwise uses the documented `f64` backend. Integer
 small-box branch boundaries are compared exactly, with a fast log-space
 precheck away from equality. The unimplemented high-precision backend fails
@@ -388,6 +389,44 @@ digest includes the exact integer values.
 Adding a field with another modulus requires a new profile and generated cells.
 It must not reuse a profile because the modulus has the same bit length.
 
+`Q128Offset275`, with `q = 2^128 - 275`, is a second exact 128-bit profile and
+the one exception to the rule on generated cells. It is a separate profile: it
+has its own wire tags, and runtime configuration and commitment decoding check
+its exact modulus as for every other profile. It has no generated cells. Every
+table lookup first resolves `SisModulusProfileId::row_owner`, which maps it to
+`Q128OffsetA7F7`, and the profile adds no role cell.
+
+The exception exists because of the table identity. The table digest is
+computed over the generated cell and audit files, so generated cells for this
+modulus would change it. The digest is serialized into every commitment and
+enters the schedule policy digest. A new digest would therefore invalidate
+every existing commitment and schedule catalog, and every proof made under
+them, for a modulus that none of them uses. With the cells shared, those files
+and the table digest are unchanged, and the digest does not name this modulus.
+
+Sharing the cells is sound only while the estimator returns the same result
+for both moduli on every input Akita gives it. Apart from rejecting `q <= 1`,
+the estimator reads `q` in three ways:
+
+- its bit length, which for a modulus above 64 bits also fixes the
+  trivial-length threshold `2^(bits - 1)`;
+- `log2(q)`, computed from the bit length and the leading 64 bits;
+- exact integer comparisons with `q^2`: the small-box branch boundary, which
+  compares the scalar dimension times the squared length and is evaluated
+  exactly only within `2^(1e-8)` of equality, and the Euclidean triviality
+  check, which compares the squared length.
+
+The two moduli agree on the first two. Both have bit length 128, and the
+leading 64 bits of both are all ones. The third cannot separate them. Akita
+passes a `u64` coefficient bound or the square root of a `u128` squared length,
+and a `u64` scalar dimension, so the compared quantity stays below `2^192`
+while `q^2` exceeds `2^255` for both moduli.
+
+`crates/akita-sis-estimator/tests/q128_offset275_row_sharing.rs` pins these
+facts. An estimator revision or an input type under which the two moduli can
+differ MUST give `Q128Offset275` its own generated cells, which changes the
+table identity.
+
 ### Runtime role key
 
 Runtime callers use this canonical key:
@@ -649,7 +688,9 @@ digest. Dependent schedule catalogs embed that same digest.
 - A shared coefficient ladder for all roles.
 - A dense base 32 row grid.
 - Cell interpolation.
-- Reusing a modulus profile for another modulus of the same size.
+- Reusing a modulus profile for another modulus of the same size. The
+  `Q128Offset275` profile shares cells, not a profile identity, under the
+  condition stated in [Exact modulus profiles](#exact-modulus-profiles).
 - Treating the scalar estimate as a proof against every structured attack.
 - Compatibility with artifacts tied to the replaced SIS table digest.
 
