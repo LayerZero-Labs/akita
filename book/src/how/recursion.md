@@ -1,10 +1,12 @@
 # Recursion and proof streams
 
 A fold turns an opening of a committed source into an opening of a new digit
-witness. Akita repeats this reduction until the remaining response is small
-enough for the verifier to read and check directly. The recursion here is a
-sequence of polynomial-opening reductions. Each step proves relations about
-the previous source and passes one new witness claim to its successor.
+witness. The schedule selects a chain of these reductions ending in a response
+that the verifier reads and checks directly. This does not require the full
+witness to shrink at every edge; in particular, the root may expand it. The
+recursion here is a sequence of polynomial-opening reductions. Each step proves
+relations about the previous source and passes one new witness claim to its
+successor.
 
 This chapter follows a direct edge with one source group first. A grouped
 root and an edge that offloads setup use the same handoff, with the additional
@@ -65,6 +67,14 @@ compression quotients. A raw reduced-evaluation fold has neither kind of
 auxiliary data. The
 [complete witness layouts](./proving/ring-relation-checking.md#what-enters-the-next-witness)
 define the segments for each admitted case.
+
+The response in (2) combines source blocks, but (3) includes the digitized
+response and all the opening, inner-commitment, and auxiliary segments. Reducing
+the claim to one witness opening therefore does not imply that this full
+witness has fewer entries than the input source. Digit decomposition and the
+selected physical realization can outweigh the response reduction, especially
+at the root. Witness length, public payload size, and the size of the claim
+passed onward are distinct quantities.
 
 Equation (3) is prover state. A nonterminal fold does not send this full
 witness to the verifier. Instead, it binds the witness and reduces its
@@ -239,7 +249,9 @@ planner or try a different mode when a proof fails.
 
 The offline planner runs one root search. Root contraction can change candidate
 order, but it is not a feasibility rule or part of the final objective.
-Contractive and noncontractive roots share the same suffix memo and frontier.
+A root whose complete outgoing witness is no smaller than its input remains
+eligible. Contractive and noncontractive roots share the same suffix memo and
+frontier.
 The configured `SelectionPolicyId` comparator selects the final complete
 schedule. Recursive folds still require strict progress, and offloaded edges
 still enforce their explicit minimum contraction policy.

@@ -31,9 +31,9 @@ policy and the checker use the same live set in
 | [`setup-offloading-planner`](../../../specs/setup-offloading-planner.md) | implemented | Current recursive setup selection policy and external artifact contract. |
 | [`sis-quantum128-scalar-n-table`](../../../specs/sis-quantum128-scalar-n-table.md) | implemented | Current 128-bit SIS security policy source. |
 | [`structured-e-term`](../../../specs/structured-e-term.md) | implemented | Current structured verifier E-term contract. |
-| [`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md) | active | Merged implementation still has an unresolved proof blocker. |
+| [`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md) | active | Defines packing relations, indexed fold challenges, and planner contracts. Its review record reports all three blockers repaired. |
 | [`transcript-grinding`](../../../specs/transcript-grinding.md) | implemented | Defines the current proof-of-work and fold-response grinding policy. |
-| [`grinding-nonce-encoding`](../../../specs/grinding-nonce-encoding.md) | active | Explains the packed-main and inline-LEB128 nonce designs while PR #37 remains under review. |
+| [`grinding-nonce-encoding`](../../../specs/grinding-nonce-encoding.md) | active | Explains current inline-LEB128 nonces and compares them with the historical packed representation. |
 
 ## Archived records
 

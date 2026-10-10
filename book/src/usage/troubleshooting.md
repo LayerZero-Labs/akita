@@ -43,8 +43,8 @@ Check these causes in order:
    layout. A catalog row may need to be generated and shipped.
 
 See [Configuration and planning](../how/configuration.md) for catalog ownership
-and [Precommitting under a recursive
-configuration](./commitment-api.md#precommitting-under-a-recursive-configuration)
+and [Recursive grouped
+openings](./commitment-api.md#recursive-grouped-openings)
 for the grouped setup pattern.
 
 ## Equality table allocation is rejected

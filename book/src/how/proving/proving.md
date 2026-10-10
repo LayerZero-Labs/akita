@@ -1,9 +1,16 @@
 # The proving protocol
 
-One Akita fold takes a committed opening claim and produces a smaller witness
-that carries the claim forward. It proves that the new witness comes from the
-old committed data, satisfies the fold relation, uses bounded digits, and is
-ready to be opened by the next level.
+One Akita fold reduces committed opening claims and the fold relation to an
+opening claim about a new recursive digit witness. It proves that the new
+witness comes from the old committed data, satisfies the fold relation, uses
+bounded digits, and is ready to be opened by the next level.
+
+This compresses the claim carried forward; it does not guarantee that the full
+next-level witness is smaller than the input witness. The folded response is
+only one part of that witness. Opening and inner-commitment digits, auxiliary
+digits, and the scheduled physical representation also contribute to its size.
+In particular, a root fold may be non-contractive: its outgoing witness may be
+as large as or larger than the application source.
 
 The root and recursive nonterminal levels use the same fold engine. They differ
 in the source they consume and the schedule parameters assigned to them. The
@@ -27,7 +34,7 @@ A nonterminal fold starts with four kinds of information.
 The fold streams:
 
 - one schedule-shaped sequence of commitment payloads and sum-check messages;
-- one smaller digit witness for the successor;
+- one recursive digit witness for the successor;
 - one opening claim that binds that witness at the final Stage 2 challenge; and
 - when setup offloading is selected, a separate opening claim for one prepared
   setup prefix.
@@ -158,7 +165,7 @@ The process repeats until the schedule reaches its terminal level.
 | Level | Source | Main responsibility | Output |
 | --- | --- | --- | --- |
 | Root | Application polynomial groups | Batch the requested openings and enter the recursive fold path | First recursive witness claim, plus an optional setup claim |
-| Recursive nonterminal | Witness and optional setup group from the predecessor | Authenticate the handoff and shrink it again | Next witness claim, plus an optional setup claim |
+| Recursive nonterminal | Witness and optional setup group from the predecessor | Authenticate the handoff and reduce it to the next opening claim | Next witness claim, plus an optional setup claim |
 | Terminal | Final clear witness bound by its predecessor | Check consistency, A relation, evaluation trace, encoding, and scheduled norm directly | Accept or reject |
 
 The terminal has no outer B commitment, no opening D commitment, and no

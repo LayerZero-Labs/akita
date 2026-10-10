@@ -142,10 +142,12 @@ The planner keeps an offloaded edge only when all of the following are true:
 - the offloaded suffix reduces the power of two capacity of the first setup
   scan that still runs directly.
 
-Among feasible schedules, the production policy first minimizes that remaining
-direct setup capacity. It then compares exact estimated proof bytes, including
-every Stage 3 proof. Later tie breaks prefer a smaller total setup envelope and
-then a smaller root output witness before the canonical schedule order.
+Among feasible recursive schedules, the production policy first minimizes the
+power of two capacity that covers all setup objects. It then minimizes the
+first setup capacity that the verifier still scans directly. Within those
+capacity buckets, it compares the exact proof-and-work score, then estimated
+proof bytes, including every Stage 3 proof, and the first direct output-witness
+length. The canonical descriptor breaks remaining ties.
 
 The shipped recursive catalogs consider offloaded edges produced by the root
 and its direct child. This `RootAndFirstChildV1` domain is part of the catalog
@@ -170,8 +172,25 @@ catalogs. The current build can expose recursive setup schedules for:
 - the fp128 one hot multi chunk configuration with eight chunks and two leading
   distributed levels.
 
-Setup offloading currently uses the supported uniform $D = 64$ shape. Other
-setup ring dimensions do not expose a recursive offloading catalog.
+`RecursiveCommitmentConfig<Cfg>` inherits the base configuration's ring-dimension
+policy. Each artifact row fixes the native A, B, and D dimensions for its folds.
+Supported offloading rows can use different dimensions for these matrices and
+can change dimensions between folds. A ring dimension is the number of field
+coefficients in one ring element; it is not a matrix row count.
+
+For example, one row in `fp128_onehot_recursive.aks` has two earlier commitment
+groups, each with one 16-variable polynomial. Its final group contains two
+34-variable polynomials. The first recursive fold opens a setup-prefix group
+with
+
+$$
+d_A=512,\qquad d_B=128,\qquad d_D=128.
+$$
+
+The A and B dimensions belong to that group. The consuming fold owns the shared
+D dimension. The [ring-dimension contract](./architecture.md#ring-dimension-ownership)
+explains these roles. The matching recursive catalog must contain an admitted
+row for the requested workload and dimensions.
 
 Support depends on supplying the matching recursive family artifact. Other base
 configurations have no recursive catalog and are rejected rather than silently

@@ -180,8 +180,9 @@ constant number of leading rounds. Two reasons:
    tail and final rounds would inflate the proof size and the number of fold levels,
    so those rounds keep the single-response protocol.
 2. **Where the cost actually is.** Only the first few rounds are large enough to be
-   worth distributing. After they shrink the witness, the remaining rounds are cheap
-   and run fine on a single machine.
+   worth distributing. Once the scheduled recursive folds have reduced the full
+   witness, the remaining rounds are cheap and run fine on a single machine.
+   This does not require the root fold itself to shrink the witness.
 
 So the schedule fixes a constant number of distributed rounds. Those leading
 rounds retain one $\mathbf z_j$ per machine; the later rounds return to the

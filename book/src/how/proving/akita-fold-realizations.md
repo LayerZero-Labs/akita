@@ -10,6 +10,14 @@ each payload mode needs. A physical row is one coordinate equation in its
 stated ring. We first compare the two payloads, then derive the compression
 chains that connect them to the semantic commitments.
 
+Compression here concerns public commitment payloads, not the complete
+next-level witness. Smaller payloads require additional private digits to
+prove their compression chains. The complete recursive witness also includes
+response, opening, and inner-commitment digits, plus any quotients required by
+the relation mode. A shorter folded response therefore does not guarantee a
+smaller complete witness; the root may expand it while reducing the relations
+to one recursive witness opening claim.
+
 The output is a set of ring equations. [Checking ring relations over a
 field](./ring-relation-checking.md) explains the next step: use either quotient
 lifting or quotient-free checking to turn those equations into field claims
@@ -681,10 +689,11 @@ page.
    the commitment hint. It retains their quotient rows when the consuming
    fold uses quotient lifting.
 2. **Build the fold-side objects.**
-   [`RingRelationProver::new`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_relation.rs)
+   [`RingRelationProver::prepare`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_relation.rs)
+   coordinates public opening payloads and fold challenges. The CPU backend
    decomposes the position-folded values into $\hat{\mathbf e}$, computes
-   $\mathbf v_D=\mathbf D\hat{\mathbf e}$, samples the fold challenges, and
-   builds $\mathbf z$. In compressed mode,
+   $\mathbf v_D=\mathbf D\hat{\mathbf e}$, and retains the accepted response
+   $\mathbf z$ behind a fold handle. In compressed mode,
    [`materialize_compression_witness`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/witness_build/compression_witness.rs)
    combines the retained $\mathbf F$ material with a newly computed
    $\mathbf H$ chain for $\mathbf v_D$, producing the terminal payload $p_H$
@@ -773,21 +782,21 @@ compressed: assemble_compressed_relation_rhs(p_F, p_H)
 
 [`RingRelationInstance`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/ring_relation.rs)
 is the common relation-statement carrier constructed independently by the
-prover and verifier. Its statement fields are verifier-reconstructible; the
-prover may additionally retain a private intermediate needed while preparing
-its witness:
+prover and verifier. Its public fields are verifier-reconstructible. In
+compressed mode, private commitment intermediates remain inside the CPU backend:
 
 | Field or accessor | Mathematical meaning |
 |---|---|
-| `group_challenges()[0]` | fold challenges $c_b$ |
+| `group_ambient_a_challenges(0)` | fold challenges $c_b$ in the A ring; embedded from the challenge subring for packing |
 | `group_ring_multiplier_point(0)` | ring multipliers used by the physical consistency row |
 | `opening_batch()` | authenticated group and claim geometry |
 | `role_dims()` | native $\mathbf A/\mathbf B/\mathbf D$ ring dimensions |
 | `rhs()` in raw mode | $[0\mid\mathbf 0_A\mid\mathbf u\mid\mathbf v_D]$ in the basic setting |
 | `rhs()` in compressed mode | zero ordinary and first-map targets, followed by terminal $p_F,p_H$ targets |
-| `v()` in raw mode | public $\mathbf v_D=\mathbf D\hat{\mathbf e}$ |
-| `v()` in the compressed prover instance | the privately computed $\mathbf v_D$, retained locally after constructing the $\mathbf H$ chain |
-| `v()` in compressed verifier replay | empty; the verifier uses $p_H$ rather than reconstructing $\mathbf v_D$ |
+
+Raw replay includes the public $\mathbf v_D$ in `rhs()`. Compressed replay
+uses $p_H$ instead; the privately computed $\mathbf v_D$ remains in the CPU
+witness-build state and is not a field of the public relation instance.
 
 Full opening points are not owned by `RingRelationInstance`. They are prepared
 separately by the scheduled opening method. The verifier consumes evaluation
@@ -807,20 +816,22 @@ orchestration cannot inspect or transport it. In the basic setting, its private
 
 | Field | Mathematical meaning |
 |---|---|
-| `z_folded_rings` | folded response $\mathbf z$, before decomposition into $\hat z$ |
-| `e_folded` | recomposed position-folded rings $E_b$ |
+| `fold` | accepted CPU fold handle retaining the centered response coefficients and its challenges |
+| `folded_opening` | method-selected opening state: the $E_b$ rings for evaluation trace, or the packed fold product for coefficient packing |
 | `e_hat` | opening digits $\hat{\mathbf e}$ |
-| `hint` | semantic inner rows, plus retained $\mathbf F$ stages for compressed payloads and quotients when required by the relation mode |
+| `inner_relation` | retained semantic inner rows used to reconstruct $\hat{\mathbf t}$ |
+| `role_dims` | native A, B, and D dimensions for the group |
 
 The
 [`PortableCommitmentHandle`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/commitment/portable.rs)
 does not store a materialized $\hat{\mathbf t}$ or a separate copy of
 $\mathbf u$. `cpu_recursive_witness_build` derives $\hat{\mathbf t}$ from its semantic
 inner rows. At the aggregate level, `RingRelationWitness::compression` holds
-the optional materialized $\mathbf F/\mathbf H$ chains used by this fold. The
-quotient output is computed afterward only in quotient-lift mode. Reduced
-evaluation places only the ordinary and optional compression digits according
-to `WitnessLayout`.
+the optional materialized $\mathbf F/\mathbf H$ chains used by this fold.
+`RingRelationWitness::d_quotients` records whether the shared D relation has
+quotient data. Quotient-lift assembly includes ordinary and compression
+quotient digits. Reduced evaluation places only the ordinary and optional
+compression digits. `WitnessLayout` defines their exact ranges.
 
 ### Verifier reconstruction
 

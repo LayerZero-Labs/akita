@@ -256,16 +256,17 @@ range that contains both the positive and negative bound.
 ## Where Akita uses decomposition
 
 A proof starts with the values supplied by the application. Akita calls these
-the root source. A fold is one proof step that reduces the current witness to a
-smaller witness for the next step. An opening proves that a committed
-polynomial has a claimed value at a chosen point.
+the root source. An opening proves that a committed polynomial has a claimed
+value at a chosen point. A fold reduces the current claims to an opening of a
+new recursive digit witness. The full witness includes auxiliary data and need
+not be smaller than the input, especially at the root.
 
 These values need different decomposition depths.
 
 | Value | Why it is decomposed | Bound used for its depth |
 | --- | --- | --- |
 | Root committed source | It is the application data entering the first commitment | `log_commit_bound` |
-| Recursive committed source | It is the smaller witness produced by an earlier fold | The source bound stored by the schedule |
+| Recursive committed source | It is the recursive digit witness produced by an earlier fold | The source bound stored by the schedule |
 | Opening value | It is used to prove a claimed polynomial evaluation | `log_open_bound` or the full field width |
 | Setup prefix | It contains public setup field elements used by a later fold | The full field width |
 | Folded response | It is the response produced during one fold | The exact response bound stored by the schedule |

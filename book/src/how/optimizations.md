@@ -319,12 +319,20 @@ hiding a smaller cached operation on the same matrix route. Requests from one
 fused operation share one routing extent across transform domains. Only
 retained requests are max-joined into physical cache slots.
 
-Retention is the default. A caller with an isolated root owner may apply
-`ReleaseRootNttAfterFold`. Release removes every built shared matrix key once
-per physical owner. Existing readers remain valid through shared ownership. A
-later smaller request builds the smaller exact extent instead of reviving an
-empty covering slot. Small compression NTT entries remain resident and are
-reused after this boundary.
+Shared prepared caches may remain available across proofs. Applications can
+call `backend.trim_caches()` to release built shared-matrix transform slots.
+
+On CPU, release removes built shared-matrix transform slots. Compression
+transforms remain resident. Active readers keep released slots alive through
+shared references. The reported byte count describes removed cache entries;
+their storage can remain allocated until those readers finish. A later request
+builds its exact extent instead of reusing a removed covering slot.
+
+Trim when releasing the shared cache will not remove warm state needed by
+concurrent work. Trimming does not guarantee an immediate drop in process
+memory, and proof completion does not clear the shared cache. The
+[setup runtime guide](../usage/setup-runtime.md#reuse-and-release-cpu-caches)
+describes this application choice.
 
 `CpuPreparedSetup::shared_ntt_cache_bytes` and
 `compression_ntt_cache_bytes` report each namespace. `ntt_cache_bytes` returns

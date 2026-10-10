@@ -141,8 +141,9 @@ routes use different SIS tables because they certify different norms.
 ## Coordinate-wise special soundness
 
 Folding compresses many source blocks into a response
-$\mathbf z=\sum_b c_b\mathbf s_b$. Extraction considers accepting answers
-to related challenges while keeping the earlier messages fixed.
+$\mathbf z=\sum_b c_b\mathbf s_b$. One response alone cannot recover all
+the $\mathbf s_b$. Extraction instead considers accepting answers to
+related challenges while keeping the earlier messages fixed.
 
 For intuition, suppose two answers differ only at coordinate $j$. Honest
 responses satisfy
@@ -153,9 +154,11 @@ $$
 \tag{4}
 $$
 
-When the challenge difference is a unit, division recovers
-$\mathbf s_j$. The full ring argument establishes the unit property
-and controls the bounds needed for a matrix-collision reduction.
+If the challenge difference is a unit, division recovers
+$\mathbf s_j$. In a ring, a nonzero difference need not be a unit.
+The full ring argument must establish the unit property and control the
+bounds needed for a matrix-collision reduction. Equation (4) illustrates
+the coordinate fork; it does not by itself establish those properties.
 
 Coordinate-wise special soundness, or CWSS, describes the accepting
 transcripts needed for this extraction. At one fold, take the original

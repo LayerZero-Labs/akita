@@ -693,16 +693,17 @@ This subsection applies when the schedule selects `EvaluationTrace`. A fold
 that selects `SubringCoefficientPacking` uses the coefficient-packing flow in
 the following subsection instead.
 
-The base-field path follows the reduction above:
+The CPU backend performs the private opening arithmetic. The base-field
+path follows the reduction above:
 
 1. **Prepare the opening weights.**
    [`prepare_opening_point`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/batch.rs)
    constructs $Q_p$, $B_b$, and $P$.
 2. **Evaluate the ring polynomial.**
-   [`evaluate_claims_at_prepared_point`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/prove/fold_kernels.rs)
+   [`evaluate_claims_at_prepared_point`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/source.rs)
    returns the position-folded rings $E_b$ and the temporary ring $Y$.
 3. **Recover the scalar evaluation.**
-   [`scalar_opening_from_folded_ring`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/prove/fold_kernels.rs)
+   [`scalar_opening_from_folded_ring`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/source.rs)
    computes $\operatorname{TraceOpen}_P(Y)$.
 4. **Prepare the trace factors.**
    [`prepare_evaluation_trace_group_parameters`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/trace_weight/evaluation_trace.rs)
@@ -713,8 +714,15 @@ The base-field path follows the reduction above:
    combines those factors with the claim coefficients and physical $\hat e$
    locations to construct $T(x)$.
 6. **Fuse the Stage-2 relation.**
-   [`accumulate_fused_relation_linear`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/sumcheck/relation_range_image/mod.rs)
+   [`accumulate_fused_relation_linear_signed`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/sumcheck/relation_range_image/mod.rs)
    adds the prepared linear relation to the fused Stage-2 sumcheck.
+
+`PreparedFold::relation_groups` retains one method-selected point and the
+scalar openings for each group as `PreparedRelationGroupPublic` metadata.
+For evaluation trace, `PreparedRelationGroupPublic::kind()` gives the prepared
+$P$, $Q$, and $B$ factors. `PreparedFold::witness_handle` is an opaque handle
+to the CPU-owned digit witness. Protocol orchestration can use the public
+weights but cannot inspect the private opening digits through that handle.
 
 The main data flow is:
 
@@ -722,7 +730,7 @@ The main data flow is:
 opening point r
       |
       v
-PreparedOpeningPoint { Q_p, B_b, P }
+PreparedOpeningPoint: weights Q_p, B_b, P
       |
       v
 OpeningFoldOutput
@@ -732,9 +740,9 @@ OpeningFoldOutput
                                                   v
 PreparedFold
 |-- evaluation_trace_claim: v_tr
-|-- evaluation_trace_points: prepared opening points
+|-- relation_groups: method-selected points and scalar openings
 |-- evaluation_trace_claim_coefficients: c_q
-`-- witness: contains E_b and e_hat
+`-- witness_handle: opaque CPU-owned digit witness
       |
       v
 prepare_evaluation_trace_group_parameters
@@ -756,17 +764,18 @@ The main values are:
 
 | Code value | Mathematical object |
 |---|---|
-| `PreparedOpeningPoint::ring_opening_point.position_weights` | $Q_p$ |
-| `PreparedOpeningPoint::ring_opening_point.live_block_weights` | $B_b$ |
-| `PreparedOpeningPoint::packed_inner_point` | $P(X)$ |
+| `PreparedOpeningPoint::ring_multiplier_point.as_base().position_weights` in the base-field case | $Q_p$ |
+| `PreparedOpeningPoint::ring_multiplier_point.as_base().live_block_weights` in the base-field case | $B_b$ |
+| `PreparedOpeningPoint::packed_inner_trusted()` | $P(X)$ |
 | `OpeningFoldOutput::folded` | $E_0,E_1,\ldots$ |
 | `OpeningFoldOutput::eval` | temporary $Y(X)$ |
 | `PreparedEvaluationTraceClaim::claimed_evaluation` | $v_{\mathrm{tr}}=\operatorname{TraceOpen}_P(Y)$ |
 | `PreparedEvaluationTraceClaim::claim_coefficients` | claim-batching coefficients $c_q$ |
-| `RingRelationGroupWitness::e_folded` | position-folded rings $E_b$ |
+| `RingRelationGroupWitness::folded_opening`, in its `EvaluationTrace` variant | position-folded rings $E_b$ |
 | `RingRelationGroupWitness::e_hat` | digit rings $\hat e_{b,h}(X)$ |
 | `PreparedFold::evaluation_trace_claim` | $v_{\mathrm{tr}}$ carried into Stage 2 |
-| `PreparedFold::evaluation_trace_points` | prepared $P$, $Q$, and $B$ for each group |
+| `PreparedFold::relation_groups`, through `PreparedRelationGroupPublic::kind()` | prepared $P$, $Q$, and $B$ for each evaluation-trace group |
+| `PreparedFold::witness_handle` | opaque handle to the CPU-owned digit witness, including the opening digits |
 | `PreparedFold::evaluation_trace_claim_coefficients` | $c_q$ carried into trace-weight construction |
 | `EvaluationTraceGroupParameters::shared_block_opening_point` | block point from which $B_b$ is evaluated |
 | `EvaluationTraceGroupParameters::opening_digit_weights` | $G_h$ |

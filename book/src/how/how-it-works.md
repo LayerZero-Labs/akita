@@ -1,7 +1,7 @@
 # How it works
 
 Akita opens a committed polynomial by repeatedly replacing a large hidden
-table with a smaller committed witness. Every replacement comes with a proof
+table with a new committed witness. Every replacement comes with a proof
 that the new witness carries the same opening claim and satisfies the required
 commitment relations. The last witness is small enough for the verifier to
 check directly.
@@ -37,7 +37,8 @@ An Akita opening moves through the following stages.
    evaluations before deriving challenges that depend on them.
 4. **Run the root fold.** The prover prepares each requested opening, builds the
    first fold relation, and proves that relation with the scheduled sum-checks.
-   The fold emits a smaller witness and a new opening claim.
+   The fold emits a recursive digit witness and a new opening claim; the root
+   witness need not be smaller than its input.
 5. **Run any recursive folds.** Each nonterminal successor authenticates the
    witness produced by its predecessor and repeats the same reduction. A fold
    may also authenticate a prepared setup prefix when setup offloading was
@@ -62,7 +63,7 @@ polynomial groups + opening claims
         root relation and fold
                  |
                  v
-      smaller committed witness
+      next committed digit witness
                  |
           zero or more recursive folds
                  |
@@ -75,8 +76,11 @@ polynomial groups + opening claims
 
 ## What one fold preserves
 
-A fold is useful only if it shrinks the witness without weakening the claim.
-Akita maintains three invariants at every nonterminal level.
+A fold reduces the current relations to a recursive opening claim without
+weakening their connection to the committed source. The full next-level
+witness includes auxiliary and representation data, so its physical size is
+not guaranteed to decrease at every fold. In particular, root folds may be
+non-contractive. Akita maintains three invariants at every nonterminal level.
 
 ### The opening claim remains attached to the witness
 
@@ -91,7 +95,7 @@ then returns to the ordinary recursive path with one folded witness.
 
 ### The commitment relations remain binding
 
-The prover cannot choose an arbitrary smaller witness. Each fold proves the
+The prover cannot choose an arbitrary successor witness. Each fold proves the
 relations that connect source digits, inner commitment values, outer
 commitments, opening digits, and the folded response. The proof may carry raw
 commitment values or smaller compressed payloads, but both forms enforce the
