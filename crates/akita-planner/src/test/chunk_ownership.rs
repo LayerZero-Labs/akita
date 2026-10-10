@@ -313,15 +313,19 @@ fn incoming_width_guard_preserves_the_unpruned_complete_winner() {
             complete_schedule_score(policy, selected, None).unwrap(),
             oracle_score
         );
+        assert_eq!(guarded.len(), 2, "the width guard must keep both consumers");
 
         // For these single-chunk consumers, false disables only the incoming
         // width conjunct. Requiring one survivor proves every other dominance
         // condition holds, instead of merely exercising different widths.
+        // Level dominance ties on every coordinate here, and the canonical
+        // descriptor tie-break keeps the narrower consumer, which is also the
+        // complete winner. Under the 169-bit tables we found no fixture in this
+        // family that makes the unguarded frontier keep the wider consumer, so
+        // this test pins that the guard keeps both widths, not a lost winner.
         let unguarded = prune::level_candidates(&consumer_layout, false, generate()).unwrap();
         assert_eq!(unguarded.len(), 1);
-        assert_eq!(unguarded[0].params.blocks().positions_per_block, 1024);
-        let wrong = fixture.complete(&fixture.suffix(&unguarded[0].params));
-        assert!(complete_schedule_score(policy, &wrong, None).unwrap() > oracle_score);
+        assert_eq!(unguarded[0].params.blocks().positions_per_block, 512);
     }
 }
 
@@ -333,11 +337,22 @@ fn frontier_source_block_len_preserves_the_unpruned_complete_winner() {
 
     let fixture = IncomingWidthFixture::new();
     let policy = &fixture.policy;
-    let suffixes = fixture
+    let mut suffixes = fixture
         .raw
         .iter()
         .map(|(params, _)| fixture.suffix(params))
         .collect::<Vec<_>>();
+    // Under the 169-bit tables the narrower consumer is also locally cheaper,
+    // so no real pair in this fixture family shows the reversal this frontier
+    // key prevents. Give the wider suffix the narrower cost minus one work
+    // element. Its params, source width, and so its predecessor padding are
+    // unchanged; only the suffix-local order flips.
+    let narrower_cost = suffixes[0].cost;
+    assert!(narrower_cost.strictly_better(suffixes[1].cost));
+    suffixes[1].cost = ProofCost {
+        work_elements: narrower_cost.work_elements - 1,
+        ..narrower_cost
+    };
     let first = suffixes[0].folds.first().unwrap();
     let second = suffixes[1].folds.first().unwrap();
     assert!(first.input_witness_len < second.input_witness_len);
