@@ -176,7 +176,10 @@ parameter change, and it is not part of this spec.
       cells are regenerated under `Quantum169BitADPS16`.
 - [x] Every checked-in schedule artifact is regenerated, and
       `catalog_security --check` passes.
-- [ ] The CI test pass is green.
+- [x] The CI test pass is green, together with the schedule drift job, both
+      transcript backend suites, the proof-stream roundtrips, the x86
+      portability checks, and the recursion-glue smoke. The AArch64 NEON
+      portability job has not been run.
 - [x] Proof size and runtime are measured against `main`.
 
 ### Performance
