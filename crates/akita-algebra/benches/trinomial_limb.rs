@@ -1,6 +1,8 @@
 //! One-thread arithmetic-only commitment columns; plans and matrix transforms are untimed.
-//! The 128-bit baseline is rank 1 and does no final lift. Its ratio to the rank-3
-//! limb row compares two commitment profiles, rather than equal work.
+//! The rank sweep and the phase breakdown run on the LaBinius commitment prime; the other
+//! admitted primes run at one rank, to compare primes. The 128-bit baseline is rank 1 and
+//! does no final lift, so its ratio to a limb row compares two commitment profiles rather
+//! than equal work.
 
 use std::hint::black_box;
 use std::time::Duration;
@@ -18,6 +20,10 @@ const M: usize = 4096;
 const WORDS: usize = D.div_ceil(64);
 const BITS: u64 = (M * D) as u64;
 const MAX_ROWS: usize = 4;
+/// The LaBinius commitment prime.
+const SWEEP_PRIME: u32 = 33_568_993;
+/// The one rank at which every other admitted prime runs.
+const COMPARISON_ROWS: usize = 2;
 const SEED: u64 = 0x215_197;
 
 type Bits = [u64; WORDS];
@@ -113,7 +119,7 @@ fn limb_benchmarks(criterion: &mut Criterion, source: &[Bits]) {
     group.throughput(Throughput::Elements(BITS));
     for column in &mut columns {
         for rows in 1..=MAX_ROWS {
-            if column.domain.prime() != 268_433_353 && rows != 3 {
+            if column.domain.prime() != SWEEP_PRIME && rows != COMPARISON_ROWS {
                 continue;
             }
             let parameter = format!("p={}/rank={rows}/width={M}", column.domain.prime());
@@ -126,9 +132,14 @@ fn limb_benchmarks(criterion: &mut Criterion, source: &[Bits]) {
     }
     group.finish();
 
-    let column = &mut columns[2];
-    let mut group =
-        criterion.benchmark_group("trinomial_limb/phases/p=268433353/rank=1/width=4096");
+    let column = columns
+        .iter_mut()
+        .find(|column| column.domain.prime() == SWEEP_PRIME)
+        .expect("the sweep prime is admitted");
+    let mut group = criterion.benchmark_group(format!(
+        "trinomial_limb/phases/p={}/rank=1/width={M}",
+        column.domain.prime()
+    ));
     group.sample_size(20);
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(2));
