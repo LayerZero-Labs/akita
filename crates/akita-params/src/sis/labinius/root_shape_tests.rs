@@ -75,6 +75,7 @@ fn geometry_budget_and_missing_cell_rejections() {
         1 << first_uncovered,
         (1 << (22 - first_uncovered)) / 4,
         PROFILE.ring_degree(),
+        0,
     )
     .unwrap();
     assert_eq!(response.digit_count(), 4);

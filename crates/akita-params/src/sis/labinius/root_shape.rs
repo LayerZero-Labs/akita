@@ -77,13 +77,13 @@ impl LabiniusRootShape {
             })?;
         let scalars_per_column = scalars_per_column.ok_or_else(geometry_overflow)?;
         let columns = u64::try_from(fold_width).map_err(|_| geometry_overflow())?;
-        if !challenge.meets_budget(columns, lambda_fold) {
-            return Err(AkitaError::InvalidSetup(
-                "LaBinius root challenge profile does not meet fold budget".into(),
-            ));
-        }
-        let response =
-            LabiniusFoldResponse::derive(&challenge, fold_width, ring_elements_per_column, degree)?;
+        let response = LabiniusFoldResponse::derive(
+            &challenge,
+            fold_width,
+            ring_elements_per_column,
+            degree,
+            lambda_fold,
+        )?;
         let width = u64::try_from(ring_elements_per_column).map_err(|_| geometry_overflow())?;
         let rank_a = labinius_min_secure_rank(
             profile.commitment_modulus(),
