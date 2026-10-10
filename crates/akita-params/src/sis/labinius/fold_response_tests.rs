@@ -17,7 +17,8 @@ fn positive_reach(digits: usize) -> u128 {
 fn sample_fold_matches_the_design_anchors() {
     let challenge = profile(BinaryScalarRing::Cyclotomic243, 46);
     let response =
-        LabiniusFoldResponse::derive(&challenge, 256, 4_096, LabiniusRingDegree::D648).unwrap();
+        LabiniusFoldResponse::derive(&challenge, 256, 4_096, LabiniusRingDegree::D648, 128)
+            .unwrap();
     assert_eq!(response.honest_cap(), 1_266);
     assert_eq!(response.tail_threshold(), 1_266);
     assert_eq!(response.digit_count(), 3);
@@ -25,6 +26,27 @@ fn sample_fold_matches_the_design_anchors() {
     assert_eq!(response.diameter(), 4_095);
     assert_eq!(response.eta_a(), 1_506_960);
     assert_eq!(response.abort_probability_bound(), (7, 8));
+}
+
+#[test]
+fn folds_outside_the_challenge_budget_are_rejected() {
+    let singleton =
+        BinaryChallengeProfile::fixed_weight(BinaryScalarRing::Cyclotomic243, 162).unwrap();
+    let sample = profile(BinaryScalarRing::Cyclotomic243, 46);
+    LabiniusFoldResponse::derive(&sample, 256, 4_096, LabiniusRingDegree::D648, 128).unwrap();
+    for (challenge, columns, width, degree, lambda_fold) in [
+        (&singleton, 65_536, 1, LabiniusRingDegree::D162, 0),
+        (&sample, 256, 4_096, LabiniusRingDegree::D648, 129),
+        (&sample, 512, 4_096, LabiniusRingDegree::D648, 128),
+    ] {
+        match LabiniusFoldResponse::derive(challenge, columns, width, degree, lambda_fold) {
+            Err(AkitaError::InvalidSetup(message)) => assert!(
+                message.contains("challenge profile does not meet fold budget"),
+                "{message}"
+            ),
+            other => panic!("expected InvalidSetup naming the fold budget, got {other:?}"),
+        }
+    }
 }
 
 /// The cap is compared with the real Hoeffding threshold
@@ -40,12 +62,13 @@ fn derivation_agrees_with_independent_definitions() {
         (BinaryScalarRing::Cyclotomic729, LabiniusRingDegree::D1944),
     ];
     for (ring, degree) in rings {
-        for weight in [1usize, 16, 46, 81] {
+        for weight in [2usize, 16, 46, 81] {
             let challenge = profile(ring, weight);
             for columns in [1usize, 16, 256, 4_096] {
                 for width in [1usize, 64, 4_096, 1 << 20] {
                     let response =
-                        LabiniusFoldResponse::derive(&challenge, columns, width, degree).unwrap();
+                        LabiniusFoldResponse::derive(&challenge, columns, width, degree, 0)
+                            .unwrap();
                     let coefficients = (width * degree.degree() as usize) as f64;
                     let variance = (columns * weight * 4) as f64;
                     let hoeffding = (2.0 * variance * (16.0 * coefficients / 7.0).ln()).sqrt();
@@ -86,11 +109,11 @@ fn derivation_agrees_with_independent_definitions() {
 fn degenerate_and_mismatched_folds_are_rejected() {
     let challenge = profile(BinaryScalarRing::Cyclotomic243, 46);
     let degree = LabiniusRingDegree::D648;
-    assert!(LabiniusFoldResponse::derive(&challenge, 0, 4_096, degree).is_err());
-    assert!(LabiniusFoldResponse::derive(&challenge, 256, 0, degree).is_err());
-    assert!(LabiniusFoldResponse::derive(&challenge, 256, usize::MAX, degree).is_err());
+    assert!(LabiniusFoldResponse::derive(&challenge, 0, 4_096, degree, 0).is_err());
+    assert!(LabiniusFoldResponse::derive(&challenge, 256, 0, degree, 0).is_err());
+    assert!(LabiniusFoldResponse::derive(&challenge, 256, usize::MAX, degree, 0).is_err());
     let zero = profile(BinaryScalarRing::Cyclotomic243, 0);
-    assert!(LabiniusFoldResponse::derive(&zero, 256, 4_096, degree).is_err());
+    assert!(LabiniusFoldResponse::derive(&zero, 256, 4_096, degree, 0).is_err());
     let other_ring = profile(BinaryScalarRing::Cyclotomic729, 46);
-    assert!(LabiniusFoldResponse::derive(&other_ring, 256, 4_096, degree).is_err());
+    assert!(LabiniusFoldResponse::derive(&other_ring, 256, 4_096, degree, 0).is_err());
 }

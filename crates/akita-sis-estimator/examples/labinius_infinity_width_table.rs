@@ -311,6 +311,7 @@ mod tests {
             256,
             4_096,
             LabiniusRingDegree::D648,
+            128,
         )
         .unwrap();
         assert_eq!(response.diameter(), Source::ACCEPTED_RESPONSE_DIAMETER);
