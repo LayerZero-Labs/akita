@@ -27,10 +27,8 @@ use rayon::prelude::*;
 /// on this path, and the reference's i128 overflow errors are unreachable here.
 /// Larger bounds retain the reference's checked arithmetic and errors.
 ///
-/// With `parallel`, independent rows write disjoint output slots. Source bytes
-/// are prepared on the calling thread because the sealed `SwitchField` contract
-/// does not require its associated source type to implement `Sync`. Scratch
-/// reservation failure falls back to the reference, preserving its error API.
+/// With `parallel`, independent rows write disjoint output slots and embed
+/// their source words in the worker, as the serial path does.
 pub fn fold_integer<H: SwitchField>(
     source: &[H::Source],
     scalar_rows: usize,
@@ -62,39 +60,20 @@ pub fn fold_integer<H: SwitchField>(
         .map_err(|_| AkitaError::InvalidInput("integer response allocation failed".into()))?;
     result.resize(scalar_rows, [0i64; 162]);
 
-    #[cfg(feature = "parallel")]
-    if rayon::current_num_threads() > 1 && scalar_rows > 1 {
-        let mut words = Vec::new();
-        if words.try_reserve_exact(length).is_err() {
-            drop(result);
-            return endpoint::fold_integer::<H>(source, scalar_rows, columns, challenges, profile);
-        }
-        words.extend(
-            source
-                .iter()
-                .map(|&word| embed_source::<H>(word).to_bytes()),
-        );
-        result
-            .par_iter_mut()
-            .enumerate()
-            .try_for_each(|(row, response)| {
-                fold_row(challenges, response, |column| {
-                    let index = checked::mul_add(column, scalar_rows, row)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    words.get(index).copied().ok_or(AkitaError::InvalidProof)
-                })
-            })?;
-        return Ok(result);
-    }
-
-    for (row, response) in result.iter_mut().enumerate() {
+    let fold = |(row, response): (usize, &mut [i64; 162])| {
         fold_row(challenges, response, |column| {
             let index =
                 checked::mul_add(column, scalar_rows, row).ok_or(AkitaError::InvalidProof)?;
             let word = *source.get(index).ok_or(AkitaError::InvalidProof)?;
             Ok(embed_source::<H>(word).to_bytes())
-        })?;
+        })
+    };
+    #[cfg(feature = "parallel")]
+    if rayon::current_num_threads() > 1 && scalar_rows > 1 {
+        result.par_iter_mut().enumerate().try_for_each(fold)?;
+        return Ok(result);
     }
+    result.iter_mut().enumerate().try_for_each(fold)?;
     Ok(result)
 }
 

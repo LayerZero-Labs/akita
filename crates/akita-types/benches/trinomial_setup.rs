@@ -101,14 +101,17 @@ fn bench_case(
     )
     .expect("benchmark setup view must fit its domain");
 
-    let column_point = point(case.columns.next_power_of_two(), 0x1020_3040);
+    let response_point = point(case.response_domain_len, 0x1020_3040);
     let setup_point = point(case.setup_domain_len, 0x5060_7080);
-    let dense_rows = (0..case.rows * case.degree)
+    let alpha = F::from_u64(0x1234_5678_9abc_def0);
+    let row_weights = (0..case.rows)
         .map(|row| F::from_u64(11 + row as u64 * 17))
         .collect::<Vec<_>>();
-    let gadget = F::from_u64(17);
+    let gadget = (0..case.digit_depth)
+        .map(|digit| F::from_u64(5 + digit as u64 * 12))
+        .collect::<Vec<_>>();
     let prepared = view
-        .prepare(&column_point, &dense_rows, gadget)
+        .prepare(&response_point, alpha, &row_weights, &gadget)
         .expect("benchmark preparation must succeed");
     let dense = prepared
         .materialize_setup_weights()
@@ -125,9 +128,10 @@ fn bench_case(
             black_box(
                 black_box(view)
                     .prepare(
-                        black_box(&column_point),
-                        black_box(&dense_rows),
-                        black_box(gadget),
+                        black_box(&response_point),
+                        black_box(alpha),
+                        black_box(&row_weights),
+                        black_box(&gadget),
                     )
                     .expect("benchmark preparation must succeed"),
             )

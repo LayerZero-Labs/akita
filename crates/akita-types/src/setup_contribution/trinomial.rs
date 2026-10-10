@@ -6,9 +6,12 @@
 
 use std::sync::Arc;
 
-use akita_algebra::offset_eq::{
-    eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
-    EqPairTensorFamily, OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS,
+use akita_algebra::{
+    fft::field_pow,
+    offset_eq::{
+        eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
+        EqPairTensorFamily, OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS,
+    },
 };
 use akita_error::{checked, AkitaError};
 use jolt_field::Field;
@@ -326,76 +329,56 @@ impl TrinomialASetupView {
         Ok(address)
     }
 
-    /// Prepare `gadget * eq(column_point,j) * dense_rows[i*D+s]`.
-    /// The dense row factors are multiplication-adjoint contractions of the
-    /// coefficient point, supplied by the relation owner. No alpha powers or
-    /// unreduced polynomial weights are implied by this view.
+    /// Contract the response point and prepare the one canonical family set
+    /// used for both dense setup weights and verifier-side MLE evaluation.
     pub fn prepare<E: Field>(
         self,
-        column_point: &[E],
-        dense_rows: &[E],
-        gadget: E,
+        response_point: &[E],
+        alpha: E,
+        row_weights: &[E],
+        gadget: &[E],
     ) -> Result<PreparedTrinomialASetupWeights<E>, AkitaError> {
-        let column_domain = checked::ceil_log2(self.columns)
-            .and_then(checked::pow2)
-            .ok_or_else(|| AkitaError::InvalidSetup("trinomial column domain overflow".into()))?;
-        validate_point_domain(column_point, column_domain, "column")?;
-        let degree = self.polynomial.degree();
-        let row_len = checked::product([self.rows, degree])
-            .ok_or_else(|| AkitaError::InvalidSetup("trinomial row factor overflow".into()))?;
-        if dense_rows.len() != row_len {
+        validate_point_domain(response_point, self.response.domain_len(), "response")?;
+        if row_weights.len() != self.rows {
             return Err(AkitaError::InvalidSize {
-                expected: row_len,
-                actual: dense_rows.len(),
+                expected: self.rows,
+                actual: row_weights.len(),
             });
         }
-        let mut column_weights = Vec::new();
-        column_weights
-            .try_reserve_exact(self.columns)
-            .map_err(|_| {
-                AkitaError::InvalidInput("trinomial column weight allocation failed".into())
-            })?;
-        column_weights.extend(
-            (0..self.columns).map(|j| akita_algebra::offset_eq::eq_eval_at_index(column_point, j)),
-        );
-        let column_weights = Arc::<[E]>::from(column_weights);
-        let mut setup_families = Vec::new();
-        setup_families.try_reserve_exact(self.rows).map_err(|_| {
-            AkitaError::InvalidInput("trinomial row weight allocation failed".into())
-        })?;
-        for (row, coefficients) in dense_rows.chunks_exact(degree).enumerate() {
-            setup_families.push(EqPairTensorFamily::new(
-                self.setup_address(row, 0, 0)?,
-                0,
-                gadget,
-                vec![
-                    EqPairTensorAxis::dense(1, 0, Arc::<[E]>::from(coefficients)),
-                    EqPairTensorAxis::dense(degree, 0, Arc::clone(&column_weights)),
-                ],
-            )?);
+        if gadget.len() != self.response.digit_depth() {
+            return Err(AkitaError::InvalidSize {
+                expected: self.response.digit_depth(),
+                actual: gadget.len(),
+            });
         }
-        let mut rows = Vec::new();
-        rows.try_reserve_exact(row_len).map_err(|_| {
-            AkitaError::InvalidInput("trinomial dense row allocation failed".into())
-        })?;
-        rows.extend_from_slice(dense_rows);
+
+        let gadget = Arc::<[E]>::from(gadget);
+        let column_weights = (0..self.columns)
+            .map(|column| {
+                let response_families =
+                    response_tensor_families(self.response, column, alpha, Arc::clone(&gadget))?;
+                eval_boolean_pair_tensor_families::<E, false, false>(
+                    &[],
+                    response_point,
+                    &response_families,
+                )
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let setup_families = setup_tensor_families(self, alpha, row_weights, &column_weights)?;
+        let modulus_evaluation = self.polynomial.evaluate_modulus_at(alpha)?;
         Ok(PreparedTrinomialASetupWeights {
             view: self,
-            gadget,
-            dense_rows: rows,
-            column_weights,
+            modulus_evaluation,
             setup_families,
         })
     }
 }
 
-/// Prepared setup weights for the remainder relation, in one canonical owner.
+/// Prepared setup weights for a trinomial relation row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedTrinomialASetupWeights<E: Field> {
     view: TrinomialASetupView,
-    gadget: E,
-    dense_rows: Vec<E>,
-    column_weights: Arc<[E]>,
+    modulus_evaluation: E,
     setup_families: Vec<EqPairTensorFamily<E>>,
 }
 
@@ -405,8 +388,13 @@ impl<E: Field> PreparedTrinomialASetupWeights<E> {
         self.view
     }
 
-    /// Materialize one scalar weight per setup-domain address, including zeros
-    /// before and after the tight matrix extent.
+    /// `Phi(alpha)` for the exact polynomial named by this view.
+    #[must_use]
+    pub const fn modulus_evaluation(&self) -> E {
+        self.modulus_evaluation
+    }
+
+    /// Materialize one scalar weight per setup-domain address.
     pub fn materialize_setup_weights(&self) -> Result<Vec<E>, AkitaError> {
         validate_work(self.view.setup_domain_len())?;
         let equality = OffsetEqWindow::new(&[])?;
@@ -417,70 +405,112 @@ impl<E: Field> PreparedTrinomialASetupWeights<E> {
         )
     }
 
-    /// Evaluate the setup-weight MLE without scanning the matrix or allocating
-    /// its dense setup-domain weight vector.
+    /// Evaluate the setup-weight multilinear polynomial without scanning the
+    /// setup matrix or materializing its dense weight vector.
     pub fn evaluate_setup_weight_at(&self, setup_point: &[E]) -> Result<E, AkitaError> {
         validate_point_domain(setup_point, self.view.setup_domain_len(), "setup")?;
         eval_boolean_pair_tensor_families::<E, false, false>(setup_point, &[], &self.setup_families)
     }
+}
 
-    /// Contract a tight row-major matrix in exactly one pass. Accumulate
-    /// `Abar_i = sum_j eq(column_point,j) A_ij` in `rows*D` field slots, then
-    /// contract with the prepared dense row factors and digit gadget.
-    /// Each matrix entry must contain exactly D coefficients.
-    pub fn contract_matrix<'a>(
-        &self,
-        matrix: impl IntoIterator<Item = &'a [E]>,
-    ) -> Result<E, AkitaError>
-    where
-        E: 'a,
-    {
-        let degree = self.view.polynomial.degree();
-        let expected = checked::product([self.view.rows, self.view.columns])
-            .ok_or(AkitaError::InvalidProof)?;
-        let mut accumulators = Vec::new();
-        accumulators
-            .try_reserve_exact(self.dense_rows.len())
-            .map_err(|_| {
-                AkitaError::InvalidInput("trinomial contraction allocation failed".into())
-            })?;
-        accumulators.resize(self.dense_rows.len(), E::zero());
-        let mut count = 0;
-        for (entry, coefficients) in matrix.into_iter().enumerate() {
-            if entry >= expected || coefficients.len() != degree {
-                return Err(AkitaError::InvalidInput(
-                    "trinomial matrix contraction geometry mismatch".into(),
-                ));
-            }
-            let weight = *self
-                .column_weights
-                .get(entry % self.view.columns)
-                .ok_or(AkitaError::InvalidProof)?;
-            let start = checked::product([entry / self.view.columns, degree])
-                .ok_or(AkitaError::InvalidProof)?;
-            let range = checked::range(start, degree).ok_or(AkitaError::InvalidProof)?;
-            for (destination, &coefficient) in accumulators
-                .get_mut(range)
-                .ok_or(AkitaError::InvalidProof)?
-                .iter_mut()
-                .zip(coefficients)
-            {
-                *destination += weight * coefficient;
-            }
-            count += 1;
-        }
-        if count != expected {
-            return Err(AkitaError::InvalidSize {
-                expected,
-                actual: count,
-            });
-        }
-        Ok(self.gadget
-            * accumulators
-                .iter()
-                .zip(&self.dense_rows)
-                .fold(E::zero(), |sum, (&a, &z)| sum + a * z))
+fn response_tensor_families<E: Field>(
+    layout: TrinomialResponseLayout,
+    column: usize,
+    alpha: E,
+    gadget: Arc<[E]>,
+) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
+    let coefficient_families = alpha_dyadic_axes(
+        alpha,
+        layout.polynomial().degree(),
+        0,
+        layout.coefficient_stride(),
+    )?;
+    coefficient_families
+        .into_iter()
+        .map(|(start, scalar, coefficient_axis)| {
+            EqPairTensorFamily::new(
+                0,
+                layout.address(column, 0, start)?,
+                scalar,
+                vec![
+                    coefficient_axis,
+                    EqPairTensorAxis::dense(0, layout.digit_stride(), Arc::clone(&gadget)),
+                ],
+            )
+        })
+        .collect()
+}
+
+fn setup_tensor_families<E: Field>(
+    view: TrinomialASetupView,
+    alpha: E,
+    row_weights: &[E],
+    column_weights: &[E],
+) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
+    let degree = view.polynomial().degree();
+    let row_stride = view
+        .columns()
+        .checked_mul(degree)
+        .ok_or_else(|| AkitaError::InvalidSetup("trinomial setup row stride overflow".into()))?;
+    let row_weights = Arc::<[E]>::from(row_weights);
+    let column_weights = Arc::<[E]>::from(column_weights);
+    alpha_dyadic_axes(alpha, degree, 1, 0)?
+        .into_iter()
+        .map(|(start, scalar, coefficient_axis)| {
+            EqPairTensorFamily::new(
+                view.setup_address(0, 0, start)?,
+                0,
+                scalar,
+                vec![
+                    coefficient_axis,
+                    EqPairTensorAxis::dense(degree, 0, Arc::clone(&column_weights)),
+                    EqPairTensorAxis::dense(row_stride, 0, Arc::clone(&row_weights)),
+                ],
+            )
+        })
+        .collect()
+}
+
+fn alpha_dyadic_axes<E: Field>(
+    alpha: E,
+    len: usize,
+    left_stride: usize,
+    right_stride: usize,
+) -> Result<Vec<(usize, E, EqPairTensorAxis<E>)>, AkitaError> {
+    let mut factors = Vec::new();
+    let mut power = alpha;
+    let max_bits = usize::BITS as usize - len.leading_zeros() as usize;
+    for _ in 0..max_bits {
+        factors.push([E::one(), power]);
+        power *= power;
     }
+
+    let mut start = 0usize;
+    let mut remaining = len;
+    let mut output = Vec::with_capacity(len.count_ones() as usize);
+    while remaining != 0 {
+        let log_len = usize::BITS as usize - 1 - remaining.leading_zeros() as usize;
+        let block_len = 1usize
+            .checked_shl(log_len as u32)
+            .ok_or_else(|| AkitaError::InvalidSetup("trinomial dyadic length overflow".into()))?;
+        let exponent = u64::try_from(start)
+            .map_err(|_| AkitaError::InvalidSetup("trinomial degree exceeds u64".into()))?;
+        output.push((
+            start,
+            field_pow(alpha, exponent),
+            EqPairTensorAxis::bit_product(
+                left_stride,
+                right_stride,
+                Arc::<[[E; 2]]>::from(&factors[..log_len]),
+            )?,
+        ));
+        debug_assert_eq!(output.last().map(|(_, _, axis)| axis.len), Some(block_len));
+        start = start
+            .checked_add(block_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("trinomial dyadic offset overflow".into()))?;
+        remaining -= block_len;
+    }
+    Ok(output)
 }
 
 fn validate_point_domain<F: Field>(
@@ -530,27 +560,51 @@ mod tests {
         let view = TrinomialASetupView::new(polynomial, 2, 2, 37, 4096, response).unwrap();
         assert_eq!(view.setup_address(1, 1, 647).unwrap(), 2628);
         assert_eq!(response.address(1, 1, 647).unwrap(), 3372);
-        let column_point = point(1, 3);
+
+        let response_point = point(13, 3);
         let setup_point = point(12, 19);
-        let rows = point(1296, 7);
-        let gadget = F::from_u64(17);
-        let prepared = view.prepare(&column_point, &rows, gadget).unwrap();
+        let alpha = F::from_u64(7);
+        let row_weights = [F::from_u64(11), F::from_u64(13)];
+        let gadget = [F::from_u64(5), F::from_u64(17)];
+        let prepared = view
+            .prepare(&response_point, alpha, &row_weights, &gadget)
+            .unwrap();
+
+        let mut alpha_powers = Vec::with_capacity(polynomial.degree());
+        let mut power = F::one();
+        for _ in 0..polynomial.degree() {
+            alpha_powers.push(power);
+            power *= alpha;
+        }
+        let column_weights = (0..view.columns())
+            .map(|column| {
+                let mut weight = F::zero();
+                for (coefficient, &coefficient_weight) in alpha_powers.iter().enumerate() {
+                    for (digit, &digit_weight) in gadget.iter().enumerate() {
+                        let address = response.address(column, digit, coefficient).unwrap();
+                        weight += coefficient_weight
+                            * digit_weight
+                            * eq_eval_at_index(&response_point, address);
+                    }
+                }
+                weight
+            })
+            .collect::<Vec<_>>();
+
+        let materialized = prepared.materialize_setup_weights().unwrap();
         let mut expected = vec![F::zero(); view.setup_domain_len()];
-        let matrix: Vec<Vec<F>> = (0..4).map(|j| point(648, j * 37 + 1)).collect();
-        let mut direct_contraction = F::zero();
-        for row in 0..2 {
-            for column in 0..2 {
-                for coefficient in 0..648 {
+        for (row, &row_weight) in row_weights.iter().enumerate() {
+            for (column, &column_weight) in column_weights.iter().enumerate() {
+                for (coefficient, &coefficient_weight) in alpha_powers.iter().enumerate() {
                     let address = view.setup_address(row, column, coefficient).unwrap();
-                    let weight = gadget
-                        * rows[row * 648 + coefficient]
-                        * eq_eval_at_index(&column_point, column);
-                    expected[address] = weight;
-                    direct_contraction += weight * matrix[row * 2 + column][coefficient];
+                    expected[address] = row_weight * column_weight * coefficient_weight;
                 }
             }
         }
-        assert_eq!(prepared.materialize_setup_weights().unwrap(), expected);
+        assert_eq!(materialized, expected);
+        assert!(materialized[..view.setup_offset()].iter().all(F::is_zero));
+        assert!(materialized[2629..].iter().all(F::is_zero));
+
         let direct_evaluation = expected
             .iter()
             .enumerate()
@@ -562,15 +616,9 @@ mod tests {
             direct_evaluation
         );
         assert_eq!(
-            prepared
-                .contract_matrix(matrix.iter().map(Vec::as_slice))
-                .unwrap(),
-            direct_contraction
+            prepared.modulus_evaluation(),
+            polynomial.evaluate_modulus_at(alpha).unwrap()
         );
-        assert!(prepared
-            .contract_matrix(matrix[..3].iter().map(Vec::as_slice))
-            .is_err());
-        assert!(view.prepare(&column_point, &rows[..1295], gadget).is_err());
     }
 
     #[test]
@@ -610,7 +658,7 @@ mod tests {
         let view = TrinomialASetupView::new(polynomial, 1, 2, 0, 1024, response).unwrap();
         assert!(view.setup_address(1, 0, 0).is_err());
         assert!(view
-            .prepare(&point(9, 1), &[F::one(); 324], F::one())
+            .prepare(&point(9, 1), F::from_u64(3), &[F::one()], &[F::one()])
             .is_err());
         let wrong_polynomial = RelationPolynomial::minus_trinomial(324).unwrap();
         assert!(TrinomialASetupView::new(wrong_polynomial, 1, 2, 0, 1024, response).is_err());
