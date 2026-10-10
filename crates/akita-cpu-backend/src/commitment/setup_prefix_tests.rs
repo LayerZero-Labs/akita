@@ -7,17 +7,22 @@ use jolt_field::Zero;
 fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
     use jolt_field::Prime32Offset99 as F;
 
-    let natural_len = 64;
+    // q32 compression starts at D=128, so the prefix B image must be D=128.
+    let natural_len = 128;
     let mut level_params = sample_level_params();
-    retarget_group_role_dims_wide(&mut level_params, 64, 64, 1024);
+    retarget_group_role_dims_wide(&mut level_params, 128, 128, 1024);
     let commitment_params =
         setup_prefix_precommitted_params(&level_params, natural_len).expect("prefix params");
     let id = scheduled_setup_prefix(natural_len, commitment_params)
         .slot_id()
         .expect("setup prefix group");
     let slot = || {
-        let inner_rows =
-            RingVec::from_coeffs_with_ring_dim(vec![F::zero(); 64], 64).expect("inner rows");
+        let inner = &id.commitment_profile.inner.matrix;
+        let inner_rows = RingVec::from_coeffs_with_ring_dim(
+            vec![F::zero(); inner.output_rank() * inner.ring_dimension()],
+            inner.ring_dimension(),
+        )
+        .expect("inner rows");
         let matrix = &id.commitment_profile.outer.matrix;
         let plan = akita_params::CompressionChainPlan::for_complete_source(
             matrix.sis_modulus_profile(),

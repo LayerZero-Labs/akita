@@ -23,12 +23,13 @@ fn portable_tensor_import_matches_homogeneous_proof() {
     common::init_rayon_pool();
     common::run_on_large_stack(|| {
         let chunk_size = akita_config::unit_onehot_source_chunk_size::<fp32::OneHot>().unwrap();
+        // The smallest shipped fp32 one-hot row with a recursive tensor-projection fold.
         let poly =
-            OneHotPoly::<F, u8>::new(chunk_size, vec![Some(0); (1 << 16) / chunk_size]).unwrap();
+            OneHotPoly::<F, u8>::new(chunk_size, vec![Some(0); (1 << 20) / chunk_size]).unwrap();
         let expected =
             akita_params::lagrange_weights(&vec![E::from_u64(2); chunk_size.ilog2() as usize])
                 .unwrap()[0];
-        run::<fp32::OneHot, _>(16, vec![poly; 2], expected);
+        run::<fp32::OneHot, _>(20, vec![poly], expected);
     });
 }
 
@@ -37,8 +38,8 @@ fn offloaded_route_uses_only_local_prefix_handles() {
     common::init_rayon_pool();
     common::run_on_large_stack(|| {
         // The smallest shipped fp32 recursive row with an offloaded setup prefix.
-        let poly = DensePoly::from_field_evals(24, vec![F::from_u64(1); 1 << 24]).unwrap();
-        run::<RecursiveCommitmentConfig<fp32::Dense>, _>(24, vec![poly], E::from_u64(1));
+        let poly = DensePoly::from_field_evals(28, vec![F::from_u64(1); 1 << 28]).unwrap();
+        run::<RecursiveCommitmentConfig<fp32::Dense>, _>(28, vec![poly], E::from_u64(1));
     });
 }
 

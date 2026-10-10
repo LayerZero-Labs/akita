@@ -448,10 +448,11 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
         ),
         (
             policy_of::<fp32::Dense>(),
+            // q32 compression starts at D=128, so a compressed D image needs D=128.
             CommitmentRingDims {
                 inner: 1024,
                 outer: 128,
-                opening: 64,
+                opening: 128,
             },
             3,
         ),

@@ -87,7 +87,7 @@ fn dense_nv26_selected_schedules_keep_inner_basis_independent() {
             b_output_raw: 256,
             d_input_raw: 720_896,
             d_output_raw: 256,
-            next_witness: 12_910_144,
+            next_witness: 12_916_352,
         }
     );
 
@@ -95,22 +95,22 @@ fn dense_nv26_selected_schedules_keep_inner_basis_independent() {
     assert_eq!(
         fp64,
         Snapshot {
-            inner_basis: 11,
+            inner_basis: 16,
             opening_basis: 3,
-            positions: 256,
+            positions: 128,
             blocks: 256,
-            outer_slices: 4,
-            inner_digits: 6,
+            outer_slices: 8,
+            inner_digits: 4,
             n_a: 1,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 1_572_864,
-            a_output_raw: 1_024,
+            a_input_raw: 1_048_576,
+            a_output_raw: 2_048,
             b_input_raw: 1_441_792,
-            b_output_raw: 256,
-            d_input_raw: 1_441_792,
-            d_output_raw: 256,
-            next_witness: 18_363_520,
+            b_output_raw: 128,
+            d_input_raw: 720_896,
+            d_output_raw: 128,
+            next_witness: 21_851_776,
         }
     );
 
@@ -133,7 +133,7 @@ fn dense_nv26_selected_schedules_keep_inner_basis_independent() {
             b_output_raw: 64,
             d_input_raw: 704_512,
             d_output_raw: 64,
-            next_witness: 31_002_560,
+            next_witness: 31_008_704,
         }
     );
 }

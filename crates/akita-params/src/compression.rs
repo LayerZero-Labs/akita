@@ -781,20 +781,35 @@ mod tests {
     fn payload_geometry_canonically_selects_wire_count_and_ring_dimension() {
         let profile = SisModulusProfileId::Q128OffsetA7F7;
         let compressed =
-            CommitmentPayloadGeometry::for_mode(CommitmentPayloadMode::Compressed, profile, 4, 16)
+            CommitmentPayloadGeometry::for_mode(CommitmentPayloadMode::Compressed, profile, 4, 64)
                 .unwrap();
-        assert_eq!(compressed.source_coefficients(), 64);
+        assert_eq!(compressed.source_coefficients(), 256);
         assert_eq!(compressed.transmitted_coefficients(), 16);
         assert_eq!(compressed.transcript_ring_dimension(), 16);
 
-        let raw = CommitmentPayloadGeometry::for_mode(CommitmentPayloadMode::Raw, profile, 4, 16)
+        let raw = CommitmentPayloadGeometry::for_mode(CommitmentPayloadMode::Raw, profile, 4, 64)
             .unwrap();
-        assert_eq!(raw.source_coefficients(), 64);
-        assert_eq!(raw.transmitted_coefficients(), 64);
-        assert_eq!(raw.transcript_ring_dimension(), 16);
+        assert_eq!(raw.source_coefficients(), 256);
+        assert_eq!(raw.transmitted_coefficients(), 256);
+        assert_eq!(raw.transcript_ring_dimension(), 64);
 
-        let plan = CompressionChainPlan::for_complete_source(profile, 64).unwrap();
-        assert!(CommitmentPayloadGeometry::new(5, 16, Some(&plan)).is_err());
+        let plan = CompressionChainPlan::for_complete_source(profile, 256).unwrap();
+        assert!(CommitmentPayloadGeometry::new(5, 64, Some(&plan)).is_err());
+
+        // The q128 ladder starts at D=32, so it cannot recompose a D=16 source.
+        assert!(compression_source_ring_dimension_supported(profile, 64));
+        assert!(!compression_source_ring_dimension_supported(profile, 16));
+        assert!(CommitmentPayloadGeometry::for_mode(
+            CommitmentPayloadMode::Compressed,
+            profile,
+            16,
+            16
+        )
+        .is_err());
+        assert!(!compression_source_ring_dimension_supported(
+            SisModulusProfileId::Q32Offset99,
+            64
+        ));
     }
 
     #[test]

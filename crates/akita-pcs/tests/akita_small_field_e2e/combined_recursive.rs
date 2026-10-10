@@ -71,7 +71,7 @@ fn commit_prove_verify<Cfg, P>(
 }
 
 // One setup built from the union of a recursive family's requirements and a
-// scalar family's must prove under both catalogs on one backend. `nv = 24` is
+// scalar family's must prove under both catalogs on one backend. `nv = 28` is
 // the smallest fp32 recursive row that opens a setup prefix, so the recursive
 // proof imports that slot from the combined registry rather than from a
 // registry built for its family alone.
@@ -82,7 +82,7 @@ fn commit_prove_verify<Cfg, P>(
 // `recursive_setup_e2e.rs` proves there and is production-sized.
 #[test]
 fn fp32_combined_setup_proves_recursive_and_onehot_families() {
-    const MAX_NV: usize = 24;
+    const MAX_NV: usize = 28;
     const ONEHOT_NV: usize = 16;
 
     init_rayon_pool();

@@ -152,8 +152,9 @@ fn setup_prefix_params_project_b_width_for_smaller_outer_dimension() {
 fn setup_prefix_coverage_eval_len_uses_exact_registry_match() {
     use jolt_field::Prime32Offset99 as F;
 
+    // q32 compression starts at D=128, so the prefix B image must be D=128.
     let mut level_params = prefix_eligible_level_params();
-    retarget_group_role_dims_wide(&mut level_params, 64, 64, 1024);
+    retarget_group_role_dims_wide(&mut level_params, 128, 128, 1024);
     let source_ring_dimension = 32;
     let natural_len = 129usize;
     let n_prefix = padded_setup_prefix_len(natural_len);
@@ -258,9 +259,9 @@ fn setup_prefix_coverage_eval_len_rejects_unplanned_level_params() {
 fn verifier_registry_duplicate_insert_does_not_replace_existing_slot() {
     use jolt_field::Prime32Offset99 as F;
 
-    let natural_len = 64;
+    let natural_len = 128;
     let mut level_params = sample_level_params();
-    retarget_group_role_dims_wide(&mut level_params, 64, 64, 1024);
+    retarget_group_role_dims_wide(&mut level_params, 128, 128, 1024);
     let commitment_params =
         setup_prefix_precommitted_params(&level_params, natural_len).expect("prefix params");
     let id = scheduled_setup_prefix(natural_len, commitment_params)
