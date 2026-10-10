@@ -1,6 +1,7 @@
+use akita_config::SetupRequirements;
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
 use akita_error::AkitaError;
-use akita_params::SetupPrefixSlotId;
+use akita_params::{setup_prefix_slot_field_elements, SetupPrefixSlotId};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
     derive_public_matrix_prefix, AkitaExpandedSetup, AkitaSetupDescriptor, AkitaVerifierSetup,
@@ -54,15 +55,22 @@ where
 /// Decoding a verifier setup checks the registry's structure only. This
 /// derives each slot's prefix of the public stream from the setup seed,
 /// commits it with the slot's profile, and requires the stored commitment to
-/// match. The cost is that of committing the longest prefix, the same work the
+/// match. The cost is that of the largest slot footprint, the same work the
 /// setup builder performed.
+///
+/// `requirements` is the trust root for the work: it comes from the trusted
+/// schedule catalog, and every stored slot must be one of its prefix slots.
+/// That check runs before any stream is derived, so hostile setup bytes cannot
+/// choose the size of the recomputation.
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidSetup`] when a stored commitment differs from
-/// its recomputation or a slot cannot be committed.
+/// Returns [`AkitaError::InvalidSetup`] when a slot is not required by
+/// `requirements`, its footprint exceeds their matrix capacity, a stored
+/// commitment differs from its recomputation, or a slot cannot be committed.
 pub fn authenticate_verifier_setup_prefixes<F>(
     setup: AkitaVerifierSetup<F>,
+    requirements: &SetupRequirements<F>,
 ) -> Result<AkitaVerifierSetup<F>, AkitaError>
 where
     F: Field
@@ -78,12 +86,26 @@ where
         .iter()
         .map(|(id, _)| id.clone())
         .collect();
+    if let Some(id) = ids
+        .iter()
+        .find(|id| requirements.prefix_slot_ids().binary_search(id).is_err())
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "setup-prefix slot of natural length {} is not required by the trusted catalog",
+            id.natural_len
+        )));
+    }
     let num_field_elements = ids
         .iter()
-        .map(SetupPrefixSlotId::n_prefix)
-        .try_fold(0, |longest, n_prefix| n_prefix.map(|n| longest.max(n)))?;
+        .map(setup_prefix_slot_field_elements)
+        .try_fold(0, |largest, footprint| footprint.map(|f| largest.max(f)))?;
     if num_field_elements == 0 {
         return Ok(setup.assume_prefix_registry_authenticated());
+    }
+    if num_field_elements > requirements.matrix_capacity().num_field_elements {
+        return Err(AkitaError::InvalidSetup(
+            "setup-prefix footprint exceeds the trusted matrix capacity".into(),
+        ));
     }
     let seed = &setup.expanded().descriptor().setup_seed;
     let stream = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(

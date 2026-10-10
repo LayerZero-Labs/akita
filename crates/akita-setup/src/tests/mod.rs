@@ -141,9 +141,44 @@ fn verifier_setup_prefix_registry_is_authenticated_only_by_recomputation() {
                 .expect("strict decode");
             assert!(!decoded.prefix_registry_authenticated());
             let authenticated =
-                authenticate_verifier_setup_prefixes(decoded.clone()).expect("honest registry");
+                authenticate_verifier_setup_prefixes(decoded.clone(), &requirements)
+                    .expect("honest registry");
             assert!(authenticated.prefix_registry_authenticated());
             assert_eq!(authenticated, derived);
+
+            // The trusted catalog bounds the recomputation: a slot it does not
+            // require is rejected before any public stream is derived.
+            let dense_catalog =
+                akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>()
+                    .expect("dense catalog");
+            let no_prefixes =
+                SetupRequirements::from_catalog::<fp128::Dense>(&dense_catalog, 26, 1)
+                    .expect("dense requirements");
+            assert!(no_prefixes.prefix_slot_ids().is_empty());
+            assert!(matches!(
+                authenticate_verifier_setup_prefixes(decoded.clone(), &no_prefixes),
+                Err(AkitaError::InvalidSetup(_))
+            ));
+
+            // A registry holding only its shortest slot authenticates on its
+            // own: the rebuilt stream is sized by the slots present, at each
+            // slot's full footprint (`setup_prefix_slot_field_elements`).
+            let (_, short_slot) = decoded
+                .prefix_slots()
+                .iter()
+                .min_by_key(|(id, _)| id.n_prefix().unwrap())
+                .expect("recursive row has setup prefixes");
+            let mut short_registry = SetupPrefixVerifierRegistry::new(
+                decoded.expanded().descriptor().setup_seed.clone(),
+            );
+            short_registry
+                .insert(short_slot.clone())
+                .expect("structurally valid slot");
+            let short = AkitaVerifierSetup::from_parts(decoded.expanded().clone(), short_registry)
+                .expect("structurally valid setup");
+            assert!(authenticate_verifier_setup_prefixes(short, &requirements)
+                .expect("a single short slot authenticates")
+                .prefix_registry_authenticated());
 
             let mut registry = SetupPrefixVerifierRegistry::new(
                 decoded.expanded().descriptor().setup_seed.clone(),
@@ -160,7 +195,7 @@ fn verifier_setup_prefix_registry_is_authenticated_only_by_recomputation() {
             let altered = AkitaVerifierSetup::from_parts(decoded.expanded().clone(), registry)
                 .expect("structurally valid setup");
             assert!(matches!(
-                authenticate_verifier_setup_prefixes(altered),
+                authenticate_verifier_setup_prefixes(altered, &requirements),
                 Err(AkitaError::InvalidSetup(_))
             ));
         })
