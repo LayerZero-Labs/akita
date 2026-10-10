@@ -179,7 +179,8 @@ parameter change, and it is not part of this spec.
 - [x] The CI test pass is green, together with the schedule drift job, both
       transcript backend suites, the proof-stream roundtrips, the x86
       portability checks, and the recursion-glue smoke. The AArch64 NEON
-      portability job has not been run.
+      kernel tests pass natively on an Apple M4 (macOS) rather than the
+      workflow's Linux AArch64 runner.
 - [x] Proof size and runtime are measured against `main`.
 
 ### Performance
