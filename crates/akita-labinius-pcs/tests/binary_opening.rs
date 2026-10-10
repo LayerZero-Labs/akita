@@ -4,10 +4,12 @@
 
 mod common;
 
+use akita_config::SetupRequirements;
 use akita_error::AkitaError;
 use akita_labinius_pcs::{
     family::{tables::shipped_catalog, Family128, Family64, FieldFamily},
     shipped::{ShippedCatalogError, SupportedGeometry, SUPPORTED_GEOMETRIES},
+    Prover, Verifier,
 };
 use akita_labinius_verifier::{RootOpeningMode, RootStatement};
 use common::{artifacts, geometry, locate, message, sample_geometry_opening, Case, H};
@@ -113,12 +115,12 @@ fn fp128_opening_is_accepted_and_every_change_is_rejected() {
     opening_is_accepted_and_every_change_is_rejected::<Family128>();
 }
 
-/// Both shipped catalogs carry the rows of every supported geometry.
+/// Both families construct every supported geometry with both catalogs selected.
 #[test]
-fn every_supported_geometry_resolves_in_both_shipped_catalogs() {
-    fn resolves<P: FieldFamily>() {
+fn every_supported_geometry_constructs_prover_and_verifier_for_both_families() {
+    fn constructs<P: FieldFamily>() {
         for supported in SUPPORTED_GEOMETRIES {
-            shipped_catalog::<P>(supported, &artifacts()).unwrap();
+            Case::<P>::new(supported.log_num_cells, RootOpeningMode::Both);
         }
         let unsupported = SupportedGeometry {
             log_num_cells: 14,
@@ -129,8 +131,47 @@ fn every_supported_geometry_resolves_in_both_shipped_catalogs() {
             Err(ShippedCatalogError::UnsupportedGeometry)
         ));
     }
-    resolves::<Family64>();
-    resolves::<Family128>();
+    constructs::<Family64>();
+    constructs::<Family128>();
+}
+
+/// Descriptor capacities must cover the binary grouped row before opening.
+#[test]
+fn constructors_reject_undersized_nested_setup_capacity() {
+    let supported = geometry(16);
+    let shipped = shipped_catalog::<Family64>(supported, &artifacts()).unwrap();
+    let key = shipped.tables.response_key(&shipped.digits, None).unwrap();
+    let max_num_vars = key.max_num_vars();
+    let num_polynomials = key.num_polynomials().unwrap();
+    let outcomes = [
+        ("batch capacity", max_num_vars, num_polynomials - 1),
+        ("variable capacity", max_num_vars - 1, num_polynomials),
+    ]
+    .map(|(name, vars, batch)| {
+        let requirements = SetupRequirements::from_catalog(&shipped.digits, vars, batch).unwrap();
+        // The element producer keeps the physical matrix large enough while
+        // both catalogs use the intentionally undersized descriptor capacity.
+        let requirements = requirements
+            .union(SetupRequirements::from_catalog(&shipped.elements, vars, batch).unwrap())
+            .unwrap();
+        let setup = akita_pcs::new_prover_setup(&requirements).unwrap();
+        let verifier_setup = setup
+            .to_verifier_setup(requirements.matrix_capacity())
+            .unwrap();
+        (
+            name,
+            Prover::<Family64>::new(supported, shipped.digits.clone(), None, setup).err(),
+            Verifier::<Family64>::new(supported, shipped.digits.clone(), None, verifier_setup)
+                .err(),
+        )
+    });
+    assert!(
+        outcomes.iter().all(|(_, prover, verifier)| {
+            matches!(prover, Some(AkitaError::InvalidSetup(_)))
+                && matches!(verifier, Some(AkitaError::InvalidSetup(_)))
+        }),
+        "both constructors must reject undersized capacities: {outcomes:?}"
+    );
 }
 
 #[test]
@@ -145,7 +186,7 @@ fn fp128_sample_geometry_opening() {
     sample_geometry_opening::<Family128>("fp128", RootOpeningMode::Binary);
 }
 
-/// Complete binary proof bytes stay fixed when the prime mode is added.
+/// Complete binary proof bytes stay fixed per family and protocol selection.
 #[cfg(all(feature = "transcript-blake2b", not(feature = "transcript-keccak")))]
 #[test]
 fn binary_proof_bytes_are_pinned_for_both_families() {
@@ -166,12 +207,19 @@ fn binary_proof_bytes_are_pinned_for_both_families() {
             .map(|byte| format!("{byte:02x}"))
             .collect()
     }
+    let expected = if akita_params::DEV_PROTOCOL {
+        (
+            "11029db75032d95c1ade4a0f868b05796e21b811bd64cff4b8e24385aa113293",
+            "2635ea4d40a4fa269fed27f4c49109e27174c203731644f04b9103e3c29ae25e",
+        )
+    } else {
+        (
+            "19c08bbf71e5566c23c8da9d87fa6a8baa164b981f2794b142c75957cdeb78ec",
+            "eb4d420ce70c9586aa241a147953ef5ff2c43b34bf77dd46c1298629e254ed9b",
+        )
+    };
     assert_eq!(
-        digest::<Family64>(),
-        "19c08bbf71e5566c23c8da9d87fa6a8baa164b981f2794b142c75957cdeb78ec"
-    );
-    assert_eq!(
-        digest::<Family128>(),
-        "eb4d420ce70c9586aa241a147953ef5ff2c43b34bf77dd46c1298629e254ed9b"
+        (digest::<Family64>(), digest::<Family128>()),
+        (expected.0.to_owned(), expected.1.to_owned())
     );
 }

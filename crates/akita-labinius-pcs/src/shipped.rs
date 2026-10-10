@@ -22,7 +22,7 @@ pub struct SupportedGeometry {
 }
 
 /// The single supported-geometry list used by loading, generation and tests.
-pub const SUPPORTED_GEOMETRIES: [SupportedGeometry; 5] = {
+pub const SUPPORTED_GEOMETRIES: [SupportedGeometry; 4] = {
     let geometry = SupportedGeometry {
         profile: LabiniusRootProfile::D648Q25BoundedW46,
         log_num_cells: 16,
@@ -41,10 +41,6 @@ pub const SUPPORTED_GEOMETRIES: [SupportedGeometry; 5] = {
         },
         SupportedGeometry {
             log_num_cells: 22,
-            ..geometry
-        },
-        SupportedGeometry {
-            log_num_cells: 24,
             ..geometry
         },
     ]

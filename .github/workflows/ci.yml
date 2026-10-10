@@ -510,6 +510,8 @@ jobs:
         run: cargo test --profile ci-test -p akita-labinius-pcs --no-default-features --features labinius,${{ matrix.backend }}
       - name: Test the parallel opt-in PCS
         run: cargo test --profile ci-test -p akita-labinius-pcs --no-default-features --features labinius,parallel,${{ matrix.backend }}
+      - name: Test the parallel opt-in PCS under the dev protocol
+        run: cargo test --profile ci-test -p akita-labinius-pcs --no-default-features --features labinius,parallel,${{ matrix.backend }},akita-params/dev-protocol
       - name: Check parallel opt-in targets
         run: cargo clippy -p akita-labinius-pcs --all-targets --no-default-features --features labinius,parallel,${{ matrix.backend }} -- -D warnings
       - name: Check opt-in targets

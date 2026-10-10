@@ -70,7 +70,8 @@ impl<P: FieldFamily> Prover<P> {
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] when the setup is malformed, the
-    /// catalog lacks the geometry's rows, or the setup does not cover the
+    /// catalog lacks the geometry's rows, or the prover setup's descriptor
+    /// capacity, matrix footprint, or prefix slots do not cover a selected
     /// grouped row; and the admission error of the geometry or the field pair.
     pub fn new(
         geometry: SupportedGeometry,
@@ -86,6 +87,11 @@ impl<P: FieldFamily> Prover<P> {
         for selected in std::iter::once(None).chain(elements.as_ref().map(Some)) {
             let row = response_row::<P>(&layout, &catalog, selected)?;
             ensure_setup_prefix_coverage(row, |id| setup.prefix_slots.get(id).is_some())?;
+            if !TrustedScheduleCatalog::<P::Digits>::verifier_admits(&setup.expanded, row)? {
+                return Err(AkitaError::InvalidSetup(
+                    "the grouped row does not fit the prover setup".into(),
+                ));
+            }
             ensure_prover_schedule_fits_setup::<P::Digits>(
                 &setup.expanded,
                 row.schedule(),

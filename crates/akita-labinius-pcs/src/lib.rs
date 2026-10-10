@@ -1,9 +1,9 @@
 //! Succinct, non-hiding Akita commitments for LaBinius binary and prime claims.
 //!
 //! A proof-field family fixes the base and challenge fields and the nested
-//! configurations for digit and full-width element tables. [`Prover`] commits
+//! configurations for digit and full-width element tables. `Prover` commits
 //! a binary message and opens a binary claim, a prime claim, or both;
-//! [`Verifier`] authenticates them against that commitment. One grouped Akita
+//! `Verifier` authenticates them against that commitment. One grouped Akita
 //! proof opens the image digits, optional prime left opening, and response
 //! digits. Enable `labinius` explicitly to use this crate.
 

@@ -126,7 +126,7 @@ degree. These are the padded lengths used by `LoweredRootLayout` and by the
 one-polynomial conversion.
 
 `shipped::SUPPORTED_GEOMETRIES` fixes profile `D648Q25BoundedW46`, fold-width
-log 8, fold security 128, and cell-count logs 16, 18, 20, 22, and 24. Each
+log 8, fold security 128, and cell-count logs 16, 18, 20, and 22. Each
 digit catalog contains the scalar image and response rows, the two-group
 response rows, and the three-group response rows. Each element catalog
 contains the scalar producer rows for the prime table. A grouped lookup key
@@ -183,7 +183,8 @@ Before opening or reading proof bytes, each constructor checks the setup
 with `Valid::check`, derives the root setup from the nested descriptor's
 `setup_seed`, admits the field pair and layout, resolves the binary row and
 any selected three-group row, and checks required prefix-slot coverage and
-row capacity. The prover uses `ensure_prover_schedule_fits_setup`; the
+row capacity. The prover requires `TrustedScheduleCatalog::verifier_admits`
+for each selected row and uses `ensure_prover_schedule_fits_setup`; the
 verifier requires `AkitaVerifier` to admit each selected row's digest. The
 prover additionally prepares the root matrix in its limb transform domain
 and creates one CPU backend for all table configurations.
@@ -316,7 +317,12 @@ nested proof, mode changes, truncation, and trailing bytes. Every row requires
 It locates proof sections from the bytes exchanged by the oracle rather than
 reimplementing the reduction wire grammar. The reduction's own tests cover
 its individual proof-of-work nonces. The binary test pins one complete proof
-digest per shipped family. `tests/prime_conversion.rs` compares the flattened
+digest per shipped family and protocol selection. The binary tests construct
+the prover and verifier for every supported geometry on both families with
+both catalogs selected, and reject nested setups with undersized descriptor
+capacities. The **LaBinius PCS** CI job tests the parallel opt-in PCS under
+the dev protocol as well as the main protocol for both transcript backends.
+`tests/prime_conversion.rs` compares the flattened
 polynomial's evaluation with a direct extension-valued evaluation, including
 random, zero, one, and basis-coordinate tables and Boolean endpoints.
 Ignored `(22,8)` samples report setup, commit, open and verify timings, and
@@ -324,6 +330,9 @@ proof-size parts; prime samples give the prime commitment and three-group
 nested proof their own lines.
 
 ## Conditional guarantees and exclusions
+
+`2^24` cells at fold-width log 8 exceed the root matrix derivation caps and
+are not a supported geometry.
 
 Acceptance authenticates every returned evaluation against the same Y and W,
 and the same committed uP when present, conditional on ordinary Akita's
