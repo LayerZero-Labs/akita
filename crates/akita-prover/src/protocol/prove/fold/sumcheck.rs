@@ -770,7 +770,7 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage2Kern
         self.rounds
     }
     fn degree_bound(&self) -> usize {
-        3
+        akita_params::STAGE2_SUMCHECK_DEGREE
     }
     fn input_claim(&self) -> E {
         self.claim
