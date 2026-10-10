@@ -48,6 +48,7 @@ jobs:
           RUSTFLAGS: -D warnings -C target-cpu=native
         run: |
           cargo test --release -p akita-algebra --lib --features labinius-binary binary
+          cargo test --release -p akita-algebra --lib --features labinius-trinomial trinomial::limb
           cargo test --release -p akita-algebra --lib ntt
           cargo test --release -p akita-types --lib ntt_cache
           cargo test --release -p akita-verifier --lib terminal::ntt::

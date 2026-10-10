@@ -45,8 +45,9 @@ pub use ring::{
 };
 #[cfg(feature = "labinius-trinomial")]
 pub use ring::{
-    embed_scalar, pack_scalar_components, unpack_scalar_components, MinusTrinomial, PlusTrinomial,
-    TrinomialError, TrinomialI8Lut, TrinomialModulus, TrinomialNtt, TrinomialNttDomain,
+    embed_scalar, pack_scalar_components, shifted_remainder_evaluations, unpack_scalar_components,
+    MinusTrinomial, PlusTrinomial, TrinomialError, TrinomialI8Lut, TrinomialLimbAccumulator,
+    TrinomialLimbDomain, TrinomialLimbSlots, TrinomialModulus, TrinomialNtt, TrinomialNttDomain,
     TrinomialNttWorkspace, TrinomialRing,
 };
 pub use split_eq::GruenSplitEq;

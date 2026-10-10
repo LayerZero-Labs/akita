@@ -7,7 +7,7 @@ use std::arch::x86_64::{
     _mm256_xor_si256, _mm_storeu_si128,
 };
 
-use super::{fold_with, round_product_with, PackedBinary162};
+use super::{fold_with, round_product_with, LimbView};
 use crate::binary::{product, BinaryField162 as F};
 
 #[target_feature(enable = "pclmulqdq")]
@@ -29,8 +29,8 @@ pub(super) unsafe fn product_words(a: F, b: F) -> [u64; 6] {
 
 #[target_feature(enable = "pclmulqdq")]
 pub(super) unsafe fn round_product(
-    lhs: &PackedBinary162,
-    rhs: &PackedBinary162,
+    lhs: &LimbView<&[u64]>,
+    rhs: &LimbView<&[u64]>,
     current_claim: F,
 ) -> [F; 3] {
     round_product_with(lhs, rhs, current_claim, |a, b| {
@@ -40,7 +40,7 @@ pub(super) unsafe fn round_product(
 }
 
 #[target_feature(enable = "pclmulqdq")]
-pub(super) unsafe fn fold_in_place(values: &mut PackedBinary162, r: F) {
+pub(super) unsafe fn fold_in_place(values: &mut LimbView<&mut [u64]>, r: F) {
     fold_with(values, r, |a, b| {
         // SAFETY: the enclosing function carries the same target feature.
         unsafe { product::x86_multiply(a, b) }
@@ -63,11 +63,12 @@ unsafe fn product_vectors(a: [__m256i; 3], b: [__m256i; 3]) -> [__m256i; 6] {
 
 #[inline]
 #[target_feature(enable = "avx2")]
-unsafe fn load_four(values: &PackedBinary162, index: usize) -> [__m256i; 3] {
+unsafe fn load_four<T: AsRef<[u64]>>(values: &LimbView<T>, index: usize) -> [__m256i; 3] {
     std::array::from_fn(|word| {
         // SAFETY: callers establish that four elements beginning at `index`
-        // exist, and unaligned loads accept the Vec allocation's alignment.
-        unsafe { _mm256_loadu_si256(values.words[word].as_ptr().add(index).cast()) }
+        // exist in every limb: LimbView::new checks equal lengths. Offsets
+        // index..index + 4 stay within that length; loads are unaligned.
+        unsafe { _mm256_loadu_si256(values.words[word].as_ref().as_ptr().add(index).cast()) }
     })
 }
 
@@ -179,15 +180,17 @@ fn xor_words(sum: &mut [u64; 6], terms: [u64; 6]) {
 
 #[target_feature(enable = "avx2,pclmulqdq,vpclmulqdq")]
 pub(super) unsafe fn round_product_vec2(
-    lhs: &PackedBinary162,
-    rhs: &PackedBinary162,
+    lhs: &LimbView<&[u64]>,
+    rhs: &LimbView<&[u64]>,
     current_claim: F,
 ) -> [F; 3] {
     let zero = _mm256_setzero_si256();
     let mut sums = [[zero; 6]; 2];
     let mut index = 0;
     while index + 3 < lhs.len() {
-        // SAFETY: the loop condition establishes four available elements.
+        // SAFETY: LimbView::new checks equal limb lengths; the round caller
+        // checks matching table lengths. The loop bounds index..index + 4
+        // within both views; this function enables all required features.
         unsafe {
             let a = load_four(lhs, index);
             let b = load_four(rhs, index);
@@ -221,16 +224,19 @@ pub(super) unsafe fn round_product_vec2(
 }
 
 #[target_feature(enable = "avx2,pclmulqdq,vpclmulqdq")]
-pub(super) unsafe fn fold_in_place_vec2(values: &mut PackedBinary162, r: F) {
+pub(super) unsafe fn fold_in_place_vec2(values: &mut LimbView<&mut [u64]>, r: F) {
     let old_len = values.len();
-    let new_len = old_len.div_ceil(2);
     let scalar_r = r;
     let r = r
         .to_words()
         .map(|word| _mm256_set_epi64x(0, word as i64, 0, word as i64));
     let mut input = 0;
     while input + 3 < old_len {
-        // SAFETY: the loop condition establishes four available elements.
+        // SAFETY: LimbView::new checks equal limb lengths. The loop bounds
+        // input..input + 4 within every limb. All inputs are loaded before
+        // stores; output = input/2 and output + 2 <= input + 4 <= old_len,
+        // so stores stay in bounds and cannot overwrite unread input.
+        // This function enables all required features.
         unsafe {
             let loaded = load_four(values, input);
             let even = loaded.map(|v| low_words(v));
@@ -261,5 +267,4 @@ pub(super) unsafe fn fold_in_place_vec2(values: &mut PackedBinary162, r: F) {
         );
         input += 2;
     }
-    values.truncate(new_len);
 }
