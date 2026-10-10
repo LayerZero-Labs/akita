@@ -136,11 +136,15 @@ exactly D range-checked carry integers per row; there is no matrix-quotient
 message. The honest bound and the no-wrap condition are owned by
 [root admission](labinius-root-admission.md#commitment-row-carry).
 
-The prover's `lowered::a_relation_carry` computes both remainders over the
-integers with `matrix_row_remainder` and `folded_image_remainder`: element
-products accumulate in `i64` under the checked bound
-`D*(q-1)*max|p| <= i64::MAX` and are summed and reduced in `i128`. It checks
-divisibility by q and the carry range; a failure returns `InvalidProof`.
+The prover's `lowered::a_relation_carry` computes the matrix remainder with
+limb-prime transforms and signed CRT when D is 648, the middle coefficient is
+-1, the reference product limit `D*q*max|p| <= i64::MAX` holds, and the checked
+bound `B = 3*m*D*(q-1)*max|p|` permits a product of admitted limb primes greater
+than `2B`. The matrix entries remain the integers in `[0,q)`; CRT recovers the
+same integer remainder as `matrix_row_remainder`. Other cases use
+`matrix_row_remainder`. The image remainder is computed over the integers with
+`folded_image_remainder`. It checks divisibility by q and the carry range; a
+failure returns `InvalidProof`.
 
 The unreduced parity row over the integers is
 
