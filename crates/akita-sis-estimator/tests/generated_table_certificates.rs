@@ -11,8 +11,8 @@
 
 use akita_sis_estimator::width_table::{
     infinity_width_work_items, runtime_width_rows, validate_infinity_width_rows,
-    InfinityWidthCertificate, InfinityWidthProfile, InfinityWidthRow, InfinityWidthTableConfig,
-    InfinityWidthWorkItem, DEFAULT_MAX_RANK, DEFAULT_SEARCH_CAP,
+    InfinityWidthCertificate, InfinityWidthPolicyCosts, InfinityWidthProfile, InfinityWidthRow,
+    InfinityWidthTableConfig, InfinityWidthWorkItem, DEFAULT_MAX_RANK, DEFAULT_SEARCH_CAP,
 };
 use akita_sis_estimator::{
     estimate, scalar_sis_from_ring_wide, AkitaModulusProfileId, CostValue, EstimateConfig,
@@ -286,24 +286,73 @@ fn production_boundaries_reproduce_their_certificates() {
     assert!(samples.iter().any(|row| successor_in_large_box_regime(row)));
     assert!(samples.iter().any(|row| row.max_width == 0));
     for row in samples {
-        if let Some(accepted) = &row.max_costs {
+        let width = rejected_successor_width(row);
+        let recomputed = InfinityWidthRow {
+            max_costs: row.max_costs.as_ref().map(|_| InfinityWidthPolicyCosts {
+                adps16_quantum: estimate_boundary(row, row.max_width, &config),
+            }),
+            next_costs: Some(InfinityWidthPolicyCosts {
+                adps16_quantum: estimate_boundary(row, width, &config),
+            }),
+            ..row.clone()
+        };
+        if let (Some(recorded), Some(now)) = (&row.max_costs, &recomputed.max_costs) {
             assert_same_boundary(
                 row,
                 row.max_width,
-                &accepted.adps16_quantum,
-                &estimate_boundary(row, row.max_width, &config),
+                &recorded.adps16_quantum,
+                &now.adps16_quantum,
             );
         }
-        let width = rejected_successor_width(row);
-        let rejected = row
+        let recorded = row
             .next_costs
             .as_ref()
             .expect("exact cutoff records its rejected successor");
-        assert_same_boundary(
-            row,
-            width,
-            &rejected.adps16_quantum,
-            &estimate_boundary(row, width, &config),
-        );
+        let now = recomputed
+            .next_costs
+            .as_ref()
+            .expect("recomputed successor");
+        assert_same_boundary(row, width, &recorded.adps16_quantum, &now.adps16_quantum);
+        // The tolerance absorbs numerical noise only: the recomputed boundary
+        // must still sit on the generator's side of the policy target.
+        validate_infinity_width_rows(std::slice::from_ref(&recomputed)).unwrap_or_else(|error| {
+            panic!(
+                "{} d={} rank={} bound={}: recomputed boundary crosses the target: {error}",
+                row.modulus_profile.label(),
+                row.d,
+                row.rank,
+                row.coeff_linf_bound,
+            )
+        });
     }
+}
+
+#[test]
+fn a_boundary_crossing_inside_the_tolerance_is_still_rejected() {
+    let row = policy_audit_rows()
+        .into_iter()
+        .find(|row| !row.hit_cap && row.max_width > 0)
+        .expect("an exact cutoff");
+    let target = row.policy.adps16_quantum_constraint().minimum_log2_rop;
+    let with_costs = |accepted: f64, rejected: f64| InfinityWidthRow {
+        max_costs: Some(InfinityWidthPolicyCosts {
+            adps16_quantum: InfinityWidthCertificate {
+                rop: CostValue::finite_log2(accepted),
+                beta: None,
+                zeta: None,
+            },
+        }),
+        next_costs: Some(InfinityWidthPolicyCosts {
+            adps16_quantum: InfinityWidthCertificate {
+                rop: CostValue::finite_log2(rejected),
+                beta: None,
+                zeta: None,
+            },
+        }),
+        ..row.clone()
+    };
+    let shift = COST_LOG2_TOLERANCE / 10.0;
+    assert!(validate_infinity_width_rows(&[with_costs(target + shift, target - 1.0)]).is_ok());
+    assert!(validate_infinity_width_rows(&[with_costs(target - shift, target - 1.0)]).is_err());
+    assert!(validate_infinity_width_rows(&[with_costs(target + 1.0, target + shift)]).is_err());
 }
