@@ -4,22 +4,27 @@ Akita is a high-performance, modular lattice polynomial commitment scheme with t
 Its Module-SIS binding targets 128 bits under a lattice attack model with a quantum cost, and its Fiat-Shamir challenges target a 128-bit rate per random-oracle query in the classical random-oracle model.
 [Security status](book/src/intro.md#security-status) states what these targets cover.
 
-Akita is the public scheme name for this implementation and the intended repository/package name is `akita-pcs`.
-The codebase is being decomposed into a focused `akita-*` crate family rather than remaining a single monolithic package.
+Akita is the public scheme name for this implementation. The umbrella package is `akita-pcs`.
+To try it, run `cargo run -p akita-pcs --release --example quickstart` and read the [quickstart](book/src/usage/quickstart.md).
 
-The current workspace exposes the main ownership boundaries under `crates/`:
+Status: Akita is not yet a formally audited production release ([SECURITY.md](SECURITY.md)). It makes no backward-compatibility guarantees and does not provide zero knowledge.
+
+The workspace is a family of focused `akita-*` crates under `crates/`. [`docs/crate-graph.md`](docs/crate-graph.md) has the full map and dependency graph. The main ownership boundaries are:
 
 - `akita-error` owns the shared protocol error and reusable checked integer formulas for exact sizes, offsets, and ranges.
 - Jolt's `jolt-field` package owns shared field arithmetic; `akita-serialization` and `akita-algebra` own Akita encoding, NTT, ring, and polynomial utilities.
 - `akita-transcript`, `akita-challenges`, and `akita-sumcheck` own Fiat-Shamir transcripts, challenge sampling, and generic sumcheck machinery.
-- `akita-types` owns shared proof, setup, schedule, layout, SIS, and commitment data shapes used by both roles.
-- `akita-planner` is the `Cfg`-free offline schedule engine: candidate expansion, schedule-search DP, and external artifact emitter. It sits *below* `akita-config`.
+- `akita-params` owns parameter geometry, sizing, SIS tables, schedules, witness layout, dispatch, and grinding plans.
+- `akita-types` owns proof, setup, and claim wire values, shared protocol math, and native transcript replay used by both roles.
+- `akita-sis-estimator` owns offline scalar SIS attack-cost estimation and table certification.
+- `akita-planner` is the `Cfg`-free offline schedule engine: candidate expansion, schedule-search DP, and external artifact emitter. Runtime crates never depend on it; its `catalog-gen` feature pulls in `akita-config` to emit artifacts.
 - `akita-schedules` owns versioned schedule artifacts, semantic row validation, and validated owned runtime catalogs.
 - `akita-config` owns concrete runtime config presets and the single `CommitmentConfig` policy trait. A config identifies the expected artifact family and policy but does not own rows.
-- `akita-setup` owns config-backed setup construction and optional setup cache persistence.
+- `akita-setup` owns requirement-backed setup construction and optional setup cache persistence.
 - `akita-verifier` owns verifier replay without prover-only polynomial backends. It receives the validated schedule catalog explicitly.
-- `akita-prover` owns commitment, proving, setup expansion, recursive/ring-switch witness construction, and polynomial backends.
-- `akita-pcs` is the umbrella package: it owns the end-to-end `AkitaCommitmentScheme` orchestration, re-exports the broad public surface, and hosts examples, benches, and integration tests. (There is no separate `akita-scheme` crate.)
+- `akita-prover` owns backend-neutral protocol sequencing, proof assembly, and the opaque backend contracts.
+- `akita-cpu-backend` owns the CPU sources, commitments, witness arithmetic, and caches behind those contracts.
+- `akita-pcs` is the umbrella package: it owns the end-to-end `AkitaCommitmentScheme` orchestration, re-exports the common commit, prove, and verify types, and hosts examples, benches, and integration tests. (There is no separate `akita-scheme` crate.)
 
 Verifier-only consumers should prefer the slim role crates directly:
 `akita-verifier` for verification, `akita-types` for proof/setup/claim shapes,
@@ -30,12 +35,12 @@ pulls in prover-facing APIs.
 ## Documentation
 
 The [Akita Book](book/README.md) is the **canonical target** for narrative
-documentation (how the scheme works, how to use it, and the foundations). Most
-chapters are still stubs that cite source paths and specs to fold; until prose
-lands, integrators should read the [Akita Book](book/README.md) (start with
-[`book/src/how/architecture.md`](book/src/how/architecture.md)),
-[`book/src/usage/commitment-api.md`](book/src/usage/commitment-api.md),
-and [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md).
+documentation (how the scheme works, how to use it, and the foundations).
+Integrators should start with the
+[quickstart](book/src/usage/quickstart.md), the
+[integration guide](book/src/usage/integration.md), and
+[`book/src/how/architecture.md`](book/src/how/architecture.md). Recursion users
+should also read [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md).
 Build the book locally with `./scripts/serve-book.sh` (see
 [`book/README.md`](book/README.md) for the toolchain). `AGENTS.md` is the
 agent command runbook; `docs/` holds maintainer contracts (crate graph,
@@ -48,22 +53,27 @@ comments) are in [`docs/documentation.md`](docs/documentation.md).
 The runtime schedule contract is `TrustedScheduleCatalog<Cfg>`. A versioned
 JSON artifact stores complete expanded rows. The application loads that
 artifact as a config-bound trusted parameter for both proving and verification.
-A proof contains only the 32 byte `OpeningScheduleSelection` row digest. It
-cannot provide or replace schedule content.
+The public statement carries the 32 byte `OpeningScheduleSelection` row digest
+beside the proof bytes. Neither can provide or replace schedule content.
 
 Artifact loading checks the expected family, protocol epoch, config policy,
-runtime challenge hooks, every expanded schedule invariant, every committed
-profile, and every row digest. Honest prover key selection and verifier digest
+runtime challenge hooks, every expanded schedule invariant, and every committed
+profile. It derives each row digest and rejects duplicate identities,
+noncanonical JSON, and noncanonical digest order. Honest prover key selection and verifier digest
 selection then use the same owned catalog.
 
-`AkitaCommitmentScheme<Cfg>` instance owns one validated catalog and uses it
-for setup, commitment, proving, and verification. Direct verifier and prover
-orchestration accept `&TrustedScheduleCatalog<Cfg>`, so an integration can load
-an external trusted artifact without compiling its rows into Akita.
+An `AkitaCommitmentScheme<Cfg>` instance owns one validated catalog and uses it
+for setup, commitment, proving, and verification. Direct verifier construction
+takes a `TrustedScheduleCatalog<Cfg>` by value and prover orchestration borrows
+one, so an integration can load an external trusted artifact without compiling
+its rows into Akita.
 
 Load artifact bytes from application-owned storage and construct the scheme:
 
 ```rust
+use akita_config::proof_optimized::fp128;
+use akita_pcs::AkitaCommitmentScheme;
+
 let bytes = std::fs::read("parameters/fp128_onehot.aks")?;
 let scheme = AkitaCommitmentScheme::<fp128::OneHot>::from_schedule_artifact(&bytes)?;
 ```
@@ -81,12 +91,13 @@ For a faster planner iteration loop, pass one or more family names, for example
 before committing planner changes.
 
 The schedule-artifact drift job regenerates every family into a temporary
-directory and rejects any byte difference from the tracked artifacts.
+directory and rejects any byte difference from the tracked artifacts. It also
+compares the regenerated catalog snapshot with `artifacts/schedule-catalog.tsv`.
 
 ## Lineage
 
 Akita keeps the earlier implementation lineage explicit while giving the improved scheme its own name.
-This is also the line where planned protocol improvements over the original design live: faster verifier-oriented reductions via matrix-claim delegation, smaller large-field proofs via field-size lowering, and efficient zero-knowledge techniques under the Whiteout design direction.
+The [roadmap](book/src/roadmap/roadmap.md) lists what is implemented and what is planned.
 
 ## Contributing
 
