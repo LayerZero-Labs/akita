@@ -21,8 +21,8 @@ for evaluation points and claimed values.
 | `fp128` | A 128 bit prime field | The same field | Hosts that already work over the full challenge field |
 
 All three families target 128 bits for Module-SIS binding under Akita's
-concrete lattice attack model with a quantum cost, and a 128-bit per-address
-Fiat-Shamir rate in the classical random-oracle model. The
+concrete lattice attack model with a quantum cost, and a 128-bit Fiat-Shamir
+rate per random-oracle query in the classical random-oracle model. The
 [security status](../intro.md#security-status) states what these targets cover. The smaller base fields use extension fields for opening
 points and claimed values. The host should choose the family whose opening
 field matches the values it needs to prove. The [rings and

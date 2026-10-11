@@ -184,26 +184,41 @@ parameter checks.
 ## Security status
 
 Akita's 128-bit target is a statement about two concrete models. It is not an
-end-to-end post-quantum security proof.
+end-to-end security bound, classical or quantum.
 
-- **Module-SIS binding.** Two generated tables price the binding, both at a
-  128-bit target with the ADPS16 quantum cost model: a coefficient-$L_\infty$
-  table, from a scalarized infinity-norm LGSA estimate, and a Euclidean table
-  for selective-$L_2$ folds, which prices the collision's $L_2$ length. Each
-  estimate prices one known attack family on a scalarized instance. It does
-  not price attacks that exploit ring or module structure, CRT splitting,
-  subfield projection, or role-specific matrix structure, and it does not show
-  that every quantum attack costs at least $2^{128}$.
+- **Module-SIS binding.** Module-SIS instances are priced at a 128-bit target
+  with the ADPS16 quantum cost model. Two generated tables cover the
+  commitment matrices: a coefficient-$L_\infty$ table, from a scalarized
+  infinity-norm LGSA estimate, and a Euclidean table for selective-$L_2$
+  folds, which prices the collision's $L_2$ length. Six fixed cells cover the
+  compression matrices of compressed commitments. Each estimate prices one
+  known attack family on a scalarized instance. It does not price attacks
+  that exploit ring or module structure, CRT splitting, subfield projection,
+  or role-specific matrix structure, and it does not show that every quantum
+  attack costs at least $2^{128}$. These estimates price the instances. They
+  do not account for the loss of the reduction from a successful prover to a
+  Module-SIS solution.
 - **Fiat-Shamir.** Transcript checks are analyzed in the classical
-  random-oracle model. Sparse fold-challenge addresses have a proved 128-bit
-  per-address rate, because every accepted challenge set has at least
-  $2^{128}$ elements. Each typed field challenge is priced so that its local
-  algebraic loss meets a 128-bit per-query rate, with proof-of-work where
-  needed. Extending that rate to the complete extraction tree also requires,
-  at every field site, a proof that its full-tree debit is at most the local
-  loss, or a target raised to price the debit. That field-address ledger is
-  not yet implemented. The total over an attacker's query budget grows with
-  the budget and is not reported per schedule row. The
+  random-oracle model. Sparse fold-challenge addresses have a 128-bit
+  per-address rate under the grinding specification's indexed fold bound.
+  That bound assumes the accepting-tree extraction described in the binding
+  chapter, the ability to sample each complete indexed oracle stream with its
+  exact distribution conditioned on the selected challenge value, and an
+  address that binds each challenge to its preceding transcript prefix. Every accepted challenge set has at least $2^{128}$ elements,
+  but support size alone does not give the rate. Each typed field challenge
+  is priced so that its local algebraic loss meets a 128-bit per-query rate,
+  with proof-of-work where needed. Extending that rate to the complete
+  extraction tree also requires, at every field site, a proof that its
+  full-tree debit is at most the local loss, or a target raised to price the
+  debit. Akita has no such field-address ledger. A complete claim also needs
+  an adversarial query budget, the fold-coordinate completion bound
+  instantiated for the selected schedule, bounds on field challenges first
+  queried by final verification and on the distinct transcript contexts that
+  produce group roots, a certificate that the extraction tree has polynomial
+  size, and Module-SIS success probabilities evaluated at the extractor's
+  expected running time. None of these is declared today. The total over an
+  attacker's query budget grows with the budget and is not reported per
+  schedule row. The
   [binding chapter](./foundations/pcs-and-binding.md#from-the-fold-bound-to-a-security-claim)
   and the [grinding specification](../../specs/transcript-grinding.md)
   give the accounting.

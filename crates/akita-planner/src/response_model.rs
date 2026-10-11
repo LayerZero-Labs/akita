@@ -33,9 +33,11 @@ const SOURCE_MODEL_ENVELOPE_PPM: u128 = 1_030_000;
 ///
 /// Markov's inequality gives `Pr[X <= (40/39) E[X]] >= 1/40` for every
 /// nonnegative response energy `X`. Thus this is a distribution-free
-/// completeness guarantee for grinding, not a Gaussian-tail assumption. With
-/// 4096 independent transcript attempts, the probability that every attempt
-/// misses this energy cap is below `2^-149`. That bounds the energy predicate
+/// completeness guarantee for grinding, not a Gaussian-tail assumption. The
+/// cap is built from the modeled mean, so it applies when the source-model
+/// envelope bounds `E[X]`. In that case, with 4096 independent transcript
+/// attempts, the probability that every attempt misses this energy cap is
+/// below `2^-149`. That bounds the energy predicate
 /// only: response admission also checks the digit range, and terminal
 /// admission the Golomb-Rice payload budget.
 const RESPONSE_MEAN_MULTIPLIER_NUMERATOR: u128 = 40;

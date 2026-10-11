@@ -130,9 +130,10 @@ The production rule is the ADPS16 quantum LGSA model with a 128-bit target. It
 is an attack-cost model, not a physical resource estimate or an unqualified
 post-quantum security proof.
 
-The quantum cost applies to the SIS tables only. Fiat-Shamir challenge spaces
-and grinding are sized for a 128-bit per-address rate in the classical
-random-oracle model, and Akita has no quantum-random-oracle analysis. See
+The quantum cost applies to the SIS tables only. Field challenges and grinding are
+sized for a 128-bit per-query rate, and indexed fold coordinates for a 128-bit
+per-address rate, both in the classical random-oracle model. Akita has no
+quantum-random-oracle analysis. See
 [Introduction → Security status](../intro.md#security-status).
 
 The conventional `0.2650 * beta` quantum Core-SVP cost is deliberate. Akita
