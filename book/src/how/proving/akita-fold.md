@@ -573,6 +573,17 @@ the resulting $\mathbf z$ fits that scheduled bound. This grinding helps the
 honest prover find a compact response; the range check on its committed digits
 is what certifies the bound in the protocol.
 
+A fold over several committed groups uses one shared nonce, so every group's
+response must fit in the same attempt. A group sized by the universal
+digit-depth policy fits with probability at least $1/8$ per attempt on its
+own. Recursive and setup-prefix groups can instead be sized by the planner's
+Gaussian response model, which targets $1/40$ per attempt as a modeled rather
+than proven probability. Akita does not certify a joint per-attempt
+probability for several groups, so the fixed attempt cap bounds prover work
+but no exhaustion bound is claimed for a multi-group fold. Exhausting the cap
+is a completeness failure: the prover returns an error and the verifier is
+unaffected.
+
 Equations (9a), (9b), and (9e) are identities among recomposed values; they do
 not yet use the opening digits $\hat{\mathbf e}$, the outer digits
 $\hat{\mathbf t}$, or bounded digits for $\mathbf z$. The next-level committed
