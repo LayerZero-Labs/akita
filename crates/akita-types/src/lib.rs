@@ -39,10 +39,10 @@ pub use ntt_cache::{
     dense_i8_commit_prefers_exact_ifma52, ntt_cache_requires_exactness_tail,
     prepare_compression_ntt_cache, prepare_joined_exact_ntt_cache, prepare_ntt_cache,
     prepare_reduced_compression_ntt_cache, prepared_verifier_ntt_cache_metadata,
-    select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey, NttCacheMode,
-    NttPrefixRequirement, NttTransformDomain, PreparedNttCache, PreparedNttTailPairView,
-    PreparedVerifierNttCacheBinding, PreparedVerifierNttCacheMetadata, ProtocolCrtNttParams,
-    PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
+    select_compression_crt_ntt_params, select_crt_ntt_params, view_riscv64_scalar_q128_cache,
+    NttCacheKey, NttCacheMode, NttPrefixRequirement, NttTransformDomain, PreparedNttCache,
+    PreparedNttTailPairView, PreparedVerifierNttCacheBinding, PreparedVerifierNttCacheMetadata,
+    ProtocolCrtNttParams, PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
 };
 pub use proof::{
     assemble_compressed_relation_rhs, assemble_relation_rhs, build_compression_relation_weights,
