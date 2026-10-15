@@ -165,8 +165,12 @@ mod tests {
     #[test]
     fn every_generated_production_row_derives_a_complete_plan() {
         use crate::proof_optimized::{fp32, fp64};
+        use akita_params::{
+            SumcheckProtocol, EXTENSION_OPENING_REDUCTION_DEGREE, SETUP_SUMCHECK_DEGREE,
+            STAGE2_SUMCHECK_DEGREE,
+        };
 
-        fn audit<Cfg: CommitmentConfig>()
+        fn audit<Cfg: CommitmentConfig>(seen_wire_degrees: &mut [bool; 3])
         where
             Cfg::Field: CanonicalEncoding,
             Cfg::ExtField: ExtField<Cfg::Field>,
@@ -213,29 +217,63 @@ mod tests {
                 assert!(count(GrindingQueryKind::FoldChallengeGroup) > 0);
                 assert!(plan.expanded_query_count() >= plan.runs().len() as u64);
 
-                for run in plan.runs() {
-                    let GrindingSite::L2VirtualBatch { level } = run.site() else {
-                        continue;
-                    };
-                    let params = if level == 0 {
+                let level_params = |level: u32| {
+                    if level == 0 {
                         &row.schedule().root.params
                     } else {
                         &row.schedule().recursive_folds
                             [usize::try_from(level - 1).expect("fold level fits usize")]
                         .params
-                    };
-                    let akita_params::InnerCommitSecurityRoute::L2 {
-                        norm_proof_shape, ..
-                    } = params.inner().matrix.security_route()
-                    else {
-                        panic!("L2 virtual-batch query requires an L2 security route");
-                    };
-                    assert_eq!(
-                        run.loss_factor(),
-                        u64::try_from(norm_proof_shape.virtual_evaluation_count())
-                            .expect("virtual evaluation count fits u64"),
-                        "shifted virtual batching must price its highest eta degree"
-                    );
+                    }
+                };
+                for run in plan.runs() {
+                    match run.site() {
+                        GrindingSite::L2VirtualBatch { level } => {
+                            let akita_params::InnerCommitSecurityRoute::L2 {
+                                norm_proof_shape, ..
+                            } = level_params(level).inner().matrix.security_route()
+                            else {
+                                panic!("L2 virtual-batch query requires an L2 security route");
+                            };
+                            assert_eq!(
+                                run.loss_factor(),
+                                u64::try_from(norm_proof_shape.virtual_evaluation_count())
+                                    .expect("virtual evaluation count fits u64"),
+                                "shifted virtual batching must price its highest eta degree"
+                            );
+                        }
+                        // Every relation row shares the level's ring-switch
+                        // challenge, so it must cover the native inner rows,
+                        // whose lifted residual has degree below 2 * d_a.
+                        GrindingSite::RingSwitchAlpha { level } => {
+                            let inner_rows = u64::try_from(2 * level_params(level).d_a() - 1)
+                                .expect("inner-row degree fits u64");
+                            assert!(
+                                run.loss_factor() >= inner_rows,
+                                "level {level}: ring-switch loss {} below the inner-row degree bound {inner_rows}",
+                                run.loss_factor(),
+                            );
+                        }
+                        // The verifier reads exactly these degrees from the
+                        // wire, so the plan must price the rounds at them.
+                        GrindingSite::SumcheckRound { protocol, .. } => {
+                            let (slot, degree) = match protocol {
+                                SumcheckProtocol::Stage2 => (0, STAGE2_SUMCHECK_DEGREE),
+                                SumcheckProtocol::Stage3 => (1, SETUP_SUMCHECK_DEGREE),
+                                SumcheckProtocol::ExtensionOpeningReduction => {
+                                    (2, EXTENSION_OPENING_REDUCTION_DEGREE)
+                                }
+                                _ => continue,
+                            };
+                            seen_wire_degrees[slot] = true;
+                            assert_eq!(
+                                run.loss_factor(),
+                                u64::try_from(degree).unwrap(),
+                                "{protocol:?} round priced away from its wire degree"
+                            );
+                        }
+                        _ => {}
+                    }
                 }
 
                 // A level's Stage 3 rounds are induced by its *successor's*
@@ -270,25 +308,33 @@ mod tests {
             }
         }
 
-        audit::<fp128::Dense>();
-        audit::<fp128::DenseBounded>();
-        audit::<fp128::DenseMultiChunk>();
-        audit::<fp128::OneHot>();
-        audit::<fp128::OneHotMultiChunk>();
-        audit::<fp128::OneHotMultiChunkW2R2>();
-        audit::<fp128::OneHotMultiChunkW4R2>();
-        audit::<fp128::OneHotMultiChunkW2R3>();
-        audit::<fp128::OneHotMultiChunkW4R3>();
-        audit::<fp128::OneHotMultiChunkW8R3>();
-        audit::<fp128::DenseMultiChunkW8R3>();
-        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW2R3>>();
-        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW4R3>>();
-        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R3>>();
-        audit::<fp64::Dense>();
-        audit::<fp64::OneHot>();
-        audit::<fp32::Dense>();
-        audit::<fp32::OneHot>();
-        audit::<crate::RecursiveCommitmentConfig<fp128::OneHot>>();
-        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>();
+        let mut seen = [false; 3];
+        audit::<fp128::Dense>(&mut seen);
+        audit::<fp128::DenseBounded>(&mut seen);
+        audit::<fp128::DenseMultiChunk>(&mut seen);
+        audit::<fp128::OneHot>(&mut seen);
+        audit::<fp128::OneHotMultiChunk>(&mut seen);
+        audit::<fp128::OneHotMultiChunkW2R2>(&mut seen);
+        audit::<fp128::OneHotMultiChunkW4R2>(&mut seen);
+        audit::<fp128::OneHotMultiChunkW2R3>(&mut seen);
+        audit::<fp128::OneHotMultiChunkW4R3>(&mut seen);
+        audit::<fp128::OneHotMultiChunkW8R3>(&mut seen);
+        audit::<fp128::DenseMultiChunkW8R3>(&mut seen);
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW2R3>>(&mut seen);
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW4R3>>(&mut seen);
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R3>>(&mut seen);
+        audit::<fp64::Dense>(&mut seen);
+        audit::<fp64::OneHot>(&mut seen);
+        audit::<fp32::Dense>(&mut seen);
+        audit::<fp32::OneHot>(&mut seen);
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHot>>(&mut seen);
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>(&mut seen);
+        audit::<crate::RecursiveCommitmentConfig<fp128::Dense>>(&mut seen);
+        audit::<crate::RecursiveCommitmentConfig<fp64::Dense>>(&mut seen);
+        audit::<crate::RecursiveCommitmentConfig<fp32::Dense>>(&mut seen);
+        assert_eq!(
+            seen, [true; 3],
+            "every priced sumcheck protocol is exercised"
+        );
     }
 }

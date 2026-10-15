@@ -256,7 +256,7 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
     }
 
     fn degree_bound(&self) -> usize {
-        3
+        akita_params::STAGE2_SUMCHECK_DEGREE
     }
 
     fn input_claim(&self) -> E {
