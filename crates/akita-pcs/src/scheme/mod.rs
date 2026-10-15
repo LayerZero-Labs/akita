@@ -7,10 +7,11 @@ use akita_params::{BasisMode, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapa
 use akita_prover::{BackendRegistry, FixedFoldRoute, ProverBackend, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::AkitaVerifierSetup;
-use akita_types::FpExtEncoding;
+use akita_types::{AkitaSponge, FpExtEncoding, PROOF_STREAM_PROTOCOL};
 use akita_verifier::AkitaVerifier;
 use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
+use jolt_transcript::{ProverTranscript, Sponge};
 use std::time::Instant;
 
 /// End-to-end PCS wrapper, generic over commitment config `Cfg`.
@@ -115,7 +116,12 @@ where
     /// Produce a fused batched opening proof from retained commitments.
     ///
     /// Each handle retains its exact source. The backend validates public claims
-    /// against that commitment before creating independent proof state.
+    /// against that commitment before creating independent proof state. The
+    /// proof is the argument string of a fresh [`AkitaSponge`] transcript under
+    /// [`PROOF_STREAM_PROTOCOL`] bound to `session`, as
+    /// [`AkitaVerifier::verify_standalone`] reads it. To embed Akita in an outer
+    /// transcript instead, call [`akita_prover::batched_prove`] with that
+    /// transcript.
     ///
     /// # Errors
     ///
@@ -147,6 +153,44 @@ where
         >,
     {
         let started = Instant::now();
+        let mut transcript = ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, session);
+        self.prove_on_transcript(setup, opening, backend, &mut transcript, basis)?;
+        let proof = transcript.finish();
+        tracing::info!(
+            proof_bytes = proof.len(),
+            elapsed_s = started.elapsed().as_secs_f64(),
+            "akita batched prove complete"
+        );
+        Ok(proof)
+    }
+
+    /// The body of [`batched_prove`](Self::batched_prove) on any transcript:
+    /// import the schedule's setup prefixes, route every fold to `backend`,
+    /// and run the core prover. The caller finishes `transcript`.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn prove_on_transcript<'a, H: Sponge>(
+        &self,
+        setup: &AkitaProverSetup<Cfg::Field>,
+        opening: SelectedProverOpeningData<
+            'a,
+            Cfg::ExtField,
+            CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+            Cfg::Field,
+        >,
+        backend: &CpuBackend<Cfg::Field, Cfg::ExtField>,
+        transcript: &mut ProverTranscript<H>,
+        basis: BasisMode,
+    ) -> Result<(), AkitaError>
+    where
+        Cfg::Field: WithCommitAccumulator + 'static,
+        Cfg::ExtField: jolt_field::MulBaseUnreduced<Cfg::Field> + 'static,
+        <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
+        CpuBackend<Cfg::Field, Cfg::ExtField>: ProverBackend<
+            Cfg::Field,
+            Cfg::ExtField,
+            CommitmentHandle = CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+        >,
+    {
         let resolved = self.schedules.resolve_selection(opening.selection())?;
         let required_prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
             resolved.schedule(),
@@ -154,24 +198,18 @@ where
         )?;
         let prefix_slots =
             backend.import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)?;
-        let mut registry = BackendRegistry::<Cfg>::new()?;
+        let mut registry = BackendRegistry::<Cfg, H>::new()?;
         let root = registry.register(backend, &prefix_slots)?;
         let mut route = FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
-        let proof = akita_prover::batched_prove::<Cfg, _>(
+        akita_prover::batched_prove::<Cfg, _, _>(
             setup.expanded.descriptor(),
             &self.schedules,
             &registry,
             opening,
-            session,
+            transcript,
             basis,
             &mut route,
-        )?;
-        tracing::info!(
-            proof_bytes = proof.len(),
-            elapsed_s = started.elapsed().as_secs_f64(),
-            "akita batched prove complete"
-        );
-        Ok(proof)
+        )
     }
 
     /// Build a verifier for `setup` over this scheme's schedule catalog.

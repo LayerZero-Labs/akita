@@ -60,7 +60,7 @@ fn commit_prove_verify<Cfg, P>(
                 .clone(),
         )
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),

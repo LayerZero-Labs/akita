@@ -876,3 +876,21 @@ mod kernel_tests;
 mod opening_tests;
 #[cfg(test)]
 mod relation_tests;
+
+/// Run the core prover on a fresh [`akita_types::AkitaSponge`] transcript under
+/// [`akita_types::PROOF_STREAM_PROTOCOL`] bound to `session`, and return its
+/// argument string, as `AkitaVerifier::verify_standalone` reads it.
+#[cfg(test)]
+pub(crate) fn prove_on_session(
+    session: &[u8],
+    prove: impl FnOnce(
+        &mut jolt_transcript::ProverTranscript<akita_types::AkitaSponge>,
+    ) -> Result<(), AkitaError>,
+) -> Result<Vec<u8>, AkitaError> {
+    let mut transcript = jolt_transcript::ProverTranscript::<akita_types::AkitaSponge>::new(
+        &akita_types::PROOF_STREAM_PROTOCOL,
+        session,
+    );
+    prove(&mut transcript)?;
+    Ok(transcript.finish())
+}

@@ -23,7 +23,7 @@ The integration has four small crates.
 | --- | --- | --- |
 | `artifact` | Native host | Creates a real Akita commitment, opening proof, and verifier bundle |
 | `glue` | Host and guest | Defines the bounded `AkitaJoltInputs` wire format |
-| `guest` | Jolt RISC-V guest | Decodes the bundle and calls `AkitaVerifier::batched_verify` |
+| `guest` | Jolt RISC-V guest | Decodes the bundle and calls `AkitaVerifier::verify_standalone` |
 | `host` | Native host | Compiles the guest, runs Jolt, and checks the outer proof |
 
 The data flow is direct:

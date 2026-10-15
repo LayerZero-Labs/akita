@@ -148,15 +148,17 @@ where
         })
         .unwrap();
     let prove = |owners| {
-        batched_prove(
-            setup.expanded.descriptor(),
-            scheme.schedules(),
-            &registry,
-            opening(),
-            DOMAIN,
-            BasisMode::Lagrange,
-            &mut FixedFoldRoute::new(owners),
-        )
+        common::prove_on_session(DOMAIN, |transcript| {
+            batched_prove(
+                setup.expanded.descriptor(),
+                scheme.schedules(),
+                &registry,
+                opening(),
+                transcript,
+                BasisMode::Lagrange,
+                &mut FixedFoldRoute::new(owners),
+            )
+        })
     };
     if !all_ids.is_empty() {
         // Public slots exist in the union, but the selected executor lacks the
@@ -202,7 +204,7 @@ where
         .verifier(scheme.setup_verifier(&setup).unwrap())
         .unwrap();
     verifier
-        .batched_verify(
+        .verify_standalone(
             &proof,
             DOMAIN,
             GroupBatchStatement::new(

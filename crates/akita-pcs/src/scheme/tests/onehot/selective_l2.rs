@@ -53,8 +53,9 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
     let prover_group =
         PolynomialGroupClaims::new(point.clone(), openings.clone(), commitments[0].clone())
             .expect("L2 prover group");
-    let proof = scheme
-        .batched_prove(
+    let mut transcript = ProverTranscript::<TestSponge>::new(&TEST_PROTOCOL, TRANSCRIPT_LABEL);
+    scheme
+        .prove_on_transcript(
             &setup,
             selected_prover_data::<L2Cfg, _>(
                 &scheme,
@@ -63,10 +64,11 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
             )
             .expect("L2 opening data"),
             &stack,
-            TRANSCRIPT_LABEL,
+            &mut transcript,
             BasisMode::Lagrange,
         )
         .expect("L2 proof");
+    let proof = transcript.finish();
 
     let verify = |candidate: &[u8]| {
         let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
@@ -79,12 +81,17 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
-                    candidate,
+                let mut transcript = jolt_transcript::VerifierTranscript::<TestSponge>::new(
+                    &TEST_PROTOCOL,
                     TRANSCRIPT_LABEL,
+                    candidate,
+                );
+                verifier.batched_verify(
+                    &mut transcript,
                     selected_statement::<L2Cfg>(&scheme, claims).expect("L2 verifier statement"),
                     BasisMode::Lagrange,
-                )
+                )?;
+                Ok(transcript.finish()?)
             })
     };
     verify(&proof).expect("valid L2 proof");

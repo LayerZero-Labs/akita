@@ -88,7 +88,7 @@ The repository separates proving from verification on purpose.
 | `akita-prover` | Polynomial representations, prepared compute state, and prover kernels |
 | `akita-verifier` | Verification without prover polynomial backends or planner search |
 | `akita-types` | Proofs, commitments, claims, schedules, and setup types shared across the boundary |
-| `akita-transcript` | The transcript that derives proof challenges from the public statement and prior messages |
+| `jolt-transcript` (external) | The transcript that derives proof challenges from the public statement and prior messages |
 
 An application that proves and verifies can begin with `akita-pcs`. A small
 verifier should depend directly on `akita-verifier`, `akita-types`, and

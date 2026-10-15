@@ -246,7 +246,7 @@ jobs:
         env:
           AKITA_BENCH_PROFILE_FEATURE: ${{ matrix.group.profile_feature }}
         run: |
-          features="parallel,$AKITA_BENCH_PROFILE_FEATURE,transcript-blake2b"
+          features="parallel,$AKITA_BENCH_PROFILE_FEATURE"
           cargo build --release --quiet --example profile \
             --no-default-features --features "$features"
 

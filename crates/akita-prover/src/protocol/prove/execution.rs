@@ -13,14 +13,16 @@ use jolt_field::{
     AdditiveGroup, CanonicalEncoding, ExtField, Fold, MulBaseUnreduced, PseudoMersenne, Ring,
     Unreduced,
 };
+use jolt_transcript::{Channel, ProverTranscript, Sponge};
 use std::any::{Any, TypeId};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_PROOF: AtomicU64 = AtomicU64::new(1);
 
-impl<Cfg, B> Executor<Cfg> for TypedExecutor<'_, Cfg, B>
+impl<Cfg, B, S> Executor<Cfg, S> for TypedExecutor<'_, Cfg, B>
 where
     Cfg: CommitmentConfig,
+    S: Sponge,
     Cfg::Field: CanonicalEncoding + AkitaSerialize + Unreduced + PseudoMersenne + Ring + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
@@ -41,8 +43,8 @@ where
     }
     fn root(
         &self,
-        handoff: &mut FoldHandoff<'_, '_, '_, Cfg>,
-        grinding: &mut ProverGrinding<'_>,
+        handoff: &mut FoldHandoff<'_, '_, '_, Cfg, S>,
+        grinding: &mut ProverGrinding<'_, S>,
         claims: &OpeningClaims<'_, Cfg::ExtField, Commitment<Cfg::Field>>,
         handles: &dyn Any,
         basis: BasisMode,
@@ -59,7 +61,7 @@ where
             .try_borrow_mut()
             .map_err(|_| AkitaError::InvalidInput("root executor re-entry".into()))?;
         let request = handoff.request;
-        let state = root::prove_root::<Cfg, B>(
+        let state = root::prove_root::<Cfg, B, S>(
             request.setup,
             self.prefixes,
             self.backend,
@@ -151,8 +153,8 @@ where
     }
     fn recursive(
         &self,
-        handoff: &mut FoldHandoff<'_, '_, '_, Cfg>,
-        grinding: &mut ProverGrinding<'_>,
+        handoff: &mut FoldHandoff<'_, '_, '_, Cfg, S>,
+        grinding: &mut ProverGrinding<'_, S>,
         public: FoldPublicState<Cfg::Field, Cfg::ExtField>,
         resident: ResidentSuccessor,
         index: usize,
@@ -163,7 +165,7 @@ where
         let (witness_handle, commitment_material) =
             resident.into_pair::<B::WitnessHandle, B::CommitmentMaterialHandle>(handoff.current)?;
         let request = handoff.request;
-        let state = suffix::prove_recursive_step::<Cfg, B>(
+        let state = suffix::prove_recursive_step::<Cfg, B, S>(
             request.setup,
             self.prefixes,
             self.backend,
@@ -187,7 +189,7 @@ where
         &self,
         id: BackendId,
         request: &ProofRequest<'_, Cfg>,
-        grinding: &mut ProverGrinding<'_>,
+        grinding: &mut ProverGrinding<'_, S>,
         public: FoldPublicState<Cfg::Field, Cfg::ExtField>,
         resident: ResidentSuccessor,
     ) -> Result<(), AkitaError> {
@@ -196,7 +198,7 @@ where
         })?;
         let (witness_handle, commitment_material) =
             resident.into_pair::<B::WitnessHandle, B::CommitmentMaterialHandle>(id)?;
-        suffix::prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, B>(
+        suffix::prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, B, S>(
             self.backend,
             grinding,
             public.level,
@@ -231,15 +233,21 @@ where
 }
 
 /// Prove with one transcript and route-selected registry entries for every fold.
-pub fn batched_prove<'a, Cfg, H>(
+///
+/// Akita runs on the caller's transcript: its first operation absorbs the
+/// instance descriptor as a public message, and every Akita message lands in
+/// the caller's argument string. The caller owns the transcript's protocol id,
+/// session binding, and `finish`.
+#[allow(clippy::too_many_arguments)]
+pub fn batched_prove<'a, Cfg, H, S>(
     expanded: &AkitaSetupDescriptor,
     schedules: &TrustedScheduleCatalog<Cfg>,
-    registry: &BackendRegistry<'_, Cfg>,
+    registry: &BackendRegistry<'_, Cfg, S>,
     opening: SelectedProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
-    transcript_session: &[u8],
+    transcript: &mut ProverTranscript<S>,
     basis: BasisMode,
     policy: &mut dyn FoldExecutionPolicy,
-) -> Result<Vec<u8>, AkitaError>
+) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: CanonicalEncoding + AkitaSerialize + Unreduced + PseudoMersenne + Ring + 'static,
@@ -253,6 +261,7 @@ where
         + AkitaSerialize
         + 'static,
     H: CommitmentHandleMetadata + 'static,
+    S: Sponge,
 {
     let (resolved, claims, grinding_plan, descriptor_bytes) =
         root::resolve_root::<Cfg, H>(expanded, schedules, opening, basis)?;
@@ -307,8 +316,15 @@ where
             .ok_or_else(|| AkitaError::Internal("proof schedule has no successor fold".into()))?,
         adopted: None,
     };
-    let channel = akita_transcript::new_prover_channel(transcript_session, &descriptor_bytes)?;
-    let mut grinding = ProverGrinding::new(channel, &grinding_plan);
+    transcript.site(
+        akita_params::ProtocolSiteId {
+            family: akita_params::transcript_site::SITE_FAMILY_ROOT_STATEMENT,
+            ..akita_params::ProtocolSiteId::default()
+        }
+        .into(),
+    );
+    transcript.public_bytes(&descriptor_bytes);
+    let mut grinding = ProverGrinding::new(transcript, &grinding_plan);
     let (mut public, mut resident) = root_executor.root(
         &mut handoff,
         &mut grinding,
@@ -340,13 +356,13 @@ where
             "proved fold count differs from schedule".into(),
         ));
     }
-    let proof = grinding.finish()?;
+    grinding.finish()?;
     for (slot, selected) in registry.slots.iter().zip(selected) {
         if selected {
             slot.finish()?;
         }
     }
-    Ok(proof)
+    Ok(())
 }
 
 #[cfg(test)]

@@ -19,14 +19,21 @@ use jolt_field::{
     CanonicalBytes, CanonicalEncoding, ExtField, Field, Fold, One, PseudoMersenne, Ring, Unreduced,
     Zero,
 };
+use jolt_transcript::ProverTranscript;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 mod common;
+use crate::common::sponge::{verify_on_test_sponge, TestSponge, TEST_PROTOCOL};
+#[cfg(feature = "logging")]
+use akita_params::transcript_site::{
+    SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_PHYSICAL_L2, SITE_FAMILY_STAGE3,
+};
 use common::load_workspace_scheme;
-#[cfg(feature = "logging-transcript")]
+#[cfg(feature = "logging")]
 use common::mutations::{
-    assert_ranges_match_context, representative_mutation_ranges, selected_sumcheck_protocols,
+    assert_messages_cover, message_ranges, representative_mutation_ranges,
+    selected_sumcheck_protocols,
 };
 
 const STACK_SIZE: usize = 256 * 1024 * 1024;
@@ -101,7 +108,7 @@ fn verify_input<'a, Cfg: CommitmentConfig>(
 type Fixture<F, E> = (
     AkitaVerifierSetup<F>,
     CommittedGroup<F>,
-    Vec<u8>,
+    ProverTranscript<TestSponge>,
     Vec<E>,
     E,
     OpeningScheduleSelection,
@@ -163,23 +170,31 @@ where
         )
         .expect("commitment");
     let selection = selection_for::<Cfg>(&commitment, scheme.schedules());
-    let proof = scheme
-        .batched_prove(
-            &setup,
-            prove_input::<Cfg>(
-                selection,
-                &point,
-                opening,
-                &commitment,
-                hint,
-                scheme.schedules(),
-            ),
-            &stack,
-            label,
-            BasisMode::Lagrange,
-        )
-        .expect("native proof");
-    (verifier_setup, commitment, proof, point, opening, selection)
+    let mut transcript = ProverTranscript::<TestSponge>::new(&TEST_PROTOCOL, label);
+    crate::common::caller_transcript::prove_on_transcript(
+        scheme,
+        &setup,
+        prove_input::<Cfg>(
+            selection,
+            &point,
+            opening,
+            &commitment,
+            hint,
+            scheme.schedules(),
+        ),
+        &stack,
+        &mut transcript,
+        BasisMode::Lagrange,
+    )
+    .expect("native proof");
+    (
+        verifier_setup,
+        commitment,
+        transcript,
+        point,
+        opening,
+        selection,
+    )
 }
 
 fn assert_soundness_boundaries<F, Cfg>(num_vars: usize, label: &'static [u8])
@@ -200,14 +215,13 @@ where
     Cfg::ExtField: ExtField<F> + FpExtEncoding<F> + Unreduced + Fold + AkitaSerialize,
 {
     let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
-    #[cfg(feature = "logging-transcript")]
-    akita_transcript::clear_thread_events();
-    let (setup, commitment, proof, point, opening, selection) =
+    let (setup, commitment, transcript, point, opening, selection) =
         make_dense_fixture::<F, Cfg>(&scheme, num_vars, label);
-    #[cfg(feature = "logging-transcript")]
-    let proof_ranges = akita_transcript::thread_proof_ranges();
-    #[cfg(feature = "logging-transcript")]
-    assert_ranges_match_context(&proof_ranges);
+    #[cfg(feature = "logging")]
+    let messages = message_ranges(transcript.events());
+    let proof = transcript.finish();
+    #[cfg(feature = "logging")]
+    assert_messages_cover(&messages, proof.len());
     let resolved = scheme
         .schedules()
         .resolve_selection(selection)
@@ -227,7 +241,8 @@ where
     );
     let verify = |candidate: &[u8], claimed: Cfg::ExtField, session: &[u8]| {
         scheme.verifier(setup.clone()).and_then(|verifier| {
-            verifier.batched_verify(
+            verify_on_test_sponge(
+                &verifier,
                 candidate,
                 session,
                 verify_input::<Cfg>(selection, &point, claimed, &commitment),
@@ -252,9 +267,9 @@ where
         Err(AkitaError::InvalidProof)
     ));
 
-    #[cfg(feature = "logging-transcript")]
+    #[cfg(feature = "logging")]
     let mutation_offsets = {
-        let by_role = representative_mutation_ranges(proof_ranges);
+        let by_role = representative_mutation_ranges(messages);
         assert!(
             !by_role.is_empty(),
             "native proof must expose fixed-shape semantic-role ranges"
@@ -271,13 +286,10 @@ where
         }
         for (family, protocol) in [
             (
-                akita_transcript::SITE_FAMILY_PHYSICAL_L2,
+                SITE_FAMILY_PHYSICAL_L2,
                 akita_params::SumcheckProtocol::PhysicalL2,
             ),
-            (
-                akita_transcript::SITE_FAMILY_STAGE3,
-                akita_params::SumcheckProtocol::Stage3,
-            ),
+            (SITE_FAMILY_STAGE3, akita_params::SumcheckProtocol::Stage3),
         ] {
             if by_role.iter().any(|(bucket, _)| bucket.family == family) {
                 assert!(
@@ -288,8 +300,9 @@ where
         }
         if Cfg::ExtField::DEGREE > 1 {
             assert!(
-                by_role.iter().any(|(bucket, _)| bucket.family
-                    == akita_transcript::SITE_FAMILY_EXTENSION_OPENING_REDUCTION),
+                by_role
+                    .iter()
+                    .any(|(bucket, _)| bucket.family == SITE_FAMILY_EXTENSION_OPENING_REDUCTION),
                 "extension-field workload must exercise native EOR messages"
             );
             assert!(
@@ -300,10 +313,10 @@ where
         }
         by_role
             .into_iter()
-            .map(|(_, range)| range.start)
+            .map(|(_, message)| message.range.start)
             .collect::<Vec<_>>()
     };
-    #[cfg(not(feature = "logging-transcript"))]
+    #[cfg(not(feature = "logging"))]
     let mutation_offsets = vec![
         0,
         proof.len() / 4,

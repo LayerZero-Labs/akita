@@ -122,7 +122,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
@@ -207,7 +207,7 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 proof,
                 label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),

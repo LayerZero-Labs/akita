@@ -112,7 +112,9 @@ environments:
 The direct `akita-verifier` path has no polynomial backend, setup generator, or
 planner search. This makes it the right boundary for small verifier targets.
 The host decodes the public bundle, reconstructs the typed statement, starts a
-fresh verifier transcript, and calls `AkitaVerifier::batched_verify`.
+fresh verifier transcript, calls `AkitaVerifier::batched_verify` on it, and
+then calls the transcript's `finish` to reject trailing proof bytes.
+`AkitaVerifier::verify_standalone` does all three for a standalone proof.
 
 When the verifier itself runs inside another proof system, begin with native
 verification of the same bundle. Then move the exact accepted bundle into the

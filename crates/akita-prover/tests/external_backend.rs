@@ -7,6 +7,7 @@ use akita_prover::backend::*;
 use akita_types::*;
 use jolt_field::{CanonicalEncoding, Field};
 use jolt_poly::UnivariatePoly;
+use jolt_transcript::ProverTranscript;
 use std::marker::PhantomData;
 
 pub struct ExternalBackend<F, E>(PhantomData<(F, E)>);
@@ -545,8 +546,8 @@ pub fn prove_with_external_backend<'a, Cfg>(
     prefixes: &akita_prover::SetupPrefixProverRegistry<Cfg::Field, Handle>,
     schedules: &akita_config::TrustedScheduleCatalog<Cfg>,
     opening: akita_prover::SelectedProverOpeningData<'a, Cfg::ExtField, Handle, Cfg::Field>,
-    transcript_session: &[u8],
-) -> Result<Vec<u8>, AkitaError>
+    transcript: &mut ProverTranscript<AkitaSponge>,
+) -> Result<(), AkitaError>
 where
     Cfg: akita_config::CommitmentConfig,
     Cfg::Field: CanonicalEncoding
@@ -573,12 +574,12 @@ where
     let mut registry = akita_prover::BackendRegistry::<Cfg>::new()?;
     let root = registry.register(&backend, prefixes)?;
     let mut route = akita_prover::FixedFoldRoute::new(vec![root; levels]);
-    akita_prover::batched_prove::<Cfg, _>(
+    akita_prover::batched_prove::<Cfg, _, _>(
         expanded,
         schedules,
         &registry,
         opening,
-        transcript_session,
+        transcript,
         BasisMode::Lagrange,
         &mut route,
     )

@@ -209,7 +209,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     group.bench_function(format!("verify/{mode_label}"), |b| {
         b.iter(|| {
             verifier
-                .batched_verify(
+                .verify_standalone(
                     black_box(&proof),
                     b"bench",
                     black_box(verifier_claims(
@@ -229,7 +229,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     if measure_stage2 {
         relation_phase_timing::report(label, nv, 3, || {
             verifier
-                .batched_verify(
+                .verify_standalone(
                     &proof,
                     b"bench",
                     verifier_claims(selection, &pt[..], &openings[..], &commitments[0]),
@@ -242,7 +242,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
             b.iter_custom(|iterations| {
                 relation_phase_timing::measure_complete_stage2(iterations, || {
                     verifier
-                        .batched_verify(
+                        .verify_standalone(
                             black_box(&proof),
                             b"bench",
                             black_box(verifier_claims(
@@ -282,7 +282,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                 )
                 .unwrap();
             verifier
-                .batched_verify(
+                .verify_standalone(
                     &pf,
                     b"bench",
                     verifier_claims(selection, &pt[..], &openings[..], &cms[0]),
@@ -440,7 +440,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     group.bench_function(format!("verify/{mode_label}"), |b| {
         b.iter(|| {
             verifier
-                .batched_verify(
+                .verify_standalone(
                     black_box(&proof),
                     b"bench",
                     black_box(verifier_claims(
@@ -478,7 +478,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
                 )
                 .unwrap();
             verifier
-                .batched_verify(
+                .verify_standalone(
                     &pf,
                     b"bench",
                     verifier_claims(selection, &pt[..], &openings[..], &cms[0]),

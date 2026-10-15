@@ -19,11 +19,9 @@ packages:
 akita-verifier = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
 akita-config = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>", default-features = false }
 akita-types = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>", default-features = false }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>", default-features = false }
 akita-serialization = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
 ```
 
-The default `akita-verifier` features enable the Blake2b transcript backend.
 Schedule rows are external data, not features. The host loads approved artifact
 bytes, constructs a `TrustedScheduleCatalog<Cfg>`, and supplies that config-bound
 catalog to every verification call.
@@ -40,7 +38,7 @@ The verifier receives these public values:
 - The approved external schedule artifact or its validated catalog.
 - A schedule selection produced with the proof.
 - Ordered commitments, points, and claimed values.
-- Spongefish argument bytes.
+- Argument bytes.
 - The application transcript domain and basis mode.
 
 The host should place them in one versioned public artifact or authenticate the
@@ -85,7 +83,7 @@ pass the application session label to its verification method.
 
 ```rust
 let verifier = akita_verifier::AkitaVerifier::new(verifier_setup, catalog)?;
-verifier.batched_verify(
+verifier.verify_standalone(
     &proof_bytes,
     TRANSCRIPT_DOMAIN,
     statement,
@@ -154,7 +152,6 @@ Run these checks when changing a verifier integration:
 scripts/check-crate-deps.sh akita-verifier
 cargo clippy -p akita-verifier --all-targets --release \
   --no-default-features \
-  --features transcript-blake2b \
   -- -D warnings
 ```
 

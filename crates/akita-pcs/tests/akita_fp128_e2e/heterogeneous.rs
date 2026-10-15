@@ -189,7 +189,7 @@ fn heterogeneous_group_types() {
         onehot_scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
@@ -352,7 +352,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         onehot_scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
@@ -381,7 +381,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         assert!(
             onehot_scheme
                 .verifier(verifier_setup.clone())
-                .and_then(|verifier| verifier.batched_verify(
+                .and_then(|verifier| verifier.verify_standalone(
                     &proof,
                     session,
                     GroupBatchStatement::new(selection, tampered).expect("statement"),
@@ -817,20 +817,25 @@ fn explicit_commitment_transfer_between_backends() {
         let root = registry.register(&receiver, &prefixes).unwrap();
         let mut route =
             akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
-        let proof = akita_prover::batched_prove::<Cfg, _>(
+        let mut transcript = jolt_transcript::ProverTranscript::<akita_pcs::AkitaSponge>::new(
+            &akita_pcs::PROOF_STREAM_PROTOCOL,
+            session,
+        );
+        akita_prover::batched_prove::<Cfg, _, _>(
             setup.expanded.descriptor(),
             scheme.schedules(),
             &registry,
             prover_data,
-            session,
+            &mut transcript,
             BasisMode::Lagrange,
             &mut route,
         )
         .expect("heterogeneous prove");
+        let proof = transcript.finish();
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     GroupBatchStatement::new(
@@ -894,7 +899,7 @@ where
                 .clone(),
         )
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 session,
                 verify_input::<Cfg>(point, &openings, &commitment, scheme.schedules()),

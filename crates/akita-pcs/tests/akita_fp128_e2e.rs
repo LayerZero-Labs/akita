@@ -364,7 +364,7 @@ fn fp128_onehot_batched() {
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     verify_input::<OneHotCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
@@ -425,7 +425,7 @@ fn fp128_dense_batched() {
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     verify_input::<DenseCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
@@ -518,7 +518,7 @@ fn fp128_onehot_oversized_setup() {
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     verify_input::<OneHotCfg>(
@@ -590,7 +590,7 @@ fn fp128_dense_monomial_basis() {
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     verify_input::<DenseCfg>(

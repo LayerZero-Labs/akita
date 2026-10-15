@@ -633,7 +633,7 @@ fn fp32_onehot_multi_group() {
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     session,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),

@@ -121,7 +121,7 @@ where
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     transcript_domain,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
@@ -186,7 +186,7 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     label,
                     verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
@@ -241,7 +241,7 @@ where
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     label,
                     verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
@@ -367,7 +367,7 @@ where
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     label,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
@@ -469,7 +469,7 @@ where
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verifier.verify_standalone(
                     &proof,
                     label,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),

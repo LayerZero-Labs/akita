@@ -2,6 +2,7 @@
 
 mod common;
 
+use crate::common::sponge::{prove_on_test_sponge, verify_on_test_sponge};
 use akita_cpu_backend::CpuBackend;
 use akita_params::GrindingPlan;
 use akita_pcs::AkitaCommitmentScheme;
@@ -64,19 +65,20 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
-    let proof = scheme
-        .batched_prove(
-            &setup,
-            prove_input::<OneHotCfg>(&point, &[opening], &commitment, hint, scheme.schedules()),
-            &stack,
-            LABEL,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
+    let proof = prove_on_test_sponge(
+        &scheme,
+        &setup,
+        prove_input::<OneHotCfg>(&point, &[opening], &commitment, hint, scheme.schedules()),
+        &stack,
+        LABEL,
+        BasisMode::Lagrange,
+    )
+    .expect("prove");
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verify_on_test_sponge(
+                &verifier,
                 &proof,
                 LABEL,
                 verify_input::<OneHotCfg>(&point, &[opening], &commitment, scheme.schedules()),
@@ -101,7 +103,8 @@ impl FoldLinfGrindFixture {
         self.scheme
             .verifier(self.verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(
+                verify_on_test_sponge(
+                    &verifier,
                     proof,
                     LABEL,
                     verify_input::<OneHotCfg>(

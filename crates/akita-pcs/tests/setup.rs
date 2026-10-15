@@ -205,7 +205,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 session,
                 verify_input::<Cfg>(
@@ -325,7 +325,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 session,
                 verify_input::<Cfg>(
@@ -348,7 +348,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &tampered,
                 session,
                 verify_input::<Cfg>(
@@ -368,7 +368,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &wrong_binding,
                 session,
                 verify_input::<Cfg>(
@@ -469,7 +469,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 session,
                 verify_input::<Cfg>(
@@ -574,7 +574,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(
+            verifier.verify_standalone(
                 &proof,
                 session,
                 verify_input::<Cfg>(

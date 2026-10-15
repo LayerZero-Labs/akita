@@ -153,9 +153,9 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage1Kern
     }
 }
 
-pub(super) fn prove_stage1<F, E, B>(
+pub(super) fn prove_stage1<F, E, B, H: Sponge>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, H>,
     level: u32,
     rs: &mut RingSwitchOutput<E, B::RelationHandle>,
     lp: &CommittedGroupParams,
@@ -163,7 +163,15 @@ pub(super) fn prove_stage1<F, E, B>(
 ) -> Result<Stage1ProveOutput<E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Send + Sync + 'static,
-    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize + Send + Sync + 'static,
+    E: ExtField<F>
+        + Unreduced
+        + Fold
+        + Ring
+        + AkitaSerialize
+        + Send
+        + Sync
+        + 'static
+        + CanonicalDecode,
     B: crate::backend::OpaqueStage1Kernel<F, E>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -221,7 +229,7 @@ where
             next_round: 0,
             field: std::marker::PhantomData,
         };
-        let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+        let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
             grinding,
             akita_params::SumcheckProtocol::Stage1,
             level,
@@ -335,7 +343,7 @@ where
             next_round: 0,
             field: std::marker::PhantomData,
         };
-        let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+        let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
             grinding,
             akita_params::SumcheckProtocol::PhysicalL2,
             level,
@@ -386,7 +394,7 @@ where
             next_round: 0,
             field: std::marker::PhantomData,
         };
-        let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+        let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
             grinding,
             akita_params::SumcheckProtocol::Stage1,
             level,
@@ -479,10 +487,10 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prove_stage2<F, E, B>(
+pub(super) fn prove_stage2<F, E, B, H: Sponge>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
     level: usize,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, H>,
     batching_coeff: E,
     rs: RingSwitchOutput<E, B::RelationHandle>,
     stage1_point: &[E],
@@ -497,7 +505,7 @@ pub(super) fn prove_stage2<F, E, B>(
 ) -> Result<Stage2ProveOutput<E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize + CanonicalDecode,
     B: crate::backend::OpaqueStage2Kernel<F, E>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
@@ -569,7 +577,7 @@ where
         rounds: num_rounds,
         field: std::marker::PhantomData,
     };
-    let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+    let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
         grinding,
         akita_params::SumcheckProtocol::Stage2,
         level,
@@ -595,7 +603,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prove_stage3<F, E, B>(
+pub(super) fn prove_stage3<F, E, B, H: Sponge>(
     backend: &B,
     session: &B::ProofSessionHandle,
     level: usize,
@@ -609,7 +617,7 @@ pub(super) fn prove_stage3<F, E, B>(
     alpha: E,
     sumcheck_challenges: &[E],
     relation_address_geometry: akita_params::RelationAddressGeometry,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, H>,
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
@@ -670,7 +678,7 @@ where
                 .map_err(|error| {
                     AkitaError::Internal(format!("setup-prefix slot serialization failed: {error}"))
                 })?;
-            akita_types::stage3_public_slot(grinding, level, &encoded_slot)?;
+            akita_types::stage3_public_slot(grinding, level, &encoded_slot);
             akita_types::stage3_claim::<F, E, _>(grinding, level, setup_product_claim)?;
             let mut kernel = Stage3Sumcheck {
                 backend,
@@ -680,7 +688,7 @@ where
                 next_round: 0,
                 field: std::marker::PhantomData,
             };
-            let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+            let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
                 grinding,
                 akita_params::SumcheckProtocol::Stage3,
                 level,

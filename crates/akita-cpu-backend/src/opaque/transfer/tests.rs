@@ -145,15 +145,17 @@ fn run(signed: bool) {
         .unwrap();
     let levels = row.schedule().num_fold_levels();
     let prove = |owners| {
-        akita_prover::batched_prove::<Cfg, _>(
-            setup.expanded.descriptor(),
-            &catalog,
-            &registry,
-            opening(),
-            DOMAIN,
-            BasisMode::Lagrange,
-            &mut FixedFoldRoute::new(owners),
-        )
+        crate::opaque::prove_on_session(DOMAIN, |transcript| {
+            akita_prover::batched_prove::<Cfg, _, _>(
+                setup.expanded.descriptor(),
+                &catalog,
+                &registry,
+                opening(),
+                transcript,
+                BasisMode::Lagrange,
+                &mut FixedFoldRoute::new(owners),
+            )
+        })
         .unwrap()
     };
     let mut owners = vec![b; levels];
@@ -176,7 +178,7 @@ fn run(signed: bool) {
     .unwrap()])
     .unwrap();
     verifier
-        .batched_verify(
+        .verify_standalone(
             &proof,
             DOMAIN,
             GroupBatchStatement::new(selection, claims).unwrap(),

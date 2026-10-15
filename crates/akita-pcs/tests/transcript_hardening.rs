@@ -1,17 +1,28 @@
 #![allow(missing_docs)]
 
-#[cfg(feature = "logging-transcript")]
+#[cfg(feature = "logging")]
 #[path = "transcript_hardening/catalog_events.rs"]
 mod catalog_events;
 mod common;
 
+use crate::common::sponge::{
+    prove_on_test_sponge, verify_on_test_sponge, TestSponge, TEST_PROTOCOL,
+};
 use akita_cpu_backend::CpuBackend;
-#[cfg(feature = "logging-transcript")]
+#[cfg(feature = "logging")]
+use akita_params::transcript_site::{
+    SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_PHYSICAL_L2,
+    SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_STAGE3, SITE_FAMILY_SUMCHECK,
+    SITE_FAMILY_TERMINAL,
+};
+#[cfg(feature = "logging")]
 use common::mutations::{
-    assert_ranges_match_context, representative_mutation_ranges, selected_sumcheck_protocols,
+    assert_messages_cover, message_ranges, representative_mutation_ranges,
+    selected_sumcheck_protocols,
 };
 use common::*;
 use jolt_field::One;
+use jolt_transcript::{Channel, ProtocolId, ProverTranscript, VerifierTranscript};
 
 const NUM_VARS: usize = 14;
 const LABEL: &[u8] = b"hardening/onehot/native";
@@ -47,26 +58,25 @@ fn stream_binds_session_statement_basis_and_eof() {
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
-        #[cfg(feature = "logging-transcript")]
-        akita_transcript::clear_thread_events();
-        let proof = scheme
-            .batched_prove(
-                &setup,
-                prove_input::<OneHotCfg>(&point, &[opening], &commitment, hint, scheme.schedules()),
-                &stack,
-                LABEL,
-                BasisMode::Lagrange,
-            )
-            .expect("prove");
-        #[cfg(feature = "logging-transcript")]
-        let prover_events = akita_transcript::thread_events();
-        #[cfg(feature = "logging-transcript")]
-        let prover_ranges = akita_transcript::thread_proof_ranges();
+        let mut prover = ProverTranscript::<TestSponge>::new(&TEST_PROTOCOL, LABEL);
+        crate::common::caller_transcript::prove_on_transcript(
+            &scheme,
+            &setup,
+            prove_input::<OneHotCfg>(&point, &[opening], &commitment, hint, scheme.schedules()),
+            &stack,
+            &mut prover,
+            BasisMode::Lagrange,
+        )
+        .expect("prove");
+        #[cfg(feature = "logging")]
+        let prover_events = prover.events().to_vec();
+        let proof = prover.finish();
         let verify = |candidate: &[u8], session: &[u8], claimed: F, basis| {
             scheme
                 .verifier(verifier_setup.clone())
                 .and_then(|verifier| {
-                    verifier.batched_verify(
+                    verify_on_test_sponge(
+                        &verifier,
                         candidate,
                         session,
                         verify_input::<OneHotCfg>(
@@ -80,37 +90,62 @@ fn stream_binds_session_statement_basis_and_eof() {
                 })
         };
 
-        #[cfg(feature = "logging-transcript")]
-        akita_transcript::clear_thread_events();
         verify(&proof, LABEL, opening, BasisMode::Lagrange).expect("honest proof");
-        #[cfg(feature = "logging-transcript")]
+        let mut verifier = VerifierTranscript::<TestSponge>::new(&TEST_PROTOCOL, LABEL, &proof);
+        scheme
+            .verifier(verifier_setup.clone())
+            .and_then(|akita| {
+                akita.batched_verify(
+                    &mut verifier,
+                    verify_input::<OneHotCfg>(&point, &[opening], &commitment, scheme.schedules()),
+                    BasisMode::Lagrange,
+                )
+            })
+            .expect("honest proof on the caller's transcript");
+        #[cfg(feature = "logging")]
+        let verifier_events = verifier.events().to_vec();
+        verifier.finish().expect("honest proof is consumed exactly");
+
+        // The caller's transcript is bound: the same proof under another
+        // protocol id, or after a caller prefix the prover never absorbed,
+        // rejects.
+        const OTHER_PROTOCOL: ProtocolId = ProtocolId::new::<TestSponge>("akita-pcs/other-caller");
+        for (protocol, prefix) in [
+            (&OTHER_PROTOCOL, None),
+            (&TEST_PROTOCOL, Some(&b"caller prefix"[..])),
+        ] {
+            let mut verifier = VerifierTranscript::<TestSponge>::new(protocol, LABEL, &proof);
+            if let Some(prefix) = prefix {
+                verifier.public_bytes(prefix);
+            }
+            let verified = scheme.verifier(verifier_setup.clone()).and_then(|akita| {
+                akita.batched_verify(
+                    &mut verifier,
+                    verify_input::<OneHotCfg>(&point, &[opening], &commitment, scheme.schedules()),
+                    BasisMode::Lagrange,
+                )
+            });
+            assert!(
+                verified.is_err() || verifier.finish().is_err(),
+                "a proof must not verify on a different caller transcript"
+            );
+        }
+        #[cfg(feature = "logging")]
         {
-            let verifier_events = akita_transcript::thread_events();
             assert!(!prover_events.is_empty());
             assert_eq!(verifier_events, prover_events);
-            assert_ranges_match_context(&prover_ranges);
 
-            let mut ordered_ranges = prover_ranges.clone();
-            ordered_ranges.sort_unstable_by_key(|range| range.start);
-            let mut cursor = 0usize;
-            for range in &ordered_ranges {
-                assert_eq!(range.start, cursor, "native proof ranges must be gap-free");
-                cursor = range.start.checked_add(range.len).expect("range end");
-            }
-            assert_eq!(
-                cursor,
-                proof.len(),
-                "native proof ranges must cover the proof"
-            );
+            let messages = message_ranges(&prover_events);
+            assert_messages_cover(&messages, proof.len());
 
-            let role_ranges = representative_mutation_ranges(prover_ranges.clone());
+            let role_ranges = representative_mutation_ranges(messages);
             for family in [
-                akita_transcript::SITE_FAMILY_SUMCHECK,
-                akita_transcript::SITE_FAMILY_OPENING_PAYLOAD,
-                akita_transcript::SITE_FAMILY_STAGE1,
-                akita_transcript::SITE_FAMILY_STAGE2,
-                akita_transcript::SITE_FAMILY_NEXT_WITNESS,
-                akita_transcript::SITE_FAMILY_TERMINAL,
+                SITE_FAMILY_SUMCHECK,
+                SITE_FAMILY_OPENING_PAYLOAD,
+                SITE_FAMILY_STAGE1,
+                SITE_FAMILY_STAGE2,
+                SITE_FAMILY_NEXT_WITNESS,
+                SITE_FAMILY_TERMINAL,
             ] {
                 assert!(
                     role_ranges
@@ -131,13 +166,10 @@ fn stream_binds_session_statement_basis_and_eof() {
             }
             for (family, protocol) in [
                 (
-                    akita_transcript::SITE_FAMILY_PHYSICAL_L2,
+                    SITE_FAMILY_PHYSICAL_L2,
                     akita_params::SumcheckProtocol::PhysicalL2,
                 ),
-                (
-                    akita_transcript::SITE_FAMILY_STAGE3,
-                    akita_params::SumcheckProtocol::Stage3,
-                ),
+                (SITE_FAMILY_STAGE3, akita_params::SumcheckProtocol::Stage3),
             ] {
                 if role_ranges
                     .iter()
@@ -150,18 +182,18 @@ fn stream_binds_session_statement_basis_and_eof() {
                 }
             }
             assert!(
-                role_ranges.iter().any(|(bucket, range)| {
-                    bucket.family == akita_transcript::SITE_FAMILY_SUMCHECK
-                        && akita_transcript::ProtocolSiteId::from_bytes(range.context.site_id).round
-                            > 0
+                role_ranges.iter().any(|(bucket, message)| {
+                    bucket.family == SITE_FAMILY_SUMCHECK && message.site.round > 0
                 }),
                 "workload must exercise and mutate a later sumcheck round"
             );
-            for (bucket, range) in role_ranges {
-                let end = range.start.checked_add(range.len).expect("range end");
-                assert!(end <= proof.len(), "recorded proof range must be in bounds");
+            for (bucket, message) in role_ranges {
+                assert!(
+                    message.range.end <= proof.len(),
+                    "recorded proof range must be in bounds"
+                );
                 let mut mutated = proof.clone();
-                mutated[range.start] ^= 1;
+                mutated[message.range.start] ^= 1;
                 assert!(
                     verify(&mutated, LABEL, opening, BasisMode::Lagrange).is_err(),
                     "fixed-shape mutation in native bucket={bucket:?} must reject",
@@ -222,15 +254,15 @@ fn stream_mutations_reject_without_panicking() {
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
-        let proof = scheme
-            .batched_prove(
-                &setup,
-                prove_input::<DenseCfg>(&point, &[opening], &commitment, hint, scheme.schedules()),
-                &stack,
-                LABEL,
-                BasisMode::Lagrange,
-            )
-            .expect("prove");
+        let proof = prove_on_test_sponge(
+            &scheme,
+            &setup,
+            prove_input::<DenseCfg>(&point, &[opening], &commitment, hint, scheme.schedules()),
+            &stack,
+            LABEL,
+            BasisMode::Lagrange,
+        )
+        .expect("prove");
         for offset in [
             0,
             proof.len() / 4,
@@ -244,7 +276,8 @@ fn stream_mutations_reject_without_panicking() {
                 scheme
                     .verifier(verifier_setup.clone())
                     .and_then(|verifier| {
-                        verifier.batched_verify(
+                        verify_on_test_sponge(
+                            &verifier,
                             &mutated,
                             LABEL,
                             verify_input::<DenseCfg>(

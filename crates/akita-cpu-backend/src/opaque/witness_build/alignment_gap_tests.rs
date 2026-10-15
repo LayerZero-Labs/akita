@@ -159,15 +159,17 @@ fn nonzero_alignment_gaps_preserve_the_proven_statement() {
                         .schedule()
                         .num_fold_levels()
                 ]);
-                akita_prover::batched_prove::<Cfg, _>(
-                    setup.expanded.descriptor(),
-                    &catalog,
-                    &registry,
-                    opening(),
-                    SESSION,
-                    BasisMode::Lagrange,
-                    &mut route,
-                )
+                crate::opaque::prove_on_session(SESSION, |transcript| {
+                    akita_prover::batched_prove::<Cfg, _, _>(
+                        setup.expanded.descriptor(),
+                        &catalog,
+                        &registry,
+                        opening(),
+                        transcript,
+                        BasisMode::Lagrange,
+                        &mut route,
+                    )
+                })
                 .unwrap()
             };
             let zero_proof = prove();
@@ -202,7 +204,7 @@ fn nonzero_alignment_gaps_preserve_the_proven_statement() {
                 .unwrap()])
                 .unwrap();
                 verifier
-                    .batched_verify(
+                    .verify_standalone(
                         proof,
                         SESSION,
                         GroupBatchStatement::new(selection, claims).unwrap(),

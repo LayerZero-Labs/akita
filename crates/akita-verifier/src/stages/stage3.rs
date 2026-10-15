@@ -17,7 +17,8 @@ use akita_types::AkitaExpandedSetup;
 use akita_types::{setup_prefix_coverage_eval_len, AkitaVerifierSetup, PreparedRelationAddress};
 #[cfg(test)]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_field::{CanonicalDecode, CanonicalEncoding, ExtField, Field, Ring};
+use jolt_transcript::Sponge;
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
 /// sumcheck for the setup contribution at `x_challenges`.
@@ -72,16 +73,16 @@ impl<E: Field> SetupSumcheckVerifier<E> {
     }
 
     /// Replay stage 3 directly from the Spongefish stream.
-    pub(crate) fn verify<F>(
+    pub(crate) fn verify<F, H: Sponge>(
         &self,
         setup: &AkitaVerifierSetup<F>,
         next_fold_level_params: &CommittedGroupParams,
-        grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+        grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
         level: u32,
     ) -> Result<SetupSumcheckReplay<E>, AkitaError>
     where
         F: Field + CanonicalEncoding,
-        E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
+        E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F> + CanonicalDecode,
     {
         let geometry = self.setup_index_weight.projection_geometry();
         let ring_d = geometry.base_ring_dim();
@@ -99,7 +100,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
             level,
         )?;
         let claim = akita_types::stage3_claim::<F, E, _>(grinding, level, E::zero())?;
-        let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
+        let mut channel = akita_types::GrindingSumcheckVerifier::<F, E, _>::new(
             grinding,
             akita_params::SumcheckProtocol::Stage3,
             level,
@@ -133,17 +134,17 @@ impl<E: Field> SetupSumcheckVerifier<E> {
 ///
 /// The setup contribution is evaluated at the Stage 2 point with its
 /// coefficient variables removed.
-pub(crate) fn verify_stage3<F, E>(
+pub(crate) fn verify_stage3<F, E, H: Sponge>(
     setup: &AkitaVerifierSetup<F>,
     rs: &RingSwitchVerifyOutput<E>,
     stage2_challenges: &[E],
     next_params: &CommittedGroupParams,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
     level: u32,
 ) -> Result<SetupSumcheckReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
+    E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F> + CanonicalDecode,
 {
     let setup_coefficient_bits = rs
         .relation_address_geometry
@@ -156,7 +157,7 @@ where
         setup_x_challenges,
         rs.alpha,
     )?;
-    verifier.verify::<F>(setup, next_params, grinding, level)
+    verifier.verify::<F, _>(setup, next_params, grinding, level)
 }
 
 /// Resolve the planned setup-prefix slot in the verifier setup, check that it
@@ -165,12 +166,12 @@ where
 /// The coverage length returned by [`setup_prefix_coverage_eval_len`] is not
 /// needed: it equals the projection geometry's `setup_index_len` because the
 /// common base ring dimension is a power of two.
-fn bind_setup_prefix_slot<F>(
+fn bind_setup_prefix_slot<F, H: Sponge>(
     setup: &AkitaVerifierSetup<F>,
     next_fold_level_params: &CommittedGroupParams,
     natural_field_len: usize,
     ring_d: usize,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
     level: u32,
 ) -> Result<(), AkitaError>
 where
@@ -199,7 +200,8 @@ where
     slot.id
         .serialize_compressed(&mut encoded_slot)
         .map_err(|_| AkitaError::InvalidProof)?;
-    akita_types::stage3_public_slot(grinding, level, &encoded_slot)
+    akita_types::stage3_public_slot(grinding, level, &encoded_slot);
+    Ok(())
 }
 
 #[cfg(test)]

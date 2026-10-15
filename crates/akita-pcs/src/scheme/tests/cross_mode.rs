@@ -145,7 +145,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 scheme
                     .verifier(verifier_setup.clone())
                     .and_then(|verifier| {
-                        verifier.batched_verify(
+                        verifier.verify_standalone(
                             proof,
                             LABEL,
                             statement(selection, &point, opening, &commitment),
@@ -173,7 +173,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     scheme
                         .verifier(verifier_setup.clone())
                         .and_then(|verifier| {
-                            verifier.batched_verify(
+                            verifier.verify_standalone(
                                 proof,
                                 LABEL,
                                 statement(wrong_selection, &point, opening, &commitment),

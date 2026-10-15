@@ -1,5 +1,16 @@
 use super::*;
 
+/// The sponge the transcript-mutation tests run on; CI runs them once more with
+/// `keccak-test-sponge` on Keccak.
+#[cfg(not(feature = "keccak-test-sponge"))]
+type TestSponge = AkitaSponge;
+#[cfg(feature = "keccak-test-sponge")]
+type TestSponge = jolt_transcript::Keccak;
+
+/// The standalone proof-stream protocol under [`TestSponge`].
+const TEST_PROTOCOL: jolt_transcript::ProtocolId =
+    jolt_transcript::ProtocolId::new::<TestSponge>(akita_types::PROOF_STREAM_PROTOCOL_NAME);
+
 fn workspace_scheme<C>() -> Result<AkitaCommitmentScheme<C>, AkitaError>
 where
     C: CommitmentConfig,

@@ -135,15 +135,17 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
                 "no bridge registered for selected backend types",
             ),
         ] {
-            let error = batched_prove(
-                setup.expanded.descriptor(),
-                scheme.schedules(),
-                &registry,
-                opening()?,
-                DOMAIN,
-                BasisMode::Lagrange,
-                &mut FixedFoldRoute::new(owners),
-            )
+            let error = common::prove_on_session(DOMAIN, |transcript| {
+                batched_prove(
+                    setup.expanded.descriptor(),
+                    scheme.schedules(),
+                    &registry,
+                    opening()?,
+                    transcript,
+                    BasisMode::Lagrange,
+                    &mut FixedFoldRoute::new(owners),
+                )
+            })
             .unwrap_err();
             assert!(matches!(error, AkitaError::InvalidInput(message) if message == expected));
             assert_eq!(private.admitted.get(), 0);
@@ -163,28 +165,32 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
         source: &private,
         owners: Vec::new(),
     };
-    let proof = batched_prove(
-        setup.expanded.descriptor(),
-        scheme.schedules(),
-        &registry,
-        input,
-        DOMAIN,
-        BasisMode::Lagrange,
-        &mut route,
-    )?;
+    let proof = common::prove_on_session(DOMAIN, |transcript| {
+        batched_prove(
+            setup.expanded.descriptor(),
+            scheme.schedules(),
+            &registry,
+            input,
+            transcript,
+            BasisMode::Lagrange,
+            &mut route,
+        )
+    })?;
     assert_eq!(route.owners.len(), levels);
 
     let exports = private.exports.get();
     let imports = private.imports.get();
-    let reference = batched_prove(
-        setup.expanded.descriptor(),
-        scheme.schedules(),
-        &registry,
-        opening()?,
-        DOMAIN,
-        BasisMode::Lagrange,
-        &mut FixedFoldRoute::new(vec![private_id; levels]),
-    )?;
+    let reference = common::prove_on_session(DOMAIN, |transcript| {
+        batched_prove(
+            setup.expanded.descriptor(),
+            scheme.schedules(),
+            &registry,
+            opening()?,
+            transcript,
+            BasisMode::Lagrange,
+            &mut FixedFoldRoute::new(vec![private_id; levels]),
+        )
+    })?;
     assert_eq!(proof, reference);
     assert_eq!(private.exports.get(), exports);
     assert_eq!(private.imports.get(), imports);
@@ -198,7 +204,7 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
             &committed_group,
         )?])?,
     )?;
-    verifier.batched_verify(&proof, DOMAIN, statement, BasisMode::Lagrange)?;
+    verifier.verify_standalone(&proof, DOMAIN, statement, BasisMode::Lagrange)?;
     if check_failures {
         let destination = PrivateCpu::new(CpuBackend::new(setup.expanded.clone())?);
         let unused = PrivateCpu::new(CpuBackend::new(setup.expanded.clone())?);
@@ -215,15 +221,17 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
             if include_unused {
                 owners[levels - 1] = unused_id;
             }
-            batched_prove(
-                setup.expanded.descriptor(),
-                scheme.schedules(),
-                &registry,
-                opening()?,
-                DOMAIN,
-                BasisMode::Lagrange,
-                &mut FixedFoldRoute::new(owners),
-            )
+            common::prove_on_session(DOMAIN, |transcript| {
+                batched_prove(
+                    setup.expanded.descriptor(),
+                    scheme.schedules(),
+                    &registry,
+                    opening()?,
+                    transcript,
+                    BasisMode::Lagrange,
+                    &mut FixedFoldRoute::new(owners),
+                )
+            })
         };
         let backends = [&private, &destination, &unused];
         // Unselected executors must not be admitted, even if they would fail admission.

@@ -48,7 +48,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
-pub(super) fn prove_root<Cfg, B>(
+pub(super) fn prove_root<Cfg, B, S: Sponge>(
     expanded: &akita_types::AkitaSetupDescriptor,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
     backend: &B,
@@ -57,9 +57,9 @@ pub(super) fn prove_root<Cfg, B>(
     handles: &[B::CommitmentHandle],
     schedule: &FoldSchedule,
     proof_session: &B::ProofSessionHandle,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, S>,
     basis: BasisMode,
-    handoff: &mut super::registry::FoldHandoff<'_, '_, '_, Cfg>,
+    handoff: &mut super::registry::FoldHandoff<'_, '_, '_, Cfg, S>,
 ) -> Result<
     ProveLevelOutput<Cfg::Field, Cfg::ExtField, B::CommitmentMaterialHandle, B::WitnessHandle>,
     AkitaError,
@@ -108,7 +108,7 @@ where
             )
         },
     );
-    let prepared = prepare_fold::<Cfg::Field, Cfg::ExtField, B>(
+    let prepared = prepare_fold::<Cfg::Field, Cfg::ExtField, B, _>(
         backend,
         root_claims,
         material,
@@ -122,7 +122,7 @@ where
         next_params.inner_ring_dimension(),
         false,
     )?;
-    prove_fold::<Cfg::Field, Cfg::ExtField, B>(
+    prove_fold::<Cfg::Field, Cfg::ExtField, B, _>(
         expanded,
         prefix_slots,
         backend,

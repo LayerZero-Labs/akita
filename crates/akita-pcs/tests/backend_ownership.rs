@@ -199,7 +199,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
             scheme
                 .verifier(scheme.setup_verifier(&setup).unwrap().clone())
                 .and_then(|verifier| {
-                    verifier.batched_verify(
+                    verifier.verify_standalone(
                         &proof,
                         DOMAIN,
                         GroupBatchStatement::new(selection, public).unwrap(),

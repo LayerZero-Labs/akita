@@ -5,10 +5,10 @@ use akita_error::AkitaError;
 use akita_params::*;
 use akita_prover::backend::*;
 use akita_sumcheck::SumcheckKernel;
-use akita_transcript::{new_prover_channel, new_verifier_channel};
 use akita_types::*;
 use jolt_field::{Ext2, ExtField, Field, One, Prime128OffsetA7F7, Ring, Zero};
 use jolt_poly::UnivariatePoly;
+use jolt_transcript::{ProverTranscript, VerifierTranscript};
 use std::sync::Arc;
 type F = Prime128OffsetA7F7;
 type E = Ext2<F>;
@@ -107,7 +107,7 @@ fn prove_eor(
         super::CommitmentHandle<F, E>,
         crate::opaque::CpuWitnessHandle,
     >],
-    grinding: &mut ProverGrinding<'_>,
+    grinding: &mut ProverGrinding<'_, AkitaSponge>,
 ) -> Result<ProvedReduction, AkitaError> {
     let prepared = <CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(
         backend, session, context, layout, groups,
@@ -131,7 +131,7 @@ fn prove_eor(
         claim,
         rounds: layout.max_num_vars() - 1,
     };
-    let mut channel = GrindingSumcheckProver::<F, E>::new(
+    let mut channel = GrindingSumcheckProver::<F, E, _>::new(
         grinding,
         SumcheckProtocol::ExtensionOpeningReduction,
         1,
@@ -297,9 +297,10 @@ fn recursive_extension_opening_reduction_pads_and_shares_challenges() {
             ring_dimension: 64,
         },
     ];
-    let channel = new_prover_channel(b"test/aggregate-padding", b"test").unwrap();
+    let mut transcript =
+        ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, b"test/aggregate-padding");
     let plan = eor_test_plan(7, true);
-    let mut grinding = ProverGrinding::new(channel, &plan);
+    let mut grinding = ProverGrinding::new(&mut transcript, &plan);
     let proved = prove_eor(
         &backend,
         &proof.session,
@@ -445,9 +446,12 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                     ring_dimension: D,
                 },
             ];
-            let channel = new_prover_channel(b"test/mixed-eor-dense-oracle", b"test").unwrap();
+            let mut transcript = ProverTranscript::<AkitaSponge>::new(
+                &PROOF_STREAM_PROTOCOL,
+                b"test/mixed-eor-dense-oracle",
+            );
             let plan = eor_test_plan(8, true);
-            let mut grinding = ProverGrinding::new(channel, &plan);
+            let mut grinding = ProverGrinding::new(&mut transcript, &plan);
             let proved = prove_eor(
                 &backend,
                 &proof.session,
@@ -457,7 +461,8 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                 &mut grinding,
             )
             .unwrap();
-            let proof_bytes = grinding.finish().unwrap();
+            grinding.finish().unwrap();
+            let proof_bytes = transcript.finish();
             let tables = [
                 (&setup_evals, &long_point),
                 (&long_evals, &long_point),
@@ -472,10 +477,12 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                 .flat_map(|(evals, point)| direct_column_partials::<F, E>(evals, point))
                 .collect::<Vec<_>>();
             assert_eq!(proved.partials, partials);
-            let channel =
-                new_verifier_channel(b"test/mixed-eor-dense-oracle", b"test", &proof_bytes)
-                    .unwrap();
-            let mut replay = VerifierGrinding::new(channel, &plan);
+            let mut transcript = VerifierTranscript::<AkitaSponge>::new(
+                &PROOF_STREAM_PROTOCOL,
+                b"test/mixed-eor-dense-oracle",
+                &proof_bytes,
+            );
+            let mut replay = VerifierGrinding::new(&mut transcript, &plan);
             let eor_prefix = eor_prefix::<F, E, _>(
                 &mut replay,
                 &layout,
@@ -501,7 +508,7 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                             .fold(E::zero(), |sum, (w, f)| sum + *w * *f)
                 },
             );
-            let mut channel = GrindingSumcheckVerifier::<F, E>::new(
+            let mut channel = GrindingSumcheckVerifier::<F, E, _>::new(
                 &mut replay,
                 SumcheckProtocol::ExtensionOpeningReduction,
                 1,
@@ -519,6 +526,7 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
             let mut final_claims = vec![E::zero(); layout.num_total_polynomials()];
             eor_final_claims::<F, E, _>(&mut replay, &layout, &mut final_claims, 1).unwrap();
             replay.finish().unwrap();
+            transcript.finish().unwrap();
             assert_eq!(rho, proved.rho);
             let expected = terms
                 .iter()
@@ -553,10 +561,12 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                     point: &long_point,
                     ring_dimension: D,
                 }];
-                let channel =
-                    new_prover_channel(b"test/shared-commitment-scopes", b"test").unwrap();
+                let mut transcript = ProverTranscript::<AkitaSponge>::new(
+                    &PROOF_STREAM_PROTOCOL,
+                    b"test/shared-commitment-scopes",
+                );
                 let plan = eor_test_plan(8, false);
-                let mut grinding = ProverGrinding::new(channel, &plan);
+                let mut grinding = ProverGrinding::new(&mut transcript, &plan);
                 let proved = prove_eor(
                     &backend,
                     guard.session(),

@@ -7,8 +7,14 @@ use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Valid};
 use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
-use akita_params::{validate_schedule_ring_dims, BasisMode, CommittedGroupBatchProfile};
-use akita_types::{FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_params::{
+    validate_schedule_ring_dims, BasisMode, CommittedGroupBatchProfile, ProtocolSiteId,
+};
+use akita_types::{
+    AkitaSponge, FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
+    PROOF_STREAM_PROTOCOL,
+};
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
 use crate::AkitaVerifier;
 
@@ -19,13 +25,39 @@ where
         Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne + Valid,
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
 {
-    /// Verify one authoritative Spongefish argument.
-    #[inline(never)]
-    #[tracing::instrument(skip_all, name = "AkitaVerifier::batched_verify")]
-    pub fn batched_verify(
+    /// Verify a standalone Akita proof: one argument string under
+    /// [`PROOF_STREAM_PROTOCOL`] bound to `session`, which must be consumed
+    /// exactly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when the proof is rejected or has
+    /// trailing bytes, and the [`batched_verify`](Self::batched_verify)
+    /// errors otherwise.
+    pub fn verify_standalone(
         &self,
         proof: &[u8],
         session: &[u8],
+        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
+        basis: BasisMode,
+    ) -> Result<(), AkitaError> {
+        let mut transcript =
+            VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, session, proof);
+        self.batched_verify(&mut transcript, statement, basis)?;
+        Ok(transcript.finish()?)
+    }
+
+    /// Verify one Akita opening by reading its messages from the caller's
+    /// transcript.
+    ///
+    /// The first transcript operation absorbs the instance descriptor as a
+    /// public message. The caller owns the transcript's protocol id, session
+    /// binding, and the final [`VerifierTranscript::finish`] check.
+    #[inline(never)]
+    #[tracing::instrument(skip_all, name = "AkitaVerifier::batched_verify")]
+    pub fn batched_verify<H: Sponge>(
+        &self,
+        transcript: &mut VerifierTranscript<'_, H>,
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
@@ -106,8 +138,15 @@ where
             schedule,
             basis,
         )?;
-        let state = akita_transcript::new_verifier_channel(session, &descriptor_bytes, proof)?;
-        let mut grinding = akita_types::VerifierGrinding::new(state, &grinding_plan);
+        transcript.site(
+            ProtocolSiteId {
+                family: akita_params::transcript_site::SITE_FAMILY_ROOT_STATEMENT,
+                ..ProtocolSiteId::default()
+            }
+            .into(),
+        );
+        transcript.public_bytes(&descriptor_bytes);
+        let mut grinding = akita_types::VerifierGrinding::new(transcript, &grinding_plan);
         let raw_groups = claims
             .groups()
             .iter()
@@ -120,7 +159,7 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?;
         let raw_claims = OpeningClaims::from_groups(raw_groups)?;
-        let root = verify_root::<Cfg::Field, Cfg::ExtField>(
+        let root = verify_root::<Cfg::Field, Cfg::ExtField, _>(
             setup,
             &mut grinding,
             &raw_claims,
@@ -130,7 +169,7 @@ where
             schedule.recursive_folds.first(),
             &schedule.terminal,
         )?;
-        verify_suffix::<Cfg::Field, Cfg::ExtField>(
+        verify_suffix::<Cfg::Field, Cfg::ExtField, _>(
             setup,
             &self.terminal_ntt,
             &mut grinding,
@@ -144,7 +183,7 @@ where
                 setup_prefix_opening: root.setup_prefix_opening,
             },
         )?;
-        grinding.finish().map(|_accepted| ())
+        grinding.finish()
     }
 }
 
