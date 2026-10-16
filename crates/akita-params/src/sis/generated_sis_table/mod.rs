@@ -39,5 +39,7 @@ pub(crate) fn sis_max_widths(
         SisModulusProfileId::Q32Offset99 => q32::sis_max_widths(d, coeff_linf_bound),
         SisModulusProfileId::Q64Offset59 => q64::sis_max_widths(d, coeff_linf_bound),
         SisModulusProfileId::Q128OffsetA7F7 => q128::sis_max_widths(d, coeff_linf_bound),
+        // No generated rows: lookups resolve `SisModulusProfileId::row_owner` before this dispatch.
+        SisModulusProfileId::Q128Offset275 => None,
     }
 }

@@ -164,6 +164,7 @@ fn deserialize_sis_modulus_profile<R: Read>(
         0 => Ok(SisModulusProfileId::Q32Offset99),
         1 => Ok(SisModulusProfileId::Q64Offset59),
         2 => Ok(SisModulusProfileId::Q128OffsetA7F7),
+        4 => Ok(SisModulusProfileId::Q128Offset275),
         _ => Err(SerializationError::InvalidData(
             "invalid SIS modulus profile tag".to_string(),
         )),
@@ -633,3 +634,7 @@ mod tests {
 #[cfg(test)]
 #[path = "setup_prefix_slots/internal_tests.rs"]
 mod internal_tests;
+
+#[cfg(test)]
+#[path = "setup_prefix_slots/sis_modulus_profile_tag_tests.rs"]
+mod sis_modulus_profile_tag_tests;

@@ -351,6 +351,7 @@ fn family_label(family: AkitaModulusProfileId) -> &'static str {
         AkitaModulusProfileId::Q32Offset99 => "q32",
         AkitaModulusProfileId::Q64Offset59 => "q64",
         AkitaModulusProfileId::Q128OffsetA7F7 => "q128",
+        AkitaModulusProfileId::Q128Offset275 => "q128_offset275",
     }
 }
 
