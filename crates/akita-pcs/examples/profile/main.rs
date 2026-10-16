@@ -6,9 +6,8 @@
         feature = "profile-ci-fp32",
         feature = "profile-ci-fp64",
         feature = "profile-ci-fp128-base",
-        feature = "profile-ci-multi-group-direct",
-        feature = "profile-ci-multi-group-recursive",
-        feature = "profile-ci-multi-group-recursive-w8r2",
+        feature = "profile-ci-multi-group",
+        feature = "profile-ci-multi-group-w8r2",
         feature = "profile-ci-distributed",
     ))
 ))]

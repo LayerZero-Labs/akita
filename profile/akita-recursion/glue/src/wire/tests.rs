@@ -26,7 +26,7 @@ fn schedules<Cfg: CommitmentConfig>(chunking: ChunkedWitnessCfg) -> TrustedSched
 fn blob_prefix() -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&BLOB_MAGIC);
-    bytes.push(AkitaJoltCase::OneHotFp128Direct.tag());
+    bytes.push(AkitaJoltCase::OneHotFp128.tag());
     (TEST_D as u64)
         .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
         .unwrap();
@@ -41,7 +41,7 @@ fn full_catalog_frame_round_trips_without_compiled_rows() {
 
     assert_eq!(
         read_blob_case(&framed).expect("framed case"),
-        AkitaJoltCase::OneHotFp128Direct
+        AkitaJoltCase::OneHotFp128
     );
     let (decoded, decoded_inner) = split_schedule_catalog::<TestCfg>(
         &framed,

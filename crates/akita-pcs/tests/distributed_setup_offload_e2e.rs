@@ -1,8 +1,8 @@
 //! End-to-end coverage for the mixed distributed (multi-chunk) + recursive
 //! setup-offload profile.
 //!
-//! This test uses `RecursiveCommitmentConfig<fp128::OneHotMultiChunk>` (the
-//! production `W8R2` preset, `fp128_onehot_recursive_multi_chunk_w8r2`
+//! This test uses `fp128::OneHotMultiChunk` (the
+//! production `W8R2` preset, `fp128_onehot_multi_chunk`
 //! family): two precommitted singleton groups at `nv=16` and a two-polynomial
 //! final group at `nv=32`. That schedule combines the `W8R2` chunked witness
 //! layout (8 chunks on the two leading fold levels) with recursive setup
@@ -21,7 +21,7 @@
 mod common;
 
 use akita_config::proof_optimized::fp128;
-use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::CommitmentConfig;
 use akita_params::ScheduleLookupKey;
 use akita_params::{
     setup_matrix_capacity_for_schedule, verifier_setup_matrix_capacity_for_schedule, FoldSchedule,
@@ -31,7 +31,7 @@ use common::*;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 
-type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
+type W8R2Cfg = fp128::OneHotMultiChunk;
 fn w8r2_profiling_key(
     base_catalog: &akita_config::TrustedScheduleCatalog<fp128::OneHotMultiChunk>,
 ) -> ScheduleLookupKey {
@@ -64,9 +64,22 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     let prover = setup_matrix_capacity_for_schedule(schedule.schedule()).expect("prover capacity");
     let verifier = verifier_setup_matrix_capacity_for_schedule(schedule.schedule(), &root_layout)
         .expect("verifier capacity");
-    let setup_for_two = akita_config::SetupRequirements::from_catalog::<W8R2Cfg>(&catalog, 32, 2)
-        .map(|requirements| requirements.matrix_capacity())
-        .expect("setup capacity for K=2");
+    let grouped_catalog = akita_config::TrustedScheduleCatalog::<W8R2Cfg>::new(
+        akita_config::ValidatedScheduleCatalog::try_new(
+            W8R2Cfg::schedule_family_name(),
+            [(schedule.profiles().clone(), schedule.schedule().clone())],
+            &akita_config::policy_of::<W8R2Cfg>(
+                akita_params::ChunkedWitnessCfg::default_non_chunked(),
+            ),
+            W8R2Cfg::ring_challenge_config,
+        )
+        .expect("admitted grouped row"),
+    )
+    .expect("trusted grouped catalog");
+    let setup_for_two =
+        akita_config::SetupRequirements::from_catalog::<W8R2Cfg>(&grouped_catalog, 32, 2)
+            .map(|requirements| requirements.matrix_capacity())
+            .expect("setup capacity for K=2");
     let setup_for_four = akita_config::SetupRequirements::from_catalog::<W8R2Cfg>(&catalog, 32, 4)
         .map(|requirements| requirements.matrix_capacity())
         .expect("setup capacity for K=4");
@@ -103,8 +116,8 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
         "verifier setup must remain a prefix of the prover setup"
     );
 
-    // `K=2` cannot reach the four-polynomial grouped root, and this family
-    // ships no row without precommitted groups. The only shape it can still serve is
+    // `K=2` cannot reach the four-polynomial grouped root. In this one-row
+    // catalog, the only shape it can still serve is
     // an independent commitment of the frozen precommit descriptor, performed
     // under the base config. Provisioning must cover exactly that, so derive
     // the expectation from the same primitive commit-time admission uses.

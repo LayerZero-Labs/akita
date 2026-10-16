@@ -61,10 +61,6 @@ where
         Envelope::ring_challenge_config(d).or_else(|_| Final::ring_challenge_config(d))
     }
 
-    fn selection_policy() -> akita_schedules::SelectionPolicyId {
-        Envelope::selection_policy()
-    }
-
     fn schedule_family_name() -> &'static str {
         Envelope::schedule_family_name()
     }

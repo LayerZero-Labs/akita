@@ -12,7 +12,7 @@ pub(super) use workspace_schedules::load_workspace_scheme;
 
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
-use akita_config::{RecursiveCommitmentConfig, TrustedScheduleCatalog};
+use akita_config::TrustedScheduleCatalog;
 pub(super) use akita_cpu_backend::CommitmentHandle;
 pub(super) use akita_cpu_backend::DensePoly;
 pub(super) use akita_cpu_backend::OneHotPoly;

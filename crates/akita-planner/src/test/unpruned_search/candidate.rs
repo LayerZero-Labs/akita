@@ -363,11 +363,12 @@ pub(in crate::schedule_params) fn prepend_root(
     );
     let root_params = &aligned_root;
     let opening_layout = schedule_key.opening_layout()?;
-    let first_direct_setup_field_len =
-        std::num::NonZeroUsize::new(active_setup_field_len(root_params, &opening_layout)?)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("unpruned root setup field length must be nonzero".into())
-            })?;
+    let first_direct_setup_field_len = std::num::NonZeroUsize::new(
+        akita_params::active_setup_field_len(root_params, &opening_layout)?,
+    )
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup("unpruned root setup field length must be nonzero".into())
+    })?;
     let successor = suffix.folds.first().map_or_else(
         || akita_params::FoldSuccessor::Terminal(&suffix.terminal.params),
         |fold| akita_params::FoldSuccessor::Recursive(fold.params.as_ref()),

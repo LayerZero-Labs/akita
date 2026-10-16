@@ -500,9 +500,9 @@ fn bench_dense_nv14(c: &mut Criterion) {
     .expect("workspace schedule artifact");
     bench_dense_phases::<256, fp128::Dense>(c, "dense-adaptive", 14, false, scheme);
 }
-fn bench_dense_nv14_quotient(c: &mut Criterion) {
+fn bench_dense_nv20_quotient(c: &mut Criterion) {
     let key =
-        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::new(14, 1));
+        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::new(20, 1));
     let catalogs = cross_mode_catalogs::<fp128::Dense>(&key).expect("cross-mode catalogs");
     assert_eq!(
         catalogs
@@ -513,11 +513,11 @@ fn bench_dense_nv14_quotient(c: &mut Criterion) {
         catalogs.quotient_selection,
     );
     let scheme = akita_pcs::AkitaCommitmentScheme::new(catalogs.quotient);
-    bench_dense_phases::<256, fp128::Dense>(c, "dense-quotient", 14, true, scheme);
+    bench_dense_phases::<256, fp128::Dense>(c, "dense-quotient", 20, true, scheme);
 }
-fn bench_dense_nv14_reduced(c: &mut Criterion) {
+fn bench_dense_nv20_reduced(c: &mut Criterion) {
     let key =
-        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::new(14, 1));
+        akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::new(20, 1));
     let catalogs = cross_mode_catalogs::<fp128::Dense>(&key).expect("cross-mode catalogs");
     assert_eq!(
         catalogs
@@ -528,7 +528,7 @@ fn bench_dense_nv14_reduced(c: &mut Criterion) {
         catalogs.reduced_selection,
     );
     let scheme = akita_pcs::AkitaCommitmentScheme::new(catalogs.reduced);
-    bench_dense_phases::<256, fp128::Dense>(c, "dense-reduced", 14, true, scheme);
+    bench_dense_phases::<256, fp128::Dense>(c, "dense-reduced", 20, true, scheme);
 }
 fn bench_dense_nv16(c: &mut Criterion) {
     let scheme = load_workspace_scheme::<fp128::Dense>(
@@ -558,8 +558,8 @@ fn bench_onehot_nv25(c: &mut Criterion) {
 criterion_group!(
     akita_benches,
     bench_dense_nv14,
-    bench_dense_nv14_quotient,
-    bench_dense_nv14_reduced,
+    bench_dense_nv20_quotient,
+    bench_dense_nv20_reduced,
     bench_dense_nv16,
     bench_dense_nv24,
     bench_onehot_nv15,

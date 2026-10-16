@@ -9,7 +9,7 @@
 mod integration;
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::RecursiveCommitmentConfig;
+
 use akita_recursion_glue::AkitaJoltCase;
 use integration::declare_akita_guest;
 
@@ -26,20 +26,14 @@ declare_akita_guest!(
     512
 );
 declare_akita_guest!(
-    akita_verify_fp128_direct,
-    AkitaJoltCase::OneHotFp128Direct,
+    akita_verify_fp128,
+    AkitaJoltCase::OneHotFp128,
     fp128::OneHot,
     512
 );
 declare_akita_guest!(
-    akita_verify_fp128_recursive,
-    AkitaJoltCase::OneHotFp128Recursive,
-    RecursiveCommitmentConfig<fp128::OneHot>,
-    512
-);
-declare_akita_guest!(
     akita_verify,
-    AkitaJoltCase::OneHotFp128MultiGroupRecursive,
-    RecursiveCommitmentConfig<fp128::OneHot>,
+    AkitaJoltCase::OneHotFp128MultiGroup,
+    fp128::OneHot,
     512
 );

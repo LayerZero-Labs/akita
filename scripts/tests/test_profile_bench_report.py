@@ -1020,7 +1020,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         )
         log = "\n".join(
             [
-                "INFO planned fold group label=onehot_fp128_multi_group_recursive level=0 "
+                "INFO planned fold group label=onehot_fp128_multi_group level=0 "
                 "group=pre0 group_role=precommitted "
                 + group_fields.format(
                     consumer=0,
@@ -1040,7 +1040,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                     natural=0,
                     padded=0,
                 ),
-                "INFO planned fold group label=onehot_fp128_multi_group_recursive level=0 "
+                "INFO planned fold group label=onehot_fp128_multi_group level=0 "
                 "group=final group_role=final "
                 + group_fields.format(
                     consumer=0,
@@ -1060,7 +1060,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                     natural=0,
                     padded=0,
                 ),
-                "INFO planned fold group label=onehot_fp128_multi_group_recursive level=0 "
+                "INFO planned fold group label=onehot_fp128_multi_group level=0 "
                 "group=setup_to_L1 group_role=setup_offload "
                 + group_fields.format(
                     consumer=1,
@@ -1080,7 +1080,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                     natural=11294208,
                     padded=16777216,
                 ),
-                "INFO planned fold level label=onehot_fp128_multi_group_recursive level=0 "
+                "INFO planned fold level label=onehot_fp128_multi_group level=0 "
                 "d=256 d_a=256 d_b=64 d_d=64 n_a=1 n_b=1 n_d=1 "
                 "challenge_l1_mass=23 log_basis=3 position_index_bits=15 "
                 "block_index_bits=9 num_live_ring_elements_per_claim=16777216 "
@@ -1088,14 +1088,14 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "num_positions_per_block=32768 delta_commit=1 delta_open=43 delta_fold=3 "
                 "input_witness_len=8590000128 output_witness_len=47963968 "
                 "current_w_len=pre0:65536;final:8589934592 next_w_len=47963968",
-                "INFO proof fold level label=onehot_fp128_multi_group_recursive level=0 "
+                "INFO proof fold level label=onehot_fp128_multi_group level=0 "
                 "d=256 total_bytes=804 stage3_sumcheck_bytes=800 "
                 "fold_grind_nonce_bytes=4 root_variant=terminal",
             ]
         )
         summary = extract_summary(
             log,
-            "onehot_fp128_multi_group_recursive",
+            "onehot_fp128_multi_group",
             32,
             4,
             allow_legacy_relation_mode=True,
@@ -1727,7 +1727,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         )
 
         self.assertEqual(
-            human_case_label(summary), "Fp128 one-hot nv32, direct setup check"
+            human_case_label(summary), "Fp128 one-hot nv32"
         )
 
     def test_adaptive_multi_group_case_label_exposes_workload_shape(self) -> None:
@@ -1751,7 +1751,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertEqual(
             human_case_label(summary),
-            "Fp128 multi-group (final nv32, 4 polys total), direct setup check",
+            "Fp128 multi-group (final nv32, 4 polys total)",
         )
 
         output = io.StringIO()
@@ -1766,7 +1766,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         summary["config"] = "adaptive recursive multi-group W8R2"
         self.assertEqual(
             human_case_label(summary),
-            "Fp128 multi-group W8R2 (final nv32, 4 polys total), direct setup check",
+            "Fp128 multi-group W8R2 (final nv32, 4 polys total)",
         )
 
     def test_recursive_singleton_case_label_matches_direct_workload(self) -> None:
@@ -1784,7 +1784,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertEqual(
             human_case_label(summary),
-            "Fp128 one-hot nv36, recursive setup check",
+            "Fp128 one-hot nv36",
         )
 
     def test_case_label_keeps_non_dimension_topology_variant(self) -> None:
@@ -1804,7 +1804,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertEqual(
             human_case_label(summary),
-            "Fp128 one-hot nv32 W4R2, direct setup check",
+            "Fp128 one-hot nv32 W4R2",
         )
 
     def test_multi_group_statement_uses_three_points_and_mixed_arities(self) -> None:
@@ -1816,7 +1816,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         summary = normalize_case_summary(
             {
-                "mode": "onehot_fp128_multi_group_recursive",
+                "mode": "onehot_fp128_multi_group",
                 "num_vars": 34,
                 "num_polys": 4,
                 "setup_contribution_mode": "recursive",
@@ -1848,15 +1848,14 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         statement = public_opening_statement(summary)
         name = benchmark_name(
-            "onehot_fp128_multi_group_recursive", 34, 4, "recursive"
+            "onehot_fp128_multi_group", 34, 4
         )
         self.assertIn("one 16 variable polynomial", statement)
         self.assertIn("at its own point", statement)
         self.assertIn("2 34 variable polynomials", statement)
         self.assertEqual(
             name,
-            "fp128 multi-group opening, final nv34, 4 polynomials total "
-            "(recursive setup contribution)",
+            "fp128 multi-group opening, final nv34, 4 polynomials total",
         )
         self.assertNotIn("same-point", name)
 
@@ -1898,17 +1897,17 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         shard_section, statement_section = report.split("### Public opening statements")
         self.assertIn("### Benchmark shards", shard_section)
         self.assertIn(
-            "| <code>1-fp32-base</code> | Fp32 dense nv30, direct setup check<br>Fp32 one\\-hot nv34, direct setup check |",
+            "| <code>1-fp32-base</code> | Fp32 dense nv30<br>Fp32 one\\-hot nv34 |",
             shard_section,
         )
         self.assertIn(
-            "| <code>2-fp64-base</code> | Fp64 dense nv29, direct setup check |",
+            "| <code>2-fp64-base</code> | Fp64 dense nv29 |",
             shard_section,
         )
         self.assertIn("Over Fp32", statement_section)
-        self.assertIn("Fp32 dense nv30, direct setup check", statement_section)
+        self.assertIn("Fp32 dense nv30", statement_section)
         self.assertIn("Over Fp64", statement_section)
-        self.assertIn("Fp64 dense nv29, direct setup check", statement_section)
+        self.assertIn("Fp64 dense nv29", statement_section)
 
     def test_partial_merge_base_coverage_is_explicit(self) -> None:
         from scripts.profile_bench_report import render_report
@@ -1961,7 +1960,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         summary = normalize_case_summary(
             {
-                "mode": "onehot_fp128_multi_group_recursive",
+                "mode": "onehot_fp128_multi_group",
                 "num_vars": 32,
                 "num_polys": 4,
                 "exit_code": 0,
@@ -2165,7 +2164,19 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("| n/a |", report)
         self.assertIn("Grinding was not measured", report)
 
-    def test_configured_cases_treats_setup_mode_as_case_dimension(self) -> None:
+    def test_runtime_schedule_reports_the_selected_offload_count(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        for count in (0, 1, 2):
+            log = (
+                "INFO runtime schedule label=onehot_fp128 levels=7 "
+                f"selected_offload_edges={count} num_setup_field_elements=1024\n"
+            )
+            summary = extract_summary(log, "onehot_fp128", 36, 1)
+            self.assertEqual(summary["selected_offload_edges"], count)
+        self.assertNotIn("selected_offload_edges", extract_summary("", "onehot_fp128", 36, 1))
+
+    def test_configured_cases_rejects_retired_setup_mode_dimension(self) -> None:
         from scripts.profile_bench_report import configured_cases
 
         args = type(
@@ -2182,52 +2193,75 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             },
         )()
 
-        cases = configured_cases(args)
+        with self.assertRaises(ValueError):
+            configured_cases(args)
 
-        self.assertEqual([case.setup_mode for case in cases], ["direct", "recursive"])
-        self.assertEqual(
-            [case.mode for case in cases],
-            ["onehot_fp128", "onehot_fp128"],
-        )
-        self.assertNotEqual(cases[0].case_id, cases[1].case_id)
-        self.assertTrue(cases[1].case_id.endswith("-setup-recursive"))
-
-    def test_nv36_direct_renders_immediately_before_recursive(self) -> None:
-        from scripts.profile_bench_report import (
-            human_case_label,
-            normalize_case_summary,
-            report_case_sort_key,
-        )
+    def test_legacy_policy_baselines_collapse_deterministically(self) -> None:
+        from scripts.profile_bench_report import load_optional_case_summaries
 
         cases = [
-            normalize_case_summary(
-                {
-                    "mode": "onehot_fp128",
-                    "num_vars": 36,
-                    "num_polys": 1,
-                    "setup_contribution_mode": "direct",
-                    "benchmark_shard": "3-fp128-base",
-                }
-            ),
-            normalize_case_summary(
-                {
-                    "mode": "onehot_fp128",
-                    "num_vars": 36,
-                    "num_polys": 1,
-                    "setup_contribution_mode": "recursive",
-                    "benchmark_shard": "3-fp128-base",
-                }
-            ),
+            {"mode": "onehot_fp128", "num_vars": 36, "num_polys": 1,
+             "setup_contribution_mode": mode, "verify_total_s": timing}
+            for mode, timing in [("direct", 2.0), ("recursive", 1.0)]
         ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "summary.json"
+            for ordered in (cases, list(reversed(cases))):
+                path.write_text(json.dumps({"cases": ordered}), encoding="utf-8")
+                indexed = load_optional_case_summaries(directory)
+                self.assertEqual(len(indexed), 1)
+                baseline = next(iter(indexed.values()))
+                self.assertEqual(baseline["setup_contribution_mode"], "direct")
+                self.assertEqual(baseline["verify_total_s"], 2.0)
+            path.write_text(json.dumps({"cases": [cases[0], cases[0]]}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "ambiguous duplicate"):
+                load_optional_case_summaries(directory)
 
-        ordered = sorted(cases, key=report_case_sort_key)
-        self.assertEqual(
-            [human_case_label(case) for case in ordered],
-            [
-                "Fp128 one-hot nv36, direct setup check",
-                "Fp128 one-hot nv36, recursive setup check",
-            ],
+    def test_runtime_schedule_without_offload_count_is_accepted(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+        summary = extract_summary(
+            'INFO runtime schedule label="onehot_fp128" fold_levels=3',
+            mode="onehot_fp128", num_vars=36, num_polys=1,
         )
+        self.assertNotIn("selected_offload_edges", summary)
+
+    def test_legacy_mode_alias_supports_merge_base_smoke_and_measurement(self) -> None:
+        from unittest import mock
+        from scripts import profile_bench_merge_base_policy as policy
+        from scripts import profile_bench_report as report
+        current = "onehot_fp128_multi_group_multi_chunk_w8r2"
+        legacy = policy.LEGACY_PROFILE_MODES[current]
+        case = policy.BenchCase(current, 32, 2)
+        with mock.patch.object(policy, "merge_base_profile_modes", return_value={legacy}):
+            self.assertEqual(policy.missing_modes_for_cases("base", [case]), [])
+        observed_modes = []
+        def run(command, **kwargs):
+            mode = kwargs["env"]["AKITA_MODE"]
+            observed_modes.append(mode)
+            if mode == current:
+                return subprocess.CompletedProcess(command, 1, "Unknown AKITA_MODE", "")
+            return subprocess.CompletedProcess(command, 0,
+                f'INFO runtime schedule label="{legacy}" selected_offload_edges=1', "")
+        with mock.patch.object(policy.subprocess, "run", side_effect=run):
+            self.assertEqual(policy.smoke_profile_case(pathlib.Path("profile"), case), (True, ""))
+        self.assertEqual(observed_modes, [current, legacy])
+        observed_modes.clear()
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(report.subprocess, "run", side_effect=run), \
+             mock.patch.object(report, "missing_required_run_metrics", return_value=[]):
+            summary, code = report.run_benchmark_case("profile", pathlib.Path(directory),
+                report.BenchmarkCaseSpec(current, 32, 2), allow_legacy_relation_mode=True)
+            self.assertEqual(code, 0)
+            self.assertEqual(summary["mode"], current)
+            self.assertEqual(summary["selected_offload_edges"], 1)
+            self.assertEqual(summary["env"]["AKITA_MODE"], legacy)
+        self.assertEqual(observed_modes, [current, legacy])
+
+    def test_renamed_grouped_mode_preserves_baseline_identity(self) -> None:
+        from scripts.profile_bench_report import normalize_case_summary
+        old = normalize_case_summary({"mode": "onehot_fp128_multi_group_recursive_multi_chunk_w8r2", "num_vars": 32, "num_polys": 2})
+        new = normalize_case_summary({"mode": "onehot_fp128_multi_group_multi_chunk_w8r2", "num_vars": 32, "num_polys": 2})
+        self.assertEqual(old["case_id"], new["case_id"])
 
     def test_write_aggregate_summaries_propagates_sibling_failure(self) -> None:
         from scripts.profile_bench_report import (

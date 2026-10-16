@@ -25,34 +25,25 @@ Akita proofs fold the witness at the root, may fold it through more recursive
 levels, and then send the terminal witness directly. The planner chooses the
 best complete schedule under the configured selection policy.
 
-The complete schedule orders are:
+There is one complete-schedule order:
 
 ```text
-direct:          (first-direct padded capacity, proof-and-work score, proof bytes,
-                  total setup, root output witness, descriptor)
-recursive:       (padded total-setup capacity, first-direct padded capacity,
-                  proof-and-work score, proof bytes, first-direct output witness,
-                  descriptor)
+(padded total-setup capacity, first-direct padded capacity,
+ proof-and-work score, proof bytes, first-direct output witness, descriptor)
 ```
 
-For a direct schedule, the first direct edge is the root. For an offloaded
-schedule, it is the first edge after the setup-prefix chain.
+The planner compares schedules with zero, one, or two setup offloads. Only the
+root and its first child may produce an offload under the production policy.
+Zero-offload schedules evaluate setup directly and commonly win for small
+inputs. This is a maximum of two setup offloads, not a limit of two witness
+folds and not a requirement to offload twice.
 
-First-direct capacity is a verifier-cost proxy, not a complete runtime model.
-Its power-of-two bucket permits proof-size improvements within a factor-two
-setup-scan bound and avoids letting a later, unusually large suffix matrix
-control the leading direct objective. The additive scan term prices direct
-work at every fold within that bucket. The
-[planner rationale](../../specs/setup-offloading-planner.md#why-adaptive-direct-planning-starts-with-first-direct-capacity)
-defines the related setup quantities and records the limitations of this design
-choice.
-
-Recursive setup planning uses a different leading metric because offloading can
-move setup cost into a committed prefix. It first fixes the power-of-two
-capacity covering every setup object, then minimizes the remaining direct scan,
-proof-and-work score, proof bytes, and first-direct output witness. The
-[recursive-objective rationale](../../specs/setup-offloading-planner.md#why-recursive-planning-starts-with-padded-total-setup-capacity)
-explains why exact setup inside the winning bucket is not another tie-break.
+The leading setup bucket covers every setup object. Within that bucket the
+objective favors a smaller remaining direct scan and then proof/work. Discrete
+geometry changes can make the selected count non-monotone: scalar fp128
+one-hot at nv24…29 selects 0,1,0,1,0,1. No fixed size threshold is imposed.
+The [Book](../../book/src/how/setup-offloading.md) explains the objective,
+representative observations, and limitations.
 
 The output is an `akita_params::PlannedFoldSchedule`. Its protocol value is a
 typed `FoldSchedule { root, recursive_folds, terminal }`; its non-protocol
@@ -85,7 +76,7 @@ multiplicity is always `1`; multi-group roots derive those counts from
 - The scalar SIS policy identifier.
 - Decomposition parameters, including the basis search range.
 - Claim and challenge extension degrees.
-- Ring dimension mode and recursive setup capability.
+- Ring dimensions and the bounded setup-offload search domain.
 - Selection policy and optional setup field budget.
 
 Source laws are separate planner-only values. For example, the one-hot policy
@@ -133,8 +124,7 @@ Conceptually, a candidate level answers three questions:
   the first direct output-witness length and total setup envelope?
 
 The first question determines whether the current fold is worthwhile. The second question determines how expensive later recursive levels can be.
-Adaptive direct planning retains the first-direct-first objective. Recursive
-setup planning compares total setup at next-power-of-two capacity, then
+Setup planning compares total setup at next-power-of-two capacity, then
 minimizes first-direct capacity and proof-and-work score within the winning bucket
 before comparing first-direct output-witness length.
 
@@ -175,7 +165,7 @@ After that candidate is chosen, the suffix DP still performs the important globa
 - Fold once more and pay the current level proof bytes plus the best suffix below it.
 
 The memoized suffix state tracks the level, current witness length, active
-basis choices, and parent-visible geometry. Direct and recursive search share
+basis choices, and parent-visible geometry. Direct and offloaded successor edges share
 one projected frontier: a setup-aware first-direct projection and a setup-aware
 proof-payload projection. A candidate is pruned only when both projections make it irrelevant
 to every parent transition. At a complete root, a level setup bound larger than

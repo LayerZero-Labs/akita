@@ -1266,17 +1266,12 @@ It does not add a semantic preference for smaller `s` or larger `d_A`.
 
 ### Objective and exact pricing
 
-Adaptive direct catalogs use `MinFirstDirectSetupThenExactProofAndWorkV5`:
-first-direct padded setup capacity, exact additive proof-and-work score,
-proof bytes, exact total setup field elements, root output-witness
-length, and the canonical descriptor.
-
 The additive work term includes each fold's outgoing witness and, for a direct
 edge, twice the natural setup-scan length plus 64 units per common-base ring.
-Offloaded edges have no direct-scan charge. Recursive catalogs use
+Offloaded edges have no direct-scan charge. All catalogs use
 `MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6`, which first compares
 the next-power-of-two capacity covering the total setup envelope.
-Exact setup differences within one recursive capacity bucket are tolerated
+Exact setup differences within one capacity bucket are tolerated
 before comparing first-direct capacity, the proof-and-work score, proof bytes, and first-direct
 output-witness length. A numeric tie then goes
 directly to the canonical descriptor. No direct objective component for `s`,
@@ -1521,9 +1516,7 @@ The planner MUST keep the search bounded in the following ways.
       fold to terminal without inserting another fold.
 - [x] The planner searches every admitted `(d_A, s)` pair inside the two
       level adaptive prefix and keeps the current equal-role suffix.
-- [x] Adaptive direct catalogs minimize first-direct setup capacity, the exact
-      proof-and-work score, proof bytes, exact total setup, root output-witness length, and the canonical
-      descriptor. Recursive catalogs minimize padded total setup-envelope
+- [x] All catalogs minimize padded total setup-envelope
       capacity, first-direct setup capacity, the exact proof-and-work score,
       proof bytes, first-direct
       output-witness length, and then the canonical descriptor. The objective has no

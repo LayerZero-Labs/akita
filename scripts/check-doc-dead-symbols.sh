@@ -33,6 +33,10 @@ dead_patterns=(
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 
 removed_api_patterns=(
+  'RecursiveCommitmentConfig'
+  'RecursiveScheduleConfig'
+  'recursive_setup_planning'
+  'MinFirstDirectSetupThenExactProofAndWorkV5'
   'CommitmentExecutionSchedule'
   'CommitmentRoundStep'
   'InnerOuterRouteKind'

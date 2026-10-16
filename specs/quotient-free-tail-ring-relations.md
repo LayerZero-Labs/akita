@@ -804,7 +804,7 @@ That record is operational context and is not normative.
   current native quotient-row order and witness layout.
 - [`structured-e-term.md`](structured-e-term.md), current verifier structured
   evaluation-trace term.
-- [`setup-offloading-planner.md`](setup-offloading-planner.md), successor-owned
+- [Setup offloading](../book/src/how/setup-offloading.md), successor-owned
   incoming-prefix topology and Stage-3 selection.
 - [`selective-l2-fold-security-sizing.md`](selective-l2-fold-security-sizing.md),
   independent Linf/L2 route selection and typed source moments.

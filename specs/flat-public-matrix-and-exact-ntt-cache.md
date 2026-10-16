@@ -1449,7 +1449,7 @@ or pass-through aliases that recreate the old API.
 - `specs/archive/2026-Q3/setup-layout-repack.md`
 - `specs/runtime-ring-cutover.md`
 - `specs/role-native-projected-digit-layout.md`
-- `specs/setup-offloading-planner.md`
+- [Setup offloading](../book/src/how/setup-offloading.md)
 - `crates/akita-types/src/proof/setup.rs`
 - `crates/akita-params/src/layout/setup_envelope.rs`
 - `crates/akita-types/src/proof/setup_prefix.rs`

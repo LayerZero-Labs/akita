@@ -103,14 +103,13 @@ independent case uses its own constructor.
 
 ## Recursive grouped openings
 
-A `RecursiveCommitmentConfig<BaseConfig>` uses setup offloading for supported
-large verifier workloads. Commit the final group under the recursive catalog.
-Earlier groups use the reviewed independent commitment profile from the base
-catalog, supplied through `GroupContext::explicit(&base_profile)`. The final
+A configuration's planner selects setup offloading when its complete schedule
+prefers it. Earlier groups use their reviewed independent commitment profile
+from the same catalog, supplied through `GroupContext::explicit(&base_profile)`. The final
 group uses `GroupContext::scheduler_with_precommitted_groups(&prior)`.
 
 This keeps one backend owner for the entire proof and preserves the independent
-public profiles of earlier groups. The proof's recursive catalog checks the
+public profiles of earlier groups. The proof's trusted catalog checks the
 complete ordered batch.
 
 ## Dense and one hot groups in one batch

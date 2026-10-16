@@ -27,8 +27,7 @@ modes_rs = profile_modes
 MODES = {
     "onehot_fp32", "dense_fp32", "onehot_fp64", "dense_fp64",
     "dense_fp128", "onehot_fp128", "onehot_fp128_multi_group",
-    "onehot_fp128_multi_group_recursive",
-    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2",
+    "onehot_fp128_multi_group_multi_chunk_w8r2",
     "onehot_fp128_multi_chunk_w8r2", "onehot_fp128_multi_chunk_w2r2",
     "onehot_fp128_multi_chunk_w4r2",
 }
@@ -40,8 +39,7 @@ MODE_NUM_POLYS = {
     "dense_fp128": {1},
     "onehot_fp128": {1},
     "onehot_fp128_multi_group": {4},
-    "onehot_fp128_multi_group_recursive": {4},
-    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": {4},
+    "onehot_fp128_multi_group_multi_chunk_w8r2": {4},
     "onehot_fp128_multi_chunk_w8r2": {1},
     "onehot_fp128_multi_chunk_w2r2": {1},
     "onehot_fp128_multi_chunk_w4r2": {1},
@@ -54,16 +52,11 @@ MODE_NUM_VARS = {
     "dense_fp128": {28},
     "onehot_fp128": {36},
     "onehot_fp128_multi_group": {34},
-    "onehot_fp128_multi_group_recursive": {34},
-    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": {32},
+    "onehot_fp128_multi_group_multi_chunk_w8r2": {32},
     "onehot_fp128_multi_chunk_w8r2": {32},
     "onehot_fp128_multi_chunk_w2r2": {32},
     "onehot_fp128_multi_chunk_w4r2": {32},
 }
-MODE_SETUP = {mode: {"direct"} for mode in MODES}
-MODE_SETUP["onehot_fp128"] = {"direct", "recursive"}
-MODE_SETUP["onehot_fp128_multi_group_recursive"] = {"recursive"}
-MODE_SETUP["onehot_fp128_multi_group_recursive_multi_chunk_w8r2"] = {"recursive"}
 PROFILE_BENCH_MARKER = "profile-bench-selected"
 
 feature_graph = load_feature_graph(repo)
@@ -79,7 +72,7 @@ if not selected_match:
 selected_modes = set(re.findall(r'name:\s*"([^"]+)"', selected_match.group(1)))
 
 wf = workflow.read_text(encoding="utf-8")
-case_line = re.compile(r"^([^:]+:\d+:\d+(?::[^:\s]+)?)\s*$")
+case_line = re.compile(r"^([^:]+:\d+:\d+)\s*$")
 
 
 def cases_after_pipe(start: int) -> list[str]:
@@ -121,31 +114,15 @@ if not bench_cases:
     print("No matrix bench cases found in profile-bench.yml", file=sys.stderr)
     raise SystemExit(1)
 case_specs = [case_spec for _, _, case_spec in bench_cases]
-fp128_direct = "onehot_fp128:36:1:direct"
-fp128_recursive = "onehot_fp128:36:1:recursive"
-if fp128_direct not in case_specs or case_specs.index(fp128_direct) + 1 >= len(case_specs):
-    print("fp128 nv36 direct benchmark case is missing", file=sys.stderr)
-    raise SystemExit(1)
-if case_specs[case_specs.index(fp128_direct) + 1] != fp128_recursive:
-    print(
-        "fp128 nv36 recursive benchmark must immediately follow the direct case",
-        file=sys.stderr,
-    )
+if case_specs.count("onehot_fp128:36:1") != 1:
+    print("fp128 nv36 benchmark must appear exactly once", file=sys.stderr)
     raise SystemExit(1)
 failed = False
 matrix_features: dict[str, set[str]] = {}
 for group_name, profile_feature, case_spec in bench_cases:
-    mode, num_vars_s, num_polys_s, *setup_mode = case_spec.split(":")
+    mode, num_vars_s, num_polys_s = case_spec.split(":")
     num_vars = int(num_vars_s)
     num_polys = int(num_polys_s)
-    actual_setup_mode = setup_mode[0] if setup_mode else "direct"
-    if actual_setup_mode not in {"direct", "recursive"}:
-        print(
-            f"bench case '{case_spec}' uses unsupported setup contribution mode "
-            f"'{actual_setup_mode}'",
-            file=sys.stderr,
-        )
-        failed = True
     if mode not in MODES:
         print(f"bench case mode '{mode}' is missing from MODES", file=sys.stderr)
         failed = True
@@ -180,14 +157,6 @@ for group_name, profile_feature, case_spec in bench_cases:
         expected = ", ".join(str(value) for value in sorted(MODE_NUM_VARS[mode]))
         print(
             f"bench case '{case_spec}' uses num_vars={num_vars}; expected one of [{expected}]",
-            file=sys.stderr,
-        )
-        failed = True
-    if actual_setup_mode not in MODE_SETUP[mode]:
-        expected_setup = ", ".join(sorted(MODE_SETUP[mode]))
-        print(
-            f"bench case '{case_spec}' uses setup mode '{actual_setup_mode}'; "
-            f"expected one of [{expected_setup}]",
             file=sys.stderr,
         )
         failed = True

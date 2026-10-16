@@ -63,34 +63,22 @@ impl PlannerCostModelId {
 /// Deterministic schedule-selection policy bound into trusted catalog artifacts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionPolicyId {
-    /// Pick first direct setup, exact additive cost, proof bytes, total setup,
-    /// root output witness, then descriptor.
-    MinFirstDirectSetupThenExactProofAndWorkV5,
     /// Pick power-of-two setup-envelope capacity, first direct setup, exact
     /// additive cost, proof bytes, first direct output witness, then descriptor.
     MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6,
 }
 
 impl SelectionPolicyId {
-    /// Canonical selection objective for one schedule policy shape.
-    pub fn for_policy(recursive_setup_planning: bool) -> Self {
-        if recursive_setup_planning {
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-        } else {
-            Self::MinFirstDirectSetupThenExactProofAndWorkV5
-        }
-    }
-
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
-            Self::MinFirstDirectSetupThenExactProofAndWorkV5 => 14,
             Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => 15,
             // Tags 1 and 2 belong to the descriptor-only predecessors. Tag 3
             // belonged to the retired setup-envelope-first policy. Tags 4--6
             // selected proof bytes; tags 7--9 used rounded work cost,
             // and tags 10--12 did not price direct verifier setup scans.
             // Tag 13 belonged to the retired proof-and-work-first objective.
+            // Tag 14 belonged to the retired direct-only objective.
             // Never reuse an objective tag: trusted catalog admission depends on it.
         }
     }
@@ -98,9 +86,6 @@ impl SelectionPolicyId {
     /// Stable identity name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::MinFirstDirectSetupThenExactProofAndWorkV5 => {
-                "MinFirstDirectSetupThenExactProofAndWorkV5"
-            }
             Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
                 "MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6"
             }
@@ -216,7 +201,6 @@ pub struct PlannerPolicy {
     /// Inclusive B/D opening and folded-response basis domain.
     pub opening_basis_range: (u32, u32),
     pub witness_chunk: ChunkedWitnessCfg,
-    pub recursive_setup_planning: bool,
 }
 
 impl PlannerPolicy {
@@ -303,12 +287,6 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
         )));
     }
     validate_ring_dimension_schedule(policy)?;
-    let expected_selection_policy = SelectionPolicyId::for_policy(policy.recursive_setup_planning);
-    if policy.selection_policy != expected_selection_policy {
-        return Err(AkitaError::InvalidSetup(
-            "schedule selection policy disagrees with the schedule mode".to_string(),
-        ));
-    }
     if policy.setup_field_budget == Some(0) {
         return Err(AkitaError::InvalidSetup(
             "explicit setup field budget must be positive".to_string(),
@@ -916,7 +894,8 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
+            selection_policy:
+                SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -942,7 +921,6 @@ mod tests {
             inner_basis_range: (3, 16),
             opening_basis_range: (3, 6),
             witness_chunk: ChunkedWitnessCfg::default(),
-            recursive_setup_planning: false,
         }
     }
 
@@ -954,35 +932,6 @@ mod tests {
         assert!(RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(0));
         assert!(RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(1));
         assert!(!RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(2));
-    }
-
-    #[test]
-    fn recursive_and_direct_policies_use_distinct_setup_objectives() {
-        assert_eq!(
-            SelectionPolicyId::for_policy(false),
-            SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
-        );
-        assert_eq!(
-            SelectionPolicyId::for_policy(true),
-            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-        );
-    }
-
-    #[test]
-    fn setup_objective_admission_matches_recursive_setup_planning() {
-        for recursive_setup_planning in [false, true] {
-            let mut policy = PlannerPolicy {
-                recursive_setup_planning,
-                selection_policy: SelectionPolicyId::for_policy(recursive_setup_planning),
-                ..adaptive_policy()
-            };
-            validate_policy(&policy).expect("matching setup objective");
-            policy.selection_policy = SelectionPolicyId::for_policy(!recursive_setup_planning);
-            assert!(matches!(
-                validate_policy(&policy),
-                Err(AkitaError::InvalidSetup(_))
-            ));
-        }
     }
 
     #[test]

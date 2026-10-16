@@ -157,7 +157,8 @@ mod tests {
         let policy = PlannerPolicy {
             cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
+            selection_policy:
+                SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -183,7 +184,6 @@ mod tests {
             inner_basis_range: (1, 1),
             opening_basis_range: (1, 1),
             witness_chunk: ChunkedWitnessCfg::default(),
-            recursive_setup_planning: false,
         };
         let challenge = akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG;
 
@@ -215,7 +215,8 @@ mod tests {
         let policy = PlannerPolicy {
             cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
+            selection_policy:
+                SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -241,7 +242,6 @@ mod tests {
             inner_basis_range: (4, 4),
             opening_basis_range: (4, 4),
             witness_chunk: ChunkedWitnessCfg::default(),
-            recursive_setup_planning: false,
         };
         let challenge = akita_challenges::D128_SELECTIVE_L2_CHALLENGE_CONFIG;
         let basis_eight = selective_l2_inner_matrix(

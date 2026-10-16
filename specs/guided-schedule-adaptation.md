@@ -226,7 +226,7 @@ adds no workspace dependency edge.
 - [PR #472](https://github.com/LayerZero-Labs/akita/pull/472)
 - [External schedule catalog ownership](external-schedule-catalog-ownership.md)
 - [Quotient-free tail implementation](quotient-free-tail-ring-relations-implementation.md)
-- [Setup offloading planner](setup-offloading-planner.md)
+- [Setup offloading](../book/src/how/setup-offloading.md)
 - `crates/akita-planner/src/planner.rs`
 - `crates/akita-planner/src/schedule_params/suffix_dp/`
 - `crates/akita-planner/src/test/adapted_schedule.rs`

@@ -92,8 +92,7 @@ fn plan_candidate_children(
             child_query_search.clone(),
         )?)
     };
-    let offload_search_enabled = ctx.policy.recursive_setup_planning
-        && ctx
+    let offload_search_enabled = ctx
             .policy
             .recursive_setup_search_policy
             .admits_offloaded_edge_at(state.level)
@@ -180,10 +179,7 @@ fn price_planned_fold_candidate(
                 akita_params::padded_setup_prefix_len(natural_len)
                     < akita_params::padded_setup_prefix_len(incoming_len)
             });
-    if matches!(
-        ctx.policy.selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-    ) && matches!(search.guide_scope, Some(GuideScope::CompleteRoot))
+    if matches!(search.guide_scope, Some(GuideScope::CompleteRoot))
         && guide.is_some_and(|(lower_bound, _)| {
             complete_root_setup_bound_is_strictly_worse(lower_bound, &frontiers.projected)
         })
@@ -214,9 +210,6 @@ fn price_planned_fold_candidate(
     if prune_direct_edge {
         if let Some(diagnostics) = ctx.diagnostics {
             diagnostics.record_guided_direct_edge_prune();
-        }
-        if !ctx.policy.recursive_setup_planning {
-            return Ok(());
         }
     }
     let children = plan_candidate_children(

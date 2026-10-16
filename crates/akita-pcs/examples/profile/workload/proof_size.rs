@@ -1,4 +1,4 @@
-use akita_params::{FoldSchedule, PolynomialGroupLayout, SetupContributionMode};
+use akita_params::{FoldSchedule, PolynomialGroupLayout};
 use akita_schedules::PlannerPolicy;
 
 pub(super) struct ProofSizeBudgets {
@@ -44,7 +44,6 @@ pub(super) fn report_proof_size_against_planner(
     proof: &[u8],
     budgets: ProofSizeBudgets,
     source: &str,
-    mode: SetupContributionMode,
 ) {
     let actual_bytes = proof.len();
     assert!(
@@ -60,13 +59,12 @@ pub(super) fn report_proof_size_against_planner(
         planner_estimate = budgets.planner_estimate,
         native_bound = budgets.bound,
         planner_delta,
-        ?mode,
         "native proof-size comparison"
     );
     eprintln!(
         "[{label}] proof_size: native={actual_bytes} bytes, planner_estimate={} bytes, \
          native_bound={} bytes, actual_minus_planner={planner_delta} bytes, \
-         source={source}, setup_contribution_mode={mode:?}",
+         source={source}",
         budgets.planner_estimate, budgets.bound,
     );
 }
@@ -85,7 +83,6 @@ mod tests {
                 bound: 2,
             },
             "fixture",
-            SetupContributionMode::Direct,
         );
     }
 }

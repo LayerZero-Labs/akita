@@ -121,70 +121,104 @@ The exact mixed dimension evaluation rules are in
 
 ## How the planner chooses offloading
 
-The ordinary configuration catalogs use direct setup evaluation. A supported
-`RecursiveCommitmentConfig<Cfg>` expects a separate external catalog in which
-the planner may use setup offloading.
-
-For each nonterminal edge, the planner retains a direct successor. At producer
-levels admitted by the catalog's recursive setup search policy, it also
-compares an offloaded successor:
+Every configuration uses the same offloading-enabled planner. At each
+nonterminal fold it retains a direct successor. At producer levels zero and
+one it also compares an offloaded successor:
 
 ```text
 Direct successor:    [folded witness]
 Offloaded successor: [setup prefix, folded witness]
 ```
 
-The planner keeps an offloaded edge only when all of the following are true:
+The offloaded successor must support opening the exact setup prefix alongside
+the witness, contract the combined witness by at least a factor of three, and
+reduce the power-of-two capacity of the first setup scan still evaluated
+directly. The suffix must contain at least two folds. Ring-relation, source,
+security, and prefix-geometry checks must also pass.
 
-- setup construction can prepare the exact prefix commitment;
-- the successor can open the prefix and witness together;
-- the complete folded witness contracts by at least a factor of three; and
-- the offloaded suffix reduces the power of two capacity of the first setup
-  scan that still runs directly.
+The complete schedule is ordered lexicographically by:
 
-Among feasible recursive schedules, the production policy first minimizes the
-power of two capacity that covers all setup objects. It then minimizes the
-first setup capacity that the verifier still scans directly. Within those
-capacity buckets, it compares the exact proof-and-work score, then estimated
-proof bytes, including every Stage 3 proof, and the first direct output-witness
-length. The canonical descriptor breaks remaining ties.
+1. Padded total setup-envelope capacity.
+2. First directly evaluated setup capacity.
+3. Exact modeled proof-and-work score.
+4. Modeled proof bytes, including every Stage 3 proof.
+5. First-direct output witness length.
+6. Canonical schedule descriptor.
 
-The shipped recursive catalogs consider offloaded edges produced by the root
-and its direct child. This `RootAndFirstChildV1` domain is part of the catalog
-identity; direct traversal remains available at every level. Exhaustive search
-is available for audit workloads. Within the selected domain, the planner may
-select no offloaded levels, one level, or several levels. A prefix size does
-not force the choice. The successor's `incoming_setup_prefix` field records the
-selected edge. There is no second producer-side mode bit that can disagree
-with it.
+The exact score is `2^18 * proof_bytes + witness_work + direct_setup_scan_work`.
+A direct scan of L setup field elements costs `2L + 64 * ceil(L / d)`, where d
+is that fold's common-base setup ring dimension. This is an offline cost model, not a
+measurement of verifier latency. Padding lets the planner trade raw setup
+size within a power-of-two bucket for a smaller remaining direct scan.
 
-Planner search happens offline. The artifact row records the exact choices,
-and the verifier resolves and audits that row. It never searches for a cheaper
-schedule while checking a proof.
+The production search domain is `RootAndFirstChildV1`: **zero, one, or two setup
+offloads**, with two a maximum. Witness reduction can still contain more than
+two folds. Zero-offload schedules remain eligible and commonly win for small
+inputs, where carrying the prefix and proving Stage 3 adds overhead. There is
+no fixed root-size threshold and no forced offload at any size. Each selected
+consumer-owned setup-prefix group records one offloaded predecessor edge.
 
-## Current supported configurations
+A zero-offload result uses the same direct evaluation mechanism as before,
+but its layout can differ from the former direct-only planner: the surviving
+objective prioritizes the total setup-envelope bucket. For example, the
+unchunked fp128 one-hot nv14 row changes A dimension from 128 to 256 and outer
+slicing from one to two while retaining zero offloads. Setup, commitments,
+proof bytes, and grinding-plan fixtures must be regenerated together.
 
-The recursive catalog is intentionally narrower than the ordinary Akita
-catalogs. The current build can expose recursive setup schedules for:
+Planning happens offline. The verifier loads and audits the exact trusted row;
+it does not run this search or accept a proof-selected schedule.
 
-- the fp32, fp64, and fp128 dense configurations;
-- the fp128 one hot configuration;
-- the fp128 one hot multi chunk configuration with eight chunks and two leading
-  distributed levels (`OneHotMultiChunk`); and
-- the fp128 one hot multi chunk configurations with two, four, or eight chunks
-  and three leading distributed levels (`OneHotMultiChunkW2R3`,
-  `OneHotMultiChunkW4R3`, and `OneHotMultiChunkW8R3`).
+## Observed counts and non-monotone cases
 
-`RecursiveCommitmentConfig<Cfg>` inherits the base configuration's ring-dimension
-policy. Each artifact row fixes the native A, B, and D dimensions for its folds.
-Supported offloading rows can use different dimensions for these matrices and
-can change dimensions between folds. A ring dimension is the number of field
-coefficients in one ring element; it is not a matrix row count.
+The original baseline survey, before the packing eligibility changes in
+PR #245, covered 584 inputs spanning fp32/fp64/fp128, dense/one-hot sources,
+and ten witness chunk layouts. It produced 561 admitted schedules and 23 search
+timeouts. Sixteen results came from existing catalogs. All 60 combinations had
+both zero and positive observations; 46 had a two-offload observation.
 
-For example, one row in `fp128_onehot_recursive.aks` has two earlier commitment
-groups, each with one 16-variable polynomial. Its final group contains two
-34-variable polynomials. The first recursive fold opens a setup-prefix group
-with
+For one unchunked polynomial with 2^nv entries, the successful sampled points
+were as follows. Ranges include every integer; separated points leave gaps.
+
+| Source | Zero offloads: nv | One offload: nv | Two offloads: nv |
+| --- | --- | --- | --- |
+| fp32 dense | 16–22 | 23–32, 40 | 44, 48 |
+| fp32 one-hot | 16–24 | 25–32, 39–40 | 44, 48 |
+| fp64 dense | 16–21 | 22–32, 36 | 38 |
+| fp64 one-hot | 16–24 | 25–32, 39 | 40, 48 |
+| fp128 dense | 16–24 | 25–32 | 36, 40 |
+| fp128 one-hot | 16–24, 26, 28 | 25, 27, 29–32, 36 | 40, 42, 48 |
+
+The first five series are monotone on their successful sampled points. The
+fp128 one-hot scalar series is non-monotone: nv 24 through 29 selects
+`0, 1, 0, 1, 0, 1` under one policy digest. Discrete ring dimensions, splits,
+padding, and suffix choices change the winning layout; the survey did not
+attribute every reversal to a specific losing candidate.
+
+Witness partitioning changes the boundaries. For fp128 one-hot W8R2, every
+integer nv=16…48 was checked: zero at 16–28, one at 29–34, two at 35–48.
+W means witness chunk count; it is distinct from the one-hot density K=256.
+
+These are historical schedule choices, not current catalog guarantees, universal
+thresholds, or verifier benchmarks. fp64 dense timed out at nv40/48 and fp128 dense at nv48; a timeout
+establishes no count or infeasibility. Unmeasured gaps and larger sizes are not
+extrapolated. Modeled proof bytes and planner wall time do not measure proof
+size or verifier latency in an end-to-end run.
+
+## Configuration and catalog loading
+
+Use the ordinary field/source preset, including multi-chunk presets when
+needed, and load its matching `TrustedScheduleCatalog<Cfg>`. There is one
+catalog family per preset. Small and large rows share the same policy; the
+presence of setup-prefix groups determines each row's offload count.
+
+Each artifact row fixes the native A, B, and D dimensions for its folds.
+Offloading rows can use different dimensions for these matrices and can change
+dimensions between folds. A ring dimension counts field coefficients in one
+ring element; it is not a matrix row count.
+
+For example, the `fp128_onehot.aks` row with two earlier singleton nv16 groups
+and a final group of two nv34 polynomials opens a setup-prefix group in its
+first recursive fold with
 
 $$
 d_A=512,\qquad d_B=128,\qquad d_D=128.
@@ -192,39 +226,20 @@ $$
 
 The A and B dimensions belong to that group. The consuming fold owns the shared
 D dimension. The [ring-dimension contract](./architecture.md#ring-dimension-ownership)
-explains these roles. The matching recursive catalog must contain an admitted
-row for the requested workload and dimensions.
+explains these roles. The matching catalog must contain an admitted row for the
+requested workload and dimensions.
 
-Support depends on supplying the matching recursive family artifact. Other base
-configurations have no recursive catalog and are rejected rather than silently
-falling back to a direct schedule under the recursive adapter.
-
-The dense artifacts cover singleton polynomials with these variable counts:
-
-| Base configuration | Recursive artifact | Variable counts |
-| --- | --- | --- |
-| `fp32::Dense` | `fp32_dense_recursive.aks` | 20, 22, 24, 26, 28, 30 |
-| `fp64::Dense` | `fp64_dense_recursive.aks` | 21, 23, 25, 27, 29 |
-| `fp128::Dense` | `fp128_dense_recursive.aks` | 20, 22, 24, 26, 28 |
-
-Load the matching artifact into
-`TrustedScheduleCatalog<RecursiveCommitmentConfig<Cfg>>`. A recursive family
-allows offloading; individual rows may still select only direct edges when
-that is the planner's preferred feasible schedule.
-
-Regenerate these artifacts with the current planner:
+Regenerate the catalogs with:
 
 ```bash
-scripts/generate-schedule-artifacts.sh --row-progress \
-  fp32_dense_recursive fp64_dense_recursive fp128_dense_recursive
+scripts/generate-schedule-artifacts.sh --row-progress
 ```
 
-When a grouped proof includes commitments formed earlier, those commitments are
-created under the base configuration. The later grouped opening selects
-`RecursiveCommitmentConfig<Cfg>`. This lets commitments made at different times
-enter the same opening without guessing a future setup offloading schedule. A
-scalar recursive profile can select the recursive adapter directly because it
-has no earlier commitment groups to preserve.
+Earlier independently committed groups retain their frozen public profiles.
+The final grouped opening uses the same configuration and resolves the complete
+ordered batch, including those earlier profiles. Grouped results can differ
+from scalar results with the same final-group arity because their complete
+input shapes differ.
 
 ## What the verifier rejects
 
@@ -249,7 +264,7 @@ panic.
 
 | Responsibility | Primary implementation |
 | --- | --- |
-| Enable the recursive catalog | `crates/akita-config/src/recursive_commitment.rs` |
+| Derive the single catalog policy | `crates/akita-config/src/lib.rs` |
 | Search direct and offloaded suffixes | `crates/akita-planner/src/schedule_params/suffix_dp/` |
 | Build recursive candidates and prefix requirements | `crates/akita-planner/src/schedule_params/candidate/recursive.rs` and `candidate/setup_prefix.rs` |
 | Define prefix identities and proof data | `crates/akita-params/src/layout/setup_prefix_slots.rs` and `crates/akita-types/src/proof/setup_prefix.rs` |
@@ -260,7 +275,6 @@ panic.
 | Verify Stage 3 | `crates/akita-verifier/src/stages/stage3.rs` |
 | Enforce the recursive fold handoff | `crates/akita-prover/src/protocol/prove/` and `crates/akita-verifier/src/fold/` |
 
-The live planner contract is
-[`specs/setup-offloading-planner.md`](https://github.com/LayerZero-Labs/akita/blob/main/specs/setup-offloading-planner.md).
-It records the exact feasibility rules and external-artifact invariants. This
-chapter owns the reader explanation of the implemented feature.
+[Configuration and schedule planning](configuration.md) explains the sole
+planner policy, bounded setup-offload search, and trusted catalog admission.
+This chapter explains the implemented setup-offloading protocol.

@@ -290,15 +290,15 @@ fn portable_fragment_validates_relation_order_for_grouped_q128_layout() {
     .unwrap();
     let precommitted = catalog
         .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
-            16, 1,
+            14, 1,
         )))
         .unwrap()
         .profiles()
         .final_group;
     let resolved = catalog
         .resolve_key(&ScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(32, 2),
-            precommitteds: vec![precommitted, precommitted],
+            final_group: PolynomialGroupLayout::new(16, 1),
+            precommitteds: vec![precommitted],
         })
         .unwrap();
     let params = &resolved.schedule().root.params;

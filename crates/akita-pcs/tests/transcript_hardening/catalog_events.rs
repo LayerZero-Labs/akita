@@ -26,8 +26,8 @@
 //! coefficients are skipped and logged. The cap matches the largest cell the
 //! default fp128 correctness matrix proves (one-hot, 28 variables); every
 //! skipped row commits at least `2^30` coefficients, the production sizes that
-//! matrix marks `#[ignore]`. The recursive catalogs are excluded for the same
-//! reason: every recursive row is production-sized.
+//! matrix marks `#[ignore]`. Offloading rows in the unified catalogs are subject to the same
+//! coefficient cap.
 
 use crate::common::{dense_opening_lagrange, load_workspace_scheme, onehot_opening_lagrange};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
@@ -463,9 +463,9 @@ where
 /// these rows to check that representative selection preserves this distinction.
 #[test]
 fn norm_route_separates_recursive_fp64_dense_rows() {
-    let scheme = load_workspace_scheme::<
-        akita_config::recursive_commitment::RecursiveCommitmentConfig<fp64::Dense>,
-    >(akita_params::ChunkedWitnessCfg::default_non_chunked())
+    let scheme = load_workspace_scheme::<fp64::Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
     .expect("workspace schedule catalog");
     let single = |num_vars: usize| {
         scheme

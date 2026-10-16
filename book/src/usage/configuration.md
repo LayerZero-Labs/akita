@@ -36,7 +36,7 @@ The next choice is the representation of the table.
 | `OneHot` | Each fixed size chunk contains one selected position | Preserves the compact source and skips work for zero entries |
 | `DenseBounded` | Every centered coefficient fits the declared signed bound | Uses fewer commitment digits than full width dense data |
 
-The direct fp128 types are `fp128::Dense` and `fp128::OneHot`.
+The standard fp128 types are `fp128::Dense` and `fp128::OneHot`.
 `fp128::DenseBounded` accepts every `u64` value and the corresponding negative
 range. It uses the `fp128_dense_bounded` artifact family.
 
@@ -69,23 +69,20 @@ The common direct case uses one group and
 commits earlier groups first, then commits the final group with
 `GroupContext::scheduler_with_precommitted_groups(&prior)`.
 
-## Direct and recursively offloaded setup checks
+## Automatic setup offloading
 
-Every Akita proof reduces a large opening through a sequence of folds. The word
-recursive in `RecursiveCommitmentConfig<Cfg>` refers to an additional setup
-checking path. It lets the proof carry the large public setup contribution into
-a later fold instead of asking the verifier to scan it directly.
+Every configuration uses one planner policy. Offline planning compares complete
+schedules with zero, one, or two setup offloads. Small inputs commonly select
+zero: the verifier evaluates the setup contribution directly. Larger inputs
+can carry that contribution into a later fold through a committed setup prefix.
+Applications choose their field, source contract, and witness partition; the
+trusted schedule determines the offload count.
 
-Use the direct configuration first. It has the simplest setup and is the right
-choice for ordinary local verification. Use a shipped recursive configuration
-when the verifier environment makes direct setup evaluation expensive. The
-[setup offloading](../how/setup-offloading.md) chapter explains the complete
-protocol and its supported families.
-
-Precommitted groups in a recursive grouped opening still use the base
-configuration. The final group and the proof use
-`RecursiveCommitmentConfig<Cfg>`. This preserves the commitment identity of the
-earlier groups while selecting the recursive adapter for the complete opening.
+Two is a maximum, not an exact count. There is no fixed input-size threshold,
+and discrete layout choices can make the count non-monotone. The
+[setup offloading](../how/setup-offloading.md) chapter gives measured schedule
+choices and explains the objective. Earlier commitments and the final grouped
+opening use the same configuration and their matching trusted catalog.
 
 ## Partition large prover work
 
@@ -99,10 +96,7 @@ The profile name `W8R2` means eight chunks in the first two folds (levels 0 and
 (levels 0, 1, and 2). The fp128 presets `OneHotMultiChunkW2R3`,
 `OneHotMultiChunkW4R3`, and `OneHotMultiChunkW8R3` offer two, four, and eight
 chunks; `DenseMultiChunkW8R3` offers eight chunks for dense sources.
-`RecursiveCommitmentConfig<fp128::OneHotMultiChunkW2R3>`,
-`RecursiveCommitmentConfig<fp128::OneHotMultiChunkW4R3>`, and
-`RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R3>` combine each chunk
-width with recursive setup offloading. Each preset uses its own trusted schedule catalog;
+Each chunk width participates in automatic setup offloading and uses its own trusted schedule catalog;
 `OneHotMultiChunk` and `DenseMultiChunk` continue to use W8R2.
 
 Multi chunk configurations are deployment choices for measured large
@@ -137,7 +131,7 @@ Use these starting points:
 | One selected entry in each fixed size chunk | `fp128::OneHot` |
 | Values known to fit the full `u64` range | `fp128::DenseBounded` |
 | A host using a small prime field | The matching `fp32` or `fp64` family |
-| A verifier that must avoid a large direct setup scan | A supported `RecursiveCommitmentConfig<Cfg>` |
+| Large verifier workloads | The matching field/source preset; its planner can offload setup |
 
 The [first proof](./quickstart.md) uses `fp128::Dense`. The
 [integration guide](./integration.md) develops grouped openings and prepared

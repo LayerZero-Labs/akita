@@ -109,14 +109,6 @@ impl RelationSearchDomain {
         self.transitions().contains(&transition)
     }
 
-    #[must_use]
-    pub(crate) const fn including_terminal_quotient(self) -> Self {
-        match self {
-            Self::ReducedOnly | Self::QuotientAndReduced => Self::QuotientAndReduced,
-            Self::QuotientOnly => Self::QuotientOnly,
-        }
-    }
-
     pub(crate) const fn for_mode(mode: RingRelationMode) -> Self {
         match mode {
             RingRelationMode::QuotientLift => Self::QuotientOnly,

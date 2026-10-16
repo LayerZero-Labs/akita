@@ -38,9 +38,8 @@ use akita_params::sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
 };
 use akita_params::{
-    active_setup_field_len, padded_setup_prefix_len, CommitmentRingDims, CommittedGroupParams,
-    DecompositionParams, GroupCommitPhaseParams, GroupOpenPhaseParams, OpeningClaimsLayout,
-    PolynomialGroupLayout, TranscriptGrindingCost,
+    padded_setup_prefix_len, CommitmentRingDims, CommittedGroupParams, DecompositionParams,
+    GroupCommitPhaseParams, GroupOpenPhaseParams, PolynomialGroupLayout, TranscriptGrindingCost,
 };
 #[cfg(all(test, feature = "catalog-gen"))]
 use akita_params::{try_extension_opening_reduction_level_bytes, PlannedFoldSchedule};
@@ -62,11 +61,10 @@ pub(crate) use akita_schedules::planner_support::{
     CandidateTerminalResponse,
 };
 pub(crate) use candidate::{
-    derive_ab_commitment_candidate, derive_fold_candidates, derive_recursive_candidate_views,
-    derive_terminal_candidates, recursive_split_search_domain, AbCommitmentCandidateRequest,
-    CandidateInnerRoute, CandidateLayoutGuide, FoldCandidatePolicy, PlannerOpeningCandidate,
-    RecursiveCandidateRequest, RecursiveFoldWork, SetupPrefixLayoutGuide, SetupPrefixSearchCache,
-    SplitBoundPolicy,
+    derive_ab_commitment_candidate, derive_fold_candidates, derive_terminal_candidates,
+    recursive_split_search_domain, AbCommitmentCandidateRequest, CandidateInnerRoute,
+    CandidateLayoutGuide, FoldCandidatePolicy, PlannerOpeningCandidate, RecursiveCandidateRequest,
+    RecursiveFoldWork, SetupPrefixLayoutGuide, SetupPrefixSearchCache, SplitBoundPolicy,
 };
 #[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) use candidate::{
@@ -589,8 +587,6 @@ pub(crate) type LayoutCandidateScore = (usize, usize, usize, usize);
 /// setup objective before witness sizing and suffix recursion. Equal setup
 /// candidates can still differ in proof size or the complete descriptor.
 pub(crate) fn prune_locally_unprofitable_slices(
-    policy: &PlannerPolicy,
-    opening_layout: &OpeningClaimsLayout,
     candidates: Vec<CommittedGroupParams>,
 ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
     if candidates.len() <= 1 {
@@ -599,14 +595,7 @@ pub(crate) fn prune_locally_unprofitable_slices(
     let mut best_setup = None;
     let mut retained = Vec::new();
     for params in candidates {
-        let setup_score = match policy.selection_policy {
-            crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => {
-                padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?)
-            }
-            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
-                padded_setup_prefix_len(level_setup_field_elements(&params)?)
-            }
-        };
+        let setup_score = padded_setup_prefix_len(level_setup_field_elements(&params)?);
         match best_setup.map(|best| setup_score.cmp(&best)) {
             None | Some(std::cmp::Ordering::Less) => {
                 best_setup = Some(setup_score);

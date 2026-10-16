@@ -119,7 +119,7 @@ prefix slots.
 - [x] `fp32_combined_setup_proves_recursive_and_onehot_families`
   (`crates/akita-pcs/tests/akita_small_field_e2e/combined_recursive.rs`) runs
   in default CI. It builds one setup from the union of
-  `RecursiveCommitmentConfig<fp32::Dense>` and `fp32::OneHot` requirements at
+  `fp32::Dense` and `fp32::OneHot` requirements at
   `nv = 24`, where the recursive row opens a setup prefix. It then proves and
   verifies an opening under each catalog on one backend.
 - [x] Release gate: `combined_recursive_setup_proves_both_onehot_families`

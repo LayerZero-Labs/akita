@@ -20,16 +20,10 @@ pub(super) fn build_successor(
         successor_witness.own_group_mut().profile.outer_slice_count =
             akita_params::CommitmentSliceCount::ONE;
     }
-    if successor_witness.inner().digits.log_basis != predecessor.params.open().digits.log_basis
-        || successor_witness.inner().digits.num_digits != 1
-    {
-        return Err(AkitaError::InvalidSetup(format!(
-            "packing recursive digit basis mismatch: predecessor open={}, successor inner={} with {} digits",
-            predecessor.params.open().digits.log_basis,
-            successor_witness.inner().digits.log_basis,
-            successor_witness.inner().digits.num_digits,
-        )));
-    }
+    // Recursive witness coefficients are the predecessor's opening digits.
+    // A reused template may use a different opening basis at the next fold.
+    successor_witness.own_group_mut().profile.inner.digits =
+        akita_params::GadgetDigits::new(predecessor.params.open().digits.log_basis, 1);
     successor_witness.own_group_mut().opening.opening_method =
         akita_params::OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension,

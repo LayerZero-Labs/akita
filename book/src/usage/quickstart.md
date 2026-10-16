@@ -24,7 +24,7 @@ therefore stays tied to code that works.
 
 ## The statement being proved
 
-The example uses `fp128::Dense`, Akita's direct configuration for arbitrary
+The example uses `fp128::Dense`, Akita's configuration for arbitrary
 values in its 128 bit field. It creates a table with $2^{14}$ field elements.
 That table represents a multilinear polynomial with 14 variables.
 

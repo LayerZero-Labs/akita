@@ -13,7 +13,7 @@ use akita_cpu_backend::CpuBackend;
 use akita_cpu_backend::OneHotPoly;
 use akita_params::{
     BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, OpeningClaimsLayout,
-    PolynomialGroupLayout, SetupContributionMode,
+    PolynomialGroupLayout,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::FpExtEncoding;
@@ -67,7 +67,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         .collect();
 
     let pools = ProfileThreadPools::get();
-    let setup_contribution_mode = SetupContributionMode::Direct;
     let (commitments, proof, setup) = {
         let t0 = Instant::now();
         let setup = scheme.setup_prover(nv, num_polys).unwrap();
@@ -123,12 +122,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
         let t0 = Instant::now();
-        tracing::info!(
-            label,
-            ?setup_contribution_mode,
-            "profile setup-contribution mode"
-        );
-        eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
         let proof = scheme
             .batched_prove(
                 &setup,
@@ -171,7 +164,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             &proof,
             proof_size_budgets(plan, group_layout, scheme.schedules().policy()),
             "planned",
-            setup_contribution_mode,
         );
         emit_runtime_schedule_summary(
             label,
@@ -188,7 +180,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             &proof,
             proof_size_budgets(&schedule, group_layout, scheme.schedules().policy()),
             "runtime schedule",
-            setup_contribution_mode,
         );
         emit_runtime_schedule_summary(
             label,

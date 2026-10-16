@@ -253,8 +253,8 @@ type VerifyFixture = (
 fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let scheme = workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
         .expect("workspace schedule artifact");
-    let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout(&scheme, num_vars);
+    let alpha = layout.d_a().trailing_zeros() as usize;
     let full_num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
 
     let (poly, evals) = make_dense_poly(full_num_vars);

@@ -99,16 +99,15 @@ The root live set is deliberately small and is synchronized with
 13. `role-native-projected-digit-layout.md`
 14. `runtime-ring-cutover.md`
 15. `selective-l2-fold-security-sizing.md`
-16. `setup-offloading-planner.md`
-17. `sis-quantum128-scalar-n-table.md`
-18. `structured-e-term.md`
-19. `subring-coefficient-packing.md`
-20. `transcript-grinding.md`
-21. `grinding-nonce-encoding.md`
-22. `guided-schedule-adaptation.md`
-23. `family-agnostic-cpu-backend.md`
+16. `sis-quantum128-scalar-n-table.md`
+17. `structured-e-term.md`
+18. `subring-coefficient-packing.md`
+19. `transcript-grinding.md`
+20. `grinding-nonce-encoding.md`
+21. `guided-schedule-adaptation.md`
+22. `family-agnostic-cpu-backend.md`
 
-All 23 current live specifications must pass the default dead-symbol scan. A record
+All 22 current live specifications must pass the default dead-symbol scan. A record
 that still contains a historical API name must either describe it explicitly as
 a historical snapshot or be repaired before it is added to the live set.
 

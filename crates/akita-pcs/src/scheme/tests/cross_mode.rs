@@ -24,7 +24,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
     std::thread::Builder::new()
         .stack_size(512 * 1024 * 1024)
         .spawn(|| {
-            const NUM_VARS: usize = 14;
+            const NUM_VARS: usize = 20;
             const LABEL: &[u8] = b"test/cross-relation-mode";
 
             let key = akita_params::ScheduleLookupKey::single(

@@ -167,7 +167,7 @@ fn a_distinct_bound_is_a_distinct_catalog_identity() {
 
 /// The bound must actually reduce the source-dependent root digit depth.
 ///
-/// Each catalog family independently minimizes its setup-first objective, so its
+/// Each catalog family independently minimizes its padded setup envelope, so its
 /// selected setup envelope need not be monotone in the source bound: a bounded
 /// family may spend its lower digit cost on a different A/B/D shape, including a
 /// different A basis. Compare digit depths at the bounded row's own basis rather

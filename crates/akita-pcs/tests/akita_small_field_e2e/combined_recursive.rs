@@ -1,9 +1,8 @@
 use super::*;
-use akita_config::{CommitmentConfig, RecursiveCommitmentConfig, SetupRequirements};
+use akita_config::{CommitmentConfig, SetupRequirements};
 
 type F = fp32::Field;
 type E = fp32::ExtensionField;
-type RecursiveCfg = RecursiveCommitmentConfig<fp32::Dense>;
 
 /// Commit `poly` under `scheme`'s family on `backend`, prove its single-group
 /// opening against the shared `setup`, and verify the proof.
@@ -87,7 +86,7 @@ fn fp32_combined_setup_proves_recursive_and_onehot_families() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let recursive_scheme = load_workspace_scheme::<RecursiveCfg>(
+        let recursive_scheme = load_workspace_scheme::<fp32::Dense>(
             akita_params::ChunkedWitnessCfg::default_non_chunked(),
         )
         .expect("workspace recursive catalog");
@@ -96,12 +95,9 @@ fn fp32_combined_setup_proves_recursive_and_onehot_families() {
         )
         .expect("workspace one-hot catalog");
 
-        let recursive_requirements = SetupRequirements::from_catalog::<RecursiveCfg>(
-            recursive_scheme.schedules(),
-            MAX_NV,
-            1,
-        )
-        .expect("recursive requirements");
+        let recursive_requirements =
+            SetupRequirements::from_catalog::<fp32::Dense>(recursive_scheme.schedules(), MAX_NV, 1)
+                .expect("recursive requirements");
         let recursive_slots = recursive_requirements.prefix_slot_ids().to_vec();
         assert!(
             !recursive_slots.is_empty(),

@@ -1,6 +1,6 @@
 //! Portable extension-field imports and executor-local setup-prefix ownership.
 use super::common;
-use akita_config::{proof_optimized::fp32, CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{proof_optimized::fp32, CommitmentConfig};
 use akita_cpu_backend::{
     CpuBackend, CpuImportPacket, CpuSource, DensePoly, GroupContext, OneHotPoly, SuccessorSection,
 };
@@ -22,13 +22,50 @@ const DOMAIN: &[u8] = b"akita/test/portable-extension-import";
 fn portable_tensor_import_matches_homogeneous_proof() {
     common::init_rayon_pool();
     common::run_on_large_stack(|| {
+        const NUM_VARS: usize = 22;
         let chunk_size = akita_config::unit_onehot_source_chunk_size::<fp32::OneHot>().unwrap();
         let poly =
-            OneHotPoly::<F, u8>::new(chunk_size, vec![Some(0); (1 << 16) / chunk_size]).unwrap();
+            OneHotPoly::<F, u8>::new(chunk_size, vec![Some(0); (1 << NUM_VARS) / chunk_size])
+                .unwrap();
         let expected =
             akita_params::lagrange_weights(&vec![E::from_u64(2); chunk_size.ilog2() as usize])
                 .unwrap()[0];
-        run::<fp32::OneHot, _>(16, vec![poly; 2], expected);
+        // Generate this small batched case in memory; the shipped nv16 row has
+        // no tensor successor. Independent admission and the assertions in run
+        // ensure we still exercise batched, zero-offload tensor transfer.
+        let policy = akita_config::policy_of::<fp32::OneHot>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        );
+        let key = akita_params::ScheduleLookupKey::single(
+            akita_params::PolynomialGroupLayout::new(NUM_VARS, 2),
+        );
+        let planned = akita_planner::find_schedule(
+            &key,
+            fp32::OneHot::committed_source_contract().unwrap(),
+            &[],
+            &policy,
+            fp32::OneHot::ring_challenge_config,
+        )
+        .expect("small batched tensor schedule");
+        let profiles = akita_params::CommittedGroupBatchProfile {
+            final_group: planned.schedule.root.params.own_group().profile,
+            precommitteds: vec![],
+        };
+        let catalog = akita_config::ValidatedScheduleCatalog::try_new(
+            fp32::OneHot::schedule_family_name(),
+            [(profiles, planned.schedule)],
+            &policy,
+            fp32::OneHot::ring_challenge_config,
+        )
+        .expect("independently admitted tensor-transfer schedule");
+        let scheme = akita_pcs::AkitaCommitmentScheme::<fp32::OneHot>::new(
+            akita_config::TrustedScheduleCatalog::new(
+                catalog,
+                akita_params::ChunkedWitnessCfg::default_non_chunked(),
+            )
+            .unwrap(),
+        );
+        run::<fp32::OneHot, _>(&scheme, NUM_VARS, vec![poly.clone(), poly], expected, false);
     });
 }
 
@@ -36,21 +73,26 @@ fn portable_tensor_import_matches_homogeneous_proof() {
 fn offloaded_route_uses_only_local_prefix_handles() {
     common::init_rayon_pool();
     common::run_on_large_stack(|| {
-        // The smallest shipped fp32 recursive row with an offloaded setup prefix.
+        // The smallest shipped fp32 dense row with an offloaded setup prefix.
         let poly = DensePoly::from_field_evals(24, vec![F::from_u64(1); 1 << 24]).unwrap();
-        run::<RecursiveCommitmentConfig<fp32::Dense>, _>(24, vec![poly], E::from_u64(1));
+        let scheme = common::load_workspace_scheme::<fp32::Dense>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .unwrap();
+        run::<fp32::Dense, _>(&scheme, 24, vec![poly], E::from_u64(1), true);
     });
 }
 
-fn run<Cfg, P>(nv: usize, polys: Vec<P>, expected: E)
-where
+fn run<Cfg, P>(
+    scheme: &akita_pcs::AkitaCommitmentScheme<Cfg>,
+    nv: usize,
+    polys: Vec<P>,
+    expected: E,
+    expect_offload: bool,
+) where
     Cfg: CommitmentConfig<Field = F, ExtField = E> + 'static,
     P: CpuSource<F, E>,
 {
-    let scheme = common::load_workspace_scheme::<Cfg>(
-        akita_params::ChunkedWitnessCfg::default_non_chunked(),
-    )
-    .unwrap();
     let setup = scheme.setup_prover(nv, polys.len()).unwrap();
     let producer = Cpu::new(setup.expanded.clone()).unwrap();
     let consumer = Cpu::new(setup.expanded.clone()).unwrap();
@@ -84,7 +126,11 @@ where
     let all_ids =
         akita_config::required_setup_prefix_slot_ids_for_schedule(schedule, input.opening_layout())
             .unwrap();
-    assert_eq!(!all_ids.is_empty(), Cfg::recursive_setup_planning());
+    assert_eq!(
+        !all_ids.is_empty(),
+        expect_offload,
+        "fixture setup-offload coverage changed"
+    );
     assert!(schedule.recursive_folds.iter().any(|fold| matches!(
         fold.params.source_encoding,
         CommittedSourceEncoding::TensorSubfieldProjection { .. }

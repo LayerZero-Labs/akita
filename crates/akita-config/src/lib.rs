@@ -50,15 +50,11 @@ macro_rules! impl_catalog_family {
             fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
                 <$base as $crate::CommitmentConfig>::committed_source_class()
             }
-            fn recursive_setup_planning() -> bool {
-                <$base as $crate::CommitmentConfig>::recursive_setup_planning()
-            }
         }
     };
 }
 
 pub mod proof_optimized;
-pub mod recursive_commitment;
 #[cfg(test)]
 mod runtime_chunking_tests;
 #[cfg(test)]
@@ -78,7 +74,6 @@ pub use akita_schedules::{
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
 pub use proof_optimized::{ensure_prover_schedule_fits_setup, verifier_schedule_fits_setup};
-pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use transcript_binding::transcript_instance_descriptor;
 pub use transcript_grinding_plan::derive_transcript_grinding_plan;
 
@@ -88,19 +83,15 @@ pub use transcript_grinding_plan::derive_transcript_grinding_plan;
 /// Chunking is supplied by the application. Planner entry points and catalog
 /// admission validate the resulting policy before consuming it.
 pub fn policy_of<Cfg: CommitmentConfig>(chunking: ChunkedWitnessCfg) -> PlannerPolicy {
-    let recursive_setup_planning = Cfg::recursive_setup_planning();
     PlannerPolicy {
         cost_model: akita_schedules::PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
         selective_l2_response_model:
             akita_schedules::SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
-        selection_policy: Cfg::selection_policy(),
+        selection_policy: akita_schedules::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6,
         recursive_split_search_policy:
             akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
-        recursive_setup_search_policy: if recursive_setup_planning {
-            akita_schedules::RecursiveSetupSearchPolicy::RootAndFirstChildV1
-        } else {
-            akita_schedules::RecursiveSetupSearchPolicy::Exhaustive
-        },
+        recursive_setup_search_policy:
+            akita_schedules::RecursiveSetupSearchPolicy::RootAndFirstChildV1,
         setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
         ring_dimension_schedule: Cfg::RING_DIMENSION_SCHEDULE,
@@ -114,7 +105,6 @@ pub fn policy_of<Cfg: CommitmentConfig>(chunking: ChunkedWitnessCfg) -> PlannerP
         inner_basis_range: Cfg::inner_basis_range(),
         opening_basis_range: Cfg::opening_basis_range(),
         witness_chunk: chunking,
-        recursive_setup_planning,
     }
 }
 
@@ -435,24 +425,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             Self::committed_source_class(),
             Self::decomposition(),
         )
-    }
-
-    /// Whether schedule planning may emit recursive setup-contribution edges.
-    ///
-    /// Ordinary configs are direct-only. Config adapters that opt into recursive
-    /// setup offloading override this and use a separate external family artifact.
-    fn recursive_setup_planning() -> bool {
-        false
-    }
-
-    /// Catalog-bound schedule selection objective.
-    ///
-    /// Direct presets minimize first-direct setup capacity before proof and work,
-    /// across the adaptive dimension domain. Recursive setup presets
-    /// first minimize the padded total setup envelope. The policy is part of
-    /// catalog identity.
-    fn selection_policy() -> akita_schedules::SelectionPolicyId {
-        akita_schedules::SelectionPolicyId::for_policy(Self::recursive_setup_planning())
     }
 
     /// Stable trusted schedule family identity for external artifact loading.
@@ -869,8 +841,7 @@ mod fp128_policy_tests {
 
     #[test]
     fn row_admission_rejects_overpadded_setup_prefix() {
-        type RecursiveOneHot = crate::RecursiveCommitmentConfig<fp128::OneHot>;
-        let catalog = crate::test_support::workspace_schedule_catalog::<RecursiveOneHot>(
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>(
             akita_params::ChunkedWitnessCfg::default_non_chunked(),
         )
         .expect("recursive one-hot schedule catalog");
@@ -890,7 +861,7 @@ mod fp128_policy_tests {
                     .then_some(row)
             })
             .expect("generated row with a setup prefix");
-        let error = mutated_row_admission_error::<RecursiveOneHot>(
+        let error = mutated_row_admission_error::<fp128::OneHot>(
             row,
             |schedule| {
                 let step = schedule
@@ -917,8 +888,7 @@ mod fp128_policy_tests {
 
     #[test]
     fn row_admission_rejects_setup_prefix_that_omits_real_tail_rings() {
-        type RecursiveOneHot = crate::RecursiveCommitmentConfig<fp128::OneHot>;
-        let catalog = crate::test_support::workspace_schedule_catalog::<RecursiveOneHot>(
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>(
             akita_params::ChunkedWitnessCfg::default_non_chunked(),
         )
         .expect("recursive one-hot schedule catalog");
@@ -938,7 +908,7 @@ mod fp128_policy_tests {
                     .then_some(row)
             })
             .expect("generated row with a setup prefix");
-        let error = mutated_row_admission_error::<RecursiveOneHot>(
+        let error = mutated_row_admission_error::<fp128::OneHot>(
             row,
             |schedule| {
                 let step = schedule

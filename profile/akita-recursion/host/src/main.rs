@@ -18,7 +18,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::CommitmentConfig;
 use akita_params::BasisMode;
 use akita_recursion_glue::{read_blob_case, AkitaJoltCase, AkitaJoltInputs, MAX_JOLT_BLOB_BYTES};
 use akita_types::prepared_verifier_ntt_cache_metadata;
@@ -60,9 +60,8 @@ fn run_native_guest(case: AkitaJoltCase, blob: &[u8]) -> Result<(), String> {
     let native_output = match case {
         AkitaJoltCase::OneHotFp32 => guest::akita_verify_fp32(blob),
         AkitaJoltCase::OneHotFp64 => guest::akita_verify_fp64(blob),
-        AkitaJoltCase::OneHotFp128Direct => guest::akita_verify_fp128_direct(blob),
-        AkitaJoltCase::OneHotFp128Recursive => guest::akita_verify_fp128_recursive(blob),
-        AkitaJoltCase::OneHotFp128MultiGroupRecursive => guest::akita_verify(blob),
+        AkitaJoltCase::OneHotFp128 => guest::akita_verify_fp128(blob),
+        AkitaJoltCase::OneHotFp128MultiGroup => guest::akita_verify(blob),
     };
     info!(native_output, "native guest output");
     if native_output != 0 {
@@ -233,14 +232,11 @@ fn strict_host_preflight(case: AkitaJoltCase, blob: &[u8]) -> Result<Option<Vec<
                 strict_decode_and_verify!(blob, fp64::Field, fp64::OneHot, 512);
             Ok(None)
         }
-        AkitaJoltCase::OneHotFp128Direct => {
+        AkitaJoltCase::OneHotFp128 => {
             strict_fp128_preflight!(blob, fp128::OneHot)
         }
-        AkitaJoltCase::OneHotFp128Recursive => {
-            strict_fp128_preflight!(blob, RecursiveCommitmentConfig<fp128::OneHot>)
-        }
-        AkitaJoltCase::OneHotFp128MultiGroupRecursive => {
-            strict_fp128_preflight!(blob, RecursiveCommitmentConfig<fp128::OneHot>)
+        AkitaJoltCase::OneHotFp128MultiGroup => {
+            strict_fp128_preflight!(blob, fp128::OneHot)
         }
     }
 }
@@ -410,29 +406,18 @@ fn run() -> Result<(), String> {
             build_prover_akita_verify_fp64,
             build_verifier_akita_verify_fp64
         ),
-        AkitaJoltCase::OneHotFp128Direct => run_selected_guest!(
+        AkitaJoltCase::OneHotFp128 => run_selected_guest!(
             args,
             &blob,
             case,
-            compile_akita_verify_fp128_direct,
-            trace_akita_verify_fp128_direct_to_file,
-            preprocess_shared_akita_verify_fp128_direct,
-            preprocess_prover_akita_verify_fp128_direct,
-            build_prover_akita_verify_fp128_direct,
-            build_verifier_akita_verify_fp128_direct
+            compile_akita_verify_fp128,
+            trace_akita_verify_fp128_to_file,
+            preprocess_shared_akita_verify_fp128,
+            preprocess_prover_akita_verify_fp128,
+            build_prover_akita_verify_fp128,
+            build_verifier_akita_verify_fp128
         ),
-        AkitaJoltCase::OneHotFp128Recursive => run_selected_guest!(
-            args,
-            &blob,
-            case,
-            compile_akita_verify_fp128_recursive,
-            trace_akita_verify_fp128_recursive_to_file,
-            preprocess_shared_akita_verify_fp128_recursive,
-            preprocess_prover_akita_verify_fp128_recursive,
-            build_prover_akita_verify_fp128_recursive,
-            build_verifier_akita_verify_fp128_recursive
-        ),
-        AkitaJoltCase::OneHotFp128MultiGroupRecursive => run_selected_guest!(
+        AkitaJoltCase::OneHotFp128MultiGroup => run_selected_guest!(
             args,
             &blob,
             case,

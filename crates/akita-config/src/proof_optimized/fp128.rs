@@ -179,13 +179,6 @@ impl_proof_optimized_preset!(
 );
 impl_catalog_family!(OneHotMultiChunk, OneHot, "fp128_onehot_multi_chunk");
 
-impl crate::recursive_commitment::RecursiveScheduleConfig for OneHot {
-    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive";
-}
-
-impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunk {
-    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive_multi_chunk_w8r2";
-}
 impl_catalog_family!(
     OneHotMultiChunkW2R2,
     OneHot,
@@ -197,10 +190,6 @@ impl_catalog_family!(
     "fp128_onehot_multi_chunk_w4r2"
 );
 impl_catalog_family!(DenseMultiChunk, Dense, "fp128_dense_multi_chunk");
-
-impl crate::recursive_commitment::RecursiveScheduleConfig for Dense {
-    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_dense_recursive";
-}
 
 impl_catalog_family!(
     OneHotMultiChunkW2R3,
@@ -222,23 +211,11 @@ impl_catalog_family!(
 
 impl_catalog_family!(DenseMultiChunkW8R3, Dense, "fp128_dense_multi_chunk_w8r3");
 
-impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunkW2R3 {
-    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive_multi_chunk_w2r3";
-}
-
-impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunkW4R3 {
-    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive_multi_chunk_w4r3";
-}
-
-impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunkW8R3 {
-    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive_multi_chunk_w8r3";
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::schedule_artifact_tests::mutated_row_admission_error;
-    use crate::{CommitmentConfig, RecursiveCommitmentConfig};
+    use crate::CommitmentConfig;
 
     fn assert_r3_catalog<Cfg: CommitmentConfig>(chunking: akita_params::ChunkedWitnessCfg) {
         let catalog = crate::test_support::workspace_schedule_catalog::<Cfg>(chunking)
@@ -267,12 +244,6 @@ mod tests {
                     Cfg::schedule_family_name(),
                 );
             }
-            if Cfg::recursive_setup_planning() {
-                assert!(schedule
-                    .recursive_folds
-                    .iter()
-                    .any(|fold| fold.params.setup_prefix().is_some()));
-            }
             let error = mutated_row_admission_error::<Cfg>(
                 row,
                 |schedule| {
@@ -291,14 +262,5 @@ mod tests {
         assert_r3_catalog::<OneHotMultiChunkW4R3>(akita_params::MultiChunkProfileId::W4R3.cfg());
         assert_r3_catalog::<OneHotMultiChunkW8R3>(akita_params::MultiChunkProfileId::W8R3.cfg());
         assert_r3_catalog::<DenseMultiChunkW8R3>(akita_params::MultiChunkProfileId::W8R3.cfg());
-        assert_r3_catalog::<RecursiveCommitmentConfig<OneHotMultiChunkW2R3>>(
-            akita_params::MultiChunkProfileId::W2R3.cfg(),
-        );
-        assert_r3_catalog::<RecursiveCommitmentConfig<OneHotMultiChunkW4R3>>(
-            akita_params::MultiChunkProfileId::W4R3.cfg(),
-        );
-        assert_r3_catalog::<RecursiveCommitmentConfig<OneHotMultiChunkW8R3>>(
-            akita_params::MultiChunkProfileId::W8R3.cfg(),
-        );
     }
 }

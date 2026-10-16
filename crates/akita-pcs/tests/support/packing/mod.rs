@@ -155,14 +155,6 @@ where
     fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
         Base::committed_source_class()
     }
-
-    fn recursive_setup_planning() -> bool {
-        Base::recursive_setup_planning()
-    }
-
-    fn selection_policy() -> akita_schedules::SelectionPolicyId {
-        Base::selection_policy()
-    }
 }
 
 impl<Base, const LEVEL: usize> CommitmentConfig for UnsupportedEvaluationTraceConfig<Base, LEVEL>
@@ -202,13 +194,5 @@ where
 
     fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
         Base::committed_source_class()
-    }
-
-    fn recursive_setup_planning() -> bool {
-        Base::recursive_setup_planning()
-    }
-
-    fn selection_policy() -> akita_schedules::SelectionPolicyId {
-        Base::selection_policy()
     }
 }

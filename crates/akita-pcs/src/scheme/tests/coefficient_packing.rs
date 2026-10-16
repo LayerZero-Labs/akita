@@ -216,29 +216,13 @@ fn packing_round_trip(prefixed_fold_count: usize) {
             let polynomial =
                 akita_cpu_backend::DensePoly::from_field_evals(num_vars, &evaluations).unwrap();
 
-            let mut setup = scheme.setup_prover(num_vars, 1).unwrap();
-            let setup_prefixes = row
-                .schedule()
-                .recursive_folds
-                .iter()
-                .map(|fold| {
-                    fold.params
-                        .setup_prefix()
-                        .unwrap()
-                        .slot_id()
-                        .expect("setup prefix group")
-                })
-                .collect::<Vec<_>>();
-            let prefix_backend =
-                CpuBackend::<PackingField, PackingExt>::new(setup.expanded.clone()).unwrap();
-            let artifacts = prefix_backend
-                .export_setup_prefixes(&setup_prefixes)
-                .unwrap();
-            for prefix in &setup_prefixes {
-                setup
-                    .prefix_slots
-                    .insert(artifacts.get(prefix).unwrap().clone())
-                    .unwrap();
+            let setup = scheme.setup_prover(num_vars, 1).unwrap();
+            for fold in &row.schedule().recursive_folds {
+                let slot = fold.params.setup_prefix().unwrap().slot_id().unwrap();
+                assert!(
+                    setup.prefix_slots.get(&slot).is_some(),
+                    "setup must provision each selected offload prefix automatically"
+                );
             }
             let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
             let verifier_setup = scheme.setup_verifier(&setup).unwrap();

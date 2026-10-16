@@ -3,61 +3,12 @@
 //! # Group B — fp128 full correctness matrix
 //!
 //! `CommitmentConfig<Field=F, ExtField=F>`, so the generic driver is used directly.
-//! The table covers the full cartesian product:
-//!   poly ∈ {Dense, OneHot} × chunk ∈ {sc, mc} × precommit ∈ {direct, pre} × recursion ∈ {nonrec, rec}
-//!
-//! In the recursive rows, `direct` and `pre` distinguish whether the *caller*
-//! supplies precommitted groups, not whether the schedule is multi-group:
-//! recursive mode always resolves against a multi-group setup internally.
-//! `direct` is `RecursiveCommitmentConfig` with no user precommit; `pre` adds
-//! user precommitted groups on top. Both columns therefore exist and are
-//! declared below.
-//!
-//! Legend:
-//!   ✓        — runs in default `cargo test` using checked-in external artifacts
-//!   ign      — skipped in default `cargo test` due to production-sized nv; needs `-- --ignored`
-//!   NA       — no production schedule exists for this combination; cell is intentionally absent
-//!
-//! Non-recursive `pre` cells use one 14-variable pre-group; recursive `pre`
-//! cells use the shared recursive profile's two 16-variable pre-groups. Every ✓
-//! cell below runs and is backed by a real generated catalog row — there are no
-//! `#[ignore]`d placeholders for missing catalog entries in this file.
-//!
-//! ```text
-//! ╔══════════╦══════════╦═══════════════════════════════╦═══════════════════════════════╗
-//! ║          ║          ║      single-chunk (sc)        ║      multi-chunk (mc)         ║
-//! ║ poly     ║ rec?     ╠═══════════════╦═══════════════╬═══════════════╦═══════════════╣
-//! ║          ║          ║    direct     ║      pre      ║    direct     ║      pre      ║
-//! ╠══════════╬══════════╬═══════════════╬═══════════════╬═══════════════╬═══════════════╣
-//! ║ Dense    ║ nonrec   ║ ✓ [14,16,     ║ ✓ final=16    ║ ✓ [16]        ║      NA       ║
-//! ║          ║          ║    24,26]     ║               ║               ║               ║
-//! ║ Dense    ║ rec      ║      NA       ║      NA       ║      NA       ║      NA       ║
-//! ╠══════════╬══════════╬═══════════════╬═══════════════╬═══════════════╬═══════════════╣
-//! ║ OneHot   ║ nonrec   ║ ✓ [12,15,     ║ ✓ final=      ║      ign      ║      NA       ║
-//! ║          ║          ║    20,28]     ║   [16,20]     ║               ║               ║
-//! ║ OneHot   ║ rec      ║      ign      ║      ign      ║      ign      ║      ign      ║
-//! ╚══════════╩══════════╩═══════════════╩═══════════════╩═══════════════╩═══════════════╝
-//! ```
-//!
-//! Dense + recursive: no production schedule exists; those cells are permanently NA.
-//! Dense mc pre: NA. The multi-chunk family ships only nv=16, and the DP finds
-//! no multi-group multi-chunk schedule below final_nv=20, so backing this cell
-//! would mean adding a production size purely for a test.
-//! OneHot mc nonrec direct: nv=32 is production-sized (ign).
-//!   `fp128_onehot_mc_catalog_resolves` is the cheap always-run companion that
-//!   checks the same catalog row without proving at nv=32.
-//! OneHot mc nonrec pre: NA. The catalog has no combined final=32, pre=14 row.
-//! OneHot sc rec: nv=32 is production-sized (ign).
-//!   direct = RecursiveCommitmentConfig only, no user precommit.
-//!   pre    = RecursiveCommitmentConfig + two 16-variable user precommits,
-//!            committed under the base config's scalar row.
-//! OneHot mc rec: nv=32 is production-sized (ign).
-//!   direct = RecursiveCommitmentConfig<OneHotMultiChunk>.
-//!   pre    = same + two 16-variable user precommits, committed under the
-//!            base config's scalar row.
-//!
-//! Every ✓ cell resolves against a real shipped catalog row; no cell here is
-//! backed by a schedule added solely to make a test pass.
+//! Catalog workloads cover dense and one-hot sources, scalar and multi-chunk
+//! layouts, and openings with and without caller-supplied precommitted groups.
+//! Every row uses the same planner policy. Production-sized offloaded cells at
+//! nv32 are ignored by default; their cheap catalog-resolution companions run
+//! without constructing the source. Small rows may still use ordinary witness
+//! recursion while selecting zero setup offloads.
 //!
 //! # Group E — heterogeneous cells (see `akita_fp128_e2e/heterogeneous.rs`)
 //!
@@ -158,19 +109,19 @@ macro_rules! matrix_test {
             });
         }
     };
-    // recursive mode, no user precommit (fp128_onehot_recursive.rs schedule)
-    (recursive_direct; $name:ident; $base_cfg:ty; $chunking:expr) => {
+    // recursive mode, no user precommit (fp128_onehot.aks schedule)
+    (offloaded_single_group; $name:ident; $base_cfg:ty; $chunking:expr) => {
         #[test]
         #[ignore = "production-sized; run explicitly with --release"]
         fn $name() {
-            prove_verify_recursive_direct_roundtrip::<$base_cfg>(
+            prove_verify_offloaded_single_group_roundtrip::<$base_cfg>(
                 $chunking,
                 concat!("completeness/", stringify!($name)).as_bytes(),
             );
         }
     };
     // recursive mode + user precommitted groups (profiles from the base config's scalar row)
-    (recursive_pre; $name:ident; $base_cfg:ty; $chunking:expr) => {
+    (offloaded_precommitted; $name:ident; $base_cfg:ty; $chunking:expr) => {
         #[test]
         #[ignore = "production-sized; run explicitly with --release"]
         fn $name() {
@@ -263,28 +214,28 @@ matrix_test!(onehot_pre; fp128_onehot_pre; fp128::OneHot; ChunkedWitnessCfg::def
 
 // ----------------------------------------------------------------------------
 // OneHot × single-chunk × direct × recursive    (production-sized, ignored)
-// RecursiveCommitmentConfig, no user precommit; uses fp128_onehot_recursive.rs schedule.
+//  no user precommit; uses fp128_onehot.aks schedule.
 // ----------------------------------------------------------------------------
-matrix_test!(recursive_direct; fp128_onehot_rec; fp128::OneHot; ChunkedWitnessCfg::default_non_chunked());
+matrix_test!(offloaded_single_group; fp128_onehot_offloaded; fp128::OneHot; ChunkedWitnessCfg::default_non_chunked());
 
 // ----------------------------------------------------------------------------
 // OneHot × single-chunk × precommitted × recursive    (production-sized, ignored)
-// RecursiveCommitmentConfig + user precommit; profiles from the base config's scalar row.
+// ordinary configuration + user precommit; profiles from the base config's scalar row.
 // ----------------------------------------------------------------------------
-matrix_test!(recursive_pre; fp128_onehot_rec_pre; fp128::OneHot; ChunkedWitnessCfg::default_non_chunked());
+matrix_test!(offloaded_precommitted; fp128_onehot_offloaded_pre; fp128::OneHot; ChunkedWitnessCfg::default_non_chunked());
 
 // ----------------------------------------------------------------------------
 // OneHot × multi-chunk × direct × recursive    (production-sized, ignored)
-// RecursiveCommitmentConfig<OneHotMultiChunk>; uses fp128_onehot_recursive_multi_chunk_w8r2.rs.
+// OneHotMultiChunk; uses fp128_onehot_multi_chunk.aks.
 // ----------------------------------------------------------------------------
-matrix_test!(recursive_direct; fp128_onehot_mc_rec; fp128::OneHotMultiChunk; MultiChunkProfileId::W8R2.cfg());
+matrix_test!(offloaded_single_group; fp128_onehot_mc_offloaded; fp128::OneHotMultiChunk; MultiChunkProfileId::W8R2.cfg());
 
 // ----------------------------------------------------------------------------
 // OneHot × multi-chunk × precommitted × recursive    (production-sized, ignored)
-// RecursiveCommitmentConfig<OneHotMultiChunk> + user precommit;
+// OneHotMultiChunk + user precommit;
 // profiles from the base config's scalar row.
 // ----------------------------------------------------------------------------
-matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk; MultiChunkProfileId::W8R2.cfg());
+matrix_test!(offloaded_precommitted; fp128_onehot_mc_offloaded_pre; fp128::OneHotMultiChunk; MultiChunkProfileId::W8R2.cfg());
 
 // ----------------------------------------------------------------------------
 // OneHot × multi-chunk × direct × non-recursive    [32]

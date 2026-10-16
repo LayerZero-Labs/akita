@@ -457,7 +457,7 @@ scheme.schedules());
 // ----------------------------------------------------------------------------
 
 // fp32 × Dense × direct              catalog: single(20,1)
-small_field_test!(dense; fp32_dense; fp32::Dense; fp32::Field; fp32::ExtensionField; nvs=[20]; check=reduced_eor::assert_fp32_dense);
+small_field_test!(dense; fp32_dense; fp32::Dense; fp32::Field; fp32::ExtensionField; nvs=[22]; check=reduced_eor::assert_fp32_dense);
 // fp32 × Dense × precommitted        catalog: final=(20,1) <- pre=[(20,1)]
 //
 // pre_nv=20 rather than 14: an independent precommit commits with its own row

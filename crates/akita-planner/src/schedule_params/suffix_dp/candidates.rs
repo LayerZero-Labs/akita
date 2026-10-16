@@ -14,10 +14,10 @@ use crate::{
 };
 
 use super::{
-    derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
-    dimension_candidates, suffix_opening_layout, CandidateInnerRoute, CandidateLayoutGuide,
-    FoldCandidatePolicy, RecursiveCandidateRequest, RecursiveFoldWork, SetupPrefixLayoutGuide,
-    SetupPrefixSearchCache, SplitBoundPolicy, SuffixCtx, SuffixState,
+    derive_fold_candidates, derive_terminal_candidates, dimension_candidates,
+    suffix_opening_layout, CandidateInnerRoute, CandidateLayoutGuide, FoldCandidatePolicy,
+    RecursiveCandidateRequest, RecursiveFoldWork, SetupPrefixLayoutGuide, SetupPrefixSearchCache,
+    SplitBoundPolicy, SuffixCtx, SuffixState,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -637,19 +637,20 @@ impl<'a> CandidateDomain<'a> {
                         )?
                         .filtered(ctx.relation_mode_filter)?;
                     if work.purpose == OpeningPurpose::TerminalAndFold {
-                        let views = derive_recursive_candidate_views(
+                        let terminal_candidates = derive_terminal_candidates(request)?;
+                        let fold_candidates = derive_fold_candidates(
                             request,
+                            RecursiveFoldWork::direct(relation_domain),
                             self.fold_policy,
-                            relation_domain,
                         )?;
-                        terminal.extend(views.terminal.into_iter().filter_map(|params| {
+                        terminal.extend(terminal_candidates.into_iter().filter_map(|params| {
                             (!self.adaptation_guided
                                 || self.guide_terminal.is_some_and(|guide| {
                                     terminal_candidate_matches_guide(&params, guide)
                                 }))
                             .then_some(params)
                         }));
-                        for (candidate, next_witness_len) in views.folds {
+                        for (candidate, next_witness_len) in fold_candidates {
                             if !relation_domain.admits(candidate.ring_relation_mode) {
                                 return Err(AkitaError::InvalidSetup(
                                     "combined recursive view emitted a fold outside its relation domain"

@@ -51,7 +51,7 @@ report_matches \
     "live setup-offloading docs must not assign schedule ownership to compiled Rust tables" \
     git grep -n -i -E \
         'GeneratedFrozenGroup|GeneratedRecursiveFold|generated[- ]table|generated module|table constructor|generated replay|Rust schedule table|committed schedule table' \
-        -- specs/setup-offloading-planner.md book/src/how/setup-offloading.md \
+        -- book/src/how/setup-offloading.md \
         book/src/usage/profiling.md book/src/introduction/reviewing-akita.md \
         book/src/introduction/built-for-production.md \
         crates/akita-config/src/proof_optimized.rs crates/akita-config/src/lib.rs

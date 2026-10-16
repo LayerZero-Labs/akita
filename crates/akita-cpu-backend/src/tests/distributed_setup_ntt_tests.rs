@@ -1,12 +1,12 @@
 //! Production distributed setup-offload NTT requirement regression.
 use crate::opaque::{NttExecutionRequirements, NttOperationCluster};
 use akita_config::proof_optimized::fp128;
-use akita_config::RecursiveCommitmentConfig;
+
 use akita_params::ScheduleLookupKey;
 use akita_params::{InnerCommitMatrixParams, PolynomialGroupLayout};
 use akita_types::{centered_quotient_requires_i16_tail, NttCacheKey, NttTransformDomain};
 
-type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
+type W8R2Cfg = fp128::OneHotMultiChunk;
 fn w8r2_profiling_key(
     base_catalog: &akita_config::TrustedScheduleCatalog<fp128::OneHotMultiChunk>,
 ) -> ScheduleLookupKey {

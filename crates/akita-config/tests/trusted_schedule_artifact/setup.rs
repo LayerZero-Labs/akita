@@ -1,7 +1,6 @@
 use super::support::checked_in_catalog;
 use akita_config::{
-    proof_optimized::fp128, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog,
-    ValidatedScheduleCatalog,
+    proof_optimized::fp128, CommitmentConfig, TrustedScheduleCatalog, ValidatedScheduleCatalog,
 };
 use akita_serialization::AkitaSerialize;
 
@@ -43,24 +42,24 @@ fn recursive_prefix_fixture<Cfg: CommitmentConfig>(
 #[test]
 fn recursive_prefix_slot_id_fixture() {
     // These setup-prefix identities bind the generated schedule and policy.
-    let onehot = recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHot>>(
+    let onehot = recursive_prefix_fixture::<fp128::OneHot>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
-    let multichunk = recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>(
+    let multichunk = recursive_prefix_fixture::<fp128::OneHotMultiChunk>(
         akita_params::MultiChunkProfileId::W8R2.cfg(),
     );
     assert_eq!(
         onehot,
         (
-            3,
-            "643eb959607f2fa91a51cb4e445ac706c291481c02edc47d3e6836d6185ea58d".to_string(),
+            12,
+            "526d166d62c45f75fd322a8ac79971afed6a596250435e43a1fc41f1df4ac07a".to_string(),
         )
     );
     assert_eq!(
         multichunk,
         (
-            3,
-            "0ea09bafa95cc857b27075caefeaa5dda6c8fb07ade9216198aac783c6384a59".to_string(),
+            4,
+            "523116bcbb12c42126091be91b5f200b6dd09c26f9916072f431fc247d6e3549".to_string(),
         )
     );
 }
@@ -74,12 +73,13 @@ fn setup_prefix_planning_rejects_invalid_capacity_metadata() {
         .expect_err("zero-batch setup metadata must reject for nonrecursive configs");
     assert!(format!("{zero_batch}").contains("at least 1"));
 
-    let recursive = checked_in_catalog::<RecursiveCommitmentConfig<fp128::OneHot>>(
-        akita_params::ChunkedWitnessCfg::default_non_chunked(),
-    );
-    let oversized_vars = akita_config::SetupRequirements::from_catalog::<
-        RecursiveCommitmentConfig<fp128::OneHot>,
-    >(&recursive, usize::BITS as usize, 1)
+    let recursive =
+        checked_in_catalog::<fp128::OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    let oversized_vars = akita_config::SetupRequirements::from_catalog::<fp128::OneHot>(
+        &recursive,
+        usize::BITS as usize,
+        1,
+    )
     .map(|requirements| requirements.prefix_slot_ids().to_vec())
     .expect_err("oversized setup metadata must reject for recursive configs");
     assert!(format!("{oversized_vars}").contains("exceeds preprocessing limits"));
@@ -122,8 +122,8 @@ fn setup_requirements_keep_precommits_when_the_grouped_row_does_not_fit() {
 
 #[test]
 fn setup_requirements_union_covers_both_families_at_one_bound() {
-    type OneHot = RecursiveCommitmentConfig<fp128::OneHot>;
-    type MultiChunk = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
+    type OneHot = fp128::OneHot;
+    type MultiChunk = fp128::OneHotMultiChunk;
     let requirements_at = |max_num_vars, max_num_batched_polys| {
         (
             akita_config::SetupRequirements::from_catalog::<OneHot>(

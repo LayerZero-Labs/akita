@@ -10,7 +10,7 @@ use crate::verifier::run_timings as run_verifier_timings;
 pub(crate) use batched_onehot::run_batched_onehot;
 use cache::assert_profile_ntt_cache_did_not_grow;
 use claims::{prover_claims, verifier_claims};
-pub(crate) use multi_group::{profile_setup_contribution_mode, run_recursive_multi_group_onehot};
+pub(crate) use multi_group::run_multi_group_onehot;
 pub(crate) use profile_data::onehot_k_for_num_vars;
 use profile_data::{
     degree_one_claim_point_to_base, make_profile_onehot_poly, onehot_lagrange_opening,

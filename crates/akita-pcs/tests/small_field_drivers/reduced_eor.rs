@@ -50,7 +50,7 @@ pub(super) fn assert_fp32_dense(
             step.params.ring_relation_mode == RingRelationMode::ReducedEvaluation
                 && step.params.opening_method() == OpeningMethod::EvaluationTrace
         })
-        .expect("fp32 dense nv=20 must contain a reduced EvaluationTrace fold");
+        .expect("fp32 dense nv=22 must contain a reduced EvaluationTrace fold");
     let truncated = &roundtrip.proof[..roundtrip.proof.len() - 1];
     let outcome = catch_unwind(AssertUnwindSafe(|| verify(roundtrip, truncated, label)));
     assert!(

@@ -51,10 +51,6 @@ impl CommitmentConfig for CountingDense {
     fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
         fp128::Dense::committed_source_class()
     }
-
-    fn recursive_setup_planning() -> bool {
-        fp128::Dense::recursive_setup_planning()
-    }
 }
 
 #[test]
@@ -84,11 +80,11 @@ fn trusted_artifact_round_trip_preserves_rows_and_selection() {
         loaded.resolve_profiles(loaded_row.profiles()).unwrap()
     ));
     assert_eq!(loaded_row.schedule(), checked_in_row.schedule());
-    assert!(loaded_row
+    assert!(loaded.rows().any(|row| row
         .schedule()
         .recursive_folds
         .iter()
-        .any(|fold| fold.params.ring_relation_mode.is_reduced_evaluation()));
+        .any(|fold| fold.params.ring_relation_mode.is_reduced_evaluation())));
 }
 
 #[test]

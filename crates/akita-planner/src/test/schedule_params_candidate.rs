@@ -1029,7 +1029,6 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
         potential_b_dimensions: &[256],
         potential_d_dimensions: &[256],
     };
-    policy.selection_policy = crate::SelectionPolicyId::for_policy(policy.recursive_setup_planning);
     let pre_group = PolynomialGroupLayout::new(14, 1);
     let pre_key = ScheduleLookupKey::single(pre_group);
     let pre_candidates = crate::planner::root_level_candidates_with_fresh_preparation(
@@ -1062,10 +1061,9 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn setup_prefix_cache_separates_equal_width_opening_methods() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, RecursiveCommitmentConfig};
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
 
-    type Recursive = RecursiveCommitmentConfig<OneHot>;
-    let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let dimensions = CommitmentRingDims {
         inner: 128,
         outer: 64,
@@ -1234,13 +1232,10 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
-    use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
-    type Recursive = RecursiveCommitmentConfig<OneHot>;
-    let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
-    let challenge = Recursive::ring_challenge_config(64).expect("challenge config");
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    let challenge = OneHot::ring_challenge_config(64).expect("challenge config");
     let mut cache = SetupPrefixSearchCache::default();
     for log_prefix in 12..=20 {
         let groups = derive_setup_prefix_groups(

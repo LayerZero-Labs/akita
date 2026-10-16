@@ -818,8 +818,8 @@ pub struct FoldScheduleEstimate {
     pub estimated_terminal_response_payload_bytes: usize,
     /// Maximum flat setup-matrix capacity required by the schedule.
     pub estimated_num_setup_field_elements: usize,
-    /// Natural (unpadded) setup length at the first direct edge for setup-first
-    /// schedule selection.
+    /// Natural (unpadded) setup length at the first direct edge, used as a tie-breaker
+    /// after the padded total setup envelope.
     pub first_direct_setup_field_len: Option<usize>,
     /// Number of recursive successors that consume an offloaded setup prefix.
     pub selected_offload_edges: usize,

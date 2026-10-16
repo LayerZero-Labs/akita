@@ -5,7 +5,7 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
     std::thread::Builder::new()
         .stack_size(512 * 1024 * 1024)
         .spawn(|| {
-            const NUM_VARS: usize = 16;
+            const NUM_VARS: usize = 20;
 
             let (scheme, verifier_setup, commitment, mut proof, opening_point, opening, _) =
                 make_verify_fixture(NUM_VARS);

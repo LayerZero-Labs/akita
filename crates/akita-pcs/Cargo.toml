@@ -66,9 +66,8 @@ profile-ci = [
   "profile-ci-fp32",
   "profile-ci-fp64",
   "profile-ci-fp128-base",
-  "profile-ci-multi-group-direct",
-  "profile-ci-multi-group-recursive",
-  "profile-ci-multi-group-recursive-w8r2",
+  "profile-ci-multi-group",
+  "profile-ci-multi-group-w8r2",
   "profile-ci-distributed",
 ]
 # Each CI matrix group enables one narrow profile feature so rustc only builds
@@ -79,9 +78,8 @@ profile-bench-selected = []
 profile-ci-fp32 = ["profile-bench-selected"]
 profile-ci-fp64 = ["profile-bench-selected"]
 profile-ci-fp128-base = ["profile-bench-selected"]
-profile-ci-multi-group-direct = ["profile-bench-selected"]
-profile-ci-multi-group-recursive = ["profile-bench-selected"]
-profile-ci-multi-group-recursive-w8r2 = ["profile-bench-selected"]
+profile-ci-multi-group = ["profile-bench-selected"]
+profile-ci-multi-group-w8r2 = ["profile-bench-selected"]
 profile-ci-distributed = ["profile-bench-selected"]
 # Compile the profile example with only the singleton adaptive fp128 one-hot
 # configuration. Schedule rows remain external artifacts.

@@ -12,6 +12,7 @@ to track current behavior; update the owning book chapter instead.
 
 | Spec | Final status | Book chapter | Archived |
 |------|--------------|--------------|----------|
+| `2026-Q4/setup-offloading-planner.md` | superseded | `book/src/how/setup-offloading.md` | 2026-Q4 |
 | `2026-Q3/eor-streamed-prover.md` | historical | `book/src/how/proving/extension-opening-reduction.md` | 2026-Q3 |
 | `2026-Q3/eor-sumcheck-prover-acceleration.md` | historical | `book/src/how/proving/extension-opening-reduction.md` | 2026-Q3 |
 | `2026-Q3/extension-field-opening-batching.md` | historical | `book/src/how/proving/extension-opening-reduction.md` | 2026-Q3 |

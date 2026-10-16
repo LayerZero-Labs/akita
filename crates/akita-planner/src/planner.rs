@@ -439,11 +439,9 @@ pub(crate) fn root_level_candidates_for_prepared_producers(
             }
             slice_candidates.push(candidate_params);
         }
-        for candidate_params in crate::schedule_params::prune_locally_unprofitable_slices(
-            policy,
-            &opening_batch,
-            slice_candidates,
-        )? {
+        for candidate_params in
+            crate::schedule_params::prune_locally_unprofitable_slices(slice_candidates)?
+        {
             let Some(output_witness_len) = root_batch_next_w_len(
                 field_bits,
                 policy.claim_ext_degree,
@@ -881,7 +879,7 @@ pub(crate) fn find_schedule_in_relation_order(
         diagnostics.record_setup_prefix_cache(hits, misses);
     }
     let suffix = suffix?;
-    let best = select_complete_candidate(policy, suffix.setup_candidates(), diagnostics)?;
+    let best = select_complete_candidate(suffix.setup_candidates(), diagnostics)?;
 
     let Some(best) = best.cloned() else {
         if key.precommitteds.is_empty() {
@@ -924,7 +922,7 @@ pub(crate) fn find_schedule_in_relation_order(
         best.first_direct_setup_field_len
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
-                    "setup-first schedule is missing its first direct setup size".into(),
+                    "selected schedule is missing its first direct setup size".into(),
                 )
             })?
             .get(),

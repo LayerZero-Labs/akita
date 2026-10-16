@@ -1,14 +1,11 @@
 use akita_error::AkitaError;
 
 use super::{candidate_schedule_descriptor_bytes, CandidateMetrics, ScheduleCandidate};
-use crate::{PlannerPolicy, SelectionPolicyId};
 
-/// Complete-schedule ordering: numeric policy coordinates, an optional legacy
-/// root output-witness tie-break, then the canonical descriptor.
+/// Complete-schedule ordering: numeric coordinates, then the canonical descriptor.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct CompleteScheduleScore {
     objective: CompleteObjectiveBound,
-    legacy_root_output_witness_len: Option<usize>,
     descriptor: Vec<u8>,
 }
 
@@ -16,55 +13,33 @@ pub(crate) struct CompleteScheduleScore {
 /// complete-schedule tie-breaks, so a bound may prune only when it is strictly
 /// worse than an already completed candidate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum CompleteObjectiveBound {
-    SetupFirst {
-        first_direct_setup_capacity: usize,
-        exact_score: u128,
-        proof_bytes: usize,
-        setup_field_elements: usize,
-    },
-    PaddedSetupEnvelopeFirst {
-        setup_envelope_capacity: usize,
-        first_direct_setup_capacity: usize,
-        exact_score: u128,
-        proof_bytes: usize,
-        first_direct_output_witness_len: usize,
-    },
+pub(crate) struct CompleteObjectiveBound {
+    pub(crate) setup_envelope_capacity: usize,
+    pub(crate) first_direct_setup_capacity: usize,
+    pub(crate) exact_score: u128,
+    pub(crate) proof_bytes: usize,
+    pub(crate) first_direct_output_witness_len: usize,
 }
 
 impl CompleteObjectiveBound {
     pub(crate) fn for_direct_edge(
-        policy: &PlannerPolicy,
         first_direct_setup_capacity: usize,
         first_direct_output_witness_len: usize,
         exact_score: u128,
         proof_bytes: usize,
         setup_field_elements: usize,
     ) -> Self {
-        match policy.selection_policy {
-            SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => Self::SetupFirst {
-                first_direct_setup_capacity,
-                exact_score,
-                proof_bytes,
-                setup_field_elements,
-            },
-            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
-                Self::PaddedSetupEnvelopeFirst {
-                    setup_envelope_capacity: akita_params::padded_setup_prefix_len(
-                        setup_field_elements,
-                    ),
-                    first_direct_setup_capacity,
-                    exact_score,
-                    proof_bytes,
-                    first_direct_output_witness_len,
-                }
-            }
+        Self {
+            setup_envelope_capacity: akita_params::padded_setup_prefix_len(setup_field_elements),
+            first_direct_setup_capacity,
+            exact_score,
+            proof_bytes,
+            first_direct_output_witness_len,
         }
     }
 
-    fn for_candidate(policy: &PlannerPolicy, metrics: CandidateMetrics) -> Self {
+    fn for_candidate(metrics: CandidateMetrics) -> Self {
         Self::for_direct_edge(
-            policy,
             metrics.first_direct_setup_capacity.field_elements(),
             metrics.first_direct_output_witness_len,
             metrics.cost.exact_score(),
@@ -74,47 +49,26 @@ impl CompleteObjectiveBound {
     }
 
     pub(crate) fn is_strictly_worse_than(self, incumbent: CandidateMetrics) -> bool {
-        match self {
-            Self::SetupFirst {
-                first_direct_setup_capacity,
-                exact_score,
-                proof_bytes,
-                setup_field_elements,
-            } => {
-                (
-                    first_direct_setup_capacity,
-                    exact_score,
-                    proof_bytes,
-                    setup_field_elements,
-                ) > (
-                    incumbent.first_direct_setup_capacity.field_elements(),
-                    incumbent.cost.exact_score(),
-                    incumbent.proof_bytes(),
-                    incumbent.setup_field_elements,
-                )
-            }
-            Self::PaddedSetupEnvelopeFirst {
-                setup_envelope_capacity,
-                first_direct_setup_capacity,
-                exact_score,
-                proof_bytes,
-                first_direct_output_witness_len,
-            } => {
-                (
-                    setup_envelope_capacity,
-                    first_direct_setup_capacity,
-                    exact_score,
-                    proof_bytes,
-                    first_direct_output_witness_len,
-                ) > (
-                    akita_params::padded_setup_prefix_len(incumbent.setup_field_elements),
-                    incumbent.first_direct_setup_capacity.field_elements(),
-                    incumbent.cost.exact_score(),
-                    incumbent.proof_bytes(),
-                    incumbent.first_direct_output_witness_len,
-                )
-            }
-        }
+        let Self {
+            setup_envelope_capacity,
+            first_direct_setup_capacity,
+            exact_score,
+            proof_bytes,
+            first_direct_output_witness_len,
+        } = self;
+        (
+            setup_envelope_capacity,
+            first_direct_setup_capacity,
+            exact_score,
+            proof_bytes,
+            first_direct_output_witness_len,
+        ) > (
+            akita_params::padded_setup_prefix_len(incumbent.setup_field_elements),
+            incumbent.first_direct_setup_capacity.field_elements(),
+            incumbent.cost.exact_score(),
+            incumbent.proof_bytes(),
+            incumbent.first_direct_output_witness_len,
+        )
     }
 
     /// Compare a direct suffix against a retained recursive-parent projection.
@@ -125,42 +79,26 @@ impl CompleteObjectiveBound {
         self,
         incumbent: CandidateMetrics,
     ) -> bool {
-        match self {
-            Self::SetupFirst {
-                first_direct_setup_capacity,
-                exact_score,
-                proof_bytes,
-                ..
-            } => {
-                (first_direct_setup_capacity, exact_score, proof_bytes)
-                    > (
-                        incumbent.first_direct_setup_capacity.field_elements(),
-                        incumbent.cost.exact_score(),
-                        incumbent.proof_bytes(),
-                    )
-            }
-            Self::PaddedSetupEnvelopeFirst {
-                setup_envelope_capacity,
+        let Self {
+            setup_envelope_capacity,
+            first_direct_setup_capacity,
+            exact_score,
+            proof_bytes,
+            first_direct_output_witness_len,
+        } = self;
+        setup_envelope_capacity
+            >= akita_params::padded_setup_prefix_len(incumbent.setup_field_elements)
+            && (
                 first_direct_setup_capacity,
                 exact_score,
                 proof_bytes,
                 first_direct_output_witness_len,
-            } => {
-                setup_envelope_capacity
-                    >= akita_params::padded_setup_prefix_len(incumbent.setup_field_elements)
-                    && (
-                        first_direct_setup_capacity,
-                        exact_score,
-                        proof_bytes,
-                        first_direct_output_witness_len,
-                    ) > (
-                        incumbent.first_direct_setup_capacity.field_elements(),
-                        incumbent.cost.exact_score(),
-                        incumbent.proof_bytes(),
-                        incumbent.first_direct_output_witness_len,
-                    )
-            }
-        }
+            ) > (
+                incumbent.first_direct_setup_capacity.field_elements(),
+                incumbent.cost.exact_score(),
+                incumbent.proof_bytes(),
+                incumbent.first_direct_output_witness_len,
+            )
     }
 
     /// Compare a direct suffix against a retained payload projection. Under
@@ -172,54 +110,35 @@ impl CompleteObjectiveBound {
         self,
         incumbent: CandidateMetrics,
     ) -> bool {
-        match self {
-            Self::SetupFirst {
-                exact_score,
-                proof_bytes,
-                ..
-            } => {
-                (exact_score, proof_bytes) > (incumbent.cost.exact_score(), incumbent.proof_bytes())
-            }
-            Self::PaddedSetupEnvelopeFirst {
-                setup_envelope_capacity,
-                exact_score,
-                proof_bytes,
-                ..
-            } => {
-                setup_envelope_capacity
-                    >= akita_params::padded_setup_prefix_len(incumbent.setup_field_elements)
-                    && (exact_score, proof_bytes)
-                        > (incumbent.cost.exact_score(), incumbent.proof_bytes())
-            }
-        }
+        let Self {
+            setup_envelope_capacity,
+            exact_score,
+            proof_bytes,
+            ..
+        } = self;
+        setup_envelope_capacity
+            >= akita_params::padded_setup_prefix_len(incumbent.setup_field_elements)
+            && (exact_score, proof_bytes) > (incumbent.cost.exact_score(), incumbent.proof_bytes())
     }
 
     pub(crate) fn setup_envelope_is_strictly_worse_than(self, incumbent: CandidateMetrics) -> bool {
-        match self {
-            Self::PaddedSetupEnvelopeFirst {
-                setup_envelope_capacity,
-                ..
-            } => {
-                setup_envelope_capacity
-                    > akita_params::padded_setup_prefix_len(incumbent.setup_field_elements)
-            }
-            Self::SetupFirst { .. } => false,
-        }
+        let Self {
+            setup_envelope_capacity,
+            ..
+        } = self;
+        setup_envelope_capacity
+            > akita_params::padded_setup_prefix_len(incumbent.setup_field_elements)
     }
 }
 
 pub(crate) fn complete_schedule_score(
-    policy: &PlannerPolicy,
     candidate: &ScheduleCandidate,
     diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
 ) -> Result<CompleteScheduleScore, AkitaError> {
-    let root_output_witness_len = candidate
-        .folds
-        .first()
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("complete schedule is missing its root fold".into())
-        })?
-        .output_witness_len;
+    // Reject incomplete schedules before deriving their descriptor and score.
+    candidate.folds.first().ok_or_else(|| {
+        AkitaError::InvalidSetup("complete schedule is missing its root fold".into())
+    })?;
     let descriptor = candidate_schedule_descriptor_bytes(
         None,
         &candidate.folds,
@@ -229,20 +148,16 @@ pub(crate) fn complete_schedule_score(
     let metrics = candidate.metrics();
     if candidate.first_direct_setup_field_len.is_none() {
         return Err(AkitaError::InvalidSetup(
-            "setup-first candidate is missing its first direct setup size".into(),
+            "candidate is missing its first direct setup size".into(),
         ));
     }
     Ok(CompleteScheduleScore {
-        objective: CompleteObjectiveBound::for_candidate(policy, metrics),
-        legacy_root_output_witness_len: (policy.selection_policy
-            != SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6)
-            .then_some(root_output_witness_len),
+        objective: CompleteObjectiveBound::for_candidate(metrics),
         descriptor,
     })
 }
 
 pub(crate) fn select_complete_candidate<'a>(
-    policy: &PlannerPolicy,
     candidates: impl IntoIterator<Item = &'a ScheduleCandidate>,
     diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
 ) -> Result<Option<&'a ScheduleCandidate>, AkitaError> {
@@ -251,7 +166,7 @@ pub(crate) fn select_complete_candidate<'a>(
         if !candidate.cost.fits_query_limit() {
             continue;
         }
-        let score = complete_schedule_score(policy, candidate, diagnostics)?;
+        let score = complete_schedule_score(candidate, diagnostics)?;
         if best
             .as_ref()
             .is_none_or(|(best_score, _)| score < *best_score)

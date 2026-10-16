@@ -7,9 +7,9 @@ use akita_config::{
 };
 use akita_params::{
     sis::num_digits_open, BlockGeometry, CommittedGroupBatchProfile, DecompositionParams,
-    FoldSchedule, GadgetDigits, OpenCommitMatrixParams, OuterCommitMatrixParams,
-    PolynomialGroupLayout, ScheduleLookupKey, ScheduleSisBound, ScheduleSisRole,
-    TerminalResponseShape,
+    FoldSchedule, GadgetDigits, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, PolynomialGroupLayout, ScheduleLookupKey, ScheduleSisBound,
+    ScheduleSisRole, TerminalResponseShape,
 };
 use akita_schedules::{planner_support::planned_next_witness_len, ResolvedScheduleRow};
 
@@ -18,7 +18,8 @@ fn differing_basis_schedule<Cfg: CommitmentConfig>(
     b_bound: u128,
 ) -> (CommittedGroupBatchProfile, FoldSchedule) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../artifacts/schedules")
+        .join("../..")
+        .join("artifacts/schedules")
         .join(format!("{}.aks", Cfg::schedule_family_name()));
     let bytes = std::fs::read(path).expect("checked-in schedule artifact");
     let catalog = TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(
@@ -41,8 +42,19 @@ fn differing_basis_schedule<Cfg: CommitmentConfig>(
     // Keep the scanner at base 8 while decomposing the honest B input at base 4.
     let own = root.own_group_mut();
     own.profile.group = PolynomialGroupLayout::singleton(num_vars);
-    let live = (1usize << num_vars) / own.profile.inner.matrix.ring_dimension();
-    let positions = own.profile.blocks.positions_per_block;
+    own.profile.outer_slice_count = akita_params::CommitmentSliceCount::ONE;
+    // Pin the rank-boundary geometry independently of the catalog optimum.
+    // Both domains keep the existing base-eight opening alphabet.
+    let (d_a, positions) = if Cfg::EXT_DEGREE == 1 {
+        (128, 64)
+    } else {
+        (512, 16)
+    };
+    let mut inner_key = own.profile.inner.matrix.sis_table_key().unwrap();
+    inner_key.ring_dimension = d_a as u32;
+    own.profile.inner.matrix =
+        InnerCommitMatrixParams::try_new_with_min_rank(inner_key, positions).unwrap();
+    let live = (1usize << num_vars) / d_a;
     own.profile.blocks = BlockGeometry::new(live, positions, live.div_ceil(positions));
     own.profile.outer.digits = GadgetDigits::new(
         2,
@@ -51,13 +63,20 @@ fn differing_basis_schedule<Cfg: CommitmentConfig>(
             ..policy.decomposition
         }),
     );
-    let width = own
-        .profile
-        .derive_slice_geometry()
-        .unwrap()
-        .physical_input_width();
     let mut key = own.profile.outer.matrix.sis_table_key();
     key.coeff_linf_bound = b_bound;
+    key.ring_dimension = if Cfg::EXT_DEGREE == 1 { 64 } else { 128 };
+    let width = akita_params::CommitmentSliceGeometry::try_new(
+        own.profile.outer_slice_count,
+        own.profile.blocks.live_blocks,
+        1,
+        own.profile.inner.matrix.output_rank(),
+        own.profile.outer.digits.num_digits,
+        d_a,
+        key.ring_dimension as usize,
+    )
+    .unwrap()
+    .physical_input_width();
     own.profile.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(key, width).unwrap();
 
     let d_width = akita_params::opening_d_segment_width(
@@ -86,10 +105,24 @@ fn differing_basis_schedule<Cfg: CommitmentConfig>(
 
     let terminal = &mut schedule.terminal;
     terminal.input_witness_len = schedule.root.output_witness_len;
-    let live = terminal.input_witness_len.div_ceil(terminal.d_a());
-    let positions = terminal.blocks.positions_per_block;
+    let terminal_d = if Cfg::EXT_DEGREE == 1 { 64 } else { 128 };
+    let old_key = terminal.inner.matrix.sis_table_key().unwrap();
+    let key = akita_params::sis::sis_table_key_for_linf_bound(
+        old_key.policy,
+        old_key.table_digest,
+        old_key.modulus_profile,
+        old_key.role,
+        terminal_d as u32,
+        old_key.coeff_linf_bound,
+    )
+    .unwrap();
+    let positions = if Cfg::EXT_DEGREE == 1 { 256 } else { 128 };
+    assert_eq!(terminal.inner.digits.num_digits, 1);
+    terminal.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(key, positions).unwrap();
+    terminal.fold_challenge_config = Cfg::ring_challenge_config(terminal_d).unwrap();
+    let live = terminal.input_witness_len.div_ceil(terminal_d);
     terminal.blocks = BlockGeometry::new(live, positions, live.div_ceil(positions));
-    let cap = terminal.response_shape.layout.groups[0].z_linf_cap.unwrap();
+    let cap = terminal.certified_response_linf_cap().unwrap();
     terminal.response_shape = TerminalResponseShape::derive(terminal, cap).unwrap();
 
     let profiles = CommittedGroupBatchProfile {

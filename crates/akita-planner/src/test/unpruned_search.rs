@@ -147,7 +147,7 @@ fn consider_complete_schedule(
     {
         return Ok(());
     }
-    let candidate_score = score(policy, &candidate)?;
+    let candidate_score = score(&candidate)?;
     if selected
         .as_ref()
         .is_none_or(|(best_score, _)| candidate_score < *best_score)

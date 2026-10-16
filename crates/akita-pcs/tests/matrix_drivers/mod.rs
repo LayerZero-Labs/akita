@@ -10,16 +10,13 @@
 
 use crate::common::proof_size::prove_matching_byte_model;
 use crate::common::*;
-use akita_config::{
-    recursive_commitment::RecursiveScheduleConfig, CommitmentConfig, RecursiveCommitmentConfig,
-};
+use akita_config::CommitmentConfig;
 use akita_cpu_backend::{CpuBackend, DensePoly, OneHotPoly};
 use akita_params::{BasisMode, PolynomialGroupLayout, ScheduleLookupKey};
-use akita_pcs::AkitaCommitmentScheme;
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 
 /// Single-group recursive roundtrip: one two-polynomial final group at `nv=32`, no
-/// user precommitted groups. Uses `RecursiveCommitmentConfig<BaseCfg>` so the proof
+/// user precommitted groups. Uses `BaseCfg` so the proof
 /// carries a stage-3 recursive setup-sumcheck, offloading the setup contribution.
 ///
 /// Covers schedule resolution, setup-prefix precomputation, prove, a serialization
@@ -28,21 +25,19 @@ use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 // Only called from the expensive recursive matrix cells, which are normally
 // filtered out of focused test runs.
 #[allow(dead_code)]
-pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(
+pub(super) fn prove_verify_offloaded_single_group_roundtrip<BaseCfg>(
     chunking: akita_params::ChunkedWitnessCfg,
     transcript_domain: &'static [u8],
 ) where
-    BaseCfg: CommitmentConfig<Field = F, ExtField = F> + RecursiveScheduleConfig,
+    BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
 {
-    type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
-
     const FINAL_NV: usize = 32;
     const FINAL_GROUP_SIZE: usize = 2;
 
     init_rayon_pool();
     run_on_large_stack(move || {
-        let scheme = load_workspace_scheme::<RecursiveCommitmentConfig<BaseCfg>>(chunking)
-            .expect("workspace schedule artifact");
+        let scheme =
+            load_workspace_scheme::<BaseCfg>(chunking).expect("workspace schedule artifact");
         let schedule_key =
             ScheduleLookupKey::single(PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE));
         let opening_layout = schedule_key.opening_layout().expect("opening layout");
@@ -87,7 +82,7 @@ pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(
             .map(|poly| onehot_opening_lagrange(poly, &point))
             .collect();
 
-        let prover_data = selected_prover_data::<RecursiveCommitmentConfig<BaseCfg>>(
+        let prover_data = selected_prover_data::<BaseCfg>(
             OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                 point.clone(),
                 openings.clone(),

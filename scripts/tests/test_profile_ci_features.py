@@ -13,7 +13,7 @@ class ProfileCiFeatureTests(unittest.TestCase):
     def test_recursive_profile_enables_no_schedule_features(self) -> None:
         self.assertEqual(
             schedule_features(
-                self.graph, "akita-pcs", "profile-ci-multi-group-recursive"
+                self.graph, "akita-pcs", "profile-ci-multi-group"
             ),
             set(),
         )
@@ -23,7 +23,7 @@ class ProfileCiFeatureTests(unittest.TestCase):
             schedule_features(
                 self.graph,
                 "akita-pcs",
-                "profile-ci-multi-group-recursive-w8r2",
+                "profile-ci-multi-group-w8r2",
             ),
             set(),
         )

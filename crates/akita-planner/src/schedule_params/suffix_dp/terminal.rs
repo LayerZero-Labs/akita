@@ -203,20 +203,17 @@ mod tests {
     #[test]
     fn terminal_route_guide_preserves_either_feasible_route() {
         use crate::schedule_params::PlannerOpeningCandidate;
-        use akita_config::{
-            policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
-        };
+        use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
         use akita_params::InnerCommitSecurityRoute;
 
-        type Recursive = RecursiveCommitmentConfig<OneHot>;
-        let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+        let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
         let source_moment = crate::response_model::SourceMomentEstimate::new(1_000_000);
         let request = RecursiveCandidateRequest {
             input_chunks: None,
             policy: &policy,
             payload_mode: akita_params::CommitmentPayloadMode::Compressed,
             opening: PlannerOpeningCandidate::evaluation_trace(
-                Recursive::ring_challenge_config(64).expect("challenge config"),
+                OneHot::ring_challenge_config(64).expect("challenge config"),
             ),
             dimensions: CommitmentRingDims::uniform(64),
             current_witness_len: 948_672,

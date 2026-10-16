@@ -1,8 +1,8 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow,
     degree_one_claim_point_to_base, make_profile_onehot_poly, onehot_lagrange_opening,
-    opening_from_poly, profile_setup_contribution_mode, proof_size_budgets, prover_claims,
-    random_claim_point, report_proof_size_against_planner, run_verifier_timings, verifier_claims,
+    opening_from_poly, proof_size_budgets, prover_claims, random_claim_point,
+    report_proof_size_against_planner, run_verifier_timings, verifier_claims,
 };
 use crate::parallel::ProfileThreadPools;
 use crate::report::{
@@ -74,13 +74,6 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
 {
     let pools = ProfileThreadPools::get();
     let openings = [opening];
-    let setup_contribution_mode = profile_setup_contribution_mode();
-    tracing::info!(
-        label,
-        ?setup_contribution_mode,
-        "profile setup-contribution mode"
-    );
-    eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
 
     let (commitments, proof) = {
         let t0 = Instant::now();
@@ -162,7 +155,6 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
                 &proof,
                 proof_size_budgets(plan, group_layout, scheme.schedules().policy()),
                 "planned",
-                setup_contribution_mode,
             );
         }
         emit_runtime_schedule_summary(
@@ -182,7 +174,6 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
                 &proof,
                 proof_size_budgets(schedule, group_layout, scheme.schedules().policy()),
                 "runtime schedule",
-                setup_contribution_mode,
             );
         }
         emit_runtime_schedule_summary(

@@ -106,13 +106,7 @@ pub(super) fn consider_child_suffixes<'a>(
         }) {
             continue;
         }
-        frontier.consider_pending(
-            edge.policy,
-            edge.diagnostics,
-            parent_cost,
-            candidate,
-            projections,
-        )?;
+        frontier.consider_pending(edge.diagnostics, parent_cost, candidate, projections)?;
     }
     Ok(())
 }
@@ -153,38 +147,19 @@ struct PayloadScore {
     setup_field_elements: usize,
 }
 
-fn setup_envelope_score(
-    selection_policy: crate::SelectionPolicyId,
-    setup_field_elements: usize,
-) -> usize {
-    if selection_policy
-        == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-    {
-        akita_params::padded_setup_prefix_len(setup_field_elements)
-    } else {
-        setup_field_elements
-    }
-}
-
-fn setup_score(
-    selection_policy: crate::SelectionPolicyId,
-    metrics: super::super::CandidateMetrics,
-) -> SetupScore {
+fn setup_score(metrics: super::super::CandidateMetrics) -> SetupScore {
     SetupScore {
         first_direct_setup_capacity: metrics.first_direct_setup_capacity,
         first_direct_output_witness_len: metrics.first_direct_output_witness_len,
         cost: metrics.cost,
-        setup_field_elements: setup_envelope_score(selection_policy, metrics.setup_field_elements),
+        setup_field_elements: akita_params::padded_setup_prefix_len(metrics.setup_field_elements),
     }
 }
 
-fn payload_score(
-    selection_policy: crate::SelectionPolicyId,
-    metrics: super::super::CandidateMetrics,
-) -> PayloadScore {
+fn payload_score(metrics: super::super::CandidateMetrics) -> PayloadScore {
     PayloadScore {
         cost: metrics.cost,
-        setup_field_elements: setup_envelope_score(selection_policy, metrics.setup_field_elements),
+        setup_field_elements: akita_params::padded_setup_prefix_len(metrics.setup_field_elements),
     }
 }
 
@@ -376,7 +351,6 @@ impl ProjectedFrontier {
 
     fn consider(
         &mut self,
-        policy: &PlannerPolicy,
         diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
         parent_cost: ParentObservableKey,
         candidate: ScheduleCandidate,
@@ -384,13 +358,8 @@ impl ProjectedFrontier {
     ) -> Result<(), AkitaError> {
         let admission = ParentAdmissionClass::for_candidate(&candidate);
         let metrics = candidate.metrics();
-        let retained_projections = self.retained_primary_projections(
-            policy,
-            &parent_cost,
-            metrics,
-            admission,
-            projections,
-        );
+        let retained_projections =
+            self.retained_primary_projections(&parent_cost, metrics, admission, projections);
         if retained_projections.is_empty() {
             return Ok(());
         }
@@ -412,12 +381,8 @@ impl ProjectedFrontier {
                 choices.projected_mut(projection),
                 projected.clone(),
                 |left, right| match projection {
-                    Projection::FirstDirectSetup => {
-                        setup_dominates_for_policy(policy.selection_policy, left, right)
-                    }
-                    Projection::Payload => {
-                        payload_dominates_for_policy(policy.selection_policy, left, right)
-                    }
+                    Projection::FirstDirectSetup => setup_dominates(left, right),
+                    Projection::Payload => payload_dominates(left, right),
                 },
             );
         }
@@ -426,7 +391,6 @@ impl ProjectedFrontier {
 
     fn retained_primary_projections(
         &self,
-        policy: &PlannerPolicy,
         parent_cost: &ParentObservableKey,
         metrics: super::super::CandidateMetrics,
         admission: ParentAdmissionClass,
@@ -437,10 +401,9 @@ impl ProjectedFrontier {
             Projection::FirstDirectSetup => !choices.is_some_and(|choices| {
                 choices.projected(projection).iter().any(|existing| {
                     setup_primary_strictly_dominates(
-                        policy.selection_policy,
-                        setup_score(policy.selection_policy, existing.schedule.metrics()),
+                        setup_score(existing.schedule.metrics()),
                         existing.admission,
-                        setup_score(policy.selection_policy, metrics),
+                        setup_score(metrics),
                         admission,
                     )
                 })
@@ -448,10 +411,9 @@ impl ProjectedFrontier {
             Projection::Payload => !choices.is_some_and(|choices| {
                 choices.projected(projection).iter().any(|existing| {
                     payload_primary_strictly_dominates(
-                        policy.selection_policy,
-                        payload_score(policy.selection_policy, existing.schedule.metrics()),
+                        payload_score(existing.schedule.metrics()),
                         existing.admission,
-                        payload_score(policy.selection_policy, metrics),
+                        payload_score(metrics),
                         admission,
                     )
                 })
@@ -474,12 +436,11 @@ impl ProjectedFrontier {
         projections: &[Projection],
     ) -> Result<(), AkitaError> {
         let parent_cost = first_parent_visible_cost(policy, &candidate)?;
-        self.consider(policy, diagnostics, parent_cost, candidate, projections)
+        self.consider(diagnostics, parent_cost, candidate, projections)
     }
 
     fn consider_pending(
         &mut self,
-        policy: &PlannerPolicy,
         diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
         parent_cost: &ParentObservableKey,
         pending: PendingScheduleCandidate,
@@ -488,7 +449,7 @@ impl ProjectedFrontier {
         let admission = ParentAdmissionClass::for_pending(&pending);
         let metrics = pending.metrics();
         let mut retained_projections =
-            self.retained_primary_projections(policy, parent_cost, metrics, admission, projections);
+            self.retained_primary_projections(parent_cost, metrics, admission, projections);
         if retained_projections.is_empty() {
             return Ok(());
         }
@@ -505,20 +466,18 @@ impl ProjectedFrontier {
                     .iter()
                     .any(|existing| match projection {
                         Projection::FirstDirectSetup => setup_projection_dominates(
-                            policy.selection_policy,
-                            projected_setup_order(policy.selection_policy, existing),
+                            projected_setup_order(existing),
                             ProjectionOrder {
-                                score: setup_score(policy.selection_policy, metrics),
+                                score: setup_score(metrics),
                                 descriptor: descriptor.as_ref(),
                                 context: &descriptor_context,
                                 admission,
                             },
                         ),
                         Projection::Payload => payload_projection_dominates(
-                            policy.selection_policy,
-                            projected_payload_order(policy.selection_policy, existing),
+                            projected_payload_order(existing),
                             ProjectionOrder {
-                                score: payload_score(policy.selection_policy, metrics),
+                                score: payload_score(metrics),
                                 descriptor: descriptor.as_ref(),
                                 context: &descriptor_context,
                                 admission,
@@ -545,14 +504,12 @@ impl ProjectedFrontier {
             let frontier = choices.projected_mut(projection);
             frontier.retain(|existing| match projection {
                 Projection::FirstDirectSetup => !setup_projection_dominates(
-                    policy.selection_policy,
-                    projected_setup_order(policy.selection_policy, &projected),
-                    projected_setup_order(policy.selection_policy, existing),
+                    projected_setup_order(&projected),
+                    projected_setup_order(existing),
                 ),
                 Projection::Payload => !payload_projection_dominates(
-                    policy.selection_policy,
-                    projected_payload_order(policy.selection_policy, &projected),
-                    projected_payload_order(policy.selection_policy, existing),
+                    projected_payload_order(&projected),
+                    projected_payload_order(existing),
                 ),
             });
             frontier.push(projected.clone());
@@ -596,24 +553,13 @@ fn projection_bound_is_dominated(
     })
 }
 
-fn setup_dominates_for_policy(
-    selection_policy: crate::SelectionPolicyId,
-    left: &ProjectedCandidate,
-    right: &ProjectedCandidate,
-) -> bool {
-    setup_projection_dominates(
-        selection_policy,
-        projected_setup_order(selection_policy, left),
-        projected_setup_order(selection_policy, right),
-    )
+fn setup_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> bool {
+    setup_projection_dominates(projected_setup_order(left), projected_setup_order(right))
 }
 
-fn projected_setup_order(
-    selection_policy: crate::SelectionPolicyId,
-    candidate: &ProjectedCandidate,
-) -> ProjectionOrder<'_, SetupScore> {
+fn projected_setup_order(candidate: &ProjectedCandidate) -> ProjectionOrder<'_, SetupScore> {
     ProjectionOrder {
-        score: setup_score(selection_policy, candidate.schedule.metrics()),
+        score: setup_score(candidate.schedule.metrics()),
         descriptor: candidate.descriptor.as_ref(),
         context: &candidate.descriptor_context,
         admission: candidate.admission,
@@ -621,7 +567,6 @@ fn projected_setup_order(
 }
 
 fn setup_primary_strictly_dominates(
-    selection_policy: crate::SelectionPolicyId,
     left_score: SetupScore,
     left_admission: ParentAdmissionClass,
     right_score: SetupScore,
@@ -630,22 +575,13 @@ fn setup_primary_strictly_dominates(
     if !left_admission.admits_every_parent_of(right_admission) {
         return false;
     }
-    if matches!(
-        selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-    ) {
-        return left_score.setup_field_elements <= right_score.setup_field_elements
-            && (left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
-                || (left_score.first_direct_setup_capacity
-                    == right_score.first_direct_setup_capacity
-                    && (left_score.cost.strictly_better(right_score.cost)
-                        || (left_score.cost.never_worse(right_score.cost)
-                            && left_score.first_direct_output_witness_len
-                                < right_score.first_direct_output_witness_len))));
-    }
-    left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
-        || (left_score.first_direct_setup_capacity == right_score.first_direct_setup_capacity
-            && left_score.cost.strictly_better(right_score.cost))
+    left_score.setup_field_elements <= right_score.setup_field_elements
+        && (left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
+            || (left_score.first_direct_setup_capacity == right_score.first_direct_setup_capacity
+                && (left_score.cost.strictly_better(right_score.cost)
+                    || (left_score.cost.never_worse(right_score.cost)
+                        && left_score.first_direct_output_witness_len
+                            < right_score.first_direct_output_witness_len))))
 }
 
 #[derive(Clone, Copy)]
@@ -657,7 +593,6 @@ struct ProjectionOrder<'a, Score> {
 }
 
 fn setup_projection_dominates(
-    selection_policy: crate::SelectionPolicyId,
     left: ProjectionOrder<'_, SetupScore>,
     right: ProjectionOrder<'_, SetupScore>,
 ) -> bool {
@@ -670,47 +605,26 @@ fn setup_projection_dominates(
             == right.score.first_direct_output_witness_len
         && left.context == right.context
         && left.descriptor <= right.descriptor;
-    let equal_later_coordinates_are_canonical =
-        cost_never_worse && left.context == right.context && left.descriptor <= right.descriptor;
-    if matches!(
-        selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-    ) {
-        return left.score.setup_field_elements <= right.score.setup_field_elements
-            && (left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
-                || (left.score.first_direct_setup_capacity
-                    == right.score.first_direct_setup_capacity
-                    && (left.score.cost.strictly_better(right.score.cost)
-                        || (cost_never_worse
-                            && left.score.first_direct_output_witness_len
-                                < right.score.first_direct_output_witness_len)
-                        || equal_output_is_canonical)));
-    }
-    left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
-        || (left.score.first_direct_setup_capacity == right.score.first_direct_setup_capacity
-            && (left.score.cost.strictly_better(right.score.cost)
-                || (equal_later_coordinates_are_canonical
-                    && left.score.setup_field_elements <= right.score.setup_field_elements)))
+    left.score.setup_field_elements <= right.score.setup_field_elements
+        && (left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
+            || (left.score.first_direct_setup_capacity == right.score.first_direct_setup_capacity
+                && (left.score.cost.strictly_better(right.score.cost)
+                    || (cost_never_worse
+                        && left.score.first_direct_output_witness_len
+                            < right.score.first_direct_output_witness_len)
+                    || equal_output_is_canonical)))
 }
 
-fn payload_dominates_for_policy(
-    selection_policy: crate::SelectionPolicyId,
-    left: &ProjectedCandidate,
-    right: &ProjectedCandidate,
-) -> bool {
+fn payload_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> bool {
     payload_projection_dominates(
-        selection_policy,
-        projected_payload_order(selection_policy, left),
-        projected_payload_order(selection_policy, right),
+        projected_payload_order(left),
+        projected_payload_order(right),
     )
 }
 
-fn projected_payload_order(
-    selection_policy: crate::SelectionPolicyId,
-    candidate: &ProjectedCandidate,
-) -> ProjectionOrder<'_, PayloadScore> {
+fn projected_payload_order(candidate: &ProjectedCandidate) -> ProjectionOrder<'_, PayloadScore> {
     ProjectionOrder {
-        score: payload_score(selection_policy, candidate.schedule.metrics()),
+        score: payload_score(candidate.schedule.metrics()),
         descriptor: candidate.descriptor.as_ref(),
         context: &candidate.descriptor_context,
         admission: candidate.admission,
@@ -718,7 +632,6 @@ fn projected_payload_order(
 }
 
 fn payload_primary_strictly_dominates(
-    selection_policy: crate::SelectionPolicyId,
     left_score: PayloadScore,
     left_admission: ParentAdmissionClass,
     right_score: PayloadScore,
@@ -726,20 +639,15 @@ fn payload_primary_strictly_dominates(
 ) -> bool {
     left_admission.admits_every_parent_of(right_admission)
         && left_score.cost.strictly_better(right_score.cost)
-        && (selection_policy
-            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-            || left_score.setup_field_elements <= right_score.setup_field_elements)
+        && left_score.setup_field_elements <= right_score.setup_field_elements
 }
 
 fn payload_projection_dominates(
-    selection_policy: crate::SelectionPolicyId,
     left: ProjectionOrder<'_, PayloadScore>,
     right: ProjectionOrder<'_, PayloadScore>,
 ) -> bool {
     left.admission.admits_every_parent_of(right.admission)
-        && (selection_policy
-            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-            || left.score.setup_field_elements <= right.score.setup_field_elements)
+        && left.score.setup_field_elements <= right.score.setup_field_elements
         && (left.score.cost.strictly_better(right.score.cost)
             || (left.score.cost.never_worse(right.score.cost)
                 && left.score.setup_field_elements <= right.score.setup_field_elements

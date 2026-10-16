@@ -28,6 +28,10 @@ fi
 # Removed identifiers. Do not list Q16/Fp16 here: live specs may discuss retired
 # small-field profiles by name (see remove-fp16).
 dead_patterns=(
+  'RecursiveCommitmentConfig'
+  'RecursiveScheduleConfig'
+  'recursive_setup_planning'
+  'MinFirstDirectSetupThenExactProofAndWorkV5'
   'CommitmentExecutionSchedule'
   'CommitmentRoundStep'
   'InnerOuterRouteKind'
@@ -165,7 +169,6 @@ live_specs=(
   specs/role-native-projected-digit-layout.md
   specs/runtime-ring-cutover.md
   specs/selective-l2-fold-security-sizing.md
-  specs/setup-offloading-planner.md
   specs/sis-quantum128-scalar-n-table.md
   specs/structured-e-term.md
   specs/subring-coefficient-packing.md

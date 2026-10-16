@@ -4,10 +4,10 @@
 |---------------|--------------------------------------------|
 | Author(s)     | Amirhossein Khajehpour, Quang Dao          |
 | Created       | 2026-07-10                                 |
-| Status        | implemented                                |
+| Status        | superseded                                |
 | PR            | #301; revised by #318 and #428             |
 | Supersedes    | Fixed two-level rollout in this document   |
-| Superseded-by | Flat setup/capacity portions superseded by `flat-public-matrix-and-exact-ntt-cache.md`; recursive selection remains the current policy |
+| Superseded-by | `book/src/how/setup-offloading.md` and `book/src/how/configuration.md` |
 | Book-chapter  | book/src/how/setup-offloading.md           |
 
 > **Commit-API update (2026-08-10).** The public commitment flow is one

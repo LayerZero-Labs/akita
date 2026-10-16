@@ -389,7 +389,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
 
     let mut policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     // A singleton adaptive domain keeps the split frontier needed to expose
-    // this query tradeoff while using the production setup-first objective.
+    // this query tradeoff while using the production padded-envelope objective.
     policy.ring_dimension_schedule = crate::RingDimensionSchedule {
         num_search_levels: 2,
         suffix_dimensions: &[256],
@@ -397,7 +397,6 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
         potential_b_dimensions: &[256],
         potential_d_dimensions: &[256],
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let key =
         akita_params::ScheduleLookupKey::single(akita_params::PolynomialGroupLayout::singleton(14));

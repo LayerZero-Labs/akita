@@ -159,12 +159,9 @@ fn ring_dimension_domain_is_canonical_and_rejects_invalid_carriers() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
-    use akita_config::{policy_of, proof_optimized::fp32::OneHot};
+fn setup_envelope_slice_pruning_uses_padded_total_setup() {
     use akita_params::{CommitmentSliceCount, SisModulusProfileId};
 
-    let mut policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
     let params_for = |outer_slice_count| {
         let mut params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,
@@ -178,7 +175,6 @@ fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
         params.own_group_mut().profile.outer_slice_count = outer_slice_count;
         params.with_decomp(1, 64, 2, 2, 2).expect("slice candidate")
     };
-    let opening_layout = OpeningClaimsLayout::new(6, 1).expect("opening layout");
     let candidates = [
         CommitmentSliceCount::FOUR,
         CommitmentSliceCount::ONE,
@@ -188,17 +184,17 @@ fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
     .into_iter()
     .collect();
 
-    let selected =
-        prune_locally_unprofitable_slices(&policy, &opening_layout, candidates).expect("pruning");
-    assert_eq!(selected.len(), 1);
+    let selected = prune_locally_unprofitable_slices(candidates).expect("pruning");
+    assert_eq!(selected.len(), 2);
     assert_eq!(selected[0].outer_slice_count(), CommitmentSliceCount::FOUR);
+    assert_eq!(selected[1].outer_slice_count(), CommitmentSliceCount::TWO);
     let selected_capacity = padded_setup_prefix_len(
-        active_setup_field_len(&selected[0], &opening_layout).expect("selected setup prefix"),
+        level_setup_field_elements(&selected[0]).expect("selected setup envelope"),
     );
     for other in [CommitmentSliceCount::ONE, CommitmentSliceCount::TWO] {
         let other_params = params_for(other);
         let other_capacity = padded_setup_prefix_len(
-            active_setup_field_len(&other_params, &opening_layout).expect("other setup prefix"),
+            level_setup_field_elements(&other_params).expect("other setup envelope"),
         );
         assert!(selected_capacity <= other_capacity);
     }

@@ -158,38 +158,28 @@ fn every_grouped_artifact_precommit_has_a_shipped_scalar_producer() {
         }
     }
 
-    for (recursive_family, base_family) in [
-        ("fp128_onehot_recursive", "fp128_onehot"),
-        (
-            "fp128_onehot_recursive_multi_chunk_w8r2",
-            "fp128_onehot_multi_chunk",
-        ),
-        (
-            "fp128_onehot_recursive_multi_chunk_w2r3",
-            "fp128_onehot_multi_chunk_w2r3",
-        ),
-        (
-            "fp128_onehot_recursive_multi_chunk_w4r3",
-            "fp128_onehot_multi_chunk_w4r3",
-        ),
-        (
-            "fp128_onehot_recursive_multi_chunk_w8r3",
-            "fp128_onehot_multi_chunk_w8r3",
-        ),
+    // Chunked grouped workloads use their own scalar producer. The unchunked
+    // one-hot family also includes heterogeneous dense/bounded producers;
+    // those are covered by the exact cross-family check above.
+    for family_name in [
+        "fp128_onehot_multi_chunk",
+        "fp128_onehot_multi_chunk_w2r3",
+        "fp128_onehot_multi_chunk_w4r3",
+        "fp128_onehot_multi_chunk_w8r3",
     ] {
-        let recursive = catalogs
-            .get(recursive_family)
-            .unwrap_or_else(|| panic!("missing recursive artifact {recursive_family}"));
+        let catalog = catalogs
+            .get(family_name)
+            .unwrap_or_else(|| panic!("missing artifact {family_name}"));
         let base_producers = scalar_producers
             .iter()
-            .filter(|(family, _)| *family == base_family)
+            .filter(|(family, _)| *family == family_name)
             .map(|(_, producer)| producer)
             .collect::<Vec<_>>();
-        for row in recursive.rows() {
+        for row in catalog.rows() {
             for precommitted in &row.profiles().precommitteds {
                 assert!(
                     base_producers.contains(&precommitted),
-                    "recursive artifact {recursive_family} precommit is not produced by base family {base_family}: {:?}",
+                    "artifact {family_name} precommit is not produced by its scalar catalog: {:?}",
                     precommitted.group,
                 );
             }

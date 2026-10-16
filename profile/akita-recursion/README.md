@@ -37,9 +37,9 @@ cargo build --release
 
 # 2. Generate one exact CI case (artifact prints its identity and size).
 #    REQUIRED before step 3 because `host` reads this file from disk.
-AKITA_RECURSION_BLOB=target/onehot_fp128_nv36_recursive.bin \
+AKITA_RECURSION_BLOB=target/onehot_fp128_nv36.bin \
     ./target/release/akita-recursion-artifact \
-    --case onehot_fp128:36:1:recursive
+    --case onehot_fp128:36:1
 
 # 3. Compile the guest to RISC-V, emulate it, and report cycle markers.
 #    Start with trace-only (no Jolt prover) when measuring the recursive
@@ -51,20 +51,20 @@ ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
     AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
     --trace-only \
     --trace-output /dev/null \
-    --input target/onehot_fp128_nv36_recursive.bin
+    --input target/onehot_fp128_nv36.bin
 ```
 
 The reusable scalar OneHot cases are the exact cases from the CI profile
 catalog:
 
-| Case | Guest field | Setup mode | Root envelope |
-| --- | --- | --- | --- |
-| `onehot_fp32:30:1` | fp32 with degree four extension claims | direct | D2048 |
-| `onehot_fp64:30:1` | fp64 with degree two extension claims | direct | D512 |
-| `onehot_fp128:36:1:direct` | fp128 | direct | D512 |
-| `onehot_fp128:36:1:recursive` | fp128 | recursive | D512 |
+| Case | Guest field | Root envelope |
+| --- | --- | --- |
+| `onehot_fp32:30:1` | fp32 with degree four extension claims | catalog selected |
+| `onehot_fp64:30:1` | fp64 with degree two extension claims | catalog selected |
+| `onehot_fp128:36:1` | fp128 | catalog selected |
 
-The blob stores this identity, and the host dispatches to a separate Jolt
+All cases use the same planner policy, which selects zero, one, or two setup
+offloads. There is no setup-mode argument. The blob stores this identity, and the host dispatches to a separate Jolt
 entrypoint for each verifier monomorphization. A blob cannot be replayed by a
 different case entrypoint. Omitting `--case` retains the older grouped fp128
 nv32 recursive example.

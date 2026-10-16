@@ -250,7 +250,7 @@ fn adapted_schedule_plans_many_interchangeable_producers() {
 #[test]
 fn adapted_schedule_rejects_non_grouped_or_mismatched_requests() {
     let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
-    let main_group = PolynomialGroupLayout::singleton(14);
+    let main_group = PolynomialGroupLayout::singleton(24);
     let main_row = scalar_row(main_group).expect("scalar main row");
 
     let scalar_request = crate::emit::GroupedGenerationRequest::new(main_group, Vec::new());
@@ -283,7 +283,7 @@ fn adapted_schedule_rejects_non_grouped_or_mismatched_requests() {
 #[test]
 fn adapted_schedule_forces_the_frozen_split_after_grouped_growth() {
     let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
-    let main_group = PolynomialGroupLayout::singleton(14);
+    let main_group = PolynomialGroupLayout::singleton(24);
     let main_row = scalar_row(main_group).expect("scalar main row");
     let pre_profile = scalar_row(PolynomialGroupLayout::singleton(32))
         .expect("large scalar precommit row")
@@ -295,10 +295,11 @@ fn adapted_schedule_forces_the_frozen_split_after_grouped_growth() {
     };
     let request = grouped_request::<Dense>(main_group, &key.precommitteds);
 
-    let adapted = find_adapted_schedule(
+    let adapted = find_adapted_schedule_for_key(
         &main_row,
-        &request,
+        &key,
         Dense::committed_source_contract().unwrap(),
+        &request.source_contracts(),
         &policy,
         Dense::ring_challenge_config,
     )
@@ -407,13 +408,10 @@ fn adapted_schedule_rebuilds_a_checked_in_onehot_group_shape() {
 
 #[test]
 fn adapted_schedule_preserves_recursive_setup_offload_topology() {
-    type RecursiveOneHot = akita_config::RecursiveCommitmentConfig<OneHot>;
-
-    let recursive_catalog =
-        akita_config::test_support::workspace_schedule_catalog::<RecursiveOneHot>(
-            akita_params::ChunkedWitnessCfg::default_non_chunked(),
-        )
-        .expect("recursive one-hot catalog");
+    let recursive_catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("recursive one-hot catalog");
     let main_group = PolynomialGroupLayout::singleton(36);
     let main_row = recursive_catalog
         .resolve_key(&ScheduleLookupKey::single(main_group))
@@ -438,15 +436,14 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
         precommitteds: vec![pre_profile],
     };
     let request = grouped_request::<OneHot>(main_group, &key.precommitteds);
-    let policy =
-        policy_of::<RecursiveOneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
 
     let adapted = find_adapted_schedule(
         main_row,
         &request,
-        RecursiveOneHot::committed_source_contract().unwrap(),
+        OneHot::committed_source_contract().unwrap(),
         &policy,
-        RecursiveOneHot::ring_challenge_config,
+        OneHot::ring_challenge_config,
     )
     .expect("guided recursive adaptation");
     assert_frozen_skeleton(main_row.schedule(), &adapted.schedule);

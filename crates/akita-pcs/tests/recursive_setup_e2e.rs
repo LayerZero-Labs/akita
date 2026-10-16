@@ -1,7 +1,7 @@
 //! End-to-end coverage for the generated recursive setup-offload profile.
 //!
 //! This test intentionally uses the profile emitted in
-//! `fp128_onehot_recursive`: two precommitted singleton groups at `nv=16`
+//! `fp128_onehot`: two precommitted singleton groups at `nv=16`
 //! and a two-polynomial final group at `nv=32`. That generated schedule carries
 //! setup-prefix metadata, so a successful recursive proof exercises the
 //! offloaded setup-contribution path rather than the inline direct setup scan.
@@ -21,7 +21,7 @@
 
 mod common;
 
-use akita_config::{RecursiveCommitmentConfig, SetupRequirements};
+use akita_config::SetupRequirements;
 use akita_cpu_backend::CpuBackend;
 use common::*;
 
@@ -43,13 +43,10 @@ fn generated_recursive_onehot_profile_proves_with_setup_offload() {
 #[test]
 #[ignore = "production-sized profile E2E; run explicitly with --release"]
 fn combined_recursive_setup_proves_both_onehot_families() {
-    type OneHotRec = RecursiveCommitmentConfig<fp128::OneHot>;
-    type MultiChunkRec = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
-
     init_rayon_pool();
     run_on_large_stack(|| {
-        let onehot = SetupRequirements::from_catalog::<OneHotRec>(
-            load_workspace_scheme::<OneHotRec>(
+        let onehot = SetupRequirements::from_catalog::<fp128::OneHot>(
+            load_workspace_scheme::<fp128::OneHot>(
                 akita_params::ChunkedWitnessCfg::default_non_chunked(),
             )
             .expect("recursive one-hot catalog")
@@ -58,10 +55,12 @@ fn combined_recursive_setup_proves_both_onehot_families() {
             RECURSIVE_ROUND_TRIP_POLYS,
         )
         .expect("recursive one-hot requirements");
-        let multichunk = SetupRequirements::from_catalog::<MultiChunkRec>(
-            load_workspace_scheme::<MultiChunkRec>(akita_params::MultiChunkProfileId::W8R2.cfg())
-                .expect("recursive multi-chunk catalog")
-                .schedules(),
+        let multichunk = SetupRequirements::from_catalog::<fp128::OneHotMultiChunk>(
+            load_workspace_scheme::<fp128::OneHotMultiChunk>(
+                akita_params::MultiChunkProfileId::W8R2.cfg(),
+            )
+            .expect("recursive multi-chunk catalog")
+            .schedules(),
             RECURSIVE_ROUND_TRIP_NV,
             RECURSIVE_ROUND_TRIP_POLYS,
         )

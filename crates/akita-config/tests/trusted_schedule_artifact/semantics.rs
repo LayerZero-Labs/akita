@@ -1,7 +1,5 @@
 use super::support::{checked_in_artifact_bytes, checked_in_catalog};
-use akita_config::{
-    proof_optimized::fp128, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog,
-};
+use akita_config::{proof_optimized::fp128, CommitmentConfig, TrustedScheduleCatalog};
 
 /// Edit a checked-in artifact structurally. Admission audits rows before its
 /// canonical-bytes check, so the edited artifact reaches the audit. The edited
@@ -76,7 +74,7 @@ fn unsupported_terminal_inner_log_basis_is_rejected_not_panicking() {
 
 #[test]
 fn unsupported_fold_group_log_basis_is_rejected_not_panicking() {
-    type Cfg = RecursiveCommitmentConfig<akita_config::proof_optimized::fp32::Dense>;
+    type Cfg = akita_config::proof_optimized::fp32::Dense;
     const GROUP: &str = "recursive fold 0 final group";
     for log_basis in [0, 17, 128] {
         let edited = format!("log_basis {log_basis} ");
@@ -116,7 +114,7 @@ fn out_of_range_digit_depths_are_rejected_before_digit_formulas() {
     });
     assert_digit_range_rejection::<fp128::Dense>(&terminal_fold, "terminal fold", "fold", &edited);
 
-    type Cfg = RecursiveCommitmentConfig<akita_config::proof_optimized::fp32::Dense>;
+    type Cfg = akita_config::proof_optimized::fp32::Dense;
     for (key, role) in [("num_digits_open", "opening"), ("num_digits_fold", "fold")] {
         let bytes = edited_artifact::<Cfg>(|value| {
             first_recursive_group(value)["opening"][key] = u64::MAX.into();

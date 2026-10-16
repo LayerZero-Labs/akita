@@ -14,13 +14,13 @@ use akita_params::{terminal_response_planner_bytes, ScheduleLookupKey};
 use crate::PlannerPolicy;
 
 use super::{
-    derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
-    dimension_candidates, level_setup_field_elements, suffix_opening_layout,
-    terminal_setup_field_elements, CandidateFoldStep, CandidateInnerRoute, CandidateLayoutGuide,
-    CandidateTerminalResponse, CompleteObjectiveBound, FoldCandidatePolicy, ProofCost,
-    RecursiveCandidateRequest, RecursiveFoldWork, RelationCandidateTopology, RelationModeFilter,
-    RelationSearchDomain, RelationTraversalOrder, RingRelationPhase, ScheduleCandidate,
-    SetupPrefixCapacity, SetupPrefixLayoutGuide, SetupPrefixSearchCache, SplitBoundPolicy,
+    derive_fold_candidates, derive_terminal_candidates, dimension_candidates,
+    level_setup_field_elements, suffix_opening_layout, terminal_setup_field_elements,
+    CandidateFoldStep, CandidateInnerRoute, CandidateLayoutGuide, CandidateTerminalResponse,
+    CompleteObjectiveBound, FoldCandidatePolicy, ProofCost, RecursiveCandidateRequest,
+    RecursiveFoldWork, RelationCandidateTopology, RelationModeFilter, RelationSearchDomain,
+    RelationTraversalOrder, RingRelationPhase, ScheduleCandidate, SetupPrefixCapacity,
+    SetupPrefixLayoutGuide, SetupPrefixSearchCache, SplitBoundPolicy,
 };
 use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
@@ -589,7 +589,6 @@ fn direct_edge_lower_bound(
     .encoded_len()?;
     let lower_bound_cost = ProofCost::new(proof_bytes, 0, 0, output_witness_len as u128)?;
     Ok(CompleteObjectiveBound::for_direct_edge(
-        policy,
         SetupPrefixCapacity::for_natural_len(natural_setup_field_len).field_elements(),
         output_witness_len,
         lower_bound_cost.exact_score(),
@@ -804,7 +803,7 @@ fn price_level_candidate_with_children(
         require_child_fold,
     } = candidate;
     // Only a prefix-consuming state is read through the setup projection by
-    // an offloaded parent. The top-level setup-first objective also reads the
+    // an offloaded parent. The top-level padded-envelope objective also reads the
     // root setup projection. Ordinary direct suffixes are consumed solely
     // through the payload projection, so retaining a parallel setup winner
     // there duplicates frontier work and memo ownership with no observer.

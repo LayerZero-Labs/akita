@@ -34,7 +34,7 @@ performance.
 
 ### Schedule families
 
-Choosing `fp128::DenseBounded`, `RecursiveCommitmentConfig<_>`, or a multi-chunk
+Choosing `fp128::DenseBounded` or a multi-chunk
 preset does not change the feature graph. Load the matching `.aks` artifact from
 application-owned storage and pass its bytes to
 `AkitaCommitmentScheme::from_schedule_artifact`. The config validates the family

@@ -10,20 +10,22 @@ full downloadable artifact.
 
 ## Current statement matrix
 
-| Case | Polynomial groups | Setup path |
-| --- | --- | --- |
-| `dense_fp32` | 1 at nv30 | Direct |
-| `onehot_fp32` | 1 at nv34 | Direct |
-| `dense_fp64` | 1 at nv29 | Direct |
-| `onehot_fp64` | 1 at nv35 | Direct |
-| `dense_fp128` | 1 at nv28 | Direct |
-| `onehot_fp128` | 1 at nv36 | Direct and recursive |
-| `onehot_fp128_multi_group` | 1 at nv16 + 1 at nv16 + 2 at nv34 | Direct |
-| `onehot_fp128_multi_group_recursive` | 1 at nv16 + 1 at nv16 + 2 at nv34 | Recursive |
-| `onehot_fp128_multi_group_recursive_multi_chunk_w8r2` | 1 at nv16 + 1 at nv16 + 2 at nv32 | Recursive |
-| `onehot_fp128_multi_chunk_w2r2` | 1 at nv32 | Direct |
-| `onehot_fp128_multi_chunk_w4r2` | 1 at nv32 | Direct |
-| `onehot_fp128_multi_chunk_w8r2` | 1 at nv32 | Direct |
+All cases use the same planner-selected setup policy. The report describes the
+chosen schedule; setup mode is not a benchmark input.
+
+| Case | Polynomial groups |
+| --- | --- |
+| `dense_fp32` | 1 at nv30 |
+| `onehot_fp32` | 1 at nv34 |
+| `dense_fp64` | 1 at nv29 |
+| `onehot_fp64` | 1 at nv35 |
+| `dense_fp128` | 1 at nv28 |
+| `onehot_fp128` | 1 at nv36 |
+| `onehot_fp128_multi_group` | 1 at nv16 + 1 at nv16 + 2 at nv34 |
+| `onehot_fp128_multi_group_multi_chunk_w8r2` | 1 at nv16 + 1 at nv16 + 2 at nv32 |
+| `onehot_fp128_multi_chunk_w2r2` | 1 at nv32 |
+| `onehot_fp128_multi_chunk_w4r2` | 1 at nv32 |
+| `onehot_fp128_multi_chunk_w8r2` | 1 at nv32 |
 
 The workflow splits these cases into narrow feature groups so each runner
 compiles only the profile modes it measures. Each runner loads the matching
@@ -41,12 +43,12 @@ representation changes prover work, not the meaning of the opening claim.
 The multi group cases contain four polynomials in three ordered groups. Two
 earlier groups each contain one 16 variable polynomial and use separate points.
 The final group contains two polynomials that share one point. It uses 34
-variables in the direct and standard recursive cases. The W8R2 case uses 32
+variables in the standard case. The W8R2 case uses 32
 variables.
 
-Direct and recursive rows prove the same opening statement. The recursive setup
-row carries the large public setup contribution through a Stage 3 sumcheck.
-Direct mode evaluates that contribution during Stage 2.
+The selected schedule may carry a large public setup contribution through a
+Stage 3 sumcheck or evaluate it directly. Both authenticate the same opening
+statement. The offload count is a planner result rather than a profile setting.
 
 W2R2, W4R2, and W8R2 divide the witness relation into 2, 4, or 8 chunks during
 the first folds. The generated schedule may choose different A, B, and D ring

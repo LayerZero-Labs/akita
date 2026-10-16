@@ -18,7 +18,7 @@ pub(super) fn derive_fold_candidate_frontier(
     let mut candidates = Vec::new();
     let mut best_modeled_with_score = std::collections::BTreeMap::<
         akita_params::RingRelationMode,
-        (LayoutCandidateScore, usize, CommittedGroupParams, usize),
+        (LayoutCandidateScore, usize),
     >::new();
     let mut all_modeled = Vec::<BestLinfCandidate>::new();
     let best_modeled_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
@@ -67,18 +67,17 @@ pub(super) fn derive_fold_candidate_frontier(
                 }
                 if source_index == 0
                     && next_witness_len < request.current_witness_len
-                    && best_modeled_with_score.get(&mode).is_none_or(
-                        |(best_score, best_r, _, _)| {
+                    && best_modeled_with_score
+                        .get(&mode)
+                        .is_none_or(|(best_score, best_r)| {
                             recursive_candidate_order_key(score, r)
                                 < recursive_candidate_order_key(*best_score, *best_r)
-                        },
-                    )
+                        })
                 {
                     if !relation_domain.has_multiple_modes() {
                         best_modeled_score.set(Some(score));
                     }
-                    best_modeled_with_score
-                        .insert(mode, (score, r, candidate.clone(), next_witness_len));
+                    best_modeled_with_score.insert(mode, (score, r));
                 }
                 if next_witness_len < request.current_witness_len
                     && !candidates.contains(&(candidate.clone(), next_witness_len))
@@ -91,20 +90,8 @@ pub(super) fn derive_fold_candidate_frontier(
             break;
         }
     }
-    let best_modeled = best_modeled_with_score
-        .into_values()
-        .map(|(_, r, candidate, next)| (r, candidate, next))
-        .collect::<Vec<_>>();
     if !request.opening.is_coefficient_packing() {
-        let l2_seeds = if matches!(
-            request.policy.selection_policy,
-            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-        ) {
-            &all_modeled
-        } else {
-            &best_modeled
-        };
-        for best in l2_seeds {
+        for best in &all_modeled {
             append_selective_l2_candidates(
                 &mut candidates,
                 Some(best),

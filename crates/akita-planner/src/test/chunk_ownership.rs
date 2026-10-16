@@ -36,7 +36,6 @@ impl IncomingWidthFixture {
             potential_b_dimensions: &[64],
             potential_d_dimensions: &[64],
         };
-        policy.selection_policy = crate::SelectionPolicyId::for_policy(false);
         akita_schedules::planner_support::validate_policy(&policy).unwrap();
         let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
         let opening_layout = key.opening_layout().unwrap();
@@ -240,10 +239,8 @@ fn incoming_width_guard_preserves_the_unpruned_complete_winner() {
         .iter()
         .map(|(params, _)| fixture.complete(&fixture.suffix(params)))
         .collect::<Vec<_>>();
-    let oracle = select_complete_candidate(policy, &unpruned, None)
-        .unwrap()
-        .unwrap();
-    let oracle_score = complete_schedule_score(policy, oracle, None).unwrap();
+    let oracle = select_complete_candidate(&unpruned, None).unwrap().unwrap();
+    let oracle_score = complete_schedule_score(oracle, None).unwrap();
     assert_eq!(
         oracle.folds.to_vec()[1].params.blocks().positions_per_block,
         1024
@@ -302,12 +299,12 @@ fn incoming_width_guard_preserves_the_unpruned_complete_winner() {
             .iter()
             .map(|candidate| fixture.complete(&fixture.suffix(&candidate.params)))
             .collect::<Vec<_>>();
-        let selected = select_complete_candidate(policy, &guarded_schedules, None)
+        let selected = select_complete_candidate(&guarded_schedules, None)
             .unwrap()
             .unwrap();
         assert_eq!(selected.cost, oracle.cost);
         assert_eq!(
-            complete_schedule_score(policy, selected, None).unwrap(),
+            complete_schedule_score(selected, None).unwrap(),
             oracle_score
         );
 
@@ -318,7 +315,7 @@ fn incoming_width_guard_preserves_the_unpruned_complete_winner() {
         assert_eq!(unguarded.len(), 1);
         assert_eq!(unguarded[0].params.blocks().positions_per_block, 4096);
         let wrong = fixture.complete(&fixture.suffix(&unguarded[0].params));
-        assert!(complete_schedule_score(policy, &wrong, None).unwrap() > oracle_score);
+        assert!(complete_schedule_score(&wrong, None).unwrap() > oracle_score);
     }
 }
 
@@ -373,15 +370,13 @@ fn frontier_source_block_len_preserves_the_unpruned_complete_winner() {
         .iter()
         .map(|suffix| fixture.complete(suffix))
         .collect::<Vec<_>>();
-    let oracle = select_complete_candidate(policy, &unpruned, None)
-        .unwrap()
-        .unwrap();
-    let oracle_score = complete_schedule_score(policy, oracle, None).unwrap();
+    let oracle = select_complete_candidate(&unpruned, None).unwrap().unwrap();
+    let oracle_score = complete_schedule_score(oracle, None).unwrap();
     assert_eq!(
         oracle.cost, unpruned[0].cost,
         "predecessor padding must reverse the suffix-only ordering"
     );
-    assert!(complete_schedule_score(policy, &unpruned[1], None).unwrap() > oracle_score);
+    assert!(complete_schedule_score(&unpruned[1], None).unwrap() > oracle_score);
 
     for reverse in [false, true] {
         let mut ordered = suffixes.clone();
@@ -416,11 +411,9 @@ fn frontier_source_block_len_preserves_the_unpruned_complete_winner() {
             .flat_map(frontier::ProjectedObjectiveChoices::payload_candidates)
             .map(|suffix| fixture.complete(suffix))
             .collect::<Vec<_>>();
-        let selected = select_complete_candidate(policy, &retained, None)
-            .unwrap()
-            .unwrap();
+        let selected = select_complete_candidate(&retained, None).unwrap().unwrap();
         assert!(
-            complete_schedule_score(policy, selected, None).unwrap() == oracle_score,
+            complete_schedule_score(selected, None).unwrap() == oracle_score,
             "frontier lost the complete winner with reverse={reverse}: selected={:?}, oracle={:?}",
             selected.cost,
             oracle.cost
@@ -443,10 +436,8 @@ fn frontier_source_block_len_preserves_the_unpruned_complete_winner() {
                 .positions_per_block,
             4096
         );
-        let selected = select_complete_candidate(policy, &wrong, None)
-            .unwrap()
-            .unwrap();
-        assert!(complete_schedule_score(policy, selected, None).unwrap() > oracle_score);
+        let selected = select_complete_candidate(&wrong, None).unwrap().unwrap();
+        assert!(complete_schedule_score(selected, None).unwrap() > oracle_score);
     }
 }
 
@@ -536,8 +527,6 @@ fn contracting_chunk_search_matches_unpruned_complete_objective() {
             potential_b_dimensions: &[256],
             potential_d_dimensions: &[256],
         };
-        policy.selection_policy =
-            crate::SelectionPolicyId::for_policy(policy.recursive_setup_planning);
         policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
         policy.inner_basis_range.1 = policy.inner_basis_range.0;
         let key = PolynomialGroupLayout::singleton(20);
@@ -598,8 +587,6 @@ fn contracting_chunk_pruning_preserves_consumer_widths_in_both_orders() {
             potential_b_dimensions: &[256],
             potential_d_dimensions: &[256],
         };
-        policy.selection_policy =
-            crate::SelectionPolicyId::for_policy(policy.recursive_setup_planning);
         policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
         policy.inner_basis_range.1 = policy.inner_basis_range.0;
         let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(20));

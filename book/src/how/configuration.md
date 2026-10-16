@@ -165,18 +165,19 @@ profiles for R1, R2, and R3. For example, W4R3 keeps four response chunks at
 levels 0, 1, and 2, then switches to one chunk at level 3. The terminal step
 closes the remaining witness rather than adding another chunked fold.
 
-The fp128 R3 companions ship separate external artifacts, including W2R3, W4R3,
-and W8R3 recursive setup companions. Regression tests check the exact three-fold prefix
+The fp128 R3 companions ship separate external artifacts for W2R3, W4R3,
+and W8R3. Regression tests check the exact three-fold prefix
 and single-chunk suffix. They also check that changing the third fold's chunk
 count without recomputing its geometry fails catalog admission.
 
-### Recursive setup catalogs
+### Automatic setup offloading
 
-Ordinary configuration catalogs use direct setup evaluation. The supported
-`RecursiveCommitmentConfig<Cfg>` adapters select separate catalogs that may
-carry a committed setup prefix into the next fold. Keeping the catalogs
-separate prevents an ordinary verifier from accepting a recursive setup shape
-under a direct configuration.
+Every configuration uses the setup-envelope-first planner. Its catalog may
+contain schedules with zero, one, or two setup offloads. A zero-offload row
+evaluates setup directly; offloaded rows carry a committed setup prefix into
+the next fold. Only the root and its first child may produce an offload, so
+the production maximum remains two. The count is chosen offline for each
+complete input shape, rather than supplied as an application setting.
 
 The planner prices the Stage 3 proof and the later prefix opening as part of the
 complete suffix. Artifact rows record every selected prefix edge. Catalog
@@ -256,7 +257,7 @@ The normative constraints and failure behavior are recorded in
 The coefficient `L∞` route remains available at every fold. A production
 preset may also enable the typed `L2` response model. Every shipped
 fp32, fp64, and fp128 dense and one-hot family enables it. This includes each
-generated multi-chunk and recursive companion.
+generated multi-chunk family.
 
 The planner always retains the universal L infinity candidate. When typed
 moments are available, it also evaluates the modeled L infinity depth. From

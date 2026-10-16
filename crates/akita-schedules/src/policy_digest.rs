@@ -25,7 +25,6 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
         inner_basis_range,
         opening_basis_range,
         witness_chunk,
-        recursive_setup_planning,
     } = *policy;
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"AKITA-PLANNER-POLICY-V1");
@@ -44,7 +43,8 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     write_u64(&mut bytes, u64::from(opening_basis_range.1));
     write_u64(&mut bytes, witness_chunk.num_chunks as u64);
     write_u64(&mut bytes, witness_chunk.num_activated_levels as u64);
-    write_u64(&mut bytes, u64::from(recursive_setup_planning));
+    // Preserve the enabled-offloading identity. The disabled value is retired.
+    write_u64(&mut bytes, 1);
     write_u64(&mut bytes, u64::from(cost_model.tag()));
     write_u64(&mut bytes, u64::from(selection_policy.tag()));
     write_u64(&mut bytes, u64::from(recursive_split_search_policy.tag()));
@@ -122,16 +122,10 @@ mod tests {
     #[test]
     fn current_selection_objectives_do_not_reuse_retired_identity_tags() {
         assert_eq!(
-            SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5.tag(),
-            14
-        );
-        assert_eq!(
             SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6.tag(),
             15
         );
-        assert!(!(1..=13)
-            .contains(&SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5.tag()));
-        assert!(!(1..=13).contains(
+        assert!(!(1..=14).contains(
             &SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6.tag()
         ));
     }

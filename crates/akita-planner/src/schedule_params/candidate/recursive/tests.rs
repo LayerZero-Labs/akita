@@ -1,16 +1,13 @@
 use super::*;
 
 #[test]
-fn combined_terminal_and_fold_views_match_independent_searches() {
-    use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
-    };
+fn fold_frontiers_retain_l2_candidates() {
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
     use akita_params::InnerCommitSecurityRoute;
 
-    type Recursive = RecursiveCommitmentConfig<OneHot>;
-    let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let opening = PlannerOpeningCandidate::evaluation_trace(
-        Recursive::ring_challenge_config(64).expect("challenge config"),
+        OneHot::ring_challenge_config(64).expect("challenge config"),
     );
     let dimensions = CommitmentRingDims::uniform(64);
     let source = crate::InnerBasisSource::BalancedDigits { log_basis: 4 };
@@ -36,23 +33,13 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
         } else {
             FoldCandidatePolicy::Best
         };
-        let expected_terminal = derive_terminal_candidates(request).expect("terminal search");
-        let expected_folds = derive_fold_candidates(
+        let folds = derive_fold_candidates(
             request,
             RecursiveFoldWork::direct(RelationSearchDomain::QuotientOnly),
             fold_policy,
         )
         .expect("fold search");
-        let actual = derive_recursive_candidate_views(
-            request,
-            fold_policy,
-            RelationSearchDomain::QuotientOnly,
-        )
-        .expect("combined search");
-
-        assert_eq!(actual.terminal, expected_terminal);
-        assert_eq!(actual.folds, expected_folds);
-        assert!(actual.folds.iter().any(|(candidate, _)| matches!(
+        assert!(folds.iter().any(|(candidate, _)| matches!(
             candidate.inner().matrix.security_route(),
             InnerCommitSecurityRoute::L2 { .. }
         )));
@@ -61,18 +48,15 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
 
 #[test]
 fn guided_search_forces_a_split_outside_the_bounded_domain() {
-    use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
-    type Recursive = RecursiveCommitmentConfig<OneHot>;
-    let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let base_request = RecursiveCandidateRequest {
         input_chunks: None,
         policy: &policy,
         payload_mode: akita_params::CommitmentPayloadMode::Compressed,
         opening: PlannerOpeningCandidate::evaluation_trace(
-            Recursive::ring_challenge_config(64).expect("challenge config"),
+            OneHot::ring_challenge_config(64).expect("challenge config"),
         ),
         dimensions: CommitmentRingDims::uniform(64),
         current_witness_len: 948_672,
@@ -137,13 +121,10 @@ fn guided_search_forces_a_split_outside_the_bounded_domain() {
 
 #[test]
 fn guided_recursive_l2_survives_the_profitability_filter() {
-    use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
     use akita_params::InnerCommitSecurityRoute;
 
-    type Recursive = RecursiveCommitmentConfig<OneHot>;
-    let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     for source_bound in [
         1_000,
         10_000,
@@ -162,7 +143,7 @@ fn guided_recursive_l2_survives_the_profitability_filter() {
                 policy: &policy,
                 payload_mode: akita_params::CommitmentPayloadMode::Compressed,
                 opening: PlannerOpeningCandidate::evaluation_trace(
-                    Recursive::ring_challenge_config(64).expect("challenge config"),
+                    OneHot::ring_challenge_config(64).expect("challenge config"),
                 ),
                 dimensions: CommitmentRingDims::uniform(64),
                 current_witness_len: 948_672,
@@ -228,19 +209,16 @@ fn guided_recursive_l2_survives_the_profitability_filter() {
 
 #[test]
 fn combined_relation_views_match_mode_specific_searches() {
-    use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
     use akita_params::RingRelationMode::{QuotientLift, ReducedEvaluation};
 
-    type Recursive = RecursiveCommitmentConfig<OneHot>;
-    let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let request = RecursiveCandidateRequest {
         input_chunks: None,
         policy: &policy,
         payload_mode: akita_params::CommitmentPayloadMode::Compressed,
         opening: PlannerOpeningCandidate::evaluation_trace(
-            Recursive::ring_challenge_config(64).expect("challenge config"),
+            OneHot::ring_challenge_config(64).expect("challenge config"),
         ),
         dimensions: CommitmentRingDims::uniform(64),
         current_witness_len: 948_672,
@@ -272,37 +250,36 @@ fn combined_relation_views_match_mode_specific_searches() {
         })
         .map(|(candidate, next)| (candidate.canonical_descriptor_bytes(), next))
         .collect::<std::collections::BTreeSet<_>>();
-    let actual =
-        derive_recursive_candidate_views(request, FoldCandidatePolicy::Best, relation_domain)
-            .expect("shared relation search");
-    let actual_folds = actual
-        .folds
+    let terminal = derive_terminal_candidates(request).expect("terminal search");
+    let folds = derive_fold_candidates(
+        request,
+        RecursiveFoldWork::direct(relation_domain),
+        FoldCandidatePolicy::Best,
+    )
+    .expect("relation search");
+    let actual_folds = folds
         .into_iter()
         .map(|(candidate, next)| (candidate.canonical_descriptor_bytes(), next))
         .collect::<std::collections::BTreeSet<_>>();
 
     assert_eq!(actual_folds, expected);
-    assert!(actual
-        .terminal
+    assert!(terminal
         .iter()
         .all(|params| params.ring_relation_mode == QuotientLift));
 }
 
 #[test]
 fn reduced_only_views_keep_quotient_terminal_and_exclusively_reduced_folds() {
-    use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
     use akita_params::RingRelationMode::{QuotientLift, ReducedEvaluation};
 
-    type Recursive = RecursiveCommitmentConfig<OneHot>;
-    let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let request = RecursiveCandidateRequest {
         input_chunks: None,
         policy: &policy,
         payload_mode: akita_params::CommitmentPayloadMode::Compressed,
         opening: PlannerOpeningCandidate::evaluation_trace(
-            Recursive::ring_challenge_config(64).expect("challenge config"),
+            OneHot::ring_challenge_config(64).expect("challenge config"),
         ),
         dimensions: CommitmentRingDims::uniform(64),
         current_witness_len: 948_672,
@@ -319,15 +296,19 @@ fn reduced_only_views_keep_quotient_terminal_and_exclusively_reduced_folds() {
         FoldCandidatePolicy::Best,
         FoldCandidatePolicy::Frontier(SplitBoundPolicy::Enabled),
     ] {
-        let views = derive_recursive_candidate_views(request, fold_policy, relation_domain)
-            .expect("reduced-only combined search");
-        assert!(!views.terminal.is_empty());
-        assert!(views
-            .terminal
+        let terminal = derive_terminal_candidates(request).expect("terminal search");
+        let folds = derive_fold_candidates(
+            request,
+            RecursiveFoldWork::direct(relation_domain),
+            fold_policy,
+        )
+        .expect("reduced-only search");
+        assert!(!terminal.is_empty());
+        assert!(terminal
             .iter()
             .all(|params| params.ring_relation_mode == QuotientLift));
-        assert!(!views.folds.is_empty());
-        assert!(views.folds.iter().all(|(candidate, _)| {
+        assert!(!folds.is_empty());
+        assert!(folds.iter().all(|(candidate, _)| {
             candidate.ring_relation_mode == ReducedEvaluation
                 && relation_domain.admits(candidate.ring_relation_mode)
         }));
@@ -336,39 +317,38 @@ fn reduced_only_views_keep_quotient_terminal_and_exclusively_reduced_folds() {
 
 #[test]
 fn combined_views_keep_a_noncontracting_terminal_candidate() {
-    use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
-    type Recursive = RecursiveCommitmentConfig<OneHot>;
-    let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let opening = PlannerOpeningCandidate::evaluation_trace(
-        Recursive::ring_challenge_config(64).expect("challenge config"),
+        OneHot::ring_challenge_config(64).expect("challenge config"),
     );
     let source = crate::InnerBasisSource::BalancedDigits { log_basis: 4 };
     let mut witnessed_boundary = false;
     for current_witness_len in [1 << 12, 1 << 13, 1 << 14, 1 << 15, 1 << 16] {
-        let views = derive_recursive_candidate_views(
-            RecursiveCandidateRequest {
-                input_chunks: None,
-                policy: &policy,
-                payload_mode: akita_params::CommitmentPayloadMode::Raw,
-                opening,
-                dimensions: CommitmentRingDims::uniform(64),
-                current_witness_len,
-                source,
-                log_basis_inner: 4,
-                log_basis_open: 4,
-                fold_level: 2,
-                source_moment: None,
-                relation_traversal_order: RelationTraversalOrder::Canonical,
-                guide: None,
-            },
+        let request = RecursiveCandidateRequest {
+            input_chunks: None,
+            policy: &policy,
+            payload_mode: akita_params::CommitmentPayloadMode::Raw,
+            opening,
+            dimensions: CommitmentRingDims::uniform(64),
+            current_witness_len,
+            source,
+            log_basis_inner: 4,
+            log_basis_open: 4,
+            fold_level: 2,
+            source_moment: None,
+            relation_traversal_order: RelationTraversalOrder::Canonical,
+            guide: None,
+        };
+        let terminal = derive_terminal_candidates(request).expect("terminal search");
+        let folds = derive_fold_candidates(
+            request,
+            RecursiveFoldWork::direct(RelationSearchDomain::QuotientOnly),
             FoldCandidatePolicy::Best,
-            RelationSearchDomain::QuotientOnly,
         )
-        .expect("combined search");
-        if !views.terminal.is_empty() && views.folds.is_empty() {
+        .expect("fold search");
+        if !terminal.is_empty() && folds.is_empty() {
             witnessed_boundary = true;
             break;
         }
@@ -381,13 +361,10 @@ fn combined_views_keep_a_noncontracting_terminal_candidate() {
 
 #[test]
 fn late_consumer_keeps_setup_prefix_slices_eligible() {
-    use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
-    type Recursive = RecursiveCommitmentConfig<OneHot>;
-    let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
-    let challenge = Recursive::ring_challenge_config(64).expect("challenge config");
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    let challenge = OneHot::ring_challenge_config(64).expect("challenge config");
     let mut cache = SetupPrefixSearchCache::default();
     let request = RecursiveCandidateRequest {
         input_chunks: None,

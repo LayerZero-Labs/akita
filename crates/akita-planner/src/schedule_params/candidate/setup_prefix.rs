@@ -399,15 +399,12 @@ mod tests {
 
     #[test]
     fn guided_setup_prefix_survives_pareto_pruning() {
-        use akita_config::{
-            policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
-        };
+        use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
-        type Recursive = RecursiveCommitmentConfig<OneHot>;
-        let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+        let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
         let n_prefix = 1usize << 14;
         let opening = PlannerOpeningCandidate::evaluation_trace(
-            Recursive::ring_challenge_config(64).expect("challenge config"),
+            OneHot::ring_challenge_config(64).expect("challenge config"),
         );
         let mut cache = SetupPrefixSearchCache::default();
         let request = |guide| SetupPrefixSearchRequest {

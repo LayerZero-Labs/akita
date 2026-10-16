@@ -132,14 +132,12 @@ impl<F> SetupRequirements<F> {
         }
         for row in catalog.rows_within_setup_capacity(max_num_vars, max_num_batched_polys)? {
             scan.observe_schedule(row.schedule())?;
-            if Cfg::recursive_setup_planning() {
-                prefix_slot_ids.extend(
-                    crate::setup_prefix_slots::required_setup_prefix_slot_ids_for_schedule(
-                        row.schedule(),
-                        &row.profiles().opening_layout()?,
-                    )?,
-                );
-            }
+            prefix_slot_ids.extend(
+                crate::setup_prefix_slots::required_setup_prefix_slot_ids_for_schedule(
+                    row.schedule(),
+                    &row.profiles().opening_layout()?,
+                )?,
+            );
         }
         Ok(Self {
             max_num_vars,

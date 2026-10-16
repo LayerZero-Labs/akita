@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 if __package__:
+    from .profile_bench_merge_base_policy import LEGACY_PROFILE_MODES
     from .profile_bench_fold_details import (
         PROOF_LEVEL_BYTE_FIELDS,
         challenge_line,
@@ -48,6 +49,7 @@ if __package__:
         value_with_baseline_delta,
     )
 else:
+    from profile_bench_merge_base_policy import LEGACY_PROFILE_MODES
     from profile_bench_fold_details import (
         PROOF_LEVEL_BYTE_FIELDS,
         challenge_line,
@@ -89,7 +91,7 @@ RSS_PATTERNS = [
 ]
 ONEHOT_ARITY = 256
 ONEHOT_WORKLOAD_LABEL = f"1-of-{ONEHOT_ARITY} one-hot"
-CASE_SCHEMA_VERSION = 9
+CASE_SCHEMA_VERSION = 10
 VALID_RELATION_MODES = frozenset(("quotient_lift", "reduced_evaluation"))
 REQUIRED_RUN_METRICS = (
     "setup_s",
@@ -115,11 +117,10 @@ class BenchmarkCaseSpec:
     mode: str
     num_vars: int
     num_polys: int
-    setup_mode: str = "direct"
 
     @property
     def case_id(self) -> str:
-        return case_id(self.mode, self.num_vars, self.num_polys, self.setup_mode)
+        return case_id(self.mode, self.num_vars, self.num_polys)
 
 
 @dataclass(frozen=True)
@@ -136,7 +137,7 @@ class CaseMetadata:
 # `akita_planner::generated_families::ALL_GENERATED_FAMILIES` registry. Modes
 # outside this map still render via the `case_metadata` fallback below.
 CASE_METADATA: dict[str, CaseMetadata] = {
-    # Direct fp128 one-hot and dense use adaptive generated schedules.
+    # All presets use the same offloading-enabled adaptive planner.
     "onehot_fp128": CaseMetadata(
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "mixed D256 to D64"
     ),
@@ -144,18 +145,11 @@ CASE_METADATA: dict[str, CaseMetadata] = {
     "onehot_fp128_multi_group": CaseMetadata(
         "fp128", "onehot", "multi-group one-hot", "multi-group", "multi_group"
     ),
-    "onehot_fp128_multi_group_recursive": CaseMetadata(
+    "onehot_fp128_multi_group_multi_chunk_w8r2": CaseMetadata(
         "fp128",
         "onehot",
         "multi-group one-hot",
-        "adaptive recursive multi-group",
-        "multi_group",
-    ),
-    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": CaseMetadata(
-        "fp128",
-        "onehot",
-        "multi-group one-hot",
-        "adaptive recursive multi-group W8R2",
+        "multi-group W8R2",
         "multi_group",
     ),
     "onehot_fp128_multi_chunk_w8r2": CaseMetadata(
@@ -253,18 +247,11 @@ def parse_args() -> argparse.Namespace:
         help="Total number of polynomials in the mode-specific benchmark case.",
     )
     run_parser.add_argument(
-        "--setup-mode",
-        choices=VALID_SETUP_MODES,
-        default="direct",
-        help="SetupContributionMode to use for cases that do not specify one.",
-    )
-    run_parser.add_argument(
         "--case",
         action="append",
         default=[],
         help=(
-            "Benchmark case as NUM_VARS:NUM_POLYS, MODE:NUM_VARS:NUM_POLYS, "
-            "or MODE:NUM_VARS:NUM_POLYS:SETUP_MODE. "
+            "Benchmark case as NUM_VARS:NUM_POLYS or MODE:NUM_VARS:NUM_POLYS. "
             "Can be repeated."
         ),
     )
@@ -347,18 +334,11 @@ def parse_args() -> argparse.Namespace:
         help="Total number of polynomials in the mode-specific benchmark case.",
     )
     failure_parser.add_argument(
-        "--setup-mode",
-        choices=VALID_SETUP_MODES,
-        default="direct",
-        help="SetupContributionMode to use for cases that do not specify one.",
-    )
-    failure_parser.add_argument(
         "--case",
         action="append",
         default=[],
         help=(
-            "Benchmark case as NUM_VARS:NUM_POLYS, MODE:NUM_VARS:NUM_POLYS, "
-            "or MODE:NUM_VARS:NUM_POLYS:SETUP_MODE. "
+            "Benchmark case as NUM_VARS:NUM_POLYS or MODE:NUM_VARS:NUM_POLYS. "
             "Can be repeated."
         ),
     )
@@ -754,92 +734,74 @@ def normalize_setup_mode(value: object) -> str:
     return setup_mode
 
 
-def setup_mode_case_suffix(setup_mode: str) -> str:
-    setup_mode = normalize_setup_mode(setup_mode)
-    if setup_mode == "direct":
-        return ""
-    return f"-setup-{setup_mode}"
-
-
-def case_id(mode: str, num_vars: int, num_polys: int, setup_mode: str = "direct") -> str:
+def case_id(mode: str, num_vars: int, num_polys: int) -> str:
     metadata = case_metadata(mode)
     config = slugify_config(metadata.config)
     return (
         f"{metadata.field_family}-{workload_slug(metadata, num_polys)}"
-        f"-nv{num_vars}-np{num_polys}-{config}{setup_mode_case_suffix(setup_mode)}"
+        f"-nv{num_vars}-np{num_polys}-{config}"
     )
 
 
 def benchmark_name(
-    mode: str, num_vars: int, num_polys: int = 1, setup_mode: str = "direct"
+    mode: str, num_vars: int, num_polys: int = 1
 ) -> str:
     metadata = case_metadata(mode)
-    setup_mode = normalize_setup_mode(setup_mode)
-    setup_suffix = ""
-    if setup_mode != "direct":
-        setup_suffix = f" ({setup_mode} setup contribution)"
     if metadata.opening_topology == "multi_group":
         return (
             f"{metadata.field_family} multi-group opening, final nv{num_vars}, "
-            f"{num_polys} polynomials total{setup_suffix}"
+            f"{num_polys} polynomials total"
         )
     if metadata.workload == "onehot":
         if num_polys > 1:
             return (
                 f"{metadata.field_family} {metadata.config} same-point "
                 f"1-of-{ONEHOT_ARITY} one-hot x{num_polys} with {num_vars} variables"
-                f"{setup_suffix}"
             )
         return (
             f"{metadata.field_family} {metadata.config} 1-of-{ONEHOT_ARITY} one-hot "
-            f"with {num_vars} variables{setup_suffix}"
+            f"with {num_vars} variables"
         )
     if num_polys > 1:
         return (
             f"{metadata.field_family} {metadata.config} dense x{num_polys} "
-            f"with {num_vars} variables{setup_suffix}"
+            f"with {num_vars} variables"
         )
-    return f"{metadata.field_family} {metadata.config} dense with {num_vars} variables{setup_suffix}"
+    return f"{metadata.field_family} {metadata.config} dense with {num_vars} variables"
 
 
 def parse_case_spec(
-    spec: str, default_mode: str, default_setup_mode: str = "direct"
+    spec: str, default_mode: str
 ) -> BenchmarkCaseSpec:
     parts = spec.split(":")
-    setup_mode = normalize_setup_mode(default_setup_mode)
     if len(parts) == 2:
         mode = default_mode
         num_vars_str, num_polys_str = parts
     elif len(parts) == 3:
         mode, num_vars_str, num_polys_str = parts
-    elif len(parts) == 4:
-        mode, num_vars_str, num_polys_str, setup_mode_str = parts
-        setup_mode = normalize_setup_mode(setup_mode_str)
     else:
         raise ValueError(
-            f"invalid case spec {spec!r}; expected NUM_VARS:NUM_POLYS, "
-            "MODE:NUM_VARS:NUM_POLYS, or MODE:NUM_VARS:NUM_POLYS:SETUP_MODE"
+            f"invalid case spec {spec!r}; expected NUM_VARS:NUM_POLYS or "
+            "MODE:NUM_VARS:NUM_POLYS"
         )
     num_vars = int(num_vars_str)
     num_polys = int(num_polys_str)
     if num_vars <= 0 or num_polys <= 0:
         raise ValueError(f"invalid case spec {spec!r}; NUM_VARS and NUM_POLYS must be positive")
     return BenchmarkCaseSpec(
-        mode=mode, num_vars=num_vars, num_polys=num_polys, setup_mode=setup_mode
+        mode=mode, num_vars=num_vars, num_polys=num_polys
     )
 
 
 def configured_cases(args: argparse.Namespace) -> list[BenchmarkCaseSpec]:
-    setup_mode = normalize_setup_mode(getattr(args, "setup_mode", "direct"))
     if args.case:
-        cases = [parse_case_spec(spec, args.mode, setup_mode) for spec in args.case]
+        cases = [parse_case_spec(spec, args.mode) for spec in args.case]
     else:
         cases = [
             BenchmarkCaseSpec(
                 mode=args.mode,
                 num_vars=args.num_vars,
                 num_polys=args.num_polys,
-                setup_mode=setup_mode,
             )
         ]
     # case_id is the output dir name and the failure/aggregation key, so
@@ -856,24 +818,22 @@ def extract_summary(
     mode: str,
     num_vars: int,
     num_polys: int,
-    setup_mode: str = "direct",
     *,
     allow_legacy_relation_mode: bool = False,
 ) -> dict[str, object]:
     metadata = case_metadata(mode)
-    setup_mode = normalize_setup_mode(setup_mode)
     summary: dict[str, object] = {
         "schema_version": CASE_SCHEMA_VERSION,
-        "benchmark": benchmark_name(mode, num_vars, num_polys, setup_mode),
+        "benchmark": benchmark_name(mode, num_vars, num_polys),
         "mode": mode,
-        "setup_contribution_mode": setup_mode,
+        "setup_contribution_mode": "unmeasured",
         "field_family": metadata.field_family,
         "workload": metadata.workload,
         "workload_label": metadata.workload_label,
         "config": metadata.config,
         "num_vars": num_vars,
         "num_polys": num_polys,
-        "case_id": case_id(mode, num_vars, num_polys, setup_mode),
+        "case_id": case_id(mode, num_vars, num_polys),
         "collected_at": datetime.now(timezone.utc).isoformat(),
     }
     planned_levels: dict[int, dict[str, object]] = {}
@@ -1072,6 +1032,9 @@ def extract_summary(
             )
         elif "profile extension field" in line and kvs.get("label") == mode:
             summary["ext_degree"] = int(kvs["ext_degree"])
+        elif "runtime schedule" in line and kvs.get("label") == mode:
+            if "selected_offload_edges" in kvs:
+                summary["selected_offload_edges"] = int(kvs["selected_offload_edges"])
         elif "profile setup-contribution mode" in line and kvs.get("label") == mode:
             if "setup_contribution_mode" in kvs:
                 summary["setup_contribution_mode"] = normalize_setup_mode(
@@ -1635,7 +1598,6 @@ def run_benchmark_case(
     env["AKITA_MODE"] = case.mode
     env["AKITA_NUM_VARS"] = str(case.num_vars)
     env["AKITA_NUM_POLYS"] = str(case.num_polys)
-    env["AKITA_SETUP_MODE"] = case.setup_mode
     env.setdefault("AKITA_PROFILE_TRACE", "0")
     env.setdefault("AKITA_PROFILE_SPAN_CLOSES", "0")
     env.setdefault("AKITA_PROFILE_LOG", "info")
@@ -1645,6 +1607,11 @@ def run_benchmark_case(
     command = time_command(binary)
     completed = subprocess.run(command, capture_output=True, text=True, env=env)
     combined_log = completed.stdout + completed.stderr
+    legacy_mode = LEGACY_PROFILE_MODES.get(case.mode)
+    if allow_legacy_relation_mode and legacy_mode and "Unknown AKITA_MODE" in combined_log:
+        env["AKITA_MODE"] = legacy_mode
+        completed = subprocess.run(command, capture_output=True, text=True, env=env)
+        combined_log = completed.stdout + completed.stderr
 
     write_text(output_dir / "stdout.log", completed.stdout)
     write_text(output_dir / "stderr.log", completed.stderr)
@@ -1652,11 +1619,10 @@ def run_benchmark_case(
     write_text(output_dir / "command.txt", " ".join(shlex.quote(part) for part in command) + "\n")
 
     summary = extract_summary(
-        combined_log,
+        combined_log.replace(legacy_mode, case.mode) if legacy_mode else combined_log,
         mode=case.mode,
         num_vars=case.num_vars,
         num_polys=case.num_polys,
-        setup_mode=case.setup_mode,
         allow_legacy_relation_mode=allow_legacy_relation_mode,
     )
     return_code = completed.returncode
@@ -1667,7 +1633,6 @@ def run_benchmark_case(
         "AKITA_MODE": env["AKITA_MODE"],
         "AKITA_NUM_VARS": env["AKITA_NUM_VARS"],
         "AKITA_NUM_POLYS": env["AKITA_NUM_POLYS"],
-        "AKITA_SETUP_MODE": env["AKITA_SETUP_MODE"],
         "AKITA_PROFILE_TRACE": env["AKITA_PROFILE_TRACE"],
         "AKITA_PROFILE_SPAN_CLOSES": env["AKITA_PROFILE_SPAN_CLOSES"],
         "AKITA_PROFILE_LOG": env["AKITA_PROFILE_LOG"],
@@ -1864,6 +1829,7 @@ SUMMARY_CSV_COLUMNS = (
     "workload",
     "config",
     "mode",
+    "selected_offload_edges",
     "setup_contribution_mode",
     "num_vars",
     "num_polys",
@@ -2232,10 +2198,10 @@ def write_failure_summary(args: argparse.Namespace) -> int:
             {
                 "schema_version": CASE_SCHEMA_VERSION,
                 "benchmark": benchmark_name(
-                    case.mode, case.num_vars, case.num_polys, case.setup_mode
+                    case.mode, case.num_vars, case.num_polys
                 ),
                 "mode": case.mode,
-                "setup_contribution_mode": case.setup_mode,
+                "setup_contribution_mode": "unmeasured",
                 "field_family": metadata.field_family,
                 "workload": metadata.workload,
                 "workload_label": metadata.workload_label,
@@ -2273,14 +2239,16 @@ def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
     normalized = dict(summary)
     allow_legacy_relation_mode = int(normalized.get("schema_version", 0)) < 9
     mode = str(normalized["mode"])
+    mode = next((current for current, legacy in LEGACY_PROFILE_MODES.items() if mode == legacy), mode)
+    normalized["mode"] = mode
     num_vars = int(normalized["num_vars"])
     num_polys = int(normalized.get("num_polys", 1))
-    setup_mode = normalize_setup_mode(normalized.get("setup_contribution_mode", "direct"))
+    setup_mode = str(normalized.get("setup_contribution_mode", "unmeasured"))
     metadata = case_metadata(mode)
     normalized["num_polys"] = num_polys
     normalized["setup_contribution_mode"] = setup_mode
-    normalized["case_id"] = case_id(mode, num_vars, num_polys, setup_mode)
-    normalized["benchmark"] = benchmark_name(mode, num_vars, num_polys, setup_mode)
+    normalized["case_id"] = case_id(mode, num_vars, num_polys)
+    normalized["benchmark"] = benchmark_name(mode, num_vars, num_polys)
     normalized["field_family"] = metadata.field_family
     normalized["workload"] = metadata.workload
     normalized["workload_label"] = metadata.workload_label
@@ -2393,7 +2361,21 @@ def load_optional_case_summaries(dir_path: str) -> dict[str, dict[str, object]] 
     if not summary_path.exists():
         return None
     cases = load_case_summaries(summary_path)
-    return {str(case["case_id"]): case for case in cases}
+    indexed: dict[str, dict[str, object]] = {}
+    for case in cases:
+        key = str(case["case_id"])
+        previous = indexed.get(key)
+        # Historical summaries may contain both policies, whose IDs now collapse.
+        # The default historical baseline was direct; never select it by file order.
+        if previous is not None:
+            modes = {previous.get("setup_contribution_mode"), case.get("setup_contribution_mode")}
+            if modes == {"direct", "recursive"}:
+                if case.get("setup_contribution_mode") == "direct":
+                    indexed[key] = case
+                continue
+            raise ValueError(f"ambiguous duplicate benchmark case after normalization: {key}")
+        indexed[key] = case
+    return indexed
 
 
 def md_text(value: object) -> str:
@@ -2704,7 +2686,6 @@ def human_case_label(summary: dict[str, object]) -> str:
     field_segment = f"Fp{bits}" if bits is not None else field_family
     workload = str(summary.get("workload", "dense"))
     metadata = case_metadata(str(summary.get("mode", "")))
-    setup_mode = str(summary.get("setup_contribution_mode", "direct"))
     config = str(summary.get("config", ""))
     chunk_variant = re.search(r"W\d+R\d+", config, flags=re.IGNORECASE)
 
@@ -2716,7 +2697,7 @@ def human_case_label(summary: dict[str, object]) -> str:
             f" (final nv{int(summary['num_vars'])}, "
             f"{int(summary.get('num_polys', 1))} polys total)"
         )
-        return f"{label}, {setup_mode} setup check"
+        return label
 
     workload_token = "one-hot" if workload == "onehot" else "dense"
     label = f"{field_segment} {workload_token} nv{int(summary['num_vars'])}"
@@ -2725,7 +2706,7 @@ def human_case_label(summary: dict[str, object]) -> str:
     num_polys = int(summary.get("num_polys", 1))
     if num_polys > 1:
         label += f", {num_polys} polynomials"
-    return f"{label}, {setup_mode} setup check"
+    return label
 
 
 def public_opening_group_candidates(
@@ -3573,10 +3554,6 @@ def render_report(args: argparse.Namespace) -> int:
             code_text(f"AKITA_MODE={env.get('AKITA_MODE', current['mode'])}"),
             code_text(f"AKITA_NUM_VARS={env.get('AKITA_NUM_VARS', current['num_vars'])}"),
             code_text(f"AKITA_NUM_POLYS={env.get('AKITA_NUM_POLYS', current.get('num_polys', 1))}"),
-            code_text(
-                "AKITA_SETUP_MODE="
-                f"{env.get('AKITA_SETUP_MODE', current.get('setup_contribution_mode', 'direct'))}"
-            ),
         ]
         print(
             "- Command: `target/release/examples/profile` with "
