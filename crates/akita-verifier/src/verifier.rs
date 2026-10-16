@@ -2,7 +2,7 @@
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
-use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
+use akita_params::{FoldSchedule, OpeningScheduleSelection, ScheduleRowDigest};
 use akita_types::AkitaVerifierSetup;
 use jolt_field::CanonicalEncoding;
 
@@ -17,8 +17,12 @@ use crate::prepared_cache::{terminal_ntt_cache_requirement, TerminalNttCache};
 /// A row is admitted when its opening key fits the setup descriptor's
 /// polynomial capacity and its direct verifier matrix uses fit the setup's
 /// public matrix
-/// ([`TrustedScheduleCatalog::verifier_admits`]). A proof for any
-/// other row is rejected.
+/// ([`TrustedScheduleCatalog::verifier_admits`]). A row that offloads setup
+/// contributions to setup-prefix commitments is admitted only when the setup's
+/// prefix registry is authenticated
+/// ([`AkitaVerifierSetup::prefix_registry_authenticated`]), because those
+/// commitments are the only link between such a row's relation and the public
+/// matrix. A proof for any other row is rejected.
 #[derive(Debug)]
 pub struct AkitaVerifier<Cfg: CommitmentConfig> {
     pub(crate) setup: AkitaVerifierSetup<Cfg::Field>,
@@ -43,7 +47,11 @@ where
         setup: AkitaVerifierSetup<Cfg::Field>,
         schedules: TrustedScheduleCatalog<Cfg>,
     ) -> Result<Self, AkitaError> {
-        let rows = schedules.verifier_admitted_rows(setup.expanded())?;
+        let rows: Vec<_> = schedules
+            .verifier_admitted_rows(setup.expanded())?
+            .into_iter()
+            .filter(|row| setup.prefix_registry_authenticated() || !offloads_setup(row.schedule()))
+            .collect();
         let admitted = rows.iter().map(|row| row.selection().row_digest).collect();
         let requirements = rows
             .iter()
@@ -75,8 +83,10 @@ where
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] when sizing or preparing the
-    /// selected row fails, or when a trusted cache is supplied for a row this
-    /// verifier does not admit or does not match that row.
+    /// selected row fails, when the selected row offloads setup contributions
+    /// but the setup's prefix registry is not authenticated, or when a trusted
+    /// cache is supplied for a row this verifier does not admit or does not
+    /// match that row.
     pub fn for_selection(
         setup: AkitaVerifierSetup<Cfg::Field>,
         schedules: TrustedScheduleCatalog<Cfg>,
@@ -89,6 +99,15 @@ where
             }
             _ => None,
         };
+        if row.is_some_and(|row| offloads_setup(row.schedule()))
+            && !setup.prefix_registry_authenticated()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "selected schedule row offloads setup contributions, but the setup-prefix \
+                 registry is not authenticated against the public stream"
+                    .into(),
+            ));
+        }
         let (admitted, terminal_ntt) = match (row, trusted_terminal_cache) {
             (Some(row), None) => (
                 vec![selection.row_digest],
@@ -121,6 +140,14 @@ where
             terminal_ntt,
         })
     }
+}
+
+/// Whether verifying `schedule` reads setup-prefix commitments.
+fn offloads_setup(schedule: &FoldSchedule) -> bool {
+    schedule
+        .recursive_folds
+        .iter()
+        .any(|fold| fold.params.setup_prefix().is_some())
 }
 
 impl<Cfg: CommitmentConfig> AkitaVerifier<Cfg> {
@@ -273,6 +300,54 @@ mod tests {
                 AkitaVerifier::for_selection(few_vars, catalog, selection, Some(&artifact)),
                 Err(AkitaError::InvalidSetup(_))
             ));
+        });
+    }
+    #[test]
+    fn offloading_row_requires_an_authenticated_prefix_registry() {
+        on_large_stack(|| {
+            type Recursive = akita_config::RecursiveCommitmentConfig<
+                akita_config::proof_optimized::fp128::Dense,
+            >;
+            let catalog = akita_config::test_support::workspace_schedule_catalog::<Recursive>()
+                .expect("recursive dense catalog");
+            let row = catalog
+                .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
+                    26, 1,
+                )))
+                .expect("recursive dense row");
+            assert!(offloads_setup(row.schedule()));
+            let layout = row.profiles().opening_layout().expect("opening layout");
+            let capacity = verifier_setup_matrix_capacity_for_schedule(row.schedule(), &layout)
+                .expect("matrix capacity")
+                .num_field_elements;
+            let selection = row.selection();
+
+            let unauthenticated = setup(26, capacity);
+            assert!(matches!(
+                AkitaVerifier::for_selection(
+                    unauthenticated.clone(),
+                    catalog.clone(),
+                    selection,
+                    None
+                ),
+                Err(AkitaError::InvalidSetup(_))
+            ));
+            assert!(
+                !AkitaVerifier::new(unauthenticated.clone(), catalog.clone())
+                    .expect("verifier")
+                    .admits(selection.row_digest)
+            );
+
+            let authenticated = unauthenticated.assume_prefix_registry_authenticated();
+            assert!(AkitaVerifier::new(authenticated.clone(), catalog.clone())
+                .expect("verifier")
+                .admits(selection.row_digest));
+            assert_eq!(
+                AkitaVerifier::for_selection(authenticated, catalog, selection, None)
+                    .expect("single-row verifier")
+                    .admitted_rows(),
+                &[selection.row_digest]
+            );
         });
     }
 }

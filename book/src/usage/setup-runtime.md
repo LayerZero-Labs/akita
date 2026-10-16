@@ -137,7 +137,13 @@ recursive setup proof does not need the same direct prefix in the verifier hot
 path.
 
 The complete setup prefix commitment registry remains part of verifier setup.
-Those commitments authenticate the offloaded public setup contributions.
+Those commitments authenticate the offloaded public setup contributions, so the
+registry itself must be authentic. A verifier setup derived from a prover setup
+in the same process inherits the backend's recomputation; one decoded from bytes
+does not, and verifiers reject offloading rows until its registry is recomputed
+or authenticated against a trusted digest. With `disk-persistence`, the loader
+recomputes a cached registry against the public matrix and rewrites a cache file
+that disagrees.
 
 ## Reuse and release CPU caches
 

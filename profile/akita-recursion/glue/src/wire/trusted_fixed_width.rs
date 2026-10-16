@@ -189,6 +189,9 @@ where
             ),
             prefix_slots,
         )
+        // Benchmark trust model: the host recomputed this setup before
+        // emitting the blob, and the outer verifier must pin it.
+        .map(AkitaVerifierSetup::assume_prefix_registry_authenticated)
         .map_err(|err| SerializationError::InvalidData(err.to_string()))
     }
 

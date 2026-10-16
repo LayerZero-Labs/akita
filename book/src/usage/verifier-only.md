@@ -129,6 +129,19 @@ code. A host can authenticate the package by digest, distribute it with the
 application, or regenerate and validate it before placing it in the verifier
 environment.
 
+Strict decoding is not enough for schedules that offload setup contributions.
+It rederives the public matrix from its seed but checks setup prefix
+commitments only structurally, so a decoded setup starts with an
+unauthenticated registry and the verifier does not admit those rows. Authenticate
+the registry before building the verifier: either recompute it with
+`akita_setup::authenticate_verifier_setup_prefixes`, which commits each public
+prefix again and accepts only the prefix slots that the `SetupRequirements` of
+your trusted schedule catalog name, or check the package against a digest you
+trust and then call
+`AkitaVerifierSetup::assume_prefix_registry_authenticated`. A verifier setup
+derived in the same process with `setup_verifier` or
+`setup_verifier_for_schedule` is already authenticated.
+
 ## Handle rejection as a normal result
 
 All verifier facing proof, setup, schedule, claim, and transcript data is

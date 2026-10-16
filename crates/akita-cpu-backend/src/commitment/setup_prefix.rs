@@ -210,6 +210,28 @@ impl<F: Field> SetupPrefixProverRegistry<F> {
         Ok(())
     }
 
+    /// Add every slot of `other`, typically a backend export.
+    ///
+    /// The merged registry keeps the in-process provenance capability only when
+    /// `other` holds it and `self` either holds it or is empty.
+    pub fn extend(&mut self, other: Self) -> Result<(), AkitaError>
+    where
+        F: Valid,
+    {
+        if other.setup_seed != self.setup_seed {
+            return Err(AkitaError::InvalidSetup(
+                "setup-prefix registries belong to different public matrices".to_string(),
+            ));
+        }
+        let backend_validated =
+            (self.backend_validated || self.slots.is_empty()) && other.backend_validated;
+        for slot in other.slots.into_values() {
+            self.insert(slot)?;
+        }
+        self.backend_validated = backend_validated;
+        Ok(())
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (&SetupPrefixSlotId, &SetupPrefixSlot<F>)> {
         self.slots.iter()
     }

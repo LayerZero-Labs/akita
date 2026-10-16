@@ -189,10 +189,8 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             let artifacts = prefix_backend
                 .export_setup_prefixes(std::slice::from_ref(&setup_prefix))
                 .unwrap();
-            setup
-                .prefix_slots
-                .insert(artifacts.get(&setup_prefix).unwrap().clone())
-                .unwrap();
+            assert!(artifacts.get(&setup_prefix).is_some());
+            setup.prefix_slots.extend(artifacts).unwrap();
             let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
             let verifier_setup = scheme.setup_verifier(&setup).unwrap();
             let akita_cpu_backend::CommitOutput {
