@@ -10,6 +10,9 @@ use akita_params::{
 use akita_serialization::AkitaSerialize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod common;
+use common::checked_in_catalog;
+
 #[derive(Clone, Copy, Debug)]
 struct CountingDense;
 
@@ -61,16 +64,6 @@ impl CommitmentConfig for CountingDense {
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {
         fp128::Dense::chunked_witness_cfg()
     }
-}
-
-fn checked_in_catalog<Cfg: CommitmentConfig>() -> TrustedScheduleCatalog<Cfg> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("artifacts/schedules")
-        .join(format!("{}.aks", Cfg::schedule_family_name()));
-    let bytes = std::fs::read(&path)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-    TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(&bytes).expect("checked-in trusted artifact")
 }
 
 fn checked_in_artifact_bytes<Cfg: CommitmentConfig>() -> Vec<u8> {
