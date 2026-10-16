@@ -112,10 +112,10 @@ scheduled dimension directly against the field's dispatch and NTT support.
 The public setup is one flat field stream with no ring dimension.
 
 A, B, and D matrix dimensions form a separate admission domain and are all at
-least 64. Compressed commitments derive their two smaller dimensions directly
-from the modulus profile (`q128: 16/8`, `q64: 32/16`, `q32: 64/32`). Those
-compression-only dimensions never become `CommitmentRingDims` and never reduce
-the ordinary relation's common coefficient block.
+least 64. Compressed commitments derive their two map dimensions directly
+from the modulus profile (`q128: 32/16`, `q64: 64/32`, `q32: 128/64`). Those
+map dimensions never become `CommitmentRingDims` and never reduce the ordinary
+relation's common coefficient block.
 
 Every function on the prove/verify path has one of two roles:
 

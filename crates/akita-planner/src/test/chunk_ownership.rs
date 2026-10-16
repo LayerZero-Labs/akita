@@ -19,14 +19,14 @@ impl IncomingWidthFixture {
             CandidateFoldChain, PlannerOpeningCandidate,
         };
 
-        // A small root with many live blocks makes eight large, equal witness
+        // A small root with many live blocks makes two large, equal witness
         // bodies. The two consumers emit equal-length witnesses, but a wider
         // consumer adds enough producer padding to overturn its local dominance.
         let mut policy = policy_of::<OneHot>();
         policy.claim_ext_degree = 1;
-        policy.opening_basis_range = (2, 2);
+        policy.opening_basis_range = (4, 4);
         policy.witness_chunk = akita_params::ChunkedWitnessCfg {
-            num_chunks: 8,
+            num_chunks: 2,
             num_activated_levels: 1,
         };
         policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
@@ -40,7 +40,7 @@ impl IncomingWidthFixture {
         };
         policy.selection_policy = crate::SelectionPolicyId::for_policy(false);
         akita_schedules::planner_support::validate_policy(&policy).unwrap();
-        let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
+        let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(18));
         let opening_layout = key.opening_layout().unwrap();
         let opening = PlannerOpeningCandidate::coefficient_packing(0, 1, dimensions, 64)
             .unwrap()
@@ -52,13 +52,14 @@ impl IncomingWidthFixture {
             dimensions,
             opening,
             policy.inner_basis_range.0,
-            2,
+            4,
         )
         .unwrap()
         .into_iter()
         .find(|(params, _)| {
             params.blocks().positions_per_block == 2
                 && params.outer_slice_count() == akita_params::CommitmentSliceCount::ONE
+                && params.inner().matrix.output_rank() == 1
         })
         .unwrap();
         let shape = Arc::new(
@@ -67,7 +68,7 @@ impl IncomingWidthFixture {
                 &opening_layout,
                 &akita_params::RelationWitnessGeometry::for_level(&producer, &opening_layout, 1)
                     .unwrap(),
-                8,
+                2,
                 akita_params::RelationQuotientPlan::for_field_bits(&producer, 128).unwrap(),
             )
             .unwrap()
@@ -81,9 +82,9 @@ impl IncomingWidthFixture {
             opening,
             dimensions,
             current_witness_len: witness_len,
-            source: crate::InnerBasisSource::BalancedDigits { log_basis: 2 },
-            log_basis_inner: 2,
-            log_basis_open: 2,
+            source: crate::InnerBasisSource::BalancedDigits { log_basis: 4 },
+            log_basis_inner: 4,
+            log_basis_open: 4,
             fold_level: 1,
             source_moment: None,
             relation_traversal_order: RelationTraversalOrder::Canonical,
@@ -93,8 +94,14 @@ impl IncomingWidthFixture {
             derive_unpruned_fold_candidates_for_oracle(request, RelationSearchDomain::QuotientOnly)
                 .unwrap();
         raw.retain(|(params, _)| {
-            [1024, 4096].contains(&params.blocks().positions_per_block)
-                && params.outer_slice_count() == akita_params::CommitmentSliceCount::ONE
+            matches!(
+                (
+                    params.blocks().positions_per_block,
+                    params.outer_slice_count()
+                ),
+                (2048, akita_params::CommitmentSliceCount::ONE)
+                    | (4096, akita_params::CommitmentSliceCount::TWO)
+            )
         });
         raw.sort_by_key(|(params, _)| params.blocks().positions_per_block);
         assert_eq!(raw.len(), 2);
@@ -135,7 +142,7 @@ impl IncomingWidthFixture {
         })
         .unwrap()
         .into_iter()
-        .find(|params| params.blocks().positions_per_block == 2048)
+        .find(|params| params.blocks().positions_per_block == 1024)
         .unwrap();
         let (terminal, terminal_bytes) = try_terminal_direct_suffix_cost(
             &policy,
@@ -195,7 +202,7 @@ impl IncomingWidthFixture {
         let candidate = super::super::unpruned_search::prepend_root(
             &self.policy,
             &self.key,
-            1 << 16,
+            1 << 18,
             &self.producer,
             suffix,
         )
@@ -248,7 +255,7 @@ fn incoming_width_guard_preserves_the_unpruned_complete_winner() {
     let oracle_score = complete_schedule_score(policy, oracle, None).unwrap();
     assert_eq!(
         oracle.folds.to_vec()[1].params.blocks().positions_per_block,
-        1024
+        2048
     );
     assert_eq!(
         unpruned[0].cost.proof_bytes(),
@@ -276,7 +283,7 @@ fn incoming_width_guard_preserves_the_unpruned_complete_winner() {
         level: 1,
         current_witness_len: shape.align(1, 1).unwrap().0,
         input_chunks: Some(shape),
-        current_lb: 2,
+        current_lb: 4,
         source_moment: None,
         dimension_ceiling: producer.role_dims(),
         topology: SuffixTopology::Direct {

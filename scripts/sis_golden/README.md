@@ -31,7 +31,7 @@ sage -python scripts/sis_golden/check.py
 ## Euclidean comparison table regen
 
 Generate the Euclidean comparison CSV or the separate L2 table. The generator
-uses the 128 bit quantum ADPS16 profile. Its key is a power of two bound on the
+uses the 169-bit quantum ADPS16 profile. Its key is a power of two bound on the
 squared norm of the complete scalar collision vector.
 
 For a row-oriented comparison artifact:
@@ -179,7 +179,7 @@ Production SIS table generation uses the planner-shaped infinity key:
 ```
 
 The checked-in production policy is
-`Quantum128BitADPS16`: one ADPS16 quantum LGSA rule with a 128-bit target. The production table is
+`Quantum169BitADPS16`: one ADPS16 quantum LGSA rule with a 169-bit target. The production table is
 scalar-keyed by exact modulus profile, coefficient bound, and `n = rank * d`.
 The role-specific coverage declaration is the source of reachable cells. The
 Inner/A cells are the exact protocol targets
@@ -279,9 +279,9 @@ checked-in certificate:
 ```bash
 compression_diag_dir="$(mktemp -d /tmp/akita-compression.XXXXXX)"
 for job in \
-  q32:32:128 q32:64:2048 q32:128:1024 \
-  q64:16:256 q64:32:4096 q64:64:2048 \
-  q128:8:512 q128:16:8192 q128:32:4096
+  q32:64:1024 q32:128:16384 q32:256:256 \
+  q64:32:2048 q64:64:32768 q64:128:512 \
+  q128:16:4096 q128:32:65536 q128:64:1024
 do
   IFS=: read -r profile d cap <<< "$job"
   cargo run -p akita-sis-estimator --release --features parallel \
@@ -297,11 +297,11 @@ copied or reordered by hand:
 
 ```bash
 compression_diag_csv="$compression_diag_dir/compression_infinity_width_table.csv"
-head -n 1 "$compression_diag_dir/q32-d32.csv" > "$compression_diag_csv"
+head -n 1 "$compression_diag_dir/q32-d64.csv" > "$compression_diag_csv"
 for job in \
-  q32:32 q32:64 q32:128 \
-  q64:16 q64:32 q64:64 \
-  q128:8 q128:16 q128:32
+  q32:64 q32:128 q32:256 \
+  q64:32 q64:64 q64:128 \
+  q128:16 q128:32 q128:64
 do
   IFS=: read -r profile d <<< "$job"
   test "$(wc -l < "$compression_diag_dir/${profile}-d${d}.csv" | tr -d ' ')" = 2
@@ -313,15 +313,15 @@ import csv
 import sys
 
 expected = [
-    ("q32", 32, 128, 127, "false", "Exact"),
-    ("q32", 64, 2048, 1769, "false", "Exact"),
-    ("q32", 128, 1024, 1024, "true", "AtLeast"),
-    ("q64", 16, 256, 254, "false", "Exact"),
-    ("q64", 32, 4096, 3538, "false", "Exact"),
-    ("q64", 64, 2048, 2048, "true", "AtLeast"),
-    ("q128", 8, 512, 508, "false", "Exact"),
-    ("q128", 16, 8192, 7077, "false", "Exact"),
-    ("q128", 32, 4096, 4096, "true", "AtLeast"),
+    ("q32", 64, 1024, 600, "false", "Exact"),
+    ("q32", 128, 16384, 15115, "false", "Exact"),
+    ("q32", 256, 256, 256, "true", "AtLeast"),
+    ("q64", 32, 2048, 1200, "false", "Exact"),
+    ("q64", 64, 32768, 30230, "false", "Exact"),
+    ("q64", 128, 512, 512, "true", "AtLeast"),
+    ("q128", 16, 4096, 2400, "false", "Exact"),
+    ("q128", 32, 65536, 60460, "false", "Exact"),
+    ("q128", 64, 1024, 1024, "true", "AtLeast"),
 ]
 with open(sys.argv[1], newline="", encoding="utf-8") as stream:
     rows = list(csv.DictReader(stream))
@@ -337,7 +337,7 @@ actual = [
     for row in rows
 ]
 assert actual == expected, (actual, expected)
-assert all(row["policy"] == "Quantum128BitADPS16" for row in rows)
+assert all(row["policy"] == "Quantum169BitADPS16" for row in rows)
 assert all(row["rank"] == "1" and row["coeff_linf_bound"] == "1" for row in rows)
 PY
 

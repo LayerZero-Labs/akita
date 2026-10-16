@@ -325,12 +325,11 @@ fn b_slice_report_geometry(
 ) -> Result<BSliceReportGeometry, AkitaError> {
     let logical_rows = slice_count.logical_output_rows(physical_output_rank)?;
     let complete_compression_bytes = if payload_mode.is_compressed() {
-        let complete_source_coefficients =
-            slice_count.complete_source_coefficients(physical_output_rank, outer_ring_dimension)?;
         Some(
-            akita_params::CompressionChainPlan::for_complete_source(
+            akita_params::CompressionChainPlan::for_image(
                 modulus_profile,
-                complete_source_coefficients,
+                logical_rows,
+                outer_ring_dimension,
             )?
             .source_bytes(),
         )

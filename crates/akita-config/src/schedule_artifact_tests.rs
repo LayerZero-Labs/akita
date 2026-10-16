@@ -127,7 +127,9 @@ fn row_admission_audits_recursive_setup_prefix_policy() {
 
 #[test]
 fn catalog_binding_revalidates_recursive_setup_prefix_challenge_hook() {
-    type RecursiveMultiChunk = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
+    // W8R3 is the shipped recursive family whose setup prefix uses an
+    // evaluation-trace opening.
+    type RecursiveMultiChunk = RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R3>;
 
     let row = row_with_setup_prefix::<RecursiveMultiChunk>(|prefix| {
         prefix.opening.opening_method == OpeningMethod::EvaluationTrace

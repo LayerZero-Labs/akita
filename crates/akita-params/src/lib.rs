@@ -40,7 +40,6 @@ pub use golomb_rice::{
     golomb_rice_encode_vec, golomb_rice_max_quotient_for_cap, golomb_rice_total_wire_bits,
     golomb_rice_values_within_cap, golomb_rice_zigzag_width,
 };
-pub use layout::setup_prefix_slots::setup_prefix_compression_plan;
 pub use layout::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
     active_setup_field_len, basis_weights, basis_weights_prefix, checked_opening_source_index,

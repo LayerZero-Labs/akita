@@ -114,7 +114,7 @@ between them in the transcript. `relation/` holds the prepared relation
 evaluator, the relation point, and the evaluation trace. `terminal/` holds the
 direct terminal checks and the exact A-product evaluation.
 
-At each nonterminal fold, the verifier checks fixed 128-byte `p_H` and `p_F`
+At each nonterminal fold, the verifier checks fixed 256-byte `p_H` and `p_F`
 payload shapes, reconstructs the B, D, F, and H relation right hand sides, and
 folds the compression relations at their native ring dimensions. It derives
 the negative-binary support from `WitnessLayout` and evaluates the stage-1
