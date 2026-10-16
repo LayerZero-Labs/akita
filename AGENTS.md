@@ -105,6 +105,7 @@ Follow the [#244](https://github.com/LayerZero-Labs/akita/pull/244) cutover: **o
 - `disk-persistence` — disk-backed persistence for some commitment flows
 - `logging-transcript` — `LoggingTranscript` schedule events and smell checks
 - `response-model-diagnostics` — expensive source and response energy measurements for model calibration
+- `program-bound-terminal-cache` (`akita-verifier`) — add `TerminalCacheArtifact::ProgramBound` for terminal NTT caches compiled into the verifier program; `Supplied` caches are always rebuilt
 
 Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 

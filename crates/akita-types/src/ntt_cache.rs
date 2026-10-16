@@ -36,9 +36,10 @@ use exact::{
 };
 use limbs::PreparedLimbMatrix;
 pub use prepared_artifact::{
-    build_riscv64_scalar_q128_cache_artifact, decode_riscv64_scalar_q128_cache,
-    prepared_verifier_ntt_cache_metadata, PreparedVerifierNttCacheBinding,
-    PreparedVerifierNttCacheMetadata, PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
+    build_riscv64_scalar_q128_cache_artifact, check_riscv64_scalar_q128_cache_derivation,
+    decode_riscv64_scalar_q128_cache, prepared_verifier_ntt_cache_metadata,
+    PreparedVerifierNttCacheBinding, PreparedVerifierNttCacheMetadata,
+    PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
 };
 
 /// Transform representation stored by one exact-prefix NTT cache entry.
