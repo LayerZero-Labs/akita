@@ -12,10 +12,11 @@ readme = "../../README.md"
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e19eda725fb9af3dc4a7fa51c6307e7cf6922dea", default-features = false, features = [
   "asm",
   "solinas",
 ] }
+jolt-inlines-blake2 = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e19eda725fb9af3dc4a7fa51c6307e7cf6922dea", default-features = false, optional = true }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
@@ -25,6 +26,8 @@ sha3 = "0.12.0"
 
 [features]
 default = ["transcript-blake2b"]
+# Descriptor digests over the jolt-inlines Blake2b (guest verifiers).
+blake2-inline = ["dep:jolt-inlines-blake2"]
 test-support = []
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",

@@ -53,6 +53,14 @@ transcript-keccak = [
   "akita-params/transcript-keccak",
   "akita-verifier/transcript-keccak",
 ]
+# Blake2b transcript and descriptor digests over the jolt-inlines hasher (a
+# RISC-V guest verifier); same bytes as the portable hasher.
+blake2-inline = ["akita-transcript/blake2-inline", "akita-params/blake2-inline"]
+# 64-point NTT and pointwise-dot inlines for a RISC-V guest verifier.
+ntt-inline = ["akita-algebra/ntt-inline"]
+# Keccak-f[1600] for the SHAKE challenge samplers through the jolt-inlines
+# Keccak inline (a RISC-V guest verifier).
+keccak-inline = ["akita-challenges/keccak-inline"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
@@ -102,7 +110,7 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e19eda725fb9af3dc4a7fa51c6307e7cf6922dea", default-features = false, features = [
   "asm",
   "solinas",
 ] }
@@ -117,7 +125,7 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e19eda725fb9af3dc4a7fa51c6307e7cf6922dea", default-features = false }
 # Test-only: pull in `akita-config`'s workspace artifact loader and ring-plan
 # seed. Schedule rows remain checked-in external artifacts loaded at runtime.
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
