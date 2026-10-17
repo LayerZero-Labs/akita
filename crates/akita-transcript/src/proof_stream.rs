@@ -296,11 +296,13 @@ where
     E: ExtField<F>,
 {
     fn encode(&self) -> impl AsRef<[u8]> {
-        let mut out = Vec::new();
-        for coefficient in self.value.to_base_vec() {
-            out.extend_from_slice(FieldAtom::new(coefficient).encode().as_ref());
-        }
-        out
+        let coefficients = self.value.to_base_vec();
+        AtomBytes::with_len(coefficients.len() * F::NUM_BYTES, |out| {
+            for (coefficient, chunk) in coefficients.iter().zip(out.chunks_exact_mut(F::NUM_BYTES))
+            {
+                coefficient.to_bytes_le(chunk);
+            }
+        })
     }
 }
 
@@ -326,7 +328,44 @@ where
 
 impl<F: CanonicalEncoding> Encoding<[u8]> for FieldAtom<F> {
     fn encode(&self) -> impl AsRef<[u8]> {
-        self.0.to_bytes_le_vec()
+        AtomBytes::with_len(F::NUM_BYTES, |out| self.0.to_bytes_le(out))
+    }
+}
+
+/// Encoded bytes of one proof atom, inline when they fit in 64 bytes.
+///
+/// Spongefish encodes every received and public atom before absorbing it;
+/// writing the encoding into an inline, word-aligned buffer avoids
+/// allocating it on the heap.
+enum AtomBytes {
+    Inline { bytes: InlineAtomBytes, len: usize },
+    Heap(Vec<u8>),
+}
+
+#[repr(C, align(8))]
+struct InlineAtomBytes([u8; 64]);
+
+impl AtomBytes {
+    fn with_len(len: usize, fill: impl FnOnce(&mut [u8])) -> Self {
+        let mut bytes = InlineAtomBytes([0; 64]);
+        if let Some(out) = bytes.0.get_mut(..len) {
+            fill(out);
+            Self::Inline { bytes, len }
+        } else {
+            let mut out = vec![0; len];
+            fill(&mut out);
+            Self::Heap(out)
+        }
+    }
+}
+
+impl AsRef<[u8]> for AtomBytes {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            // `with_len` builds `Inline` only when `len` fits the buffer.
+            Self::Inline { bytes, len } => bytes.0.get(..*len).unwrap_or_default(),
+            Self::Heap(bytes) => bytes,
+        }
     }
 }
 
@@ -1031,6 +1070,16 @@ mod tests {
             receive_field_group::<F>(&mut verifier, site, usize::MAX),
             Err(AkitaError::InvalidInput(message)) if message.contains("field record encoded")
         ));
+    }
+
+    #[test]
+    fn atom_bytes_encode_inline_and_spilled_lengths() {
+        for len in [0, 16, 64, 65, 200] {
+            let expected: Vec<u8> = (0..len).map(|index| (index * 7 + 1) as u8).collect();
+            let encoded = AtomBytes::with_len(len, |out| out.copy_from_slice(&expected));
+            assert_eq!(matches!(encoded, AtomBytes::Inline { .. }), len <= 64);
+            assert_eq!(encoded.as_ref(), expected.as_slice());
+        }
     }
 
     #[test]

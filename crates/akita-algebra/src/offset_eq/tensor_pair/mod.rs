@@ -101,6 +101,23 @@ impl<F: Field> EqPairTensorAxis<F> {
         }
     }
 
+    /// Number of coordinates with a nonzero weight. A bit-product weight is
+    /// nonzero exactly when every selected factor is, since a field has no
+    /// zero divisors.
+    pub(super) fn nonzero_len(&self) -> usize {
+        match &self.weights {
+            EqPairTensorWeights::Unit => self.len,
+            EqPairTensorWeights::Dense(weights) => {
+                weights.iter().filter(|weight| !weight.is_zero()).count()
+            }
+            EqPairTensorWeights::BitProduct(bit_factors) => {
+                bit_factors.iter().fold(1, |count, factors| {
+                    count * factors.iter().filter(|factor| !factor.is_zero()).count()
+                })
+            }
+        }
+    }
+
     pub(super) fn supports_bit_recurrence(&self) -> bool {
         matches!(
             self.weights,
