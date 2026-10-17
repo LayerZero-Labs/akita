@@ -195,8 +195,11 @@ impl PreparedLimbCommitMatrix {
     /// Maximum retained workspace bytes per worker, including four columns of eight-element batches.
     ///
     /// Smaller commitments allocate fewer column slots. Peak arithmetic scratch
-    /// additionally includes an inverse copy (2592 bytes), source packing scratch (152 bytes),
-    /// and gather indices (81 bytes). These are
+    /// additionally includes an inverse copy (2592 bytes), eight four-word sources
+    /// (512 bytes), eight chunk slices (128 bytes on 64-bit targets), source packing
+    /// scratch (152 bytes), and gather indices (81 bytes). These payloads total
+    /// 3465 bytes per worker on 64-bit targets, excluding stack metadata and padding,
+    /// and need not all be live simultaneously. They are
     /// bounded by degree, independent of width and column count. The result's
     /// `columns * rank * 648 * 4` bytes are allocated once, shared across workers.
     pub fn workspace_bytes(&self) -> usize {

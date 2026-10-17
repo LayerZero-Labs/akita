@@ -53,10 +53,30 @@ impl<const B: usize> Workspace<B> {
                 .iter_mut()
                 .zip(words.chunks_exact(column_words))
             {
-                for (element, slots) in (start..end).zip(transformed.iter_mut()) {
-                    let chunk = column
+                let active = transformed
+                    .get_mut(..count)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let mut chunks: [&[H::Source]; ELEMENT_BATCH] = [&[]; ELEMENT_BATCH];
+                let mut sources = [[0u128; K]; ELEMENT_BATCH];
+                for ((chunk, source), element) in
+                    chunks.iter_mut().zip(&mut sources).zip(start..end)
+                {
+                    *chunk = column
                         .get(element * K..(element + 1) * K)
                         .ok_or(AkitaError::InvalidProof)?;
+                    for (source, &word) in source.iter_mut().zip(*chunk) {
+                        *source = word.into();
+                    }
+                }
+                let sources = sources.get(..count).ok_or(AkitaError::InvalidProof)?;
+                if prepared
+                    .domain
+                    .try_forward_interleaved_words_batch(sources, active)
+                    .map_err(|error| AkitaError::InvalidInput(error.to_string()))?
+                {
+                    continue;
+                }
+                for (chunk, slots) in chunks.into_iter().zip(active) {
                     let bits = pack_binary_element_bits::<H>(chunk)?;
                     prepared
                         .domain
@@ -64,21 +84,44 @@ impl<const B: usize> Workspace<B> {
                         .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
                 }
             }
-            for (accumulators, row) in self
-                .accumulators
-                .chunks_exact_mut(B)
-                .zip(prepared.matrix.chunks_exact(prepared.m))
+            let source_columns = self.transformed.each_ref().map(Vec::as_slice);
+            let sources = source_columns
+                .get(..columns)
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut accumulator_rows = self.accumulators.chunks_exact_mut(B);
+            let mut matrix_rows = prepared.matrix.chunks_exact(prepared.m);
+            while let (Some(first), Some(first_matrix)) =
+                (accumulator_rows.next(), matrix_rows.next())
             {
-                let matrix = row.get(start..end).ok_or(AkitaError::InvalidProof)?;
-                for (accumulator, transformed) in
-                    accumulators.iter_mut().zip(&self.transformed).take(columns)
-                {
-                    accumulator
-                        .add_product_batch(
-                            matrix,
-                            transformed.get(..count).ok_or(AkitaError::InvalidProof)?,
+                let first_matrix = first_matrix
+                    .get(start..end)
+                    .ok_or(AkitaError::InvalidProof)?;
+                match (accumulator_rows.next(), matrix_rows.next()) {
+                    (Some(second), Some(second_matrix)) => {
+                        let second_matrix = second_matrix
+                            .get(start..end)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        TrinomialLimbAccumulator::add_product_tile(
+                            [
+                                first.get_mut(..columns).ok_or(AkitaError::InvalidProof)?,
+                                second.get_mut(..columns).ok_or(AkitaError::InvalidProof)?,
+                            ],
+                            [first_matrix, second_matrix],
+                            sources,
                         )
                         .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+                    }
+                    (None, None) => {
+                        for (accumulator, source) in first.iter_mut().zip(sources) {
+                            accumulator
+                                .add_product_batch(
+                                    first_matrix,
+                                    source.get(..count).ok_or(AkitaError::InvalidProof)?,
+                                )
+                                .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+                        }
+                    }
+                    _ => return Err(AkitaError::InvalidProof),
                 }
             }
         }

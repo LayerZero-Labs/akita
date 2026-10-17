@@ -4,6 +4,7 @@ mod accumulator;
 mod bounds;
 mod normalization;
 mod reduction;
+mod source_batch;
 mod transform;
 mod validation;
 

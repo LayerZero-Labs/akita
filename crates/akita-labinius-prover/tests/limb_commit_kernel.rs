@@ -119,7 +119,7 @@ where
 #[test]
 fn every_limb_prime_matches_the_integer_definition() {
     for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
-        for (rank, width) in [(1, 1), (2, 3), (4, 2)] {
+        for (rank, width) in [(1, 1), (2, 3), (3, 3), (4, 2)] {
             check::<BinaryField128>(prime, rank, width, 2, false);
         }
         check::<BinaryField192>(prime, 2, 2, 2, false);
@@ -144,40 +144,44 @@ fn binary_field192_ragged_columns_match_the_integer_definition() {
 
 #[test]
 fn ragged_column_blocks_match_unblocked_and_integer_definitions() {
-    const RANK: usize = 2;
     const WIDTH: usize = 129;
     const COLUMNS: usize = 9;
-    let mut rng = StdRng::seed_from_u64(0x09c0_1129);
-    let matrix: Vec<u32> = (0..RANK * WIDTH * D)
-        .map(|_| (rng.next_u64() % u64::from(Q)) as u32)
-        .collect();
-    // Sparse, independently positioned bits keep the integer convolution cheap
-    // while exercising every component, both signs, and the last source bit.
-    let source: Vec<u128> = (0..COLUMNS * WIDTH * K)
-        .map(|index| 1 | (1 << (1 + index % 126)) | (1 << 127))
-        .collect();
-    let prepared = PreparedLimbCommitMatrix::prepare(Q, D, RANK, WIDTH, &matrix).unwrap();
-    let expected = integer_definition::<BinaryField128>(Q, &matrix, RANK, WIDTH, COLUMNS, &source);
-    // A single column cannot share its matrix stream with another column and
-    // provides the unblocked reference across the 128-term checkpoint.
-    let unblocked: Vec<u32> = source
-        .chunks_exact(WIDTH * K)
-        .flat_map(|column| {
-            commit_binary_clear_limb_prepared::<BinaryField128>(&prepared, 1, column).unwrap()
-        })
-        .collect();
-    assert_eq!(unblocked, expected);
-    let commit = || {
-        commit_binary_clear_limb_prepared::<BinaryField128>(&prepared, COLUMNS, &source).unwrap()
-    };
-    assert_eq!(commit(), expected);
-    #[cfg(feature = "parallel")]
-    for threads in [1, 2, 4] {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build()
-            .unwrap();
-        assert_eq!(pool.install(commit), expected, "threads={threads}");
+    // Rank three exercises a two-row tile followed by the odd-row fallback.
+    for rank in [2, 3] {
+        let mut rng = StdRng::seed_from_u64(0x09c0_1129);
+        let matrix: Vec<u32> = (0..rank * WIDTH * D)
+            .map(|_| (rng.next_u64() % u64::from(Q)) as u32)
+            .collect();
+        // Sparse, independently positioned bits keep the integer convolution cheap
+        // while exercising every component, both signs, and the last source bit.
+        let source: Vec<u128> = (0..COLUMNS * WIDTH * K)
+            .map(|index| 1 | (1 << (1 + index % 126)) | (1 << 127))
+            .collect();
+        let prepared = PreparedLimbCommitMatrix::prepare(Q, D, rank, WIDTH, &matrix).unwrap();
+        let expected =
+            integer_definition::<BinaryField128>(Q, &matrix, rank, WIDTH, COLUMNS, &source);
+        // A single column cannot share its matrix stream with another column and
+        // provides the unblocked reference across the 128-term checkpoint.
+        let unblocked: Vec<u32> = source
+            .chunks_exact(WIDTH * K)
+            .flat_map(|column| {
+                commit_binary_clear_limb_prepared::<BinaryField128>(&prepared, 1, column).unwrap()
+            })
+            .collect();
+        assert_eq!(unblocked, expected);
+        let commit = || {
+            commit_binary_clear_limb_prepared::<BinaryField128>(&prepared, COLUMNS, &source)
+                .unwrap()
+        };
+        assert_eq!(commit(), expected);
+        #[cfg(feature = "parallel")]
+        for threads in [1, 2, 4] {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            assert_eq!(pool.install(commit), expected, "threads={threads}");
+        }
     }
 }
 

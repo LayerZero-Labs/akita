@@ -36,15 +36,75 @@ impl TrinomialLimbDomain {
             .map_or(0, |tables| std::mem::size_of_val(tables.as_ref()))
     }
 
-    pub(super) fn forward_interleaved_bits_backend(
+    /// Transform a batch of four-word sources when source batching is selected.
+    ///
+    /// Source bit `s` of word `c` is coefficient `4*s+c`, with sign `(-1)^s`.
+    /// The remaining 136 coefficient bits are zero. Source and output counts must agree.
+    /// Validate all output primes before mutation or table initialization.
+    /// Return `false` with every output unchanged on an unsupported backend.
+    pub fn try_forward_interleaved_words_batch(
         &self,
-        bits: &[u64],
-        out: &mut TrinomialLimbSlots,
-        backend: Backend,
-    ) -> Result<(), TrinomialError> {
-        let bits = Self::check_bits(bits)?;
-        self.check_slots(out)?;
-        let tables = self.interleaved_first_level.get_or_init(|| {
+        words: &[[u128; 4]],
+        out: &mut [TrinomialLimbSlots],
+    ) -> Result<bool, TrinomialError> {
+        if words.len() != out.len() {
+            return Err(TrinomialError::LimbInput {
+                reason: "source batch and output lengths do not match",
+            });
+        }
+        for output in out.iter() {
+            self.check_slots(output)?;
+        }
+        #[cfg(target_arch = "x86_64")]
+        if self.backend == Backend::Avx512VbmiBatch {
+            if out.is_empty() {
+                return Ok(true);
+            }
+            let tables = self.interleaved_tables();
+            let (sources, words) = words.as_chunks::<4>();
+            let (outputs, out) = out.as_chunks_mut::<4>();
+            for (source, output) in sources.iter().zip(outputs) {
+                // SAFETY: Selection detects AVX2 and AVX-512F/VL/BW/
+                // VBMI/BITALG. Equal counts and every output tag were
+                // validated before the first mutation; arrays are complete.
+                unsafe {
+                    super::source_batch::forward_interleaved_words::<4>(
+                        self,
+                        source,
+                        tables,
+                        output.each_mut().map(|slot| &mut slot.values),
+                    )
+                };
+            }
+            let (sources, remaining_sources) = words.as_chunks::<2>();
+            let (outputs, remaining_outputs) = out.as_chunks_mut::<2>();
+            for (source, output) in sources.iter().zip(outputs) {
+                // SAFETY: Selection detects AVX2 and AVX-512F/VL/BW/
+                // VBMI/BITALG. The validated paired arrays are complete.
+                unsafe {
+                    super::source_batch::forward_interleaved_words::<2>(
+                        self,
+                        source,
+                        tables,
+                        output.each_mut().map(|slot| &mut slot.values),
+                    )
+                };
+            }
+            for (source, output) in remaining_sources.iter().zip(remaining_outputs) {
+                // SAFETY: Selection detects AVX2 and AVX-512F/VL/BW/
+                // VBMI/BITALG. At most one validated complete source remains.
+                unsafe {
+                    super::vbmi::forward_interleaved(self, source, tables, &mut output.values)
+                };
+            }
+            return Ok(true);
+        }
+        let _ = words;
+        Ok(false)
+    }
+
+    fn interleaved_tables(&self) -> &[[[i32; 3 * LANES]; 256]] {
+        self.interleaved_first_level.get_or_init(|| {
             // Four sign phases for each of the three first-level sources.
             // A phase offset of four negates every entry. Allocate in blocks
             // of 24 KiB rather than constructing a 288 KiB stack temporary.
@@ -88,10 +148,21 @@ impl TrinomialLimbDomain {
                 }
             }
             tables
-        });
+        })
+    }
+
+    pub(super) fn forward_interleaved_bits_backend(
+        &self,
+        bits: &[u64],
+        out: &mut TrinomialLimbSlots,
+        backend: Backend,
+    ) -> Result<(), TrinomialError> {
+        let bits = Self::check_bits(bits)?;
+        self.check_slots(out)?;
+        let tables = self.interleaved_tables();
         #[cfg(target_arch = "x86_64")]
         match backend {
-            Backend::Avx2 => {
+            Backend::Avx2 | Backend::Avx512VbmiBatch => {
                 // SAFETY: Selection establishes AVX2; validation precedes this call.
                 unsafe { super::avx2::forward_interleaved(self, bits, tables, &mut out.values) };
                 return Ok(());

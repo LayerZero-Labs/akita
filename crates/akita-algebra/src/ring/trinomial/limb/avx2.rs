@@ -152,7 +152,7 @@ pub(super) unsafe fn triple<const INVERSE: bool, const NORMALIZE: bool>(
 }
 
 #[inline(always)]
-unsafe fn row<const INVERSE: bool, const NORMALIZE: bool>(
+pub(super) unsafe fn row<const INVERSE: bool, const NORMALIZE: bool>(
     ptr: *mut __m256i,
     offset: usize,
     step: usize,

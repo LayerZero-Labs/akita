@@ -155,6 +155,33 @@ fn limb_benchmarks(criterion: &mut Criterion, source: &[Bits]) {
             black_box(&column.transformed);
         });
     });
+    // Exercise direct four-word sources through normal runtime selection.
+    // Unsupported backends have no direct-word benchmark to time.
+    let words: Vec<[u128; 4]> = (0..M).map(|_| rng.gen()).collect();
+    if column
+        .domain
+        .try_forward_interleaved_words_batch(&words[..1], &mut column.transformed[..1])
+        .expect("matching source count and prime")
+    {
+        group.throughput(Throughput::Elements((M * 512) as u64));
+        for batch in [1, 8] {
+            group.bench_function(format!("direct_words_batch_{batch}_4096_elements"), |b| {
+                b.iter(|| {
+                    for (words, outputs) in black_box(&words)
+                        .chunks(batch)
+                        .zip(column.transformed.chunks_mut(batch))
+                    {
+                        assert!(column
+                            .domain
+                            .try_forward_interleaved_words_batch(words, outputs)
+                            .expect("matching source count and prime"));
+                    }
+                    black_box(&column.transformed);
+                });
+            });
+        }
+        group.throughput(Throughput::Elements(BITS));
+    }
     group.bench_function("one_row_accumulation_4096_products_and_finish", |b| {
         b.iter(|| {
             for (matrix, source) in black_box(&column.matrix[..M])
@@ -192,6 +219,44 @@ fn limb_benchmarks(criterion: &mut Criterion, source: &[Bits]) {
             },
         );
     }
+    let tile_sources: [Vec<_>; 4] = std::array::from_fn(|column_index| {
+        let mut sources = column.transformed.clone();
+        sources.rotate_left(17 * column_index);
+        sources
+    });
+    let mut tile_accumulators: [Vec<_>; 2] =
+        std::array::from_fn(|_| vec![TrinomialLimbAccumulator::new(&column.domain); 4]);
+    let mut tile_outputs = vec![column.domain.zero_slots(); 8];
+    group.throughput(Throughput::Elements((8 * M * D) as u64));
+    group.bench_function(
+        "two_row_four_column_batch_8_4096_products_and_finish",
+        |b| {
+            b.iter(|| {
+                for start in (0..M).step_by(8) {
+                    let sources: [&[_]; 4] =
+                        std::array::from_fn(|c| &tile_sources[c][start..start + 8]);
+                    let [row0, row1] = &mut tile_accumulators;
+                    TrinomialLimbAccumulator::add_product_tile(
+                        [row0, row1],
+                        [
+                            &column.matrix[start..start + 8],
+                            &column.matrix[M + start..M + start + 8],
+                        ],
+                        black_box(&sources),
+                    )
+                    .expect("matching tile geometry and prime");
+                }
+                for (accumulator, output) in tile_accumulators
+                    .iter_mut()
+                    .flatten()
+                    .zip(&mut tile_outputs)
+                {
+                    accumulator.finish(output).expect("matching tile prime");
+                }
+                black_box(&tile_outputs);
+            });
+        },
+    );
     // Keep inverse input nonzero when a Criterion filter excludes accumulation.
     for (matrix, source) in column.matrix[..M].iter().zip(&column.transformed) {
         column.accumulators[0]
