@@ -307,6 +307,23 @@ mod tests {
                         .export_setup_prefixes(std::slice::from_ref(&invalid))
                         .is_err());
                 }
+                // A prefix must be committed at the full field width; a
+                // consistent-width one-digit profile would bind a truncated image.
+                let mut truncated = id.clone();
+                let profile = &mut truncated.commitment_profile;
+                profile.inner.digits.num_digits = 1;
+                profile.inner.matrix = profile
+                    .inner
+                    .matrix
+                    .try_with_input_width(profile.blocks.positions_per_block)
+                    .unwrap();
+                let error = first
+                    .export_setup_prefixes(std::slice::from_ref(&truncated))
+                    .expect_err("truncated inner depth must be rejected");
+                assert!(
+                    error.to_string().contains("full field width"),
+                    "unexpected error: {error}"
+                );
                 assert_eq!(first.setup_prefix_cache_len().unwrap(), 0);
                 let artifacts = first
                     .export_setup_prefixes(std::slice::from_ref(&id))

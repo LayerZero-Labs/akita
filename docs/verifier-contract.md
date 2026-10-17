@@ -22,7 +22,7 @@ The verifier never invokes planner search. It accepts only an explicit
 The catalog is setup or preprocessing input, never proof input. Before setup
 access or transcript replay, Akita validates artifact identity and runtime
 hooks, resolves the public row digest, compares every ordered public
-`GroupCommitPhaseParams`, re-audits every A/B/D/recursive/terminal SIS matrix,
+`GroupCommitPhaseParams`, re-audits every A/B/D/recursive/terminal SIS matrix, requires every setup-prefix commitment profile to use the full-field-width inner decomposition,
 prices each shared A row for the schedule's response-chunk count, checks
 challenge and full terminal L infinity or L2 cap geometry, and confirms the
 schedule fits the setup field capacity. Private polynomial representations and

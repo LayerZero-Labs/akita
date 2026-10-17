@@ -32,6 +32,7 @@ pub(crate) fn validate_setup_prefix_commitment<'a, F: Field>(
             .field_bits(),
     )?;
     commitment_profile.validate_setup_prefix_geometry(id.natural_len)?;
+    commitment_profile.validate_setup_prefix_digit_depth()?;
     let n_prefix = id.n_prefix()?;
     let ring_dimension = commitment_profile.inner.matrix.ring_dimension();
     let committed_n_prefix = checked::pow2(commitment_profile.group.num_vars())

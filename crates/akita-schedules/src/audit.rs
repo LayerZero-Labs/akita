@@ -148,6 +148,9 @@ fn audit_frozen_group(
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     params.validate()?;
+    if params.setup_natural_len.is_some() {
+        params.profile.validate_setup_prefix_digit_depth()?;
+    }
     audit_inner_matrix(label, &params.profile.inner.matrix, policy)?;
     audit_outer_matrix(label, &params.profile.outer.matrix, policy)?;
 
