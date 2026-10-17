@@ -6,7 +6,8 @@ use akita_serialization::{SerializationError, Valid};
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
 use crate::layout::field_bytes;
 use crate::tail_golomb_rice_low_bits::{
-    rice_low_bits_for_cap, tail_z_planner_bits_per_coord, wire_rice_low_bits,
+    cap_rice_low_bits_for_wire, rice_low_bits_for_cap, tail_z_planner_bits_per_coord,
+    wire_rice_low_bits,
 };
 use crate::wire_limits::{checked_shape_len, checked_shape_sequence_len};
 use crate::{CommittedGroupParams, TerminalFoldParams};
@@ -38,6 +39,40 @@ pub struct TailSegmentGroupLayout {
     pub z_rice_low_bits: u32,
     /// Scheduled byte budget for this group's Golomb-coded z payload.
     pub z_payload_bytes: usize,
+}
+
+impl TailSegmentGroupLayout {
+    /// Require the Golomb-Rice width and payload budget that the canonical
+    /// terminal derivation emits for this group's cap.
+    ///
+    /// A Linf group stores its cap, which fixes both values. An L2 group stores
+    /// only the wire width of its encoding scale; that width fixes the cap
+    /// width (up to the saturated zero case), which fixes the budget. The L2
+    /// wire decodes signed `i16` coefficients, so its scale cannot exceed
+    /// [`crate::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT`].
+    pub fn validate_canonical_z_wire(&self) -> Result<(), AkitaError> {
+        let canonical = match self.z_linf_cap {
+            Some(cap) => {
+                self.z_rice_low_bits == wire_rice_low_bits(cap)
+                    && self.z_payload_bytes == z_payload_budget_from_cap(self.z_coords, cap)?
+            }
+            None => {
+                self.z_rice_low_bits
+                    <= wire_rice_low_bits(crate::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT)
+                    && cap_rice_low_bits_for_wire(self.z_rice_low_bits).any(|cap_low_bits| {
+                        z_payload_budget_for_cap_low_bits(self.z_coords, cap_low_bits)
+                            .is_ok_and(|budget| budget == self.z_payload_bytes)
+                    })
+            }
+        };
+        if !canonical {
+            return Err(AkitaError::InvalidSetup(
+                "terminal z Golomb-Rice width or payload budget is not canonical for its cap"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Shape of the clear terminal response payload.
@@ -179,7 +214,7 @@ impl TerminalResponseShape {
             .and_then(|value| value.checked_mul(d))
             .ok_or_else(|| AkitaError::InvalidSetup("terminal t coordinates overflow".into()))?;
         let z_rice_low_bits = wire_rice_low_bits(encoding_scale);
-        let z_payload_bytes = z_payload_budget_from_cap(z_coords, encoding_scale);
+        let z_payload_bytes = z_payload_budget_from_cap(z_coords, encoding_scale)?;
         let logical_num_elems = z_coords
             .checked_add(e_field_elems)
             .and_then(|value| value.checked_add(t_field_elems))
@@ -226,10 +261,18 @@ impl TerminalResponseShape {
     }
 }
 
-pub(crate) fn z_payload_budget_from_cap(z_coords: usize, cap: u128) -> usize {
-    let low_bits_cap = rice_low_bits_for_cap(cap);
-    let bits_per_coord = tail_z_planner_bits_per_coord(low_bits_cap);
-    z_coords.saturating_mul(bits_per_coord).div_ceil(8)
+pub(crate) fn z_payload_budget_from_cap(z_coords: usize, cap: u128) -> Result<usize, AkitaError> {
+    z_payload_budget_for_cap_low_bits(z_coords, rice_low_bits_for_cap(cap))
+}
+
+fn z_payload_budget_for_cap_low_bits(
+    z_coords: usize,
+    cap_rice_low_bits: u32,
+) -> Result<usize, AkitaError> {
+    z_coords
+        .checked_mul(tail_z_planner_bits_per_coord(cap_rice_low_bits))
+        .map(|bits| bits.div_ceil(8))
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal z payload budget overflow".into()))
 }
 
 fn tail_segment_layout_from_groups(
@@ -304,7 +347,7 @@ fn tail_segment_layout_from_groups(
                 "terminal honest response cap {z_cap} exceeds inner-matrix SIS capacity {security_cap}"
             )));
         }
-        let z_payload_bytes = z_payload_budget_from_cap(z_coords, z_cap);
+        let z_payload_bytes = z_payload_budget_from_cap(z_coords, z_cap)?;
         group_layouts.push(TailSegmentGroupLayout {
             z_coords,
             e_field_elems,
