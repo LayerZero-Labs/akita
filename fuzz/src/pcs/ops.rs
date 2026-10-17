@@ -1,0 +1,338 @@
+//! The only place that spells out Akita's end-to-end trait bounds.
+//!
+//! Every bounded public operation used by the harness is a method of
+//! [`PcsOps`], blanket-implemented for each config that satisfies the bounds
+//! of the production APIs. Generic harness code then needs only `Cfg: PcsOps`.
+
+use akita_config::{CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
+use akita_cpu_backend::{
+    AkitaProverSetup, CommitOutput, CommitmentHandle, CpuBackend, CpuSource, DensePoly,
+    GroupContext, OneHotPoly,
+};
+use akita_error::AkitaError;
+use akita_params::{BasisMode, FoldSchedule, OpeningClaimsLayout, OpeningScheduleSelection};
+use akita_pcs::AkitaCommitmentScheme;
+use akita_prover::{ProverBackend, SelectedProverOpeningData};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
+use akita_types::{
+    AkitaVerifierSetup, CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims,
+};
+use akita_verifier::AkitaVerifier;
+use jolt_field::{
+    AdditiveGroup, CanonicalBytes, ExtField, Field, Fold, MulBaseUnreduced, PseudoMersenne, Ring,
+    Unreduced, WithCommitAccumulator,
+};
+use std::sync::Arc;
+
+pub type Handle<Cfg> =
+    CommitmentHandle<<Cfg as CommitmentConfig>::Field, <Cfg as CommitmentConfig>::ExtField>;
+pub type Output<Cfg> =
+    CommitOutput<<Cfg as CommitmentConfig>::Field, <Cfg as CommitmentConfig>::ExtField>;
+pub type Claims<'a, Cfg> = OpeningClaims<
+    'a,
+    <Cfg as CommitmentConfig>::ExtField,
+    CommittedGroup<<Cfg as CommitmentConfig>::Field>,
+>;
+/// One group's `(point, evaluations, commitment)` in a verifier statement.
+pub type ClaimRow<'a, Cfg> = (
+    Vec<<Cfg as CommitmentConfig>::ExtField>,
+    Vec<<Cfg as CommitmentConfig>::ExtField>,
+    &'a CommittedGroup<<Cfg as CommitmentConfig>::Field>,
+);
+pub type Opening<'a, Cfg> = SelectedProverOpeningData<
+    'a,
+    <Cfg as CommitmentConfig>::ExtField,
+    Handle<Cfg>,
+    <Cfg as CommitmentConfig>::Field,
+>;
+pub type Statement<'a, Cfg> =
+    GroupBatchStatement<'a, <Cfg as CommitmentConfig>::ExtField, <Cfg as CommitmentConfig>::Field>;
+
+/// A prepared, reusable proof input: selection and layout are public.
+#[derive(Clone)]
+pub struct Proved {
+    pub proof: Vec<u8>,
+    pub selection: OpeningScheduleSelection,
+    pub layout: OpeningClaimsLayout,
+}
+
+pub trait PcsOps: CommitmentConfig {
+    fn load_scheme(bytes: &[u8]) -> Result<AkitaCommitmentScheme<Self>, AkitaError>;
+
+    fn schedules(scheme: &AkitaCommitmentScheme<Self>) -> &TrustedScheduleCatalog<Self>;
+
+    fn encode_commitment(commitment: &CommittedGroup<Self::Field>) -> Vec<u8>;
+
+    /// Canonical transcript instance descriptor bytes for one proof.
+    fn instance_descriptor(
+        setup: &akita_types::AkitaSetupDescriptor,
+        layout: &OpeningClaimsLayout,
+        selection: OpeningScheduleSelection,
+        schedule: &FoldSchedule,
+        basis: BasisMode,
+    ) -> Result<Vec<u8>, AkitaError>;
+
+    fn setup(
+        scheme: &AkitaCommitmentScheme<Self>,
+        max_num_vars: usize,
+        max_num_polys: usize,
+    ) -> Result<AkitaProverSetup<Self::Field>, AkitaError>;
+
+    fn backend(
+        scheme: &AkitaCommitmentScheme<Self>,
+        setup: &AkitaProverSetup<Self::Field>,
+    ) -> Result<CpuBackend<Self::Field, Self::ExtField>, AkitaError>;
+
+    /// This family's setup requirements at a given capacity.
+    fn setup_requirements(
+        scheme: &AkitaCommitmentScheme<Self>,
+        max_num_vars: usize,
+        max_num_polys: usize,
+    ) -> Result<SetupRequirements<Self::Field>, AkitaError>;
+
+    /// One prover setup covering `requirements` (possibly several families).
+    fn covering_setup(
+        requirements: &SetupRequirements<Self::Field>,
+    ) -> Result<AkitaProverSetup<Self::Field>, AkitaError>;
+
+    fn verifier_setup(
+        scheme: &AkitaCommitmentScheme<Self>,
+        setup: &AkitaProverSetup<Self::Field>,
+    ) -> Result<AkitaVerifierSetup<Self::Field>, AkitaError>;
+
+    fn narrowed_verifier_setup(
+        scheme: &AkitaCommitmentScheme<Self>,
+        setup: &AkitaProverSetup<Self::Field>,
+        schedule: &FoldSchedule,
+        layout: &OpeningClaimsLayout,
+    ) -> Result<AkitaVerifierSetup<Self::Field>, AkitaError>;
+
+    /// Verifier admitting every catalog row `setup` supports.
+    fn verifier(
+        scheme: &AkitaCommitmentScheme<Self>,
+        setup: AkitaVerifierSetup<Self::Field>,
+    ) -> Result<AkitaVerifier<Self>, AkitaError>;
+
+    /// Verifier admitting only `selection`'s row.
+    fn selection_verifier(
+        scheme: &AkitaCommitmentScheme<Self>,
+        setup: AkitaVerifierSetup<Self::Field>,
+        selection: OpeningScheduleSelection,
+    ) -> Result<AkitaVerifier<Self>, AkitaError>;
+
+    fn commit_dense(
+        scheme: &AkitaCommitmentScheme<Self>,
+        backend: &CpuBackend<Self::Field, Self::ExtField>,
+        polys: Vec<DensePoly<Self::Field>>,
+        context: GroupContext<'_>,
+    ) -> Result<Output<Self>, AkitaError>;
+
+    fn commit_onehot(
+        scheme: &AkitaCommitmentScheme<Self>,
+        backend: &CpuBackend<Self::Field, Self::ExtField>,
+        polys: Vec<OneHotPoly<Self::Field, u8>>,
+        context: GroupContext<'_>,
+    ) -> Result<Output<Self>, AkitaError>;
+
+    fn select<'a>(
+        claims: Claims<'a, Self>,
+        handles: Vec<Handle<Self>>,
+        scheme: &AkitaCommitmentScheme<Self>,
+    ) -> Result<Opening<'a, Self>, AkitaError>;
+
+    fn prove(
+        scheme: &AkitaCommitmentScheme<Self>,
+        setup: &AkitaProverSetup<Self::Field>,
+        opening: Opening<'_, Self>,
+        backend: &CpuBackend<Self::Field, Self::ExtField>,
+        session: &[u8],
+        basis: BasisMode,
+    ) -> Result<Proved, AkitaError>;
+
+    fn verify(
+        verifier: &AkitaVerifier<Self>,
+        proof: &[u8],
+        session: &[u8],
+        statement: Statement<'_, Self>,
+        basis: BasisMode,
+    ) -> Result<(), AkitaError>;
+}
+
+impl<Cfg> PcsOps for Cfg
+where
+    Cfg: CommitmentConfig + 'static,
+    Cfg::Field: Field
+        + CanonicalBytes
+        + Unreduced
+        + PseudoMersenne
+        + Valid
+        + AkitaSerialize
+        + AkitaDeserialize<Context = ()>
+        + WithCommitAccumulator
+        + Ring
+        + 'static,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + ExtField<Cfg::Field>
+        + Ring
+        + Unreduced
+        + Fold
+        + AkitaSerialize
+        + MulBaseUnreduced<Cfg::Field>
+        + 'static,
+    CpuBackend<Cfg::Field, Cfg::ExtField>:
+        ProverBackend<Cfg::Field, Cfg::ExtField, CommitmentHandle = Handle<Cfg>>,
+    DensePoly<Cfg::Field>: CpuSource<Cfg::Field, Cfg::ExtField>,
+    OneHotPoly<Cfg::Field, u8>: CpuSource<Cfg::Field, Cfg::ExtField>,
+{
+    fn load_scheme(bytes: &[u8]) -> Result<AkitaCommitmentScheme<Self>, AkitaError> {
+        AkitaCommitmentScheme::<Self>::from_schedule_artifact(bytes)
+    }
+
+    fn schedules(scheme: &AkitaCommitmentScheme<Self>) -> &TrustedScheduleCatalog<Self> {
+        scheme.schedules()
+    }
+
+    fn instance_descriptor(
+        setup: &akita_types::AkitaSetupDescriptor,
+        layout: &OpeningClaimsLayout,
+        selection: OpeningScheduleSelection,
+        schedule: &FoldSchedule,
+        basis: BasisMode,
+    ) -> Result<Vec<u8>, AkitaError> {
+        akita_config::transcript_instance_descriptor::<Self::Field, Self>(
+            setup, layout, selection, schedule, basis,
+        )
+        .map(|(_, bytes)| bytes)
+    }
+
+    fn encode_commitment(commitment: &CommittedGroup<Self::Field>) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        commitment
+            .serialize_compressed(&mut bytes)
+            .expect("commitments encode");
+        bytes
+    }
+
+    fn setup(
+        scheme: &AkitaCommitmentScheme<Self>,
+        max_num_vars: usize,
+        max_num_polys: usize,
+    ) -> Result<AkitaProverSetup<Self::Field>, AkitaError> {
+        scheme.setup_prover(max_num_vars, max_num_polys)
+    }
+
+    fn backend(
+        _scheme: &AkitaCommitmentScheme<Self>,
+        setup: &AkitaProverSetup<Self::Field>,
+    ) -> Result<CpuBackend<Self::Field, Self::ExtField>, AkitaError> {
+        CpuBackend::new(Arc::clone(&setup.expanded))
+    }
+
+    fn setup_requirements(
+        scheme: &AkitaCommitmentScheme<Self>,
+        max_num_vars: usize,
+        max_num_polys: usize,
+    ) -> Result<SetupRequirements<Self::Field>, AkitaError> {
+        SetupRequirements::from_catalog::<Self>(scheme.schedules(), max_num_vars, max_num_polys)
+    }
+
+    fn covering_setup(
+        requirements: &SetupRequirements<Self::Field>,
+    ) -> Result<AkitaProverSetup<Self::Field>, AkitaError> {
+        akita_setup::new_prover_setup::<Self::Field>(requirements)
+    }
+
+    fn verifier_setup(
+        scheme: &AkitaCommitmentScheme<Self>,
+        setup: &AkitaProverSetup<Self::Field>,
+    ) -> Result<AkitaVerifierSetup<Self::Field>, AkitaError> {
+        scheme.setup_verifier(setup)
+    }
+
+    fn narrowed_verifier_setup(
+        scheme: &AkitaCommitmentScheme<Self>,
+        setup: &AkitaProverSetup<Self::Field>,
+        schedule: &FoldSchedule,
+        layout: &OpeningClaimsLayout,
+    ) -> Result<AkitaVerifierSetup<Self::Field>, AkitaError> {
+        scheme.setup_verifier_for_schedule(setup, schedule, layout)
+    }
+
+    fn verifier(
+        scheme: &AkitaCommitmentScheme<Self>,
+        setup: AkitaVerifierSetup<Self::Field>,
+    ) -> Result<AkitaVerifier<Self>, AkitaError> {
+        scheme.verifier(setup)
+    }
+
+    fn selection_verifier(
+        scheme: &AkitaCommitmentScheme<Self>,
+        setup: AkitaVerifierSetup<Self::Field>,
+        selection: OpeningScheduleSelection,
+    ) -> Result<AkitaVerifier<Self>, AkitaError> {
+        AkitaVerifier::for_selection(setup, scheme.schedules().clone(), selection, None)
+    }
+
+    fn commit_dense(
+        scheme: &AkitaCommitmentScheme<Self>,
+        backend: &CpuBackend<Self::Field, Self::ExtField>,
+        polys: Vec<DensePoly<Self::Field>>,
+        context: GroupContext<'_>,
+    ) -> Result<Output<Self>, AkitaError> {
+        let source = backend.import_source(polys)?;
+        backend.commit(Self::schedules(scheme), &source, context)
+    }
+
+    fn commit_onehot(
+        scheme: &AkitaCommitmentScheme<Self>,
+        backend: &CpuBackend<Self::Field, Self::ExtField>,
+        polys: Vec<OneHotPoly<Self::Field, u8>>,
+        context: GroupContext<'_>,
+    ) -> Result<Output<Self>, AkitaError> {
+        let source = backend.import_source(polys)?;
+        backend.commit(Self::schedules(scheme), &source, context)
+    }
+
+    fn select<'a>(
+        claims: Claims<'a, Self>,
+        handles: Vec<Handle<Self>>,
+        scheme: &AkitaCommitmentScheme<Self>,
+    ) -> Result<Opening<'a, Self>, AkitaError> {
+        SelectedProverOpeningData::from_committed_claims::<Self>(
+            claims,
+            handles,
+            scheme.schedules(),
+        )
+    }
+
+    fn prove(
+        scheme: &AkitaCommitmentScheme<Self>,
+        setup: &AkitaProverSetup<Self::Field>,
+        opening: Opening<'_, Self>,
+        backend: &CpuBackend<Self::Field, Self::ExtField>,
+        session: &[u8],
+        basis: BasisMode,
+    ) -> Result<Proved, AkitaError> {
+        let selection = opening.selection();
+        let layout = opening.opening_layout().clone();
+        let proof = crate::liveness::observe(std::any::type_name::<Self>(), || {
+            scheme.batched_prove(setup, opening, backend, session, basis)
+        })?;
+        Ok(Proved {
+            proof,
+            selection,
+            layout,
+        })
+    }
+
+    fn verify(
+        verifier: &AkitaVerifier<Self>,
+        proof: &[u8],
+        session: &[u8],
+        statement: Statement<'_, Self>,
+        basis: BasisMode,
+    ) -> Result<(), AkitaError> {
+        verifier.batched_verify(proof, session, statement, basis)
+    }
+}
