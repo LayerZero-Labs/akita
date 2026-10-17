@@ -46,6 +46,8 @@ jobs:
           RUSTFLAGS: -D warnings -C target-cpu=native
         run: |
           cargo test --release -p akita-algebra --lib ntt
+          # The add-reduce kernels and their tail tests exist only with `parallel`.
+          cargo test --release -p akita-algebra --features parallel --lib ntt::neon
           cargo test --release -p akita-types --lib ntt_cache
           cargo test --release -p akita-verifier --lib terminal::ntt::
           cargo test --release -p akita-cpu-backend --lib wide_mass::tests
