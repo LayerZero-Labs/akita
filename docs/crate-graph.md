@@ -35,6 +35,7 @@ orchestration lives in `akita-pcs`.
 | `akita-zk-prover` (`dev`) | Prover-side zero-knowledge building blocks (#120); no proof path depends on it |
 | `akita-labinius-verifier` (`dev`) | Seed-derived admitted root setup, lowered root relation, and verification of the root reduction of a binary or prime evaluation claim to evaluation claims on committed tables; no proof path depends on it |
 | `akita-labinius-prover` (`dev`) | Binary source commitment, lowered root witness, root sumcheck kernels, and the root reduction prover with a transparent test oracle; no proof path depends on it |
+| `akita-labinius-pcs` (`dev`) | Opt-in polynomial commitment for a binary source over the 64-bit and 128-bit proof-field families: a nested Akita scheme commits the image digits and response digits of the root reduction, and the prime left opening when the statement has a prime claim, and opens them in one grouped proof; shipped schedule catalogs and their offline generator; no proof path depends on it |
 
 ## Dependency Layers
 
@@ -60,6 +61,24 @@ graph TD
   Pcs["akita-pcs"]
   LabiniusVerifier["akita-labinius-verifier (dev)"]
   LabiniusProver["akita-labinius-prover (dev)"]
+  LabiniusPcs["akita-labinius-pcs (dev)"]
+
+  LabiniusPcs --> LabiniusProver
+  LabiniusPcs --> LabiniusVerifier
+  LabiniusPcs --> Pcs
+  LabiniusPcs --> Cpu
+  LabiniusPcs --> Prover
+  LabiniusPcs --> Verifier
+  LabiniusPcs --> Config
+  LabiniusPcs --> Schedules
+  LabiniusPcs --> Params
+  LabiniusPcs --> Types
+  LabiniusPcs --> Algebra
+  LabiniusPcs --> Error
+  LabiniusPcs --> Ser
+  LabiniusPcs --> Field
+  LabiniusPcs -. labinius-catalog-gen .-> Planner
+  LabiniusPcs --> Challenges
 
   LabiniusVerifier --> Algebra
   LabiniusVerifier --> Error
@@ -254,3 +273,9 @@ Successor export/import contracts and directed `Edge<A, B>` bridges live in
 constructor. The generic coordinator erases packets only for bridge dispatch;
 packet encoding and conversion belong to backend implementations. PCS integration
 tests implement external bridges using the public CPU packet API.
+
+The `labinius-catalog-gen` feature of `akita-labinius-pcs` enables its optional
+planner dependency for the offline catalog generator. Without that feature the
+crate loads its shipped catalogs through the ordinary artifact admission and
+does not depend on the planner; `scripts/check-crate-deps.sh akita-labinius-pcs`
+checks this for every runtime feature combination.

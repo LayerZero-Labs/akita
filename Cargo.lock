@@ -99,6 +99,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-labinius-pcs"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-challenges",
+ "akita-config",
+ "akita-cpu-backend",
+ "akita-error",
+ "akita-labinius-prover",
+ "akita-labinius-verifier",
+ "akita-params",
+ "akita-pcs",
+ "akita-planner",
+ "akita-prover",
+ "akita-schedules",
+ "akita-serialization",
+ "akita-types",
+ "akita-verifier",
+ "jolt-field",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "akita-labinius-prover"
 version = "0.1.0"
 dependencies = [
