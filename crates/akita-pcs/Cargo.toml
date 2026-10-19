@@ -53,6 +53,14 @@ transcript-keccak = [
   "akita-params/transcript-keccak",
   "akita-verifier/transcript-keccak",
 ]
+# Blake2b transcript and descriptor digests over the jolt-inlines hasher (a
+# RISC-V guest verifier); same bytes as the portable hasher.
+blake2-inline = ["akita-transcript/blake2-inline", "akita-params/blake2-inline"]
+# 64-point NTT and pointwise-dot inlines for a RISC-V guest verifier.
+ntt-inline = ["akita-algebra/ntt-inline"]
+# Keccak-f[1600] for the SHAKE challenge samplers through the jolt-inlines
+# Keccak inline (a RISC-V guest verifier).
+keccak-inline = ["akita-challenges/keccak-inline"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
