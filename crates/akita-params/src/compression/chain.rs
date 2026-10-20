@@ -16,6 +16,10 @@ const Q32_COMPLETE_SOURCE_COUNT: usize =
 
 static Q128_COMPLETE_SOURCE_PLANS: [OnceLock<CompressionChainPlan>; Q128_COMPLETE_SOURCE_COUNT] =
     [const { OnceLock::new() }; Q128_COMPLETE_SOURCE_COUNT];
+// A plan names its exact modulus profile, so the two 128-bit profiles cannot
+// share cells even though their field byte length and key domain coincide.
+static Q128_OFFSET275_COMPLETE_SOURCE_PLANS: [OnceLock<CompressionChainPlan>;
+    Q128_COMPLETE_SOURCE_COUNT] = [const { OnceLock::new() }; Q128_COMPLETE_SOURCE_COUNT];
 static Q64_COMPLETE_SOURCE_PLANS: [OnceLock<CompressionChainPlan>; Q64_COMPLETE_SOURCE_COUNT] =
     [const { OnceLock::new() }; Q64_COMPLETE_SOURCE_COUNT];
 static Q32_COMPLETE_SOURCE_PLANS: [OnceLock<CompressionChainPlan>; Q32_COMPLETE_SOURCE_COUNT] =
@@ -28,6 +32,7 @@ fn complete_source_plan_cache(
     let index = source_coefficients.checked_sub(1)?;
     match modulus_profile {
         SisModulusProfileId::Q128OffsetA7F7 => Q128_COMPLETE_SOURCE_PLANS.get(index),
+        SisModulusProfileId::Q128Offset275 => Q128_OFFSET275_COMPLETE_SOURCE_PLANS.get(index),
         SisModulusProfileId::Q64Offset59 => Q64_COMPLETE_SOURCE_PLANS.get(index),
         SisModulusProfileId::Q32Offset99 => Q32_COMPLETE_SOURCE_PLANS.get(index),
     }

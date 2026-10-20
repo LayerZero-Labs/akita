@@ -12,6 +12,8 @@
 //! project does not guarantee backward compatibility.
 
 #[cfg(test)]
+mod sis_modulus_profile_tag_tests;
+#[cfg(test)]
 mod tests;
 mod transcript_grinding_binding;
 
@@ -822,6 +824,7 @@ fn decode_sis_modulus_profile<R: Read>(
         0 => Ok(SisModulusProfileId::Q32Offset99),
         1 => Ok(SisModulusProfileId::Q64Offset59),
         2 => Ok(SisModulusProfileId::Q128OffsetA7F7),
+        4 => Ok(SisModulusProfileId::Q128Offset275),
         other => Err(SerializationError::InvalidData(format!(
             "unknown SisModulusProfileId tag {other}"
         ))),

@@ -35,7 +35,8 @@ const fn proof_optimized_inner_basis_range(
     let max = match profile {
         akita_params::SisModulusProfileId::Q32Offset99 => 10,
         akita_params::SisModulusProfileId::Q64Offset59
-        | akita_params::SisModulusProfileId::Q128OffsetA7F7 => PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX,
+        | akita_params::SisModulusProfileId::Q128OffsetA7F7
+        | akita_params::SisModulusProfileId::Q128Offset275 => PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX,
     };
     (PROOF_OPTIMIZED_LOG_BASIS_MIN, max)
 }

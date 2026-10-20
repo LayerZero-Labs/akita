@@ -82,7 +82,9 @@ const fn max_inner_coeff_linf_bound(modulus_profile: SisModulusProfileId) -> u12
     match modulus_profile {
         SisModulusProfileId::Q32Offset99 => Q32_MAX_INNER_COEFF_LINF_BOUND,
         SisModulusProfileId::Q64Offset59 => Q64_MAX_INNER_COEFF_LINF_BOUND,
-        SisModulusProfileId::Q128OffsetA7F7 => Q128_MAX_INNER_COEFF_LINF_BOUND,
+        SisModulusProfileId::Q128OffsetA7F7 | SisModulusProfileId::Q128Offset275 => {
+            Q128_MAX_INNER_COEFF_LINF_BOUND
+        }
     }
 }
 
@@ -90,7 +92,7 @@ const fn challenge_extension_degree(modulus_profile: SisModulusProfileId) -> usi
     match modulus_profile {
         SisModulusProfileId::Q32Offset99 => 4,
         SisModulusProfileId::Q64Offset59 => 2,
-        SisModulusProfileId::Q128OffsetA7F7 => 1,
+        SisModulusProfileId::Q128OffsetA7F7 | SisModulusProfileId::Q128Offset275 => 1,
     }
 }
 
@@ -135,6 +137,8 @@ static Q64_INNER_COEFF_LINF_BOUNDS: [OnceLock<Vec<u128>>; INNER_RING_DIMENSION_C
     [const { OnceLock::new() }; INNER_RING_DIMENSION_COUNT];
 static Q128_INNER_COEFF_LINF_BOUNDS: [OnceLock<Vec<u128>>; INNER_RING_DIMENSION_COUNT] =
     [const { OnceLock::new() }; INNER_RING_DIMENSION_COUNT];
+static Q128_OFFSET275_INNER_COEFF_LINF_BOUNDS: [OnceLock<Vec<u128>>; INNER_RING_DIMENSION_COUNT] =
+    [const { OnceLock::new() }; INNER_RING_DIMENSION_COUNT];
 
 pub(super) fn cached_inner_coeff_linf_bounds(
     modulus_profile: SisModulusProfileId,
@@ -148,6 +152,7 @@ pub(super) fn cached_inner_coeff_linf_bounds(
         SisModulusProfileId::Q32Offset99 => &Q32_INNER_COEFF_LINF_BOUNDS[index],
         SisModulusProfileId::Q64Offset59 => &Q64_INNER_COEFF_LINF_BOUNDS[index],
         SisModulusProfileId::Q128OffsetA7F7 => &Q128_INNER_COEFF_LINF_BOUNDS[index],
+        SisModulusProfileId::Q128Offset275 => &Q128_OFFSET275_INNER_COEFF_LINF_BOUNDS[index],
     };
     Some(cache.get_or_init(|| derive_inner_coeff_linf_bounds(modulus_profile, ring_dimension)))
 }
@@ -173,6 +178,8 @@ fn derive_inner_coeff_linf_bounds(
     modulus_profile: SisModulusProfileId,
     ring_dimension: u32,
 ) -> Vec<u128> {
+    // A profile is covered at exactly the cells of the profile whose rows it reads.
+    let modulus_profile = modulus_profile.row_owner();
     let mut bounds = Vec::new();
     for &challenge_dimension in akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS {
         if !inner_challenge_mass_supported(modulus_profile, ring_dimension, challenge_dimension) {
@@ -276,6 +283,10 @@ pub fn sis_role_cell(
 }
 
 /// Enumerate every exact production matrix-role coverage cell.
+///
+/// These are the cells the generated table is built from. A profile whose
+/// [`SisModulusProfileId::row_owner`] is another profile adds no cell here;
+/// [`sis_role_cell`] accepts it at exactly the cells of its row owner.
 pub fn sis_role_cells() -> Vec<SisRoleCell> {
     let profiles = [
         SisModulusProfileId::Q32Offset99,

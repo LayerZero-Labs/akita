@@ -54,17 +54,17 @@ pub fn compression_sis_cell(
     if coeff_linf_bound != COMPRESSION_SIS_COEFF_LINF_BOUND {
         return None;
     }
+    // The table lists row owners. The returned cell keeps the exact profile.
+    let row_owner = modulus_profile.row_owner();
     COMPRESSION_SIS_CELLS
         .iter()
         .copied()
-        .find(|&(profile, dimension, _)| profile == modulus_profile && dimension == ring_dimension)
-        .map(
-            |(modulus_profile, ring_dimension, sis_max_width)| CompressionSisCell {
-                modulus_profile,
-                ring_dimension,
-                sis_max_width,
-            },
-        )
+        .find(|&(profile, dimension, _)| profile == row_owner && dimension == ring_dimension)
+        .map(|(_, ring_dimension, sis_max_width)| CompressionSisCell {
+            modulus_profile,
+            ring_dimension,
+            sis_max_width,
+        })
 }
 
 /// Minimum ADPS16-quantum-secure module rank for one compression matrix.
