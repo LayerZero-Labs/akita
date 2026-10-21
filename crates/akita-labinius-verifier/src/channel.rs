@@ -354,8 +354,7 @@ where
     }
 }
 
-impl<'proof, F, E, Sp> VerifierRoundContext<E>
-    for RootSumcheckVerifierChannel<'_, 'proof, F, Sp>
+impl<'proof, F, E, Sp> VerifierRoundContext<E> for RootSumcheckVerifierChannel<'_, 'proof, F, Sp>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,

@@ -711,8 +711,7 @@ impl<'context, 'a, 'proof, F, E, H: Sponge>
     }
 }
 
-impl<'proof, F, E, H> VerifierRoundContext<E>
-    for GrindingSumcheckVerifier<'_, '_, 'proof, F, E, H>
+impl<'proof, F, E, H> VerifierRoundContext<E> for GrindingSumcheckVerifier<'_, '_, 'proof, F, E, H>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
