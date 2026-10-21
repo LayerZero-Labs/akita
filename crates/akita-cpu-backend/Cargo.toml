@@ -26,6 +26,7 @@ akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-featur
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 rayon = { version = "1.10", optional = true }
+rand_core = "0.6"
 tracing = "0.1"
 
 [dev-dependencies]
@@ -52,6 +53,11 @@ akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-featur
 [features]
 response-model-diagnostics = ["akita-prover/response-model-diagnostics"]
 disk-persistence = []
+# Whiteout hiding randomness: samples the randomness columns of schedules that
+# declare them. Selects nothing; clear schedules never sample.
+zk = ["jolt-crypto/sample", "rand_core/getrandom", "akita-params/zk"]
+# Seeded hiding randomness for reproducible tests. Never enabled outside tests.
+test-support = []
 labinius-trinomial = [
   "akita-algebra/labinius-trinomial",
   "akita-types/labinius-trinomial",

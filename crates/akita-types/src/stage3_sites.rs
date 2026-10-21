@@ -1,10 +1,14 @@
 //! Proof-stream grammar for recursive setup-product stage 3.
+//!
+//! Every stage-3 message is public in both modes: the setup-product claim and
+//! the prefix evaluation depend only on the public setup and public
+//! challenges, so they go through [`Channel`], never `PrivateChannel`.
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
 use akita_params::transcript_site::{ProtocolSiteId, SITE_FAMILY_STAGE3};
 use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_transcript::{Channel, PrivateChannel};
+use jolt_transcript::Channel;
 
 const ROLE_SETUP_SLOT: u32 = 1;
 const ROLE_INPUT_CLAIM: u32 = 2;
@@ -62,7 +66,7 @@ where
 {
     let state = grinding.state_mut();
     state.site(site.into());
-    state.exchange_private::<F, E>(std::slice::from_mut(&mut value))?;
+    state.exchange_all(std::slice::from_mut(&mut value))?;
     Ok(value)
 }
 

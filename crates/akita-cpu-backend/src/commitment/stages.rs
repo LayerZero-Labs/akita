@@ -42,6 +42,8 @@ pub(crate) enum InnerImageInput<'a, F: Field> {
 pub(crate) struct UncompressedCommitmentOutput<F: Field> {
     image: BackendStateRef<InnerImage>,
     u: RingVec<F>,
+    /// Slice-major B hiding-randomness coefficients; empty when clear.
+    outer_randomness: Vec<i8>,
 }
 
 impl<F: Field> UncompressedCommitmentOutput<F> {
@@ -59,7 +61,26 @@ impl<F: Field> UncompressedCommitmentOutput<F> {
                 "uncompressed commitment output disagrees with its checked plan".into(),
             ));
         }
-        Ok(Self { image, u })
+        Ok(Self {
+            image,
+            u,
+            outer_randomness: Vec::new(),
+        })
+    }
+
+    /// Attach the B hiding randomness that `u` was committed with.
+    pub(crate) fn with_outer_randomness(
+        mut self,
+        outer_randomness: Vec<i8>,
+        plan: &UncompressedCommitPlan,
+    ) -> Result<Self, AkitaError> {
+        if outer_randomness.len() != plan.outer().randomness_coefficient_len()? {
+            return Err(AkitaError::Internal(
+                "B hiding randomness disagrees with its checked plan".into(),
+            ));
+        }
+        self.outer_randomness = outer_randomness;
+        Ok(self)
     }
 
     /// Borrow the resident inner image.
@@ -73,9 +94,9 @@ impl<F: Field> UncompressedCommitmentOutput<F> {
         &self.u
     }
 
-    /// Consume into the resident image and canonical B image.
-    pub(crate) fn into_parts(self) -> (BackendStateRef<InnerImage>, RingVec<F>) {
-        (self.image, self.u)
+    /// Consume into the resident image, canonical B image, and B randomness.
+    pub(crate) fn into_parts(self) -> (BackendStateRef<InnerImage>, RingVec<F>, Vec<i8>) {
+        (self.image, self.u, self.outer_randomness)
     }
 }
 
@@ -89,6 +110,7 @@ pub(crate) struct CompressionStageOutput<F: Field> {
 pub(crate) struct FullCommitmentOutput<F: Field> {
     image: BackendStateRef<InnerImage>,
     compression: CompressionStageOutput<F>,
+    outer_randomness: Vec<i8>,
 }
 
 impl<F: Field> FullCommitmentOutput<F> {
@@ -96,18 +118,30 @@ impl<F: Field> FullCommitmentOutput<F> {
     pub(crate) fn new(
         image: BackendStateRef<InnerImage>,
         compression: CompressionStageOutput<F>,
+        outer_randomness: Vec<i8>,
     ) -> Result<Self, AkitaError> {
         if image.binding() != compression.state().binding() {
             return Err(AkitaError::Internal(
                 "complete commitment stage outputs belong to different requests".into(),
             ));
         }
-        Ok(Self { image, compression })
+        Ok(Self {
+            image,
+            compression,
+            outer_randomness,
+        })
     }
 
-    /// Consume into the resident inner image and compression-stage output.
-    pub(crate) fn into_parts(self) -> (BackendStateRef<InnerImage>, CompressionStageOutput<F>) {
-        (self.image, self.compression)
+    /// Consume into the resident inner image, compression-stage output, and
+    /// B hiding randomness.
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        BackendStateRef<InnerImage>,
+        CompressionStageOutput<F>,
+        Vec<i8>,
+    ) {
+        (self.image, self.compression, self.outer_randomness)
     }
 }
 
@@ -163,10 +197,14 @@ pub(crate) trait InnerCommitOperation<F: Field>: Send + Sync {
 /// Object-safe outer commitment operation.
 pub(crate) trait OuterCommitOperation<F: Field>: Send + Sync {
     /// Decompose the inner image and apply canonical B slicing.
+    ///
+    /// `randomness` holds the slice-major hiding-randomness coefficients
+    /// appended to every slice; it is empty for a clear commitment.
     fn commit_outer(
         &self,
         plan: &UncompressedCommitPlan,
         inner: InnerImageInput<'_, F>,
+        randomness: &[i8],
     ) -> Result<RingVec<F>, AkitaError>;
 }
 

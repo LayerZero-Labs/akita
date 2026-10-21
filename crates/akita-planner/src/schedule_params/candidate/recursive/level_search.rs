@@ -92,6 +92,7 @@ pub(super) fn prepare_recursive_level_search(
 pub(super) fn attach_recursive_setup_prefix(
     setup_prefix: Option<&akita_params::GroupOpenPhaseParams>,
     extension_degree: usize,
+    hiding: bool,
     mut candidate_params: CommittedGroupParams,
 ) -> Result<CommittedGroupParams, AkitaError> {
     candidate_params.set_setup_prefix(setup_prefix.cloned())?;
@@ -106,10 +107,32 @@ pub(super) fn attach_recursive_setup_prefix(
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("setup-prefix shared D width overflow".to_string())
             })?;
-        candidate_params.open_matrix = OpenCommitMatrixParams::try_new_with_min_rank(
-            candidate_params.open().matrix.sis_table_key(),
-            total_d_width,
-        )?;
+        if !hiding {
+            candidate_params.open_matrix = OpenCommitMatrixParams::try_new_with_min_rank(
+                candidate_params.open().matrix.sis_table_key(),
+                total_d_width,
+            )?;
+        } else {
+            // Hiding randomness stays after every group's columns and is
+            // resized for the rank the widened D matrix selects.
+            let key = candidate_params.open().matrix.sis_table_key();
+            let Some((open_matrix, randomness)) = super::super::price_with_hiding_randomness(
+                true,
+                total_d_width - candidate_params.open_randomness_columns,
+                candidate_params.role_dims().d_d(),
+                key.modulus_profile,
+                candidate_params.open().digits.log_basis,
+                |width| OpenCommitMatrixParams::try_new_with_min_rank(key, width).ok(),
+                OpenCommitMatrixParams::output_rank,
+            )?
+            else {
+                return Err(AkitaError::UnsupportedSchedule(
+                    "setup-prefix D matrix has no hiding fixed point".into(),
+                ));
+            };
+            candidate_params.open_matrix = open_matrix;
+            candidate_params.open_randomness_columns = randomness;
+        }
     }
     Ok(candidate_params)
 }

@@ -301,8 +301,11 @@ fn audit_committed_params(
         dims.d_a(),
         dims.d_b(),
     )?
+    .with_randomness_columns(params.own_group().profile.randomness_columns)?
     .physical_input_width();
-    let expected_d_width = expected_d_width(label, params, num_claims, policy.claim_ext_degree)?;
+    let expected_d_width = expected_d_width(label, params, num_claims, policy.claim_ext_degree)?
+        .checked_add(params.open_randomness_columns)
+        .ok_or_else(|| invalid(label, "D width overflow"))?;
     if params.inner().matrix.input_width() != expected_a_width
         || params.outer().matrix.input_width() != expected_b_width
         || params.open().matrix.input_width() != expected_d_width
@@ -536,13 +539,48 @@ fn audit_terminal(
     Ok(())
 }
 
+/// Which hiding-randomness widths a row may carry.
+#[derive(Clone, Copy)]
+pub(crate) enum HidingAdmission {
+    /// None: zero knowledge is not selectable yet, so every width is zero.
+    Clear,
+    /// The test-only hiding schedules, recomputed up to their cut level.
+    #[cfg(all(feature = "test-support", feature = "zk"))]
+    TestCut(usize),
+}
+
 /// Re-audit one complete expanded row against the policy the verifier trusts.
 pub(crate) fn audit_resolved_schedule(
     profiles: &CommittedGroupBatchProfile,
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,
+    hiding: HidingAdmission,
 ) -> Result<(), AkitaError> {
     validate_policy(policy)?;
+    match hiding {
+        HidingAdmission::Clear => {
+            let levels = std::iter::once(&schedule.root)
+                .chain(&schedule.recursive_folds)
+                .map(|fold| &fold.params);
+            for params in levels {
+                if params.open_randomness_columns != 0
+                    || params
+                        .preceding_group_iter()
+                        .chain(std::iter::once(params.own_group()))
+                        .any(|group| group.profile.randomness_columns != 0)
+                {
+                    return Err(invalid(
+                        "schedule",
+                        "hiding randomness is not selectable in a trusted catalog",
+                    ));
+                }
+            }
+        }
+        #[cfg(all(feature = "test-support", feature = "zk"))]
+        HidingAdmission::TestCut(cut_level) => {
+            akita_params::zk::validate_hiding_randomness(schedule, cut_level)?;
+        }
+    }
     profiles.validate(policy.decomposition.field_bits())?;
     schedule.validate_structure()?;
     audit_digit_ranges(schedule, policy.decomposition.field_bits())?;

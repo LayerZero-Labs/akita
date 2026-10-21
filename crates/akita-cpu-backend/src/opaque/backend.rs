@@ -84,6 +84,8 @@ pub struct CpuBackend<F: Field, E> {
     /// One setup-prefix value is retained per slot for the life of this backend.
     /// Overlapping cold acquisitions may derive duplicate candidates without waiting.
     pub(super) setup_prefix_cache: SetupPrefixCache<CachedSetupPrefix<F>>,
+    /// Source of the hiding randomness of schedules that declare it.
+    pub(crate) hiding_rng: Arc<crate::hiding::HidingRng>,
     extension: PhantomData<fn() -> E>,
 }
 
@@ -129,8 +131,20 @@ impl<F: Field, E> CpuBackend<F, E> {
             prepared: Some(CpuPreparedSetup::new(expanded)),
             max_cached_ring_switch_elements,
             setup_prefix_cache: SetupPrefixCache::default(),
+            hiding_rng: Arc::new(crate::hiding::HidingRng::os()),
             extension: PhantomData,
         })
+    }
+
+    /// Draw hiding randomness from `rng` instead of the operating system
+    /// CSPRNG. A seeded `rng` makes hiding commitments and proofs
+    /// reproducible. Test-only until a production zero-knowledge caller
+    /// exists.
+    #[cfg(feature = "test-support")]
+    #[must_use]
+    pub fn with_hiding_rng(mut self, rng: impl rand_core::CryptoRngCore + Send + 'static) -> Self {
+        self.hiding_rng = Arc::new(crate::hiding::HidingRng::new(rng));
+        self
     }
 
     #[cfg(test)]
@@ -290,6 +304,7 @@ impl<F: Field, E> CpuBackend<F, E> {
             prepared: None,
             max_cached_ring_switch_elements,
             setup_prefix_cache: SetupPrefixCache::default(),
+            hiding_rng: Arc::new(crate::hiding::HidingRng::os()),
             extension: PhantomData,
         })
     }

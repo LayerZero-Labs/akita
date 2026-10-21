@@ -106,7 +106,9 @@ where
     state.site(eor_site(level, STAGE_OPENINGS).into());
     state.public_all(openings);
     state.site(eor_site(level, STAGE_PARTIALS).into());
-    state.exchange_private::<F, E>(&mut partials)?;
+    state
+        .exchange_private::<F, E>(&mut partials)
+        .map_err(Into::<AkitaError>::into)?;
     let (eta, claim_coefficients) =
         batch_challenges::<E>(opening_batch, level, split_bits, |site, count| {
             grinding.grinded_ext_challenges::<F, E>(site, count)
@@ -138,7 +140,9 @@ where
     }
     let state = grinding.state_mut();
     state.site(eor_site(level, STAGE_FINAL_CLAIMS).into());
-    state.exchange_private::<F, E>(final_claims)?;
+    state
+        .exchange_private::<F, E>(final_claims)
+        .map_err(Into::<AkitaError>::into)?;
     Ok(())
 }
 

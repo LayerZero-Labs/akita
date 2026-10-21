@@ -16,6 +16,7 @@ pub mod setup_contribution;
 mod stage1_sites;
 mod stage2_sites;
 mod stage3_sites;
+mod stage_checks;
 mod subring_coefficient_packing;
 pub mod trace_weight;
 pub mod transcript;
@@ -31,7 +32,7 @@ pub use field_reduction::{
     embed_ring_subfield_vector, embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
     recover_ring_subfield_inner_product, trace_h, FpExtEncoding, SubfieldParams,
 };
-pub use fold_sites::FoldSite;
+pub use fold_sites::{bind_fold_openings, FoldSite};
 pub use instance_descriptor::{
     digest_effective_schedule, digest_serializable, setup_seed_digest, AkitaInstanceDescriptor,
     AlgebraSection, CallSection, PlanSection, ProtocolFeatureSet, SetupSection,
@@ -109,6 +110,7 @@ pub use setup_contribution::{
 pub use stage1_sites::{stage1_child_claims, stage1_range_image};
 pub use stage2_sites::stage2_w_eval;
 pub use stage3_sites::{stage3_claim, stage3_prefix_eval, stage3_public_slot};
+pub use stage_checks::{check_range_leaf, check_stage2_oracle, RangeLeaf, Stage2OracleWeights};
 pub use subring_coefficient_packing::PreparedSubringCoefficientPackingPoint;
 pub use trace_weight::{
     ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
@@ -119,7 +121,7 @@ pub use transcript::{
 };
 pub use transcript_grinding::{
     GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProverGrinding,
-    VerifierGrinding,
+    ProverGrindingChannel, VerifierGrinding, VerifierGrindingChannel,
 };
 
 #[cfg(test)]

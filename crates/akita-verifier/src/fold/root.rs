@@ -10,7 +10,7 @@ use akita_types::Commitment;
 use akita_types::GrindingReplay;
 use akita_types::{AkitaVerifierSetup, FpExtEncoding, OpeningClaims, RingVec};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
-use jolt_transcript::{Channel, PrivateChannel, Sponge};
+use jolt_transcript::{Channel, Sponge};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn verify_root<F, E, H: Sponge>(
@@ -77,10 +77,8 @@ where
         basis,
         root_lp,
     )?;
-    grinding
-        .state_mut()
-        .site(akita_types::FoldSite::Openings { level: 0 }.id()?.into());
-    grinding.state_mut().public_all(&openings);
+    // Schedule validation admits no setup prefix at the root.
+    akita_types::bind_fold_openings::<F, E, _>(grinding, 0, None, &openings)?;
     let payload_geometry = relation_layout.opening_payload_geometry()?;
     let opening_payload = {
         let mut payload =
@@ -94,7 +92,7 @@ where
             .id()?
             .into(),
         );
-        state.exchange_private_base::<F>(&mut payload)?;
+        state.exchange_all(&mut payload)?;
         RingVec::from_coeffs(payload)
     };
     let prefix = finalize_claims::<F, E, _>(opening_batch, material, grinding, 0)?;

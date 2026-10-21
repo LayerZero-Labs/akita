@@ -337,6 +337,9 @@ pub struct PhysicalBSetupPlan<E: Field> {
     pub(super) logical_row_weights: Arc<[E]>,
     pub(super) weight_segments: Arc<[PhysicalBWeightSegment<E>]>,
     pub(super) relation_tensors: Vec<EqPairTensorFamily<E>>,
+    /// Relation tensors of the slice-major hiding-randomness columns, which
+    /// follow the logical message columns in the column weight table.
+    pub(super) randomness_tensors: Vec<EqPairTensorFamily<E>>,
 }
 
 impl<E: Field> PhysicalBSetupPlan<E> {
@@ -362,6 +365,7 @@ impl<E: Field> PhysicalBSetupPlan<E> {
             logical_row_weights,
             weight_segments: weight_segments.into(),
             relation_tensors: Vec::new(),
+            randomness_tensors: Vec::new(),
         })
     }
 
@@ -393,6 +397,29 @@ impl<E: Field> PhysicalBSetupPlan<E> {
 
     pub fn logical_input_width(&self) -> usize {
         self.geometry.logical_input_width()
+    }
+
+    /// Length of the column weight table: the logical message columns, then
+    /// the slice-major hiding-randomness columns.
+    pub fn column_len(&self) -> Result<usize, AkitaError> {
+        self.geometry
+            .logical_input_width()
+            .checked_add(self.geometry.total_randomness_columns()?)
+            .ok_or_else(|| AkitaError::InvalidSetup("B column table overflow".into()))
+    }
+
+    /// Relation tensors of the hiding-randomness columns, one per slice.
+    pub fn randomness_tensors(&self) -> &[EqPairTensorFamily<E>] {
+        &self.randomness_tensors
+    }
+
+    /// Relation tensors of every column in the column weight table.
+    pub fn column_tensors(&self) -> Vec<EqPairTensorFamily<E>> {
+        self.relation_tensors
+            .iter()
+            .chain(&self.randomness_tensors)
+            .cloned()
+            .collect()
     }
 
     pub fn physical_input_width(&self) -> usize {
@@ -445,6 +472,10 @@ pub struct SetupContributionGroupPlan<E: Field> {
     /// All physical units, including empty chunks that retain replicated Z.
     pub(crate) num_physical_units: usize,
     pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
+    /// D hiding-randomness columns this group's D window extends over; only
+    /// the group whose columns end the D message carries them.
+    pub(crate) d_randomness_cols: usize,
+    pub(crate) d_randomness_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,
 }
 
@@ -490,6 +521,8 @@ impl<E: Field> SetupContributionGroupPlan<E> {
             active_units: Vec::new().into(),
             num_physical_units: 0,
             d_tensors: Vec::new(),
+            d_randomness_cols: 0,
+            d_randomness_tensors: Vec::new(),
             a_tensors: Vec::new(),
         }
     }
@@ -657,6 +690,29 @@ impl<E: Field> SetupContributionGroupPlan<E> {
     #[must_use]
     pub fn d_col_range(&self) -> Range<usize> {
         self.d_col_range.clone()
+    }
+
+    /// Length of this group's D column weight table: its opening columns,
+    /// then any D hiding-randomness columns it carries.
+    #[must_use]
+    pub fn d_column_len(&self) -> usize {
+        self.d_col_range.len() + self.d_randomness_cols
+    }
+
+    /// Relation tensors of the D hiding-randomness columns this group carries.
+    #[must_use]
+    pub fn d_randomness_tensors(&self) -> &[EqPairTensorFamily<E>] {
+        &self.d_randomness_tensors
+    }
+
+    /// Relation tensors of every column in this group's D column table.
+    #[must_use]
+    pub fn d_column_tensors(&self) -> Vec<EqPairTensorFamily<E>> {
+        self.d_tensors
+            .iter()
+            .chain(&self.d_randomness_tensors)
+            .cloned()
+            .collect()
     }
 
     /// Physical B setup plan for this group.

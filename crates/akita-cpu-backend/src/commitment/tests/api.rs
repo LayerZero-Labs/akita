@@ -384,6 +384,7 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
         };
     let group = PolynomialGroupLayout::new(NUM_VARS, 1);
     let profile = |params: &CommittedGroupParams| GroupCommitPhaseParams {
+        randomness_columns: 0,
         version: GroupCommitPhaseParams::VERSION,
         group,
 
@@ -542,7 +543,7 @@ fn imported_root_outer_image_matches_full_cpu_commitment() {
             .unwrap()
             .into_parts();
         let normal_group = CommittedGroup::new(profile, Commitment::new(normal_payload));
-        let (_, outer_image) = executor
+        let (_, outer_image, _) = executor
             .execute_uncompressed_stages(&execution, &sources, None)
             .unwrap()
             .into_parts();

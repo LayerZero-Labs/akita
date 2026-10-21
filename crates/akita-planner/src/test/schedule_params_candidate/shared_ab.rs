@@ -37,6 +37,7 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
             num_digits_outer: 2,
             modeled_linf_cap: None,
             failure_target: FoldFailureTarget::PerAttempt,
+            hiding: false,
         })
         .unwrap()
     };
@@ -83,6 +84,7 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
             num_digits_outer: 2,
             modeled_linf_cap: None,
             failure_target: FoldFailureTarget::PerAttempt,
+            hiding: false,
         })
         .is_err()
     );
@@ -115,6 +117,7 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
             num_digits_outer: 2,
             modeled_linf_cap: None,
             failure_target: FoldFailureTarget::PerAttempt,
+            hiding: false,
         })
         .unwrap()
         .is_none()

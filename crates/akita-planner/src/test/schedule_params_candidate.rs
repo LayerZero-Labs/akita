@@ -11,6 +11,7 @@ fn synthetic_profile(
     params: &CommittedGroupParams,
 ) -> GroupCommitPhaseParams {
     GroupCommitPhaseParams {
+        randomness_columns: 0,
         version: GroupCommitPhaseParams::VERSION,
         group,
         blocks: params.blocks(),
@@ -242,6 +243,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
             log_basis_inner: 4,
             log_basis_open: 4,
             fold_level: 3,
+            hiding: false,
             source_moment: Some(
                 crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap(),
             ),
@@ -312,6 +314,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
         log_basis_inner: 3,
         log_basis_open: 3,
         fold_level: 1,
+        hiding: false,
         source_moment: Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
         relation_traversal_order: RelationTraversalOrder::Canonical,
         guide: None,
@@ -473,6 +476,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
                 log_basis_inner: log_basis,
                 log_basis_open: log_basis,
                 fold_level: 1,
+                hiding: false,
                 source_moment: Some(
                     crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap(),
                 ),
@@ -647,6 +651,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             inner_basis,
             Dense::opening_basis_range().0,
             None,
+            false,
         )
     };
     let grouped = candidates_from_prepared(Dense::inner_basis_range().0)
@@ -873,6 +878,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         final_group: grouped_key.final_group,
         precommitteds: (0..count)
             .map(|index| GroupCommitPhaseParams {
+                randomness_columns: 0,
                 group: PolynomialGroupLayout::singleton(10 + index),
                 ..frozen_group
             })

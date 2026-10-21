@@ -116,3 +116,4 @@ jolt-transcript = { path = "../jolt/.claude/worktrees/whiteout-dev/crates/jolt-t
 jolt-sumcheck = { path = "../jolt/.claude/worktrees/whiteout-dev/crates/jolt-sumcheck" }
 jolt-crypto = { path = "../jolt/.claude/worktrees/whiteout-dev/crates/jolt-crypto" }
 jolt-metal = { path = "../jolt/.claude/worktrees/whiteout-dev/crates/jolt-metal" }
+jolt-zk = { path = "../jolt/.claude/worktrees/whiteout-dev/crates/jolt-zk" }

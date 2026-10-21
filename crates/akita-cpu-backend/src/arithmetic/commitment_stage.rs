@@ -22,6 +22,7 @@ fn compute_outer_commitment_from_rows<F, B, const D_A: usize, const D_B: usize>(
     inner_rows: &[&RingVec<F>],
     inner_plan: &CommitInnerPlan,
     outer_plan: &OuterCommitPlan,
+    randomness: &[i8],
 ) -> Result<RingVec<F>, AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -71,6 +72,7 @@ where
         prepared,
         outer_plan.n_b(),
         prepared_polynomials.iter(),
+        &randomness_planes::<D_B>(randomness)?,
         outer_plan.geometry(),
         outer_plan.log_basis_outer(),
     )?;
@@ -85,11 +87,26 @@ where
     Ok(u)
 }
 
+/// View flat slice-major randomness coefficients as `D`-coefficient rings.
+pub(crate) fn randomness_planes<const D: usize>(
+    randomness: &[i8],
+) -> Result<Vec<[i8; D]>, AkitaError> {
+    randomness
+        .chunks(D)
+        .map(|ring| {
+            <[i8; D]>::try_from(ring).map_err(|_| {
+                AkitaError::Internal("hiding randomness is not a whole number of rings".into())
+            })
+        })
+        .collect()
+}
+
 fn commit_outer_slices<'a, F, B, const D_B: usize>(
     backend: &B,
     prepared: &B::PreparedSetup,
     n_b: usize,
     polynomial_digits: impl IntoIterator<Item = &'a DigitBlocks>,
+    randomness: &[[i8; D_B]],
     geometry: &akita_params::CommitmentSliceGeometry,
     log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D_B>>, AkitaError>
@@ -117,7 +134,7 @@ where
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
     let mut inputs = Vec::with_capacity(geometry.slice_count().get());
-    for_each_outer_slice_input::<D_B>(polynomial_planes, geometry, |input| {
+    for_each_outer_slice_input::<D_B>(polynomial_planes, randomness, geometry, |input| {
         inputs.push(input.to_vec());
         Ok(())
     })?;
@@ -418,6 +435,7 @@ impl<'a, F: Field, E> CpuOuterCommitOperation<'a, F, E> {
         inner_plan: &CommitInnerPlan,
         outer_plan: &OuterCommitPlan,
         rows: &[&RingVec<F>],
+        randomness: &[i8],
     ) -> Result<RingVec<F>, AkitaError>
     where
         F: CanonicalEncoding,
@@ -436,6 +454,7 @@ impl<'a, F: Field, E> CpuOuterCommitOperation<'a, F, E> {
                     rows,
                     inner_plan,
                     outer_plan,
+                    randomness,
                 )
             )
         )
@@ -450,6 +469,7 @@ where
         &self,
         plan: &crate::commitment::UncompressedCommitPlan,
         inner: InnerImageInput<'_, F>,
+        randomness: &[i8],
     ) -> Result<RingVec<F>, AkitaError> {
         let inner_plan = *plan.inner();
         let outer_plan = plan.outer();
@@ -464,12 +484,12 @@ where
                 }
                 self.inner_storage.with_witnesses(image, |witnesses| {
                     let rows = witnesses.iter().collect::<Vec<_>>();
-                    self.commit_rows(&inner_plan, outer_plan, &rows)
+                    self.commit_rows(&inner_plan, outer_plan, &rows, randomness)
                 })
             }
             InnerImageInput::HostRows(rows) => {
                 let rows = rows.iter().collect::<Vec<_>>();
-                self.commit_rows(&inner_plan, outer_plan, &rows)
+                self.commit_rows(&inner_plan, outer_plan, &rows, randomness)
             }
         }
     }

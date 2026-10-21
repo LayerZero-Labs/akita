@@ -7,6 +7,7 @@ use akita_params::{FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout};
 use akita_prover::backend::*;
 use akita_prover::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 use akita_types::{AkitaSetupDescriptor, Commitment};
+use jolt_algebra::{One, Zero};
 use jolt_poly::UnivariatePoly;
 use std::cell::Cell;
 
@@ -46,6 +47,12 @@ pub(crate) enum Fault {
     Finish,
     /// Panics inside a Stage-1 round kernel instead of returning an error.
     PanicStage1Round,
+    /// Adds `X − X²` to the last Stage-2 round polynomial and reports the
+    /// matching final claim, `final + r − r²` at the last challenge `r`. Every
+    /// round still sums correctly and the witness evaluation stays honest, so
+    /// the prover's self-checks pass and only the verifier's Stage-2 output
+    /// check can reject the proof.
+    Stage2OracleMiss,
 }
 
 pub(crate) struct PrivateCpu {
@@ -63,6 +70,8 @@ pub(crate) struct PrivateCpu {
     /// Index of an opening fold probe to reject regardless of its response,
     /// as if the response overflowed its digit range.
     pub(crate) reject_fold_probe: Cell<Option<usize>>,
+    /// The last Stage-2 challenge, recorded under [`Fault::Stage2OracleMiss`].
+    stage2_last_challenge: Cell<Option<E>>,
 }
 impl PrivateCpu {
     pub(crate) fn new(inner: Cpu) -> Self {
@@ -78,6 +87,7 @@ impl PrivateCpu {
             commitments: Cell::new(0),
             fold_probes: Cell::new(0),
             reject_fold_probe: Cell::new(None),
+            stage2_last_challenge: Cell::new(None),
         }
     }
     fn fail(&self, fault: Fault) -> Result<(), AkitaError> {
@@ -389,8 +399,19 @@ impl OpaqueStage2Kernel<F, E> for PrivateCpu {
         round: usize,
         previous_claim: E,
     ) -> Result<UnivariatePoly<E>, AkitaError> {
-        self.inner
-            .stage2_round_polynomial(session_handle, round, previous_claim)
+        let poly = self
+            .inner
+            .stage2_round_polynomial(session_handle, round, previous_claim)?;
+        if self.fault.get() != Fault::Stage2OracleMiss
+            || round + 1 != self.inner.stage2_num_rounds(session_handle)?
+        {
+            return Ok(poly);
+        }
+        let mut coefficients = poly.into_coefficients();
+        coefficients.resize(coefficients.len().max(3), E::zero());
+        coefficients[1] += E::one();
+        coefficients[2] -= E::one();
+        Ok(UnivariatePoly::new(coefficients))
     }
     fn bind_stage2_challenge(
         &self,
@@ -398,6 +419,11 @@ impl OpaqueStage2Kernel<F, E> for PrivateCpu {
         round: usize,
         challenge: E,
     ) -> Result<(), AkitaError> {
+        if self.fault.get() == Fault::Stage2OracleMiss
+            && round + 1 == self.inner.stage2_num_rounds(session_handle)?
+        {
+            self.stage2_last_challenge.set(Some(challenge));
+        }
         self.inner
             .bind_stage2_challenge(session_handle, round, challenge)
     }
@@ -405,7 +431,16 @@ impl OpaqueStage2Kernel<F, E> for PrivateCpu {
         &self,
         session_handle: Self::Stage2SessionHandle,
     ) -> Result<RelationWitnessFinalClaims<E>, AkitaError> {
-        self.inner.finish_stage2(session_handle)
+        let claims = self.inner.finish_stage2(session_handle)?;
+        match self.stage2_last_challenge.take() {
+            Some(r) if self.fault.get() == Fault::Stage2OracleMiss => {
+                Ok(RelationWitnessFinalClaims::new(
+                    claims.witness_evaluation(),
+                    claims.final_claim() + r - r * r,
+                ))
+            }
+            _ => Ok(claims),
+        }
     }
 }
 impl OpaqueWitnessOpeningKernel<F, E> for PrivateCpu {

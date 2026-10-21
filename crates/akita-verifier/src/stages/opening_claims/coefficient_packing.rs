@@ -121,10 +121,6 @@ where
             .state_mut()
             .public_all(claims.group_point(group_index)?);
     }
-    grinding
-        .state_mut()
-        .site(akita_types::FoldSite::Openings { level }.id()?.into());
-    grinding.state_mut().public_all(openings);
     Ok(FoldClaimMaterial {
         prepared_points,
         openings: openings.to_vec(),

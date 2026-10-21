@@ -183,6 +183,8 @@ pub struct CommitmentSliceGeometry {
     max_blocks_per_slice: usize,
     ring_elements_per_block_per_polynomial: usize,
     logical_input_width: usize,
+    message_input_width: usize,
+    randomness_columns: usize,
     physical_input_width: usize,
     outer_ring_dimension: usize,
 }
@@ -230,7 +232,7 @@ impl CommitmentSliceGeometry {
             .checked_mul(projection_ratio)
             .and_then(|count| count.checked_mul(num_digits_outer))
             .ok_or_else(|| AkitaError::InvalidSetup("B slice block width overflow".into()))?;
-        let physical_input_width = ring_elements_per_block_per_polynomial
+        let message_input_width = ring_elements_per_block_per_polynomial
             .checked_mul(max_blocks_per_slice)
             .and_then(|count| count.checked_mul(num_polynomials))
             .ok_or_else(|| AkitaError::InvalidSetup("physical B width overflow".into()))?;
@@ -247,9 +249,32 @@ impl CommitmentSliceGeometry {
             max_blocks_per_slice,
             ring_elements_per_block_per_polynomial,
             logical_input_width,
-            physical_input_width,
+            message_input_width,
+            randomness_columns: 0,
+            physical_input_width: message_input_width,
             outer_ring_dimension,
         })
+    }
+
+    /// Append `randomness_columns` hiding-randomness ring columns to every
+    /// slice's physical B input, after its message columns.
+    ///
+    /// Extension seam: Whiteout outer hiding randomness (akita#120). Zero
+    /// leaves the geometry, and every view cut from it, unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the widened width overflows.
+    pub fn with_randomness_columns(
+        mut self,
+        randomness_columns: usize,
+    ) -> Result<Self, AkitaError> {
+        self.physical_input_width = self
+            .message_input_width
+            .checked_add(randomness_columns)
+            .ok_or_else(|| AkitaError::InvalidSetup("physical B width overflow".into()))?;
+        self.randomness_columns = randomness_columns;
+        Ok(self)
     }
 
     /// Checked slice count used by this geometry.
@@ -294,10 +319,34 @@ impl CommitmentSliceGeometry {
         self.logical_input_width
     }
 
-    /// Input width of the one physical B matrix.
+    /// Input width of the one physical B matrix: message columns, then the
+    /// hiding-randomness columns.
     #[must_use]
     pub const fn physical_input_width(&self) -> usize {
         self.physical_input_width
+    }
+
+    /// Padded message columns of one slice's physical B input.
+    #[must_use]
+    pub const fn message_input_width(&self) -> usize {
+        self.message_input_width
+    }
+
+    /// Hiding-randomness ring columns appended to every slice's input.
+    #[must_use]
+    pub const fn randomness_columns(&self) -> usize {
+        self.randomness_columns
+    }
+
+    /// Randomness ring elements across all slices (`slice_count * randomness_columns`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the count overflows.
+    pub fn total_randomness_columns(&self) -> Result<usize, AkitaError> {
+        self.randomness_columns
+            .checked_mul(self.slice_count.get())
+            .ok_or_else(|| AkitaError::InvalidSetup("B randomness size overflow".into()))
     }
 
     /// Convert one global live-block index to `(slice_index, block_in_slice)`.

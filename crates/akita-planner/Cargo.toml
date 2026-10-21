@@ -27,6 +27,8 @@ catalog-check = ["catalog-gen"]
 catalog-security = ["catalog-check", "dep:akita-sis-estimator"]
 test-support = []
 dev-protocol = ["akita-params/dev-protocol"]
+# Sizes the hiding-randomness columns of zero-knowledge schedules.
+zk = ["akita-params/zk"]
 
 [dev-dependencies]
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [

@@ -345,13 +345,15 @@ where
 }
 
 /// Resolve the frozen commit params of one root commitment and admit its
-/// sources, returning the producer contract that admitted them.
+/// sources, returning the open alphabet of the scheduled root opening (the
+/// alphabet of any hiding randomness; unknown for explicit params) and the
+/// producer contract that admitted them.
 pub(crate) fn resolve_commit_params<Cfg, P>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     schedules: &TrustedScheduleCatalog<Cfg>,
     context: GroupContext<'_>,
-) -> Result<(GroupCommitPhaseParams, CommittedSourceContract), AkitaError>
+) -> Result<(GroupCommitPhaseParams, Option<u32>, CommittedSourceContract), AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: Field + CanonicalEncoding,
@@ -363,7 +365,7 @@ where
     // The frozen commit params fully determine the A/B commitment. D/opening
     // geometry and source encoding are validated where the opening schedule
     // consumes them, so the commit path works from the commit params alone.
-    let commit_params: GroupCommitPhaseParams =
+    let (commit_params, randomness_log_basis): (GroupCommitPhaseParams, Option<u32>) =
         if let GroupParameterSource::Explicit(commit_params) = context.parameter_source {
             if commit_params.group != polynomial_group_layout {
                 return Err(AkitaError::InvalidSetup(
@@ -371,7 +373,7 @@ where
                         .into(),
                 ));
             }
-            *commit_params
+            (*commit_params, None)
         } else {
             let key = ScheduleLookupKey {
                 final_group: polynomial_group_layout,
@@ -392,7 +394,18 @@ where
                 )?;
             }
 
-            scheduled_row.profiles().final_group
+            (
+                scheduled_row.profiles().final_group,
+                Some(
+                    scheduled_row
+                        .schedule()
+                        .root
+                        .params
+                        .own_group()
+                        .opening
+                        .log_basis_open,
+                ),
+            )
         };
 
     // The commit params fully determine the A/B commitment, so this is the
@@ -418,7 +431,7 @@ where
         contract,
     )?;
 
-    Ok((commit_params, contract))
+    Ok((commit_params, randomness_log_basis, contract))
 }
 
 /// Commit one homogeneous polynomial group in its complete parameter context.
@@ -448,7 +461,8 @@ where
     SP: CommitmentStatePolicy<Cfg::Field>,
 {
     executor.validate_setup(expanded)?;
-    let (commit_params, _) = resolve_commit_params::<Cfg, P>(polys, expanded, schedules, context)?;
+    let (commit_params, _, _) =
+        resolve_commit_params::<Cfg, P>(polys, expanded, schedules, context)?;
     let execution_plan = CommitmentExecutionPlan::for_root(&commit_params)?;
     let source_refs: Vec<&dyn CommitmentSource<Cfg::Field>> = polys
         .iter()

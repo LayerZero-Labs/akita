@@ -445,6 +445,7 @@ mod tests {
         akita_params::GroupOpenPhaseParams {
             setup_natural_len: None,
             profile: akita_params::GroupCommitPhaseParams {
+                randomness_columns: 0,
                 version: akita_params::GroupCommitPhaseParams::VERSION,
                 group: akita_params::PolynomialGroupLayout::singleton(
                     n_prefix.trailing_zeros() as usize

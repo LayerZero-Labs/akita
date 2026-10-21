@@ -41,7 +41,9 @@ pub(crate) use backend::CyclicRowsComputeBackend;
 pub(crate) use backend::{
     CompressionComputeBackend, CompressionRowsProducts, DigitRowsComputeBackend, NttCacheOwnerId,
 };
-pub(crate) use commitment_stage::{CpuInnerCommitOperation, CpuOuterCommitOperation};
+pub(crate) use commitment_stage::{
+    randomness_planes, CpuInnerCommitOperation, CpuOuterCommitOperation,
+};
 pub(crate) use compression_stage::CpuCompressionOperation;
 pub(crate) use field_reduction::tensor_pack_recursive_witness;
 pub use prepared::CpuPreparedSetup;

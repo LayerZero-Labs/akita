@@ -100,6 +100,42 @@ pub(super) fn build_physical_b_weight_segments<E: Field>(
                 });
             }
         }
+        // Hiding-randomness columns follow the message columns of every
+        // physical row; slice `s` reads its own randomness from the column
+        // table after the logical message columns.
+        let randomness_columns = geometry.randomness_columns();
+        if randomness_columns != 0 {
+            let terms = (0..geometry.slice_count().get())
+                .map(|slice_index| {
+                    let logical_row =
+                        geometry.logical_row_index(slice_index, physical_row, physical_rows)?;
+                    let row_weight = *logical_row_weights.get(logical_row).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "physical B logical row exceeds the validated row weight table".into(),
+                        )
+                    })?;
+                    let logical_start = slice_index
+                        .checked_mul(randomness_columns)
+                        .and_then(|offset| offset.checked_add(geometry.logical_input_width()))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("B randomness column offset overflow".into())
+                        })?;
+                    Ok(PhysicalBWeightTerm {
+                        logical_start,
+                        row_weight,
+                    })
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            segments.push(PhysicalBWeightSegment {
+                physical_start: physical_row_start
+                    .checked_add(geometry.message_input_width())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("physical B randomness offset overflow".into())
+                    })?,
+                len: randomness_columns,
+                terms: terms.into(),
+            });
+        }
     }
     Ok(segments)
 }
@@ -112,9 +148,9 @@ impl<E: Field> PhysicalBSetupPlan<E> {
         &self,
         logical_column_weights: &[E],
     ) -> Result<Vec<E>, AkitaError> {
-        if logical_column_weights.len() != self.geometry().logical_input_width() {
+        if logical_column_weights.len() != self.column_len()? {
             return Err(AkitaError::InvalidSize {
-                expected: self.geometry().logical_input_width(),
+                expected: self.column_len()?,
                 actual: logical_column_weights.len(),
             });
         }

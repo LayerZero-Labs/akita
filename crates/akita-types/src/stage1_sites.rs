@@ -36,7 +36,9 @@ where
 {
     let state = grinding.state_mut();
     state.site(stage1_site(level, stage, ROLE_CHILD_CLAIMS).into());
-    state.exchange_private::<F, E>(claims)?;
+    state
+        .exchange_private::<F, E>(claims)
+        .map_err(Into::<AkitaError>::into)?;
     Ok(())
 }
 
@@ -54,7 +56,9 @@ where
 {
     let state = grinding.state_mut();
     state.site(stage1_site(level, stage, ROLE_RANGE_IMAGE).into());
-    state.exchange_private::<F, E>(std::slice::from_mut(&mut evaluation))?;
+    state
+        .exchange_private::<F, E>(std::slice::from_mut(&mut evaluation))
+        .map_err(Into::<AkitaError>::into)?;
     Ok(evaluation)
 }
 

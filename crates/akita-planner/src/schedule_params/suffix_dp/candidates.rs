@@ -623,6 +623,7 @@ impl<'a> CandidateDomain<'a> {
                         log_basis_inner: inner_lb,
                         log_basis_open: open_lb,
                         fold_level: state.level,
+                        hiding: ctx.hiding_cut_level.is_some_and(|cut| state.level <= cut),
                         source_moment: state.source_moment,
                         relation_traversal_order: ctx.relation_traversal_order,
                         guide,
@@ -754,6 +755,7 @@ impl<'a> CandidateDomain<'a> {
                     inner_lb,
                     open_lb,
                     self.root_main_constraint.map(candidate_layout_guide),
+                    ctx.hiding_cut_level.is_some(),
                 )?;
                 if let Some(constraint) = self.root_main_constraint {
                     dimension_candidates.retain(|(params, _)| {
@@ -828,6 +830,7 @@ mod tests {
             level_zero_is_root: true,
             relation_traversal_order: super::super::RelationTraversalOrder::Canonical,
             relation_mode_filter: super::super::RelationModeFilter::All,
+            hiding_cut_level: None,
         };
         for level in [0, 1, 2, 3] {
             for relation_phase in [

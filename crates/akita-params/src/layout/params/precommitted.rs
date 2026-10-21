@@ -414,16 +414,7 @@ impl GroupOpenPhaseParams {
                     .to_string(),
             ));
         }
-        let expected_b_width = crate::CommitmentSliceGeometry::try_new(
-            self.profile.outer_slice_count,
-            self.profile.blocks.live_blocks,
-            self.profile.group.num_polynomials(),
-            self.profile.inner.matrix.output_rank(),
-            self.profile.outer.digits.num_digits,
-            inner_ring_dimension,
-            outer_ring_dimension,
-        )?
-        .physical_input_width();
+        let expected_b_width = self.profile.derive_slice_geometry()?.physical_input_width();
         if self.profile.inner.matrix.input_width() != expected_a_width
             || self.profile.outer.matrix.input_width() != expected_b_width
         {

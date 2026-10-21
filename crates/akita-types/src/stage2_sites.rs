@@ -31,7 +31,9 @@ where
 {
     let state = grinding.state_mut();
     state.site(witness_evaluation_site(level).into());
-    state.exchange_private::<F, E>(std::slice::from_mut(&mut evaluation))?;
+    state
+        .exchange_private::<F, E>(std::slice::from_mut(&mut evaluation))
+        .map_err(Into::<AkitaError>::into)?;
     Ok(evaluation)
 }
 

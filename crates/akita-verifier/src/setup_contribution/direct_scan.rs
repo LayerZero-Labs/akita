@@ -288,8 +288,8 @@ fn materialize_reduced_direct_scan_weights<E: Field>(
             plan,
             group.d_relation_ratio(),
             group.role_dims().d_d(),
-            group.d_tensors(),
-            group.d_col_range().len(),
+            &group.d_column_tensors(),
+            group.d_column_len(),
         )
     };
     let evaluate_t = || {
@@ -297,8 +297,8 @@ fn materialize_reduced_direct_scan_weights<E: Field>(
             plan,
             group.b_relation_ratio(),
             group.role_dims().d_b(),
-            group.physical_b().relation_tensors(),
-            group.physical_b().logical_input_width(),
+            &group.physical_b().column_tensors(),
+            group.physical_b().column_len()?,
         )
     };
     let evaluate_z = || {
@@ -311,8 +311,8 @@ fn materialize_reduced_direct_scan_weights<E: Field>(
         )
     };
     let (e, t, z) = materialize_three_roles(
-        group.d_col_range().len(),
-        group.physical_b().logical_input_width(),
+        group.d_column_len(),
+        group.physical_b().column_len()?,
         group.z_cols(),
         evaluate_e,
         evaluate_t,
@@ -333,8 +333,8 @@ fn materialize_lifted_direct_scan_weights<E: Field>(
         let _span = tracing::info_span!("setup_materialize_e_weights").entered();
         plan.materialize_role_tensor_weights(
             group.d_relation_ratio(),
-            group.d_tensors(),
-            group.d_col_range().len(),
+            &group.d_column_tensors(),
+            group.d_column_len(),
             alpha,
         )
     };
@@ -342,8 +342,8 @@ fn materialize_lifted_direct_scan_weights<E: Field>(
         let _span = tracing::info_span!("setup_materialize_t_weights").entered();
         plan.materialize_role_tensor_weights(
             group.b_relation_ratio(),
-            group.physical_b().relation_tensors(),
-            group.physical_b().logical_input_width(),
+            &group.physical_b().column_tensors(),
+            group.physical_b().column_len()?,
             alpha,
         )
     };
@@ -357,8 +357,8 @@ fn materialize_lifted_direct_scan_weights<E: Field>(
         )
     };
     let (e, t, z) = materialize_three_roles(
-        group.d_col_range().len(),
-        group.physical_b().logical_input_width(),
+        group.d_column_len(),
+        group.physical_b().column_len()?,
         group.z_cols(),
         evaluate_e,
         evaluate_t,

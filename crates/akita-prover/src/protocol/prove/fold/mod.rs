@@ -248,10 +248,32 @@ where
         scalar_openings.extend_from_slice(prepared.scalar_openings());
     }
     if reduction.is_none() {
-        grinding
-            .state_mut()
-            .site(akita_types::FoldSite::Openings { level }.id()?.into());
-        grinding.state_mut().public_all(&scalar_openings);
+        // A setup prefix is group 0, with one evaluation; every later group's
+        // openings are derived claims.
+        let (prefix, derived) = match (
+            level_params.setup_prefix(),
+            prepared_group_openings.as_slice(),
+        ) {
+            (Some(_), [prefix, derived @ ..]) => match prefix.scalar_openings() {
+                [evaluation] => (Some(evaluation), derived),
+                _ => {
+                    return Err(AkitaError::Internal(
+                        "setup-prefix group does not open exactly one polynomial".into(),
+                    ))
+                }
+            },
+            (Some(_), []) => {
+                return Err(AkitaError::Internal(
+                    "fold with a setup prefix has no opening groups".into(),
+                ))
+            }
+            (None, derived) => (None, derived),
+        };
+        let derived = derived
+            .iter()
+            .flat_map(|group| group.scalar_openings().iter().copied())
+            .collect::<Vec<_>>();
+        akita_types::bind_fold_openings::<F, E, _>(grinding, level, prefix, &derived)?;
     }
     let crate::protocol::ring_relation::PreparedRingRelationOutput {
         relation:

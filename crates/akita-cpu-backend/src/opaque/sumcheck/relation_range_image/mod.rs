@@ -80,7 +80,7 @@
 //! `  + w(r_stage2) * p(r_stage2)`
 //! `  + eq(tau1, EvaluationTrace_row_index) * w(r_stage2) * TraceWeight(r_stage2)`,
 //!
-//! exactly the oracle returned by `expected_output_claim()`. The prover fuses
+//! exactly the oracle whose weights `oracle_weights()` returns. The prover fuses
 //! the virtual, relation, and EvaluationTrace terms around the same local `w0` /
 //! `dw` scan so the witness-side work is shared.
 

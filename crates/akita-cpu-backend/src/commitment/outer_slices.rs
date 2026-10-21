@@ -4,11 +4,21 @@ use akita_types::DigitBlocks;
 
 /// Validate one committed group's per-polynomial plane counts, then stream its
 /// canonical B slices through one reusable physical-width buffer.
+///
+/// `randomness` holds the slice-major hiding randomness, `randomness_columns`
+/// rings per slice, appended after each slice's padded message columns. It is
+/// empty for a clear commitment.
 pub(crate) fn for_each_outer_slice_input<'a, const D_B: usize>(
     polynomial_planes: impl IntoIterator<Item = &'a [[i8; D_B]]>,
+    randomness: &[[i8; D_B]],
     geometry: &akita_params::CommitmentSliceGeometry,
     mut consume: impl FnMut(&[[i8; D_B]]) -> Result<(), AkitaError>,
 ) -> Result<(), AkitaError> {
+    if randomness.len() != geometry.total_randomness_columns()? {
+        return Err(AkitaError::Internal(
+            "B slice randomness disagrees with the frozen randomness width".into(),
+        ));
+    }
     let per_block = geometry.ring_elements_per_block_per_polynomial();
     let num_live_blocks = geometry
         .block_ranges()
@@ -32,6 +42,7 @@ pub(crate) fn for_each_outer_slice_input<'a, const D_B: usize>(
     let max_blocks = geometry.max_blocks_per_slice();
     let expected_width = geometry.physical_input_width();
     let mut input = Vec::with_capacity(expected_width);
+    let mut slice_randomness = randomness.chunks(geometry.randomness_columns().max(1));
     for range in geometry.block_ranges() {
         input.clear();
         let plane_start = range
@@ -52,13 +63,18 @@ pub(crate) fn for_each_outer_slice_input<'a, const D_B: usize>(
             let padded_len = input
                 .len()
                 .checked_add(padding)
-                .filter(|len| *len <= expected_width)
+                .filter(|len| *len <= geometry.message_input_width())
                 .ok_or_else(|| {
                     AkitaError::Internal(
                         "padded B slice input exceeds physical matrix width".into(),
                     )
                 })?;
             input.resize(padded_len, [0i8; D_B]);
+        }
+        if geometry.randomness_columns() != 0 {
+            input.extend_from_slice(slice_randomness.next().ok_or_else(|| {
+                AkitaError::Internal("B slice randomness is missing a slice".into())
+            })?);
         }
         if input.len() != expected_width {
             return Err(AkitaError::Internal(
@@ -104,7 +120,7 @@ fn outer_slice_inputs<const D_B: usize>(
     let mut inputs = Vec::with_capacity(geometry.slice_count().get());
     let polynomial_planes =
         validate_outer_slice_digits::<D_B>(polynomial_digits.iter().copied(), geometry)?;
-    for_each_outer_slice_input::<D_B>(polynomial_planes, geometry, |input| {
+    for_each_outer_slice_input::<D_B>(polynomial_planes, &[], geometry, |input| {
         inputs.push(input.to_vec());
         Ok(())
     })?;
@@ -144,6 +160,44 @@ mod tests {
     }
 
     #[test]
+    fn hiding_randomness_follows_each_padded_slice() {
+        let digits = DigitBlocks::new(vec![1, 2, 3, 4, 5], vec![1; 5], 1).expect("digit blocks");
+        let geometry = CommitmentSliceGeometry::try_new(
+            akita_params::CommitmentSliceCount::TWO,
+            5,
+            1,
+            1,
+            1,
+            1,
+            1,
+        )
+        .and_then(|geometry| geometry.with_randomness_columns(2))
+        .expect("slice geometry");
+        let planes = digits.typed_planes::<1>().expect("typed planes");
+        let randomness = [[-4], [3], [-1], [0]];
+        let mut inputs = Vec::new();
+        for_each_outer_slice_input::<1>(std::iter::once(planes), &randomness, &geometry, |input| {
+            inputs.push(input.to_vec());
+            Ok(())
+        })
+        .expect("stream slices");
+        assert_eq!(
+            inputs,
+            vec![
+                vec![[1], [2], [0], [-4], [3]],
+                vec![[3], [4], [5], [-1], [0]],
+            ]
+        );
+        assert!(for_each_outer_slice_input::<1>(
+            std::iter::once(planes),
+            &randomness[..3],
+            &geometry,
+            |_| Ok(()),
+        )
+        .is_err());
+    }
+
+    #[test]
     fn outer_slice_stream_reuses_one_physical_width_buffer() {
         let digits = DigitBlocks::new((0..13).collect(), vec![1; 13], 1).expect("digit blocks");
         let geometry = CommitmentSliceGeometry::try_new(
@@ -159,7 +213,7 @@ mod tests {
         let planes = digits.typed_planes::<1>().expect("typed planes");
         let mut addresses = Vec::new();
 
-        for_each_outer_slice_input::<1>(std::iter::once(planes), &geometry, |input| {
+        for_each_outer_slice_input::<1>(std::iter::once(planes), &[], &geometry, |input| {
             assert_eq!(input.len(), geometry.physical_input_width());
             addresses.push(input.as_ptr());
             Ok(())

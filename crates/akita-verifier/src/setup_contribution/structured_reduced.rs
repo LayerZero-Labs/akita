@@ -162,8 +162,13 @@ impl<E: Field> DirectScan<E> {
             .num_positions_per_block()
             .checked_mul(group.depth_witness())
             .ok_or(AkitaError::InvalidProof)?;
-        if weights.e.len() != expected_e
-            || weights.t.len() != expected_t
+        // The column tables end with any hiding-randomness columns, which
+        // carry only setup terms and no structured term.
+        let e_randomness = group.d_column_len() - group.d_col_range().len();
+        let t_randomness =
+            group.physical_b().column_len()? - group.physical_b().logical_input_width();
+        if weights.e.len() != expected_e + e_randomness
+            || weights.t.len() != expected_t + t_randomness
             || weights.z.len() != expected_z
             || group.a_row_weights().len() != group.n_a()
         {

@@ -28,6 +28,8 @@ pub(crate) struct PreparedRelationPayload<F: Field + CanonicalEncoding> {
 pub(crate) struct CpuRecursiveWitnessAssemblyState<F: Field + CanonicalEncoding> {
     group_openings: Vec<PreparedOpeningWitness<F>>,
     d_quotients: RelationDQuotientWitness<F>,
+    /// D hiding randomness appended to the shared D input; empty when clear.
+    d_randomness: Vec<i8>,
     inner_relation: Vec<crate::opaque::OpaqueInnerRelationState<F>>,
     compression: Option<CompressionWitnessMaterialization<F>>,
 }
@@ -97,6 +99,13 @@ where
     }
     crate::arithmetic::requirements::warm_relation_ntt_cache(backend, prepared, level)?;
     let dims = level.role_dims();
+    let d_randomness = backend.hiding_rng.sample(
+        level
+            .open_randomness_columns
+            .checked_mul(dims.d_d())
+            .ok_or_else(|| AkitaError::InvalidSetup("D randomness length overflow".into()))?,
+        level.shared_d_digit_log_basis(),
+    )?;
     let (v, d_quotients) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Opening),
         F,
@@ -109,6 +118,7 @@ where
             level.open().matrix.output_rank(),
             level.shared_d_digit_log_basis(),
             level.ring_relation_mode,
+            &d_randomness,
         )
     )?;
     let payload = prepare_relation_payload(
@@ -133,6 +143,7 @@ where
         assembly_state: CpuRecursiveWitnessAssemblyState {
             group_openings,
             d_quotients,
+            d_randomness,
             inner_relation: inner,
             compression,
         },
@@ -186,6 +197,7 @@ where
     let CpuRecursiveWitnessAssemblyState {
         group_openings,
         d_quotients,
+        d_randomness,
         inner_relation,
         compression,
     } = assembly_state;
@@ -216,7 +228,8 @@ where
             opening.into_relation_witness(fold_handle, challenges, inner_relation, group_dims)?;
         group_witnesses.push(witness);
     }
-    let witness = RingRelationWitness::from_groups(group_witnesses, d_quotients, compression);
+    let witness = RingRelationWitness::from_groups(group_witnesses, d_quotients, compression)
+        .with_d_randomness(d_randomness);
     RingRelationInstance::check_v_shape_for_level(&v, &level)?;
     if relation_rhs != *relation.rhs() {
         return Err(AkitaError::InvalidInput(

@@ -142,6 +142,41 @@ impl ValidatedScheduleCatalog {
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     ) -> Result<Self, AkitaError> {
+        Self::try_new_admitting(
+            family_name,
+            rows,
+            policy,
+            ring_challenge_config,
+            crate::audit::HidingAdmission::Clear,
+        )
+    }
+
+    /// Build a catalog of test-only hiding rows, whose randomness widths up
+    /// to `cut_level` are recomputed instead of rejected.
+    #[cfg(all(feature = "test-support", feature = "zk"))]
+    pub fn try_new_with_test_hiding(
+        family_name: impl Into<String>,
+        rows: impl IntoIterator<Item = (CommittedGroupBatchProfile, FoldSchedule)>,
+        policy: &PlannerPolicy,
+        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        cut_level: usize,
+    ) -> Result<Self, AkitaError> {
+        Self::try_new_admitting(
+            family_name,
+            rows,
+            policy,
+            ring_challenge_config,
+            crate::audit::HidingAdmission::TestCut(cut_level),
+        )
+    }
+
+    fn try_new_admitting(
+        family_name: impl Into<String>,
+        rows: impl IntoIterator<Item = (CommittedGroupBatchProfile, FoldSchedule)>,
+        policy: &PlannerPolicy,
+        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        hiding: crate::audit::HidingAdmission,
+    ) -> Result<Self, AkitaError> {
         let family_name = family_name.into();
         validate_family_name(&family_name)?;
         let rows = rows
@@ -157,7 +192,7 @@ impl ValidatedScheduleCatalog {
 
         let mut resolved = Vec::with_capacity(rows.len());
         for (profiles, schedule) in rows {
-            let row = ResolvedScheduleRow::try_new(profiles, schedule, policy)?;
+            let row = ResolvedScheduleRow::try_new_admitting(profiles, schedule, policy, hiding)?;
             validate_schedule_challenge_hooks(row.schedule(), &ring_challenge_config)?;
             resolved.push(row);
         }

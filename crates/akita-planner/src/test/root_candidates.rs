@@ -37,6 +37,7 @@ pub(crate) fn root_level_candidates_with_fresh_preparation(
         candidate_log_basis_inner,
         candidate_log_basis_open,
         guide,
+        false,
     )
 }
 
@@ -73,6 +74,7 @@ pub(crate) fn exhaustive_root_candidates_for_reference(
         final_num_vars: key.final_group.num_vars(),
         main_num_polys: key.final_group.num_polynomials(),
         source: crate::schedule_params::root_inner_basis_source(final_source_contract),
+        hiding: false,
     };
     let opening_batch = key.opening_layout()?;
     let min_split = usize::from(reduced_vars >= 3);

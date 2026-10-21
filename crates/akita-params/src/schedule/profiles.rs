@@ -94,6 +94,17 @@ pub struct GroupCommitPhaseParams {
     pub inner: crate::InnerRoleParams,
     /// B/`t_hat` role: gadget decomposition and audited matrix identity.
     pub outer: crate::OuterRoleParams,
+    /// Hiding-randomness ring columns appended to every B slice.
+    ///
+    /// Extension seam: Whiteout outer hiding randomness (akita#120). Zero in
+    /// every clear schedule, where it is not serialized. The B matrix width
+    /// in the descriptor bytes binds it.
+    #[serde(default, skip_serializing_if = "is_zero_width")]
+    pub randomness_columns: usize,
+}
+
+pub(crate) fn is_zero_width(value: &usize) -> bool {
+    *value == 0
 }
 
 impl GroupCommitPhaseParams {
@@ -141,6 +152,7 @@ impl GroupCommitPhaseParams {
                 ),
                 params.outer().matrix,
             ),
+            randomness_columns: params.own_group().profile.randomness_columns,
         }
     }
 
@@ -181,7 +193,8 @@ impl GroupCommitPhaseParams {
             self.outer.digits.num_digits,
             self.inner.matrix.ring_dimension(),
             self.outer.matrix.ring_dimension(),
-        )
+        )?
+        .with_randomness_columns(self.randomness_columns)
     }
 
     /// The A-role gadget decomposition.

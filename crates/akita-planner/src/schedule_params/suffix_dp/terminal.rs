@@ -224,6 +224,7 @@ mod tests {
             log_basis_inner: 4,
             log_basis_open: 4,
             fold_level: 3,
+            hiding: false,
             source_moment,
             relation_traversal_order: RelationTraversalOrder::Canonical,
             guide: None,

@@ -8,6 +8,7 @@ use akita_error::AkitaError;
 
 mod descriptor;
 mod profiles;
+pub(crate) use profiles::is_zero_width;
 mod sis_occurrences;
 mod sizing;
 

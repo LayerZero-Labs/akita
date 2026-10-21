@@ -41,7 +41,9 @@ where
     state.exchange(&mut integer)?;
     let integer = u128::from_le_bytes(integer);
     state.site(site(level, ROLE_SUBCLAIMS).into());
-    state.exchange_private::<F, E>(subclaims)?;
+    state
+        .exchange_private::<F, E>(subclaims)
+        .map_err(Into::<AkitaError>::into)?;
     Ok(integer)
 }
 
@@ -58,7 +60,9 @@ where
 {
     let state = grinding.state_mut();
     state.site(site(level, ROLE_VIRTUAL_EVALUATIONS).into());
-    state.exchange_private::<F, E>(evaluations)?;
+    state
+        .exchange_private::<F, E>(evaluations)
+        .map_err(Into::<AkitaError>::into)?;
     Ok(())
 }
 

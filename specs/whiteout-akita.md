@@ -48,7 +48,7 @@ with an ordinary Akita proof. In outline:
   hands W6 a typed `ResidualOpening`.
 - **W5.** Akita implements `jolt_zk::whiteout::ResponseProver` with raw images.
   The last PR publishes the ZK config type and its schedule family.
-  Compression of u_a, t_p and t_D (W5c) is deferred with a stated contract.
+  Compression of u_a, t_p and t_D (W5c) lands in RP4, after W5a (§5.4).
 - **M6e.** M6e deletes `akita-zk-prover` and `akita-zk-verifier` and updates
   the dependency guards.
 
@@ -185,10 +185,15 @@ Each policy reads the target:
 - **Modeled cap.** It is not used at levels ≤ `cut_level`: ZK planning sets
   `modeled_linf_cap = None` there, so `candidate.rs:172-177` takes the policy's
   digits. A 1/40 per-attempt cap is never a one-shot bound.
+- **Admission.** `ZkOpeningSchedule`'s constructor rejects a row whose
+  `num_digits_fold` at any level ≤ `cut_level` is below the `OneShot` policy's
+  digits. Until a planner path emits ZK rows, that check is what pins the
+  one-shot sizing.
 
 The parameters are `security_bits = 136` and `masked_folds = cut_level + 1 = 2`,
 so δ_fold ≤ 2^−136 in total. With the paper's other terms (§6.2), W2-c
-computes the total zero-knowledge bound and asserts it below 2^−128:
+computes the total zero-knowledge bound below 2^−128. The paper gives no
+value for Q_tot (Q6), so the test asserts only the terms it can compute:
 
 ```text
 δ_LHL + T_att·ε/M + 2δ_fold + (T_att·Q_tot + T_att²)/2^ν
@@ -435,8 +440,10 @@ The stage-1 leaf check and the stage-2 oracle check at every level are written
 once, generic over `D: ClaimDomain<F>`. This is a fixup to M2b, where the stage
 verifiers already moved onto jolt-sumcheck. The clear verifier uses the value
 domain, so there is no parallel masked formula and no Akita copy of the
-trait. Akita depends only on jolt-transcript, which it already uses, and not
-on jolt-zk.
+trait. The checks live in akita-types so the prover can run them in
+`ValuesDomain`. Akita's normal dependencies reach only jolt-transcript, which
+it already uses. jolt-zk is a dev-dependency for the masked-domain tests
+until the `zk` feature lands; the extracted pin must contain M6b.
 
 At b = 8 with the Linf route, the paper's lowering gives these rows per
 masked level:
@@ -444,7 +451,7 @@ masked level:
 | Check | Clear formula | Lowering | Products | Aux |
 |---|---|---|---|---|
 | stage-1 leaf (`stage1.rs:186-190`) | claim = Σ_{k≤4} c_k·ri^k | `u = product(ri, ri)`; `product_into(u, c₄u + c₃ri + c₂, claim − c₁ri − c₀)` | 2 | 1 |
-| stage-2 oracle (`stage2.rs:248-335`) | claim = w·(B(w+1) + R) + const | `product_into(w, B(w+1) + R, claim − const)` | 1 | 0 |
+| stage-2 oracle (`stage2.rs:248-335`) | claim = w·(B(w+1) + R) | `product_into(w, B(w+1) + R, claim)` | 1 | 0 |
 
 In the stage-2 row, B collects both w(w+1) sites: the virtual term
 `batch·eq·w(w+1)` (`stage2.rs:329`) and the binary term `bb·binW·w(w+1)`
@@ -472,9 +479,10 @@ converted once with `match_endianness` (`LOW_TO_HIGH` → `HIGH_TO_LOW`; A18, I4
     (fixup to M6b) for stage 1, inside the `RowsDomain` used for §4.4's
     checks. The returned running claim is the `claim` in those formulas.
 - **Channels.**
-  - `GrindingReplay::State` becomes generic: `ProverGrinding<'a, C>` and
-    `VerifierGrinding<'a, 'p, C>` over `C: Channel + PrivateChannel` with
-    `C::Error: Into<AkitaError>`. This is a fixup to M2b.
+  - `GrindingReplay::State` becomes generic: `ProverGrinding<'a, H, C>` and
+    `VerifierGrinding<'a, 'p, H, C>` over `C: Channel<Sponge = H> + PrivateChannel`
+    with `C::Error: Into<AkitaError>`. This is a fixup to M2b. `C` defaults
+    to the clear transcript so existing call sites stay unchanged.
   - In masked mode, C is the prover adapter over `CommittedPads::send`
     (fixup to M6b) or jolt-zk's `MaskedVerifier`.
   - Jolt's prover lends `&mut CommittedPads` to the opening for levels
@@ -585,12 +593,12 @@ and A_D.
   in RP4 if the direct scan exceeds the verifier budget measured in W5-e, and
   is deferred otherwise (A30).
 
-### 5.4 Compression contract (W5c, deferred)
+### 5.4 Compression (W5c)
 
-Compression of u_a, t_p and t_D is deferred out of RP4, together with its
-jolt-side hook. Until then those images travel raw. That costs about 25 KB at
-the headline, against the paper's 3 × 128 B. When W5c lands, the following
-holds:
+Compression of u_a, t_p and t_D lands in RP4, together with its jolt-side
+hook. The images are already masked, so compressing them changes no hiding
+argument. Raw images cost about 25 KB at the headline, against the paper's
+3 × 128 B. W5a ships them raw; W5c then establishes the following:
 
 - The verifier holds only compressed forms. In item 3, the targets t (u_a and
   t_p) and, in item 2, t_D become their gadget reconstructions Σ_i 2^i·ξ_i
@@ -710,7 +718,7 @@ There are no prerequisites for `bind_derived_all` (§4.2) or compression (W5c).
   prover returns it, and the caller reruns.
 - This transcript order:
   1. preamble, hiding commitment;
-  2. t_p (raw until W5c);
+  2. t_p, compressed (W5c);
   3. Jolt stages 1–7 masked;
   4. stage-8 claims to Akita;
   5. levels 0..=`cut_level` masked;
@@ -746,7 +754,7 @@ Both are byte-identical (C0) and land before RP2's extraction.
 | S13 | `HonestFoldSizingQuery::failure_target`, read by each policy |
 
 S7, the `ResponseRelation` projection, is dev-only, in W5b. S8, split
-compression, is deferred with W5c.
+compression, lands with W5c.
 
 | # | PR | Seams | Depends on | Test bar |
 |---|---|---|---|---|
@@ -812,6 +820,10 @@ The numbering continues the W4 note's A1–A23.
 - **Q4, compression above 8 KiB.** The cost script's `FCHAIN_MAX_IMAGE = 884`
   disagrees with Akita's 512-coefficient cap. Should the model count the
   split chain (§5.4)?
+- **Q6, Q_tot.** `05_security.tex:316` defines Q_tot, which bounds the
+  distinguisher's and the honest algorithms' oracle queries together, but
+  §6.2 gives no value. At Q_tot = 2^100 the term is about 2^−148.6. What
+  value should the evaluation assume?
 - **Answered.** Q3: 3 products and 1 auxiliary slot per masked level (§4.4).
   Q5: 2^−950 is per fold.
 

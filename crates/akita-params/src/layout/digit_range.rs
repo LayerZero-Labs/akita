@@ -198,13 +198,16 @@ impl DigitRangePlan {
         }
     }
 
-    /// Degree of the final range leaf.
+    /// The largest [`Self::leaf_degree`] of any supported basis.
+    pub const MAX_LEAF_DEGREE: usize = 4;
+
+    /// Degree of the final range leaf, at most [`Self::MAX_LEAF_DEGREE`].
     #[must_use]
     pub fn leaf_degree(self) -> usize {
         if self.log_basis == 2 {
             2
         } else {
-            4
+            Self::MAX_LEAF_DEGREE
         }
     }
 

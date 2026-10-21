@@ -16,7 +16,7 @@ use akita_types::{
     AkitaVerifierSetup, FpExtEncoding, OpeningClaims, PolynomialGroupClaims, RingVec,
 };
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
-use jolt_transcript::{Channel, PrivateChannel, Sponge};
+use jolt_transcript::{Channel, Sponge};
 
 pub(super) struct SuffixVerifierState<F: Field, E: Field> {
     pub opening_point: Vec<E>,
@@ -141,6 +141,12 @@ where
     };
     let opening_batch = block_claims.layout()?;
     let openings = block_claims.flat_evaluations();
+    // Group order: the setup-prefix evaluation, then the witness evaluation.
+    let prefix_evaluation = current_state
+        .setup_prefix_opening
+        .as_ref()
+        .map(|(_, evaluation)| evaluation);
+    let witness_evaluation = std::slice::from_ref(&current_state.opening);
     let group_points = (0..opening_batch.num_groups())
         .map(|group_index| block_claims.group_point(group_index))
         .collect::<Result<Vec<_>, _>>()?;
@@ -148,7 +154,7 @@ where
         lp.opening_method(),
         akita_params::OpeningMethod::SubringCoefficientPacking { .. }
     ) {
-        verify_coefficient_packing_suffix_prefix::<F, E, _>(
+        let material = verify_coefficient_packing_suffix_prefix::<F, E, _>(
             &block_claims,
             &openings,
             &opening_batch,
@@ -156,7 +162,14 @@ where
             lp,
             grinding,
             level,
-        )?
+        )?;
+        akita_types::bind_fold_openings::<F, E, _>(
+            grinding,
+            level,
+            prefix_evaluation,
+            witness_evaluation,
+        )?;
+        material
     } else if const { <E as ExtField<F>>::DEGREE == 1 } {
         let prepared =
             prepare_single_field_suffix_groups::<F, E>(&block_claims, lp, &opening_batch)?;
@@ -171,10 +184,12 @@ where
             );
             grinding.state_mut().public_all(point);
         }
-        grinding
-            .state_mut()
-            .site(akita_types::FoldSite::Openings { level }.id()?.into());
-        grinding.state_mut().public_all(&openings);
+        akita_types::bind_fold_openings::<F, E, _>(
+            grinding,
+            level,
+            prefix_evaluation,
+            witness_evaluation,
+        )?;
         FoldClaimMaterial {
             prepared_points: prepared
                 .into_iter()
@@ -209,7 +224,7 @@ where
             .id()?
             .into(),
         );
-        state.exchange_private_base::<F>(&mut payload)?;
+        state.exchange_all(&mut payload)?;
         RingVec::from_coeffs(payload)
     };
     let prefix = finalize_claims::<F, E, _>(&opening_batch, material, grinding, level)?;

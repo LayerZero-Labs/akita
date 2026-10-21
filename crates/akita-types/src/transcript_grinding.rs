@@ -4,5 +4,5 @@
 mod replay;
 pub use replay::{
     GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProverGrinding,
-    VerifierGrinding,
+    ProverGrindingChannel, VerifierGrinding, VerifierGrindingChannel,
 };

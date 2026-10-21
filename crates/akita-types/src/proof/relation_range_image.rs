@@ -736,6 +736,7 @@ mod tests {
                 n_a: 1,
                 physical_b_rows: 1,
                 outer_slice_count: CommitmentSliceCount::ONE,
+                randomness_columns: 0,
             })
             .collect();
         RelationWitnessGeometry::from_parts_for_test(

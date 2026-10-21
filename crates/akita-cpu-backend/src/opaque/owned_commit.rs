@@ -51,8 +51,19 @@ where
             Vec::new(),
             PortableStatePolicy,
         )?;
-        let (recomputed, retained) =
-            executor.execute_full_via_outer_image(self, committed.parameters, &sources, None)?;
+        if committed.parameters.randomness_columns != 0 {
+            // Recomputing would draw fresh randomness, never the original.
+            return Err(AkitaError::UnsupportedSchedule(
+                "hiding commitments cannot be imported".into(),
+            ));
+        }
+        let (recomputed, retained) = executor.execute_full_via_outer_image(
+            self,
+            committed.parameters,
+            None,
+            &sources,
+            None,
+        )?;
         if recomputed.commitment != committed.public || retained != committed.retained {
             return Err(AkitaError::InvalidInput(
                 "transferred commitment does not match backend setup".into(),
@@ -112,12 +123,13 @@ where
         )?;
         let sources = source.storage.commitment_sources();
         executor.validate_setup(&prepared.expanded)?;
-        let (profile, producer_contract) = crate::commitment::resolve_commit_params::<Cfg, _>(
-            &sources,
-            &prepared.expanded,
-            family,
-            context,
-        )?;
+        let (profile, randomness_log_basis, producer_contract) =
+            crate::commitment::resolve_commit_params::<Cfg, _>(
+                &sources,
+                &prepared.expanded,
+                family,
+                context,
+            )?;
         let (negative_abs, positive) = producer_contract.accepted_bounds(
             profile.inner.digits.log_basis,
             profile.inner.digits.num_digits,
@@ -134,8 +146,13 @@ where
             negative_abs,
             positive,
         };
-        let (committed_group, prover_state) =
-            executor.execute_full_via_outer_image(self, profile, &sources, Some(accepted))?;
+        let (committed_group, prover_state) = executor.execute_full_via_outer_image(
+            self,
+            profile,
+            randomness_log_basis,
+            &sources,
+            Some(accepted),
+        )?;
         let private_handle = CommitmentHandle {
             owner: source.owner,
             committed: Arc::new(CommittedSource {

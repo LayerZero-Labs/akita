@@ -27,12 +27,16 @@ pub(crate) struct AbCommitmentCandidateRequest<'a> {
     /// remains the dominance guard.
     pub(crate) modeled_linf_cap: Option<u128>,
     pub(crate) failure_target: FoldFailureTarget,
+    /// Whether the commitment gets hiding-randomness columns.
+    pub(crate) hiding: bool,
 }
 
 pub(crate) struct AbCommitmentCandidate {
     pub(crate) num_digits_fold: usize,
     pub(crate) inner_commit_matrix: InnerCommitMatrixParams,
     pub(crate) outer_commit_matrix: OuterCommitMatrixParams,
+    /// Hiding-randomness columns appended to every B slice.
+    pub(crate) outer_randomness_columns: usize,
 }
 
 pub(super) struct InnerCommitmentCandidateRequest<'a> {
@@ -69,13 +73,82 @@ pub(super) struct OuterCommitmentCandidateRequest<'a> {
     log_basis_open: u32,
     num_digits_outer: usize,
     inner_output_rank: usize,
+    hiding: bool,
+}
+
+/// Hiding-randomness columns for an image of `rows` rings of `ring_dim`
+/// coefficients, drawn from the balanced `2^log_basis` alphabet.
+#[cfg(feature = "zk")]
+fn hiding_columns(
+    rows: usize,
+    ring_dim: usize,
+    modulus: akita_params::SisModulusProfileId,
+    log_basis: u32,
+) -> Result<usize, AkitaError> {
+    akita_params::zk::hiding_randomness_columns(
+        akita_params::zk::ImageShape {
+            rows,
+            ring_dim,
+            modulus,
+        },
+        akita_params::zk::DigitAlphabet { log_basis },
+    )
+}
+
+#[cfg(not(feature = "zk"))]
+fn hiding_columns(
+    _rows: usize,
+    _ring_dim: usize,
+    _modulus: akita_params::SisModulusProfileId,
+    _log_basis: u32,
+) -> Result<usize, AkitaError> {
+    Err(AkitaError::UnsupportedSchedule(
+        "hiding schedules need the planner's zk feature".into(),
+    ))
+}
+
+/// Price one commitment matrix together with its hiding randomness.
+///
+/// The randomness width depends on the image rank, and the rank on the
+/// widened input width, so the two are iterated to their joint fixed point
+/// from zero randomness. Both maps are nondecreasing, so the sequence only
+/// grows; a few rounds suffice for every supported table. Returns `None` when
+/// pricing fails or no fixed point is reached.
+pub(crate) fn price_with_hiding_randomness<M>(
+    hiding: bool,
+    message_width: usize,
+    ring_dim: usize,
+    modulus: akita_params::SisModulusProfileId,
+    log_basis: u32,
+    price: impl Fn(usize) -> Option<M>,
+    output_rank: impl Fn(&M) -> usize,
+) -> Result<Option<(M, usize)>, AkitaError> {
+    const MAX_ROUNDS: usize = 8;
+    let mut randomness = 0usize;
+    for _ in 0..MAX_ROUNDS {
+        let Some(width) = message_width.checked_add(randomness) else {
+            return Ok(None);
+        };
+        let Some(matrix) = price(width) else {
+            return Ok(None);
+        };
+        if !hiding {
+            return Ok(Some((matrix, 0)));
+        }
+        let needed = hiding_columns(output_rank(&matrix), ring_dim, modulus, log_basis)?;
+        if needed == randomness {
+            return Ok(Some((matrix, randomness)));
+        }
+        randomness = needed;
+    }
+    Ok(None)
 }
 
 /// Derive the one physical B matrix and complete logical B source after the
 /// route-specific A rank is known.
 pub(super) fn derive_outer_commitment_candidate(
     request: OuterCommitmentCandidateRequest<'_>,
-) -> Result<Option<OuterCommitMatrixParams>, AkitaError> {
+) -> Result<Option<(OuterCommitMatrixParams, usize)>, AkitaError> {
     let OuterCommitmentCandidateRequest {
         policy,
         dimensions,
@@ -86,6 +159,7 @@ pub(super) fn derive_outer_commitment_candidate(
         log_basis_open,
         num_digits_outer,
         inner_output_rank,
+        hiding,
     } = request;
     let Ok(slice_geometry) = akita_params::CommitmentSliceGeometry::try_new(
         outer_slice_count,
@@ -107,15 +181,22 @@ pub(super) fn derive_outer_commitment_candidate(
     ) else {
         return Ok(None);
     };
-    let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
-        sis_key_at_dimension(
-            policy,
-            akita_params::SisMatrixRole::Outer,
-            dimensions.d_b(),
-            norm_t,
-        ),
+    let key = sis_key_at_dimension(
+        policy,
+        akita_params::SisMatrixRole::Outer,
+        dimensions.d_b(),
+        norm_t,
+    );
+    let Some((outer_commit_matrix, randomness_columns)) = price_with_hiding_randomness(
+        hiding,
         slice_geometry.physical_input_width(),
-    ) else {
+        dimensions.d_b(),
+        policy.sis_modulus_profile,
+        log_basis_open,
+        |width| OuterCommitMatrixParams::try_new_with_min_rank(key, width).ok(),
+        OuterCommitMatrixParams::output_rank,
+    )?
+    else {
         return Ok(None);
     };
     let complete_source_coefficients = outer_slice_count
@@ -129,7 +210,7 @@ pub(super) fn derive_outer_commitment_candidate(
     {
         return Ok(None);
     }
-    Ok(Some(outer_commit_matrix))
+    Ok(Some((outer_commit_matrix, randomness_columns)))
 }
 
 /// Derive the slice-independent response digit count and A matrix.
@@ -237,6 +318,7 @@ pub(crate) fn derive_ab_commitment_candidate(
         num_digits_outer,
         modeled_linf_cap,
         failure_target,
+        hiding,
     } = request;
     let Some(inner_candidate) =
         derive_inner_commitment_candidate(InnerCommitmentCandidateRequest {
@@ -261,7 +343,7 @@ pub(crate) fn derive_ab_commitment_candidate(
     };
     let num_digits_fold = inner_candidate.num_digits_fold;
     let inner_commit_matrix = inner_candidate.inner_commit_matrix;
-    let Some(outer_commit_matrix) =
+    let Some((outer_commit_matrix, outer_randomness_columns)) =
         derive_outer_commitment_candidate(OuterCommitmentCandidateRequest {
             policy,
             dimensions,
@@ -272,6 +354,7 @@ pub(crate) fn derive_ab_commitment_candidate(
             log_basis_open,
             num_digits_outer,
             inner_output_rank: inner_commit_matrix.output_rank(),
+            hiding,
         })?
     else {
         return Ok(None);
@@ -280,6 +363,7 @@ pub(crate) fn derive_ab_commitment_candidate(
         num_digits_fold,
         inner_commit_matrix,
         outer_commit_matrix,
+        outer_randomness_columns,
     }))
 }
 

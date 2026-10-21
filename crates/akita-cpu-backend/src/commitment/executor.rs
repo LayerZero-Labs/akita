@@ -54,6 +54,9 @@ pub(crate) struct CommitmentExecutor<
     pub(super) route: PreparedInnerOuterRoute<'a, F>,
     pub(super) compression: Option<PreparedCompression<'a, F>>,
     pub(super) state_policy: SP,
+    /// Source of B hiding randomness; sourceless unless the executor belongs
+    /// to a backend.
+    pub(super) hiding_rng: Arc<crate::hiding::HidingRng>,
 }
 
 impl<'a, F, SP> CommitmentExecutor<'a, F, SP>
@@ -162,7 +165,9 @@ where
             CompressionOperationCapabilities::cpu::<F>(),
             Some(compression_operation.portable_exporter()),
         ))?;
-        builder.build()
+        let mut executor = builder.build()?;
+        executor.hiding_rng = backend.hiding_rng.clone();
+        Ok(executor)
     }
 }
 
@@ -490,6 +495,7 @@ where
             super::CommitmentExecutionMode::InnerOnly,
             inner.into_image(),
             None,
+            Vec::new(),
             self.state_exporters(plan)?,
         )?;
         self.state_policy.bind(components)
@@ -520,7 +526,25 @@ where
             plan.relation_mode(),
             plan.compression().cloned(),
         )?;
+        // The randomness width is part of the plan, so a clear plan samples
+        // nothing and keeps the commitment deterministic.
+        let randomness = match uncompressed.outer().randomness_coefficient_len()? {
+            0 => Vec::new(),
+            len => {
+                let log_basis = uncompressed.outer().randomness_log_basis().ok_or_else(|| {
+                    AkitaError::UnsupportedSchedule(
+                        "hiding commitment has no consuming opening alphabet".into(),
+                    )
+                })?;
+                self.hiding_rng.sample(len, log_basis)?
+            }
+        };
         if let Some(fused) = self.fused_for_plan(plan) {
+            if !randomness.is_empty() {
+                return Err(AkitaError::UnsupportedSchedule(
+                    "fused commitment routes do not support hiding randomness".into(),
+                ));
+            }
             let output =
                 fused
                     .stage
@@ -546,10 +570,11 @@ where
             .owner
             .same_owner(&outer_registration.owner)
         {
-            outer_registration
-                .stage
-                .operation
-                .commit_outer(uncompressed, super::InnerImageInput::Owned(inner.image()))?
+            outer_registration.stage.operation.commit_outer(
+                uncompressed,
+                super::InnerImageInput::Owned(inner.image()),
+                &randomness,
+            )?
         } else {
             let rows = self
                 .split_inner()?
@@ -561,12 +586,14 @@ where
                     )
                 })?
                 .export_inner_rows(uncompressed.inner(), inner.image())?;
-            outer_registration
-                .stage
-                .operation
-                .commit_outer(uncompressed, super::InnerImageInput::HostRows(&rows))?
+            outer_registration.stage.operation.commit_outer(
+                uncompressed,
+                super::InnerImageInput::HostRows(&rows),
+                &randomness,
+            )?
         };
-        UncompressedCommitmentOutput::new(inner.into_image(), u, uncompressed)
+        UncompressedCommitmentOutput::new(inner.into_image(), u, uncompressed)?
+            .with_outer_randomness(randomness, uncompressed)
     }
 
     /// Execute an uncompressed A/B route and bind its policy-selected state.
@@ -607,7 +634,7 @@ where
             )
         })?;
         let uncompressed = self.execute_uncompressed_stages(plan, sources, None)?;
-        let (image, u) = uncompressed.into_parts();
+        let (image, u, outer_randomness) = uncompressed.into_parts();
         let expected_binding = image.binding().clone();
         let compression_registration = self.compression()?;
         let compression = compression_registration.stage.operation.compress(
@@ -622,7 +649,7 @@ where
             &compression_registration.owner,
             "compression",
         )?;
-        let output = FullCommitmentOutput::new(image, compression)?;
+        let output = FullCommitmentOutput::new(image, compression, outer_randomness)?;
         CommitmentExecutionOutput::from_full(
             output,
             &self.state_policy,
@@ -687,13 +714,17 @@ where
         &self,
         backend: &CpuBackend<F, E>,
         profile: GroupCommitPhaseParams,
+        randomness_log_basis: Option<u32>,
         sources: &[&dyn CommitmentSource<F>],
         accepted: Option<AcceptedReach>,
     ) -> Result<(CommittedGroup<F>, PortableCommitmentHandle<F>), AkitaError>
 where {
-        let plan = CommitmentExecutionPlan::for_root(&profile)?;
+        let mut plan = CommitmentExecutionPlan::for_root(&profile)?;
+        if let Some(log_basis) = randomness_log_basis {
+            plan = plan.with_randomness_log_basis(log_basis);
+        }
         self.trace_route(plan.mode());
-        let (image, outer_image) = self
+        let (image, outer_image, outer_randomness) = self
             .execute_uncompressed_stages(&plan, sources, accepted)?
             .into_parts();
         let binding = image.binding().clone();
@@ -703,12 +734,13 @@ where {
         let rows = exporter.consume_inner_rows(binding.inner_plan(), image)?;
         let rows = InnerRelationStateMaterial::from_binding(&binding, rows)?.into_rows();
         let (committed_group, compression_state) =
-            backend.compress_root_outer_image(profile, outer_image)?;
+            backend.compress_root_image(profile, outer_image)?;
         let retained = super::state_policy::assemble_portable_hint(
             binding,
             super::CommitmentExecutionMode::Full,
             rows,
             Some(compression_state),
+            outer_randomness,
         )?;
         Ok((committed_group, retained))
     }
@@ -964,6 +996,7 @@ mod tests {
             &self,
             plan: &super::super::UncompressedCommitPlan,
             inner: super::super::InnerImageInput<'_, F>,
+            _randomness: &[i8],
         ) -> Result<akita_types::RingVec<F>, AkitaError> {
             if !matches!(inner, super::super::InnerImageInput::HostRows(_)) {
                 return Err(AkitaError::InvalidInput(

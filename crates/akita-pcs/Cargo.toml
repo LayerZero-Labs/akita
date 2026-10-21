@@ -111,6 +111,16 @@ akita-config = { version = "0.1.0", path = "../akita-config", default-features =
 ] }
 akita-planner = { version = "0.1.0", path = "../akita-planner", default-features = false, features = [
   "test-support",
+  "zk",
+] }
+# Test-only: sample the hiding randomness of test schedules that declare it.
+akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false, features = [
+  "test-support",
+  "zk",
+] }
+akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false, features = [
+  "test-support",
+  "zk",
 ] }
 # Test-only: the zero-knowledge schedule constructor and entry points.
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false, features = [
@@ -122,7 +132,6 @@ akita-prover = { version = "0.1.0", path = "../akita-prover", default-features =
 akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false, features = [
   "test-support",
 ] }
-akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
 criterion = { version = "0.8", features = ["html_reports"] }

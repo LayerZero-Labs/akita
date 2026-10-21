@@ -317,6 +317,27 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
                 backend.finished.get() + backend.aborted.get()
             );
         }
+        // Stage-2 rounds at level 0 that sum correctly but miss the oracle
+        // `w·(B(w+1) + R)`: the prover's self-checks pass, so proving succeeds.
+        private.fault.set(Fault::Stage2OracleMiss);
+        let faulted = prove(false)?;
+        private.fault.set(Fault::None);
+        let statement = GroupBatchStatement::new(
+            selection,
+            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                point.clone(),
+                evaluations.clone(),
+                &committed_group,
+            )?])?,
+        )?;
+        // Only `InvalidProof` is asserted; it still isolates the Stage-2 check,
+        // because every other check holds on this proof (honest witness
+        // evaluation, consistent rounds) and the verifier accepts it once
+        // `validate_stage2_replay` skips the oracle check.
+        assert_eq!(
+            verifier.verify_standalone(&faulted, DOMAIN, statement, BasisMode::Lagrange),
+            Err(AkitaError::InvalidProof)
+        );
     }
     Ok(())
 }

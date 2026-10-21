@@ -22,8 +22,27 @@ impl<F: Field, E> CpuBackend<F, E> {
     ///
     /// Returns an error if the field, frozen profile, setup capacity, or outer
     /// image shape disagrees with the root commitment plan, or if compression
-    /// fails to produce valid retained state.
+    /// fails to produce valid retained state. A profile with hiding randomness
+    /// is rejected: its randomness lives with the backend that computed `u`,
+    /// and the returned state could not carry it into the proof.
     pub fn compress_root_outer_image(
+        &self,
+        profile: GroupCommitPhaseParams,
+        outer_image: RingVec<F>,
+    ) -> Result<(CommittedGroup<F>, PortableCompressionState<F>), AkitaError>
+    where
+        F: Field + CanonicalEncoding + 'static,
+    {
+        if profile.randomness_columns != 0 {
+            return Err(AkitaError::UnsupportedSchedule(
+                "an external root outer image cannot carry hiding randomness".into(),
+            ));
+        }
+        self.compress_root_image(profile, outer_image)
+    }
+
+    /// Compress the outer image of a root commitment this backend computed.
+    pub(crate) fn compress_root_image(
         &self,
         profile: GroupCommitPhaseParams,
         outer_image: RingVec<F>,

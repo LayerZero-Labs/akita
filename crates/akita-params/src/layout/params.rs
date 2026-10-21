@@ -121,6 +121,14 @@ pub struct CommittedGroupParams {
     /// Endpoints of this fold's inherited own-group block partition.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub witness_chunk_ends: Vec<usize>,
+    /// Hiding-randomness ring columns appended to the shared D matrix after
+    /// every group's opening segment.
+    ///
+    /// Extension seam: Whiteout outer hiding randomness (akita#120). Zero in
+    /// every clear schedule, where it is not serialized. The D matrix width in
+    /// the descriptor bytes binds it.
+    #[serde(default, skip_serializing_if = "crate::schedule::is_zero_width")]
+    pub open_randomness_columns: usize,
 }
 
 impl CommittedGroupParams {
@@ -142,6 +150,7 @@ impl CommittedGroupParams {
             witness_chunk,
             successor_block_len: None,
             witness_chunk_ends: Vec::new(),
+            open_randomness_columns: 0,
         })
     }
 

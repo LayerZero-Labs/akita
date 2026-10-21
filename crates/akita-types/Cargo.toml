@@ -45,6 +45,8 @@ criterion = { version = "0.8", features = ["html_reports"] }
 jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
   "logging",
 ] }
+# Test-only: the masked claim domains the shared stage checks lower into.
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3" }
 rand = "0.8"
 
 [[bench]]

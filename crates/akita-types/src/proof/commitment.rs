@@ -361,6 +361,7 @@ where
         }
 
         let descriptor = GroupCommitPhaseParams {
+            randomness_columns: 0,
             version,
             group,
 
@@ -487,6 +488,7 @@ mod committed_group_tests {
         )
         .expect("audited B profile");
         let profile = GroupCommitPhaseParams {
+            randomness_columns: 0,
             version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::new(11, 1),
             blocks: akita_params::BlockGeometry::new(32, 32, 1),

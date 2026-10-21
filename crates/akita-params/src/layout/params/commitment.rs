@@ -130,6 +130,9 @@ impl CommittedGroupParams {
     }
 
     /// Polynomial arity encoded by the exact physical B width.
+    ///
+    /// The hiding-randomness columns are not per polynomial, so they are
+    /// removed before dividing by one polynomial's message width.
     pub fn commitment_polynomial_count(&self) -> Result<usize, AkitaError> {
         let one_polynomial_width = crate::CommitmentSliceGeometry::try_new(
             self.outer_slice_count(),
@@ -141,13 +144,19 @@ impl CommittedGroupParams {
             self.role_dims().d_b(),
         )?
         .physical_input_width();
-        self.outer()
+        let message_width = self
+            .outer()
             .matrix
             .input_width()
+            .checked_sub(self.own_group().profile.randomness_columns)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "commitment B width is narrower than its randomness columns".into(),
+                )
+            })?;
+        message_width
             .checked_div(one_polynomial_width)
-            .filter(|count| {
-                *count != 0 && self.outer().matrix.input_width() == *count * one_polynomial_width
-            })
+            .filter(|count| *count != 0 && message_width == *count * one_polynomial_width)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "commitment B width does not encode an exact polynomial count".into(),

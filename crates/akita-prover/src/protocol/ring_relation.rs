@@ -15,7 +15,7 @@ use jolt_algebra::Unreduced;
 use jolt_algebra::{CanonicalEncoding, Field, Ring};
 #[cfg(test)]
 use jolt_crypto::challenge::Challenges;
-use jolt_transcript::{Channel, PrivateChannel, Sponge};
+use jolt_transcript::{Channel, Sponge};
 
 use super::fold_grind;
 use super::prove::PreparedGroupOpening;
@@ -261,13 +261,13 @@ impl RingRelationProver {
             .id()?
             .into(),
         );
-        // WARNING: exchanged in place. This relies on `PrivateChannel`'s
-        // contract that the prover leaves values unchanged; a masked prover
-        // that wrote masked values back would corrupt `opening_payload`, which
-        // the relation below still reads.
+        // The payload is public in both modes: in ZK mode its own commitment
+        // randomness hides it, not pads. WARNING: exchanged in place. This
+        // relies on `Channel`'s contract that the prover leaves values
+        // unchanged; the relation below still reads `opening_payload`.
         grinding
             .state_mut()
-            .exchange_private_base::<F>(opening_payload.coeffs_mut())?;
+            .exchange_all(opening_payload.coeffs_mut())?;
         drop(opening_rows_span);
 
         // Public claim batching is intentionally delayed until every

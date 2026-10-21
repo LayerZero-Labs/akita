@@ -105,8 +105,54 @@ pub struct WitnessLayout {
     compression_layers: Vec<CompressionWitnessLayerLayout>,
     compression_alignment_ranges: Vec<Range<usize>>,
     relation_quotients: RelationQuotientLayout,
+    randomness: WitnessRandomnessLayout,
     /// Envelope containing everything after the chunk-major Z/E/T body.
     tail_range: Range<usize>,
+}
+
+/// Hiding-randomness section at the end of the witness tail.
+///
+/// Extension seam: Whiteout outer hiding randomness (akita#120). Clear
+/// layouts have no span, so every other offset keeps its value.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WitnessRandomnessLayout {
+    /// Slice-major B randomness of each group with nonzero randomness, in
+    /// relation order: slice `s`, column `j` and coefficient `c` sit at
+    /// `start + (s * R_B + j) * d_b + c`.
+    outer: Vec<(usize, Range<usize>)>,
+    /// D randomness: column `j` and coefficient `c` sit at
+    /// `start + j * d_d + c`. Empty when the level has none.
+    opening: Range<usize>,
+}
+
+impl WitnessRandomnessLayout {
+    /// B randomness span of `group_index`, empty when that group has none.
+    #[must_use]
+    pub fn outer(&self, group_index: usize) -> Range<usize> {
+        self.outer
+            .iter()
+            .find_map(|(group, range)| (*group == group_index).then(|| range.clone()))
+            .unwrap_or_default()
+    }
+
+    /// Every nonempty B randomness span, tagged by group, in relation order.
+    #[must_use]
+    pub fn outer_spans(&self) -> &[(usize, Range<usize>)] {
+        &self.outer
+    }
+
+    /// D randomness span, empty when the level has none.
+    #[must_use]
+    pub fn opening(&self) -> Range<usize> {
+        self.opening.clone()
+    }
+
+    fn ranges(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+        self.outer
+            .iter()
+            .map(|(_, range)| range.clone())
+            .chain(std::iter::once(self.opening.clone()))
+    }
 }
 
 /// Mode-aware ownership of polynomial-modulus quotient witness rows.
@@ -472,8 +518,28 @@ impl WitnessLayout {
                     .expect("test quotient depth must be nonzero"),
                 rows: r_rows,
             },
+            randomness: WitnessRandomnessLayout::default(),
             tail_range: r_start..r_end,
         }
+    }
+
+    /// Append hiding-randomness spans after the tail of a test layout.
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn with_randomness_for_test(
+        mut self,
+        outer: Vec<(usize, Range<usize>)>,
+        opening: Range<usize>,
+    ) -> Self {
+        let end = outer
+            .iter()
+            .map(|(_, range)| range.end)
+            .chain([opening.end, self.tail_range.end])
+            .max()
+            .unwrap_or(self.tail_range.end);
+        self.randomness = WitnessRandomnessLayout { outer, opening };
+        self.tail_range.end = end;
+        self
     }
 
     pub fn validate_internal_ranges(&self) -> Result<(), AkitaError> {
@@ -522,6 +588,7 @@ impl WitnessLayout {
             ranges.push(layer.h_span.range());
         }
         ranges.extend(self.compression_alignment_ranges.iter().cloned());
+        ranges.extend(self.randomness.ranges());
         ranges.retain(|range| !range.is_empty());
         ranges.sort_unstable_by_key(|range| range.start);
         let mut cursor = 0usize;
@@ -716,6 +783,7 @@ impl WitnessLayout {
             compression_layers: tail.compression_layers,
             compression_alignment_ranges: alignment_ranges,
             relation_quotients: tail.relation_quotients,
+            randomness: tail.randomness,
             tail_range: tail_start..tail.end,
         })
     }
@@ -811,6 +879,7 @@ impl WitnessLayout {
                         .iter()
                         .map(|layer| layer.h_span.range.end),
                 )
+                .chain(self.randomness.ranges().map(|range| range.end))
                 .max()
                 .ok_or_else(|| AkitaError::Internal("witness compression tail is empty".into()))?
                 .checked_sub(first_f)
@@ -864,6 +933,12 @@ impl WitnessLayout {
     #[must_use]
     pub fn compression_alignment_ranges(&self) -> &[Range<usize>] {
         &self.compression_alignment_ranges
+    }
+
+    /// Hiding-randomness spans at the end of the tail.
+    #[must_use]
+    pub const fn randomness(&self) -> &WitnessRandomnessLayout {
+        &self.randomness
     }
 
     pub fn r_rows(&self) -> &[WitnessQuotientRowLayout] {

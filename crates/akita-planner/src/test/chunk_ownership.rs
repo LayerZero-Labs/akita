@@ -83,6 +83,7 @@ impl IncomingWidthFixture {
             log_basis_inner: 2,
             log_basis_open: 2,
             fold_level: 1,
+            hiding: false,
             source_moment: None,
             relation_traversal_order: RelationTraversalOrder::Canonical,
             guide: None,
@@ -129,6 +130,7 @@ impl IncomingWidthFixture {
             ),
             current_witness_len: next_len,
             fold_level: 2,
+            hiding: false,
             ..request
         })
         .unwrap()
@@ -269,6 +271,7 @@ fn incoming_width_guard_preserves_the_unpruned_complete_winner() {
         level_zero_is_root: true,
         relation_traversal_order: RelationTraversalOrder::Canonical,
         relation_mode_filter: RelationModeFilter::All,
+        hiding_cut_level: None,
     };
     let state = SuffixState {
         level: 1,
@@ -649,6 +652,7 @@ fn contracting_chunk_pruning_preserves_consumer_widths_in_both_orders() {
             level_zero_is_root: true,
             relation_traversal_order: RelationTraversalOrder::Canonical,
             relation_mode_filter: RelationModeFilter::All,
+            hiding_cut_level: None,
         };
         let state = SuffixState {
             level: 1,

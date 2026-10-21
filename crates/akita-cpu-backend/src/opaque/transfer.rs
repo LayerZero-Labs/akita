@@ -414,6 +414,11 @@ where
             }
         }
         let (inner, compression) = material.transfer_parts();
+        if !inner.outer_randomness().is_empty() {
+            return Err(AkitaError::UnsupportedSchedule(
+                "successor transfer does not carry hiding randomness".into(),
+            ));
+        }
         let storage = CpuSuccessorStorage {
             logical: witness.logical.clone(),
             committed: witness.committed.clone(),

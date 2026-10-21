@@ -17,10 +17,11 @@ use akita_types::GrindingReplay;
 use akita_types::{
     batch_l2_virtual_evaluations, FpExtEncoding, PhysicalResponsePlan, RelationRangeImagePlan,
 };
+use akita_types::{check_range_leaf, RangeLeaf};
 use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field, Ring};
 use jolt_poly::Point;
 use jolt_sumcheck::{verify_single, SingleFormat, SingleInstance};
-use jolt_transcript::Sponge;
+use jolt_transcript::{ClaimMismatch, ClearDomain, Sponge};
 pub(crate) struct Stage1VerifyOutput<E: Field> {
     pub(crate) point: Vec<E>,
     pub(crate) range_image_evaluation: E,
@@ -183,12 +184,13 @@ impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
         )?;
         let range_image_evaluation =
             akita_types::stage1_range_image::<F, E, _>(grinding, level, stage, E::zero())?;
-        let expected_output = self
-            .plan
-            .evaluate_leaf_polynomial(&leaf.polynomial_coefficients, range_image_evaluation);
-        if replay.output_claim != expected_output {
-            return Err(AkitaError::InvalidProof);
-        }
+        check_range_leaf(
+            &mut ClearDomain,
+            &RangeLeaf::new(self.plan, &leaf.polynomial_coefficients)?,
+            range_image_evaluation,
+            replay.output_claim,
+        )
+        .map_err(|ClaimMismatch| AkitaError::InvalidProof)?;
         Ok(Stage1VerifyOutput {
             point: replay.challenges,
             range_image_evaluation,
@@ -310,4 +312,72 @@ where
         physical_l2_claim,
         physical_l2_families,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_params::{
+        ChallengeFieldOrder, GrindingPlan, GrindingRun, GrindingSite, SumcheckProtocol,
+    };
+    use akita_types::{AkitaSponge, ProverGrinding, VerifierGrinding, PROOF_STREAM_PROTOCOL};
+    use jolt_algebra::{FpExt4, Prime32Offset99, Zero};
+    use jolt_transcript::{Channel, ProverTranscript, VerifierTranscript};
+
+    type F = Prime32Offset99;
+    type E = FpExt4<F>;
+
+    /// A one-round basis-8 leaf proof whose round polynomial is zero, so the
+    /// leaf's output claim is zero, followed by `range_image`.
+    fn verify_leaf(range_image: E) -> Result<Stage1VerifyOutput<E>, AkitaError> {
+        let level = 1;
+        let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
+        let round_site = GrindingSite::SumcheckRound {
+            protocol: SumcheckProtocol::Stage1,
+            level,
+            stage: 0,
+            round: 0,
+        };
+        let plan = GrindingPlan::new(
+            vec![GrindingRun::proof_of_work(round_site, 1, order).unwrap()],
+            order,
+        )
+        .unwrap();
+        let mut transcript = ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, b"leaf");
+        let mut prover = ProverGrinding::new(&mut transcript, &plan);
+        prover.state_mut().public(&E::zero());
+        prover.state_mut().send_all(&[E::zero(); 4]);
+        prover.grinded_ext_challenge::<F, E>(round_site).unwrap();
+        akita_types::stage1_range_image::<F, E, _>(&mut prover, level, 0, range_image).unwrap();
+        prover.finish().unwrap();
+        let proof = transcript.finish();
+
+        let mut transcript =
+            VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, b"leaf", &proof);
+        let mut verifier = VerifierGrinding::new(&mut transcript, &plan);
+        let equality_point =
+            DigitRangeEqualityPoint::from_column_then_ring_challenges(&[E::from_u64(5)], 1, 0)
+                .unwrap();
+        Stage1Verifier::new(equality_point, DigitRangePlan::new(8).unwrap()).verify::<F, _>(
+            &mut verifier,
+            None,
+            level,
+        )
+    }
+
+    #[test]
+    fn leaf_check_accepts_exactly_the_range_roots() {
+        // The basis-8 leaf is Π_{k<4} (X − k(k+1)), so it vanishes exactly at
+        // the range images 0, 2, 6 and 12.
+        for root in [0, 2, 6, 12] {
+            let output = verify_leaf(E::from_u64(root)).unwrap();
+            assert_eq!(output.range_image_evaluation, E::from_u64(root));
+        }
+        for non_root in [1, 3, 7, 13] {
+            assert!(matches!(
+                verify_leaf(E::from_u64(non_root)),
+                Err(AkitaError::InvalidProof)
+            ));
+        }
+    }
 }

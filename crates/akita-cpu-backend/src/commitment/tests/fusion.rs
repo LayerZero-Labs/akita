@@ -179,7 +179,7 @@ impl FusedInnerOuterOperation<F> for RecordingFused<'_> {
         self.record(FusedEvent::DeviceBBegin)?;
         let u = self
             .outer
-            .commit_outer(plan, InnerImageInput::Owned(inner.image()))?;
+            .commit_outer(plan, InnerImageInput::Owned(inner.image()), &[])?;
         let output = UncompressedCommitmentOutput::new(inner.into_image(), u, plan)?;
         self.record(FusedEvent::HostResult)?;
         Ok(output)

@@ -14,6 +14,7 @@ use akita_algebra::{
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_types::AkitaVerifierSetup;
+use akita_types::{check_stage2_oracle, Stage2OracleWeights};
 use akita_types::{
     AkitaExpandedSetup, CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
     OpeningFamily, ReducedCompressionRelationWeights,
@@ -21,7 +22,7 @@ use akita_types::{
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use jolt_sumcheck::{verify_single, SingleFormat, SingleInstance};
-use jolt_transcript::Sponge;
+use jolt_transcript::{ClaimMismatch, ClearDomain, Sponge};
 
 pub(crate) struct EvaluationTraceStage2<E: Field> {
     pub(crate) trace: PreparedEvaluationTrace<E>,
@@ -131,7 +132,6 @@ impl<'a, E: Field> Stage2OpeningSemantics<'a, E> {
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
 pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     batching_coeff: E,
-    witness_eval: E,
     stage1_point: Vec<E>,
     relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
     compression: Stage2CompressionOracle<'a, E>,
@@ -147,8 +147,6 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
 pub(crate) struct Stage2VerifierInput<'a, F: Field, E: Field> {
     /// Stage 2 batching coefficient drawn after Stage 1.
     pub(crate) batching_coeff: E,
-    /// Prover-sent witness evaluation at the Stage 2 point.
-    pub(crate) witness_eval: E,
     /// Stage 1 sumcheck point.
     pub(crate) stage1_point: Vec<E>,
     /// Prepared relation-matrix evaluator from the ring switch.
@@ -198,7 +196,6 @@ where
     pub(crate) fn new(input: Stage2VerifierInput<'a, F, E>) -> Result<Self, AkitaError> {
         let Stage2VerifierInput {
             batching_coeff,
-            witness_eval,
             stage1_point,
             relation_matrix_evaluator,
             compression,
@@ -225,7 +222,6 @@ where
         }
         Ok(Self {
             batching_coeff,
-            witness_eval,
             stage1_point,
             relation_matrix_evaluator,
             compression,
@@ -244,13 +240,13 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
 {
-    #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
-    pub(crate) fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError> {
-        let w_eval = {
-            let _span = tracing::info_span!("stage2_witness_eval").entered();
-            self.witness_eval
-        };
-
+    /// The public weights of the stage-2 oracle at the sumcheck point
+    /// `challenges`.
+    #[tracing::instrument(skip_all, name = "stage2_oracle_weights")]
+    pub(crate) fn oracle_weights(
+        &self,
+        challenges: &[E],
+    ) -> Result<Stage2OracleWeights<E>, AkitaError> {
         let relation_is_reduced = matches!(
             &self.relation_matrix_evaluator.groups,
             PreparedRelationGroups::ReducedEvaluation(_)
@@ -281,7 +277,7 @@ where
                 (relation_weight?, coefficient_packing_weight?)
             }
         };
-        let compression_oracle = {
+        let compression = {
             let _span = tracing::info_span!(
                 "stage2_compression_oracle",
                 reduced = matches!(
@@ -290,48 +286,46 @@ where
                 )
             )
             .entered();
-            evaluate_compression_oracle(
+            compression_oracle_weights(
                 &self.compression,
                 self.setup,
                 &self.stage1_point,
                 challenges,
-                w_eval,
             )?
         };
-        let relation_oracle =
-            w_eval * (relation_weight + coefficient_packing_weight) + compression_oracle;
-        let trace_oracle = match &self.opening_semantics.0 {
+        let trace_weight = match &self.opening_semantics.0 {
             OpeningFamily::EvaluationTrace(trace) => {
                 let _span = tracing::info_span!("stage2_trace_oracle").entered();
-                trace.row_weight * w_eval * trace.trace.evaluate_at_point(challenges)?
+                trace.row_weight * trace.trace.evaluate_at_point(challenges)?
             }
             OpeningFamily::SubringCoefficientPacking(_) => E::zero(),
         };
-        let physical_l2_oracle = if self.physical_l2_families.is_empty() {
+        let physical_l2_weight = if self.physical_l2_families.is_empty() {
             E::zero()
         } else {
-            let weight_eval = eval_boolean_pair_tensor_families::<_, false, false>(
+            eval_boolean_pair_tensor_families::<_, false, false>(
                 challenges,
                 &self.stage1_point,
                 &self.physical_l2_families,
-            )?;
-            w_eval * weight_eval
+            )?
         };
 
         // A zero batching challenge removes the virtual term. Avoid the
         // unnecessary EqPolynomial evaluation in that degenerate case.
-        if self.batching_coeff.is_zero() {
-            return Ok(relation_oracle + trace_oracle + physical_l2_oracle);
-        }
-        let virtual_oracle = {
+        let virtual_weight = if self.batching_coeff.is_zero() {
+            E::zero()
+        } else {
             let _span = tracing::info_span!("stage2_virtual_oracle").entered();
-            let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
-            eq_val * w_eval * (w_eval + E::one())
+            self.batching_coeff * EqPolynomial::mle(&self.stage1_point, challenges)?
         };
-        Ok(self.batching_coeff * virtual_oracle
-            + relation_oracle
-            + trace_oracle
-            + physical_l2_oracle)
+        Ok(Stage2OracleWeights {
+            binary: virtual_weight + compression.binary,
+            linear: relation_weight
+                + coefficient_packing_weight
+                + compression.linear
+                + trace_weight
+                + physical_l2_weight,
+        })
     }
 }
 
@@ -407,7 +401,6 @@ where
     let witness_eval = replay.witness_eval;
     let stage2_verifier = AkitaStage2Verifier::<F, E>::new(Stage2VerifierInput {
         batching_coeff: stage1.batching_coeff,
-        witness_eval,
         stage1_point: stage1.stage1_point,
         relation_matrix_evaluator: &rs.relation_matrix_evaluator,
         compression: stage1.compression,
@@ -423,59 +416,59 @@ where
         physical_l2_families: stage1.physical_l2_families,
     })?;
 
-    let expected = stage2_verifier.expected_output_claim(&replay.challenges)?;
-    if replay.output_claim != expected {
-        return Err(AkitaError::InvalidProof);
-    }
+    let weights = stage2_verifier.oracle_weights(&replay.challenges)?;
+    check_stage2_oracle(
+        &mut ClearDomain,
+        &weights,
+        witness_eval,
+        replay.output_claim,
+    )
+    .map_err(|ClaimMismatch| AkitaError::InvalidProof)?;
     Ok(Stage2Output {
         point: replay.challenges,
         witness_eval,
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn evaluate_compression_oracle<F, E>(
+/// The compression terms' share of [`Stage2OracleWeights`]: the relation
+/// weight is linear in `w`, the batched binary constraint weighs `w(w+1)`.
+pub(crate) fn compression_oracle_weights<F, E>(
     compression: &Stage2CompressionOracle<'_, E>,
     setup: &AkitaExpandedSetup<F>,
     stage1_point: &[E],
     point: &[E],
-    witness_evaluation: E,
-) -> Result<E, AkitaError>
+) -> Result<Stage2OracleWeights<E>, AkitaError>
 where
     F: Field,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
-    match compression {
+    let (relation_weight, support, binary_batching) = match compression {
         Stage2CompressionOracle::QuotientLift {
             weights,
             support,
             binary_batching,
-        } => {
-            let relation_weight = weights.evaluate_at_point(point)?;
-            let binary_weight =
-                support.evaluate_restricted_equality_at_point(stage1_point, point)?;
-            Ok(witness_evaluation * relation_weight
-                + *binary_batching
-                    * binary_weight
-                    * witness_evaluation
-                    * (witness_evaluation + E::one()))
-        }
+        } => (weights.evaluate_at_point(point)?, support, binary_batching),
         Stage2CompressionOracle::ReducedEvaluation {
             weights,
             support,
             binary_batching,
-        } => {
-            let relation_weight = weights.evaluate_at_point(setup, point)?;
-            let binary_weight =
-                support.evaluate_restricted_equality_at_point(stage1_point, point)?;
-            Ok(witness_evaluation * relation_weight
-                + *binary_batching
-                    * binary_weight
-                    * witness_evaluation
-                    * (witness_evaluation + E::one()))
+        } => (
+            weights.evaluate_at_point(setup, point)?,
+            support,
+            binary_batching,
+        ),
+        Stage2CompressionOracle::Raw => {
+            return Ok(Stage2OracleWeights {
+                binary: E::zero(),
+                linear: E::zero(),
+            })
         }
-        Stage2CompressionOracle::Raw => Ok(E::zero()),
-    }
+    };
+    Ok(Stage2OracleWeights {
+        binary: *binary_batching
+            * support.evaluate_restricted_equality_at_point(stage1_point, point)?,
+        linear: relation_weight,
+    })
 }
 
 #[cfg(test)]
@@ -670,7 +663,6 @@ mod tests {
         let scalar_opening = E::from_u64(19);
         let verifier = AkitaStage2Verifier::<F, E>::new(Stage2VerifierInput {
             batching_coeff: E::zero(),
-            witness_eval: E::from_u64(23),
             stage1_point: vec![E::zero(); domain.num_vars()],
             relation_matrix_evaluator: &evaluator,
             compression: Stage2CompressionOracle::Raw,
