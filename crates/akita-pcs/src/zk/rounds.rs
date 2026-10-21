@@ -79,19 +79,6 @@ pub(crate) struct FusedKernel<F> {
     pub(crate) e: Vec<F>,
 }
 
-#[cfg(test)]
-impl<F: Field> FusedKernel<F> {
-    /// The sum over the hypercube.
-    pub(crate) fn sum(&self) -> F {
-        self.a
-            .iter()
-            .zip(&self.b)
-            .zip(&self.e)
-            .map(|((a, b), e)| *e * (*a + *b * (*e + F::one())))
-            .sum()
-    }
-}
-
 impl<F: Field + Fold> SumcheckKernel<F> for FusedKernel<F> {
     fn num_rounds(&self) -> usize {
         self.e.len().trailing_zeros() as usize
@@ -100,11 +87,24 @@ impl<F: Field + Fold> SumcheckKernel<F> for FusedKernel<F> {
     fn round_polynomial(
         &mut self,
         _round: usize,
-        _claim: F,
+        claim: F,
     ) -> Result<UnivariatePoly<F>, AkitaError> {
-        let evals: [F; 4] = round_evaluations([&self.a, &self.b, &self.e], |[a, b, e]| {
+        #[cfg_attr(not(test), expect(unused_mut))]
+        let mut evals: [F; 4] = round_evaluations([&self.a, &self.b, &self.e], |[a, b, e]| {
             *e * (*a + *b * (*e + F::one()))
         });
+        // Test-only: a prover of a false statement shifts each round by
+        // half its gap to the running claim, so only the verifier's final
+        // check can catch it.
+        #[cfg(test)]
+        {
+            let shift = (claim - evals[0] - evals[1]).half();
+            for eval in &mut evals {
+                *eval += shift;
+            }
+        }
+        #[cfg(not(test))]
+        let _ = claim;
         Ok(UnivariatePoly::from_evals(&evals))
     }
 

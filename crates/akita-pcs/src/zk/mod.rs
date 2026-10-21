@@ -242,11 +242,6 @@ where
             e,
         };
         let claim = batch.b + gamma * range.range_image;
-        // Test-only: without its own check, the prover continues honestly
-        // from the sum its tables give, so a false statement reaches the
-        // verifier.
-        #[cfg(test)]
-        let claim = if check { claim } else { fused.sum() };
         let point = prove_single::<F, F, AkitaError, _>(
             &mut FusedRounds(&mut fused),
             &compressed(claim, shape.num_vars, 3),
