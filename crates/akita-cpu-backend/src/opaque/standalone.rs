@@ -2,7 +2,7 @@
 pub use super::recursive::opening::{
     ExtensionOpeningReductionGroup, ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
 };
-pub use super::recursive::{DigitRangeProver, LowBasisRangeCheckProver};
+pub use super::recursive::{DigitRangeProver, DigitRangeSession, LowBasisRangeCheckProver};
 use crate::opaque::RootOpeningSource;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 

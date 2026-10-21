@@ -50,9 +50,10 @@ pub use plans::{
 pub use scope::{ProofScope, ProofScopeConsumer, ProofScopeId};
 pub use stage3::{OpaqueStage3Kernel, Stage3Request};
 pub use traits::{
-    OpaqueProverConsumer, OpaqueRecursiveWitnessBuildKernel, OpaqueRelationWitnessKernel,
-    OpaqueResourceReleaseKernel, OpaqueStage1Kernel, OpaqueStage2Kernel, OpaqueTerminalFoldKernel,
-    OpaqueWitnessCommitKernel, OpaqueWitnessOpeningKernel, ProverHandleFamily,
+    DigitRangeSteps, OpaqueProverConsumer, OpaqueRecursiveWitnessBuildKernel,
+    OpaqueRelationWitnessKernel, OpaqueResourceReleaseKernel, OpaqueStage1Kernel,
+    OpaqueStage2Kernel, OpaqueTerminalFoldKernel, OpaqueWitnessCommitKernel,
+    OpaqueWitnessOpeningKernel, ProverHandleFamily,
 };
 
 /// Complete protocol capability implemented by a concrete prover backend.

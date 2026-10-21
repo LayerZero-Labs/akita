@@ -17,7 +17,7 @@ pub(crate) use commit::uses_tensor_source;
 
 #[cfg(test)]
 pub(crate) use digit_range::direct_range_leaf::pad_compact_witness;
-pub use digit_range::{DigitRangeProver, LowBasisRangeCheckProver};
+pub use digit_range::{DigitRangeProver, DigitRangeSession, LowBasisRangeCheckProver};
 pub(crate) use relation_witness::build_w_evals_compact;
 pub(crate) use witness::cpu_extension_opening_session_from_witnesses;
 pub(crate) use witness::OpaqueRecursiveWitness;

@@ -22,10 +22,12 @@ use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field, Ring};
 use jolt_poly::Point;
 use jolt_sumcheck::{verify_single, SingleFormat, SingleInstance};
 use jolt_transcript::{ClaimMismatch, ClearDomain, Sponge};
-pub(crate) struct Stage1VerifyOutput<E: Field> {
-    pub(crate) point: Vec<E>,
-    pub(crate) range_image_evaluation: E,
-    pub(crate) physical_l2_virtual_evaluations: Option<Vec<E>>,
+/// A replayed Stage 1: its point, the range image there, and the L2 route's
+/// virtual evaluations.
+pub struct Stage1VerifyOutput<E: Field> {
+    pub point: Vec<E>,
+    pub range_image_evaluation: E,
+    pub physical_l2_virtual_evaluations: Option<Vec<E>>,
 }
 
 pub(crate) struct RangeLeafVerifierInput<E: Field> {
@@ -125,8 +127,9 @@ impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
         })
     }
 
-    /// Replay the non-L2 stage-1 proof directly from Spongefish.
-    pub(crate) fn verify<F, H: Sponge>(
+    /// Replay a stage-1 proof directly from Spongefish, on the physical L2
+    /// route when `physical_l2` is given and the L∞ route otherwise.
+    pub fn verify<F, H: Sponge>(
         &self,
         grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
         physical_l2: Option<(

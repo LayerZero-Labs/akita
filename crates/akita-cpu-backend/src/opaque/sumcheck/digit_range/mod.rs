@@ -27,7 +27,7 @@ mod session;
 mod small_poly;
 
 pub use direct_range_leaf::LowBasisRangeCheckProver;
-pub(crate) use session::DigitRangeSession;
+pub use session::DigitRangeSession;
 
 use crate::sources::packed_digits::PackedSignedDigits;
 use akita_error::AkitaError;
@@ -146,5 +146,12 @@ impl<E: Field + Ring> DigitRangeProver<E> {
             high_variable_count,
             low_variable_count,
         })
+    }
+}
+
+impl<E: Field + Ring + jolt_algebra::Fold + jolt_algebra::Unreduced> DigitRangeProver<E> {
+    /// The L∞ session [`akita_prover::prove_digit_range`] steps.
+    pub fn into_session(self) -> Result<DigitRangeSession<E>, AkitaError> {
+        DigitRangeSession::new(self, None)
     }
 }

@@ -43,5 +43,5 @@ pub use benchmark_support::{
 pub use prepared_cache::build_riscv64_terminal_ntt_cache;
 pub use relation::RelationMatrixEvaluator;
 pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};
-pub use stages::stage1::Stage1Verifier;
+pub use stages::stage1::{Stage1Verifier, Stage1VerifyOutput};
 pub use verifier::AkitaVerifier;
