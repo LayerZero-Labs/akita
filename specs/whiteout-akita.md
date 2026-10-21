@@ -669,6 +669,41 @@ The remaining tests:
 - **W5-e.** Proof bytes, prover time and verifier time are reported against
   the paper's model at the headline, including the raw-image surcharge.
 
+### 5.7 Paper deltas (W5a)
+
+Each entry gives the paper (`akita-paper/sections/whiteout/`), what the
+code does, and why.
+
+- **Weights evaluated densely.** Paper `04_protocol.tex:434-460`: the
+  verifier evaluates `A(r)` with Akita's structured-weight algorithms.
+  Code: jolt-zk's `ResponseStatement::weigh` applies the transposed rows to
+  `eq(η, ·)`, giving the table `A` over the padded `e`, and the verifier
+  evaluates its multilinear extension at `r` in `O(2^ν)`. The matrix
+  transposes run through `PreparedMatrix::apply_transposed`. Why: one owner
+  of each row map and its transpose (jolt-zk), no `H`, and one table the
+  prover's fused sumcheck already needs. A factored `A(r)` needs `e`'s
+  segments aligned to the eq factorization (A15); the cost is in W5-e.
+- **Row maps and their transposes live in jolt-zk**, not Akita (W4 §3.1
+  gives Akita the structured weights). Why: Akita evaluating them from
+  accessors would publish every lifted-relation internal and mirror its
+  layout maps; jolt-zk exposes `rows` (forward) and `weigh` (transpose)
+  over one row order, and Akita owns the batch order (§5.2 step 3).
+- **No grinding on the two new sumchecks.** Paper `04_protocol.tex:466-470`
+  counts `2a + 4ν` over `q` with no proof of work. Code: the product and
+  fused sumchecks draw plain challenges; the reused digit-range reduction
+  keeps Stage 1's grinding runs, from the same derivation a fold uses. Why:
+  the paper's error term holds as stated at `q ≈ 2^128`; Akita's 128-bit
+  grinding policy is not applied to them (A31).
+- **Raw images.** Paper `04_protocol.tex:303-313,329-330`: `ξ_a, ξ_p, ξ_D`
+  join `e` and Item 2 carries the compression equations. W5a keeps the
+  raw images; W5c (now in RP4) adds them.
+- **The opening schedule is planned at runtime** for tests and W5-e. Paper
+  `04_protocol.tex:489`: an ordinary Akita opening. Code: the recursive
+  `ResponseDigits` family (`log_commit_bound = 4`), planned by
+  `akita_planner::find_schedule`; artifacts land in W5d. The planner, not
+  the preset, picks the A basis (3 or 4); the root opening basis is pinned
+  to 3 (A32).
+
 ## 6. M6e
 
 M6e changes the following:
@@ -803,6 +838,12 @@ The numbering continues the W4 note's A1–A23.
   regenerates any it finds.
 - **A30, W5b.** Whether the direct σ_N scan fits the verifier budget is
   measured in W5-e.
+- **A31, response-sumcheck grinding.** The product and fused sumchecks
+  carry no proof of work (§5.7). Whether RP4 wants them on Akita's
+  128-bit grinding policy is open.
+- **A32, "log_basis 4".** §5.2 asks for a dense family at log_basis 4. The
+  preset bounds committed digits to `[−8, 7]`; the planner chooses the A
+  basis within `(3, 4)` and pins the root opening basis to 3.
 - A2, A3 and A12 from W4 are resolved by §4.3, §4.6 and §5.4.
 
 ## 11. Questions for the paper authors
