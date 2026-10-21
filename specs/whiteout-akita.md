@@ -48,7 +48,7 @@ with an ordinary Akita proof. In outline:
   hands W6 a typed `ResidualOpening`.
 - **W5.** Akita implements `jolt_zk::whiteout::ResponseProver` with raw images.
   The last PR publishes the ZK config type and its schedule family.
-  Compression of u_a, t_p and t_D (W5c) is deferred with a stated contract.
+  Compression of u_a, t_p and t_D (W5c) lands in RP4, after W5a (§5.4).
 - **M6e.** M6e deletes `akita-zk-prover` and `akita-zk-verifier` and updates
   the dependency guards.
 
@@ -593,12 +593,12 @@ and A_D.
   in RP4 if the direct scan exceeds the verifier budget measured in W5-e, and
   is deferred otherwise (A30).
 
-### 5.4 Compression contract (W5c, deferred)
+### 5.4 Compression (W5c)
 
-Compression of u_a, t_p and t_D is deferred out of RP4, together with its
-jolt-side hook. Until then those images travel raw. That costs about 25 KB at
-the headline, against the paper's 3 × 128 B. When W5c lands, the following
-holds:
+Compression of u_a, t_p and t_D lands in RP4, together with its jolt-side
+hook. The images are already masked, so compressing them changes no hiding
+argument. Raw images cost about 25 KB at the headline, against the paper's
+3 × 128 B. W5a ships them raw; W5c then establishes the following:
 
 - The verifier holds only compressed forms. In item 3, the targets t (u_a and
   t_p) and, in item 2, t_D become their gadget reconstructions Σ_i 2^i·ξ_i
@@ -718,7 +718,7 @@ There are no prerequisites for `bind_derived_all` (§4.2) or compression (W5c).
   prover returns it, and the caller reruns.
 - This transcript order:
   1. preamble, hiding commitment;
-  2. t_p (raw until W5c);
+  2. t_p, compressed (W5c);
   3. Jolt stages 1–7 masked;
   4. stage-8 claims to Akita;
   5. levels 0..=`cut_level` masked;
@@ -754,7 +754,7 @@ Both are byte-identical (C0) and land before RP2's extraction.
 | S13 | `HonestFoldSizingQuery::failure_target`, read by each policy |
 
 S7, the `ResponseRelation` projection, is dev-only, in W5b. S8, split
-compression, is deferred with W5c.
+compression, lands with W5c.
 
 | # | PR | Seams | Depends on | Test bar |
 |---|---|---|---|---|
