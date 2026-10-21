@@ -251,9 +251,16 @@ fn clear_catalog_rows_keep_their_golden_digests() {
         } else {
             CURRENT_PROTOCOL
         };
+        // Each line starts with its row name, up to " commitments=".
+        let moved: Vec<&str> = actual
+            .iter()
+            .enumerate()
+            .filter(|(index, line)| expected.get(*index) != Some(&line.as_str()))
+            .map(|(_, line)| line.split(" commitments=").next().unwrap_or(line))
+            .collect();
         assert!(
-            actual.iter().eq(expected.iter()),
-            "golden digests changed (DEV_PROTOCOL = {}); actual:\n{}",
+            moved.is_empty() && actual.len() == expected.len(),
+            "golden digests moved for {moved:?} (DEV_PROTOCOL = {}); actual:\n{}",
             akita_params::DEV_PROTOCOL,
             actual
                 .iter()
