@@ -8,6 +8,7 @@ pub(super) fn resolve_root<'a, 's, Cfg, H>(
     expanded: &akita_types::AkitaSetupDescriptor,
     schedules: &'s TrustedScheduleCatalog<Cfg>,
     opening: SelectedProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
+    zk: Option<&akita_params::zk::ZkOpeningSchedule>,
     basis: BasisMode,
 ) -> Result<
     (
@@ -41,6 +42,7 @@ where
             claims.opening_layout(),
             selection,
             resolved.schedule(),
+            zk,
             basis,
         )?;
     Ok((resolved, claims, grinding_plan, descriptor_bytes))

@@ -2,6 +2,7 @@
 
 use crate::CommitmentConfig;
 use akita_error::AkitaError;
+use akita_params::zk::ZkOpeningSchedule;
 use akita_params::{ChallengeFieldOrder, FoldSchedule, GrindingPlan, OpeningClaimsLayout};
 use jolt_algebra::{CanonicalEncoding, ExtField};
 
@@ -10,6 +11,36 @@ pub fn derive_transcript_grinding_plan<Cfg: CommitmentConfig>(
     schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
 ) -> Result<GrindingPlan, AkitaError>
+where
+    Cfg::Field: CanonicalEncoding,
+    Cfg::ExtField: ExtField<Cfg::Field>,
+{
+    let (challenge_order, extension_degree) = grinding_challenge_field::<Cfg>()?;
+    akita_params::derive_transcript_grinding_plan_from_public_shape(
+        schedule,
+        root_layout,
+        challenge_order,
+        extension_degree,
+    )
+}
+
+/// Derive the only accepted grinding plan for one zero-knowledge schedule.
+pub(crate) fn derive_zk_transcript_grinding_plan<Cfg: CommitmentConfig>(
+    schedule: &ZkOpeningSchedule,
+    root_layout: &OpeningClaimsLayout,
+) -> Result<GrindingPlan, AkitaError>
+where
+    Cfg::Field: CanonicalEncoding,
+    Cfg::ExtField: ExtField<Cfg::Field>,
+{
+    let (challenge_order, extension_degree) = grinding_challenge_field::<Cfg>()?;
+    schedule.grinding_plan(root_layout, challenge_order, extension_degree)
+}
+
+/// The challenge field order and claim extension degree that price `Cfg`'s
+/// grinding queries.
+fn grinding_challenge_field<Cfg: CommitmentConfig>(
+) -> Result<(ChallengeFieldOrder, usize), AkitaError>
 where
     Cfg::Field: CanonicalEncoding,
     Cfg::ExtField: ExtField<Cfg::Field>,
@@ -26,12 +57,7 @@ where
         extension_degree,
         Cfg::sis_modulus_profile().modulus(),
     )?;
-    akita_params::derive_transcript_grinding_plan_from_public_shape(
-        schedule,
-        root_layout,
-        challenge_order,
-        extension_degree,
-    )
+    Ok((challenge_order, extension_degree))
 }
 
 #[cfg(test)]

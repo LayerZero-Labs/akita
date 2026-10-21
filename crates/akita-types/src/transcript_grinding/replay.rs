@@ -114,6 +114,16 @@ fn grinding_site(site: GrindingSite, grind_bits: u8, nonce_bits: u8) -> SiteId {
         .into()
 }
 
+/// How the prover finds the accepted counter of a scheduled fold response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FoldResponseSearch {
+    /// Try counters in order and send the first accepted one as a nonce.
+    Grind,
+    /// Probe counter 0 only; nothing is sent. The plan schedules the run with
+    /// `nonce_bits = 0`.
+    OneShot,
+}
+
 /// Diagnostic site of a fold-response nonce.
 fn fold_response_site(site: GrindingSite, nonce_bits: u8) -> SiteId {
     site.site_id(u32::from(nonce_bits)).into()
@@ -305,14 +315,21 @@ impl<'a, H: Sponge> ProverGrinding<'a, H> {
     }
 
     /// Starts the scheduled fold-response search at `site`: squeezes the
-    /// fork seed every candidate counter is tried under.
-    pub fn begin_fold_response(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
+    /// fork seed every candidate counter is tried under, and returns how the
+    /// plan searches this site.
+    pub fn begin_fold_response(
+        &mut self,
+        site: GrindingSite,
+    ) -> Result<FoldResponseSearch, AkitaError> {
         let result = self.begin_fold_response_inner(site);
         self.invalid |= result.is_err();
         result
     }
 
-    fn begin_fold_response_inner(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
+    fn begin_fold_response_inner(
+        &mut self,
+        site: GrindingSite,
+    ) -> Result<FoldResponseSearch, AkitaError> {
         let entry = self.cursor.peek().ok_or_else(|| {
             AkitaError::InvalidInput("fold-response search has no remaining plan entry".into())
         })?;
@@ -328,7 +345,11 @@ impl<'a, H: Sponge> ProverGrinding<'a, H> {
         }
         self.state.site(fold_response_site(site, entry.nonce_bits));
         self.fold_seed = Some((site, self.state.challenge_bytes()));
-        Ok(())
+        Ok(if entry.nonce_bits == 0 {
+            FoldResponseSearch::OneShot
+        } else {
+            FoldResponseSearch::Grind
+        })
     }
 
     /// The fork a candidate `counter`'s fold challenges are drawn from, for the
@@ -389,6 +410,10 @@ impl<'a, H: Sponge> ProverGrinding<'a, H> {
             return Err(AkitaError::InvalidInput(
                 "fold-response nonce exceeds its scheduled bit width".into(),
             ));
+        }
+        // A one-shot response sends no nonce: its counter is always 0.
+        if entry.nonce_bits == 0 {
+            return Ok(Fork::new(&seed, counter));
         }
         self.state.site(fold_response_site(site, entry.nonce_bits));
         let start = self.state.narg().len();
@@ -516,6 +541,11 @@ impl<'a, 'proof, H: Sponge> VerifierGrinding<'a, 'proof, H> {
         let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse)?;
         self.state.site(fold_response_site(site, entry.nonce_bits));
         let seed: [u8; FORK_SEED_LEN] = self.state.challenge_bytes();
+        // A one-shot response carries no nonce; reading one would consume a
+        // byte of the next message.
+        if entry.nonce_bits == 0 {
+            return Ok(Fork::new(&seed, 0));
+        }
         let remaining = self.state.remaining();
         let counter = self.state.receive_nonce(entry.nonce_bits)?;
         self.record_nonce_bytes(remaining)?;

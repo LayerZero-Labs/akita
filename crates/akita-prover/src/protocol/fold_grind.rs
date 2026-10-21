@@ -14,10 +14,10 @@ use akita_params::{
     TerminalResponseShape, FOLD_RESPONSE_ATTEMPTS,
 };
 use akita_types::draw_group_fold_challenges;
-use akita_types::GroupFoldChallenges;
 #[cfg(test)]
 use akita_types::OpeningFamily;
 use akita_types::{FoldDraw, ForkFoldDraw};
+use akita_types::{FoldResponseSearch, GroupFoldChallenges};
 use jolt_algebra::Unreduced;
 use jolt_algebra::{CanonicalEncoding, Field, Ring};
 use jolt_transcript::Sponge;
@@ -109,9 +109,9 @@ where
     };
     let point_indices = [0usize];
     let site = akita_params::GrindingSite::FoldResponse { level };
-    grinding.begin_fold_response(site)?;
+    let search = grinding.begin_fold_response(site)?;
     let (nonce, (fold_handle, encoding, diagnostics, draws)) =
-        first_jointly_accepted_nonce(FOLD_RESPONSE_ATTEMPTS, |nonce| {
+        accepted_fold_response(search, level, FOLD_RESPONSE_ATTEMPTS, |nonce| {
             let mut fork = grinding.fold_response_fork(site, nonce)?;
             let mut draw = ForkFoldDraw::new(&mut fork);
             let challenges = draw.draw_folding_challenges_with_rejection(
@@ -211,6 +211,25 @@ fn first_jointly_accepted_nonce<T>(
     )))
 }
 
+/// The accepted counter and probe output of one scheduled fold response.
+///
+/// A grinding search returns the first accepted counter. A one-shot response
+/// probes counter 0 once, and a rejection there is
+/// [`AkitaError::FoldOverflow`], never a retry at another counter.
+fn accepted_fold_response<T>(
+    search: FoldResponseSearch,
+    level: u32,
+    max_grind_attempts: u32,
+    mut probe: impl FnMut(u32) -> Result<Option<T>, AkitaError>,
+) -> Result<(u32, T), AkitaError> {
+    match search {
+        FoldResponseSearch::Grind => first_jointly_accepted_nonce(max_grind_attempts, probe),
+        FoldResponseSearch::OneShot => probe(0)?
+            .map(|value| (0, value))
+            .ok_or(AkitaError::FoldOverflow { level }),
+    }
+}
+
 /// Probe every group at its native A dimension as one transcript transaction
 /// for each candidate nonce.
 #[allow(clippy::too_many_arguments)]
@@ -236,9 +255,9 @@ where
         ));
     }
     let site = akita_params::GrindingSite::FoldResponse { level };
-    grinding.begin_fold_response(site)?;
+    let search = grinding.begin_fold_response(site)?;
     let (nonce, mut candidate_outputs) =
-        first_jointly_accepted_nonce(max_grind_attempts, |nonce| {
+        accepted_fold_response(search, level, max_grind_attempts, |nonce| {
             let mut candidate_outputs = Vec::with_capacity(groups.len());
             {
                 let mut fork = grinding.fold_response_fork(site, nonce)?;
@@ -548,6 +567,31 @@ mod tests {
             );
             assert_eq!(draw.draws, 0);
         }
+    }
+
+    #[test]
+    fn one_shot_response_probes_counter_zero_once_and_overflows() {
+        let mut probed = Vec::new();
+        let rejected = accepted_fold_response(FoldResponseSearch::OneShot, 1, 4, |nonce| {
+            probed.push(nonce);
+            Ok((nonce == 1).then_some(()))
+        });
+        assert_eq!(rejected, Err(AkitaError::FoldOverflow { level: 1 }));
+        assert_eq!(probed, vec![0]);
+
+        let mut probed = Vec::new();
+        let accepted = accepted_fold_response(FoldResponseSearch::OneShot, 1, 4, |nonce| {
+            probed.push(nonce);
+            Ok(Some(nonce))
+        });
+        assert_eq!(accepted, Ok((0, 0)));
+        assert_eq!(probed, vec![0]);
+
+        // The same probe under a grinding search retries and accepts counter 1.
+        let grind = accepted_fold_response(FoldResponseSearch::Grind, 1, 4, |nonce| {
+            Ok((nonce == 1).then_some(()))
+        });
+        assert_eq!(grind, Ok((1, ())));
     }
 
     #[test]

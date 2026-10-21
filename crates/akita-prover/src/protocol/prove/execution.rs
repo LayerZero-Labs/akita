@@ -6,6 +6,7 @@ use crate::backend::*;
 use crate::SelectedProverOpeningData;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
+use akita_params::zk::ZkOpeningSchedule;
 use akita_params::BasisMode;
 use akita_serialization::AkitaSerialize;
 use akita_types::{AkitaSetupDescriptor, Commitment, FpExtEncoding, OpeningClaims, ProverGrinding};
@@ -266,9 +267,84 @@ where
     H: CommitmentHandleMetadata + 'static,
     S: Sponge,
 {
+    prove_on_schedule(
+        expanded, schedules, registry, opening, transcript, basis, policy, None,
+    )
+}
+
+/// [`batched_prove`] under the zero-knowledge schedule `zk`, which must wrap
+/// the selected catalog row. Fold responses up to its cut are one-shot, and a
+/// rejected one returns [`AkitaError::FoldOverflow`].
+///
+/// Test-only until zero-knowledge mode is published.
+#[cfg(feature = "test-support")]
+#[allow(clippy::too_many_arguments)]
+pub fn batched_prove_zk<'a, Cfg, H, S>(
+    expanded: &AkitaSetupDescriptor,
+    schedules: &TrustedScheduleCatalog<Cfg>,
+    registry: &BackendRegistry<'_, Cfg, S>,
+    opening: SelectedProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
+    transcript: &mut ProverTranscript<S>,
+    basis: BasisMode,
+    policy: &mut dyn FoldExecutionPolicy,
+    zk: &ZkOpeningSchedule,
+) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: CanonicalEncoding + AkitaSerialize + Unreduced + PseudoMersenne + Ring + 'static,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + ExtField<Cfg::Field>
+        + Unreduced
+        + Fold
+        + Ring
+        + MulBaseUnreduced<Cfg::Field>
+        + AkitaSerialize
+        + 'static,
+    H: CommitmentHandleMetadata + 'static,
+    S: Sponge,
+{
+    prove_on_schedule(
+        expanded,
+        schedules,
+        registry,
+        opening,
+        transcript,
+        basis,
+        policy,
+        Some(zk),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_on_schedule<'a, Cfg, H, S>(
+    expanded: &AkitaSetupDescriptor,
+    schedules: &TrustedScheduleCatalog<Cfg>,
+    registry: &BackendRegistry<'_, Cfg, S>,
+    opening: SelectedProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
+    transcript: &mut ProverTranscript<S>,
+    basis: BasisMode,
+    policy: &mut dyn FoldExecutionPolicy,
+    zk: Option<&ZkOpeningSchedule>,
+) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: CanonicalEncoding + AkitaSerialize + Unreduced + PseudoMersenne + Ring + 'static,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + ExtField<Cfg::Field>
+        + Unreduced
+        + Fold
+        + Ring
+        + MulBaseUnreduced<Cfg::Field>
+        + AkitaSerialize
+        + 'static,
+    H: CommitmentHandleMetadata + 'static,
+    S: Sponge,
+{
     catch_prover_panic(move || {
         let (resolved, claims, grinding_plan, descriptor_bytes) =
-            root::resolve_root::<Cfg, H>(expanded, schedules, opening, basis)?;
+            root::resolve_root::<Cfg, H>(expanded, schedules, opening, zk, basis)?;
         if registry.active.replace(true) {
             return Err(AkitaError::InvalidInput(
                 "backend registry already has an active proof".into(),

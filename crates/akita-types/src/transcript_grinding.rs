@@ -3,6 +3,6 @@
 #[path = "transcript_grinding/replay.rs"]
 mod replay;
 pub use replay::{
-    GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProverGrinding,
-    VerifierGrinding,
+    FoldResponseSearch, GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier,
+    ProverGrinding, VerifierGrinding,
 };

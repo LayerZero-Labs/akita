@@ -58,6 +58,11 @@ pub(crate) struct PrivateCpu {
     pub(crate) imports: Cell<usize>,
     pub(crate) exports: Cell<usize>,
     pub(crate) commitments: Cell<usize>,
+    /// Opening fold probes run so far.
+    pub(crate) fold_probes: Cell<usize>,
+    /// Index of an opening fold probe to reject regardless of its response,
+    /// as if the response overflowed its digit range.
+    pub(crate) reject_fold_probe: Cell<Option<usize>>,
 }
 impl PrivateCpu {
     pub(crate) fn new(inner: Cpu) -> Self {
@@ -71,6 +76,8 @@ impl PrivateCpu {
             imports: Cell::new(0),
             exports: Cell::new(0),
             commitments: Cell::new(0),
+            fold_probes: Cell::new(0),
+            reject_fold_probe: Cell::new(None),
         }
     }
     fn fail(&self, fault: Fault) -> Result<(), AkitaError> {
@@ -451,6 +458,11 @@ impl OpaqueOpeningKernel<F, E> for PrivateCpu {
         opening: &Self::PreparedOpeningHandle,
         plan: &ValidatedFoldProbePlan<'_>,
     ) -> Result<FoldProbeOutcome<Self::AcceptedFoldHandle>, AkitaError> {
+        let probe = self.fold_probes.get();
+        self.fold_probes.set(probe + 1);
+        if self.reject_fold_probe.get() == Some(probe) {
+            return Ok(FoldProbeOutcome::Rejected);
+        }
         self.inner.probe_opening_fold(context, opening, plan)
     }
 }

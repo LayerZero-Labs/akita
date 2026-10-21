@@ -39,6 +39,8 @@ akita-types = { version = "0.1.0", path = "../akita-types", default-features = f
 
 [features]
 response-model-diagnostics = []
+# Test-only zero-knowledge entry points; zero-knowledge mode is not published.
+test-support = ["akita-params/test-support"]
 parallel = [
   "jolt-crypto/parallel",
   "jolt-algebra/parallel",

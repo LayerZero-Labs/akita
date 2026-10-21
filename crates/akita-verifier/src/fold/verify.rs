@@ -7,6 +7,7 @@ use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Valid};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
+use akita_params::zk::ZkOpeningSchedule;
 use akita_params::{
     validate_schedule_ring_dims, BasisMode, CommittedGroupBatchProfile, ProtocolSiteId,
 };
@@ -59,6 +60,32 @@ where
         &self,
         transcript: &mut VerifierTranscript<'_, H>,
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
+        basis: BasisMode,
+    ) -> Result<(), AkitaError> {
+        self.verify_on_schedule(transcript, statement, None, basis)
+    }
+
+    /// [`batched_verify`](Self::batched_verify) under the zero-knowledge
+    /// schedule `zk`, which must wrap the selected catalog row: fold
+    /// responses up to its cut carry no nonce.
+    ///
+    /// Test-only until zero-knowledge mode is published.
+    #[cfg(feature = "test-support")]
+    pub fn batched_verify_zk<H: Sponge>(
+        &self,
+        transcript: &mut VerifierTranscript<'_, H>,
+        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
+        basis: BasisMode,
+        zk: &ZkOpeningSchedule,
+    ) -> Result<(), AkitaError> {
+        self.verify_on_schedule(transcript, statement, Some(zk), basis)
+    }
+
+    fn verify_on_schedule<H: Sponge>(
+        &self,
+        transcript: &mut VerifierTranscript<'_, H>,
+        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
+        zk: Option<&ZkOpeningSchedule>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         let setup = &self.setup;
@@ -136,6 +163,7 @@ where
             &opening_batch,
             selection,
             schedule,
+            zk,
             basis,
         )?;
         transcript.site(

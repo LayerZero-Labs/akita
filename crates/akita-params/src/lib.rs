@@ -26,6 +26,7 @@ mod transcript_grinding_plan;
 pub mod transcript_site;
 pub mod wire_limits;
 pub mod witness;
+pub mod zk;
 pub use commitment_slicing::{CommitmentSliceCount, CommitmentSliceGeometry};
 pub use compression::{
     compression_ring_dimensions, CommitmentPayloadGeometry, CommitmentPayloadMode,
