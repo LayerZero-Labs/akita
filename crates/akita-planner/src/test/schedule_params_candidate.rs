@@ -1273,3 +1273,5 @@ mod compression_source;
 
 #[path = "schedule_params_candidate/shared_ab.rs"]
 mod shared_ab;
+#[path = "schedule_params_candidate/zk_ranks.rs"]
+mod zk_ranks;

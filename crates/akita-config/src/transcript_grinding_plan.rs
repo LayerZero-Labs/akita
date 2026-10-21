@@ -126,6 +126,60 @@ mod tests {
     }
 
     #[test]
+    fn zero_knowledge_plan_is_the_clear_plan_with_one_shot_responses_up_to_the_cut() {
+        use akita_params::zk::{ZkOpeningSchedule, ZK_CUT_LEVEL};
+        use akita_params::FOLD_RESPONSE_NONCE_BITS;
+
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("one-hot schedule catalog");
+        let row_for = |num_vars| {
+            let layout = OpeningClaimsLayout::new(num_vars, 1).expect("opening layout");
+            let row = catalog
+                .resolve_key(&akita_params::ScheduleLookupKey::single(
+                    layout.root_final_group_layout().expect("root group"),
+                ))
+                .expect("generated production row");
+            (layout, row.schedule().clone())
+        };
+        let (layout, schedule) = row_for(18);
+        let clear = derive_transcript_grinding_plan::<fp128::OneHot>(&schedule, &layout)
+            .expect("clear plan");
+        let zk = ZkOpeningSchedule::for_tests(schedule.clone(), ZK_CUT_LEVEL).expect("zk schedule");
+        let one_shot =
+            derive_zk_transcript_grinding_plan::<fp128::OneHot>(&zk, &layout).expect("zk plan");
+
+        assert_eq!(clear.runs().len(), one_shot.runs().len());
+        let mut fold_levels = Vec::new();
+        for (clear_run, zk_run) in clear.runs().iter().zip(one_shot.runs()) {
+            assert_eq!(clear_run.site(), zk_run.site());
+            if let GrindingSite::FoldResponse { level } = zk_run.site() {
+                fold_levels.push(level);
+                assert_eq!(clear_run.nonce_bits(), FOLD_RESPONSE_NONCE_BITS);
+                let expected = if level <= ZK_CUT_LEVEL {
+                    0
+                } else {
+                    FOLD_RESPONSE_NONCE_BITS
+                };
+                assert_eq!(zk_run.nonce_bits(), expected, "level {level}");
+            } else {
+                assert_eq!(clear_run, zk_run);
+            }
+        }
+        assert_eq!(
+            fold_levels,
+            (0..schedule.num_fold_levels() as u32).collect::<Vec<_>>()
+        );
+        assert_ne!(clear.digest().unwrap(), one_shot.digest().unwrap());
+
+        assert!(ZkOpeningSchedule::for_tests(schedule, ZK_CUT_LEVEL + 1).is_err());
+        let (_, two_level) = row_for(12);
+        assert_eq!(two_level.num_fold_levels(), 2);
+        assert!(ZkOpeningSchedule::for_tests(two_level, ZK_CUT_LEVEL).is_err());
+    }
+
+    #[test]
     fn stage1_prices_the_full_eq_factored_round_degree() {
         let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>(
             akita_params::ChunkedWitnessCfg::default_non_chunked(),

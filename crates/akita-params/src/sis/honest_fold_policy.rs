@@ -602,4 +602,193 @@ mod tests {
         assert_eq!(policy.independent_challenge_groups(query), Some(2));
         assert!(policy.num_digits_fold(query).is_ok());
     }
+
+    /// One-shot target of each fold at or before the zero-knowledge cut.
+    fn zk_target() -> FoldFailureTarget {
+        FoldFailureTarget::OneShot {
+            security_bits: crate::zk::ZK_FOLD_SECURITY_BITS,
+            masked_folds: crate::zk::ZK_CUT_LEVEL + 1,
+        }
+    }
+
+    /// Level 0 of `fp128_onehot_recursive final=36:1`: the one-hot root,
+    /// folded with packing challenges in the 64-dimensional subring.
+    fn headline_root(challenge: &SparseChallengeConfig) -> HonestFoldSizingQuery<'_> {
+        HonestFoldSizingQuery {
+            ring_dimension: 512,
+            challenge_dimension: 64,
+            num_claims: 1,
+            num_live_ring_elements_per_claim: 1 << 27,
+            num_positions_per_block: 1 << 15,
+            num_live_blocks: 1 << 12,
+            num_chunks: 1,
+            num_fold_coeffs: (1 << 15) * 512,
+            witness_norms: FoldWitnessNorms::new(1, 2),
+            log_basis_response: 3,
+            challenge_config: challenge,
+            failure_target: zk_target(),
+        }
+    }
+
+    /// Level 1 of `fp128_onehot_recursive final=36:1`: a recursive fold of
+    /// balanced base-8 digits.
+    fn headline_level1(challenge: &SparseChallengeConfig) -> HonestFoldSizingQuery<'_> {
+        HonestFoldSizingQuery {
+            ring_dimension: 512,
+            challenge_dimension: 512,
+            num_claims: 1,
+            num_live_ring_elements_per_claim: 329_469,
+            num_positions_per_block: 8_192,
+            num_live_blocks: 41,
+            num_chunks: 1,
+            num_fold_coeffs: 8_192 * 512,
+            witness_norms: FoldWitnessNorms::bounded(3, 512),
+            log_basis_response: 3,
+            challenge_config: challenge,
+            failure_target: zk_target(),
+        }
+    }
+
+    /// Smallest admitted magnitude of a response with `num_digits` balanced
+    /// digits: the range covers `[-reach, reach]`.
+    fn response_reach(log_basis: u32, num_digits: usize) -> u128 {
+        let (negative, positive) =
+            crate::sis::balanced_digit_representable_bounds(log_basis, num_digits);
+        negative.min(positive)
+    }
+
+    /// `log2` of the one-shot failure bound of a balanced fold with digit
+    /// reach `reach`, and whether `2N exp(-reach^2 / 2 sigma^2) <= 2^-137`
+    /// holds in exact rational arithmetic (`ln 2 < 6932/10000`), or the reach
+    /// covers the deterministic envelope, where the failure probability is 0.
+    fn balanced_failure(query: HonestFoldSizingQuery<'_>, reach: u128) -> (f64, bool) {
+        let challenge = FoldChallengeNorms::new(query.challenge_config);
+        let envelope = crate::sis::fold_witness_beta_inf(
+            query.num_live_blocks,
+            query.num_claims,
+            challenge,
+            query.witness_norms,
+        )
+        .unwrap();
+        if reach >= envelope {
+            return (f64::NEG_INFINITY, true);
+        }
+        let linf = query.witness_norms.infinity_norm();
+        let sigma_sq = (query.num_claims * query.num_live_blocks) as u128
+            * query.challenge_config.challenge_l2_sq_max()
+            * linf
+            * linf;
+        let two_n = 2 * query.num_fold_coeffs as u128;
+        let log2_two_n = u128::from(128 - (two_n - 1).leading_zeros());
+        let holds = reach * reach * 10_000 >= 2 * sigma_sq * (log2_two_n + 137) * 6_932;
+        let log2_bound = (two_n as f64).log2()
+            - (reach * reach) as f64 / (2.0 * sigma_sq as f64) * std::f64::consts::LOG2_E;
+        (log2_bound, holds)
+    }
+
+    /// `log2` of the best Chernoff bound over the policy's lambda grid for a
+    /// one-hot fold with threshold `reach`, and whether it is at most
+    /// `2^-137` with every term rounded up; a reach that covers the
+    /// deterministic cap has failure probability 0.
+    fn onehot_failure(
+        policy: UnitOneHotFoldPolicy,
+        query: HonestFoldSizingQuery<'_>,
+        reach: u128,
+    ) -> (f64, bool) {
+        if reach >= policy.deterministic_cap(query).unwrap() {
+            return (f64::NEG_INFINITY, true);
+        }
+        let groups = policy.independent_challenge_groups(query).unwrap() as f64;
+        let ln_two_n = ln_upper(2.0 * query.num_fold_coeffs as f64).unwrap();
+        let ln_target = ln_upper(2f64.powi(137)).unwrap();
+        let best = (-12i32..=2)
+            .filter_map(|exponent| {
+                let log_mgf = max_log_mgf_upper(
+                    query.ring_dimension,
+                    policy.source_chunk_size,
+                    query.challenge_dimension,
+                    query.challenge_config,
+                    exponent,
+                )?;
+                let lambda = 2f64.powi(exponent);
+                Some(round_up(groups * log_mgf) + ln_two_n - lambda * reach as f64)
+            })
+            .reduce(f64::min)
+            .unwrap();
+        (
+            best * std::f64::consts::LOG2_E,
+            round_up(best + ln_target) <= 0.0,
+        )
+    }
+
+    /// W2-c: at the headline shapes each one-shot fold fails with probability
+    /// at most `2^-136 / 2`, and the paper's zero-knowledge error stays below
+    /// `2^-128`.
+    #[test]
+    fn one_shot_headline_folds_meet_the_per_fold_target() {
+        let root_challenge = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        let level1_challenge = SparseChallengeConfig::production_for_ring_dim(512).unwrap();
+        assert_eq!(
+            (root_challenge.count_pm1, root_challenge.count_pm2),
+            (31, 10)
+        );
+        assert_eq!(
+            (level1_challenge.count_pm1, level1_challenge.count_pm2),
+            (19, 0)
+        );
+
+        let onehot = UnitOneHotFoldPolicy::canonical(128, DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE);
+        let root = headline_root(&root_challenge);
+        let root_digits = onehot.num_digits_fold(root).unwrap();
+        let (root_log2, root_holds) = onehot_failure(onehot, root, response_reach(3, root_digits));
+        assert!(root_holds, "root: log2 failure {root_log2}");
+
+        let balanced = BalancedSignedDigitFoldPolicy::universal(128);
+        let level1 = headline_level1(&level1_challenge);
+        let level1_digits = balanced.num_digits_fold(level1).unwrap();
+        let (level1_log2, level1_holds) =
+            balanced_failure(level1, response_reach(3, level1_digits));
+        assert!(level1_holds, "level 1: log2 failure {level1_log2}");
+
+        // Theorem wo:thm:zk with the paper's parameters (section 6.2):
+        // delta_LHL <= 2^-129.2, T_att = 163, epsilon = 2^-137, M = 2.37 and
+        // a 256-bit nonce. Q_tot = 2^100 is this test's assumption; the paper
+        // does not state it.
+        let delta_fold = root_log2.exp2() + level1_log2.exp2();
+        let t_att = 163f64;
+        let error = 2.0 * delta_fold
+            + (-129.2f64).exp2()
+            + t_att * (-137f64).exp2() / 2.37
+            + (t_att * 100f64.exp2() + t_att * t_att) / 256f64.exp2();
+        assert!(
+            error.log2() < -128.0,
+            "zero-knowledge error 2^{}",
+            error.log2()
+        );
+    }
+
+    #[test]
+    fn one_shot_targets_widen_both_policies() {
+        let root_challenge = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        let level1_challenge = SparseChallengeConfig::production_for_ring_dim(512).unwrap();
+        let onehot = UnitOneHotFoldPolicy::canonical(128, DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE);
+        let root = headline_root(&root_challenge);
+        let per_attempt = HonestFoldSizingQuery {
+            failure_target: FoldFailureTarget::PerAttempt,
+            ..root
+        };
+        assert!(
+            onehot.exact_threshold(root).unwrap() > onehot.exact_threshold(per_attempt).unwrap()
+        );
+
+        let balanced = BalancedSignedDigitFoldPolicy::universal(128);
+        let level1 = headline_level1(&level1_challenge);
+        let per_attempt = HonestFoldSizingQuery {
+            failure_target: FoldFailureTarget::PerAttempt,
+            ..level1
+        };
+        assert!(
+            balanced.universal_cap(level1).unwrap() > balanced.universal_cap(per_attempt).unwrap()
+        );
+    }
 }
