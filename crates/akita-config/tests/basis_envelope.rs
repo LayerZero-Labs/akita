@@ -125,6 +125,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
                     .fold_witness,
                 log_basis_response: root.open().digits.log_basis,
                 challenge_config: &root.fold_challenge_config(),
+                failure_target: akita_params::sis::FoldFailureTarget::PerAttempt,
             })
             .expect("one-hot fold policy");
         assert_eq!(

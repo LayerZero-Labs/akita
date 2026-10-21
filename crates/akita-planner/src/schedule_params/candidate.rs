@@ -26,6 +26,7 @@ pub(crate) struct AbCommitmentCandidateRequest<'a> {
     /// Optional typed-model cap for the Linf response. The universal policy
     /// remains the dominance guard.
     pub(crate) modeled_linf_cap: Option<u128>,
+    pub(crate) failure_target: FoldFailureTarget,
 }
 
 pub(crate) struct AbCommitmentCandidate {
@@ -48,7 +49,9 @@ pub(super) struct InnerCommitmentCandidateRequest<'a> {
     pub(super) witness_norms: FoldWitnessNorms,
     pub(super) log_basis_open: u32,
     pub(super) width_s: usize,
+    /// Optional per-attempt typed-model cap for the Linf response.
     pub(super) modeled_linf_cap: Option<u128>,
+    pub(super) failure_target: FoldFailureTarget,
 }
 
 pub(super) struct InnerCommitmentCandidate {
@@ -148,6 +151,7 @@ pub(super) fn derive_inner_commitment_candidate(
         log_basis_open,
         width_s,
         modeled_linf_cap,
+        failure_target,
     } = request;
     let d_a = dimensions.d_a();
     let num_fold_coeffs = width_s
@@ -166,8 +170,14 @@ pub(super) fn derive_inner_commitment_candidate(
         witness_norms,
         log_basis_response: log_basis_open,
         challenge_config: ring_challenge_cfg,
+        failure_target,
     }) else {
         return Ok(None);
+    };
+    // The modeled cap is a per-attempt bound, never a one-shot one.
+    let modeled_linf_cap = match failure_target {
+        FoldFailureTarget::PerAttempt => modeled_linf_cap,
+        FoldFailureTarget::OneShot { .. } => None,
     };
     let num_digits_fold = modeled_linf_cap
         .map(|cap| {
@@ -226,6 +236,7 @@ pub(crate) fn derive_ab_commitment_candidate(
         width_s,
         num_digits_outer,
         modeled_linf_cap,
+        failure_target,
     } = request;
     let Some(inner_candidate) =
         derive_inner_commitment_candidate(InnerCommitmentCandidateRequest {
@@ -243,6 +254,7 @@ pub(crate) fn derive_ab_commitment_candidate(
             log_basis_open,
             width_s,
             modeled_linf_cap,
+            failure_target,
         })?
     else {
         return Ok(None);

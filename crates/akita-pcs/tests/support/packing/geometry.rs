@@ -2,7 +2,8 @@
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_params::sis::{
-    BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldSizingQuery,
+    BalancedSignedDigitFoldPolicy, FoldFailureTarget, FoldWitnessNorms, HonestFoldPolicy,
+    HonestFoldSizingQuery,
 };
 use akita_schedules::PlannerPolicy;
 
@@ -127,6 +128,7 @@ pub(super) fn universal_fold_digit_depth(
         witness_norms,
         log_basis_response: params.log_basis_open,
         challenge_config: &params.fold_challenge_config,
+        failure_target: FoldFailureTarget::PerAttempt,
     })
 }
 
@@ -184,6 +186,7 @@ pub(super) fn retarget_synthetic_terminal<Cfg: CommitmentConfig>(
                     witness_norms: terminal_witness_norms,
                     log_basis_response: terminal.fold.log_basis,
                     challenge_config: &terminal.fold_challenge_config,
+                    failure_target: FoldFailureTarget::PerAttempt,
                 })?;
         let Some(a_bound) = akita_params::sis::rounded_up_role_a_inf_norm(
             policy.sis_security_policy,

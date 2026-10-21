@@ -14,6 +14,20 @@ use super::{
     FoldWitnessNorms,
 };
 
+/// Failure probability a fold's digit range must meet for an honest prover.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FoldFailureTarget {
+    /// Sizing for a prover that retries: each policy's own per-attempt
+    /// constant.
+    PerAttempt,
+    /// One shot: failure probability at most `2^-security_bits / masked_folds`
+    /// for this fold, which the prover probes once.
+    OneShot {
+        security_bits: u32,
+        masked_folds: u32,
+    },
+}
+
 /// Exact candidate geometry supplied to an offline honest-fold policy.
 #[derive(Clone, Copy, Debug)]
 pub struct HonestFoldSizingQuery<'a> {
@@ -35,6 +49,7 @@ pub struct HonestFoldSizingQuery<'a> {
     /// Basis used to decompose the emitted folded response.
     pub log_basis_response: u32,
     pub challenge_config: &'a SparseChallengeConfig,
+    pub failure_target: FoldFailureTarget,
 }
 
 /// One group-owned offline rule for selecting its folded-witness digit depth.
@@ -62,12 +77,25 @@ impl BalancedSignedDigitFoldPolicy {
 
     fn universal_cap(&self, query: HonestFoldSizingQuery<'_>) -> Result<u128, AkitaError> {
         validate_query(query)?;
-        // This policy is the frozen pre-chunking baseline. Preserve its
-        // logical single-fold geometry even though the query reports every
-        // physical response coefficient.
-        let logical_fold_coeffs = query.num_fold_coeffs / query.num_chunks;
-        let cap_config =
-            FoldWitnessLinfCapConfig::for_fold_coeffs(query.challenge_config, logical_fold_coeffs)?;
+        let cap_config = match query.failure_target {
+            // This policy is the frozen pre-chunking baseline. Preserve its
+            // logical single-fold geometry even though the query reports
+            // every physical response coefficient.
+            FoldFailureTarget::PerAttempt => FoldWitnessLinfCapConfig::for_fold_coeffs(
+                query.challenge_config,
+                query.num_fold_coeffs / query.num_chunks,
+            )?,
+            // A one-shot union bound covers every physical coefficient.
+            FoldFailureTarget::OneShot {
+                security_bits,
+                masked_folds,
+            } => FoldWitnessLinfCapConfig::one_shot_for_fold_coeffs(
+                query.challenge_config,
+                query.num_fold_coeffs,
+                security_bits,
+                masked_folds,
+            )?,
+        };
         let (cap, _) = fold_witness_linf_cap(
             query.num_live_blocks,
             query.num_claims,
@@ -203,11 +231,25 @@ impl UnitOneHotFoldPolicy {
         // For each exact power-of-two point, solve the Chernoff
         // inequality directly for the smallest admitted integer threshold:
         //
-        //   2 N exp(m log M_X(lambda) - lambda t) <= 7/8.
+        //   2 N exp(m log M_X(lambda) - lambda t) <= target,
         //
-        // Every sampled lambda yields a valid upper bound. Missing the true
-        // minimizer can therefore only select a larger threshold.
-        let union_factor = round_up(round_up(16.0 * query.num_fold_coeffs as f64) / 7.0);
+        // with target 7/8 per attempt, or 2^-security_bits / masked_folds for
+        // one shot. Every sampled lambda yields a valid upper bound. Missing
+        // the true minimizer can therefore only select a larger threshold,
+        // and the deterministic cap, which never fails, bounds the result.
+        let union_factor = match query.failure_target {
+            FoldFailureTarget::PerAttempt => {
+                round_up(round_up(16.0 * query.num_fold_coeffs as f64) / 7.0)
+            }
+            FoldFailureTarget::OneShot {
+                security_bits,
+                masked_folds,
+            } => {
+                // Scaling by a power of two is exact in binary floating point.
+                round_up(round_up(2.0 * query.num_fold_coeffs as f64) * f64::from(masked_folds))
+                    * 2f64.powi(i32::try_from(security_bits).ok()?)
+            }
+        };
         let union_log = ln_upper(union_factor)?;
         let mut best = worst_case;
         for exponent in -12i32..=2 {
@@ -385,6 +427,7 @@ mod tests {
             witness_norms: FoldWitnessNorms::new(1, 1),
             log_basis_response: 3,
             challenge_config: challenge,
+            failure_target: FoldFailureTarget::PerAttempt,
         }
     }
 
@@ -530,6 +573,7 @@ mod tests {
             witness_norms: FoldWitnessNorms::new(1, 1),
             log_basis_response: 3,
             challenge_config: &challenge,
+            failure_target: FoldFailureTarget::PerAttempt,
         };
         assert_eq!(policy.independent_challenge_groups(query), Some(1));
         assert!(policy.num_digits_fold(query).is_ok());
@@ -553,6 +597,7 @@ mod tests {
             witness_norms: FoldWitnessNorms::new(1, 1),
             log_basis_response: 3,
             challenge_config: &challenge,
+            failure_target: FoldFailureTarget::PerAttempt,
         };
         assert_eq!(policy.independent_challenge_groups(query), Some(2));
         assert!(policy.num_digits_fold(query).is_ok());

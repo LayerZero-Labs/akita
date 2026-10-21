@@ -251,6 +251,7 @@ impl RecursiveCandidateContext<'_, '_> {
                 log_basis_open,
                 width_s,
                 modeled_linf_cap,
+                failure_target: FoldFailureTarget::PerAttempt,
             })?
         else {
             return Ok(None);

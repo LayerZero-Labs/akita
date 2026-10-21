@@ -33,8 +33,9 @@ use akita_error::AkitaError;
 use akita_params::sis::{
     decomposed_s_block_ring_count, num_digits_for_linf_cap, num_digits_inner_for_bound,
     num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldSizingQuery,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
+    BalancedSignedDigitFoldPolicy, FoldFailureTarget, FoldWitnessNorms, HonestFoldPolicy,
+    HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams,
 };
 use akita_params::{
     active_setup_field_len, padded_setup_prefix_len, CommitmentRingDims, CommittedGroupParams,
