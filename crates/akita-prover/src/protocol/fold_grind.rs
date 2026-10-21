@@ -7,6 +7,7 @@ use crate::backend::{
     ValidatedFoldProbePlan, ValidatedTerminalFoldProbePlan,
 };
 use akita_error::AkitaError;
+use akita_params::FoldResponseSearch;
 #[cfg(test)]
 use akita_params::OpeningMethod;
 use akita_params::{
@@ -14,10 +15,10 @@ use akita_params::{
     TerminalResponseShape, FOLD_RESPONSE_ATTEMPTS,
 };
 use akita_types::draw_group_fold_challenges;
+use akita_types::GroupFoldChallenges;
 #[cfg(test)]
 use akita_types::OpeningFamily;
 use akita_types::{FoldDraw, ForkFoldDraw};
-use akita_types::{FoldResponseSearch, GroupFoldChallenges};
 use jolt_algebra::Unreduced;
 use jolt_algebra::{CanonicalEncoding, Field, Ring};
 use jolt_transcript::Sponge;

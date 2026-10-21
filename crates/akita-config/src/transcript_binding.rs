@@ -7,13 +7,10 @@
 //! it without crossing through `akita-pcs`, and so the descriptor
 //! construction is sourced from a single `Cfg`-driven implementation.
 
-use crate::transcript_grinding_plan::derive_zk_transcript_grinding_plan;
 use crate::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_error::AkitaError;
-use akita_params::zk::ZkOpeningSchedule;
-use akita_params::{
-    BasisMode, FoldSchedule, GrindingPlan, OpeningClaimsLayout, OpeningScheduleSelection,
-};
+use akita_params::zk::OpeningSchedule;
+use akita_params::{BasisMode, GrindingPlan, OpeningClaimsLayout, OpeningScheduleSelection};
 use akita_types::{
     AkitaInstanceDescriptor, AkitaSetupDescriptor, AlgebraSection, CallSection, FpExtEncoding,
     PlanSection, SetupSection, TranscriptGrindingBinding,
@@ -32,22 +29,19 @@ use jolt_algebra::{CanonicalEncoding, Field};
 /// binds every expanded fold `CommittedGroupParams`, so there is no separate
 /// setup-level digest to compute here.
 ///
-/// With `zk`, the grinding plan is the zero-knowledge schedule's, and its
-/// digest in the descriptor separates the two modes. `zk` must wrap
-/// `schedule`.
+/// A zero-knowledge `schedule` has its own grinding plan, and the plan digest
+/// in the descriptor is what separates the two modes.
 ///
 /// # Errors
 ///
 /// Returns an error when:
-/// - the algebra section cannot be derived for the field tower,
-/// - `zk` wraps a schedule other than `schedule`, or
+/// - the algebra section cannot be derived for the field tower, or
 /// - canonical descriptor serialization fails.
 pub fn transcript_instance_descriptor<F, Cfg>(
     setup: &AkitaSetupDescriptor,
     opening_batch: &OpeningClaimsLayout,
     selection: OpeningScheduleSelection,
-    schedule: &FoldSchedule,
-    zk: Option<&ZkOpeningSchedule>,
+    schedule: OpeningSchedule<'_>,
     basis: BasisMode,
 ) -> Result<(GrindingPlan, Vec<u8>), AkitaError>
 where
@@ -55,17 +49,7 @@ where
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ExtField: FpExtEncoding<F>,
 {
-    let grinding_plan = match zk {
-        None => derive_transcript_grinding_plan::<Cfg>(schedule, opening_batch)?,
-        Some(zk) if zk.schedule() == schedule => {
-            derive_zk_transcript_grinding_plan::<Cfg>(zk, opening_batch)?
-        }
-        Some(_) => {
-            return Err(AkitaError::InvalidInput(
-                "zero-knowledge schedule differs from the selected schedule row".into(),
-            ))
-        }
-    };
+    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(schedule, opening_batch)?;
     let instance_descriptor = AkitaInstanceDescriptor::new(
         AlgebraSection::for_fields::<F, Cfg::ExtField>()?,
         SetupSection::from_parts(
@@ -74,7 +58,7 @@ where
             &setup.setup_seed,
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
-        PlanSection::from_schedule(selection, schedule),
+        PlanSection::from_schedule(selection, schedule.fold_schedule()),
         TranscriptGrindingBinding::for_plan(&grinding_plan)?,
         CallSection::from_layout(opening_batch, basis)?,
     );

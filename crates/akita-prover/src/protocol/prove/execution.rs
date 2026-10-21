@@ -272,9 +272,9 @@ where
     )
 }
 
-/// [`batched_prove`] under the zero-knowledge schedule `zk`, which must wrap
-/// the selected catalog row. Fold responses up to its cut are one-shot, and a
-/// rejected one returns [`AkitaError::FoldOverflow`].
+/// [`batched_prove`] under the zero-knowledge schedule `zk`, which replaces
+/// the selected row's schedule. Fold responses up to its cut are one-shot,
+/// and a rejected one returns [`AkitaError::FoldOverflow`].
 ///
 /// Test-only until zero-knowledge mode is published.
 #[cfg(feature = "test-support")]
@@ -317,15 +317,15 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prove_on_schedule<'a, Cfg, H, S>(
+fn prove_on_schedule<'a, 's, Cfg, H, S>(
     expanded: &AkitaSetupDescriptor,
-    schedules: &TrustedScheduleCatalog<Cfg>,
+    schedules: &'s TrustedScheduleCatalog<Cfg>,
     registry: &BackendRegistry<'_, Cfg, S>,
     opening: SelectedProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
     transcript: &mut ProverTranscript<S>,
     basis: BasisMode,
     policy: &mut dyn FoldExecutionPolicy,
-    zk: Option<&ZkOpeningSchedule>,
+    zk: Option<&'s ZkOpeningSchedule>,
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -343,7 +343,7 @@ where
     S: Sponge,
 {
     catch_prover_panic(move || {
-        let (resolved, claims, grinding_plan, descriptor_bytes) =
+        let (schedule, claims, grinding_plan, descriptor_bytes) =
             root::resolve_root::<Cfg, H>(expanded, schedules, opening, zk, basis)?;
         if registry.active.replace(true) {
             return Err(AkitaError::InvalidInput(
@@ -351,14 +351,11 @@ where
             ));
         }
         let _guard = RegistryProofGuard(registry);
-        let mut owners = Vec::with_capacity(resolved.schedule().num_fold_levels());
+        let mut owners = Vec::with_capacity(schedule.num_fold_levels());
         let mut selected = vec![false; registry.slots.len()];
-        for level in 0..resolved.schedule().num_fold_levels() {
-            let requirements = FoldExecutionRequirements::new(
-                resolved.schedule(),
-                claims.opening_layout(),
-                level,
-            )?;
+        for level in 0..schedule.num_fold_levels() {
+            let requirements =
+                FoldExecutionRequirements::new(schedule, claims.opening_layout(), level)?;
             let current = owners.last().copied();
             let owner = policy.choose_backend(current, &requirements)?;
             registry.slot(owner)?;
@@ -378,7 +375,7 @@ where
         let request = ProofRequest {
             setup: expanded,
             schedules,
-            schedule: resolved.schedule(),
+            schedule,
             layout: claims.opening_layout(),
             identity,
         };

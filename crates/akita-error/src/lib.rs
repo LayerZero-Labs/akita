@@ -46,8 +46,9 @@ pub enum AkitaError {
     /// The one-shot fold response at `level` fell outside its digit range.
     ///
     /// Only a zero-knowledge opening probes a fold response once. The event
-    /// has probability at most the fold's failure target, and it is
-    /// retryable: the caller reruns the whole proof with fresh randomness.
+    /// has probability at most the fold's failure target. A rerun can
+    /// succeed only once the opening carries hiding randomness, which it
+    /// then resamples; until then the same inputs fail the same way.
     #[error("Fold response overflowed its digit range at level {level}")]
     FoldOverflow {
         /// Fold level of the rejected response.

@@ -118,8 +118,8 @@ pub use transcript::{
     extension_slots, AkitaSponge, PROOF_STREAM_PROTOCOL, PROOF_STREAM_PROTOCOL_NAME,
 };
 pub use transcript_grinding::{
-    FoldResponseSearch, GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier,
-    ProverGrinding, VerifierGrinding,
+    GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProverGrinding,
+    VerifierGrinding,
 };
 
 #[cfg(test)]

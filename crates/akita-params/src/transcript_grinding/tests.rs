@@ -298,7 +298,7 @@ fn only_a_zero_knowledge_plan_admits_one_shot_responses_and_only_up_to_its_cut()
             .collect::<Vec<_>>()
     };
     let grind = FOLD_RESPONSE_NONCE_BITS;
-    let accepted = GrindingPlan::new_zero_knowledge(runs([0, 0, grind]), order, 1).unwrap();
+    let accepted = GrindingPlan::validated(runs([0, 0, grind]), order, Some(1)).unwrap();
     assert_eq!(accepted.nonce_max_bytes(), nonce_max_bytes(grind));
     assert_ne!(
         accepted.digest().unwrap(),
@@ -309,7 +309,7 @@ fn only_a_zero_knowledge_plan_admits_one_shot_responses_and_only_up_to_its_cut()
     );
     for wrong in [[grind, 0, grind], [0, grind, grind], [0, 0, 0]] {
         assert!(matches!(
-            GrindingPlan::new_zero_knowledge(runs(wrong), order, 1),
+            GrindingPlan::validated(runs(wrong), order, Some(1)),
             Err(AkitaError::InvalidSetup(_))
         ));
     }

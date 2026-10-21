@@ -2,45 +2,15 @@
 
 use crate::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_params::zk::ZkOpeningSchedule;
-use akita_params::{ChallengeFieldOrder, FoldSchedule, GrindingPlan, OpeningClaimsLayout};
+use akita_params::zk::OpeningSchedule;
+use akita_params::{ChallengeFieldOrder, GrindingPlan, OpeningClaimsLayout};
 use jolt_algebra::{CanonicalEncoding, ExtField};
 
 /// Derive the only accepted grinding plan for one effective schedule and call.
-pub fn derive_transcript_grinding_plan<Cfg: CommitmentConfig>(
-    schedule: &FoldSchedule,
+pub fn derive_transcript_grinding_plan<'a, Cfg: CommitmentConfig>(
+    schedule: impl Into<OpeningSchedule<'a>>,
     root_layout: &OpeningClaimsLayout,
 ) -> Result<GrindingPlan, AkitaError>
-where
-    Cfg::Field: CanonicalEncoding,
-    Cfg::ExtField: ExtField<Cfg::Field>,
-{
-    let (challenge_order, extension_degree) = grinding_challenge_field::<Cfg>()?;
-    akita_params::derive_transcript_grinding_plan_from_public_shape(
-        schedule,
-        root_layout,
-        challenge_order,
-        extension_degree,
-    )
-}
-
-/// Derive the only accepted grinding plan for one zero-knowledge schedule.
-pub(crate) fn derive_zk_transcript_grinding_plan<Cfg: CommitmentConfig>(
-    schedule: &ZkOpeningSchedule,
-    root_layout: &OpeningClaimsLayout,
-) -> Result<GrindingPlan, AkitaError>
-where
-    Cfg::Field: CanonicalEncoding,
-    Cfg::ExtField: ExtField<Cfg::Field>,
-{
-    let (challenge_order, extension_degree) = grinding_challenge_field::<Cfg>()?;
-    schedule.grinding_plan(root_layout, challenge_order, extension_degree)
-}
-
-/// The challenge field order and claim extension degree that price `Cfg`'s
-/// grinding queries.
-fn grinding_challenge_field<Cfg: CommitmentConfig>(
-) -> Result<(ChallengeFieldOrder, usize), AkitaError>
 where
     Cfg::Field: CanonicalEncoding,
     Cfg::ExtField: ExtField<Cfg::Field>,
@@ -57,7 +27,9 @@ where
         extension_degree,
         Cfg::sis_modulus_profile().modulus(),
     )?;
-    Ok((challenge_order, extension_degree))
+    schedule
+        .into()
+        .grinding_plan(root_layout, challenge_order, extension_degree)
 }
 
 #[cfg(test)]

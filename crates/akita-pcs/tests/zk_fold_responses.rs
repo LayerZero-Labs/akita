@@ -11,7 +11,7 @@ mod common;
 #[path = "dynamic_backends/private_cpu.rs"]
 mod private_cpu;
 
-use akita_config::{proof_optimized::fp128, unit_onehot_source_chunk_size};
+use akita_config::{proof_optimized::fp128, unit_onehot_source_chunk_size, CommitmentConfig};
 use akita_cpu_backend::{CpuBackend, OneHotPoly};
 use akita_error::AkitaError;
 use akita_params::zk::{ZkOpeningSchedule, ZK_CUT_LEVEL};
@@ -28,8 +28,10 @@ type Cfg = fp128::OneHot;
 type F = fp128::Field;
 type E = F;
 
-const NUM_VARS: usize = 15;
-const NUM_POLYS: usize = 4;
+// `fp128_onehot final=16:2`: the smallest one-hot row whose masked levels
+// meet the one-shot target.
+const NUM_VARS: usize = 16;
+const NUM_POLYS: usize = 2;
 const DOMAIN: &[u8] = b"akita/test/zk-fold-responses/v1";
 
 #[test]
@@ -76,7 +78,11 @@ fn run() -> Result<(), AkitaError> {
         levels > ZK_CUT_LEVEL as usize + 1,
         "the cut must precede the terminal fold"
     );
-    let zk = ZkOpeningSchedule::for_tests(resolved.schedule().clone(), ZK_CUT_LEVEL)?;
+    let zk = ZkOpeningSchedule::for_tests(
+        resolved.schedule().clone(),
+        ZK_CUT_LEVEL,
+        Cfg::committed_source_contract()?,
+    )?;
     let prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
         resolved.schedule(),
         opening()?.opening_layout(),

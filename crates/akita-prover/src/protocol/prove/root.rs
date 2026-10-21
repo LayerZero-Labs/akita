@@ -8,11 +8,11 @@ pub(super) fn resolve_root<'a, 's, Cfg, H>(
     expanded: &akita_types::AkitaSetupDescriptor,
     schedules: &'s TrustedScheduleCatalog<Cfg>,
     opening: SelectedProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
-    zk: Option<&akita_params::zk::ZkOpeningSchedule>,
+    zk: Option<&'s akita_params::zk::ZkOpeningSchedule>,
     basis: BasisMode,
 ) -> Result<
     (
-        &'s akita_config::ResolvedScheduleRow,
+        &'s FoldSchedule,
         ProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
         akita_params::GrindingPlan,
         Vec<u8>,
@@ -36,16 +36,24 @@ where
     let (selection, claims) = opening.into_low_level_parts();
     let resolved = schedules.resolve_selection(selection)?;
     resolved.validate_opening_layout(claims.opening_layout())?;
+    let schedule = zk.map_or(
+        akita_params::zk::OpeningSchedule::Clear(resolved.schedule()),
+        akita_params::zk::OpeningSchedule::Zk,
+    );
     let (grinding_plan, descriptor_bytes) =
         akita_config::transcript_instance_descriptor::<Cfg::Field, Cfg>(
             expanded,
             claims.opening_layout(),
             selection,
-            resolved.schedule(),
-            zk,
+            schedule,
             basis,
         )?;
-    Ok((resolved, claims, grinding_plan, descriptor_bytes))
+    Ok((
+        schedule.fold_schedule(),
+        claims,
+        grinding_plan,
+        descriptor_bytes,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]

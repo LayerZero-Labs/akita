@@ -374,6 +374,16 @@ impl GrindingSite {
     }
 }
 
+/// How the prover finds the accepted counter of a scheduled fold response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FoldResponseSearch {
+    /// Try counters in order and send the first accepted one as a nonce of
+    /// [`FOLD_RESPONSE_NONCE_BITS`] bits.
+    Grind,
+    /// Probe counter 0 only. No nonce is sent: the run has `nonce_bits = 0`.
+    OneShot,
+}
+
 /// One compact plan run in protocol replay order.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct GrindingRun {
@@ -484,6 +494,19 @@ impl GrindingRun {
         }
     }
 
+    /// The search of a fold-response run, or `None` for any other run or an
+    /// unsupported nonce width.
+    #[must_use]
+    pub const fn fold_response_search(self) -> Option<FoldResponseSearch> {
+        match (self.kind(), self.nonce_bits) {
+            (GrindingQueryKind::FoldResponse, 0) => Some(FoldResponseSearch::OneShot),
+            (GrindingQueryKind::FoldResponse, FOLD_RESPONSE_NONCE_BITS) => {
+                Some(FoldResponseSearch::Grind)
+            }
+            _ => None,
+        }
+    }
+
     /// Construct one zero-width group root and indexed-coordinate audit run.
     pub fn fold_challenge_group(
         level: u32,
@@ -538,7 +561,7 @@ impl GrindingRun {
             GrindingQueryKind::FoldResponse
                 if self.loss_factor == 0
                     && self.grind_bits == 0
-                    && matches!(self.nonce_bits, 0 | FOLD_RESPONSE_NONCE_BITS)
+                    && self.fold_response_search().is_some()
                     && self.multiplicity == 1 => {}
             GrindingQueryKind::FoldChallengeGroup
                 if self.loss_factor == 0
@@ -697,18 +720,6 @@ impl GrindingPlan {
         challenge_order: ChallengeFieldOrder,
     ) -> Result<Self, AkitaError> {
         Self::validated(runs, challenge_order, None)
-    }
-
-    /// Validate the ordered runs of a zero-knowledge plan: the fold response
-    /// at every level up to `cut_level` is one-shot, and every later one is
-    /// the grinding search of a clear plan.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn new_zero_knowledge(
-        runs: Vec<GrindingRun>,
-        challenge_order: ChallengeFieldOrder,
-        cut_level: u32,
-    ) -> Result<Self, AkitaError> {
-        Self::validated(runs, challenge_order, Some(cut_level))
     }
 
     pub(crate) fn validated(
