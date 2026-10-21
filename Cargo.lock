@@ -187,6 +187,7 @@ dependencies = [
  "akita-schedules",
  "akita-serialization",
  "akita-setup",
+ "akita-sumcheck",
  "akita-types",
  "akita-verifier",
  "ark-bn254 0.6.0",
@@ -195,7 +196,9 @@ dependencies = [
  "jolt-algebra",
  "jolt-crypto",
  "jolt-poly",
+ "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-zk",
  "libc",
  "num-bigint 0.5.1",
  "p3-baby-bear",
@@ -1214,7 +1217,15 @@ dependencies = [
  "shake",
  "smallvec",
  "spongefish",
+ "subtle",
  "thiserror",
+]
+
+[[package]]
+name = "jolt-dit"
+version = "0.1.0"
+dependencies = [
+ "rayon",
 ]
 
 [[package]]
@@ -1322,11 +1333,13 @@ dependencies = [
  "jolt-algebra",
  "jolt-claims",
  "jolt-crypto",
+ "jolt-dit",
  "jolt-poly",
  "jolt-r1cs",
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-utils",
+ "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
  "thiserror",
@@ -2373,6 +2386,12 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "subtle"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"

@@ -74,6 +74,15 @@ keccak-test-sponge = []
 response-model-diagnostics = ["akita-cpu-backend/response-model-diagnostics"]
 # Dev-only terminal wire variant; see `akita-params`.
 dev-protocol = ["akita-params/dev-protocol"]
+# Whiteout's response prover (`specs/whiteout-akita.md` §5), test support
+# until the zero-knowledge mode is published (§5.5).
+test-support = [
+  "dep:jolt-sumcheck",
+  "dep:jolt-zk",
+  "dep:akita-sumcheck",
+  "dep:jolt-poly",
+  "akita-config/test-support",
+]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
@@ -97,8 +106,19 @@ akita-prover = { version = "0.1.0", path = "../akita-prover", default-features =
 akita-setup = { version = "0.1.0", path = "../akita-setup", default-features = false }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
+akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", optional = true }
+jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, optional = true }
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", features = [
+  "whiteout-prover",
+], optional = true }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, optional = true }
 
 [dev-dependencies]
+akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
+jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", features = [
+  "whiteout-test-support",
+] }
 jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
   "transcript-blake2b",
   "transcript-keccak",
@@ -136,6 +156,10 @@ libc = "0.2"
 [[example]]
 name = "profile"
 path = "examples/profile/main.rs"
+
+[[example]]
+name = "zk_response"
+required-features = ["test-support"]
 
 [[bench]]
 name = "ring_ntt"
