@@ -31,8 +31,6 @@ orchestration lives in `akita-pcs`.
 | `akita-prover` | Generic protocol sequencing and opaque backend contracts |
 | `akita-cpu-backend` | Owning CPU sources, commitments, witness arithmetic, and caches |
 | `akita-pcs` | Umbrella orchestration, examples, integration tests |
-| `akita-zk-verifier` (`dev`) | Verifier-side zero-knowledge building blocks (#120); no proof path depends on it |
-| `akita-zk-prover` (`dev`) | Prover-side zero-knowledge building blocks (#120); no proof path depends on it |
 | `akita-labinius-verifier` (`dev`) | Seed-derived admitted root setup, lowered root relation, and verification of the root reduction of a binary or prime evaluation claim to evaluation claims on committed tables; no proof path depends on it |
 | `akita-labinius-prover` (`dev`) | Binary source commitment, lowered root witness, root sumcheck kernels, and the root reduction prover with a transparent test oracle; no proof path depends on it |
 | `akita-labinius-pcs` (`dev`) | Opt-in polynomial commitment for a binary source over the 64-bit and 128-bit proof-field families: a nested Akita scheme commits the image digits and response digits of the root reduction, and the prime left opening when the statement has a prime claim, and opens them in one grouped proof; shipped schedule catalogs and their offline generator; no proof path depends on it |
