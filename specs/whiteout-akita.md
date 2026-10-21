@@ -221,6 +221,348 @@ paper's 2^−950 figure is per fold (Q5, answered).
 - **W2-d.** At k = 2, the re-priced A ranks for levels 0 and 1 equal the clear
   ranks, as paper §6.2 states. If they differ, the test fails.
 
+### 2.5 One-shot responses under #255's operator-norm families
+
+Akita PR #255 (`origin/feat/sparse-challenge-stream` at `038024d5d`, protocol
+v9, not merged into `whiteout/dev`) draws each fold group's challenges from
+one squeezed message. For the two operator-norm families, a message can run
+out of accepted candidates, and the honest prover then moves to the next
+fold-response nonce. This section shows that this retry can run inside a ZK
+schedule, and fixes what W2 must change for it. References in this section
+are to `038024d5d` unless prefixed with `w2:`, which means `~/akita-wo-w2` on
+`wo/akita-w2`. **[V]** marks what was read in code or the paper; **[I]** marks
+inference.
+
+The headline schedule never meets this case. Its masked levels use the
+unfiltered family (§2.3; paper §6.2, "folds before fold 5"), whose decoder
+never runs out (`stream.rs:233`, `decode_all`). The section matters for any
+ZK schedule that puts an operator-norm family at a level ≤ `cut_level`.
+
+#### 2.5.1 The retry trigger under #255
+
+Order of one fold, prover and verifier alike **[V]**:
+
+1. Fold-response nonce n: sent as a LEB128 prover message
+   (`replay.rs:378`; verifier `replay.rs:566-572`, bounded by `nonce_bits`).
+2. Fold proof of work at `FoldChallengeWork`: the least grind nonce below
+   2^(g+7) (`replay.rs:394-402`, preview `:451-452`; verifier `:578-583`).
+3. Per group: public payload absorbed, one message of fixed length squeezed,
+   decoded (`fold_draw.rs:157-200`). The decoder returns `None` exactly when
+   fewer than W of the B candidates pass "rank in range and certified
+   operator-norm predicate" (`stream.rs:233-249`, `:268-297`).
+
+The verifier maps `None` to `InvalidProof` (`fold_draw.rs:333`).
+
+The honest prover's loop is `first_jointly_accepted_nonce`
+(`fold_grind.rs:191-204`). For multi-group folds (`:230-302`), each nonce
+interleaves draw and probe per group. It returns `None`, so it moves to the
+next nonce, in two cases:
+
+- (E) a group's message runs out (`:240-247`);
+- (R) a group's response probe rejects (`:287`).
+
+The terminal fold has the same structure (`:99-136`).
+
+- **The trigger in #255 is mixed [V].** One loop retries on E ∨ R. R reads
+  the witness through `admit_fold_response`, so #255's clear nonce leaks the
+  witness exactly as before #255.
+- **E alone is public [V].** Whether message m runs out depends only on m,
+  through ranks and the predicate table (`stream.rs:14-24`). The message is a
+  squeeze of the sponge at state σ‖n‖w. Here σ is the sponge state after the
+  public transcript prefix, which the verifier also computes, and w is the
+  grind nonce, itself the least w with a public property of the sponge.
+  Hence E(n) = E(σ, n, H) is a deterministic function of σ, n and the oracle
+  H. It reads no witness, pad or randomness.
+- **What the verifier sees [V].** It sees the accepted n, which is the number
+  of earlier candidates when the search is first-success; the grind nonce w;
+  and nothing else about rejected candidates. Rejected candidates leave no
+  bytes: previews run on detached sponges (`replay.rs:411-454`).
+
+**The protocol needs no change [I].** In #255 the fold-response nonce already
+precedes the challenges, and the response is computed after them and never
+bound by the nonce. The nonce is therefore a challenge-candidate counter, and
+it carries witness information only through the prover's choice to skip on R.
+The smallest change is on the prover side. In ZK mode, skip only on E, and
+decide E for every group of the candidate before probing any response. On R,
+abort with `FoldOverflow` as W2 already does. No transcript byte, domain or
+verifier rule changes.
+
+#### 2.5.2 The public retry search
+
+Define, for a fold with groups 1..G and a candidate bound N = 2^`nonce_bits`:
+
+```text
+PublicRetry(σ, H):
+  for n in 0..N:
+      w ← least grind nonce for σ‖n            (public)
+      for g in 1..G: m_g ← squeeze; C_g ← Dec_g(m_g)
+      if some C_g = ⊥: continue                (E: public)
+      probe each group's response with C_1..C_G once
+      if some probe rejects: abort FoldOverflow (R: never retried)
+      return (n, w, C_1..C_G)
+  abort PoolExhausted                          (public; probability ≤ q^N)
+```
+
+Write n*(σ, H) for the counter it returns, and q for the probability that one
+candidate runs out. Every group is decoded before any probe. So exactly one
+probe per group is made per fold, at n*, and the abort decision never changes
+n*.
+
+**Lemma 2.5a (public retry is simulatable).** Let Π' be Whiteout in which the
+fold at each masked level ℓ ≤ `cut_level` runs `PublicRetry` instead of the
+counter-0 probe of §2.2. Assume:
+
+- its operator-norm sizing gives a per-fold overflow bound δ'_ℓ (Lemma 2.5b);
+- the retry squeezes and proofs of work add at most ΔQ oracle queries to the
+  honest algorithms.
+
+Then Theorem `wo:thm:zk` holds for Π' with error
+
+```text
+2δ'_fold + δ_LHL + T_att·ε/M + (T_att·(Q_tot + ΔQ) + T_att²)/2^ν,
+δ'_fold = Σ_{ℓ ≤ cut_level} δ'_ℓ.
+```
+
+The simulator runs `PublicRetry`'s public part, its lines marked E, on its
+own simulated transcript state.
+
+*Proof sketch.* Follow the nine hybrids of `wo:thm:zk`.
+
+- **Determinism.** The values n*, w* and C_1..C_G are F(σ, H) for a
+  deterministic F that the verifier could evaluate. σ is a function of the
+  public transcript prefix. The honest prover's only witness-dependent
+  action at the fold is the probe, and the probe affects the view only
+  through the abort.
+- **H1.** Replace the real prover by P'. At n* it continues with a fixed public
+  in-range vector instead of aborting on R. Because E is decided before any
+  probe, P' reaches the same n*, and the views differ only on the event
+  "some probe at n* rejects". Given the history before the fold, the
+  challenges at n* are i.i.d. uniform on the accepted family:
+  - acceptance in a message does not depend on the accepted values
+    (`stream.rs:19-22`; spec `sparse-challenge-stream.md:233-238`);
+  - messages at distinct n are independent oracle answers;
+  - so conditioning on E at the earlier counters and on ¬E at n* leaves the
+    accepted values uniform.
+
+  This is a probability over (coins, H), so it needs no freshness argument.
+  Its probability is at most δ'_ℓ by Lemma 2.5b, and the same event bounds the
+  failure of ct(Q') = 0 in H6.
+- **H2.** H2 programs H only at the Σ attempt inputs x_i, which are made
+  after the cut and lie in their own domain. The retry queries are honest
+  queries, and they enter Bad's count through Q_tot + ΔQ. No fold query is
+  programmed, so F is evaluated on the same oracle in every hybrid.
+- **H3 to H9.** Each step replaces a value of the prefix (masked messages,
+  commitment images, h, E_1). It uses only that the replaced value enters the
+  view through the listed channels. n*, w* and the challenges are F of
+  already-replaced prefix values and H. They are public post-processing of the
+  view, the same in the neighbouring hybrids, so no step's distance grows.
+  H7's premise, "m_i is computed from the witness, coins and earlier
+  challenges", still holds with n* and w* among the earlier public values.
+- **Final hybrid.** The simulator already derives the masked transcript's
+  challenges by querying H. It now evaluates F on its simulated σ, which
+  includes the E-loop and the `PoolExhausted` outcome. That outcome is the
+  same public function, so the simulator outputs ⊥ with the same probability.
+
+Summing gives the bound. The real and simulated retry counts are the same
+function of (σ, H), so the accepted n leaks nothing beyond σ. □
+
+**Contrast with the forbidden retry [V/I].** Paper §4.1 and `wo:lem:randomized-base`
+forbid retrying on R. A retry on R makes n* depend on whether
+‖Σ c_i x_i‖ fits, so n* is a function of the witness. The accepted
+challenges are then also conditioned on the witness, which breaks H1, since
+P' would reach a different n*. `PublicRetry` keeps R one-shot: one probe,
+abort, and a whole-proof rerun with fresh pads and randomness (§2.2). The
+interleaved #255 loop, run with "abort on R" but without reordering, would
+still be zero knowledge. Under P' it reaches the same n*. But it would probe
+at every counter where an earlier group decoded and a later one ran out, so
+δ'_ℓ would need a union over up to N probes. The reorder removes that union.
+
+**Lemma 2.5b (one-shot overflow under an operator-norm family).** Fix one
+group of a masked fold, the inputs x_1..x_ℓ (ℓ = live blocks × claims, the
+group's pair count W) with coefficients |·| ≤ β, and the shell S
+(a coefficients ±1, b coefficients ±2, η² = a + 4b, κ₁ = a + 2b). Let the
+challenges be i.i.d. uniform on S_f = {c ∈ S : ‖c‖_op ≤ Γ}, and let p ≤
+|S_f|/|S| be the certified predicate rate. A response with n coefficients,
+represented on [−L₋, L₊], leaves its range with probability at most
+δ' = min(δ_H, δ_B), where, for each end L ∈ {L₋, L₊}:
+
+```text
+δ_H = p^{−ℓ} · n · Σ_L exp(−(L+1)² / (2ℓη²β²))                      (tuple form)
+δ_B = n · Σ_L exp(−(L+1)² / (2ℓη²β²/p + (2/3)·κ₁β·(L+1)))           (Bernstein form)
+```
+
+*Proof.*
+
+- **Tuple form.** This is `wo:lem:fold-overflow` applied with the event "all
+  ℓ challenges pass". The candidates are uniform on the whole shell before
+  the predicate:
+  - the rank rejection reads position bits only, and the low w bits are free
+    signs (`stream.rs:7-12`);
+  - so the unfiltered law has independent uniform signs;
+  - the event has probability p^ℓ, not p.
+- **Bernstein form.** Fix a coefficient. It is Z = Σ_i Z_i, where Z_i depends
+  only on c_i, so the Z_i are independent.
+  - S_f is closed under c ↦ −c, because the operator norm and the shell are,
+    so E Z_i = 0.
+  - |Z_i| ≤ ‖c_i‖₁β = κ₁β.
+  - E_f[Z_i²] ≤ E_S[Z_i²]/p ≤ η²β²/p, since Z_i² ≥ 0 and, under uniform
+    signs, E_S[Z_i² | supports] = Σ_k c_k² x_{·}² ≤ η²β².
+  - Bernstein's inequality and Z ∈ ℤ give each tail, and a union over n
+    coefficients and both ends gives δ_B. □
+
+**Paper wording [I].** The last sentence of `wo:lem:fold-overflow`, "multiplied
+by 1/p … such as an operator-norm filter", is correct only when p is the
+probability of the event on the whole challenge tuple. With a per-challenge
+filter that probability is p^ℓ (Q7).
+
+**Cost [I].** In the tuple form, the target exponent grows by
+ℓ·log₂(1/p) bits:
+
+| Family | Certified p | Bits per challenge |
+|---|---|---|
+| D64 | 0.1305 | 2.94 |
+| D128 | 0.3694 | 1.44 |
+
+Since L grows like the square root of the exponent, this form is cheap for
+small W. The Bernstein form multiplies the variance proxy by 1/p, so L grows
+by about ½·log₂(1/p): +1.47 bits for D64 and +0.72 bits for D128. This holds
+while the linear term (2/3)κ₁β(L+1) stays small against 2ℓη²β²/p. It costs at
+most one more balanced radix-16 digit, and it wins for large W (fold 0
+has up to 2048 pairs). These figures are estimates; no schedule has been
+sized with them.
+
+The certified p, not the pool-sizing rate, enters δ'. The pool rates in
+`stream.rs:57-71` are measured rates lowered for sizing. They are 0.65 and
+0.78, not proofs.
+
+#### 2.5.3 Error budget
+
+- **δ'_fold.** The `OneShot` target is unchanged: ≤ 2^−136/2 per masked fold.
+  An operator-norm level reaches it with the extra digits of Lemma 2.5b, so
+  2δ'_fold ≤ 2^−135 as before. The accepted challenge law has no bias term:
+  conditioned on ¬E it is exactly uniform on S_f, and that is the law the
+  lemma uses.
+- **T_att.** Unchanged: T_att counts Σ attempts, not fold candidates.
+- **ΔQ.** Per masked fold and candidate, the extra queries are at most the
+  grind search (< 2^(g+7)) plus the group squeezes. Count permutations, which
+  over-counts oracle queries: fold 0's messages take 244 permutations
+  (#255 body). With N = 2^12, two masked folds and g ≤ 10 (#255: folds 0 and
+  1 at g = 10 and 9):
+
+  ```text
+  ΔQ ≤ 2 · 2^12 · (2^17 + 2^8) < 2^30.1
+  T_att·ΔQ/2^ν ≤ 163 · 2^30.1 / 2^256 ≈ 2^−218.5
+  ```
+
+  This term is negligible next to the T_att·Q_tot term (2^−148.6 at
+  Q_tot = 2^100, Q6). Expected retries are far smaller: q ≤ 2^−32 at the
+  certified rates (`stream.rs:23`).
+- **PoolExhausted.** Probability ≤ q^N ≤ 2^−32·4096. This is a completeness
+  loss, not a ZK term, because the simulator reproduces it exactly.
+
+The total stays below 2^−128 with the paper's §6.2 terms. W2-c gains the ΔQ
+term and, for operator-norm levels, δ' from Lemma 2.5b.
+
+#### 2.5.4 Soundness
+
+The verifier is #255's verifier, unchanged, at every operator-norm masked
+level **[V]**:
+
+- it reads the nonce below 2^`nonce_bits`;
+- it checks the fold proof of work;
+- it rejects a message that runs out (`fold_draw.rs:333`).
+
+The prover's search policy is not part of the protocol. A cheating prover
+gains no accepting branch relative to clear Akita at that site. Relative to
+W2's `nonce_bits = 0`, it has up to 2^`nonce_bits` candidates, each charged
+by the fold proof of work at #255's per-message price (W·2^128 ≤ 2^K·2^g),
+so the query-counted bound of `wo:lem:randomized-base` is unchanged **[I]**.
+
+Unfiltered masked levels keep `nonce_bits = 0`, which is strictly tighter.
+The lemma's sentence "removing overflow retries only discards executions"
+still holds, since R is never retried. The enlarged digit ranges re-price A
+as in §2.3, with Lemma 2.5b's digits.
+
+#### 2.5.5 Implementation (after #255 lands on `dev`)
+
+- **`FoldResponseSearch`** (`w2:akita-params/src/transcript_grinding.rs:377-385`)
+  gains a third variant:
+
+  ```rust
+  /// Try counters in order, skipping a counter only when some group's
+  /// operator-norm pool runs out; probe the response once at the first
+  /// counter whose messages all decode. A rejected probe is `FoldOverflow`.
+  PublicRetry,
+  ```
+
+  - Today the search derives from `nonce_bits` alone (`w2:…:497-508`), so
+    `PublicRetry` and `Grind` would both map from 12 bits.
+  - Ownership moves to `ZkOpeningSchedule::fold_response_search(level)`, the
+    single owner:
+    - `OneShot` at masked levels with an unfiltered family;
+    - `PublicRetry` at masked levels with an operator-norm family;
+    - `Grind` elsewhere.
+  - `GrindingRun` keeps `nonce_bits` as the wire fact. The schedule
+    constructor checks that `OneShot` has `nonce_bits = 0` and `PublicRetry`
+    has `FOLD_RESPONSE_NONCE_BITS`.
+- **Prover** (`w2:fold_grind.rs:215-231`, `accepted_fold_response`). The
+  probe closure splits in two:
+  - `draw(n) -> Option<PublicFoldCandidate>` runs the preview, the work and
+    every group's decode. Its signature takes the grinding state and public
+    group params, and no opening or witness handle, so witness independence
+    holds by construction.
+  - `probe(&PublicFoldCandidate) -> Option<T>` probes the responses.
+
+  The arms are:
+  - `Grind`: skip on either `None`, which is today's behavior; bytes are
+    unchanged, because the reorder does not touch the sponge.
+  - `PublicRetry`: skip only on `draw = None`; `probe = None` returns
+    `FoldOverflow { level }`.
+  - `OneShot`: `draw(0)`. `None` there is an internal error, because the
+    admission check below rules it out.
+
+  The terminal path needs no change, since masked levels are never terminal
+  (`w2:zk.rs:194-215` rejects that).
+- **Sizing.** `MaskedFoldSizing` (`w2:zk.rs:194-246`) carries only
+  `SparseChallengeConfig`. It gains the family's `OperatorNormRejection` and
+  certified p, from one owner in `akita-challenges` beside the certificate.
+  The `OneShot` balanced-policy solve then applies min(δ_H, δ_B) in checked
+  rational arithmetic. Until it does, `ZkOpeningSchedule::new` rejects an
+  operator-norm family at a masked level, which is today's de facto state.
+- **Transcript and wire.** No new message, domain or verifier rule. An
+  operator-norm masked level sends the 12-bit LEB128 nonce (1–2 bytes) where
+  W2 sends none. ZK plan digests change through `nonce_bits`. Clear digests
+  do not change (C0).
+- **Errors.** `PoolExhausted` reuses #255's `InvalidInput("fold grind
+  exceeded …")` path, renamed to a typed variant. W6 may rerun on it, but it is
+  not `FoldOverflow` and is not charged to δ_fold.
+- **Port of W2 itself.** #255 removes `Fork::new(seed, nonce)`. The one-shot
+  branch (`w2:replay.rs:443-445`, `:578-583`) becomes: no nonce message,
+  then the fold proof of work, then the group squeezes. `FoldPreview::new`
+  must not absorb a counter at `nonce_bits = 0`.
+
+#### 2.5.6 Tests (W2-e … W2-h)
+
+- **W2-e, a retry happens.** Use #255's `FixedDraw` test double
+  (`fold_grind.rs:480`). Counter 0 runs out on group 1 and counter 1 decodes.
+  Assert that `PublicRetry` returns n = 1, calls `probe` exactly once, and
+  calls it at n = 1. As an integration test, use a test-only pool override
+  so that q ≈ 1/2 for an operator-norm group at level 1 of
+  `ZkOpeningSchedule::for_tests`. Find a label whose counter 0 runs out,
+  prove, verify, and read n = 1 from the event log.
+- **W2-f, witness independence.** Fix one preview sponge state, then run
+  `PublicRetry` with two probe closures backed by two different in-range
+  witnesses. Assert equal n*, equal w* and equal message bytes. A third,
+  overflowing witness returns `FoldOverflow` with the same number of `draw`
+  calls.
+- **W2-g, overflow still aborts.** `draw` succeeds at n = 0 and `probe`
+  rejects. Assert `FoldOverflow { level }`, one probe, and no `draw(1)`.
+  Repeat with run-out at 0, success at 1, and a rejecting probe: the result
+  is `FoldOverflow`, not n = 2.
+- **W2-h, budget.** W2-c's exact-rational check extends to Lemma 2.5b's
+  min(δ_H, δ_B) for a D64 operator-norm test level, and it reports the ΔQ
+  term.
+
 ## 3. W1: outer hiding randomness per slice
 
 ### 3.1 What is sampled and where it goes
@@ -774,6 +1116,7 @@ selectable.
 | Choice | Paper item |
 |---|---|
 | `nonce_bits = 0` runs; one probe; whole-proof rerun with all randomness fresh | §4.1 "Fold responses"; Lemma `wo:lem:fold-overflow`; H1 |
+| #255 operator-norm masked levels: `PublicRetry` (skip only on pool run-out, decided before any probe; overflow aborts) | Thm `wo:thm:zk` H1, H2 (ΔQ in Q_tot); Lemma `wo:lem:fold-overflow` in tuple form (§2.5, Lemmas 2.5a, 2.5b) |
 | One-shot targets on every policy (2^−136/2 per fold); modeled cap off before the cut; A re-priced | Lemma `wo:lem:randomized-base`; Thm `wo:thm:zk` (2δ_fold) |
 | Randomness per slice, sized by one helper, open alphabet, in the next witness; precommitted groups excluded | §4.1 "Commitment randomness"; Lemma `wo:lem:stat-hiding`; H9; §3.1 advice |
 | Residual 3 × R_256, d_A = d_B | §4.1 "The residual commitment"; A7 |
@@ -803,6 +1146,10 @@ The numbering continues the W4 note's A1–A23.
   regenerates any it finds.
 - **A30, W5b.** Whether the direct σ_N scan fits the verifier budget is
   measured in W5-e.
+- **A31, certified operator-norm rates.** §2.5 uses the certified
+  predicate rates 0.1305 (D64) and 0.3694 (D128) quoted by #255's spec.
+  Where the certificate's value lives in code, and whether it is a
+  rational lower bound usable by the sizing solve, is unverified.
 - A2, A3 and A12 from W4 are resolved by §4.3, §4.6 and §5.4.
 
 ## 11. Questions for the paper authors
@@ -824,6 +1171,11 @@ The numbering continues the W4 note's A1–A23.
   distinguisher's and the honest algorithms' oracle queries together, but
   §6.2 gives no value. At Q_tot = 2^100 the term is about 2^−148.6. What
   value should the evaluation assume?
+- **Q7, the 1/p clause of `wo:lem:fold-overflow`.** With a per-challenge
+  filter, the conditioning event for a fold of ℓ challenges has probability
+  p^ℓ, not p. Should the lemma say so, and adopt the Bernstein form of
+  Lemma 2.5b for large ℓ? This does not affect the paper's parameters, whose
+  masked folds are unfiltered.
 - **Answered.** Q3: 3 products and 1 auxiliary slot per masked level (§4.4).
   Q5: 2^−950 is per fold.
 
