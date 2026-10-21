@@ -151,10 +151,10 @@ mod tests {
     }
 
     impl ProverRoundContext<F> for TestProver {
-        type Sponge = H;
+        type Channel = ProverTranscript<H>;
         type Error = AkitaError;
 
-        fn transcript_mut(&mut self) -> &mut ProverTranscript<H> {
+        fn channel_mut(&mut self) -> &mut ProverTranscript<H> {
             &mut self.state
         }
 
@@ -190,11 +190,11 @@ mod tests {
         }
     }
 
-    impl<'proof> VerifierRoundContext<'proof, F> for TestVerifier<'proof> {
-        type Sponge = H;
+    impl<'proof> VerifierRoundContext<F> for TestVerifier<'proof> {
+        type Channel = VerifierTranscript<'proof, H>;
         type Error = AkitaError;
 
-        fn transcript_mut(&mut self) -> &mut VerifierTranscript<'proof, H> {
+        fn channel_mut(&mut self) -> &mut VerifierTranscript<'proof, H> {
             &mut self.state
         }
 

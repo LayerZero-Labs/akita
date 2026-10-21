@@ -11,8 +11,8 @@
 // touch only a lane's own elements `lane` and `lane + D/2`: a caller whose
 // lanes load and store exactly those elements needs no other barrier.
 //
-// Tables are the host's NttTwiddles::negacyclic_tables() plus the fused
-// entry twist, five D-entry rows per prime (NttTables).
+// Tables are the host's crate::twiddles::negacyclic_tables() plus the
+// fused entry twist, five D-entry rows per prime (NttTables).
 
 #ifndef AKITA_NTT_H
 #define AKITA_NTT_H

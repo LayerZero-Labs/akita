@@ -19,7 +19,7 @@ orchestration lives in `akita-pcs`.
 | `akita-serialization` | Serialization, validation, compression traits |
 | `akita-algebra` | Multilinear, equality, split-equality, and offset-equality polynomial utilities; LaBinius binary and trinomial arithmetic (opt-in) |
 | `jolt-transcript` (external) | Fiat-Shamir proof channel (NARG prover/verifier transcripts, sponges, grinding) |
-| `akita-challenges` | Compatibility re-export of `jolt-crypto` sparse challenges; LaBinius binary challenge families (opt-in) |
+| `akita-challenges` | LaBinius binary challenge families (opt-in); sparse challenges live in `jolt-crypto` |
 | `akita-sumcheck` | Sumcheck kernel traits, driver adapters, folding |
 | `akita-params` | Parameter geometry, sizing, SIS tables, schedules, compression plans, witness layout, dispatch, and grinding plans |
 | `akita-types` | Proof, setup, and claim wire values, shared protocol math, and native transcript replay |
@@ -32,8 +32,6 @@ orchestration lives in `akita-pcs`.
 | `akita-prover` | Generic protocol sequencing and opaque backend contracts |
 | `akita-cpu-backend` | Owning CPU sources, commitments, witness arithmetic, and caches |
 | `akita-pcs` | Umbrella orchestration, examples, integration tests |
-| `akita-zk-verifier` (`dev`) | Verifier-side zero-knowledge building blocks (#120); no proof path depends on it |
-| `akita-zk-prover` (`dev`) | Prover-side zero-knowledge building blocks (#120); no proof path depends on it |
 | `akita-labinius-verifier` (`dev`) | Seed-derived admitted root setup, lowered root relation, and verification of the root reduction of a binary or prime evaluation claim to evaluation claims on committed tables; no proof path depends on it |
 | `akita-labinius-prover` (`dev`) | Binary source commitment, lowered root witness, root sumcheck kernels, and the root reduction prover with a transparent test oracle; no proof path depends on it |
 
@@ -182,8 +180,8 @@ graph TD
   `jolt_algebra::checked`. The formulas return `Option` and do not choose a
   protocol error variant. Callers map failure at the boundary where its meaning
   is known. Generic checked helpers must not be redefined in downstream crates.
-- `akita-challenges` owns transcript-derived challenge distributions. Its
-  optional `labinius-challenges` profiles use external `num-bigint` for exact
+- `akita-challenges` owns the LaBinius binary challenge distributions. Its
+  `labinius-challenges` profiles use external `num-bigint` for exact
   combinatorial counts that exceed 256 bits; protocol crates should consume
   those counts and norm bounds instead of reimplementing the policy.
 - `akita-planner` is the offline schedule search and artifact emission engine.

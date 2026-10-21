@@ -37,10 +37,3 @@ pub use trinomial::{
     TrinomialNtt, TrinomialNttDomain, TrinomialNttWorkspace, TrinomialRing,
     PRIME64_OFFSET_23703_MODULUS,
 };
-
-/// Compatibility re-export for jolt-akita; removed once jolt-akita ports (RP3)
-/// and Akita re-pins.
-pub use jolt_algebra::ring;
-/// Compatibility re-export for jolt-akita; removed once jolt-akita ports (RP3)
-/// and Akita re-pins.
-pub use jolt_algebra::CyclotomicRing;

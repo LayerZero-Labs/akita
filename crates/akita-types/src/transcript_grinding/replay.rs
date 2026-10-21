@@ -649,10 +649,10 @@ where
     E: ExtField<F>,
     H: Sponge,
 {
-    type Sponge = H;
+    type Channel = ProverTranscript<H>;
     type Error = AkitaError;
 
-    fn transcript_mut(&mut self) -> &mut ProverTranscript<H> {
+    fn channel_mut(&mut self) -> &mut ProverTranscript<H> {
         self.grinding.state_mut()
     }
 
@@ -711,17 +711,17 @@ impl<'context, 'a, 'proof, F, E, H: Sponge>
     }
 }
 
-impl<'proof, F, E, H> VerifierRoundContext<'proof, E>
+impl<'proof, F, E, H> VerifierRoundContext<E>
     for GrindingSumcheckVerifier<'_, '_, 'proof, F, E, H>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
     H: Sponge,
 {
-    type Sponge = H;
+    type Channel = VerifierTranscript<'proof, H>;
     type Error = AkitaError;
 
-    fn transcript_mut(&mut self) -> &mut VerifierTranscript<'proof, H> {
+    fn channel_mut(&mut self) -> &mut VerifierTranscript<'proof, H> {
         self.grinding.state_mut()
     }
 

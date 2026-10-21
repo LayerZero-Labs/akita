@@ -330,10 +330,10 @@ where
     E: ExtField<F>,
     Sp: Sponge,
 {
-    type Sponge = Sp;
+    type Channel = ProverTranscript<Sp>;
     type Error = AkitaError;
 
-    fn transcript_mut(&mut self) -> &mut ProverTranscript<Sp> {
+    fn channel_mut(&mut self) -> &mut ProverTranscript<Sp> {
         self.state
     }
 
@@ -354,17 +354,17 @@ where
     }
 }
 
-impl<'proof, F, E, Sp> VerifierRoundContext<'proof, E>
+impl<'proof, F, E, Sp> VerifierRoundContext<E>
     for RootSumcheckVerifierChannel<'_, 'proof, F, Sp>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
     Sp: Sponge,
 {
-    type Sponge = Sp;
+    type Channel = VerifierTranscript<'proof, Sp>;
     type Error = AkitaError;
 
-    fn transcript_mut(&mut self) -> &mut VerifierTranscript<'proof, Sp> {
+    fn channel_mut(&mut self) -> &mut VerifierTranscript<'proof, Sp> {
         self.state
     }
 

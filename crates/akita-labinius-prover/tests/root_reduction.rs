@@ -458,7 +458,8 @@ fn tampered_reductions_and_statements_reject_in_every_mode_on_both_field_pairs()
 }
 
 /// A nonce outside its search range rejects even when it clears the
-/// predicate; the first in-range winner of the same site is accepted.
+/// predicate, and so does an in-range nonce that fails it; the first in-range
+/// winner of the same site is accepted.
 #[test]
 fn proof_of_work_nonce_outside_its_range_rejects() {
     let case = RootCase::<H, P128, P128>::new(admitted(1, 0x31), RootOpeningMode::Binary);
@@ -469,19 +470,25 @@ fn proof_of_work_nonce_outside_its_range_rejects() {
         .find(|run| run.site() == RootGrindingSite::Alpha)
         .unwrap();
     let target = NonZeroU8::new(alpha.grind_bits()).unwrap();
-    for (first, accepted) in [(0, true), (1u32 << alpha.nonce_bits(), false)] {
+    // The transcript's own grinding: squeeze a seed, try nonces on its forks.
+    // Every proof below starts from the same fresh state, so shares the seed.
+    let seed: [u8; FORK_SEED_LEN] = channel::new_root_prover::<common::TestSponge>()
+        .unwrap()
+        .challenge_bytes();
+    let wins = |nonce: u32| {
+        grinding_predicate_accepts(
+            &Fork::<common::TestSponge>::new(&seed, nonce).squeeze(),
+            target,
+        )
+    };
+    let range = 1u32 << alpha.nonce_bits();
+    for (nonce, accepted) in [
+        ((0..).find(|&nonce| wins(nonce)).unwrap(), true),
+        ((range..).find(|&nonce| wins(nonce)).unwrap(), false),
+        ((0..range).find(|&nonce| !wins(nonce)).unwrap(), false),
+    ] {
         let mut state = channel::new_root_prover::<common::TestSponge>().unwrap();
-        // The transcript's own grinding: squeeze a seed, try nonces on its
-        // forks, send the winner.
-        let seed: [u8; FORK_SEED_LEN] = state.challenge_bytes();
-        let nonce = (first..)
-            .find(|&nonce| {
-                grinding_predicate_accepts(
-                    &Fork::<common::TestSponge>::new(&seed, nonce).squeeze(),
-                    target,
-                )
-            })
-            .unwrap();
+        assert_eq!(state.challenge_bytes::<FORK_SEED_LEN>(), seed);
         state.send_nonce(nonce);
         let proof = channel::finish_prover(state);
         let mut state = channel::new_root_verifier::<common::TestSponge>(&proof).unwrap();

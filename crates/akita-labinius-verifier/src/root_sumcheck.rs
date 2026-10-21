@@ -142,7 +142,7 @@ pub fn product_terminal<F: Field>(table_eval: F, weight_eval: F) -> F {
 }
 
 /// Replay combined rounds; the caller must check the returned terminal claim.
-pub fn verify_combined_rounds<'proof, F, E, C>(
+pub fn verify_combined_rounds<F, E, C>(
     channel: &mut C,
     invocation: u32,
     num_vars: usize,
@@ -152,7 +152,7 @@ pub fn verify_combined_rounds<'proof, F, E, C>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + CanonicalDecode,
-    C: VerifierRoundContext<'proof, E, Error = AkitaError> + ClearChannel,
+    C: VerifierRoundContext<E, Error = AkitaError> + ClearChannel,
 {
     let shape = combined_shape(num_vars)?;
     bind_root_sumcheck_instance(
@@ -169,7 +169,7 @@ where
 
 /// Replay product rounds for the linear claim `claim = <table, weights>`; the
 /// caller must check the returned terminal claim.
-pub fn verify_product_rounds<'proof, F, E, C>(
+pub fn verify_product_rounds<F, E, C>(
     channel: &mut C,
     invocation: u32,
     num_vars: usize,
@@ -178,7 +178,7 @@ pub fn verify_product_rounds<'proof, F, E, C>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + CanonicalDecode,
-    C: VerifierRoundContext<'proof, E, Error = AkitaError> + ClearChannel,
+    C: VerifierRoundContext<E, Error = AkitaError> + ClearChannel,
 {
     let shape = product_shape(num_vars)?;
     bind_root_sumcheck_instance(channel, RootSumcheckInstance::Product, invocation, num_vars)?;

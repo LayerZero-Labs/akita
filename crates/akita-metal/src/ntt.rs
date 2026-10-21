@@ -65,7 +65,7 @@ struct NttBatch {
 pub struct DeviceCrtNtt<const K: usize, const D: usize> {
     pub(crate) primes: DeviceBuffer<DevicePrime>,
     /// `[K][7][D]` words: per prime the rows of `akita::NttTables`
-    /// (`NttTwiddles::negacyclic_tables`, `psi^i R^2`, and the canonical
+    /// (`crate::twiddles::negacyclic_tables`, `psi^i R^2`, and the canonical
     /// forward twiddles with their Shoup quotients).
     pub(crate) tables: DeviceBuffer<i32>,
     /// `[K][K]` words: the Garner inverse `p_j^-1 mod p_i` in prime `i`'s

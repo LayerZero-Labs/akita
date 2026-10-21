@@ -20,16 +20,16 @@ else
       forbidden=(akita-types)
       ;;
     akita-verifier)
-      forbidden=(akita-planner akita-prover akita-cpu-backend akita-pcs akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
+      forbidden=(akita-planner akita-prover akita-cpu-backend akita-pcs akita-metal jolt-metal)
       ;;
     akita-prover)
-      forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
+      forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal)
       ;;
     akita-cpu-backend)
-      forbidden=(akita-planner akita-verifier akita-setup akita-pcs akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
+      forbidden=(akita-planner akita-verifier akita-setup akita-pcs akita-metal jolt-metal)
       ;;
     akita-config)
-      forbidden=(akita-planner akita-prover akita-cpu-backend akita-verifier akita-pcs akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
+      forbidden=(akita-planner akita-prover akita-cpu-backend akita-verifier akita-pcs akita-metal jolt-metal)
       ;;
     akita-schedules)
       forbidden=(akita-types akita-planner akita-config akita-prover akita-cpu-backend akita-verifier akita-setup akita-pcs)
@@ -46,22 +46,12 @@ else
       forbidden=(akita-verifier akita-planner akita-setup akita-pcs)
       ;;
     akita-setup)
-      forbidden=(akita-verifier akita-pcs akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
-      ;;
-    akita-zk-verifier)
-      # Verifier-side zero-knowledge building blocks (#120): never a prover,
-      # planner or setup dependency.
-      forbidden=(akita-planner akita-prover akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal akita-zk-prover)
+      forbidden=(akita-verifier akita-pcs akita-metal jolt-metal)
       ;;
     akita-labinius-verifier)
-      forbidden=(akita-planner akita-prover akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal akita-zk-prover akita-labinius-prover)
+      forbidden=(akita-planner akita-prover akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal akita-labinius-prover)
       ;;
     akita-labinius-prover)
-      forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
-      ;;
-    akita-zk-prover)
-      # Prover-side zero-knowledge building blocks (#120). Like akita-prover,
-      # they reach CPU kernels only through backend traits.
       forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal)
       ;;
     *)
@@ -76,7 +66,7 @@ fi
 # Verifier tests must also remain independent of the prover and PCS layers;
 # otherwise test-only reverse edges can conceal a production layering error.
 edge_kinds="normal"
-if [ "${pkg}" = "akita-verifier" ] || [ "${pkg}" = "akita-zk-verifier" ] || [ "${pkg}" = "akita-labinius-verifier" ]; then
+if [ "${pkg}" = "akita-verifier" ] || [ "${pkg}" = "akita-labinius-verifier" ]; then
   edge_kinds="normal,dev"
 fi
 default_tree="$(cargo tree -p "${pkg}" --edges "${edge_kinds}")"
@@ -94,6 +84,19 @@ for label in default all-features; do
     fi
   done
 done
+
+if [ "${pkg}" = "akita-verifier" ]; then
+  # jolt-zk's prover-only Whiteout pieces (the mask sampler, the witness
+  # checks) stay out of every verifier build; `whiteout` alone is allowed.
+  for flags in "" "--all-features"; do
+    # shellcheck disable=SC2086 # empty or one flag
+    if cargo tree -p "${pkg}" --edges "${edge_kinds},features" ${flags} \
+        | grep -q 'jolt-zk feature "whiteout-prover"'; then
+      echo "forbidden feature found in ${pkg} (${flags:-default}): jolt-zk/whiteout-prover" >&2
+      exit 1
+    fi
+  done
+fi
 
 echo "${pkg} dependency hygiene check passed"
 

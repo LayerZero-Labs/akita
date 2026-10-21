@@ -44,7 +44,6 @@ dependencies = [
  "akita-error",
  "criterion",
  "jolt-algebra",
- "jolt-crypto",
  "jolt-transcript",
  "keccak 0.1.6",
  "num-bigint 0.5.1",
@@ -350,24 +349,6 @@ dependencies = [
  "jolt-transcript",
  "rayon",
  "tracing",
-]
-
-[[package]]
-name = "akita-zk-prover"
-version = "0.1.0"
-dependencies = [
- "jolt-algebra",
- "rand 0.8.8",
- "rand_core 0.6.4",
-]
-
-[[package]]
-name = "akita-zk-verifier"
-version = "0.1.0"
-dependencies = [
- "akita-error",
- "jolt-algebra",
- "rand 0.8.8",
 ]
 
 [[package]]

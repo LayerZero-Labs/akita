@@ -101,3 +101,58 @@ fn pow_mod(base: i64, mut exp: i64, modulus: i64) -> i64 {
     }
     result
 }
+
+#[cfg(test)]
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    reason = "tests should fail loudly"
+)]
+mod tests {
+    use jolt_algebra::ntt::butterfly::forward_ntt;
+    use jolt_algebra::ntt::NttTwiddles;
+    use jolt_algebra::tables::q128_primes;
+    use jolt_algebra::{MontCoeff, NttKernelPlan, NttPrime};
+
+    use super::negacyclic_tables;
+
+    /// jolt-algebra's forward negacyclic NTT of `X` is `psi^(2 rev(j) + 1)`
+    /// at output `j`, with `rev` the `log2 D`-bit reversal, for `psi` read off
+    /// this module's twist table. So the tables use jolt-algebra's root.
+    fn monomial_transform_matches_psi<const D: usize>(prime: NttPrime<i32>) {
+        let [_, _, psi_pows, _] = negacyclic_tables::<D>(prime).unwrap();
+        let psi = psi_pows[1];
+
+        let mut x = [prime.from_canonical(0); D];
+        x[1] = prime.from_canonical(1);
+        let twiddles = NttTwiddles::<i32, D>::compute(prime);
+        forward_ntt(&mut x, prime, &twiddles, NttKernelPlan::detect::<i32>());
+
+        let mut psi_odd = [MontCoeff::from_raw(0); D];
+        let mut power = psi;
+        let psi_squared = prime.mul(psi, psi);
+        for entry in &mut psi_odd {
+            *entry = power;
+            power = prime.mul(power, psi_squared);
+        }
+        let bits = D.trailing_zeros();
+        for (j, &value) in x.iter().enumerate() {
+            let k = j.reverse_bits() >> (usize::BITS - bits);
+            assert_eq!(
+                prime.to_canonical(value),
+                prime.to_canonical(psi_odd[k]),
+                "p = {}, D = {D}, output {j}",
+                prime.p
+            );
+        }
+    }
+
+    #[test]
+    fn tables_use_the_jolt_algebra_root() {
+        for prime in q128_primes() {
+            monomial_transform_matches_psi::<64>(prime);
+            monomial_transform_matches_psi::<512>(prime);
+        }
+    }
+}

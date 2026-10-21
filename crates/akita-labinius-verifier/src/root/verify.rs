@@ -52,7 +52,7 @@ use jolt_transcript::Sponge;
 /// statement. The channel receives and checks the site's proof-of-work nonce
 /// before the challenge; a missing, non-canonical, out-of-range or failing
 /// nonce rejects.
-pub fn verify_root_reduction<'proof, H, F, E, const D: usize, M, O, S>(
+pub fn verify_root_reduction<H, F, E, const D: usize, M, O, S>(
     admitted: &AdmittedRootSetup<D, M>,
     statement: &RootStatement<'_, H, E>,
     oracle: &mut O,
@@ -64,7 +64,7 @@ where
     E: ExtField<F> + CanonicalDecode,
     M: TrinomialModulus,
     O: RootVerifierOracle<E>,
-    S: RootChallengeChannel<E> + VerifierRoundContext<'proof, E, Error = AkitaError>,
+    S: RootChallengeChannel<E> + VerifierRoundContext<E, Error = AkitaError>,
 {
     let layout = bind_root_statement::<H, F, E, D, M, S>(
         admitted,

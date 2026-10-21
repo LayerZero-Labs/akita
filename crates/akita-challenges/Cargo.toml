@@ -4,14 +4,11 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
 license = "Apache-2.0 OR MIT"
-description = "Compatibility re-export of jolt-crypto's sparse challenges for jolt-akita, and the LaBinius binary challenge families"
+description = "The LaBinius binary challenge families"
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
-  "lattice",
-] }
 akita-error = { version = "0.1.0", path = "../akita-error", optional = true }
 jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, optional = true }
 keccak = { version = "0.1.6", features = ["asm"], optional = true }
@@ -29,7 +26,6 @@ jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", re
 shake = "0.1.0"
 
 [features]
-parallel = ["jolt-crypto/parallel"]
 labinius-challenges = [
   "dep:akita-error",
   "dep:jolt-algebra",
