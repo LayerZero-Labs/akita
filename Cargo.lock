@@ -62,6 +62,7 @@ dependencies = [
  "akita-types",
  "jolt-algebra",
  "jolt-crypto",
+ "jolt-transcript",
  "rand_core 0.6.4",
  "serde_json",
 ]
