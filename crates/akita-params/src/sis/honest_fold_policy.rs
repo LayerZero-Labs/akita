@@ -245,9 +245,14 @@ impl UnitOneHotFoldPolicy {
                 security_bits,
                 masked_folds,
             } => {
-                // Scaling by a power of two is exact in binary floating point.
+                // 2^security_bits is built from its exponent bits, so it and
+                // the scaling by it are exact.
+                if security_bits > 1023 {
+                    return None;
+                }
+                let target_inverse = f64::from_bits(u64::from(1023 + security_bits) << 52);
                 round_up(round_up(2.0 * query.num_fold_coeffs as f64) * f64::from(masked_folds))
-                    * 2f64.powi(i32::try_from(security_bits).ok()?)
+                    * target_inverse
             }
         };
         let union_log = ln_upper(union_factor)?;
