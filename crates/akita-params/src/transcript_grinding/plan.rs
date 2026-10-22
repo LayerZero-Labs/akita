@@ -40,6 +40,7 @@ pub fn transcript_grinding_cost_for_planner_edge(
         &mut accumulator,
         challenge_order,
         claim_extension_degree,
+        None,
         level,
         params,
         relation_geometry.relation_point_variable_count(),
@@ -51,6 +52,7 @@ pub fn transcript_grinding_cost_for_planner_edge(
             &mut accumulator,
             challenge_order,
             claim_extension_degree,
+            None,
             level.checked_add(1).ok_or_else(|| {
                 AkitaError::InvalidSetup("terminal grinding level overflow".into())
             })?,
@@ -62,12 +64,15 @@ pub fn transcript_grinding_cost_for_planner_edge(
 }
 
 /// Derive the only accepted grinding plan from field metadata and public protocol shape.
+///
+/// The fold responses at the levels a zero-knowledge cut masks are one-shot.
 pub fn derive_transcript_grinding_plan_from_public_shape(
     schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
     challenge_order: ChallengeFieldOrder,
     claim_extension_degree: usize,
 ) -> Result<GrindingPlan, AkitaError> {
+    let one_shot_through = schedule.zk.map(|zk| zk.cut_level());
     schedule.validate_structure()?;
     schedule.validate_nonterminal_opening_execution(claim_extension_degree)?;
     root_layout.check()?;
@@ -98,6 +103,7 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
         &mut sink,
         challenge_order,
         claim_extension_degree,
+        one_shot_through,
         0,
         &schedule.root.params,
         root_rounds,
@@ -128,6 +134,7 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
             &mut sink,
             challenge_order,
             claim_extension_degree,
+            one_shot_through,
             usize_to_u32(index + 1, "grinding level")?,
             &fold.params,
             relation_rounds,
@@ -140,6 +147,7 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
         &mut sink,
         challenge_order,
         claim_extension_degree,
+        one_shot_through,
         usize_to_u32(
             schedule.recursive_folds.len() + 1,
             "terminal grinding level",
@@ -147,7 +155,7 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
         predecessor_rounds,
         &schedule.terminal,
     )?;
-    GrindingPlan::new(runs, challenge_order)
+    GrindingPlan::validated(runs, challenge_order, one_shot_through)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -155,6 +163,7 @@ fn append_nonterminal(
     sink: &mut impl GrindingPlanSink,
     challenge_order: ChallengeFieldOrder,
     extension_degree: usize,
+    one_shot_through: Option<u32>,
     level: u32,
     params: &CommittedGroupParams,
     relation_rounds: usize,
@@ -173,7 +182,10 @@ fn append_nonterminal(
         layout,
     )?;
 
-    sink.push(GrindingRun::fold_response(level))?;
+    sink.push(GrindingRun::scheduled_fold_response(
+        level,
+        one_shot_through,
+    ))?;
     append_fold_queries(sink, level, params, layout)?;
 
     let alpha_loss = params
@@ -303,6 +315,7 @@ fn append_terminal(
     sink: &mut impl GrindingPlanSink,
     challenge_order: ChallengeFieldOrder,
     extension_degree: usize,
+    one_shot_through: Option<u32>,
     level: u32,
     predecessor_rounds: usize,
     terminal: &crate::TerminalFoldParams,
@@ -311,7 +324,10 @@ fn append_terminal(
     if extension_degree > 1 {
         append_eor(sink, challenge_order, extension_degree, level, &layout)?;
     }
-    sink.push(GrindingRun::fold_response(level))?;
+    sink.push(GrindingRun::scheduled_fold_response(
+        level,
+        one_shot_through,
+    ))?;
     sink.push(GrindingRun::fold_challenge_group(
         level,
         0,
@@ -485,6 +501,7 @@ mod tests {
                         },
                         ChallengeFieldOrder::from_full_capacity(128).unwrap(),
                         1,
+                        None,
                         0,
                         &current,
                         7,
@@ -530,6 +547,7 @@ mod tests {
             &mut push,
             ChallengeFieldOrder::from_full_capacity(128).unwrap(),
             1,
+            None,
             0,
             &current,
             expected_rounds,
@@ -573,6 +591,7 @@ mod tests {
             },
             ChallengeFieldOrder::from_full_capacity(128).unwrap(),
             4,
+            None,
             1,
             rounds,
             &terminal,
@@ -647,6 +666,7 @@ mod tests {
                             },
                             challenge_order,
                             1,
+                            None,
                             2,
                             &current,
                             rounds,
@@ -659,6 +679,7 @@ mod tests {
                             &mut priced,
                             challenge_order,
                             1,
+                            None,
                             2,
                             &current,
                             rounds,
@@ -890,6 +911,7 @@ mod tests {
                 },
                 challenge_order,
                 1,
+                None,
                 0,
                 &current,
                 7,
@@ -942,6 +964,7 @@ mod tests {
                 &mut materialize,
                 challenge_order,
                 extension_degree,
+                None,
                 1,
                 7,
                 &terminal,
@@ -951,6 +974,7 @@ mod tests {
                 &mut cost,
                 challenge_order,
                 extension_degree,
+                None,
                 1,
                 7,
                 &terminal,

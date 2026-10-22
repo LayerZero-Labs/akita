@@ -26,8 +26,50 @@ pub(crate) struct AbCommitmentCandidateRequest<'a> {
     /// Optional typed-model cap for the Linf response. The universal policy
     /// remains the dominance guard.
     pub(crate) modeled_linf_cap: Option<u128>,
-    /// Whether the commitment gets hiding-randomness columns.
-    pub(crate) hiding: bool,
+    pub(crate) masking: LevelMasking,
+}
+
+/// How a planned fold level sits relative to a zero-knowledge cut.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LevelMasking {
+    Clear,
+    /// The level's B slices and D image carry hiding randomness, its fold
+    /// response is one-shot and sized for the cut's failure target, and it
+    /// uses the ℓ∞ route, the quotient relation, base 8, and no setup prefix.
+    Masked(akita_params::zk::ZkOpeningSchedule),
+    /// The clear level after the cut: it opens the residual commitment
+    /// (d_A = d_B) and consumes no setup prefix, so the cut runs no Stage 3.
+    AfterCut,
+}
+
+impl LevelMasking {
+    /// The masking of fold `level` under `zk`.
+    pub(crate) fn at(zk: Option<akita_params::zk::ZkOpeningSchedule>, level: usize) -> Self {
+        match zk {
+            Some(zk) if zk.masks(level) => Self::Masked(zk),
+            Some(zk) if level == zk.cut_level() as usize + 1 => Self::AfterCut,
+            _ => Self::Clear,
+        }
+    }
+
+    pub(crate) const fn hiding(self) -> bool {
+        matches!(self, Self::Masked(_))
+    }
+
+    pub(crate) const fn allows_setup_prefix(self) -> bool {
+        matches!(self, Self::Clear)
+    }
+
+    pub(crate) const fn opens_residual(self) -> bool {
+        matches!(self, Self::AfterCut)
+    }
+
+    pub(crate) const fn failure_target(self) -> FoldFailureTarget {
+        match self {
+            Self::Clear | Self::AfterCut => FoldFailureTarget::PerAttempt,
+            Self::Masked(zk) => zk.fold_failure_target(),
+        }
+    }
 }
 
 pub(crate) struct AbCommitmentCandidate {
@@ -52,7 +94,9 @@ pub(super) struct InnerCommitmentCandidateRequest<'a> {
     pub(super) witness_norms: FoldWitnessNorms,
     pub(super) log_basis_open: u32,
     pub(super) width_s: usize,
+    /// Optional per-attempt typed-model cap for the Linf response.
     pub(super) modeled_linf_cap: Option<u128>,
+    pub(super) masking: LevelMasking,
 }
 
 pub(super) struct InnerCommitmentCandidate {
@@ -229,26 +273,33 @@ pub(super) fn derive_inner_commitment_candidate(
         log_basis_open,
         width_s,
         modeled_linf_cap,
+        masking,
     } = request;
+    let failure_target = masking.failure_target();
     let d_a = dimensions.d_a();
-    let num_fold_coeffs = width_s
-        .checked_mul(d_a)
-        .and_then(|count| count.checked_mul(num_chunks))
-        .ok_or_else(|| AkitaError::InvalidSetup("fold response width overflow".into()))?;
-    let Ok(universal_digits) = fold_policy.num_digits_fold(HonestFoldSizingQuery {
-        ring_dimension: d_a,
+    let query = HonestFoldSizingQuery::new(
+        d_a,
         challenge_dimension,
         num_claims,
-        num_live_ring_elements_per_claim,
-        num_live_blocks,
-        num_positions_per_block,
+        akita_params::BlockGeometry::new(
+            num_live_ring_elements_per_claim,
+            num_positions_per_block,
+            num_live_blocks,
+        ),
         num_chunks,
-        num_fold_coeffs,
+        width_s,
         witness_norms,
-        log_basis_response: log_basis_open,
-        challenge_config: ring_challenge_cfg,
-    }) else {
+        log_basis_open,
+        ring_challenge_cfg,
+        failure_target,
+    )?;
+    let Ok(universal_digits) = fold_policy.num_digits_fold(query) else {
         return Ok(None);
+    };
+    // The modeled cap is a per-attempt bound, never a one-shot one.
+    let modeled_linf_cap = match failure_target {
+        FoldFailureTarget::PerAttempt => modeled_linf_cap,
+        FoldFailureTarget::OneShot { .. } => None,
     };
     let num_digits_fold = modeled_linf_cap
         .map(|cap| {
@@ -307,7 +358,7 @@ pub(crate) fn derive_ab_commitment_candidate(
         width_s,
         num_digits_outer,
         modeled_linf_cap,
-        hiding,
+        masking,
     } = request;
     let Some(inner_candidate) =
         derive_inner_commitment_candidate(InnerCommitmentCandidateRequest {
@@ -325,6 +376,7 @@ pub(crate) fn derive_ab_commitment_candidate(
             log_basis_open,
             width_s,
             modeled_linf_cap,
+            masking,
         })?
     else {
         return Ok(None);
@@ -342,7 +394,7 @@ pub(crate) fn derive_ab_commitment_candidate(
             log_basis_open,
             num_digits_outer,
             inner_output_rank: inner_commit_matrix.output_rank(),
-            hiding,
+            hiding: masking.hiding(),
         })?
     else {
         return Ok(None);

@@ -89,6 +89,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -1209,6 +1210,7 @@ dependencies = [
  "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
+ "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
  "serde",
@@ -1217,6 +1219,7 @@ dependencies = [
  "spongefish",
  "subtle",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]
@@ -1332,6 +1335,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]

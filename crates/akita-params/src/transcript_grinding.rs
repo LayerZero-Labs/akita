@@ -374,6 +374,16 @@ impl GrindingSite {
     }
 }
 
+/// How the prover finds the accepted counter of a scheduled fold response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FoldResponseSearch {
+    /// Try counters in order and send the first accepted one as a nonce of
+    /// [`FOLD_RESPONSE_NONCE_BITS`] bits.
+    Grind,
+    /// Probe counter 0 only. No nonce is sent: the run has `nonce_bits = 0`.
+    OneShot,
+}
+
 /// One compact plan run in protocol replay order.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct GrindingRun {
@@ -461,6 +471,42 @@ impl GrindingRun {
         }
     }
 
+    /// Construct a one-shot fold response: no nonce is sent, and the fold
+    /// challenges come from counter 0 of the response fork.
+    ///
+    /// Only a zero-knowledge plan admits this run, at the levels up to its cut
+    /// (see [`GrindingPlan::new`]).
+    #[must_use]
+    pub const fn one_shot_fold_response(level: u32) -> Self {
+        Self {
+            nonce_bits: 0,
+            ..Self::fold_response(level)
+        }
+    }
+
+    /// The fold-response run at `level` of a plan whose fold responses are
+    /// one-shot through `one_shot_through`, or of a clear plan for `None`.
+    #[must_use]
+    pub(crate) const fn scheduled_fold_response(level: u32, one_shot_through: Option<u32>) -> Self {
+        match one_shot_through {
+            Some(cut_level) if level <= cut_level => Self::one_shot_fold_response(level),
+            _ => Self::fold_response(level),
+        }
+    }
+
+    /// The search of a fold-response run, or `None` for any other run or an
+    /// unsupported nonce width.
+    #[must_use]
+    pub const fn fold_response_search(self) -> Option<FoldResponseSearch> {
+        match (self.kind(), self.nonce_bits) {
+            (GrindingQueryKind::FoldResponse, 0) => Some(FoldResponseSearch::OneShot),
+            (GrindingQueryKind::FoldResponse, FOLD_RESPONSE_NONCE_BITS) => {
+                Some(FoldResponseSearch::Grind)
+            }
+            _ => None,
+        }
+    }
+
     /// Construct one zero-width group root and indexed-coordinate audit run.
     pub fn fold_challenge_group(
         level: u32,
@@ -511,10 +557,11 @@ impl GrindingRun {
                     ));
                 }
             }
+            // The accumulator checks the nonce width against the plan's cut.
             GrindingQueryKind::FoldResponse
                 if self.loss_factor == 0
                     && self.grind_bits == 0
-                    && self.nonce_bits == FOLD_RESPONSE_NONCE_BITS
+                    && self.fold_response_search().is_some()
                     && self.multiplicity == 1 => {}
             GrindingQueryKind::FoldChallengeGroup
                 if self.loss_factor == 0
@@ -566,6 +613,8 @@ pub(crate) use sink::{GrindingPlanSink, SumcheckRoundBatch};
 
 pub(crate) struct GrindingPlanAccumulator {
     challenge_order: ChallengeFieldOrder,
+    /// Last level whose fold response is one-shot; `None` for a clear plan.
+    one_shot_through: Option<u32>,
     run_count: u32,
     total_nonce_bits: usize,
     nonce_max_bytes: usize,
@@ -574,8 +623,16 @@ pub(crate) struct GrindingPlanAccumulator {
 
 impl GrindingPlanAccumulator {
     pub(crate) fn new(challenge_order: ChallengeFieldOrder) -> Self {
+        Self::with_one_shot_through(challenge_order, None)
+    }
+
+    fn with_one_shot_through(
+        challenge_order: ChallengeFieldOrder,
+        one_shot_through: Option<u32>,
+    ) -> Self {
         Self {
             challenge_order,
+            one_shot_through,
             run_count: 0,
             total_nonce_bits: 0,
             nonce_max_bytes: 0,
@@ -594,6 +651,15 @@ impl GrindingPlanAccumulator {
             return Err(AkitaError::InvalidSetup(
                 "proof-of-work run target does not match its loss and challenge order".into(),
             ));
+        }
+        if run.kind() == GrindingQueryKind::FoldResponse {
+            let expected =
+                GrindingRun::scheduled_fold_response(run.site.level(), self.one_shot_through);
+            if run.nonce_bits != expected.nonce_bits {
+                return Err(AkitaError::InvalidSetup(
+                    "fold-response nonce width does not match the plan's one-shot cut".into(),
+                ));
+            }
         }
         let multiplicity = usize::try_from(run.multiplicity).map_err(|_| {
             AkitaError::InvalidSetup("grinding run multiplicity exceeds usize".into())
@@ -646,11 +712,23 @@ impl GrindingPlanAccumulator {
 
 impl GrindingPlan {
     /// Validate ordered runs and derive all aggregate counts once.
+    ///
+    /// Every fold response must be the grinding search of
+    /// [`GrindingRun::fold_response`].
     pub fn new(
         runs: Vec<GrindingRun>,
         challenge_order: ChallengeFieldOrder,
     ) -> Result<Self, AkitaError> {
-        let mut accumulator = GrindingPlanAccumulator::new(challenge_order);
+        Self::validated(runs, challenge_order, None)
+    }
+
+    pub(crate) fn validated(
+        runs: Vec<GrindingRun>,
+        challenge_order: ChallengeFieldOrder,
+        one_shot_through: Option<u32>,
+    ) -> Result<Self, AkitaError> {
+        let mut accumulator =
+            GrindingPlanAccumulator::with_one_shot_through(challenge_order, one_shot_through);
         for &run in &runs {
             accumulator.push(run)?;
         }

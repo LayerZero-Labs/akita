@@ -7,6 +7,7 @@ use akita_error::AkitaError;
 use akita_params::{CompressionChainPlan, RingRelationMode};
 use akita_types::RingVec;
 use jolt_algebra::Field;
+use zeroize::Zeroizing;
 
 /// State output of one inner commitment stage.
 pub(crate) struct InnerCommitOutput {
@@ -43,7 +44,7 @@ pub(crate) struct UncompressedCommitmentOutput<F: Field> {
     image: BackendStateRef<InnerImage>,
     u: RingVec<F>,
     /// Slice-major B hiding-randomness coefficients; empty when clear.
-    outer_randomness: Vec<i8>,
+    outer_randomness: Zeroizing<Vec<i8>>,
 }
 
 impl<F: Field> UncompressedCommitmentOutput<F> {
@@ -64,14 +65,14 @@ impl<F: Field> UncompressedCommitmentOutput<F> {
         Ok(Self {
             image,
             u,
-            outer_randomness: Vec::new(),
+            outer_randomness: Zeroizing::new(Vec::new()),
         })
     }
 
     /// Attach the B hiding randomness that `u` was committed with.
     pub(crate) fn with_outer_randomness(
         mut self,
-        outer_randomness: Vec<i8>,
+        outer_randomness: Zeroizing<Vec<i8>>,
         plan: &UncompressedCommitPlan,
     ) -> Result<Self, AkitaError> {
         if outer_randomness.len() != plan.outer().randomness_coefficient_len()? {
@@ -95,7 +96,9 @@ impl<F: Field> UncompressedCommitmentOutput<F> {
     }
 
     /// Consume into the resident image, canonical B image, and B randomness.
-    pub(crate) fn into_parts(self) -> (BackendStateRef<InnerImage>, RingVec<F>, Vec<i8>) {
+    pub(crate) fn into_parts(
+        self,
+    ) -> (BackendStateRef<InnerImage>, RingVec<F>, Zeroizing<Vec<i8>>) {
         (self.image, self.u, self.outer_randomness)
     }
 }
@@ -110,7 +113,7 @@ pub(crate) struct CompressionStageOutput<F: Field> {
 pub(crate) struct FullCommitmentOutput<F: Field> {
     image: BackendStateRef<InnerImage>,
     compression: CompressionStageOutput<F>,
-    outer_randomness: Vec<i8>,
+    outer_randomness: Zeroizing<Vec<i8>>,
 }
 
 impl<F: Field> FullCommitmentOutput<F> {
@@ -118,7 +121,7 @@ impl<F: Field> FullCommitmentOutput<F> {
     pub(crate) fn new(
         image: BackendStateRef<InnerImage>,
         compression: CompressionStageOutput<F>,
-        outer_randomness: Vec<i8>,
+        outer_randomness: Zeroizing<Vec<i8>>,
     ) -> Result<Self, AkitaError> {
         if image.binding() != compression.state().binding() {
             return Err(AkitaError::Internal(
@@ -139,7 +142,7 @@ impl<F: Field> FullCommitmentOutput<F> {
     ) -> (
         BackendStateRef<InnerImage>,
         CompressionStageOutput<F>,
-        Vec<i8>,
+        Zeroizing<Vec<i8>>,
     ) {
         (self.image, self.compression, self.outer_randomness)
     }

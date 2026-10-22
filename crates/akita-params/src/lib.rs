@@ -26,7 +26,6 @@ mod transcript_grinding_plan;
 pub mod transcript_site;
 pub mod wire_limits;
 pub mod witness;
-#[cfg(feature = "zk")]
 pub mod zk;
 pub use commitment_slicing::{CommitmentSliceCount, CommitmentSliceGeometry};
 pub use compression::{
@@ -99,8 +98,8 @@ pub use tail_golomb_rice_low_bits::{rice_low_bits_for_cap, wire_rice_low_bits};
 pub use transcript_grinding::{
     grind_bits_for_loss, independent_batch_loss_factor, multilinear_point_loss_factor,
     nonce_max_bytes, polynomial_identity_loss_factor, powers_batch_loss_factor,
-    ring_switch_alpha_loss_factor, ChallengeFieldOrder, GrindingPlan, GrindingQueryKind,
-    GrindingRun, GrindingSite, SumcheckProtocol, TranscriptGrindingCost,
+    ring_switch_alpha_loss_factor, ChallengeFieldOrder, FoldResponseSearch, GrindingPlan,
+    GrindingQueryKind, GrindingRun, GrindingSite, SumcheckProtocol, TranscriptGrindingCost,
     FOLD_COORDINATE_ORACLE_REVISION, FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS,
     GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
     GRINDING_PREDICATE_BYTES, GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS,

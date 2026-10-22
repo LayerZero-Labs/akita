@@ -33,8 +33,9 @@ use akita_error::AkitaError;
 use akita_params::sis::{
     decomposed_s_block_ring_count, num_digits_for_linf_cap, num_digits_inner_for_bound,
     num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldSizingQuery,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
+    BalancedSignedDigitFoldPolicy, FoldFailureTarget, FoldWitnessNorms, HonestFoldPolicy,
+    HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams,
 };
 use akita_params::{
     active_setup_field_len, padded_setup_prefix_len, CommitmentRingDims, CommittedGroupParams,
@@ -65,8 +66,8 @@ pub(crate) use candidate::{
     derive_ab_commitment_candidate, derive_fold_candidates, derive_recursive_candidate_views,
     derive_terminal_candidates, price_with_hiding_randomness, recursive_split_search_domain,
     AbCommitmentCandidateRequest, CandidateInnerRoute, CandidateLayoutGuide, FoldCandidatePolicy,
-    PlannerOpeningCandidate, RecursiveCandidateRequest, RecursiveFoldWork, SetupPrefixLayoutGuide,
-    SetupPrefixSearchCache, SplitBoundPolicy,
+    LevelMasking, PlannerOpeningCandidate, RecursiveCandidateRequest, RecursiveFoldWork,
+    SetupPrefixLayoutGuide, SetupPrefixSearchCache, SplitBoundPolicy,
 };
 #[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) use candidate::{
@@ -570,6 +571,9 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
             &mut bytes,
             descriptor_steps,
             terminal,
+            // Every candidate of one search shares its cut, so the cut does
+            // not order them.
+            None,
         )?;
         Ok(bytes)
     })();

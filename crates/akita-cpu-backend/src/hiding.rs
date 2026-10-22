@@ -2,11 +2,13 @@
 //!
 //! Extension seam: Whiteout outer hiding randomness (akita#120). Clear
 //! schedules declare zero columns and never reach the sampler, so their
-//! commitments and proofs stay deterministic.
+//! commitments and proofs stay deterministic. Every buffer that holds sampled
+//! digits is `Zeroizing`, so it is wiped when dropped.
 
 use akita_error::AkitaError;
 use rand_core::CryptoRngCore;
 use std::sync::Mutex;
+use zeroize::Zeroizing;
 
 /// The CSPRNG a backend draws hiding randomness from.
 ///
@@ -45,9 +47,13 @@ impl HidingRng {
     /// Returns [`AkitaError::UnsupportedSchedule`] when randomness is
     /// requested in a build without the `zk` feature, and an input error for
     /// an alphabet the sampler does not support.
-    pub(crate) fn sample(&self, len: usize, log_basis: u32) -> Result<Vec<i8>, AkitaError> {
+    pub(crate) fn sample(
+        &self,
+        len: usize,
+        log_basis: u32,
+    ) -> Result<Zeroizing<Vec<i8>>, AkitaError> {
         if len == 0 {
-            return Ok(Vec::new());
+            return Ok(Zeroizing::new(Vec::new()));
         }
         let mut rng = self
             .0
@@ -67,7 +73,7 @@ fn sample_hiding_digits(
     mut rng: &mut dyn CryptoRngCore,
     len: usize,
     log_basis: u32,
-) -> Result<Vec<i8>, AkitaError> {
+) -> Result<Zeroizing<Vec<i8>>, AkitaError> {
     Ok(jolt_crypto::lattice::sample_box_digits(
         &mut rng, len, log_basis,
     )?)
@@ -78,7 +84,7 @@ fn sample_hiding_digits(
     _rng: &mut dyn CryptoRngCore,
     _len: usize,
     _log_basis: u32,
-) -> Result<Vec<i8>, AkitaError> {
+) -> Result<Zeroizing<Vec<i8>>, AkitaError> {
     Err(AkitaError::UnsupportedSchedule(
         "schedule declares hiding randomness, which needs the zk feature".into(),
     ))

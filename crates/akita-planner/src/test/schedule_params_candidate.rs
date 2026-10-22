@@ -243,7 +243,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
             log_basis_inner: 4,
             log_basis_open: 4,
             fold_level: 3,
-            hiding: false,
+            masking: crate::schedule_params::LevelMasking::Clear,
             source_moment: Some(
                 crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap(),
             ),
@@ -314,7 +314,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
         log_basis_inner: 3,
         log_basis_open: 3,
         fold_level: 1,
-        hiding: false,
+        masking: crate::schedule_params::LevelMasking::Clear,
         source_moment: Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
         relation_traversal_order: RelationTraversalOrder::Canonical,
         guide: None,
@@ -476,7 +476,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
                 log_basis_inner: log_basis,
                 log_basis_open: log_basis,
                 fold_level: 1,
-                hiding: false,
+                masking: crate::schedule_params::LevelMasking::Clear,
                 source_moment: Some(
                     crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap(),
                 ),
@@ -651,7 +651,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             inner_basis,
             Dense::opening_basis_range().0,
             None,
-            false,
+            crate::schedule_params::LevelMasking::Clear,
         )
     };
     let grouped = candidates_from_prepared(Dense::inner_basis_range().0)
@@ -1279,3 +1279,6 @@ mod compression_source;
 
 #[path = "schedule_params_candidate/shared_ab.rs"]
 mod shared_ab;
+#[cfg(feature = "catalog-gen")]
+#[path = "schedule_params_candidate/zk_ranks.rs"]
+mod zk_ranks;

@@ -28,6 +28,8 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
 rayon = { version = "1.10", optional = true }
 rand_core = "0.6"
 tracing = "0.1"
+# Wipes every buffer of sampled hiding randomness on drop.
+zeroize = { version = "1.8", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false, features = [

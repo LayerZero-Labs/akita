@@ -41,8 +41,8 @@ pub(crate) struct RecursiveCandidateRequest<'a> {
     /// Optional structural replay constraint. Current lengths and security
     /// ranks are still derived; only the approved split and slicing remain.
     pub(crate) guide: Option<CandidateLayoutGuide>,
-    /// Whether this level's commitment and D image get hiding randomness.
-    pub(crate) hiding: bool,
+    /// Whether this level is masked by a zero-knowledge cut.
+    pub(crate) masking: super::LevelMasking,
 }
 
 #[derive(Clone, Copy)]
@@ -254,6 +254,7 @@ impl RecursiveCandidateContext<'_, '_> {
                 log_basis_open,
                 width_s,
                 modeled_linf_cap,
+                masking: request.masking,
             })?
         else {
             return Ok(None);
@@ -280,7 +281,7 @@ impl RecursiveCandidateContext<'_, '_> {
             return Ok(None);
         };
         let Some((open_commit_matrix, open_randomness_columns)) = price_with_hiding_randomness(
-            request.hiding,
+            request.masking.hiding(),
             width_w,
             dimensions.d_d(),
             policy.sis_modulus_profile,
@@ -352,7 +353,7 @@ impl RecursiveCandidateContext<'_, '_> {
                     log_basis_open: request.log_basis_open,
                     num_digits_outer: core.num_digits_open,
                     inner_output_rank: core.inner_commit_matrix.output_rank(),
-                    hiding: request.hiding,
+                    hiding: request.masking.hiding(),
                 })?
             else {
                 continue;
@@ -503,7 +504,7 @@ impl RecursiveCandidateContext<'_, '_> {
                         let params = attach_recursive_setup_prefix(
                             setup_prefix.as_ref(),
                             policy.claim_ext_degree,
-                            request.hiding,
+                            request.masking.hiding(),
                             base_candidate.clone(),
                         )?;
                         if params.compression_sources_supported()? {
@@ -625,7 +626,11 @@ fn append_selective_l2_candidates(
         source_moment,
         ..
     } = *request;
-    if !policy.selective_l2_response_model_enabled() {
+    // A masked level is ℓ∞ only: an ℓ2 route reveals the response energy and
+    // its cap is sized for a retrying prover.
+    if !policy.selective_l2_response_model_enabled()
+        || matches!(request.masking, super::LevelMasking::Masked(_))
+    {
         return Ok(());
     }
     if request
@@ -717,7 +722,7 @@ fn append_selective_l2_candidates(
             let params = attach_recursive_setup_prefix(
                 setup_prefix.as_ref(),
                 policy.claim_ext_degree,
-                request.hiding,
+                request.masking.hiding(),
                 base_candidate.clone(),
             )?;
             if params.compression_sources_supported()? {
@@ -860,6 +865,30 @@ pub(crate) fn derive_fold_candidates(
     policy: FoldCandidatePolicy,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     let (setup_prefix, relation_domain) = work.into_search_parts();
+    // A zero-knowledge schedule admits no setup prefix through the level after
+    // the cut, ℓ∞-only quotient folds at base 8 at masked levels, and a
+    // residual commitment with d_A = d_B; skip what admission would refuse.
+    let masking = request.masking;
+    if !masking.allows_setup_prefix() && matches!(setup_prefix, RecursiveSetupPrefix::Search { .. })
+    {
+        return Ok(Vec::new());
+    }
+    if masking.opens_residual() && request.dimensions.d_a() != request.dimensions.d_b() {
+        return Ok(Vec::new());
+    }
+    let relation_domain = if masking.hiding() {
+        if request.log_basis_open != akita_params::zk::MASKED_LOG_BASIS {
+            return Ok(Vec::new());
+        }
+        match relation_domain {
+            RelationSearchDomain::QuotientOnly | RelationSearchDomain::QuotientAndReduced => {
+                RelationSearchDomain::QuotientOnly
+            }
+            RelationSearchDomain::ReducedOnly => return Ok(Vec::new()),
+        }
+    } else {
+        relation_domain
+    };
     match policy {
         FoldCandidatePolicy::Best => {
             derive_best_fold_candidates(request, setup_prefix, relation_domain)

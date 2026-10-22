@@ -147,26 +147,32 @@ impl ValidatedScheduleCatalog {
             rows,
             policy,
             ring_challenge_config,
-            crate::audit::HidingAdmission::Clear,
+            crate::audit::ZkAdmission::Clear,
         )
     }
 
-    /// Build a catalog of test-only hiding rows, whose randomness widths up
-    /// to `cut_level` are recomputed instead of rejected.
+    /// Build a test-only catalog that also admits zero-knowledge rows, each
+    /// checked by [`akita_params::zk::ZkOpeningSchedule::admit`] against
+    /// `root_source`.
+    ///
+    /// Callers go through `akita_config::TrustedScheduleCatalog::try_new_with_test_zk`,
+    /// which takes `root_source` from the configuration, so the prover's
+    /// recheck and admission read one source contract.
+    #[doc(hidden)]
     #[cfg(all(feature = "test-support", feature = "zk"))]
-    pub fn try_new_with_test_hiding(
+    pub fn try_new_with_test_zk(
         family_name: impl Into<String>,
         rows: impl IntoIterator<Item = (CommittedGroupBatchProfile, FoldSchedule)>,
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-        cut_level: usize,
+        root_source: akita_params::sis::CommittedSourceContract,
     ) -> Result<Self, AkitaError> {
         Self::try_new_admitting(
             family_name,
             rows,
             policy,
             ring_challenge_config,
-            crate::audit::HidingAdmission::TestCut(cut_level),
+            crate::audit::ZkAdmission::TestZk(root_source),
         )
     }
 
@@ -175,7 +181,7 @@ impl ValidatedScheduleCatalog {
         rows: impl IntoIterator<Item = (CommittedGroupBatchProfile, FoldSchedule)>,
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-        hiding: crate::audit::HidingAdmission,
+        admission: crate::audit::ZkAdmission,
     ) -> Result<Self, AkitaError> {
         let family_name = family_name.into();
         validate_family_name(&family_name)?;
@@ -192,7 +198,8 @@ impl ValidatedScheduleCatalog {
 
         let mut resolved = Vec::with_capacity(rows.len());
         for (profiles, schedule) in rows {
-            let row = ResolvedScheduleRow::try_new_admitting(profiles, schedule, policy, hiding)?;
+            let row =
+                ResolvedScheduleRow::try_new_admitting(profiles, schedule, policy, admission)?;
             validate_schedule_challenge_hooks(row.schedule(), &ring_challenge_config)?;
             resolved.push(row);
         }

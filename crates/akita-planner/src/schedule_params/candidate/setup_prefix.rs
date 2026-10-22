@@ -112,6 +112,7 @@ impl SetupPrefixCandidateContext<'_> {
             log_basis_open: self.log_basis_open,
             width_s: split.width_s,
             modeled_linf_cap,
+            masking: LevelMasking::Clear,
         })
     }
 

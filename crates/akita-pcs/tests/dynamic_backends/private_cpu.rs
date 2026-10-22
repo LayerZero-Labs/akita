@@ -1,7 +1,7 @@
 // A distinct handle family; CPU storage is private to this test backend.
 use super::{Cfg, E, F};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
-use akita_cpu_backend::{CpuBackend, CpuImportPacket, GroupContext, OneHotPoly};
+use akita_cpu_backend::{CpuBackend, CpuImportPacket, CpuSource, GroupContext};
 use akita_error::AkitaError;
 use akita_params::{FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout};
 use akita_prover::backend::*;
@@ -65,6 +65,11 @@ pub(crate) struct PrivateCpu {
     pub(crate) imports: Cell<usize>,
     pub(crate) exports: Cell<usize>,
     pub(crate) commitments: Cell<usize>,
+    /// Opening fold probes run so far.
+    pub(crate) fold_probes: Cell<usize>,
+    /// Index of an opening fold probe to reject regardless of its response,
+    /// as if the response overflowed its digit range.
+    pub(crate) reject_fold_probe: Cell<Option<usize>>,
     /// The last Stage-2 challenge, recorded under [`Fault::Stage2OracleMiss`].
     stage2_last_challenge: Cell<Option<E>>,
 }
@@ -80,6 +85,8 @@ impl PrivateCpu {
             imports: Cell::new(0),
             exports: Cell::new(0),
             commitments: Cell::new(0),
+            fold_probes: Cell::new(0),
+            reject_fold_probe: Cell::new(None),
             stage2_last_challenge: Cell::new(None),
         }
     }
@@ -112,10 +119,10 @@ impl PrivateCpu {
         }
         prefixes
     }
-    pub(crate) fn commit_onehot(
+    pub(crate) fn commit<P: CpuSource<F, E>>(
         &self,
         schedules: &TrustedScheduleCatalog<Cfg>,
-        polys: Vec<OneHotPoly<F, u8>>,
+        polys: Vec<P>,
     ) -> Result<(akita_types::CommittedGroup<F>, OwnedCommitment), AkitaError> {
         let source = self.inner.import_source(polys)?;
         let output = self.inner.commit(
@@ -486,6 +493,11 @@ impl OpaqueOpeningKernel<F, E> for PrivateCpu {
         opening: &Self::PreparedOpeningHandle,
         plan: &ValidatedFoldProbePlan<'_>,
     ) -> Result<FoldProbeOutcome<Self::AcceptedFoldHandle>, AkitaError> {
+        let probe = self.fold_probes.get();
+        self.fold_probes.set(probe + 1);
+        if self.reject_fold_probe.get() == Some(probe) {
+            return Ok(FoldProbeOutcome::Rejected);
+        }
         self.inner.probe_opening_fold(context, opening, plan)
     }
 }

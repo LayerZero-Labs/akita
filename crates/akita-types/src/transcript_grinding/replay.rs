@@ -4,7 +4,7 @@ use crate::FoldDrawRecord;
 use crate::FoldSite;
 use akita_error::AkitaError;
 use akita_params::transcript_site::{ProtocolSiteId, SITE_FAMILY_SUMCHECK};
-use akita_params::{GrindingPlan, GrindingQueryKind, GrindingSite};
+use akita_params::{FoldResponseSearch, GrindingPlan, GrindingQueryKind, GrindingSite};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_sumcheck::{ProverRoundContext, SumcheckError, SumcheckSite, VerifierRoundContext};
 use jolt_transcript::{
@@ -18,6 +18,7 @@ struct GrindingPlanEntry {
     site: GrindingSite,
     grind_bits: u8,
     nonce_bits: u8,
+    fold_search: Option<FoldResponseSearch>,
 }
 
 struct GrindingPlanCursor<'a> {
@@ -41,6 +42,7 @@ impl<'a> GrindingPlanCursor<'a> {
             site: run.site(),
             grind_bits: run.grind_bits(),
             nonce_bits: run.nonce_bits(),
+            fold_search: run.fold_response_search(),
         };
         self.run_offset += 1;
         if self.run_offset == run.multiplicity() {
@@ -56,6 +58,7 @@ impl<'a> GrindingPlanCursor<'a> {
             site: run.site(),
             grind_bits: run.grind_bits(),
             nonce_bits: run.nonce_bits(),
+            fold_search: run.fold_response_search(),
         })
     }
 
@@ -341,14 +344,21 @@ impl<'a, H: Sponge, C: ProverGrindingChannel<Sponge = H>> ProverGrinding<'a, H, 
     }
 
     /// Starts the scheduled fold-response search at `site`: squeezes the
-    /// fork seed every candidate counter is tried under.
-    pub fn begin_fold_response(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
+    /// fork seed every candidate counter is tried under, and returns how the
+    /// plan searches this site.
+    pub fn begin_fold_response(
+        &mut self,
+        site: GrindingSite,
+    ) -> Result<FoldResponseSearch, AkitaError> {
         let result = self.begin_fold_response_inner(site);
         self.invalid |= result.is_err();
         result
     }
 
-    fn begin_fold_response_inner(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
+    fn begin_fold_response_inner(
+        &mut self,
+        site: GrindingSite,
+    ) -> Result<FoldResponseSearch, AkitaError> {
         let entry = self.cursor.peek().ok_or_else(|| {
             AkitaError::InvalidInput("fold-response search has no remaining plan entry".into())
         })?;
@@ -362,9 +372,12 @@ impl<'a, H: Sponge, C: ProverGrindingChannel<Sponge = H>> ProverGrinding<'a, H, 
                 "a fold-response search is already in progress".into(),
             ));
         }
+        let search = entry.fold_search.ok_or_else(|| {
+            AkitaError::InvalidInput("fold-response plan entry has no search".into())
+        })?;
         self.state.site(fold_response_site(site, entry.nonce_bits));
         self.fold_seed = Some((site, self.state.challenge_bytes()));
-        Ok(())
+        Ok(search)
     }
 
     /// The fork a candidate `counter`'s fold challenges are drawn from, for the
@@ -425,6 +438,10 @@ impl<'a, H: Sponge, C: ProverGrindingChannel<Sponge = H>> ProverGrinding<'a, H, 
             return Err(AkitaError::InvalidInput(
                 "fold-response nonce exceeds its scheduled bit width".into(),
             ));
+        }
+        // A one-shot response sends no nonce: its counter is always 0.
+        if entry.fold_search == Some(FoldResponseSearch::OneShot) {
+            return Ok(Fork::new(&seed, counter));
         }
         self.state.site(fold_response_site(site, entry.nonce_bits));
         let transcript = self.state.transcript_mut();
@@ -559,6 +576,11 @@ impl<'a, 'proof, H: Sponge, C: VerifierGrindingChannel<'proof, Sponge = H>>
         let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse)?;
         self.state.site(fold_response_site(site, entry.nonce_bits));
         let seed: [u8; FORK_SEED_LEN] = self.state.challenge_bytes();
+        // A one-shot response carries no nonce; reading one would consume a
+        // byte of the next message.
+        if entry.fold_search == Some(FoldResponseSearch::OneShot) {
+            return Ok(Fork::new(&seed, 0));
+        }
         let transcript = self.state.transcript_mut();
         let remaining = transcript.remaining();
         let counter = transcript.receive_nonce(entry.nonce_bits)?;

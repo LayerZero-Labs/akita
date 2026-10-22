@@ -539,14 +539,16 @@ fn audit_terminal(
     Ok(())
 }
 
-/// Which hiding-randomness widths a row may carry.
+/// Which rows catalog admission accepts.
 #[derive(Clone, Copy)]
-pub(crate) enum HidingAdmission {
-    /// None: zero knowledge is not selectable yet, so every width is zero.
+pub(crate) enum ZkAdmission {
+    /// Clear rows only: zero knowledge is not selectable yet, so no row has a
+    /// zero-knowledge cut or any hiding randomness.
     Clear,
-    /// The test-only hiding schedules, recomputed up to their cut level.
+    /// Test-only catalogs, which also admit zero-knowledge rows that pass
+    /// [`akita_params::zk::ZkOpeningSchedule::admit`] for the root source.
     #[cfg(all(feature = "test-support", feature = "zk"))]
-    TestCut(usize),
+    TestZk(akita_params::sis::CommittedSourceContract),
 }
 
 /// Re-audit one complete expanded row against the policy the verifier trusts.
@@ -554,11 +556,11 @@ pub(crate) fn audit_resolved_schedule(
     profiles: &CommittedGroupBatchProfile,
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,
-    hiding: HidingAdmission,
+    admission: ZkAdmission,
 ) -> Result<(), AkitaError> {
     validate_policy(policy)?;
-    match hiding {
-        HidingAdmission::Clear => {
+    match (admission, schedule.zk) {
+        (_, None) => {
             let levels = std::iter::once(&schedule.root)
                 .chain(&schedule.recursive_folds)
                 .map(|fold| &fold.params);
@@ -571,14 +573,24 @@ pub(crate) fn audit_resolved_schedule(
                 {
                     return Err(invalid(
                         "schedule",
-                        "hiding randomness is not selectable in a trusted catalog",
+                        "hiding randomness is not selectable in a clear schedule",
                     ));
                 }
             }
         }
+        (ZkAdmission::Clear, Some(_)) => {
+            return Err(invalid(
+                "schedule",
+                "a zero-knowledge cut is not selectable in a trusted catalog",
+            ));
+        }
         #[cfg(all(feature = "test-support", feature = "zk"))]
-        HidingAdmission::TestCut(cut_level) => {
-            akita_params::zk::validate_hiding_randomness(schedule, cut_level)?;
+        (ZkAdmission::TestZk(root_source), Some(_)) => {
+            akita_params::zk::ZkOpeningSchedule::admit(
+                schedule,
+                root_source,
+                policy.claim_ext_degree,
+            )?;
         }
     }
     profiles.validate(policy.decomposition.field_bits())?;

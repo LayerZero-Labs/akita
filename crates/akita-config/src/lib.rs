@@ -171,6 +171,34 @@ impl<Cfg: CommitmentConfig> TrustedScheduleCatalog<Cfg> {
         Ok(Self::from_validated(catalog))
     }
 
+    /// Build a test-only catalog that also admits zero-knowledge rows. Each
+    /// is checked by [`akita_params::zk::ZkOpeningSchedule::admit`] against
+    /// `Cfg`'s own committed-source contract and claim degree.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid chunking or any row admission refuses.
+    #[cfg(all(feature = "test-support", feature = "zk"))]
+    pub fn try_new_with_test_zk(
+        rows: impl IntoIterator<
+            Item = (
+                akita_params::CommittedGroupBatchProfile,
+                akita_params::FoldSchedule,
+            ),
+        >,
+        chunking: ChunkedWitnessCfg,
+    ) -> Result<Self, AkitaError> {
+        validate_config_policy::<Cfg>(chunking)?;
+        let catalog = ValidatedScheduleCatalog::try_new_with_test_zk(
+            Cfg::schedule_family_name(),
+            rows,
+            &policy_of::<Cfg>(chunking),
+            Cfg::ring_challenge_config,
+            Cfg::committed_source_contract()?,
+        )?;
+        Ok(Self::from_validated(catalog))
+    }
+
     /// Decode a catalog using caller-selected chunking from trusted preprocessing.
     ///
     /// Chunking is an expected policy, not an instruction supplied by a proof.

@@ -21,6 +21,7 @@ use akita_types::{
 };
 use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use jolt_algebra::{CanonicalEncoding, Field, Ring};
+use zeroize::Zeroizing;
 
 /// Consumer-owned per-group inputs retained for recursive witness construction.
 pub(crate) struct RingRelationGroupWitness<F: Field + CanonicalEncoding> {
@@ -111,7 +112,7 @@ pub(crate) struct RingRelationWitness<F: Field + CanonicalEncoding> {
     d_quotients: RelationDQuotientWitness<F>,
     compression: Option<CompressionWitnessMaterialization<F>>,
     /// D hiding randomness the opening payload was computed with.
-    d_randomness: Vec<i8>,
+    d_randomness: Zeroizing<Vec<i8>>,
 }
 
 impl<F: Field + CanonicalEncoding> RingRelationWitness<F> {
@@ -124,12 +125,12 @@ impl<F: Field + CanonicalEncoding> RingRelationWitness<F> {
             groups,
             d_quotients,
             compression,
-            d_randomness: Vec::new(),
+            d_randomness: Zeroizing::new(Vec::new()),
         }
     }
 
     /// Attach the D hiding randomness the opening payload was computed with.
-    pub(crate) fn with_d_randomness(mut self, d_randomness: Vec<i8>) -> Self {
+    pub(crate) fn with_d_randomness(mut self, d_randomness: Zeroizing<Vec<i8>>) -> Self {
         self.d_randomness = d_randomness;
         self
     }
@@ -228,7 +229,7 @@ pub(crate) struct PreparedRingSwitchGroup<F: Field + CanonicalEncoding> {
     pub(crate) e_hat: DigitBlocks,
     pub(crate) t_hat: DigitBlocks,
     /// Slice-major B hiding randomness of the consumed commitment.
-    pub(crate) outer_randomness: Vec<i8>,
+    pub(crate) outer_randomness: Zeroizing<Vec<i8>>,
     /// Block-major native-A rows: `[block][A row][coefficient]`.
     pub(crate) recomposed_inner_rows: RingVec<F>,
     pub(crate) folded_opening: GroupFoldedOpening<F>,
@@ -605,7 +606,7 @@ where
         }
         let recomposed_inner_rows =
             RingVec::from_coeffs_with_ring_dim(inner_coefficients, group_dims.d_a())?;
-        let outer_randomness = inner_relation.outer_randomness().to_vec();
+        let outer_randomness = Zeroizing::new(inner_relation.outer_randomness().to_vec());
         let expected_randomness = group_lp
             .profile
             .derive_slice_geometry()?

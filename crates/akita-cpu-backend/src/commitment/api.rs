@@ -380,6 +380,16 @@ where
                 precommitteds: context.precommitted_groups.as_slice().to_vec(),
             };
             let scheduled_row = schedules.resolve_key(&key)?;
+            // Defense in depth at the first sampling point: a zero-knowledge
+            // row samples hiding randomness below, so recheck it in release
+            // builds first. Catalog admission already ran the same check.
+            if scheduled_row.schedule().zk.is_some() {
+                akita_params::zk::ZkOpeningSchedule::admit(
+                    scheduled_row.schedule(),
+                    Cfg::committed_source_contract()?,
+                    Cfg::EXT_DEGREE,
+                )?;
+            }
 
             // A final group with precommitted groups consumes the row's whole
             // schedule. A standalone group is admitted on its own A/B footprint.

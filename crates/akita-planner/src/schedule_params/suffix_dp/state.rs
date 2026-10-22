@@ -358,9 +358,9 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) level_zero_is_root: bool,
     pub(crate) relation_traversal_order: RelationTraversalOrder,
     pub(crate) relation_mode_filter: RelationModeFilter,
-    /// Last level whose commitments and D images get hiding randomness;
-    /// `None` plans a clear schedule.
-    pub(crate) hiding_cut_level: Option<usize>,
+    /// Zero-knowledge cut whose levels are planned masked; `None` plans a
+    /// clear schedule.
+    pub(crate) zk: Option<akita_params::zk::ZkOpeningSchedule>,
 }
 
 #[derive(Clone, Copy)]
