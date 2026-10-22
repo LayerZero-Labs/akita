@@ -218,6 +218,7 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]
