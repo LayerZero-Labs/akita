@@ -1575,6 +1575,12 @@ padding rows; 5% building A plane by plane.
   δ·1[j ≥ len]·eq(τ_pad, j), evaluated by an O(ν) bit-DP (adds ν/q to the
   error; paper delta). b comes from the targets, with no matrix application.
   Estimate ≈ 60–65 ms synthetic, ≈ +12 ms at the paper's geometry.
+- **Digit-range kernel (Akita-wide follow-up).** Profiled at |e| ≈ 2^27
+  (W5 prover work, loaded machine): about 55% binds
+  (`ExactPrefixTable::fold_in_place`), 40% round polynomials
+  (`ClassIndexedRangeLeafProver::round_q_coefficients`), 12% session setup
+  (`CompactDigitSource::new`). It is the shared Stage-1 kernel of every
+  fold, so it is left to an Akita-wide change.
 - **P2, W5b.** After P1, about 80% of the verifier is the σ_N scan; W5b moves
   it into Stage 3 (§5.3). Stage 3's random column point needs ω̃ evaluated
   succinctly, which needs A15 segment alignment (C_k = 2^{c_k}, aligned o_k)
@@ -1744,6 +1750,21 @@ The numbering continues the W4 note's A1–A23.
   map products). It is not verified: jolt-zk's dudect harness
   (`examples/sigma_dudect.rs`) cannot reach Akita's executor, and Akita has
   no dudect harness; a case for it is open (§5.7).
+
+  The response prover's own code reads `e` only at public indices and
+  lifts its digits with `jolt_zk::whiteout::lift_ct` (no branch on sign):
+  `AkitaResponseProver::prove` (the committed table), `FusedE` (the i8 first
+  round and its fold), `SplitB` (indexed by `I_bin`'s public positions and
+  the round index only), and jolt-zk's `PlaneLayout::recompose`. `e`'s
+  digits and every table derived from them are wiped when freed:
+  `Zeroizing` for digits, `SecretTable` for field tables (each fold drops,
+  and so wipes, the previous one), jolt-zk's `SecretVec` for the decoded
+  parts. Not audited and not wiped here, because they are Akita's shared
+  kernels: the commitment's copy of `e` (`DensePoly` and its digit cache),
+  and the digit-range session, whose `CompactDigitSource` groups digits by
+  value class (`ordered_range_class_pairs`), a memory access that depends
+  on `e`. Both are requirements on those kernels, as for the compression
+  executor.
 - **A37, trusting the setup cache (upstream, open).** With
   disk-persistence, `akita_setup::load_prover_setup` reads the public
   matrix from the cache file and runs `AkitaExpandedSetup::check` on it
