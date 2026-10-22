@@ -61,12 +61,23 @@ impl NegativeBinarySupport {
         witness_layout: &WitnessLayout,
         physical_field_len: usize,
     ) -> Result<Self, AkitaError> {
+        Self::from_intervals(
+            witness_layout.negative_binary_support_intervals(),
+            physical_field_len,
+        )
+    }
+
+    /// The support of sorted, disjoint, nonempty `intervals` within a
+    /// power-of-two domain of `physical_field_len` entries.
+    pub fn from_intervals(
+        intervals: Vec<Range<usize>>,
+        physical_field_len: usize,
+    ) -> Result<Self, AkitaError> {
         if !physical_field_len.is_power_of_two() {
             return Err(AkitaError::InvalidSetup(
                 "negative-binary support requires a power-of-two field domain".into(),
             ));
         }
-        let intervals = witness_layout.negative_binary_support_intervals();
         let mut previous_end = 0;
         for interval in &intervals {
             if interval.start >= interval.end
