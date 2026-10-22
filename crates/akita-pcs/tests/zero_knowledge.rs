@@ -132,9 +132,10 @@ fn planner_masks_every_level_up_to_the_cut() {
         assert!(levels.len() > ZK_CUT_LEVEL as usize + 1);
         for (level, params) in levels.iter().enumerate() {
             let masked = zk().masks(level);
+            let residual = level == ZK_CUT_LEVEL as usize + 1;
             assert_eq!(
                 params.own_group().profile.randomness_columns != 0,
-                masked,
+                masked || residual,
                 "level {level} B randomness"
             );
             assert_eq!(
@@ -249,21 +250,72 @@ fn admission_recomputes_the_masked_levels() {
                 "fold digits",
             );
         }
-        // The first unmasked level carries no randomness.
+        // The level after the cut opens the residual commitment: exactly
+        // r_a's columns, at base 16, in one slice, with no D randomness.
         let after_cut = ZK_CUT_LEVEL as usize + 1;
+        for delta in [-1isize, 1] {
+            rejects(
+                &|s| {
+                    let mut levels = levels_mut(s);
+                    let group = levels[after_cut].own_group_mut();
+                    group.profile.randomness_columns = group
+                        .profile
+                        .randomness_columns
+                        .checked_add_signed(delta)
+                        .unwrap();
+                },
+                "wrong residual randomness r_a",
+            );
+        }
         rejects(
             &|s| levels_mut(s)[after_cut].open_randomness_columns += 1,
-            "wrong D hiding randomness",
+            "D hiding randomness after the cut",
+        );
+        rejects(
+            &|s| {
+                levels_mut(s)[after_cut]
+                    .own_group_mut()
+                    .opening
+                    .log_basis_open -= 1
+            },
+            "basis other than 16",
         );
         rejects(
             &|s| {
                 levels_mut(s)[after_cut]
                     .own_group_mut()
                     .profile
-                    .randomness_columns += 1
+                    .outer_slice_count = akita_params::CommitmentSliceCount::TWO
             },
-            "wrong B hiding randomness",
+            "more than one outer slice",
         );
+        rejects(
+            &|s| {
+                levels_mut(s)[after_cut].payload_mode =
+                    akita_params::CommitmentPayloadMode::Compressed
+            },
+            "residual commitment compressed",
+        );
+        // Every later level carries no randomness.
+        if let Some(later) = levels(&schedule)
+            .len()
+            .checked_sub(1)
+            .filter(|&last| last > after_cut)
+        {
+            rejects(
+                &|s| {
+                    levels_mut(s)[later]
+                        .own_group_mut()
+                        .profile
+                        .randomness_columns += 1
+                },
+                "wrong B hiding randomness",
+            );
+            rejects(
+                &|s| levels_mut(s)[later].open_randomness_columns += 1,
+                "wrong D hiding randomness",
+            );
+        }
         let masked = ZK_CUT_LEVEL as usize;
         rejects(
             &|s| levels_mut(s)[masked].ring_relation_mode = RingRelationMode::ReducedEvaluation,

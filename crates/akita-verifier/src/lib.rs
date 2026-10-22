@@ -44,7 +44,7 @@ pub use benchmark_support::{
     RelationEvaluatorBenchmarkCase,
 };
 #[cfg(all(feature = "zk", feature = "test-support"))]
-pub use masked::{CutState, MaskedPrefix, MaskedPrefixRows};
+pub use masked::{MaskedPrefix, MaskedPrefixRows, ResidualClaim};
 pub use prepared_cache::build_riscv64_terminal_ntt_cache;
 pub use relation::RelationMatrixEvaluator;
 pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};

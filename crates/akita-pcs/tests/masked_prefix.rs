@@ -418,12 +418,11 @@ fn honest_masked_prefix_satisfies_its_residual_rows() {
             honest.prefix.auxiliary_values(&honest.pads).unwrap(),
             honest.prover_auxiliary
         );
-        let cut = honest.prefix.cut();
-        assert_eq!(cut.cut_level, ZK_CUT_LEVEL);
-        assert_eq!(cut.point, honest.residual.point);
-        assert_eq!(cut.residual_commitment, honest.residual.residual_commitment);
+        let claim = honest.prefix.residual_claim();
+        assert_eq!(claim.cut_level(), ZK_CUT_LEVEL);
+        assert_eq!(claim.commitment(), honest.residual.residual_commitment);
         assert_eq!(
-            cut.witness_eval.evaluate(&honest.pads, &[]).unwrap(),
+            claim.witness_eval().evaluate(&honest.pads, &[]).unwrap(),
             honest.residual.witness_eval
         );
     });
@@ -521,7 +520,8 @@ fn masked_entries_reject_wrong_claims_and_clear_schedules() {
             .prove(&mut pads, |claim| {
                 vec![AffineRow::masked(claim + F::one(), PadIndex(0))]
             })
-            .unwrap_err();
+            .err()
+            .unwrap();
         assert!(matches!(error, AkitaError::InvalidInput(_)), "{error}");
 
         let clear = Instance::new(
@@ -533,7 +533,8 @@ fn masked_entries_reject_wrong_claims_and_clear_schedules() {
             .prove(&mut pads, |claim| {
                 vec![AffineRow::masked(claim, PadIndex(0))]
             })
-            .unwrap_err();
+            .err()
+            .unwrap();
         assert!(
             matches!(error, AkitaError::UnsupportedSchedule(_)),
             "{error}"
@@ -557,5 +558,276 @@ fn masked_entries_reject_wrong_claims_and_clear_schedules() {
             matches!(error, AkitaError::UnsupportedSchedule(_)),
             "{error}"
         );
+    });
+}
+
+/// The cut successor's parameters, which describe the residual commitment.
+fn residual_params(instance: &Instance) -> akita_params::CommittedGroupParams {
+    instance
+        .scheme
+        .schedules()
+        .resolve_selection(instance.selection())
+        .unwrap()
+        .schedule()
+        .recursive_folds[ZK_CUT_LEVEL as usize]
+        .params
+        .clone()
+}
+
+/// `Σ_i w_i · eq(i, point)` over w_k's digits, zero-padded, with the point's
+/// first coordinate the most significant bit of `i`: the dense MLE, written
+/// out from its definition.
+fn dense_mle(digits: &[i8], point: &[F]) -> F {
+    let num_vars = point.len();
+    assert!(digits.len() <= 1 << num_vars);
+    digits
+        .iter()
+        .enumerate()
+        .map(|(index, &digit)| {
+            let weight = point.iter().enumerate().fold(F::one(), |weight, (j, &r)| {
+                let bit = (index >> (num_vars - 1 - j)) & 1 == 1;
+                weight * if bit { r } else { F::one() - r }
+            });
+            F::from_i64(i64::from(digit)) * weight
+        })
+        .sum()
+}
+
+/// W3-e, `N·s = t`: the exported `(w_k, t̂_a, r_a)` open u_a. The products run
+/// through jolt-crypto's Ajtai map on the setup stream (`MatrixView`,
+/// `PreparedMatrix::apply_centered`), not Akita's commitment kernels, under
+/// the column semantics of jolt-crypto's `TwoLevelLayout`.
+fn check_residual_commitment<const D: usize>(
+    stream: &[F],
+    params: &akita_params::CommittedGroupParams,
+    opening: &ResidualOpening<F, F>,
+) {
+    use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
+    use jolt_crypto::lattice::{MatrixShape, MatrixView, PreparedMatrix};
+
+    let profile = &params.own_group().profile;
+    let n_a = profile.inner.matrix.output_rank();
+    let positions = profile.blocks.positions_per_block;
+    let blocks = profile.blocks.live_blocks;
+    let (inner, outer) = (profile.inner.digits, profile.outer.digits);
+    let a = PreparedMatrix::<F, D>::new(
+        &MatrixView::new(
+            MatrixShape {
+                rows: n_a,
+                width: positions * inner.num_digits,
+                ring_dim: D,
+            },
+            stream,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let decompose = BalancedDecomposePow2Params::<F>::new(inner.num_digits, inner.log_basis);
+    let mut t = Vec::new();
+    for block in 0..blocks {
+        let mut input = Vec::new();
+        for position in 0..positions {
+            let ring = (0..D)
+                .map(|coefficient| {
+                    opening
+                        .w_k
+                        .get((block * positions + position) * D + coefficient)
+                        .map_or(F::zero(), |&digit| F::from_i64(i64::from(digit)))
+                })
+                .collect::<Vec<_>>();
+            let mut digits = vec![0i8; inner.num_digits * D];
+            jolt_algebra::balanced_decompose_coefficients_pow2_i8_into(
+                &ring,
+                &mut digits,
+                &decompose,
+            );
+            input.extend(digits.iter().map(|&digit| i64::from(digit)));
+        }
+        t.extend(a.apply_centered(&input, 1 << 7).unwrap());
+    }
+    // G · t̂_a = t, [block][A row][digit][coefficient].
+    assert_eq!(opening.t_hat_a.len(), t.len() * outer.num_digits * D);
+    let base = F::from_u64(1 << outer.log_basis);
+    for (index, ring) in t.iter().enumerate() {
+        for coefficient in 0..D {
+            let recombined = (0..outer.num_digits).rev().fold(F::zero(), |sum, digit| {
+                sum * base
+                    + F::from_i64(i64::from(
+                        opening.t_hat_a[(index * outer.num_digits + digit) * D + coefficient],
+                    ))
+            });
+            assert_eq!(
+                recombined,
+                ring.coefficients()[coefficient],
+                "t row {index}"
+            );
+        }
+    }
+    // [B | B′](t̂_a, r_a) = u_a.
+    assert_eq!(opening.r_a.len(), profile.randomness_columns * D);
+    let b = PreparedMatrix::<F, D>::new(
+        &MatrixView::new(
+            MatrixShape {
+                rows: profile.outer.matrix.output_rank(),
+                width: opening.t_hat_a.len() / D + profile.randomness_columns,
+                ring_dim: D,
+            },
+            stream,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let input = opening
+        .t_hat_a
+        .iter()
+        .chain(opening.r_a.iter())
+        .map(|&digit| i64::from(digit))
+        .collect::<Vec<_>>();
+    let u = b
+        .apply_centered(&input, 1 << 7)
+        .unwrap()
+        .iter()
+        .flat_map(|ring| ring.coefficients().to_vec())
+        .collect::<Vec<_>>();
+    assert_eq!(u, opening.residual_commitment);
+}
+
+/// W3-e: the exported residual opening satisfies `N·s = t` for Akita's own
+/// u_a, its r_a is drawn from the residual alphabet, and the dense
+/// `w̃_k(point)` equals the decoded witness evaluation. The dense evaluation
+/// is written from the MLE's definition with the first coordinate the most
+/// significant index bit (A18); the reversed point gives another value, so
+/// the order is pinned.
+#[test]
+fn residual_opening_opens_u_a_and_evaluates_to_w_eval() {
+    on_large_stack(|| {
+        let honest = Honest::new();
+        let params = residual_params(&honest.instance);
+        let opening = &honest.residual;
+        assert_eq!(
+            params.own_group().profile.randomness_columns,
+            opening.r_a.len() / params.role_dims().d_b()
+        );
+        assert_eq!(
+            opening.r_a_log_basis,
+            akita_params::zk::RESIDUAL_RANDOMNESS_LOG_BASIS
+        );
+        assert!(opening.r_a.iter().all(|digit| (-8..8).contains(digit)));
+        assert!(opening.r_a.iter().any(|&digit| digit != 0));
+        assert!(opening.w_k.iter().all(|digit| (-4..4).contains(digit)));
+        assert_eq!(opening.w_k_log_basis, 3);
+        let stream = honest
+            .instance
+            .setup
+            .expanded
+            .shared_matrix
+            .as_field_slice();
+        match params.d_a() {
+            64 => check_residual_commitment::<64>(stream, &params, opening),
+            128 => check_residual_commitment::<128>(stream, &params, opening),
+            256 => check_residual_commitment::<256>(stream, &params, opening),
+            other => panic!("residual ring dimension {other}"),
+        }
+
+        let point = opening.point.as_slice();
+        assert_eq!(dense_mle(&opening.w_k, point), opening.witness_eval);
+        let reversed = point.iter().rev().copied().collect::<Vec<_>>();
+        assert_ne!(dense_mle(&opening.w_k, &reversed), opening.witness_eval);
+        assert_eq!(honest.prefix.residual_claim().point(), &opening.point);
+    });
+}
+
+/// Two openings of one statement send different residual commitments: u_a
+/// is hidden by fresh r_a.
+#[test]
+fn two_openings_of_one_statement_differ_in_u_a() {
+    on_large_stack(|| {
+        let honest = Honest::new();
+        let mut pads =
+            CommittedPads::uncommitted(honest.layout.clone(), honest.pads.clone()).unwrap();
+        let Ok((_, second, _)) = honest.instance.prove(&mut pads, |claim| {
+            vec![AffineRow::masked(claim, PadIndex(0))]
+        }) else {
+            panic!("second opening failed");
+        };
+        assert_ne!(second.r_a, honest.residual.r_a);
+        assert_ne!(
+            second.residual_commitment,
+            honest.residual.residual_commitment
+        );
+    });
+}
+
+/// An early masked message altered in the proof: the masked statement claim,
+/// absorbed before every challenge of the prefix. Every later challenge
+/// changes, so the replay either rejects a proof-of-work nonce or yields rows
+/// the honest pads violate.
+#[test]
+fn a_tampered_early_message_is_rejected_or_breaks_a_row() {
+    on_large_stack(|| {
+        let honest = Honest::new();
+        let mut proof = honest.proof.clone();
+        proof[0] ^= 1;
+        match honest.instance.verify(&proof, &honest.layout) {
+            Err(error) => assert!(matches!(error, AkitaError::InvalidProof), "{error}"),
+            Ok((prefix, masked_auxiliary)) => {
+                let mut relation = ResidualRelation::new(honest.layout.clone(), 1);
+                prefix
+                    .rows(&masked_auxiliary)
+                    .append_rows(&mut relation)
+                    .unwrap();
+                assert!(relation
+                    .first_violation(&honest.pads, &honest.witness())
+                    .unwrap()
+                    .is_some());
+            }
+        }
+    });
+}
+
+/// A truncated masked round is a rejected proof, not an internal error: the
+/// masked channel's transcript failure keeps its classification through the
+/// sumcheck driver.
+#[test]
+fn a_truncated_masked_proof_is_an_invalid_proof() {
+    on_large_stack(|| {
+        let honest = Honest::new();
+        let element = <F as CanonicalBytes>::NUM_BYTES;
+        // Cut inside the prefix: past the claim, before the cut level's
+        // Stage 2, so the replay runs out inside a masked round.
+        let cut = honest.proof.len() - (honest.layout.auxiliary.len() + 1) * element - 2 * element;
+        let error = honest
+            .instance
+            .verify(&honest.proof[..cut], &honest.layout)
+            .err()
+            .unwrap();
+        assert_eq!(error, AkitaError::InvalidProof);
+    });
+}
+
+/// The test schedule grinds at the masked levels, so the masked channels'
+/// nonces and the counting replay's nonce skip run.
+#[test]
+fn the_masked_levels_grind() {
+    on_large_stack(|| {
+        let instance = Instance::new(AkitaCommitmentScheme::new(zk_catalog()));
+        let resolved = instance
+            .scheme
+            .schedules()
+            .resolve_selection(instance.selection())
+            .unwrap();
+        let plan = akita_config::derive_transcript_grinding_plan::<Cfg>(
+            resolved.schedule(),
+            instance.opening_data().opening_layout(),
+        )
+        .unwrap();
+        for level in 0..=ZK_CUT_LEVEL {
+            assert!(
+                plan.runs()
+                    .iter()
+                    .any(|run| run.site().level() == level && run.grind_bits() > 0),
+                "level {level} has no proof-of-work query"
+            );
+        }
     });
 }

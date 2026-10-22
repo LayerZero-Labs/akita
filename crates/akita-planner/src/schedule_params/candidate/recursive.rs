@@ -331,6 +331,11 @@ impl RecursiveCandidateContext<'_, '_> {
             {
                 continue;
             }
+            if request.masking.opens_residual()
+                && outer_slice_count != akita_params::CommitmentSliceCount::ONE
+            {
+                continue;
+            }
             if outer_slice_count
                 .validate_for_commitment(
                     request.fold_level,
@@ -353,7 +358,7 @@ impl RecursiveCandidateContext<'_, '_> {
                     log_basis_open: request.log_basis_open,
                     num_digits_outer: core.num_digits_open,
                     inner_output_rank: core.inner_commit_matrix.output_rank(),
-                    hiding: request.masking.hiding(),
+                    hiding: request.masking.hides_outer(),
                 })?
             else {
                 continue;
@@ -867,13 +872,17 @@ pub(crate) fn derive_fold_candidates(
     let (setup_prefix, relation_domain) = work.into_search_parts();
     // A zero-knowledge schedule admits no setup prefix through the level after
     // the cut, ℓ∞-only quotient folds at base 8 at masked levels, and a
-    // residual commitment with d_A = d_B; skip what admission would refuse.
+    // residual commitment with d_A = d_B at base 16; skip what admission
+    // would refuse.
     let masking = request.masking;
     if !masking.allows_setup_prefix() && matches!(setup_prefix, RecursiveSetupPrefix::Search { .. })
     {
         return Ok(Vec::new());
     }
-    if masking.opens_residual() && request.dimensions.d_a() != request.dimensions.d_b() {
+    if masking.opens_residual()
+        && (request.dimensions.d_a() != request.dimensions.d_b()
+            || request.log_basis_open != akita_params::zk::RESIDUAL_RANDOMNESS_LOG_BASIS)
+    {
         return Ok(Vec::new());
     }
     let relation_domain = if masking.hiding() {

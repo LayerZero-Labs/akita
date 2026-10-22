@@ -8,6 +8,8 @@ mod messages;
 mod metadata;
 mod opening;
 mod plans;
+#[cfg(feature = "zk")]
+mod residual;
 mod scope;
 mod stage3;
 mod traits;
@@ -47,6 +49,8 @@ pub use plans::{
     ValidatedStage1Plan, ValidatedTerminalFoldProbePlan, ValidatedTerminalZEncodingPlan,
     WitnessCommitmentParameters,
 };
+#[cfg(feature = "zk")]
+pub use residual::{ResidualExportKernel, ResidualWitness};
 pub use scope::{ProofScope, ProofScopeConsumer, ProofScopeId};
 pub use stage3::{OpaqueStage3Kernel, Stage3Request};
 pub use traits::{

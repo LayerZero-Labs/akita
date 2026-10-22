@@ -10,32 +10,51 @@
 
 use super::registry::SuccessorHandoff;
 use super::*;
-use crate::backend::{FoldExecutionRequirements, ProofScope, ValidatedRecursiveWitnessCommitPlan};
+use crate::backend::{
+    FoldExecutionRequirements, ProofScope, ResidualExportKernel, ResidualWitness,
+    ValidatedRecursiveWitnessCommitPlan,
+};
 use crate::SelectedProverOpeningData;
 use akita_config::TrustedScheduleCatalog;
 use akita_params::zk::ZkOpeningSchedule;
 use akita_types::{check_range_leaf, AkitaSetupDescriptor, MaskedOpeningClaims, ProverGrinding};
 use jolt_algebra::AdditiveGroup;
-use jolt_poly::{Point, HIGH_TO_LOW, LOW_TO_HIGH};
+use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_transcript::{Channel, ProverTranscript};
 use jolt_zk::masking::{CommittedPads, ValuesDomain};
+use zeroize::Zeroizing;
 
-/// What the masked prefix hands the residual back end at the cut.
+/// What the masked prefix hands the residual back end at the cut: the
+/// opening of the residual commitment u_a, `[B | B′](t̂_a, r_a) = u_a` with
+/// `A·G⁻¹(w_k) = G·t̂_a`, and the evaluation claim `w̃_k(point) = witness_eval`
+/// that the residual relation's `Witness(0)` stands for
+/// (`specs/whiteout-akita.md` §4.6, §4.8.1). The digit orders are
+/// [`ResidualWitness`]'s.
 ///
-/// The residual relation's `Witness(0)` is the evaluation of the cut level's
-/// output witness w_k at `point`; `residual_commitment` is u_a, the raw outer
-/// commitment of w_k the verifier received.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// `public_segments` and the matrix `blocks` of §4.6 are not built yet.
 pub struct ResidualOpening<F, E> {
     /// The last masked level.
     pub cut_level: u32,
-    /// r₂, the cut level's Stage-2 point, first coordinate the most
-    /// significant index bit (`specs/whiteout-sigma.md` A18).
+    /// The evaluation point ([`akita_types::residual_point`]).
     pub point: Point<HIGH_TO_LOW, E>,
-    /// w̃_k(r₂), the cut level's witness evaluation.
+    /// w̃_k(point), the cut level's witness evaluation.
     pub witness_eval: E,
-    /// u_a.
+    /// u_a, the raw outer commitment.
     pub residual_commitment: Vec<F>,
+    /// w_k's digits.
+    pub w_k: Zeroizing<Vec<i8>>,
+    /// Base-two logarithm of w_k's balanced digit alphabet: the cut level's
+    /// open basis, which its range check proves.
+    pub w_k_log_basis: u32,
+    /// The inner digits t̂_a.
+    pub t_hat_a: Zeroizing<Vec<i8>>,
+    /// Base-two logarithm of t̂_a's gadget basis.
+    pub t_hat_log_basis: u32,
+    /// The hiding randomness r_a.
+    pub r_a: Zeroizing<Vec<i8>>,
+    /// Base-two logarithm of r_a's alphabet
+    /// (`akita_params::zk::RESIDUAL_RANDOMNESS_LOG_BASIS`).
+    pub r_a_log_basis: u32,
 }
 
 /// One backend proves every masked level, so a committed successor stays
@@ -111,7 +130,9 @@ where
         + AkitaSerialize
         + CanonicalEncoding
         + 'static,
-    B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
+    B: ProverBackend<Cfg::Field, Cfg::ExtField>
+        + ResidualExportKernel<Cfg::Field, Cfg::ExtField>
+        + 'static,
     B::CommitmentHandle: crate::CommitmentHandleMetadata,
     S: Sponge,
 {
@@ -189,6 +210,22 @@ where
             witness_handle,
             commitment_material,
         } = level.next_state;
+        let cut_params = match (cut_level as usize).checked_sub(1) {
+            None => &schedule.root.params,
+            Some(index) => {
+                &schedule
+                    .recursive_folds
+                    .get(index)
+                    .ok_or_else(|| AkitaError::Internal("the cut level is not scheduled".into()))?
+                    .params
+            }
+        };
+        let successor = schedule
+            .recursive_folds
+            .get(cut_level as usize)
+            .ok_or_else(|| AkitaError::Internal("the cut has no successor level".into()))?;
+        let ResidualWitness { w_k, t_hat, r_a } =
+            backend.export_residual(&witness_handle, &commitment_material, &successor.params)?;
         backend.release_witness_handle(witness_handle)?;
         drop(commitment_material);
         scope.finish()?;
@@ -197,13 +234,19 @@ where
                 "the cut level's successor is not a recursive commitment".into(),
             ));
         };
+        let residual = &successor.params.own_group().profile;
         Ok((
             ResidualOpening {
                 cut_level,
-                point: Point::<LOW_TO_HIGH, _>::low_to_high(public.sumcheck_challenges)
-                    .match_endianness::<HIGH_TO_LOW>(),
+                point: akita_types::residual_point(public.sumcheck_challenges, w_k.len()),
                 witness_eval: public.opening,
                 residual_commitment: residual_commitment.coeffs().to_vec(),
+                w_k,
+                w_k_log_basis: cut_params.open().digits.log_basis,
+                t_hat_a: t_hat,
+                t_hat_log_basis: residual.outer.digits.log_basis,
+                r_a,
+                r_a_log_basis: successor.params.own_group().opening.log_basis_open,
             },
             auxiliary.auxiliary,
         ))

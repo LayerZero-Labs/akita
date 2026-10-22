@@ -6,7 +6,7 @@
 use super::root::verify_root;
 use super::suffix::{verify_suffix_level, SuffixVerifierState};
 use super::verify::OpeningPlan;
-use crate::masked::{CutState, MaskedPrefix, MaskedReplay};
+use crate::masked::{MaskedPrefix, MaskedReplay, ResidualClaim};
 use crate::AkitaVerifier;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
@@ -32,7 +32,7 @@ where
     /// Replays levels `0..=cut_level` of a zero-knowledge opening over the
     /// masked channel of `pads` on `transcript`, and returns the masked
     /// prefix: its stage checks, to lower into residual rows once the
-    /// auxiliary block has arrived, and the cut.
+    /// auxiliary block has arrived, and the [`ResidualClaim`] at the cut.
     ///
     /// `statement` supplies the commitments, points and schedule selection;
     /// its evaluations are not read. The claims are `openings`, affine forms
@@ -72,9 +72,14 @@ where
 
     /// The pad-layout replay of [`verify_masked_prefix`](Self::verify_masked_prefix)
     /// over `view`, a counting view of the pad schedule
-    /// (`CommittedPadsView::counting`), on a transcript of zero or arbitrary
-    /// message bytes. Afterwards `view.used()` counts the masked messages'
-    /// pads, and [`MaskedPrefix::shape`] the auxiliary slots and operands.
+    /// (`CommittedPadsView::counting`). Afterwards `view.used()` counts the
+    /// masked messages' pads, and [`MaskedPrefix::shape`] the auxiliary slots
+    /// and operands.
+    ///
+    /// `transcript` must read zero bytes, or come from a reader that never
+    /// fails, long enough for the prefix; never a proof's bytes. The layout is
+    /// a function of the public schedule, and a proof can end early or fail to
+    /// decode.
     ///
     /// # Errors
     ///
@@ -160,12 +165,13 @@ where
         for offset in 0..cut_level as usize {
             state = verify_suffix_level(setup, &mut replay, schedule, offset, state)?;
         }
-        let cut = CutState::new(
+        let claim = ResidualClaim::new(
             cut_level,
             state.opening_point,
+            state.witness_len,
             state.opening,
             state.witness.coeffs().to_vec(),
         );
-        Ok(MaskedPrefix::new(replay, cut))
+        Ok(MaskedPrefix::new(replay, claim))
     }
 }

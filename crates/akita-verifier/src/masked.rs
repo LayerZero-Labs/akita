@@ -18,7 +18,7 @@ use akita_types::{
     GrindingSumcheckVerifier, RangeLeaf, Stage2OracleWeights, FIELD_DIGEST_BYTES,
 };
 use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_poly::{Point, HIGH_TO_LOW, LOW_TO_HIGH};
+use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::{
     receive_masked_single, DegreeSchedule, SingleFormat, SingleInstance, SumcheckError,
 };
@@ -260,26 +260,72 @@ where
     }
 }
 
-/// Where the masked prefix stops: the last masked level's Stage-2 output, and
-/// the residual commitment the Σ-protocol opens.
+/// The hand-off at the cut, as one value: the residual relation's
+/// `Witness(0)` is the evaluation of the w_k that `commitment` (u_a, as this
+/// verifier received it) commits to, at `point`, and the cut row equates it
+/// with the cut level's masked Stage-2 witness evaluation. The residual back
+/// end opens `commitment` at `point` and nothing else, so neither can drift
+/// from the row.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CutState<F, B> {
+pub struct ResidualClaim<F, B> {
+    cut_level: u32,
+    point: Point<HIGH_TO_LOW, F>,
+    witness_eval: AffineRow<F>,
+    commitment: Vec<B>,
+}
+
+impl<F: Field, B> ResidualClaim<F, B> {
+    /// The residual relation variable this claim defines.
+    pub const WITNESS: ResidualVar = ResidualVar::Witness(0);
+
+    /// The claim of a replay that ended at `cut_level` with Stage-2
+    /// challenges `challenges` (round order) on a w_k of `witness_len`
+    /// digits, and received `commitment`.
+    pub(crate) fn new(
+        cut_level: u32,
+        challenges: Vec<F>,
+        witness_len: usize,
+        witness_eval: AffineRow<F>,
+        commitment: Vec<B>,
+    ) -> Self {
+        Self {
+            cut_level,
+            point: akita_types::residual_point(challenges, witness_len),
+            witness_eval,
+            commitment,
+        }
+    }
+
     /// The last masked level.
-    pub cut_level: u32,
-    /// r₂, the cut level's Stage-2 point, as the residual witness's
-    /// evaluation point: the first coordinate is the most significant index
-    /// bit (`specs/whiteout-sigma.md` A18).
-    pub point: Point<HIGH_TO_LOW, F>,
-    /// The cut level's witness evaluation w̃_k(r₂), masked.
-    pub witness_eval: AffineRow<F>,
-    /// u_a, the raw outer commitment of the cut level's output witness w_k,
-    /// over the base field `B`.
-    pub residual_commitment: Vec<B>,
+    pub fn cut_level(&self) -> u32 {
+        self.cut_level
+    }
+
+    /// The evaluation point of w_k: r₂ as `HIGH_TO_LOW`, padded with leading
+    /// zeros to w_k's variable count ([`akita_types::residual_point`]).
+    pub fn point(&self) -> &Point<HIGH_TO_LOW, F> {
+        &self.point
+    }
+
+    /// u_a, the raw outer commitment to w_k this verifier received.
+    pub fn commitment(&self) -> &[B] {
+        &self.commitment
+    }
+
+    /// The cut level's masked witness evaluation.
+    pub fn witness_eval(&self) -> &AffineRow<F> {
+        &self.witness_eval
+    }
+
+    /// The cut row, `Witness(0) − w̃_k(r₂) = 0`.
+    fn row(&self) -> AffineRow<F> {
+        AffineRow::variable(Self::WITNESS).add_scaled(&self.witness_eval, -F::one())
+    }
 }
 
 /// The masked prefix of a zero-knowledge opening, after the replay of levels
 /// `0..=cut_level`: the stage checks of every masked level, in transcript
-/// order, and the cut.
+/// order, and the [`ResidualClaim`] at the cut.
 ///
 /// Each check lowers through the one formula in `akita-types`, in any
 /// [`ClaimDomain`]: residual rows ([`rows`](Self::rows)), the pad layout's
@@ -290,20 +336,20 @@ pub struct CutState<F, B> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MaskedPrefix<F, B> {
     checks: Vec<MaskedCheck<F>>,
-    cut: CutState<F, B>,
+    claim: ResidualClaim<F, B>,
 }
 
 impl<F: Field, B> MaskedPrefix<F, B> {
-    pub(crate) fn new<G>(replay: MaskedReplay<'_, G, F>, cut: CutState<F, B>) -> Self {
+    pub(crate) fn new<G>(replay: MaskedReplay<'_, G, F>, claim: ResidualClaim<F, B>) -> Self {
         Self {
             checks: replay.checks,
-            cut,
+            claim,
         }
     }
 
-    /// The cut.
-    pub fn cut(&self) -> &CutState<F, B> {
-        &self.cut
+    /// The hand-off at the cut.
+    pub fn residual_claim(&self) -> &ResidualClaim<F, B> {
+        &self.claim
     }
 
     /// Lowers every stage check, in transcript order, into `domain`, with
@@ -386,32 +432,7 @@ impl<F: Field, B> ResidualRows<F> for MaskedPrefixRows<'_, F, B> {
         let mut rows = RowsDomain::new(relation, self.masked_auxiliary);
         self.prefix.lower(&mut rows, |form| Ok(form.clone()))?;
         rows.finish()?;
-        relation.affine.push(
-            AffineRow::variable(ResidualVar::Witness(0))
-                .add_scaled(&self.prefix.cut.witness_eval, -F::one()),
-        );
+        relation.affine.push(self.prefix.claim.row());
         Ok(())
-    }
-}
-
-impl<F, B> CutState<F, B> {
-    /// The cut of a replay that ended at `cut_level` with Stage-2 point
-    /// `challenges` (in round order, low variable first).
-    pub(crate) fn new(
-        cut_level: u32,
-        challenges: Vec<F>,
-        witness_eval: AffineRow<F>,
-        residual_commitment: Vec<B>,
-    ) -> Self
-    where
-        F: Copy,
-    {
-        Self {
-            cut_level,
-            point: Point::<LOW_TO_HIGH, F>::low_to_high(challenges)
-                .match_endianness::<HIGH_TO_LOW>(),
-            witness_eval,
-            residual_commitment,
-        }
     }
 }
