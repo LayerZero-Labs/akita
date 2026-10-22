@@ -93,11 +93,16 @@ pub fn fold_evals_in_place<E: Fold>(evals: &mut Vec<E>, r: E) {
     // allocation-free to avoid Rayon and allocation overhead.
     #[cfg(feature = "parallel")]
     {
-        const PAR_FOLD_THRESHOLD: usize = 1 << 12;
-        if next_len >= PAR_FOLD_THRESHOLD {
+        // Native 128-bit folds need a larger batch to amortize dispatch and
+        // allocation. Wider fields and extension contexts keep their crossover.
+        let native_scalar = std::mem::size_of::<E>() == 16 && std::mem::size_of::<E::Ctx>() == 16;
+        let threshold = if native_scalar { 1 << 15 } else { 1 << 12 };
+        let grain = if native_scalar { 1 << 12 } else { 1 };
+        if next_len >= threshold {
             let source: &[E] = evals;
             let folded = (0..next_len)
                 .into_par_iter()
+                .with_min_len(grain)
                 .map(|target| {
                     let source_index = 2 * target;
                     let left = source[source_index];
@@ -134,7 +139,7 @@ pub fn trim_trailing_zeros<E: Field>(coeffs: &mut Vec<E>) {
 #[cfg(test)]
 mod fold_tests {
     use super::fold_evals_in_place;
-    use jolt_field::{Prime64Offset59, Ring, Zero};
+    use jolt_field::{Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
 
     #[test]
     fn fold_matches_independent_pair_evaluation() {
@@ -176,5 +181,26 @@ mod fold_tests {
         fold_evals_in_place(&mut actual, challenge);
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn native_128_fold_preserves_padding_across_the_parallel_boundary() {
+        type F = Prime128OffsetA7F7;
+        let challenge = F::from_u64(29);
+        for len in [(1 << 16) - 2, (1 << 16) - 1, 1 << 16, (1 << 16) + 1] {
+            let original = (0..len)
+                .map(|index| F::from_u64(index as u64 * 17 + 11))
+                .collect::<Vec<_>>();
+            let expected = original
+                .chunks(2)
+                .map(|pair| {
+                    let odd = pair.get(1).copied().unwrap_or_else(F::zero);
+                    pair[0] + challenge * (odd - pair[0])
+                })
+                .collect::<Vec<_>>();
+            let mut actual = original;
+            fold_evals_in_place(&mut actual, challenge);
+            assert_eq!(actual, expected);
+        }
     }
 }
