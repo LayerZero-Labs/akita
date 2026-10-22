@@ -62,6 +62,13 @@ impl Chunk {
 /// Chain rows per chunk: `K₁ξ₁ − G(ξ₂)`, then `K₂ξ₂ − cm`.
 const CHUNK_ROWS: usize = 2;
 
+/// The setup field elements every chain reads: the chain of a full chunk,
+/// whose maps are the widest.
+pub(crate) fn setup_len(profile: SisModulusProfileId) -> Result<usize, AkitaError> {
+    CompressionChainPlan::for_complete_source(profile, MAX_COMPRESSION_INPUT_BYTES / F::NUM_BYTES)?
+        .max_setup_field_elements()
+}
+
 /// The chunks of an image of `image_len` coefficients.
 pub(crate) fn chunks(
     profile: SisModulusProfileId,

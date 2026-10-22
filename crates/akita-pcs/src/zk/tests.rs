@@ -27,6 +27,14 @@ type Cfg = RecursiveCommitmentConfig<ResponseDigits>;
 /// A response prover whose catalog holds the planner's response schedule for
 /// `e` of `len` entries.
 fn akita_for(len: usize) -> AkitaResponseProver<Cfg> {
+    let (scheme, num_vars) = scheme_for(len);
+    let setup = AkitaResponseProver::setup(&scheme, num_vars).unwrap();
+    AkitaResponseProver::new(scheme, setup).unwrap()
+}
+
+/// A scheme whose catalog holds the planner's response schedule for `e` of
+/// `len` entries, and that schedule's variable count.
+fn scheme_for(len: usize) -> (AkitaCommitmentScheme<Cfg>, usize) {
     let num_vars = ResponseShape::new(len).unwrap().num_vars;
     let chunking = ChunkedWitnessCfg::default_non_chunked();
     let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
@@ -60,8 +68,7 @@ fn akita_for(len: usize) -> AkitaResponseProver<Cfg> {
         chunking,
     )
     .unwrap();
-    let setup = scheme.setup_prover(num_vars, 1).unwrap();
-    AkitaResponseProver::new(scheme, setup).unwrap()
+    (scheme, num_vars)
 }
 
 fn on_big_stack(test: impl FnOnce() + Send + 'static) {
@@ -482,6 +489,12 @@ fn chain_relation_matches_its_rows_and_vanishes_on_the_executor_witness() {
                 image
             );
             let chunks = compression::chunks(profile, image_len).unwrap();
+            // Over A7F7 every map's digits fill its ring rows: no padding.
+            assert!(chunks.iter().all(|chunk| chunk
+                .plan
+                .maps()
+                .iter()
+                .all(|map| map.padded_digit_count() == map.real_digit_count())));
             let len = compressed.witness.len();
             let padded_len = len.next_power_of_two();
             let xi: Vec<i8> = (0..len).map(|_| -((rng.next_u32() & 1) as i8)).collect();
@@ -548,11 +561,25 @@ enum Forgery {
     /// `(−2, 0)`, `ξ₂ = Bin(K₁ξ₁)` and `cm = K₂ξ₂` recomputed: the image
     /// and both chain rows are unchanged, one digit leaves `{−1, 0}`.
     Carry,
-    /// A `ξ₂` digit flipped and `cm = K₂ξ₂` recomputed: only `K₁`'s row
-    /// fails.
+    /// A `ξ₂` digit past the first coefficient flipped and `cm = K₂ξ₂`
+    /// recomputed: only `K₁`'s row fails.
     FlipXi2,
-    /// A payload coefficient moved: only `K₂`'s row fails.
+    /// A payload coefficient past the constant term moved: only `K₂`'s row
+    /// fails.
     BumpPayload,
+    /// `cm − (X − α₀)`: `K₂`'s residual is `X − α₀`, zero at `α₀` only.
+    CancelAt(u64),
+}
+
+impl Forgery {
+    /// Whether each chain row holds after the forgery.
+    fn holds(self) -> [bool; 2] {
+        match self {
+            Forgery::Carry => [true, true],
+            Forgery::FlipXi2 => [false, true],
+            Forgery::BumpPayload | Forgery::CancelAt(_) => [true, false],
+        }
+    }
 }
 
 impl Forging<'_> {
@@ -599,10 +626,15 @@ impl Forging<'_> {
                 recompute_cm(xi_2, payload);
             }
             Forgery::FlipXi2 => {
-                xi_2[0] = -1 - xi_2[0];
+                let at = second.real_digit_count() / 2 + 1;
+                xi_2[at] = -1 - xi_2[at];
                 recompute_cm(xi_2, payload);
             }
-            Forgery::BumpPayload => payload[0] += F::one(),
+            Forgery::BumpPayload => payload[3] += F::one(),
+            Forgery::CancelAt(alpha) => {
+                payload[0] += F::from_u64(alpha);
+                payload[1] -= F::one();
+            }
         }
         compression::chain_rows(stream, chunk, witness, payload).unwrap()
     }
@@ -679,7 +711,8 @@ impl<const D: usize> ResponseProver<F, D> for ImageLens<'_> {
 /// The prover chooses `cm`, so each chain constraint is load-bearing: a
 /// carry inside `ξ₁` keeps the image and both chain rows and is caught
 /// only by the binary constraint `ζ`; a `ξ₂` flip with `cm` recomputed
-/// fails only `K₁`'s row; a moved payload fails only `K₂`'s row. Each
+/// fails only `K₁`'s row; a moved payload fails only `K₂`'s row, and so
+/// does `cm − (X − α₀)`, whose residual vanishes at `α₀` alone. Each
 /// moves the chain relation off zero on a non-first chunk (the carry
 /// excepted), and the verifier rejects each at the fused sumcheck on the
 /// first image's chain and on `t_D`'s. The synthetic images fit one chunk.
@@ -699,7 +732,13 @@ fn rejects_prover_chosen_compressions() {
         assert_eq!(lens.iter().filter(|&&len| len == t_d).count(), 1);
         let rejected = |item| Err(WhiteoutError::ResponseRejected(item));
         let mut rng = rand::thread_rng();
-        for forgery in [Forgery::Carry, Forgery::FlipXi2, Forgery::BumpPayload] {
+        const ALPHA_0: u64 = 5;
+        for forgery in [
+            Forgery::Carry,
+            Forgery::FlipXi2,
+            Forgery::BumpPayload,
+            Forgery::CancelAt(ALPHA_0),
+        ] {
             // The chain relation at a random α, on a non-first chunk.
             let image_len = 640;
             let forging = Forging {
@@ -711,11 +750,7 @@ fn rejects_prover_chosen_compressions() {
             let image: Vec<F> = (0..image_len).map(|_| F::random(&mut rng)).collect();
             let mut compressed = akita.compress(&image).unwrap();
             let rows = forging.forge(&mut compressed);
-            let holds = match forgery {
-                Forgery::Carry => [true, true],
-                Forgery::FlipXi2 => [false, true],
-                Forgery::BumpPayload => [true, false],
-            };
+            let holds = forgery.holds();
             assert_eq!(
                 rows.map(|row| row.iter().all(F::is_zero)),
                 holds,
@@ -734,18 +769,28 @@ fn rejects_prover_chosen_compressions() {
                     payload: &compressed.payload,
                 }],
             );
-            let weights: Vec<F> = (0..4).map(|_| F::random(&mut rng)).collect();
-            let mut a = vec![F::zero(); compressed.witness.len().next_power_of_two()];
+            // Each of chunk 1's rows alone, at a random α: zero exactly when
+            // that row holds.
+            let row_value = |row: usize, alpha: F| {
+                let mut weights = vec![F::zero(); 4];
+                weights[2 + row] = F::one();
+                let mut a = vec![F::zero(); compressed.witness.len().next_power_of_two()];
+                chains.accumulate(alpha, &weights, &mut a).unwrap();
+                a.iter()
+                    .zip(&compressed.witness)
+                    .map(|(a, &x)| *a * F::from_i64(i64::from(x)))
+                    .sum::<F>()
+                    + chains.constant(alpha, &weights).unwrap()
+            };
             let alpha = F::random(&mut rng);
-            chains.accumulate(alpha, &weights, &mut a).unwrap();
-            let constant = chains.constant(alpha, &weights).unwrap();
-            let value = a
-                .iter()
-                .zip(&compressed.witness)
-                .map(|(a, &x)| *a * F::from_i64(i64::from(x)))
-                .sum::<F>()
-                + constant;
-            assert_eq!(value.is_zero(), holds == [true, true], "{forgery:?}");
+            assert_eq!(
+                [0, 1].map(|row| row_value(row, alpha).is_zero()),
+                holds,
+                "{forgery:?}"
+            );
+            if let Forgery::CancelAt(alpha_0) = forgery {
+                assert!(row_value(1, F::from_u64(alpha_0)).is_zero());
+            }
 
             // End to end, on the first image's chain and on t_D's.
             for image_len in [first, t_d] {
@@ -771,4 +816,29 @@ fn rejects_prover_chosen_compressions() {
             }
         }
     });
+}
+
+/// The response schedule's own setup is narrower than the compression
+/// chains' maps; the prover refuses it, and [`AkitaResponseProver::setup`]
+/// covers both. Generated without the disk cache, which may hold a wider
+/// matrix.
+#[test]
+fn refuses_a_setup_without_the_chains_maps() {
+    let (scheme, num_vars) = scheme_for(1 << 18);
+    let capacity = SetupRequirements::from_catalog::<Cfg>(scheme.schedules(), num_vars, 1)
+        .unwrap()
+        .matrix_capacity();
+    let needed = compression::setup_len(Cfg::sis_modulus_profile()).unwrap();
+    assert!(capacity.num_field_elements < needed);
+    let narrow = AkitaProverSetup::generate_with_capacity(num_vars, 1, capacity).unwrap();
+    let error = AkitaResponseProver::new(scheme.clone(), narrow)
+        .err()
+        .unwrap();
+    assert!(
+        format!("{error:?}").contains("compression chains"),
+        "{error:?}"
+    );
+    let setup = AkitaResponseProver::setup(&scheme, num_vars).unwrap();
+    assert!(setup.expanded.shared_matrix().num_field_elements() >= needed);
+    AkitaResponseProver::new(scheme, setup).unwrap();
 }

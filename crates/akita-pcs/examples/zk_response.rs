@@ -119,7 +119,7 @@ fn run(scale: usize) {
         chunking,
     )
     .unwrap();
-    let setup = scheme.setup_prover(num_vars, 1).unwrap();
+    let setup = AkitaResponseProver::setup(&scheme, num_vars).unwrap();
     let akita = AkitaResponseProver::new(scheme, setup).unwrap();
     println!("planning and setup: {:.2?}", started.elapsed());
 

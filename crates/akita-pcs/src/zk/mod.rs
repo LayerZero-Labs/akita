@@ -24,7 +24,7 @@ mod tests;
 use std::sync::Arc;
 
 use akita_algebra::EqPolynomial;
-use akita_config::{derive_digit_range_grinding_plan, CommitmentConfig};
+use akita_config::{derive_digit_range_grinding_plan, CommitmentConfig, SetupRequirements};
 use akita_cpu_backend::standalone::DigitRangeProver;
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;
@@ -78,6 +78,18 @@ fn range_plan<Cfg: CommitmentConfig, const D: usize>(
     DigitRangePlan::new(1 << log_basis)
 }
 
+/// Whether `setup`'s shared matrix holds every compression chain's maps.
+fn covers_chains<Cfg: CommitmentConfig>(setup: &AkitaExpandedSetup<F>) -> Result<(), AkitaError> {
+    let needed = compression::setup_len(Cfg::sis_modulus_profile())?;
+    let held = setup.shared_matrix().num_field_elements();
+    if held < needed {
+        return Err(AkitaError::InvalidSetup(format!(
+            "the compression chains read {needed} setup field elements, the setup holds {held}"
+        )));
+    }
+    Ok(())
+}
+
 /// Proves jolt-zk's Whiteout response statement with Akita.
 pub struct AkitaResponseProver<Cfg: CommitmentConfig> {
     scheme: AkitaCommitmentScheme<Cfg>,
@@ -118,13 +130,26 @@ impl<Cfg> AkitaResponseProver<Cfg>
 where
     Cfg: CommitmentConfig<Field = F, ExtField = F> + 'static,
 {
+    /// A prover setup for every `e` of up to `2^max_num_vars` entries: the
+    /// response schedules' matrix, extended to the compression chains' maps.
+    pub fn setup(
+        scheme: &AkitaCommitmentScheme<Cfg>,
+        max_num_vars: usize,
+    ) -> Result<AkitaProverSetup<F>, AkitaError> {
+        let requirements =
+            SetupRequirements::from_catalog::<Cfg>(scheme.schedules(), max_num_vars, 1)?
+                .covering(compression::setup_len(Cfg::sis_modulus_profile())?);
+        akita_setup::new_prover_setup::<F>(&requirements)
+    }
+
     /// A prover and verifier over `scheme`, whose catalog holds the response
-    /// schedule of every `e` it proves, with `setup` sized for them.
+    /// schedule of every `e` it proves, with `setup` from [`Self::setup`].
     pub fn new(
         scheme: AkitaCommitmentScheme<Cfg>,
         setup: AkitaProverSetup<F>,
     ) -> Result<Self, AkitaError> {
         let verifier = scheme.verifier(scheme.setup_verifier(&setup)?)?;
+        covers_chains::<Cfg>(verifier.setup().expanded())?;
         let backend = CpuBackend::new(setup.expanded.clone())?;
         Ok(Self {
             scheme,
@@ -138,8 +163,10 @@ where
         scheme: AkitaCommitmentScheme<Cfg>,
         setup: AkitaVerifierSetup<F>,
     ) -> Result<Self, AkitaError> {
+        let verifier = scheme.verifier(setup)?;
+        covers_chains::<Cfg>(verifier.setup().expanded())?;
         Ok(Self {
-            verifier: scheme.verifier(setup)?,
+            verifier,
             scheme,
             prover: None,
         })
