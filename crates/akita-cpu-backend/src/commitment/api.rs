@@ -88,8 +88,8 @@ impl<'a> GroupContext<'a> {
     /// groups — is validated where the opening consumes it, not at commit time.
     ///
     /// A profile with hiding randomness commits with fresh randomness from the
-    /// backend's hiding source, drawn from the open alphabet of a masked level,
-    /// the only kind of level that can consume it.
+    /// backend's hiding source, drawn from the open alphabet of the masked
+    /// root, the only opening that consumes an explicitly committed group.
     #[must_use]
     pub const fn explicit(profile: &'a GroupCommitPhaseParams) -> Self {
         Self {
@@ -378,11 +378,12 @@ where
                         .into(),
                 ));
             }
-            // A hiding frozen profile is admissible only as a group of a
-            // masked level (zero-knowledge admission gives every unmasked
-            // group zero randomness, and a clear catalog rejects any), and a
-            // masked level opens every group at base 8, so that is the
-            // alphabet its randomness is drawn from.
+            // A hiding explicit profile is admissible only as a group of the
+            // masked root, a precommitted group or the root's own: a clear
+            // catalog rejects any randomness, and every other level's groups
+            // are committed by the opening itself, not here. The masked root
+            // opens every group at base 8, so that is the alphabet its
+            // randomness is drawn from.
             let randomness_log_basis = (commit_params.randomness_columns != 0)
                 .then_some(akita_params::zk::MASKED_LOG_BASIS);
             (*commit_params, randomness_log_basis)

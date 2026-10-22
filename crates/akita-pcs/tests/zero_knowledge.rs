@@ -795,6 +795,26 @@ fn headline_row_offloads_to_a_setup_prefix_at_the_cut_level() {
     });
 }
 
+/// The root's two witness groups each get a quarter of the 2^-136 budget
+/// (two masked levels, two groups); level 1's setup prefix is public, so its
+/// own group keeps half.
+#[test]
+fn witness_groups_split_the_one_shot_budget_per_level() {
+    on_large_stack(|| {
+        let (_, schedule) = multi_group_zk_row();
+        let target = |params: &akita_params::CommittedGroupParams| {
+            zk().fold_failure_target(akita_params::zk::witness_group_count(params))
+                .unwrap()
+        };
+        let one_shot = |masked_folds| akita_params::sis::FoldFailureTarget::OneShot {
+            security_bits: akita_params::zk::ZK_FOLD_SECURITY_BITS,
+            masked_folds,
+        };
+        assert_eq!(target(&schedule.root.params), one_shot(4));
+        assert_eq!(target(&schedule.recursive_folds[0].params), one_shot(2));
+    });
+}
+
 /// One zero-knowledge proof over a hiding precommitted group at the root and
 /// a setup prefix at the cut level.
 #[test]
