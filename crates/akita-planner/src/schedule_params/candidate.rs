@@ -38,7 +38,8 @@ pub(crate) enum LevelMasking {
     /// uses the ℓ∞ route, the quotient relation, base 8, and no setup prefix.
     Masked(akita_params::zk::ZkOpeningSchedule),
     /// The clear level after the cut: it opens the residual commitment
-    /// (d_A = d_B) and consumes no setup prefix, so the cut runs no Stage 3.
+    /// (d_A = d_B, one outer slice, base 16, hidden by r_a) and consumes no
+    /// setup prefix, so the cut runs no Stage 3.
     AfterCut,
 }
 
@@ -62,6 +63,13 @@ impl LevelMasking {
 
     pub(crate) const fn opens_residual(self) -> bool {
         matches!(self, Self::AfterCut)
+    }
+
+    /// Whether the commitment this level consumes carries B hiding
+    /// randomness: every masked level's, and at the level after the cut the
+    /// residual commitment's r_a, at the residual alphabet.
+    pub(crate) const fn hides_outer(self) -> bool {
+        matches!(self, Self::Masked(_) | Self::AfterCut)
     }
 
     pub(crate) const fn failure_target(self) -> FoldFailureTarget {

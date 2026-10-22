@@ -119,9 +119,43 @@ pub use trace_weight::{
 pub use transcript::{
     extension_slots, AkitaSponge, PROOF_STREAM_PROTOCOL, PROOF_STREAM_PROTOCOL_NAME,
 };
+#[cfg(feature = "zk")]
+pub use transcript_grinding::CountingGrinding;
+
+/// The statement claims of a zero-knowledge opening's masked root, in group
+/// order: each an affine form over the committed pads, built by the caller
+/// (W6: Jolt's masked stage-8 claims). They replace the clear evaluations a
+/// clear root absorbs (`specs/whiteout-akita.md` §4.6).
+#[cfg(feature = "zk")]
+pub type MaskedOpeningClaims<F> = Vec<jolt_zk::masking::AffineRow<F>>;
+
+/// The residual witness's evaluation point at a zero-knowledge cut: the cut
+/// level's Stage-2 challenges `r₂` (round order, low variable first) as a
+/// `HIGH_TO_LOW` point, whose first coordinate is the most significant index
+/// bit (`specs/whiteout-sigma.md` A18), with leading zeros up to
+/// `⌈log₂ witness_len⌉` variables when w_k is longer than `2^|r₂|`.
+///
+/// The one conversion both roles apply: the verifier's residual claim and the
+/// prover's `ResidualOpening` take their point from here.
+#[cfg(feature = "zk")]
+#[must_use]
+pub fn residual_point<F: jolt_algebra::Field>(
+    stage2_challenges: Vec<F>,
+    witness_len: usize,
+) -> jolt_poly::Point<{ jolt_poly::HIGH_TO_LOW }, F> {
+    let num_vars = witness_len.next_power_of_two().trailing_zeros() as usize;
+    let point = jolt_poly::Point::<{ jolt_poly::LOW_TO_HIGH }, F>::low_to_high(stage2_challenges)
+        .match_endianness::<{ jolt_poly::HIGH_TO_LOW }>();
+    let padding = num_vars.saturating_sub(point.len());
+    jolt_poly::Point::high_to_low(
+        std::iter::repeat_n(F::zero(), padding)
+            .chain(point.into_vec())
+            .collect::<Vec<_>>(),
+    )
+}
 pub use transcript_grinding::{
-    GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProverGrinding,
-    ProverGrindingChannel, VerifierGrinding, VerifierGrindingChannel,
+    FoldResponseReplay, GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier,
+    ProverGrinding, ProverGrindingChannel, VerifierGrinding, VerifierGrindingChannel,
 };
 
 #[cfg(test)]

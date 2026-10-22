@@ -82,6 +82,18 @@ impl<F: Field> CpuCommitmentMaterialHandle<F> {
     pub(crate) fn bind(&mut self, binding: crate::opaque::OperationBinding) {
         self.binding = binding;
     }
+
+    /// The inner rows `t = A·G⁻¹(w)`, one per committed source.
+    #[cfg(feature = "zk")]
+    pub(crate) fn inner_rows(&self) -> &[RingVec<F>] {
+        self.inner.rows()
+    }
+
+    /// Slice-major B hiding randomness the commitment used.
+    #[cfg(feature = "zk")]
+    pub(crate) fn outer_randomness(&self) -> &[i8] {
+        self.inner.outer_randomness()
+    }
 }
 
 impl<F> CpuCommitmentMaterialHandle<F>

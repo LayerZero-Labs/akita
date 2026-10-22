@@ -20,6 +20,8 @@ pub(crate) mod plans;
 mod prepared_opening;
 pub(crate) mod recursive;
 pub(crate) mod relation_weights;
+#[cfg(feature = "zk")]
+mod residual;
 mod source;
 #[doc(hidden)]
 pub mod standalone;

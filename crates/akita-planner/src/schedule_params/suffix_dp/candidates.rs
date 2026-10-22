@@ -588,6 +588,14 @@ impl<'a> CandidateDomain<'a> {
         let incoming_setup_prefix = state.topology.incoming_setup_prefix();
         let mut terminal = Vec::new();
         let mut folds = Vec::new();
+        // The level after a zero-knowledge cut opens the residual commitment
+        // at the residual alphabet only; admission refuses any other basis
+        // (and a compressed payload, below).
+        if crate::schedule_params::LevelMasking::at(ctx.zk, state.level).opens_residual()
+            && open_lb != akita_params::zk::RESIDUAL_RANDOMNESS_LOG_BASIS
+        {
+            return Ok(GeneratedCandidates { terminal, folds });
+        }
 
         for inner_lb in self.inner_basis_range.clone() {
             for work in &self.opening_work {
@@ -599,6 +607,14 @@ impl<'a> CandidateDomain<'a> {
                     if self
                         .guide_fold
                         .is_some_and(|guide| payload_mode != guide.payload_mode)
+                    {
+                        continue;
+                    }
+                    // The residual commitment u_a is sent raw: the Σ-protocol
+                    // opens the outer image itself.
+                    if crate::schedule_params::LevelMasking::at(ctx.zk, state.level)
+                        .opens_residual()
+                        && payload_mode != akita_params::CommitmentPayloadMode::Raw
                     {
                         continue;
                     }

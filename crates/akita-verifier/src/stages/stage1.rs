@@ -5,6 +5,7 @@
 //! prover-side compact witness scans and two-round-prefix kernels stay in the
 //! prover/root path.
 
+use crate::claims::ClaimReplay;
 use crate::stages::ring_switch::{PreparedStage2Compression, RingSwitchVerifyOutput};
 use crate::stages::stage2::Stage2CompressionOracle;
 use akita_algebra::offset_eq::EqPairTensorFamily;
@@ -13,18 +14,16 @@ use akita_params::InnerCommitSecurityRoute;
 use akita_params::{CommittedGroupParams, DigitRangePlan};
 use akita_serialization::AkitaSerialize;
 use akita_types::DigitRangeEqualityPoint;
-use akita_types::GrindingReplay;
+use akita_types::RangeLeaf;
 use akita_types::{
     batch_l2_virtual_evaluations, FpExtEncoding, PhysicalResponsePlan, RelationRangeImagePlan,
 };
-use akita_types::{check_range_leaf, RangeLeaf};
 use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field, Ring};
 use jolt_poly::Point;
 use jolt_sumcheck::{verify_single, SingleFormat, SingleInstance};
-use jolt_transcript::{ClaimMismatch, ClearDomain, Sponge};
-pub(crate) struct Stage1VerifyOutput<E: Field> {
+pub(crate) struct Stage1VerifyOutput<E: Field, V = E> {
     pub(crate) point: Vec<E>,
-    pub(crate) range_image_evaluation: E,
+    pub(crate) range_image_evaluation: V,
     pub(crate) physical_l2_virtual_evaluations: Option<Vec<E>>,
 }
 
@@ -51,14 +50,15 @@ impl<E: Field> Stage1Verifier<E> {
 }
 
 impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
-    fn verify_product_prefix<F, H: Sponge>(
+    fn verify_product_prefix<F, G>(
         &self,
-        grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
+        grinding: &mut G,
         level: u32,
     ) -> Result<RangeLeafVerifierInput<E>, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F> + CanonicalDecode,
+        G: ClaimReplay<F, E>,
     {
         let product_stage_arities = self.plan.product_stage_arities();
         let rounds = self.equality_point.coordinates().len();
@@ -126,19 +126,20 @@ impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
     }
 
     /// Replay the non-L2 stage-1 proof directly from Spongefish.
-    pub(crate) fn verify<F, H: Sponge>(
+    pub(crate) fn verify<F, G>(
         &self,
-        grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
+        grinding: &mut G,
         physical_l2: Option<(
             &akita_types::PhysicalResponsePlan,
             akita_params::SisModulusProfileId,
             u128,
         )>,
         level: u32,
-    ) -> Result<Stage1VerifyOutput<E>, AkitaError>
+    ) -> Result<Stage1VerifyOutput<E, G::Claim>, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F> + akita_types::FpExtEncoding<F>,
+        G: ClaimReplay<F, E>,
     {
         let leaf = self.verify_product_prefix::<F, _>(grinding, level)?;
         let stage = u32::try_from(self.plan.product_stage_arities().len())
@@ -159,20 +160,22 @@ impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
             )?;
             return Ok(Stage1VerifyOutput {
                 point: replay.point,
-                range_image_evaluation: replay.range_image_evaluation,
+                range_image_evaluation: G::clear_path(replay.range_image_evaluation)?,
                 physical_l2_virtual_evaluations: Some(replay.virtual_evaluations),
             });
         }
+        let input = if self.plan.product_stage_arities().is_empty() {
+            G::constant(leaf.input_claim)
+        } else {
+            G::clear_path(leaf.input_claim)?
+        };
         let degree_bound = leaf.polynomial_coefficients.len().saturating_sub(1);
-        let mut channel = akita_types::GrindingSumcheckVerifier::<F, E, _>::new(
-            grinding,
+        let (point, output_claim) = grinding.single_sumcheck(
             akita_params::SumcheckProtocol::Stage1,
             level,
             stage,
-        );
-        let replay = verify_single::<F, E, AkitaError, _>(
-            &SingleInstance {
-                input_claim: leaf.input_claim,
+            SingleInstance {
+                input_claim: E::zero(),
                 rounds: leaf.equality_point.len(),
                 degree: degree_bound,
                 format: SingleFormat::EqFactored {
@@ -180,45 +183,43 @@ impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
                 },
                 invocation: 0,
             },
-            &mut channel,
+            input,
         )?;
-        let range_image_evaluation =
-            akita_types::stage1_range_image::<F, E, _>(grinding, level, stage, E::zero())?;
-        check_range_leaf(
-            &mut ClearDomain,
-            &RangeLeaf::new(self.plan, &leaf.polynomial_coefficients)?,
-            range_image_evaluation,
-            replay.output_claim,
-        )
-        .map_err(|ClaimMismatch| AkitaError::InvalidProof)?;
+        let range_image_evaluation = grinding.range_image(level, stage)?;
+        grinding.check_range_leaf(
+            RangeLeaf::new(self.plan, &leaf.polynomial_coefficients)?,
+            range_image_evaluation.clone(),
+            output_claim,
+        )?;
         Ok(Stage1VerifyOutput {
-            point: replay.challenges,
+            point,
             range_image_evaluation,
             physical_l2_virtual_evaluations: None,
         })
     }
 }
 
-pub(crate) struct Stage1Replay<'a, E: Field> {
+pub(crate) struct Stage1Replay<'a, E: Field, V = E> {
     pub(crate) batching_coeff: E,
     pub(crate) compression: Stage2CompressionOracle<'a, E>,
-    pub(crate) range_image_evaluation: E,
+    pub(crate) range_image_evaluation: V,
     pub(crate) stage1_point: Vec<E>,
     pub(crate) physical_l2_claim: E,
     pub(crate) physical_l2_families: Vec<EqPairTensorFamily<E>>,
 }
 
-pub(crate) fn verify_stage1<'a, F, E, H: Sponge>(
+pub(crate) fn verify_stage1<'a, F, E, G>(
     rs: &'a RingSwitchVerifyOutput<E>,
     lp: &CommittedGroupParams,
     relation_plan: &RelationRangeImagePlan,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
+    grinding: &mut G,
     level: u32,
     layout: &akita_params::NonterminalLevelLayout,
-) -> Result<Stage1Replay<'a, E>, AkitaError>
+) -> Result<Stage1Replay<'a, E, G::Claim>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F> + FpExtEncoding<F> + Ring + AkitaSerialize,
+    G: ClaimReplay<F, E>,
 {
     let num_rounds = rs.relation_address_geometry.relation_point_variable_count();
     if rs.tau0.len() != num_rounds {
@@ -320,7 +321,9 @@ mod tests {
     use akita_params::{
         ChallengeFieldOrder, GrindingPlan, GrindingRun, GrindingSite, SumcheckProtocol,
     };
-    use akita_types::{AkitaSponge, ProverGrinding, VerifierGrinding, PROOF_STREAM_PROTOCOL};
+    use akita_types::{
+        AkitaSponge, GrindingReplay, ProverGrinding, VerifierGrinding, PROOF_STREAM_PROTOCOL,
+    };
     use jolt_algebra::{FpExt4, Prime32Offset99, Zero};
     use jolt_transcript::{Channel, ProverTranscript, VerifierTranscript};
 

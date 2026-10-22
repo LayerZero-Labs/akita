@@ -1,14 +1,13 @@
 //! Verifier replay for the schedule-selected physical response norm.
 
+use crate::claims::ClaimReplay;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::AkitaError;
 use akita_params::{PhysicalL2NormProofShape, SisModulusProfileId};
 use akita_serialization::AkitaSerialize;
-use akita_types::GrindingReplay;
 use akita_types::{reconstruct_l2_sq_from_gram, FpExtEncoding, PhysicalResponsePlan};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
 use jolt_sumcheck::{verify_single, SingleFormat, SingleInstance};
-use jolt_transcript::Sponge;
 
 pub(crate) struct PhysicalL2VerifierReplay<E: Field> {
     pub(crate) point: Vec<E>,
@@ -195,12 +194,12 @@ where
 
 /// Replay a physical-L2 proof directly from the Spongefish stream.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_physical_l2_norm<F, E, H: Sponge>(
+pub(crate) fn verify_physical_l2_norm<F, E, G: ClaimReplay<F, E>>(
     plan: &PhysicalResponsePlan,
     range: PhysicalL2RangeClaim<'_, E>,
     profile: SisModulusProfileId,
     cap: u128,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
+    grinding: &mut G,
     level: u32,
 ) -> Result<PhysicalL2VerifierReplay<E>, AkitaError>
 where
@@ -261,7 +260,8 @@ where
     let mut virtual_evaluations = akita_types::extension_slots::<E>(virtual_count)?;
     akita_types::l2_virtual_evaluations::<F, E, _>(grinding, level, &mut virtual_evaluations)?;
     let range_image_evaluation =
-        akita_types::stage1_range_image::<F, E, _>(grinding, level, range.range_stage, E::zero())?;
+        akita_types::stage1_range_image::<F, E, _>(grinding, level, range.range_stage, E::zero())?
+            .0;
     validate_integer_claim::<F, E>(
         plan,
         response_l2_sq,

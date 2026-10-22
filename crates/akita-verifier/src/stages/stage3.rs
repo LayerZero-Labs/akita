@@ -1,6 +1,7 @@
 //! Verifier for the setup-product sumcheck — the verifier counterpart to the
 //! prover-side `AkitaStage3Prover`.
 
+use crate::claims::ClaimReplay;
 use crate::relation::RelationMatrixEvaluator;
 use crate::stages::ring_switch::RingSwitchVerifyOutput;
 use crate::SetupIndexWeightMle;
@@ -19,7 +20,6 @@ use jolt_algebra::ring::evaluate_power_sequence_mle;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field, Ring};
 use jolt_sumcheck::{verify_single, SingleFormat, SingleInstance};
-use jolt_transcript::Sponge;
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
 /// sumcheck for the setup contribution at `x_challenges`.
@@ -74,11 +74,11 @@ impl<E: Field> SetupSumcheckVerifier<E> {
     }
 
     /// Replay stage 3 directly from the Spongefish stream.
-    pub(crate) fn verify<F, H: Sponge>(
+    pub(crate) fn verify<F, G: ClaimReplay<F, E>>(
         &self,
         setup: &AkitaVerifierSetup<F>,
         next_fold_level_params: &CommittedGroupParams,
-        grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
+        grinding: &mut G,
         level: u32,
     ) -> Result<SetupSumcheckReplay<E>, AkitaError>
     where
@@ -143,12 +143,12 @@ impl<E: Field> SetupSumcheckVerifier<E> {
 ///
 /// The setup contribution is evaluated at the Stage 2 point with its
 /// coefficient variables removed.
-pub(crate) fn verify_stage3<F, E, H: Sponge>(
+pub(crate) fn verify_stage3<F, E, G: ClaimReplay<F, E>>(
     setup: &AkitaVerifierSetup<F>,
     rs: &RingSwitchVerifyOutput<E>,
     stage2_challenges: &[E],
     next_params: &CommittedGroupParams,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
+    grinding: &mut G,
     level: u32,
 ) -> Result<SetupSumcheckReplay<E>, AkitaError>
 where
@@ -175,12 +175,12 @@ where
 /// The coverage length returned by [`setup_prefix_coverage_eval_len`] is not
 /// needed: it equals the projection geometry's `setup_index_len` because the
 /// common base ring dimension is a power of two.
-fn bind_setup_prefix_slot<F, H: Sponge>(
+fn bind_setup_prefix_slot<F, G: akita_types::GrindingReplay>(
     setup: &AkitaVerifierSetup<F>,
     next_fold_level_params: &CommittedGroupParams,
     natural_field_len: usize,
     ring_d: usize,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
+    grinding: &mut G,
     level: u32,
 ) -> Result<(), AkitaError>
 where

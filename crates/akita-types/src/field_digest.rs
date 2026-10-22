@@ -3,7 +3,7 @@
 use akita_error::AkitaError;
 pub use akita_params::FIELD_DIGEST_BYTES;
 use jolt_algebra::CanonicalBytes;
-use jolt_transcript::{Channel, ProverTranscript, SiteId, Sponge, VerifierTranscript};
+use jolt_transcript::{Channel, SiteId, Sponge, VerifierTranscript};
 
 /// Domain tag absorbed ahead of the values of every [`field_digest`].
 const FIELD_DIGEST_DOMAIN: [u8; 32] = *b"akita-pcs/field-digest/v1\0\0\0\0\0\0\0";
@@ -28,13 +28,17 @@ pub fn field_digest<H: Sponge, F: CanonicalBytes>(values: &[F]) -> [u8; FIELD_DI
 }
 
 /// Send the [`field_digest`] of `values` at `site`, in place of the values.
-pub fn send_field_digest<H: Sponge, F: CanonicalBytes>(
-    state: &mut ProverTranscript<H>,
+///
+/// # Errors
+///
+/// The channel's: a masked channel sends no digest.
+pub fn send_field_digest<C: crate::ProverGrindingChannel, F: CanonicalBytes>(
+    state: &mut C,
     site: SiteId,
     values: &[F],
-) {
+) -> Result<(), AkitaError> {
     state.site(site);
-    state.send_bytes(&field_digest::<H, F>(values));
+    state.send_public_bytes(&field_digest::<C::Sponge, F>(values))
 }
 
 /// Receive a digest sent by [`send_field_digest`] at `site`.

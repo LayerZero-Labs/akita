@@ -96,6 +96,16 @@ impl<F: jolt_algebra::Field> From<jolt_sumcheck::SumcheckError<F>> for AkitaErro
         use jolt_sumcheck::SumcheckError;
         match error {
             SumcheckError::Transcript(error) => error.into(),
+            // A masked channel's error crosses the driver boxed; it keeps the
+            // masked channel's classification, so a truncated or malformed
+            // masked round rejects the proof.
+            #[cfg(feature = "zk")]
+            SumcheckError::PrivateChannel(source) => {
+                match source.downcast::<jolt_zk::masking::ZkError>() {
+                    Ok(error) => (*error).into(),
+                    Err(source) => Self::Internal(source.to_string()),
+                }
+            }
             SumcheckError::ZeroDegreeBound
             | SumcheckError::ShapeOverflow { .. }
             | SumcheckError::EqFactoredZeroRounds
@@ -126,6 +136,34 @@ impl<F: jolt_algebra::Field> From<jolt_sumcheck::SumcheckError<F>> for AkitaErro
             // `SumcheckError` is `#[non_exhaustive]`. A variant added upstream
             // must be classified above when Akita bumps jolt-sumcheck.
             _ => Self::Internal(error.to_string()),
+        }
+    }
+}
+
+/// A masked channel's failure (`specs/whiteout-akita.md` §4.5). A transcript
+/// failure rejects the proof as [`jolt_transcript::TranscriptError`] does; a
+/// pad schedule or message field that disagrees with the schedule is a setup
+/// error; a decoded value failing its check is a failed prover invariant.
+#[cfg(feature = "zk")]
+impl From<jolt_zk::masking::ZkError> for AkitaError {
+    fn from(error: jolt_zk::masking::ZkError) -> Self {
+        use jolt_zk::masking::ZkError;
+        match error {
+            ZkError::Transcript(error) => error.into(),
+            ZkError::PadsExhausted { .. }
+            | ZkError::PadCountMismatch { .. }
+            | ZkError::InvalidLayout { .. }
+            | ZkError::OperandPadsMismatch
+            | ZkError::MessageFieldMismatch
+            | ZkError::RoundWidthMismatch { .. }
+            | ZkError::RoundCountMismatch { .. } => Self::InvalidSetup(error.to_string()),
+            ZkError::InvalidRelation { .. }
+            | ZkError::ClaimMismatch(_)
+            | ZkError::Sumcheck(_)
+            | ZkError::BlindFoldShape(_)
+            | ZkError::BlindFoldProver(_)
+            | ZkError::BlindFoldRejected(_)
+            | ZkError::Whiteout(_) => Self::Internal(error.to_string()),
         }
     }
 }
