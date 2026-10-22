@@ -1,7 +1,7 @@
 use super::*;
 use akita_algebra::{eq_poly::EqPolynomial, offset_eq::OffsetEqWindow};
-use jolt_algebra::ring::{eval_flat_ring_at_pows_fast, ResidueKernelPoint};
 use akita_params::CompressionChainPlan;
+use jolt_algebra::ring::{eval_flat_ring_at_pows_fast, ResidueKernelPoint};
 use jolt_algebra::{ExtField, Unreduced, Zero};
 
 #[derive(Clone, Debug)]
