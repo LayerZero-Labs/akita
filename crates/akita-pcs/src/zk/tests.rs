@@ -85,20 +85,41 @@ fn accepts_what_the_statement_checker_accepts() {
     });
 }
 
-/// Changes `e` before proving it, after the statement's checker names the
-/// expected violation.
-struct Tampering<'a> {
+/// Proves a false statement: `edit` builds, from the honest `e`, the digits
+/// the prover commits and those its rows and range session read, after the
+/// statement's checker gives `expected` on the committed digits. The prover
+/// skips its own check and its sumcheck rounds stay consistent (`rounds.rs`),
+/// so only the verifier's checks can reject.
+struct Cheating<'a> {
     akita: &'a AkitaResponseProver<Cfg>,
-    tamper: Tamper,
-    expected: WhiteoutError,
+    edit: Edit,
+    expected: Result<(), WhiteoutError>,
 }
 
-/// An edit of `e`, given its segment positions.
-type Tamper = fn(&ResponseLayoutPositions, &mut [i8]);
+/// The committed, rows and range digits of a false statement.
+struct CheatDigits {
+    committed: Vec<i8>,
+    rows: Vec<i8>,
+    range: Vec<i8>,
+}
 
-/// The first digit of each kind of segment of `e`.
+impl CheatDigits {
+    /// One edited `e` in every role.
+    fn everywhere(e: Vec<i8>) -> Self {
+        Self {
+            committed: e.clone(),
+            rows: e.clone(),
+            range: e,
+        }
+    }
+}
+
+type Edit = fn(&ResponseLayoutPositions, &[i8]) -> CheatDigits;
+
+/// Where `e`'s segments start, and the first response segment's shape.
 struct ResponseLayoutPositions {
-    z: usize,
+    z_coefficients: usize,
+    z_levels: usize,
     v: usize,
     theta: usize,
 }
@@ -106,41 +127,88 @@ struct ResponseLayoutPositions {
 impl ResponseLayoutPositions {
     fn new<const D: usize>(statement: &ResponseStatement<'_, F, D>) -> Self {
         let mut offset = 0;
-        let (mut v, mut theta) = (0, 0);
+        let (mut v, mut theta, mut z) = (0, 0, None);
         for segment in statement.layout().segments {
             match segment {
-                ResponseSegment::Response { .. } => {}
+                ResponseSegment::Response {
+                    coefficients,
+                    digits,
+                    ..
+                } => {
+                    z.get_or_insert((coefficients, digits));
+                }
                 ResponseSegment::V { .. } => v = offset,
                 ResponseSegment::Theta => theta = offset,
             }
             offset += segment.num_digits();
         }
-        Self { z: 0, v, theta }
+        let (z_coefficients, z_levels) = z.unwrap();
+        Self {
+            z_coefficients,
+            z_levels,
+            v,
+            theta,
+        }
     }
 }
 
 /// Moves a digit to another one in the alphabet.
-fn bump(digit: &mut i8) {
-    *digit = if *digit == 7 { 6 } else { *digit + 1 };
+fn bumped(e: &[i8], at: usize) -> CheatDigits {
+    let mut e = e.to_vec();
+    e[at] = if e[at] == 7 { 6 } else { e[at] + 1 };
+    CheatDigits::everywhere(e)
 }
 
-impl<const D: usize> ResponseProver<F, D> for Tampering<'_> {
+/// The first response coefficient's digits `(−8, x)` at planes `(h, h + 1)`
+/// rewritten as `(8, x − 1)`: the same integer with a digit outside
+/// `[−8, 7]`.
+fn out_of_alphabet(at: &ResponseLayoutPositions, e: &[i8]) -> Vec<i8> {
+    let n = at.z_coefficients;
+    let index = (0..n * (at.z_levels - 1))
+        .find(|&i| e[i] == -8 && e[i + n] > -8)
+        .unwrap();
+    let mut edited = e.to_vec();
+    edited[index] = 8;
+    edited[index + n] -= 1;
+    edited
+}
+
+/// The range session reads a table other than `E`, every digit in the
+/// alphabet and every affine row holding: only the range image's link to
+/// `E` in the fused sumcheck can reject.
+fn unlinked_range(_: &ResponseLayoutPositions, e: &[i8]) -> CheatDigits {
+    let mut range = e.to_vec();
+    range[0] = if range[0] == 7 { 6 } else { range[0] + 1 };
+    CheatDigits {
+        committed: e.to_vec(),
+        rows: e.to_vec(),
+        range,
+    }
+}
+
+impl<const D: usize> ResponseProver<F, D> for Cheating<'_> {
     fn prove_response<H: Sponge>(
         &self,
         statement: &ResponseStatement<'_, F, D>,
         witness: &ResponseWitness,
         transcript: &mut ProverTranscript<H>,
     ) -> Result<(), ZkError> {
-        let mut tampered = witness.clone();
-        (self.tamper)(
-            &ResponseLayoutPositions::new(statement),
-            &mut tampered.digits,
-        );
+        let digits = (self.edit)(&ResponseLayoutPositions::new(statement), &witness.digits);
         assert_eq!(
-            statement.check_witness(&tampered),
-            Err(self.expected.clone())
+            statement.check_witness(&ResponseWitness {
+                digits: digits.committed.clone()
+            }),
+            self.expected.clone()
         );
-        self.akita.prove_response(statement, &tampered, transcript)
+        self.akita.prove(
+            statement,
+            ProverDigits {
+                committed: &digits.committed,
+                rows: &digits.rows,
+                range: &digits.range,
+            },
+            transcript,
+        )
     }
 
     fn verify_response<H: Sponge>(
@@ -152,43 +220,91 @@ impl<const D: usize> ResponseProver<F, D> for Tampering<'_> {
     }
 }
 
-/// W5-a: with the prover's own check bypassed, the verifier rejects each
-/// violation the statement's checker names: Items 2, 3 and 4 by tampering
-/// with `e`, and Item 5 on a statement whose relation fails. Item 1 cannot
-/// reach the verifier: a digit outside `[−8, 7]` is outside the response
-/// schedule's commitment bound.
+/// The verifier's rejection, if it is a statement rejection.
+fn rejection(error: &ZkError) -> Option<&WhiteoutError> {
+    match error {
+        ZkError::Whiteout(source) => source.downcast_ref::<WhiteoutError>(),
+        _ => None,
+    }
+}
+
+/// W5-a: the verifier rejects each violation the statement's checker names,
+/// at the check that catches it: Items 2–4 by editing `e`, Item 5 on a
+/// statement whose relation fails. Item 1: the response schedule refuses to
+/// commit a digit outside `[−8, 7]`, the range session cannot hold one, and
+/// Stage 1's leaf rejects any range image off its roots (akita-verifier's
+/// stage-1 tests); here the fused sumcheck rejects a range table other than
+/// the committed `E`, the link that ties Stage 1 to `E`.
 #[test]
 fn rejects_each_item_violation() {
     on_big_stack(|| {
         let sigma = SyntheticSigma::<64>::new(3, 1);
-        let akita = akita_for(sigma.response_len()).unchecked();
-        let cases: [(Tamper, &'static str); 3] = [
-            (|at, e| bump(&mut e[at.v]), "V commitment"),
-            (|at, e| bump(&mut e[at.z]), "ring-linear rows"),
-            (|at, e| bump(&mut e[at.theta]), "product quotient θ"),
+        let akita = akita_for(sigma.response_len());
+        let rejected = |item| Err(WhiteoutError::ResponseRejected(item));
+        let cases: [(Edit, Result<(), WhiteoutError>, &str); 4] = [
+            (unlinked_range, Ok(()), "fused sumcheck"),
+            (
+                |at, e| bumped(e, at.v),
+                rejected("V commitment"),
+                "fused sumcheck",
+            ),
+            (
+                |_, e| bumped(e, 0),
+                rejected("ring-linear rows"),
+                "product sumcheck",
+            ),
+            (
+                |at, e| bumped(e, at.theta),
+                rejected("product quotient θ"),
+                "product sumcheck",
+            ),
         ];
-        for (tamper, expected) in cases {
-            let tampering = Tampering {
+        let mut observed = Vec::new();
+        for (edit, expected, _) in cases.iter().cloned() {
+            let cheating = Cheating {
                 akita: &akita,
-                tamper,
-                expected: WhiteoutError::ResponseRejected(expected),
+                edit,
+                expected,
             };
-            let proof = sigma.prove(&tampering, 4).unwrap();
-            assert!(sigma.verify(&proof, &akita).is_err(), "{expected}");
+            let proof = sigma.prove(&cheating, 4).unwrap();
+            observed.push(sigma.verify(&proof, &akita).unwrap_err());
         }
+        let observed: Vec<_> = observed.iter().map(rejection).collect();
+        let expected: Vec<_> = cases
+            .iter()
+            .map(|(_, _, check)| Some(WhiteoutError::ResponseRejected(check)))
+            .collect();
+        assert_eq!(
+            observed,
+            expected.iter().map(Option::as_ref).collect::<Vec<_>>()
+        );
 
-        let alphabet = Tampering {
+        let committing = Cheating {
             akita: &akita,
-            tamper: |at, e| e[at.z] = 8,
-            expected: WhiteoutError::ResponseRejected("digit outside its alphabet"),
+            edit: |at, e| CheatDigits::everywhere(out_of_alphabet(at, e)),
+            expected: rejected("digit outside its alphabet"),
         };
-        assert!(sigma.prove(&alphabet, 5).is_err());
+        let refused = sigma.prove(&committing, 5).unwrap_err();
+        assert!(
+            format!("{refused:?}").contains("coefficient bound"),
+            "{refused:?}"
+        );
 
         let violating = SyntheticSigma::<64>::violating_item_five(6, 1);
         let checked = violating.prove(&CheckingResponseProver, 7).unwrap_err();
         assert!(format!("{checked:?}").contains("ct(h)"), "{checked:?}");
-        let proof = violating.prove(&akita, 7).unwrap();
-        assert!(violating.verify(&proof, &akita).is_err());
+        let cheating = Cheating {
+            akita: &akita,
+            edit: |_, e| CheatDigits::everywhere(e.to_vec()),
+            expected: rejected("ct(h)"),
+        };
+        let proof = violating.prove(&cheating, 7).unwrap();
+        let error = violating.verify(&proof, &akita).unwrap_err();
+        assert_eq!(
+            rejection(&error),
+            Some(&WhiteoutError::ResponseRejected("fused sumcheck")),
+            "{error:?}"
+        );
     });
 }
 

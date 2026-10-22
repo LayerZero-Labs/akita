@@ -77,10 +77,29 @@ pub struct AkitaResponseProver<Cfg: CommitmentConfig> {
     scheme: AkitaCommitmentScheme<Cfg>,
     verifier: AkitaVerifier<Cfg>,
     prover: Option<ProverSetup>,
-    /// Test-only: `false` skips the prover's own statement check, so tests
-    /// can show the verifier rejects what it catches.
-    #[cfg(test)]
-    check_witness: bool,
+}
+
+/// The digits each step of the prover reads. An honest prover reads `e` in
+/// all three; tests split them to reach the verifier with a false
+/// statement.
+#[derive(Clone, Copy)]
+struct ProverDigits<'a> {
+    /// The committed table `E`.
+    committed: &'a [i8],
+    /// What the product claims and their rows are computed from.
+    rows: &'a [i8],
+    /// The digit-range session's table.
+    range: &'a [i8],
+}
+
+impl<'a> ProverDigits<'a> {
+    fn honest(digits: &'a [i8]) -> Self {
+        Self {
+            committed: digits,
+            rows: digits,
+            range: digits,
+        }
+    }
 }
 
 /// The prover's setup and the backend that holds it.
@@ -105,8 +124,6 @@ where
             scheme,
             verifier,
             prover: Some(ProverSetup { setup, backend }),
-            #[cfg(test)]
-            check_witness: true,
         })
     }
 
@@ -119,31 +136,17 @@ where
             verifier: scheme.verifier(setup)?,
             scheme,
             prover: None,
-            #[cfg(test)]
-            check_witness: true,
         })
     }
 
-    /// Test-only: the prover without its own statement check.
-    #[cfg(test)]
-    fn unchecked(mut self) -> Self {
-        self.check_witness = false;
-        self
-    }
-
+    /// Proves the statement on `digits`, without checking that it holds:
+    /// [`ResponseProver::prove_response`] checks first.
     fn prove<H: Sponge, const D: usize>(
         &self,
         statement: &ResponseStatement<'_, F, D>,
-        witness: &ResponseWitness,
+        digits: ProverDigits<'_>,
         transcript: &mut ProverTranscript<H>,
     ) -> Result<(), ZkError> {
-        #[cfg(test)]
-        let check = self.check_witness;
-        #[cfg(not(test))]
-        let check = true;
-        if check {
-            statement.check_witness(witness)?;
-        }
         let side = self.prover.as_ref().ok_or_else(|| {
             zk_error(AkitaError::InvalidInput(
                 "a verifier-only response prover cannot prove".into(),
@@ -151,11 +154,14 @@ where
         })?;
         let shape = ResponseShape::new(statement.layout().len()).map_err(zk_error)?;
         let plan = range_plan::<Cfg, D>(statement).map_err(zk_error)?;
-        if witness.digits.len() != shape.len {
+        if [digits.committed, digits.rows, digits.range]
+            .iter()
+            .any(|digits| digits.len() != shape.len)
+        {
             return Err(WhiteoutError::ResponseRejected("response length").into());
         }
-        let mut e: Vec<F> = witness
-            .digits
+        let mut e: Vec<F> = digits
+            .committed
             .iter()
             .map(|&digit| F::from_i64(i64::from(digit)))
             .collect();
@@ -176,7 +182,7 @@ where
 
         // 2. The product reduction at α.
         let alpha: F = transcript.challenge();
-        let rows = statement.rows(&witness.digits, alpha)?;
+        let rows = statement.rows(digits.rows, alpha)?;
         let product_vars = ceil_log2(rows.product_x.len().max(1));
         let mut product = ProductKernel {
             u: padded(rows.product_x, product_vars),
@@ -215,7 +221,7 @@ where
             DigitRangeEqualityPoint::from_column_then_ring_challenges(&tau, shape.num_vars, 0)
                 .map_err(zk_error)?;
         let mut session = DigitRangeProver::new(
-            Arc::from(witness.digits.as_slice()),
+            Arc::from(digits.range),
             plan,
             FlatBooleanDomain::new(shape.len, shape.num_vars).map_err(zk_error)?,
             equality_point.clone(),
@@ -393,7 +399,8 @@ where
         witness: &ResponseWitness,
         transcript: &mut ProverTranscript<H>,
     ) -> Result<(), ZkError> {
-        self.prove(statement, witness, transcript)
+        statement.check_witness(witness)?;
+        self.prove(statement, ProverDigits::honest(&witness.digits), transcript)
     }
 
     fn verify_response<H: Sponge>(
