@@ -1,6 +1,7 @@
 //! Ring-switch challenge replay: alpha, tau0, and tau1, plus the prepared
 //! relation evaluator and Stage 2 compression state they determine.
 
+use crate::claims::ClaimReplay;
 use crate::relation::{
     prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
 };
@@ -13,7 +14,6 @@ use akita_types::{
     ReducedCompressionRelationWeights, RingRelationGroupOpeningView,
 };
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
-use jolt_transcript::Sponge;
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
@@ -58,15 +58,13 @@ where
     fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError>;
 }
 
-struct RingSwitchChallenges<'a, 'g, 'proof, H: Sponge>(
-    &'a mut akita_types::VerifierGrinding<'g, 'proof, H>,
-);
+struct RingSwitchChallenges<'a, G>(&'a mut G);
 
-impl<F, E, H> RingSwitchChallengeSource<F, E> for RingSwitchChallenges<'_, '_, '_, H>
+impl<F, E, G> RingSwitchChallengeSource<F, E> for RingSwitchChallenges<'_, G>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    H: Sponge,
+    G: GrindingReplay,
 {
     fn alpha(&mut self, level: u32) -> Result<E, AkitaError> {
         self.0
@@ -84,10 +82,10 @@ where
     }
 }
 
-pub(crate) fn ring_switch_verifier<F, E, H: Sponge>(
+pub(crate) fn ring_switch_verifier<F, E, G: ClaimReplay<F, E>>(
     replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
+    grinding: &mut G,
     level: u32,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where

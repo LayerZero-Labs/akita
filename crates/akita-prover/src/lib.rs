@@ -45,4 +45,6 @@ pub use protocol::{
     batched_prove, catch_prover_panic, prove_digit_range, DigitRangeOutput, ProveLevelOutput,
     RingRelationInstance, RingRelationProver, RingSwitchOutput, SuffixProverState,
 };
+#[cfg(all(feature = "zk", feature = "test-support"))]
+pub use protocol::{prove_masked_prefix, ResidualOpening};
 pub use setup::{PreparedSetupPrefix, SetupPrefixProverRegistry};

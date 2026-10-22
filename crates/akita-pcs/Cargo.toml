@@ -117,6 +117,7 @@ jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
 jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", features = [
+  "test-support",
   "whiteout-test-support",
 ] }
 jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
@@ -137,6 +138,19 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
 ] }
 akita-planner = { version = "0.1.0", path = "../akita-planner", default-features = false, features = [
   "test-support",
+  "zk",
+] }
+# Test-only: the masked prefix of a zero-knowledge opening, both roles, and
+# pads with no commitment to run it over.
+akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false, features = [
+  "test-support",
+  "zk",
+] }
+akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false, features = [
+  "test-support",
+  "zk",
+] }
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [
   "zk",
 ] }
 # Test-only: sample the hiding randomness of test schedules that declare it.

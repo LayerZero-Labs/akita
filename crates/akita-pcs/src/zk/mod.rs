@@ -416,7 +416,7 @@ where
                 .map_err(zk_error)?,
             plan,
         )
-        .verify::<F, _>(&mut grinding, None, RANGE_LEVEL)
+        .verify_clear::<F, _>(&mut grinding, None, RANGE_LEVEL)
         .map_err(zk_error)?;
         grinding.finish().map_err(zk_error)?;
 

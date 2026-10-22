@@ -34,9 +34,15 @@ akita-types = { version = "0.1.0", path = "../akita-types", default-features = f
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", optional = true }
 
 [features]
 benchmark-support = []
+# The masked prefix of a zero-knowledge opening (`specs/whiteout-akita.md`
+# §4.5–4.6). It selects nothing; its entry points also need `test-support`
+# until zero knowledge is published.
+zk = ["dep:jolt-zk", "akita-types/zk", "akita-params/zk", "akita-config/zk"]
+test-support = []
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",

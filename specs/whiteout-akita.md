@@ -1052,6 +1052,252 @@ The verifier receives raw u_a.
   - Akita's commitment kernels agree with `TwoLevelLayout` semantics.
 - **W3-f.** C0 (golden test) after the M3b and M2b fixups and the S-seams.
 - **W3-g.** `ZkOpeningSchedule::admit` rejects each §4.1 violation.
+- **After W2b.** W2b (§3.5) rebases onto W3c and makes two more shapes
+  admissible at masked levels: multi-group masked roots, whose
+  `MaskedOpeningClaims` then hold one form per claim of every group in group
+  order, and Stage 3 at masked level 0. W3c's masked path accepts the first
+  unchanged, because the root binds and batches its openings through
+  `ClaimReplay` per claim. For the second, Stage 3's rounds must go through
+  the clear sumcheck path, since its claim, rounds and prefix evaluation are
+  public (§4.2). Today the driver sends them as private messages, and a
+  masked replay fails closed with `MaskedRoundInClearReplay`.
+
+### 4.8 W3c as built: deviations from the paper and from §4.4–4.6
+
+W3c (`wo/akita-w3c`) runs levels 0..=`cut_level` masked and stops at the cut.
+Each departure below states its argument.
+
+- **Checks are recorded, then lowered (§4.5 "no separate recorded-check
+  list").** The rows domain needs the masked auxiliary values, which W6
+  sends after the cut (§7, step 6), so the masked verifier cannot push rows
+  during its replay. The fold verifier is written once over a `ClaimReplay`
+  trait (`akita-verifier/src/claims.rs`). The clear instance checks each
+  claim on the spot; the masked instance (`MaskedReplay`) holds each claim as
+  an `AffineRow` and records each level's two stage checks as data: the
+  leaf, the Stage-2 weights, and the claim forms. `MaskedPrefix::lower` then
+  runs the one formula in `akita-types` (`check_range_leaf`,
+  `check_stage2_oracle`) in any `ClaimDomain`: `RowsDomain` (`rows`),
+  `OperandShapeDomain` (`shape`) and `ValuesDomain` (`auxiliary_values`). No
+  formula is restated, and the three domains allocate the same slots
+  because they share one lowering routine. The paper's verifier holds the
+  same data.
+- **The packing-sum check needs no row.** The clear verifier compares the
+  per-group authenticated sum with the batched trace target. Both are formed
+  from the same openings with public coefficients. The masked replay
+  therefore compares the two forms coefficient by coefficient, which is a
+  public check. It is a tautology for honest layouts, and no mutation of
+  the transcript can make it fail.
+- **The cut row and the hand-off.** One value, `ResidualClaim`, carries the
+  hand-off: the point, the masked w̃_k(r₂), and u_a as this verifier received
+  it. The cut row `ResidualClaim::WITNESS − w̃_k(r₂) = 0` is built from it,
+  and the residual back end opens that commitment at that point, so the row,
+  the point and the commitment cannot be wired apart. The point has one
+  owner, `akita_types::residual_point`, which both roles call. It converts r₂
+  once from `LOW_TO_HIGH` to `HIGH_TO_LOW` through jolt-poly's
+  `match_endianness`. When w_k is longer than 2^|r₂| it pads with leading
+  zeros to ⌈log₂ |w_k|⌉ variables. A dense evaluation of the exported w_k,
+  written from the MLE's definition with the first coordinate as the most
+  significant bit, equals the decoded w_eval, and the reversed point does
+  not. This pins A18.
+- **Counts.** At b = 8 on the ℓ∞ route, each masked level lowers into three
+  product pairs (`u = ri²`, the leaf row, the Stage-2 row), one auxiliary
+  slot and three operand pads (ri, u, w_eval). The test row at k = 2 has 6
+  products, 2 auxiliary slots, 6 operand pads and one affine row, the cut
+  row. These are the paper's counts (§6.1).
+- **The prover's auxiliary values.** The prover lowers the leaf check over
+  its own decoded values (`ProveLevelOutput::range_leaf`), with
+  `check_range_leaf` in `ValuesDomain`, and runs the same check in the clear
+  domain as a release self-check. The test compares the result with
+  `MaskedPrefix::auxiliary_values` under the pads. The Stage-2 check takes
+  no auxiliary slot, so the prover does not lower it.
+- **Statement claims.** The masked root takes `MaskedOpeningClaims` (one
+  `AffineRow` per claim). The `GroupBatchStatement` supplies only the
+  commitments, points and selection, and its evaluations are not read. The
+  prover checks in release builds that each form decodes, under the pads, to
+  its own claim.
+- **One backend.** `prove_masked_prefix` proves every masked level on one
+  backend and bypasses the registry's dyn executors. Those executors stay
+  typed on the clear transcript. Routing masked levels across backends
+  needs the executor trait to become generic over the channel.
+- **Counting replay.** `CountingGrinding` consumes proof-of-work plan
+  entries without reading a nonce, and forks every fold response at counter
+  0. W6's `ShapeTranscript` makes the same choice for Jolt's grinding. The
+  replay runs over zero bytes, or a reader that never fails, long enough for
+  the prefix's messages; never over proof bytes. The layout is a function
+  of the public schedule, and a proof can end early or fail to decode. The
+  test schedule grinds at both masked levels, so the masked channels' nonces
+  and the counting replay's nonce skip both run.
+- **Stopping at the cut.** Both roles check
+  `finish_through(cut_level)`: the replay consumed every grinding-plan entry
+  of levels 0..=`cut_level` and nothing after. The schedule's plan and
+  descriptor still cover the clear levels after the cut.
+- **`ResidualOpening`.** It carries:
+  - the cut level and the point;
+  - the decoded w̃_k(point);
+  - raw u_a;
+  - w_k's digits with their alphabet (the cut level's open basis);
+  - t̂_a with its gadget basis;
+  - r_a with its alphabet.
+
+  It is built by the `ResidualExportKernel::export_residual` backend kernel
+  (§4.8.1). `public_segments` and `blocks` are not built (§4.8.1).
+- **Composition with Jolt's rows.** `MaskedPrefix::rows` numbers auxiliary
+  slots from `layout.auxiliary.start`, as `RowsDomain::new` does. Appending
+  it after Jolt's `JoltResidualRows` in one relation needs an offset
+  constructor for `RowsDomain` (W6).
+- **Channel transcript access (M6b fixup).** The masked channels do not
+  lend their transcript. They offer typed proof-of-work operations only:
+  `MaskedProver::{grind, send_nonce, narg_len}` and
+  `MaskedVerifier::{check_grind, receive_nonce, remaining}`. Akita's
+  `ProverGrindingChannel` and `VerifierGrindingChannel` are these operations.
+  Their terminal byte sends (`send_public_bytes`,
+  `send_bounded_public_bytes`) return `UnsupportedSchedule` on a masked
+  channel, and public field messages go through `Channel::exchange_all`.
+- **Error classification.** Under `zk`, a masked channel's error that
+  crosses the sumcheck driver (`SumcheckError::PrivateChannel`) maps through
+  `From<ZkError>`. A truncated or malformed masked round is therefore
+  `AkitaError::InvalidProof`, not `Internal`.
+  `CommittedPads::uncommitted`, behind jolt-zk's `test-support` feature, builds
+  pads with no commitment for Akita's tests. Until W6, only a `ZkBackend`
+  builds `CommittedPads`.
+- **Not exercised.** The tests cover k = 2 at b = 8 on `fp128::Dense`
+  14:1. They do not exercise product stages, extension-field claims or
+  Stage 3 at a masked level, and admission rejects all three. The masked
+  replay also fails closed on each. Product stages and Stage 3 run their
+  rounds through `verify_single`, whose rounds arrive masked over a masked
+  channel and fail with `MaskedRoundInClearReplay` (§4.2 makes Stage 3's
+  claim and prefix evaluation public, but the sumcheck driver still sends its
+  rounds as private messages). Extension claims fail with
+  `UnsupportedSchedule`.
+
+#### 4.8.1 Hiding the residual commitment
+
+u_a, the cut level's commitment to its output witness w_k, has no hiding
+randomness today: `admit` gives every level after the cut zero B
+randomness, and the cut successor is the after-cut level's own group. The
+paper commits to w_k "in the same way" as every earlier witness
+(04_protocol.tex:81). That is the gap closed here. The design composes with
+§3.5 (precommitted groups, W2b): §3.5 changes only levels ≤ `cut_level`, and
+this note changes only the cut successor.
+
+**Where r_a comes from.** The successor commitment that the cut level
+makes already takes its randomness width from the successor's own-group
+profile (`randomness_columns`). It takes its alphabet from the successor's
+open basis (`akita-cpu-backend/src/commitment/plan.rs:225`,
+`with_randomness_log_basis(params.own_group().opening.log_basis_open)`). The
+backend samples r_a there and keeps it in the commitment material, as W1
+does for every masked successor. No new sampling path is needed. In ZK mode
+the after-cut level is never folded: its parameters describe the residual
+commitment (A_a, [B_a | B′_a]) and nothing else. Its "consuming opening" is
+the Σ-protocol, so its open basis is defined as the Σ alphabet of r_a.
+
+**Column count.** `r_a` = `b_randomness_columns(after_cut.own_group())`. This
+is the existing §3.2 helper, `hiding_randomness_columns(rows = outer rank,
+ring_dim = d_B, modulus, alphabet = after_cut.open().log_basis)`, with the
+after-cut open basis fixed at `RESIDUAL_RANDOMNESS_LOG_BASIS = 4` (radix 16,
+the alphabet W4 sized for). Over R_256 this gives 97 columns at rank 3 (the
+existing `residual_commitment_needs_ninety_seven_columns` test) and 161 at
+rank 5 (W4 §1.5's table, which uses the same formula and slack). The count
+is per outer slice. The cut successor is required to have one slice (A28),
+because W4's single [B_a | B′_a] block assumes one.
+
+**`admit` change** (only these lines; the §3.5 per-group loop is
+untouched). At level `cut_level + 1`:
+
+- the own group carries exactly `b_randomness_columns(own)` B columns;
+  previously it carried zero;
+- the own group opens at `RESIDUAL_RANDOMNESS_LOG_BASIS`;
+- its outer slice count is 1;
+- the level's D randomness stays 0, because the level is never folded;
+- there is still no preceding group (no Stage 3 at the cut, as before).
+
+Levels above `cut_level + 1` keep zero randomness everywhere. The order
+relative to the §3.5 merge is mechanical: both edit the
+"later levels carry no randomness" branch of `admit`. Whichever lands
+second splits that branch into `cut_level + 1` (this rule) and above (zero).
+The ZK planner must then fix the after-cut open basis at 16 and recompute
+the after-cut level's witness geometry with the r_a span. The clear planner
+and clear rows do not change (C0).
+
+**Where r_a enters `ResidualOpening`.** The full hand-off becomes:
+
+```text
+ResidualOpening {
+    cut_level, point: [r₂] (HIGH_TO_LOW), witness_eval, residual_commitment: u_a (raw),
+    w_k: Vec<i64>,            // the cut level's output witness, Akita flat order
+    w_k_log_basis: u32,       // its digit alphabet (b = 8 at masked levels)
+    t_hat_a: Vec<i64>,        // gadget digits of A_a·w_k, at the after-cut inner basis
+    r_a: Zeroizing<Vec<i8>>,  // b_randomness_columns(after_cut)·d_B digits
+    r_a_log_basis: u32,       // = after_cut.open().log_basis
+    public_segments,          // §4.6: setup-prefix responses at the cut level (§3.5)
+    blocks,                   // §4.6: A_a with gadget, [B_a | B′_a] cut from the setup stream
+}
+```
+
+W6 builds the Σ segment table from the declared alphabets: `Witness` at
+`w_k_log_basis`, `InnerDigits` at the inner basis, and `ResidualRandomness` at
+`r_a_log_basis`. The alphabet has one owner, the schedule's after-cut open
+basis, and Σ reads it. Still missing, in order:
+
+1. A backend kernel, `export_residual(session, witness, material)`, that
+   returns w_k's logical digits, t̂_a and r_a from the cut successor's
+   handles before the proof scope finishes. On the CPU backend these are
+   the export packet's `LogicalDigits`, the gadget decomposition of its
+   `InnerRows`, and the retained outer randomness.
+2. `blocks`: views of A_a and [B_a | B′_a] over the setup stream, where B′_a
+   is the outer matrix's randomness-column part.
+3. `public_segments`: the setup-prefix response spans of the cut level's
+   witness layout, aligned to R_256 boundaries (A27).
+
+**Effect on W3-e.**
+
+- *N·s = t* (as designed). With r_a sampled and exported, the outer rows
+  [B_a | B′_a](t̂_a, r_a) = u_a hold for Akita's own u_a. W3-e can then
+  check `N·s = t` under jolt-zk's `SigmaSetup`, built from `blocks`. Without
+  this change the check would pass with r_a = 0 and prove nothing about
+  hiding. The test should also check that two proofs of one statement give
+  different u_a.
+- *MLE order (A18).* Unchanged. r_a is a separate Σ segment after t̂_a and
+  is not part of w_k, so `Witness(0) = w̃_k(r₂)` ranges over w_k's index
+  space only. The dense-evaluation test still needs `export_residual`'s
+  w_k. It pins Akita's flat order against the `LOW_TO_HIGH` → `HIGH_TO_LOW`
+  conversion that `CutState` and `ResidualOpening` already apply.
+
+**Zero knowledge.** u_a's raw image is hidden by Lemma `wo:lem:stat-hiding`
+at the same width rule (entropy ≥ image bits + 2λ + 8). That makes the
+response proof's binary decompositions of u_a simulatable, as the paper
+requires ("the full outer image must be hidden", 04_protocol.tex:68-72).
+
+**As built.**
+- The `admit` conditions are implemented, each with its own typed error and
+  a negative test. One condition is added beyond the design: the cut
+  successor's payload is `Raw` ("sends the residual commitment compressed").
+  §4.1 already fixes the payload mode as Raw, and the Σ-protocol opens the
+  outer image itself.
+- The ZK planner fixes the after-cut open basis at 16, the slice count at
+  1 and the payload at Raw. It sizes r_a through the same priced-randomness
+  path as the masked levels (`LevelMasking::hides_outer`). The test row's
+  residual ring dimension is 64.
+- `export_residual` is implemented for the CPU backend.
+- Tests:
+  - W3-e `N·s = t`, through jolt-crypto's `MatrixView` and
+    `PreparedMatrix::apply_centered` on Akita's setup stream: the inner rows
+    `A·G⁻¹(w_k) = G·t̂_a` and the outer rows
+    `[B | B′](t̂_a, r_a) = u_a` hold for Akita's own u_a;
+  - two openings of one statement send different u_a and r_a;
+  - the dense w̃_k(point) equals w_eval (A18).
+- `public_segments` and `blocks` remain for after the precommit merge (§3.5
+  decides the setup-prefix spans) and W6, which builds the
+  `ResidualBlock` views from the same setup stream the test reads.
+
+**Paper delta.** The paper puts the randomness of the commitment to w_j
+into w_{j+1}, "in the alphabet of the witness that later contains it". At
+the cut no later Akita witness exists. r_a joins the Σ vector s as its own
+segment, in the Σ alphabet (radix 16), and the Σ segment alphabet check
+certifies it (W4 §2.1, release check 1) instead of a range sumcheck. The
+entropy rule is unchanged, so the hiding argument is the paper's. The
+binding argument for [B_a | B′_a] is the paper's weak-opening argument at
+the Gaussian radius, which already covers every segment of s.
 
 ## 5. W5: `ResponseProver` for Akita
 

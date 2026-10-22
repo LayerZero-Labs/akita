@@ -22,6 +22,7 @@ struct Stage1ProveOutput<E: Field> {
     point: Vec<E>,
     range_image_evaluation: E,
     physical_l2: Option<PhysicalL2ProverReplay<E>>,
+    range_leaf: Option<RangeLeafClaim<E>>,
 }
 
 struct Stage2ProveOutput<E: Field> {
@@ -50,7 +51,15 @@ pub(in crate::protocol::prove) struct PreparedFold<
     clippy::too_many_arguments,
     clippy::type_complexity
 )]
-pub(super) fn prepare_fold<'claims, 'source, F, E, B, H: Sponge>(
+pub(super) fn prepare_fold<
+    'claims,
+    'source,
+    F,
+    E,
+    B,
+    H: Sponge,
+    C: crate::protocol::ProverFoldChannel<E, Sponge = H>,
+>(
     backend: &B,
     block_claims: ProverOpeningData<
         'claims,
@@ -60,7 +69,7 @@ pub(super) fn prepare_fold<'claims, 'source, F, E, B, H: Sponge>(
     >,
     commitment_material: Vec<B::CommitmentMaterialHandle>,
     pad_base_evals: bool,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     level: u32,
     level_params: &CommittedGroupParams,
     basis: BasisMode,
@@ -103,7 +112,7 @@ where
             .iter()
             .flat_map(|g| g.evaluations().iter().copied())
             .collect::<Vec<_>>();
-        let reduced = prove_extension_opening_reduction::<F, E, B, _>(
+        let reduced = prove_extension_opening_reduction::<F, E, B, _, _>(
             backend,
             session,
             &context,
@@ -284,7 +293,7 @@ where
             },
         trace_claim,
         row_coefficients,
-    } = RingRelationProver::prepare::<F, E, B, _>(
+    } = RingRelationProver::prepare::<F, E, B, _, _>(
         opening,
         prepared_group_openings,
         commitment_material,
@@ -358,8 +367,13 @@ struct CommittedNextWitness<F: Field, WitnessHandle, M> {
     commitment_material_handle: M,
 }
 
-fn prepare_physical_l2_batch<F, E, H: Sponge>(
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+fn prepare_physical_l2_batch<
+    F,
+    E,
+    H: Sponge,
+    C: crate::protocol::ProverFoldChannel<E, Sponge = H>,
+>(
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     level: usize,
     physical_l2: Option<PhysicalL2ProverReplay<E>>,
 ) -> Result<Option<PhysicalL2ProverReplay<E>>, AkitaError>
@@ -379,8 +393,14 @@ where
     Ok(Some(replay))
 }
 
-fn prepare_stage2_compression<F, E, H, S: Sponge>(
-    grinding: &mut akita_types::ProverGrinding<'_, S>,
+fn prepare_stage2_compression<
+    F,
+    E,
+    H,
+    S: Sponge,
+    C: crate::protocol::ProverFoldChannel<E, Sponge = S>,
+>(
+    grinding: &mut akita_types::ProverGrinding<'_, S, C>,
     level: usize,
     rs: &mut RingSwitchOutput<E, H>,
 ) -> Result<E, AkitaError>
@@ -503,9 +523,9 @@ where
 /// Build, commit, and transcript-bind the witness consumed by the successor.
 /// The logical witness is computed once and retained for ring switching.
 #[allow(clippy::too_many_arguments)]
-fn commit_next_witness<F, E, B, H: Sponge>(
+fn commit_next_witness<F, E, B, H: Sponge, C: crate::protocol::ProverFoldChannel<E, Sponge = H>>(
     backend: &B,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     level: u32,
     next_params: FoldSuccessorParams<'_>,
     expected_output_witness_len: usize,
@@ -561,7 +581,9 @@ where
                     .id()?
                     .into(),
             );
-            grinding.state_mut().send_all(public_commitment.coeffs());
+            grinding
+                .state_mut()
+                .exchange_all(&mut public_commitment.coeffs().to_vec())?;
             NextWitnessState::OuterPayload(public_commitment)
         }
         (
@@ -589,7 +611,7 @@ where
                     .id()?
                     .into(),
             );
-            grinding.state_mut().send_all(sent);
+            grinding.state_mut().exchange_all(&mut sent.to_vec())?;
             if akita_params::RECOMPUTE_LAST_BLOCK {
                 akita_types::send_field_digest(
                     grinding.state_mut(),
@@ -597,7 +619,7 @@ where
                         .id()?
                         .into(),
                     last_block,
-                );
+                )?;
             } else if !last_block.is_empty() {
                 return Err(AkitaError::Internal(
                     "terminal inner state is longer than its scheduled length".into(),
@@ -633,12 +655,18 @@ where
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[inline(never)]
-pub(in crate::protocol::prove) fn prove_fold<F, E, B, H: Sponge>(
+pub(in crate::protocol::prove) fn prove_fold<
+    F,
+    E,
+    B,
+    H: Sponge,
+    C: crate::protocol::ProverFoldChannel<E, Sponge = H>,
+>(
     expanded: &akita_types::AkitaSetupDescriptor,
     prefix_slots: &SetupPrefixProverRegistry<F, B::CommitmentHandle>,
     backend: &B,
     session: &B::ProofSessionHandle,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     level: usize,
     lp: &CommittedGroupParams,
     next_params: FoldSuccessorParams<'_>,
@@ -704,7 +732,7 @@ where
         witness_handle: mut next_witness,
         binding: next_commitment_binding,
         commitment_material_handle,
-    } = commit_next_witness::<F, E, B, _>(
+    } = commit_next_witness::<F, E, B, _, _>(
         backend,
         grinding,
         fold_level,
@@ -727,7 +755,7 @@ where
         backend.proof_context(session, fold_level)?,
     );
     let next_opening_source_len = committed_witness_len / next_opening_ring_dim;
-    let ring_switch = ring_switch_finalize::<F, E, B, _>(
+    let ring_switch = ring_switch_finalize::<F, E, B, _, _>(
         &consumer_ctx,
         &instance,
         grinding,
@@ -773,7 +801,8 @@ where
         point: stage1_point,
         range_image_evaluation,
         physical_l2,
-    } = prove_stage1::<F, E, _, _>(
+        range_leaf,
+    } = prove_stage1::<F, E, _, _, _>(
         &consumer_ctx,
         grinding,
         fold_level,
@@ -781,8 +810,8 @@ where
         lp,
         &relation_range_image_plan,
     )?;
-    let physical_l2 = prepare_physical_l2_batch::<F, E, _>(grinding, level, physical_l2)?;
-    let compression = prepare_stage2_compression::<F, E, _, _>(grinding, level, &mut rs)?;
+    let physical_l2 = prepare_physical_l2_batch::<F, E, _, _>(grinding, level, physical_l2)?;
+    let compression = prepare_stage2_compression::<F, E, _, _, _>(grinding, level, &mut rs)?;
     let batching_coeff =
         grinding.grinded_ext_challenge::<F, E>(akita_params::GrindingSite::Stage2Batch {
             level: fold_level,
@@ -814,7 +843,7 @@ where
     let Stage2ProveOutput {
         challenges: sumcheck_challenges,
         witness_evaluation: w_eval,
-    } = prove_stage2::<F, E, _, _>(
+    } = prove_stage2::<F, E, _, _, _>(
         &consumer_ctx,
         level,
         grinding,
@@ -842,7 +871,7 @@ where
     )?;
     akita_types::stage2_w_eval::<F, E, _>(grinding, fold_level, w_eval)?;
     let stage3_sumcheck_proof = match next_params.recursive() {
-        Some(next_fold_params) => prove_stage3::<F, E, _, _>(
+        Some(next_fold_params) => prove_stage3::<F, E, _, _, _>(
             consumer,
             session,
             level,
@@ -866,6 +895,7 @@ where
     crate::backend::OpaqueWitnessCommitKernel::advance_witness_level(consumer, &mut next_witness)?;
 
     Ok(ProveLevelOutput {
+        range_leaf,
         next_state: SuffixProverState {
             witness_handle: next_witness,
             commitment_material: commitment_material_handle,

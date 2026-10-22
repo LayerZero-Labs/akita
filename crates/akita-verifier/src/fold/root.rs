@@ -1,4 +1,5 @@
 use super::{verify_fold, FoldVerifyOutput, NextWitnessPlan, PreparedFoldReplay};
+use crate::claims::ClaimReplay;
 use crate::stages::opening_claims::{finalize_claims, verify_coefficient_packing_root_prefix};
 use akita_error::AkitaError;
 use akita_params::{
@@ -7,25 +8,33 @@ use akita_params::{
 };
 use akita_serialization::AkitaSerialize;
 use akita_types::Commitment;
-use akita_types::GrindingReplay;
 use akita_types::{AkitaVerifierSetup, FpExtEncoding, OpeningClaims, RingVec};
-use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
-use jolt_transcript::{Channel, Sponge};
+use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_transcript::Channel;
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn verify_root<F, E, H: Sponge>(
+/// Replays the root fold. `claims` supplies the statement's commitments and
+/// points, and `openings` its claims in group order; the evaluations stored in
+/// `claims` are not read.
+pub(super) fn verify_root<F, E, G: ClaimReplay<F, E>>(
     setup: &AkitaVerifierSetup<F>,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
+    grinding: &mut G,
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
+    openings: Vec<G::Claim>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
     next_fold_params: Option<&FoldParams>,
     terminal: &TerminalFoldParams,
-) -> Result<FoldVerifyOutput<F, E>, AkitaError>
+) -> Result<FoldVerifyOutput<F, E, G::Claim>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + CanonicalDecode,
 {
     root_lp.validate_opening_batch(opening_batch)?;
     for group_index in 0..opening_batch.num_groups() {
@@ -69,16 +78,15 @@ where
         );
         grinding.state_mut().public_all(group.point());
     }
-    let openings = claims.flat_evaluations();
-    let material = verify_coefficient_packing_root_prefix::<F, E>(
+    // Schedule validation admits no setup prefix at the root.
+    grinding.bind_openings(0, None, &openings)?;
+    let material = verify_coefficient_packing_root_prefix::<F, E, _>(
         claims,
-        &openings,
+        openings,
         opening_batch,
         basis,
         root_lp,
     )?;
-    // Schedule validation admits no setup prefix at the root.
-    akita_types::bind_fold_openings::<F, E, _>(grinding, 0, None, &openings)?;
     let payload_geometry = relation_layout.opening_payload_geometry()?;
     let opening_payload = {
         let mut payload =

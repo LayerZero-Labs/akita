@@ -171,9 +171,15 @@ impl<E: Field, S: DigitRangeSteps<E>> akita_sumcheck::SumcheckKernel<E>
     }
 }
 
-pub(super) fn prove_stage1<F, E, B, H: Sponge>(
+pub(super) fn prove_stage1<
+    F,
+    E,
+    B,
+    H: Sponge,
+    C: crate::protocol::ProverFoldChannel<E, Sponge = H>,
+>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     level: u32,
     rs: &mut RingSwitchOutput<E, B::RelationHandle>,
     lp: &CommittedGroupParams,
@@ -233,7 +239,7 @@ where
         session: &mut session_handle,
         field: std::marker::PhantomData,
     };
-    let (mut claim, equality_coordinates) = prove_stage1_products::<F, E, _, _>(
+    let (mut claim, equality_coordinates, leaf_weights) = prove_stage1_products::<F, E, _, _, _>(
         &mut steps,
         plan.digit_range_plan(),
         equality_coordinates,
@@ -299,7 +305,7 @@ where
             format: SingleFormat::Compressed,
             invocation: 0,
         };
-        let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
+        let mut channel = akita_types::GrindingSumcheckProver::<F, E, _, _>::new(
             grinding,
             akita_params::SumcheckProtocol::PhysicalL2,
             level,
@@ -332,7 +338,7 @@ where
             Some((response_l2_sq, virtual_evaluations)),
         )
     } else {
-        let leaf = prove_stage1_leaf::<F, E, _, _>(
+        let leaf = prove_stage1_leaf::<F, E, _, _, _>(
             &mut steps,
             plan.digit_range_plan(),
             claim,
@@ -343,6 +349,27 @@ where
         claim = leaf.claim;
         final_point = leaf.point;
         (leaf.range_image, None)
+    };
+    let range_leaf = if norm_proof.is_none() {
+        let digits = plan.digit_range_plan();
+        let leaf = akita_types::RangeLeaf::new(
+            digits,
+            &digits.batch_leaf_polynomials(&leaf_weights, &digits.leaf_coeffs::<E>())?,
+        )?;
+        akita_types::check_range_leaf(
+            &mut jolt_transcript::ClearDomain,
+            &leaf,
+            range_image_evaluation,
+            claim,
+        )
+        .map_err(|_| AkitaError::Internal("stage 1 range leaf fails its check".into()))?;
+        Some(super::RangeLeafClaim {
+            leaf,
+            range_image: range_image_evaluation,
+            claim,
+        })
+    } else {
+        None
     };
     let final_claims =
         crate::backend::OpaqueStage1Kernel::finish_stage1(ctx.backend(), session_handle)?;
@@ -399,19 +426,20 @@ where
         point: stage1_point,
         range_image_evaluation,
         physical_l2,
+        range_leaf,
     })
 }
 
 /// Stage 1's product stages: each an eq-factored sumcheck, its child
-/// claims, and their batch. Returns the leaf's input claim and equality
-/// point.
-fn prove_stage1_products<F, E, S, H: Sponge>(
+/// claims, and their batch. Returns the leaf's input claim, its equality
+/// point, and the last batch's weights on the leaf polynomials.
+fn prove_stage1_products<F, E, S, H: Sponge, C: crate::protocol::ProverFoldChannel<E, Sponge = H>>(
     steps: &mut S,
     plan: DigitRangePlan,
     mut equality_coordinates: Vec<E>,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     level: u32,
-) -> Result<(E, Vec<E>), AkitaError>
+) -> Result<(E, Vec<E>, Vec<E>), AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + CanonicalDecode,
@@ -419,6 +447,7 @@ where
 {
     let rounds = equality_coordinates.len();
     let mut claim = E::zero();
+    let mut leaf_weights = vec![E::one()];
     for stage_index in 0..plan.product_stage_arities().len() {
         let shape = plan
             .stage_shape(rounds, stage_index)
@@ -442,7 +471,7 @@ where
             },
             invocation: 0,
         };
-        let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
+        let mut channel = akita_types::GrindingSumcheckProver::<F, E, _, _>::new(
             grinding,
             akita_params::SumcheckProtocol::Stage1,
             level,
@@ -472,13 +501,14 @@ where
         )?;
         let weights = plan.interstage_batch_weights(gamma, child_claims.len());
         claim = plan.batch_claims(&weights, &child_claims)?;
+        leaf_weights.clone_from(&weights);
         steps.bind_batch_challenge(
             crate::backend::Stage1Transition::ProductBatch(stage_index),
             gamma,
         )?;
         equality_coordinates = challenges;
     }
-    Ok((claim, equality_coordinates))
+    Ok((claim, equality_coordinates, leaf_weights))
 }
 
 /// The L∞ range leaf's output claim, point and range image.
@@ -490,12 +520,12 @@ struct Stage1Leaf<E> {
 
 /// Stage 1's L∞ range leaf: an eq-factored sumcheck from `claim` at
 /// `equality_coordinates`, then the final transition.
-fn prove_stage1_leaf<F, E, S, H: Sponge>(
+fn prove_stage1_leaf<F, E, S, H: Sponge, C: crate::protocol::ProverFoldChannel<E, Sponge = H>>(
     steps: &mut S,
     plan: DigitRangePlan,
     claim: E,
     equality_coordinates: Vec<E>,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     level: u32,
 ) -> Result<Stage1Leaf<E>, AkitaError>
 where
@@ -524,7 +554,7 @@ where
         },
         invocation: 0,
     };
-    let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
+    let mut channel = akita_types::GrindingSumcheckProver::<F, E, _, _>::new(
         grinding,
         akita_params::SumcheckProtocol::Stage1,
         level,
@@ -579,10 +609,16 @@ where
     E: ExtField<F> + CanonicalDecode,
     S: DigitRangeSteps<E>,
 {
-    let (claim, equality_coordinates) =
-        prove_stage1_products::<F, E, _, _>(steps, plan, equality_point, grinding, level)?;
-    let leaf =
-        prove_stage1_leaf::<F, E, _, _>(steps, plan, claim, equality_coordinates, grinding, level)?;
+    let (claim, equality_coordinates, _) =
+        prove_stage1_products::<F, E, _, _, _>(steps, plan, equality_point, grinding, level)?;
+    let leaf = prove_stage1_leaf::<F, E, _, _, _>(
+        steps,
+        plan,
+        claim,
+        equality_coordinates,
+        grinding,
+        level,
+    )?;
     let stage = u32::try_from(plan.product_stage_arities().len())
         .map_err(|_| AkitaError::Internal("stage 1 range-image stage index exceeds u32".into()))?;
     akita_types::stage1_range_image::<F, E, _>(grinding, level, stage, leaf.range_image)?;
@@ -593,10 +629,16 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prove_stage2<F, E, B, H: Sponge>(
+pub(super) fn prove_stage2<
+    F,
+    E,
+    B,
+    H: Sponge,
+    C: crate::protocol::ProverFoldChannel<E, Sponge = H>,
+>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
     level: usize,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     batching_coeff: E,
     rs: RingSwitchOutput<E, B::RelationHandle>,
     stage1_point: &[E],
@@ -689,7 +731,7 @@ where
         format: SingleFormat::Compressed,
         invocation: 0,
     };
-    let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
+    let mut channel = akita_types::GrindingSumcheckProver::<F, E, _, _>::new(
         grinding,
         akita_params::SumcheckProtocol::Stage2,
         level,
@@ -717,7 +759,13 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prove_stage3<F, E, B, H: Sponge>(
+pub(super) fn prove_stage3<
+    F,
+    E,
+    B,
+    H: Sponge,
+    C: crate::protocol::ProverFoldChannel<E, Sponge = H>,
+>(
     backend: &B,
     session: &B::ProofSessionHandle,
     level: usize,
@@ -731,7 +779,7 @@ pub(super) fn prove_stage3<F, E, B, H: Sponge>(
     alpha: E,
     sumcheck_challenges: &[E],
     relation_address_geometry: akita_params::RelationAddressGeometry,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
@@ -809,7 +857,7 @@ where
                 format: SingleFormat::Compressed,
                 invocation: 0,
             };
-            let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
+            let mut channel = akita_types::GrindingSumcheckProver::<F, E, _, _>::new(
                 grinding,
                 akita_params::SumcheckProtocol::Stage3,
                 level,

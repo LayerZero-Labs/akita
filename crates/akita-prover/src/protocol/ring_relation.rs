@@ -15,7 +15,7 @@ use jolt_algebra::Unreduced;
 use jolt_algebra::{CanonicalEncoding, Field, Ring};
 #[cfg(test)]
 use jolt_crypto::challenge::Challenges;
-use jolt_transcript::{Channel, Sponge};
+use jolt_transcript::Sponge;
 
 use super::fold_grind;
 use super::prove::PreparedGroupOpening;
@@ -135,7 +135,15 @@ impl RingRelationProver {
     #[allow(private_bounds)]
     #[tracing::instrument(skip_all, name = "RingRelationProver::prepare")]
     #[inline(never)]
-    pub(in crate::protocol) fn prepare<'claims, 'source, F, PointF, B, H: Sponge>(
+    pub(in crate::protocol) fn prepare<
+        'claims,
+        'source,
+        F,
+        PointF,
+        B,
+        H: Sponge,
+        C: super::ProverFoldChannel<PointF, Sponge = H>,
+    >(
         opening_ctx: &OperationCtx<'_, F, B>,
         prepared_group_openings: Vec<PreparedGroupOpening<PointF, B::PreparedOpeningHandle>>,
         commitment_material: Vec<B::CommitmentMaterialHandle>,
@@ -146,7 +154,7 @@ impl RingRelationProver {
             F,
         >,
         lp: CommittedGroupParams,
-        grinding: &mut akita_types::ProverGrinding<'_, H>,
+        grinding: &mut akita_types::ProverGrinding<'_, H, C>,
         level: u32,
         reduction: &Option<crate::protocol::prove::ExtensionOpeningReduction<PointF>>,
         scalar_openings: &[PointF],
@@ -275,7 +283,7 @@ impl RingRelationProver {
         // Extension EOR supplies its already-bound coefficients because its
         // shared reduced point and final relation depend on that earlier batch.
         let (trace_claim, row_coefficients) =
-            crate::protocol::prove::prepare_evaluation_trace_claim::<F, PointF, _>(
+            crate::protocol::prove::prepare_evaluation_trace_claim::<F, PointF, _, _>(
                 reduction,
                 scalar_openings,
                 trace_opening_batch,
@@ -332,7 +340,7 @@ impl RingRelationProver {
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let _grind_span = tracing::info_span!("fold_grind_sample").entered();
         let grind_outputs =
-            fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, B, _>(
+            fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, B, _, _>(
                 opening_ctx,
                 grinding,
                 level,
