@@ -15,16 +15,20 @@ use akita_params::{CommittedGroupParams, DigitRangePlan};
 use akita_serialization::AkitaSerialize;
 use akita_types::DigitRangeEqualityPoint;
 use akita_types::RangeLeaf;
+use akita_types::VerifierGrinding;
 use akita_types::{
     batch_l2_virtual_evaluations, FpExtEncoding, PhysicalResponsePlan, RelationRangeImagePlan,
 };
 use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field, Ring};
 use jolt_poly::Point;
 use jolt_sumcheck::{verify_single, SingleFormat, SingleInstance};
-pub(crate) struct Stage1VerifyOutput<E: Field, V = E> {
-    pub(crate) point: Vec<E>,
-    pub(crate) range_image_evaluation: V,
-    pub(crate) physical_l2_virtual_evaluations: Option<Vec<E>>,
+use jolt_transcript::Sponge;
+/// A replayed Stage 1: its point, the range image there, and the L2 route's
+/// virtual evaluations.
+pub struct Stage1VerifyOutput<E: Field, V = E> {
+    pub point: Vec<E>,
+    pub range_image_evaluation: V,
+    pub physical_l2_virtual_evaluations: Option<Vec<E>>,
 }
 
 pub(crate) struct RangeLeafVerifierInput<E: Field> {
@@ -123,6 +127,25 @@ impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
                 .plan
                 .batch_leaf_polynomials(&current_weights, &leaf_coeffs)?,
         })
+    }
+
+    /// Replay a stage-1 proof in the clear, on the physical L2 route when
+    /// `physical_l2` is given and the L∞ route otherwise.
+    pub fn verify_clear<F, H: Sponge>(
+        &self,
+        grinding: &mut VerifierGrinding<'_, '_, H>,
+        physical_l2: Option<(
+            &akita_types::PhysicalResponsePlan,
+            akita_params::SisModulusProfileId,
+            u128,
+        )>,
+        level: u32,
+    ) -> Result<Stage1VerifyOutput<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F> + akita_types::FpExtEncoding<F>,
+    {
+        self.verify::<F, _>(grinding, physical_l2, level)
     }
 
     /// Replay the non-L2 stage-1 proof directly from Spongefish.

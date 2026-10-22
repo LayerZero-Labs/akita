@@ -915,4 +915,5 @@ where
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 mod sumcheck;
+pub use sumcheck::{prove_digit_range, DigitRangeOutput};
 use sumcheck::{prove_stage1, prove_stage2, prove_stage3};

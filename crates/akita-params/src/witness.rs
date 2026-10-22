@@ -446,6 +446,18 @@ impl CompressionWitnessSpan {
         Self { map, range }
     }
 
+    /// The padded digits of `map` from `start`, for a compression chain
+    /// placed outside a commitment's witness layout.
+    pub fn standalone(map: CompressionMapPlan, start: usize) -> Result<Self, AkitaError> {
+        let end = start
+            .checked_add(map.padded_digit_count())
+            .ok_or_else(|| AkitaError::InvalidSetup("compression witness span overflow".into()))?;
+        Ok(Self {
+            map,
+            range: start..end,
+        })
+    }
+
     /// Checked canonical map represented by this span.
     #[must_use]
     pub fn map(&self) -> CompressionMapPlan {

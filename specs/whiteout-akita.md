@@ -1423,6 +1423,141 @@ The remaining tests:
 - **W5-e.** Proof bytes, prover time and verifier time are reported against
   the paper's model at the headline, including the raw-image surcharge.
 
+### 5.7 Paper deltas (W5a, W5c)
+
+Each entry gives the paper (`akita-paper/sections/whiteout/`), what the
+code does, and why.
+
+- **Weights evaluated densely.** Paper `04_protocol.tex:434-460`: the
+  verifier evaluates `A(r)` with Akita's structured-weight algorithms.
+  Code: jolt-zk's `ResponseStatement::weigh` applies the transposed rows to
+  `eq(η, ·)`, giving the table `A` over the padded `e`, and the verifier
+  evaluates its multilinear extension at `r` in `O(2^ν)`. The matrix
+  transposes run through `PreparedMatrix::apply_transposed`. Why: one owner
+  of each row map and its transpose (jolt-zk), no `H`, and one table the
+  prover's fused sumcheck already needs. A factored `A(r)` needs `e`'s
+  segments aligned to the eq factorization (A15); the cost is in W5-e.
+- **Row maps and their transposes live in jolt-zk**, not Akita (W4 §3.1
+  gives Akita the structured weights). Why: Akita evaluating them from
+  accessors would publish every lifted-relation internal and mirror its
+  layout maps; jolt-zk exposes `rows` (forward) and `weigh` (transpose)
+  over one row order, and Akita owns the batch order (§5.2 step 3).
+- **No grinding on the two new sumchecks.** Paper `04_protocol.tex:466-470`
+  counts `2a + 4ν` over `q` with no proof of work. Code: the product and
+  fused sumchecks draw plain challenges; the reused digit-range reduction
+  keeps Stage 1's grinding runs, from the same derivation a fold uses. Why:
+  the paper's error term holds as stated at `q ≈ 2^128`; Akita's 128-bit
+  grinding policy is not applied to them (A34).
+- **Raw images.** Paper `04_protocol.tex:303-313,329-330`: `ξ_a, ξ_p, ξ_D`
+  join `e` and Item 2 carries the compression equations. W5a keeps the
+  raw images; W5c (now in RP4) adds them.
+- **Measured cost (W5-e, A30).** Paper `06_evaluation.tex:173-241` and
+  `numbers.tex`: `|e| = 65.5M`, `+7.3 KB`, `+1.15 s`, `+0.8 ms`. Measured
+  with `examples/zk_response.rs` on the synthetic instance at
+  `|e| = 89.7M` (`ν = 27`, 10 Gaussian digits): 72,516 B of response proof,
+  12 s prover, 3.8 s verifier, of which the dense row batch and `A(r)`
+  take about 98% and the Akita opening 0.1 s. The raw images add about
+  `(768 + 768 + 320)·16 ≈ 29.7 KB` outside it. The direct scan misses the
+  verifier budget by three orders of magnitude, so structured weights
+  (W5b or a factored `A(r)`) must land in RP4.
+- **The opening schedule is planned at runtime** for tests and W5-e. Paper
+  `04_protocol.tex:489`: an ordinary Akita opening. Code: the recursive
+  `ResponseDigits` family (`log_commit_bound = 4`), planned by
+  `akita_planner::find_schedule`; artifacts land in W5d. The planner, not
+  the preset, picks the A basis (3 or 4); the root opening basis is pinned
+  to 3 (A35).
+
+**W5c deltas.**
+
+- **Chunked images.** Paper `02_preliminaries.tex:184-199`: one two-map
+  chain per image, `cm(t)` of 128 B. Code: an image is cut into
+  `⌈len/512⌉` chunks of at most Akita's 8 KiB compression input
+  (`MAX_COMPRESSION_INPUT_BYTES`), each with its own chain, so `cm(t)` is
+  `8·⌈len/512⌉` coefficients (Q4). Why: Akita's chain plans stop at that
+  cap; the script's `FCHAIN_MAX_IMAGE = 884` has no Akita counterpart.
+- **Rows after reduction.** Paper `02_preliminaries.tex:199-203` and
+  `04_protocol.tex:329-330`: the verifier checks `t = G₁ξ₁`,
+  `K₁ξ₁ = G₂ξ₂`, `K₂ξ₂ = cm(t)`. Code: `t = G₁ξ₁` coefficient by
+  coefficient inside jolt-zk's Items 2 and 3; each chain equation is one
+  row, its negacyclically reduced residual evaluated at the product
+  challenge `α`, exactly as Akita's `ReducedEvaluation` relation evaluates
+  its own compression maps. The rows come from Akita's owner,
+  `ReducedCompressionRelationWeights::for_standalone_chains`: the prover
+  accumulates them into the dense `A` (`accumulate_dense`); the verifier
+  contracted that table at W5c and evaluates them at the point
+  (`evaluate_at_point`) from W5-P1 on. Each `ξ` occupies its map's padded
+  span (Akita's span law). The honest prover writes zero digits past the
+  real ones, and nothing enforces it: padding digits stay inside `I_bin`,
+  so they are in `{−1, 0}`, and inside the map's input width, which is the
+  width Akita's SIS sizing covers; they change `cm`, not `t`, so binding is
+  untouched. Over A7F7 every chain map's digits fill its ring rows, so the
+  padding is empty (asserted in `chain_relation_matches_its_rows…`). `K₁`
+  and `K₂` are the shared matrix's offset-0 prefix, as in Akita's own
+  compression; the response setup is sized to cover them
+  (`AkitaResponseProver::setup`, refused otherwise). Why: one owner for
+  the map transpose and the layout law. A nonzero residual has degree at
+  most `d − 1`, so it vanishes at `α` with probability at most
+  `(d − 1)/q ≤ 15/q` at `d = 16`; `α` is drawn after `e` and every `cm`
+  are fixed. No union over maps is needed: a cheat survives only if every
+  violated row vanishes, which is at most as likely as one of them.
+- **Binary constraint.** Paper `04_protocol.tex:401-410`:
+  `B_j = (γ + ζ_bin·1_{I_bin}(j))·eq(τ, j)`. Code: the same, `ζ` drawn
+  right after `γ`; `I_bin` is every compression-witness segment of `e`.
+  `ζ` is load-bearing because the prover chooses `cm`: rewriting a `ξ₁`
+  coefficient's bits `(0, −1)` at `(b, b + 1)` as `(−2, 0)` keeps `G₁ξ₁`,
+  and recomputing `ξ₂ = Bin(K₁ξ₁)` and `cm = K₂ξ₂` keeps both chain rows,
+  so Items 2 and 3, the chain rows and the `[−8, 7]` range all pass. The
+  range cannot stand in for it: Lemma `wo:lem:compressed-binding` needs
+  `{−1, 0}` digits, and Akita certifies compression SIS only at `ℓ∞ = 1`
+  (`compression_sis_cell(A7F7, 8, 2)` is `None`). The test
+  `rejects_prover_chosen_compressions` sends that forgery and the verifier
+  rejects at the fused sumcheck; with `ζ` zeroed it accepts.
+- **The statement's compression check is canonical.** jolt-zk's
+  `check_witness` asks the response prover's map whether a witness opens a
+  payload; Akita answers by recompressing the reconstructed image, so only
+  the canonical witness passes. The verifier enforces the weaker chain
+  equations and binary digits. Completeness is unchanged; soundness is the
+  verifier's.
+- **The Σ-protocol's seed.** Paper `04_protocol.tex` Protocol
+  `wo:prot:sigma`: the attempt fork absorbs `t_D`. Code: `cm(t_D)`, which
+  is also what the prover sends (§5.4).
+- **Compression per attempt (A36).** `t_D` is compressed in every attempt,
+  rejected ones included, by Akita's executor, which is not constant time
+  (A24). The executor must therefore be constant time in its image.
+
+**W5-P1 deltas.**
+
+- **Padding term.** Paper `04_protocol.tex:386-387,453`: the
+  zero-padding equations `e_j = 0` for `j ∈ [|e|, 2^ν)` are rows of `H`,
+  batched by `eq(η, ·)`. Code: no padding rows; after `η` the verifier
+  draws `τ_pad ∈ F^ν`, and `A` gains `1[j ≥ |e|]·eq(τ_pad, j)`
+  (`PaddingTerm`; it hides nothing). The verifier evaluates it as one
+  restricted equality over the interval `[|e|, 2^ν)`
+  (`NegativeBinarySupport`). Why: `η` then ranges over the real rows only,
+  and the term is one interval evaluation instead of an `eq(η, ·)` window
+  at an unaligned row offset. Cost: `ν/q`. A nonzero padding entry makes
+  `Σ_{j ≥ |e|} eq(τ_pad, j)·e_j` a nonzero multilinear polynomial in
+  `τ_pad`, and with the η batch one nonzero polynomial in disjoint
+  variables (for `|e| ≥ 1` neither part can be a nonzero constant that
+  the other cancels), so no batching scalar is needed; `ν` more
+  challenges. Tested end to end by committing a `−1` past `|e|`, which is
+  in the alphabet, a root of `E(E + 1)` and outside `I_bin`.
+- **`A(r)` without `A`.** Paper `04_protocol.tex:446-456`: the verifier
+  evaluates the contractions with structured-weight algorithms. Code:
+  `ResponseStatement::weight_at` (jolt-zk) factors `eq(r, ·)` at the
+  native ring dimension `D`; every response segment starts and ends on a
+  native element, so `z` reads as one scale per native element times one
+  common ring, and `N`, `L` and the lifted forms apply with one column
+  combination per row (`PreparedMatrix::combine_columns`). Item 2 reads
+  `V`'s digit columns per 64-coefficient quarter of `eq(r_lo, ·)`. The
+  chains' rows are Akita's `ReducedCompressionRelationWeights::
+  evaluate_at_point`. `b_η` comes from `ResponseStatement::constant` and the
+  payloads, without `rows(0)`. The prover keeps the dense `A`.
+  Tests: jolt-zk checks `weight_at` against the MLE of `weigh`'s dense
+  weights at a random point for every row family at `D = 64, 256`;
+  W5-b checks the factored `A(r)`, the dense `A` at `r` and `H` contracted
+  column by column against each other.
+
 ### 5.8 Performance plan (W5-e follow-up)
 
 W5a's measured verifier is 3.8 s at the synthetic headline (|e| ≈ 2^27), about
@@ -1440,6 +1575,12 @@ padding rows; 5% building A plane by plane.
   δ·1[j ≥ len]·eq(τ_pad, j), evaluated by an O(ν) bit-DP (adds ν/q to the
   error; paper delta). b comes from the targets, with no matrix application.
   Estimate ≈ 60–65 ms synthetic, ≈ +12 ms at the paper's geometry.
+- **Digit-range kernel (Akita-wide follow-up).** Profiled at |e| ≈ 2^27
+  (W5 prover work, loaded machine): about 55% binds
+  (`ExactPrefixTable::fold_in_place`), 40% round polynomials
+  (`ClassIndexedRangeLeafProver::round_q_coefficients`), 12% session setup
+  (`CompactDigitSource::new`). It is the shared Stage-1 kernel of every
+  fold, so it is left to an Akita-wide change.
 - **P2, W5b.** After P1, about 80% of the verifier is the σ_N scan; W5b moves
   it into Stage 3 (§5.3). Stage 3's random column point needs ω̃ evaluated
   succinctly, which needs A15 segment alignment (C_k = 2^{c_k}, aligned o_k)
@@ -1595,6 +1736,43 @@ The numbering continues the W4 note's A1–A23.
   Still open: which audit function prices A's L2 collision radius from
   `response_l2_sq_cap`, needed for the ℓ2 re-pricing of §2.5.5, and whether
   any production L2 level has W > 218 (§2.5.3).
+- **A34, response-sumcheck grinding.** The product and fused sumchecks
+  carry no proof of work (§5.7). Whether RP4 wants them on Akita's
+  128-bit grinding policy is open.
+- **A35, "log_basis 4".** §5.2 asks for a dense family at log_basis 4. The
+  preset bounds committed digits to `[−8, 7]`; the planner chooses the A
+  basis within `(3, 4)` and pins the root opening basis to 3.
+- **A36, compressing rejected attempts.** Each Σ attempt compresses its
+  `t_D` with Akita's executor before the accept bit, so a rejected
+  attempt's timing may depend on its `t_D` unless the executor is
+  constant time in its image. That is a requirement on the executor
+  (`CpuBackend::compress_relation_image`: negative-binary packing and the
+  map products). It is not verified: jolt-zk's dudect harness
+  (`examples/sigma_dudect.rs`) cannot reach Akita's executor, and Akita has
+  no dudect harness; a case for it is open (§5.7).
+
+  The response prover's own code reads `e` only at public indices and
+  lifts its digits with `jolt_zk::whiteout::lift_ct` (no branch on sign):
+  `AkitaResponseProver::prove` (the committed table), `FusedE` (the i8 first
+  round and its fold), `SplitB` (indexed by `I_bin`'s public positions and
+  the round index only), and jolt-zk's `PlaneLayout::recompose`. `e`'s
+  digits and every table derived from them are wiped when freed:
+  `Zeroizing` for digits, `SecretTable` for field tables (each fold drops,
+  and so wipes, the previous one), jolt-zk's `SecretVec` for the decoded
+  parts. Not audited and not wiped here, because they are Akita's shared
+  kernels: the commitment's copy of `e` (`DensePoly` and its digit cache),
+  and the digit-range session, whose `CompactDigitSource` groups digits by
+  value class (`ordered_range_class_pairs`), a memory access that depends
+  on `e`. Both are requirements on those kernels, as for the compression
+  executor.
+- **A37, trusting the setup cache (upstream, open).** With
+  disk-persistence, `akita_setup::load_prover_setup` reads the public
+  matrix from the cache file and runs `AkitaExpandedSetup::check` on it
+  (`validate_cached_matrix`), but does not re-derive it from the seed. A tampered cache changes `K₁` and `K₂`, and
+  every other public matrix, for any prover or verifier on that machine.
+  The response setup's own check (`AkitaResponseProver::setup`, refused
+  when too narrow) is about size, not content. No code here; the fix
+  belongs to akita-setup.
 - A2, A3 and A12 from W4 are resolved by §4.3, §4.6 and §5.4.
 
 ## 11. Questions for the paper authors

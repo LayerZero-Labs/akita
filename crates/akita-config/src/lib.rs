@@ -81,7 +81,9 @@ pub use akita_schedules::{
 pub use proof_optimized::{ensure_prover_schedule_fits_setup, verifier_schedule_fits_setup};
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use transcript_binding::transcript_instance_descriptor;
-pub use transcript_grinding_plan::derive_transcript_grinding_plan;
+pub use transcript_grinding_plan::{
+    derive_digit_range_grinding_plan, derive_transcript_grinding_plan,
+};
 
 /// Derive the schedule policy from fixed cryptographic policy and runtime chunking.
 ///

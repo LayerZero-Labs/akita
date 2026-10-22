@@ -213,6 +213,30 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  whiteout-response-no-setup-cache:
+    # The response proof's setup must cover its compression chains. With
+    # disk-persistence a cached, wider setup can hide an undersized one, so
+    # these tests also run without it.
+    name: Whiteout response proof (no setup cache)
+    runs-on: GitHubRunner-Large-Public
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: false
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-test-release
+          add-job-id-key: false
+          save-if: false
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # carg-nextest
+        with:
+          tool: cargo-nextest
+      - name: Run the response-proof tests without disk-persistence
+        run: cargo nextest run -p akita-pcs --lib --profile ci --cargo-profile ci-test --no-default-features --features parallel,test-support 'zk::'
+
   test-schedule-artifact-drift:
     name: Schedule artifact drift
     runs-on: ubuntu-latest

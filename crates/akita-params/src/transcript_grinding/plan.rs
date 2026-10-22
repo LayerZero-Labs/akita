@@ -5,7 +5,7 @@ use crate::{
     independent_batch_loss_factor, multilinear_point_loss_factor, polynomial_identity_loss_factor,
     powers_batch_loss_factor, ring_switch_alpha_loss_factor, ChallengeFieldOrder,
     CommittedGroupParams, DigitRangePlan, FoldSchedule, FoldSuccessor, GrindingPlan, GrindingRun,
-    GrindingSite, OpeningClaimsLayout, PolynomialGroupLayout, SumcheckProtocol,
+    GrindingSite, OpeningClaimsLayout, PolynomialGroupLayout, Stage1StageShape, SumcheckProtocol,
     TranscriptGrindingCost,
 };
 use akita_error::AkitaError;
@@ -227,28 +227,7 @@ fn append_nonterminal(
         .ok_or_else(|| AkitaError::InvalidSetup("digit-range basis exceeds usize".into()))?;
     let range = DigitRangePlan::new(basis)?;
     let shape = range.route_shape(rounds, params.inner().matrix.security_route())?;
-    for (stage_index, stage_shape) in shape.stages().enumerate() {
-        let stage = usize_to_u32(stage_index, "Stage 1 grinding stage")?;
-        let full_round_degree =
-            stage_shape.sumcheck_proof.1.checked_add(1).ok_or_else(|| {
-                AkitaError::InvalidSetup("Stage 1 full round degree overflow".into())
-            })?;
-        sink.sumcheck_rounds(SumcheckRoundBatch {
-            challenge_order,
-            protocol: SumcheckProtocol::Stage1,
-            level,
-            stage,
-            rounds: stage_shape.sumcheck_proof.0,
-            degree: full_round_degree,
-        })?;
-        if stage_shape.child_claims > 0 {
-            sink.push(GrindingRun::proof_of_work(
-                GrindingSite::Stage1InterstageBatch { level, stage },
-                powers_batch_loss_factor(stage_shape.child_claims)?,
-                challenge_order,
-            )?)?;
-        }
-    }
+    append_stage1_stages(sink, challenge_order, level, shape.stages())?;
     if let Some(norm) = shape.norm {
         if norm.subclaims > 0 {
             sink.push(GrindingRun::proof_of_work(
@@ -309,6 +288,62 @@ fn append_nonterminal(
         }
     }
     Ok(rounds)
+}
+
+/// Stage 1's runs at `level`: each stage's sumcheck rounds, then its
+/// interstage batch when it has child claims.
+fn append_stage1_stages(
+    sink: &mut impl GrindingPlanSink,
+    challenge_order: ChallengeFieldOrder,
+    level: u32,
+    stages: impl Iterator<Item = Stage1StageShape>,
+) -> Result<(), AkitaError> {
+    for (stage_index, stage_shape) in stages.enumerate() {
+        let stage = usize_to_u32(stage_index, "Stage 1 grinding stage")?;
+        let full_round_degree =
+            stage_shape.sumcheck_proof.1.checked_add(1).ok_or_else(|| {
+                AkitaError::InvalidSetup("Stage 1 full round degree overflow".into())
+            })?;
+        sink.sumcheck_rounds(SumcheckRoundBatch {
+            challenge_order,
+            protocol: SumcheckProtocol::Stage1,
+            level,
+            stage,
+            rounds: stage_shape.sumcheck_proof.0,
+            degree: full_round_degree,
+        })?;
+        if stage_shape.child_claims > 0 {
+            sink.push(GrindingRun::proof_of_work(
+                GrindingSite::Stage1InterstageBatch { level, stage },
+                powers_batch_loss_factor(stage_shape.child_claims)?,
+                challenge_order,
+            )?)?;
+        }
+    }
+    Ok(())
+}
+
+/// The only accepted grinding plan of a standalone L∞ digit-range
+/// reduction over `rounds` variables at `level`: Stage 1's runs exactly as
+/// a fold schedules them, and nothing else.
+pub fn derive_digit_range_grinding_plan_from_public_shape(
+    range: DigitRangePlan,
+    rounds: usize,
+    level: u32,
+    challenge_order: ChallengeFieldOrder,
+) -> Result<GrindingPlan, AkitaError> {
+    let mut runs = Vec::new();
+    let mut sink = |run| {
+        runs.push(run);
+        Ok(())
+    };
+    append_stage1_stages(
+        &mut sink,
+        challenge_order,
+        level,
+        range.stage_shapes(rounds).into_iter(),
+    )?;
+    GrindingPlan::new(runs, challenge_order)
 }
 
 fn append_terminal(

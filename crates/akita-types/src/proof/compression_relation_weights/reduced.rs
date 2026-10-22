@@ -1,5 +1,6 @@
 use super::*;
 use akita_algebra::{eq_poly::EqPolynomial, offset_eq::OffsetEqWindow};
+use akita_params::CompressionChainPlan;
 use jolt_algebra::ring::{eval_flat_ring_at_pows_fast, ResidueKernelPoint};
 use jolt_algebra::{ExtField, Unreduced, Zero};
 
@@ -383,6 +384,92 @@ impl<E: Field> ReducedCompressionRelationWeights<E> {
             evaluation += event.row_weight * matrix.evaluate(columns.physical_start)?;
         }
         Ok(evaluation)
+    }
+}
+
+impl<E: Field> ReducedCompressionRelationWeights<E> {
+    /// The reduced rows of compression chains placed outside a commitment's
+    /// witness layout, over a `physical_field_len` table. Chain `c` starts
+    /// at `chains[c].1` with its maps' padded digit spans consecutive; map
+    /// `i`'s row is `K_i·ξ_i − G(ξ_{i+1})` evaluated at `alpha`, weighted by
+    /// `row_weights` in chain then map order. A terminal map's target is the
+    /// caller's.
+    pub fn for_standalone_chains<F>(
+        alpha: E,
+        chains: &[(CompressionChainPlan, usize)],
+        row_weights: &[E],
+        physical_field_len: usize,
+    ) -> Result<Self, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + ExtField<F>,
+    {
+        let spans = chains
+            .iter()
+            .map(|(chain, start)| {
+                let mut next = *start;
+                chain
+                    .maps()
+                    .iter()
+                    .map(|&map| {
+                        let span = CompressionWitnessSpan::standalone(map, next)?;
+                        next = span.range().end;
+                        Ok(span)
+                    })
+                    .collect::<Result<Vec<_>, AkitaError>>()
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        if spans.iter().map(Vec::len).sum::<usize>() != row_weights.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: spans.iter().map(Vec::len).sum(),
+                actual: row_weights.len(),
+            });
+        }
+        let maximum_dimension = spans
+            .iter()
+            .flatten()
+            .map(|span| span.map().ring_dimension())
+            .max()
+            .unwrap_or(1);
+        let mut linear = CompressionRelationWeights {
+            events: Vec::new(),
+            alpha_powers: scalar_powers(alpha, maximum_dimension),
+            coefficient_block_len: 1,
+            physical_field_len,
+        };
+        let mut maps = Vec::with_capacity(row_weights.len());
+        let mut row_index = 0;
+        for ((plan, _), chain) in chains.iter().zip(&spans) {
+            for (index, span) in chain.iter().enumerate() {
+                let row_weight = *row_weights.get(row_index).ok_or_else(|| {
+                    AkitaError::Internal("compression row exceeds its weights".into())
+                })?;
+                maps.push(ReducedCompressionMapEvent {
+                    span: span.clone(),
+                    row_weight,
+                });
+                if let Some(successor) = chain.get(index + 1) {
+                    let map = span.map();
+                    push_recomposition::<F, E>(
+                        &mut linear,
+                        successor.range().start,
+                        successor.map().ring_dimension(),
+                        map.output_coefficients(),
+                        map.ring_dimension(),
+                        row_index,
+                        1,
+                        plan.field_bits(),
+                        row_weights,
+                    )?;
+                }
+                row_index += 1;
+            }
+        }
+        Ok(Self {
+            linear,
+            maps,
+            alpha,
+        })
     }
 }
 

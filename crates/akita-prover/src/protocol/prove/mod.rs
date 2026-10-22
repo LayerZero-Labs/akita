@@ -49,6 +49,7 @@ mod suffix;
 
 pub use execution::{batched_prove, catch_prover_panic};
 pub(in crate::protocol::prove) use fold::{prepare_fold, prove_fold, PreparedFold};
+pub use fold::{prove_digit_range, DigitRangeOutput};
 pub(in crate::protocol) use fold_kernels::*;
 #[cfg(all(feature = "zk", feature = "test-support"))]
 pub use masked::{prove_masked_prefix, ResidualOpening};

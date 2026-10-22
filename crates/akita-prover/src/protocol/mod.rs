@@ -24,7 +24,10 @@ where
 
 pub use prove::execution;
 
-pub use prove::{batched_prove, catch_prover_panic, ProveLevelOutput, SuffixProverState};
+pub use prove::{
+    batched_prove, catch_prover_panic, prove_digit_range, DigitRangeOutput, ProveLevelOutput,
+    SuffixProverState,
+};
 #[cfg(all(feature = "zk", feature = "test-support"))]
 pub use prove::{prove_masked_prefix, ResidualOpening};
 pub use ring_relation::{
