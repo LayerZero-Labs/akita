@@ -168,27 +168,30 @@ fn fused_term<F: Field>(a: F, b: F, e: F) -> F {
 
 impl<F: JoltField + Fold> FusedKernel<F> {
     /// `Σ_i Σ_t` over pairs `i` of `e_t·(a_t + B_t·(e_t + 1))` at
-    /// `t = 0..=3`, with `B`'s dense part `scale·eq(τ_k, t)·eq(τ_rest, i)`.
-    fn dense_evaluations(&self, e_at: impl Fn(usize, i64) -> F + Sync) -> [F; 4] {
+    /// `t = 0..=3`, with `B`'s dense part `scale·eq(τ_k, t)·eq(τ_rest, i)`
+    /// and `e_pair(i)` the pair's `(e_0, e_1 − e_0)`.
+    fn dense_evaluations(&self, e_pair: impl Fn(usize) -> (F, F) + Sync) -> [F; 4] {
         let tau = self.b.point.first().copied().unwrap_or_default();
-        // eq(τ_k, t) = (1 − τ_k) + t·(2τ_k − 1).
-        let eq_line: [F; 4] = std::array::from_fn(|t| {
-            (F::one() - tau) + F::from_u64(t as u64) * (tau + tau - F::one())
-        });
         let (lo, hi, bits) = self.b.rest();
+        // eq(τ_k, t)·scale = scale·(1 − τ_k) + t·scale·(2τ_k − 1), with the
+        // scale folded into the high half once per round.
+        let (start, step) = (F::one() - tau, tau + tau - F::one());
+        let hi: Vec<F> = hi.iter().map(|value| *value * self.b.scale).collect();
         let mask = (1 << bits) - 1;
-        let (a, scale) = (&self.a, self.b.scale);
+        let a = &self.a;
         cfg_fold_reduce!(
             0..a.len() / 2,
             || [F::zero(); 4],
             |mut sums: [F; 4], i: usize| {
-                let b_pair = scale * lo[i & mask] * hi[i >> bits];
-                let (a_low, a_slope) = (a[2 * i], a[2 * i + 1] - a[2 * i]);
-                let mut a_t = a_low;
-                for (t, sum) in sums.iter_mut().enumerate() {
-                    let e = e_at(i, t as i64);
-                    *sum += fused_term(a_t, b_pair * eq_line[t], e);
+                let weight = lo[i & mask] * hi[i >> bits];
+                let (mut b_t, b_slope) = (weight * start, weight * step);
+                let (mut a_t, a_slope) = (a[2 * i], a[2 * i + 1] - a[2 * i]);
+                let (mut e_t, e_slope) = e_pair(i);
+                for sum in &mut sums {
+                    *sum += fused_term(a_t, b_t, e_t);
                     a_t += a_slope;
+                    b_t += b_slope;
+                    e_t += e_slope;
                 }
                 sums
             },
@@ -239,18 +242,27 @@ impl<F: JoltField + Fold> SumcheckKernel<F> for FusedKernel<F> {
         _round: usize,
         claim: F,
     ) -> Result<UnivariatePoly<F>, AkitaError> {
-        let line = |low: F, high: F, t: i64| low + F::from_i64(t) * (high - low);
+        let line = |(low, slope): (F, F), t: i64| low + F::from_i64(t) * slope;
         let (dense, sparse) = match &self.e {
             FusedE::Field(e) => {
-                let e_at = |i: usize, t: i64| line(e[2 * i], e[2 * i + 1], t);
-                (self.dense_evaluations(e_at), self.sparse_evaluations(e_at))
+                let e_pair = |i: usize| (e[2 * i], e[2 * i + 1] - e[2 * i]);
+                (
+                    self.dense_evaluations(e_pair),
+                    self.sparse_evaluations(|i, t| line(e_pair(i), t)),
+                )
             }
             FusedE::Digits(digits) => {
-                let e_at = |i: usize, t: i64| {
+                let e_pair = |i: usize| {
                     let low = i64::from(digits[2 * i]);
-                    F::from_i64(low + t * (i64::from(digits[2 * i + 1]) - low))
+                    (
+                        F::from_i64(low),
+                        F::from_i64(i64::from(digits[2 * i + 1]) - low),
+                    )
                 };
-                (self.dense_evaluations(e_at), self.sparse_evaluations(e_at))
+                (
+                    self.dense_evaluations(e_pair),
+                    self.sparse_evaluations(|i, t| line(e_pair(i), t)),
+                )
             }
         };
         let evals: [F; 4] = std::array::from_fn(|t| dense[t] + sparse[t]);
