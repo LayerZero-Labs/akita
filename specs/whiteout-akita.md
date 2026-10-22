@@ -884,7 +884,10 @@ precommitted groups, and W_ℓ = 1 above the root.
   provenance: "precommitted" is a layout notion. Admission therefore
   requires the full width for every precommitted group at a masked level.
   Jolt makes those preprocessing commitments hiding too, and keeps their
-  randomness with the prover's preprocessing. Admitting an exempt group
+  randomness with the prover's preprocessing. W6 therefore produces ZK
+  preprocessing separately from clear preprocessing: a hiding profile comes
+  from a ZK row, a clear catalog rejects it, and a clear profile fails ZK
+  admission, so one preprocessed commitment never serves both modes. Admitting an exempt group
   would need a typed per-group mode bound in the row; it is not built.
 - *Setup prefix.* Zero randomness. Its commitment is setup-derived and known
   to the verifier.
