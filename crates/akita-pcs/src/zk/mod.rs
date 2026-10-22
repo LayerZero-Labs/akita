@@ -40,6 +40,7 @@ use akita_types::{
     ProverGrinding, RingVec, VerifierGrinding,
 };
 use akita_verifier::{AkitaVerifier, Stage1Verifier};
+use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{One, Prime128OffsetA7F7, Ring, Zero};
 use jolt_sumcheck::{prove_single, verify_single, SingleFormat, SingleInstance};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
@@ -307,17 +308,10 @@ where
         // constraint on the compression digits.
         let gamma: F = transcript.challenge();
         let zeta: F = transcript.challenge();
-        let binary = chains
-            .support(shape.padded_len())
-            .map_err(zk_error)?
-            .materialize::<F>();
+        let support = chains.support(shape.padded_len()).map_err(zk_error)?;
         let mut fused = FusedKernel {
             a: batch.a,
-            b: eq_table(&range.point)
-                .into_iter()
-                .zip(binary)
-                .map(|(weight, binary)| weight * (gamma + zeta * binary))
-                .collect(),
+            b: range_weights(&range.point, gamma, zeta, &support),
             e,
         };
         let claim = batch.b + gamma * range.range_image;
@@ -503,6 +497,24 @@ where
     ) -> Result<(), ZkError> {
         self.verify(statement, transcript)
     }
+}
+
+/// `B_j = (γ + ζ·1_{I_bin}(j))·eq(τ, j)` for every `j`, scaled in place
+/// over `eq(τ, ·)` interval by interval.
+fn range_weights(range_point: &[F], gamma: F, zeta: F, binary: &NegativeBinarySupport) -> Vec<F> {
+    let mut weights = eq_table(range_point);
+    let mut start = 0;
+    for interval in binary.intervals() {
+        weights[start..interval.start]
+            .par_iter_mut()
+            .for_each(|w| *w *= gamma);
+        weights[interval.clone()]
+            .par_iter_mut()
+            .for_each(|w| *w *= gamma + zeta);
+        start = interval.end;
+    }
+    weights[start..].par_iter_mut().for_each(|w| *w *= gamma);
+    weights
 }
 
 /// `B(r) = Σ_j (γ + ζ·1_{I_bin}(j))·eq(τ, j)·eq(r, j)`: the range image's
