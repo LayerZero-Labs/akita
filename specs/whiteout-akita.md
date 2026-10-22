@@ -93,9 +93,9 @@ carried `main` seams (§8).
   randomness width, the one-shot targets, and the response schedule.
   `SetupSection` binds the mode bit.
 - **Artifacts.** ZK schedule rows are new files in the ZK family; existing
-  rows are never modified (rule 6). Until the last PR they exist only as a
-  test-only constructor (`ZkOpeningSchedule::for_tests`, under
-  `test-support`).
+  rows are never modified (rule 6). Until the last PR they exist only as
+  test rows from `akita_planner::find_schedule_for_test_zk`, admitted by
+  `ValidatedScheduleCatalog::try_new_with_test_zk` (test-support + zk).
 - **Visibility.** Before the last PR, `ZkCommitmentConfig` and the ZK
   entry points are `#[cfg(feature = "test-support")] pub`. Nothing in a
   default or `zk`-only build can select ZK.
@@ -172,52 +172,127 @@ pub enum FoldFailureTarget {
 Each policy reads the target:
 
 - **`BalancedSignedDigitFoldPolicy`.** `PerAttempt` keeps 1/8. `OneShot`
-  replaces `ln(2N/(1−p))` with
-  `⌈ln(2N) + (security_bits + ⌈log₂ masked_folds⌉)·ln 2⌉`, computed in
-  checked integer arithmetic, so (L+1)² covers both balanced ends (Lemma
-  `wo:lem:fold-overflow`).
+  replaces the union term `ln(2N/(1−p))` with
+  `L = ⌈(⌈log₂ 2N⌉ + security_bits + ⌈log₂ masked_folds⌉) · 71/100⌉`, in
+  checked integer arithmetic (`fold_linf_cap.rs`). This upper-bounds
+  `ln(2N) + (security_bits + log₂ masked_folds)·ln 2`, since
+  `ln x ≤ ⌈log₂ x⌉ · ln 2` and `ln 2 < 0.71`. N counts every physical
+  response coefficient (all witness windows), not the per-window count the
+  per-attempt rule uses. The cap is `t* = ⌈√(2σ²L)⌉` with
+  `σ² = blocks · η² · ‖w‖∞²`, capped by the deterministic envelope, and
+  (L+1)² covers both balanced ends (Lemma `wo:lem:fold-overflow`).
 - **`UnitOneHotFoldPolicy`.** This is the one-hot root that Jolt fp128 uses.
   `PerAttempt` keeps 7/8. `OneShot` replaces 7/8 with
   `2^−security_bits / masked_folds` in the same Chernoff solve
-  (`honest_fold_policy.rs:195-215`). The policy falls back to the
-  deterministic cap when the solve does not reach the target. At that cap
-  δ = 0.
-- **Modeled cap.** It is not used at levels ≤ `cut_level`: ZK planning sets
-  `modeled_linf_cap = None` there, so `candidate.rs:172-177` takes the policy's
-  digits. A 1/40 per-attempt cap is never a one-shot bound.
-- **Admission.** `ZkOpeningSchedule`'s constructor rejects a row whose
-  `num_digits_fold` at any level ≤ `cut_level` is below the `OneShot` policy's
-  digits. Until a planner path emits ZK rows, that check is what pins the
-  one-shot sizing.
+  (`honest_fold_policy.rs:195-215`); `2^security_bits` is built exactly from
+  its exponent bits. The policy falls back to the deterministic cap when the
+  solve does not reach the target. At that cap δ = 0.
+- **Modeled caps.** A masked level never takes one: the planner's
+  `LevelMasking::Masked` drops the modeled ℓ∞ cap (a 1/40 per-attempt cap is
+  never a one-shot bound) and never emits an ℓ2 route, which carries a
+  per-attempt ℓ2 cap.
+- **Planner.** `akita_planner::find_schedule_for_test_zk` (test-support + zk)
+  plans masked levels with the `OneShot` target, hiding columns at their
+  rank fixed point, and the ℓ∞ route, and stores the cut in the schedule.
+- **Admission.** `ZkOpeningSchedule::admit` is the one check, run in release
+  at catalog admission (`ValidatedScheduleCatalog::try_new_with_test_zk`), in
+  the prover before it probes, and before commit samples root randomness. At
+  every level ≤ `cut_level` it requires the ℓ∞ route, one witness chunk, no
+  preceding group, the exact B and D randomness widths of §3.2, and at least
+  the `OneShot` policy's fold digits; later levels carry no randomness. A
+  trusted catalog rejects any row with a cut or with randomness.
 
 The parameters are `security_bits = 136` and `masked_folds = cut_level + 1 = 2`,
-so δ_fold ≤ 2^−136 in total. With the paper's other terms (§6.2), W2-c
-computes the total zero-knowledge bound below 2^−128. The paper gives no
-value for Q_tot (Q6), so the test asserts only the terms it can compute:
+so δ_fold ≤ 2^−136 in total by construction.
 
-```text
-δ_LHL + T_att·ε/M + 2δ_fold + (T_att·Q_tot + T_att²)/2^ν
-```
+**Challenge families at the masked levels.** The paper assumes the unfiltered
+d = 64 family (η² = 71) at folds ≤ the cut. In Akita:
+
+| Row | Level 0 | Level 1 |
+|---|---|---|
+| headline shape, `RecursiveCommitmentConfig<fp128::OneHot>` 36:1 | d_a = 512, packing in the 64-subring, (31 ±1, 10 ±2), η² = 71 | d_a = 512, evaluation trace, (19 ±1), η² = 19 |
+| test ZK row, `fp128::Dense` 14:1 from the planner | d_a = 512, packing in the 64-subring, (31 ±1, 10 ±2), η² = 71 | d_a = 256, packing in the 128-subring, (31 ±1), η² = 31 |
+
+Neither level-1 family is the paper's. All are unfiltered: the operator-norm
+rejection exists only on ℓ2 routes (§2.5.0), and admission forbids those at
+masked levels, so the lemma's 1/p factor stays 1 and the one-shot sizing uses
+each family's own η².
+
+**F1 finding.** Clear rows are sized per attempt, and most are one digit short
+of the one-shot target at a masked level. Among single-group fp128 rows with
+more than two levels:
+
+- one-hot (non-recursive): 15:4, 18:1, 20:1, 20:2, 28:1, 30:1, 32:1, 40:1,
+  44:1 and 50:1 are short at level 0; 20:4, 32:4 and 36:1 at level 1; only
+  16:2 passes;
+- dense: every row (14:1, 15:2, 16:1, 16:2, 17:4, 24:1, 26:1, 28:1, 30:1,
+  32:1) is short at level 0;
+- the recursive headline shape 36:1 passes at both levels. Its root one-hot
+  thresholds, 564 per attempt and 1469 one-shot, both fit the scheduled four
+  base-8 digits (positive reach 1755).
+
+So ZK rows come from the planner, never from a clear row.
+
+**Paper deltas.**
+
+- *Cut storage and binding.* The paper's k is a protocol parameter. Akita
+  stores the cut in the schedule (`FoldSchedule.zk`, a `ZkOpeningSchedule`).
+  It is serialized and appended to the schedule's descriptor bytes (tag 0x5a,
+  then the cut) only when present, so clear artifacts, row digests and
+  descriptors are unchanged. The effective-schedule digest in `PlanSection`
+  binds the cut, and the grinding-plan digest binds its `nonce_bits = 0`
+  runs; together they are the only thing that separates the modes (no proof
+  tag). Argument: the verifier derives both from the admitted row, so a proof
+  for one mode fails Fiat–Shamir in the other.
+- *One-shot sizing.* The union term is bounded with `⌈log₂⌉·0.71` instead of
+  `ln`, over all physical coefficients, so the digit range is at least the
+  paper's. Argument: every replacement over-approximates the lemma's tail, so
+  δ_fold only shrinks.
+- *Masked levels are ℓ∞ only, with no modeled cap.* The paper's masked folds
+  are ℓ∞ (§6.2) but the code would otherwise allow an ℓ2 route, whose
+  ‖z‖₂² is sent in the clear and whose cap and operator-norm family are
+  sized for a retrying prover: the rejection rate there is a
+  witness-dependent constant, not δ_fold. Admission and the planner exclude
+  it until one-shot ℓ2 sizing and a hidden energy check exist (Q8).
+- *No preceding groups at masked levels.* Admission rejects precommitted root
+  groups and setup prefixes at levels ≤ the cut: their responses share the
+  one-shot probe, but their digits are not sized for it, and their sources
+  are not in the masked sizing inputs. The headline instance therefore needs
+  one-shot sizing for the level-1 setup prefix before it is admissible (it
+  offloads level 0's setup to level 1, §1), and Jolt's precommitted groups
+  need their own source contracts at admission.
+- *Challenge families.* The masked levels use the families tabled above, not
+  the paper's d = 64 family everywhere; the sizing uses each family's η².
+- *Error terms.* The theorem's terms are unchanged. δ_fold is now
+  ≤ 2^−137 per masked fold by construction (checked for the headline level-1
+  shape in exact rational arithmetic), so 2δ_fold ≤ 2^−135. The planner
+  prices masked fold responses at the clear nonce width, an overcount of at
+  most two bytes per level that affects ranking only.
 
 The extra digits are applied before `rounded_up_role_a_inf_norm`, so A is
 re-priced at the enlarged range (Lemma `wo:lem:randomized-base`). The schedule
 audit recomputes the A bound from `num_digits_fold`
-(`akita-schedules/src/audit.rs:318-350`). Folds at or before the cut use
-the unfiltered family (d = 64, η² = 71), so the lemma's 1/p factor is 1. The
-paper's 2^−950 figure is per fold (Q5, answered).
+(`akita-schedules/src/audit.rs:318-350`). The paper's 2^−950 figure is per
+fold (Q5, answered).
 
 ### 2.4 Acceptance
 
-- **W2-a.** A ZK plan has a `FoldResponse` run with `nonce_bits = 0` at every
-  level ≤ `cut_level`, and the event log has no `Nonce` event at those sites.
-  Clear plan digests are unchanged (golden test).
-- **W2-b.** On the test-only ZK schedule, a forced too-small digit count makes
-  `prove` return `FoldOverflow { level }` after one probe. With a correct
-  schedule and a fresh RNG, the proof verifies.
-- **W2-c.** For the headline shapes, each per-fold one-shot bound is
-  ≤ 2^−136/2, checked against the lemma's closed form in exact rational
-  arithmetic (one-hot: against the Chernoff bound at the chosen λ). The total
-  ZK bound above is reported and asserted ≤ 2^−128.
+- **W2-a.** A ZK plan is the clear plan of the same folds except for a
+  `FoldResponse` run with `nonce_bits = 0` at every level ≤ `cut_level`. The
+  prover's argument string does not grow at those sites, and a nonce inserted
+  there is rejected. Clear plan and proof digests are unchanged (golden
+  test).
+- **W2-b.** On the planner's test ZK row, a backend that rejects the
+  response at a masked level makes `prove` return `FoldOverflow { level }`
+  after exactly one probe there. Without the rejection, the same proof, which
+  also carries the W1 hiding randomness, verifies.
+- **W2-c.** At the headline level-1 shape, the one-shot digit range meets
+  `2N·exp(−reach²/2σ²) ≤ 2^−137`, checked in exact rational arithmetic with
+  `ln 2 < 6932/10000`. The balanced cap is pinned as the least integer
+  meeting the closed form above, with one and with two witness windows, and
+  the headline root's one-hot thresholds are frozen (564, 1469). No test
+  asserts the total ZK bound: it would be arithmetic on the paper's
+  constants, and the paper gives no value for Q_tot (Q6).
 - **W2-d.** At k = 2, the re-priced A ranks for levels 0 and 1 equal the clear
   ranks, as paper §6.2 states. If they differ, the test fails.
 
@@ -759,7 +834,7 @@ compression, lands with W5c.
 | # | PR | Seams | Depends on | Test bar |
 |---|---|---|---|---|
 | 1 | **M6e**, plus the golden proof-digest test (C0) for a few catalog rows | — | jolt pin with the §7 fixups | builds with and without `zk`; dependency check; golden digests |
-| 2 | **W2**, plus the test-only `ZkOpeningSchedule::for_tests` constructor | S1, S11, S13 | 1 | W2-a…d |
+| 2 | **W2**, plus the test-only ZK planner path and catalog admission | S1, S11, S13 | 1 | W2-a…d |
 | 3 | **W1** (`commit_hiding` in the `zk` module) | S2, S3, S12 | 1 | W1-a…d |
 | 4 | **W3**: the cut, `ZkSchedule::validate`, the masked prover and verifier, `CountingGrinding`, `ResidualOpening` (raw u_a) | S6, S9, S10 | 2, 3, M2b/M3b fixups | W3-a…g |
 | 5 | **W5a**: `AkitaResponseProver`, direct σ_N | — | 1 | W5-a, W5-b |
@@ -792,8 +867,8 @@ The numbering continues the W4 note's A1–A23.
 - **A25, Jolt catalog levels.** The survey did not decode which levels of the
   current Jolt catalog use the L2 route. The ZK planner makes its own
   schedules, so this affects only the comparison with the paper.
-- **A26, small test shapes.** Whether the ZK planner finds feasible schedules
-  at test sizes is unverified. `for_tests` (PR 2) covers tests either way.
+- **A26, small test shapes.** The ZK planner finds an admissible
+  `fp128::Dense` 14:1 row; other test shapes are unverified.
 - **A27, setup-group alignment.** Aligning the setup group to R_256 boundaries
   adds zero cells, in an unmeasured count.
 - **A28, residual slicing.** This note fixes one slice.
