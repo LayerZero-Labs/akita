@@ -54,7 +54,7 @@ use compression::Chains;
 use rounds::{ClearProverRounds, ClearVerifierRounds, FusedKernel, ProductKernel};
 use rows::{
     batch_rows, batch_target, batch_weight_at, ceil_log2, eq_table, row_variables, zk_error,
-    PaddingMask, ProductClaims, ResponseShape, RowWeights,
+    PaddingTerm, ProductClaims, ResponseShape, RowWeights,
 };
 
 /// The response statement's field.
@@ -108,6 +108,9 @@ struct ProverDigits<'a> {
     rows: &'a [i8],
     /// The digit-range session's table.
     range: &'a [i8],
+    /// Digits committed past `e`'s end, where the padding term asks for
+    /// zeros; empty for an honest prover.
+    padding: &'a [i8],
 }
 
 impl<'a> ProverDigits<'a> {
@@ -116,6 +119,7 @@ impl<'a> ProverDigits<'a> {
             committed: digits,
             rows: digits,
             range: digits,
+            padding: &[],
         }
     }
 }
@@ -211,6 +215,15 @@ where
             .iter()
             .map(|&digit| F::from_i64(i64::from(digit)))
             .collect();
+        e.extend(
+            digits
+                .padding
+                .iter()
+                .map(|&digit| F::from_i64(i64::from(digit))),
+        );
+        if e.len() > shape.padded_len() {
+            return Err(WhiteoutError::ResponseRejected("response length").into());
+        }
         e.resize(shape.padded_len(), F::zero());
 
         // 1. Commit to e.
@@ -253,14 +266,14 @@ where
         transcript.send(&claims.x);
         transcript.send(&claims.y);
 
-        // 3. The row batch at η, and the padding term at (δ, τ_pad).
+        // 3. The row batch at η, and the padding term at τ_pad.
         let chains = self.chains(statement)?;
         let eta: Vec<F> = challenges(
             transcript,
             row_variables(statement, &chains).map_err(zk_error)?,
         );
         let weights = RowWeights::new(statement, &eta, &product_point, &chains)?;
-        let padding = padding_mask(transcript, shape);
+        let padding = padding_term(transcript, shape);
         let batch = batch_rows(statement, shape, alpha, &weights, &padding, claims, &chains)?;
 
         // 4. The digit range of e.
@@ -394,14 +407,14 @@ where
             return Err(WhiteoutError::ResponseRejected("product sumcheck").into());
         }
 
-        // 3. The row batch at η, and the padding term at (δ, τ_pad).
+        // 3. The row batch at η, and the padding term at τ_pad.
         let chains = self.chains(statement)?;
         let eta: Vec<F> = challenges(
             transcript,
             row_variables(statement, &chains).map_err(zk_error)?,
         );
         let weights = RowWeights::new(statement, &eta, &product.challenges, &chains)?;
-        let padding = padding_mask(transcript, shape);
+        let padding = padding_term(transcript, shape);
         let b = batch_target(statement, alpha, &weights, claims, &chains)?;
 
         // 4. The digit range of e.
@@ -534,10 +547,9 @@ fn challenges<C: Channel>(channel: &mut C, count: usize) -> Vec<F> {
     (0..count).map(|_| channel.challenge()).collect()
 }
 
-/// The padding term's `δ` and `τ_pad`, drawn after `η`.
-fn padding_mask<C: Channel>(channel: &mut C, shape: ResponseShape) -> PaddingMask<F> {
-    PaddingMask {
-        delta: channel.challenge(),
+/// The padding term's `τ_pad`, drawn after `η`.
+fn padding_term<C: Channel>(channel: &mut C, shape: ResponseShape) -> PaddingTerm<F> {
+    PaddingTerm {
         point: challenges(channel, shape.num_vars),
     }
 }

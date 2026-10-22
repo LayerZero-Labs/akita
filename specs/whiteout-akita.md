@@ -1527,17 +1527,21 @@ code does, and why.
 
 **W5-P1 deltas.**
 
-- **Masked padding term.** Paper `04_protocol.tex:386-387,453`: the
+- **Padding term.** Paper `04_protocol.tex:386-387,453`: the
   zero-padding equations `e_j = 0` for `j ∈ [|e|, 2^ν)` are rows of `H`,
   batched by `eq(η, ·)`. Code: no padding rows; after `η` the verifier
-  draws `δ` and `τ_pad ∈ F^ν`, and `A` gains
-  `δ·1[j ≥ |e|]·eq(τ_pad, j)`. The verifier evaluates it as one restricted
-  equality over the interval `[|e|, 2^ν)` (`NegativeBinarySupport`). Why:
-  `η` then ranges over the real rows only, and the term is one interval
-  evaluation instead of an `eq(η, ·)` window at an unaligned row offset.
-  Cost: a nonzero padding entry survives unless `Σ_{j ≥ |e|}
-  eq(τ_pad, j)e_j = 0`, probability at most `ν/q`, added to the batching
-  error; `ν + 1` more challenges.
+  draws `τ_pad ∈ F^ν`, and `A` gains `1[j ≥ |e|]·eq(τ_pad, j)`
+  (`PaddingTerm`; it hides nothing). The verifier evaluates it as one
+  restricted equality over the interval `[|e|, 2^ν)`
+  (`NegativeBinarySupport`). Why: `η` then ranges over the real rows only,
+  and the term is one interval evaluation instead of an `eq(η, ·)` window
+  at an unaligned row offset. Cost: `ν/q`. A nonzero padding entry makes
+  `Σ_{j ≥ |e|} eq(τ_pad, j)·e_j` a nonzero multilinear polynomial in
+  `τ_pad`, and with the η batch one nonzero polynomial in disjoint
+  variables (for `|e| ≥ 1` neither part can be a nonzero constant that
+  the other cancels), so no batching scalar is needed; `ν` more
+  challenges. Tested end to end by committing a `−1` past `|e|`, which is
+  in the alphabet, a root of `E(E + 1)` and outside `I_bin`.
 - **`A(r)` without `A`.** Paper `04_protocol.tex:446-456`: the verifier
   evaluates the contractions with structured-weight algorithms. Code:
   `ResponseStatement::weight_at` (jolt-zk) factors `eq(r, ·)` at the
@@ -1740,6 +1744,14 @@ The numbering continues the W4 note's A1–A23.
   map products). It is not verified: jolt-zk's dudect harness
   (`examples/sigma_dudect.rs`) cannot reach Akita's executor, and Akita has
   no dudect harness; a case for it is open (§5.7).
+- **A37, trusting the setup cache (upstream, open).** With
+  disk-persistence, `akita_setup::load_prover_setup` reads the public
+  matrix from the cache file and runs `AkitaExpandedSetup::check` on it
+  (`validate_cached_matrix`), but does not re-derive it from the seed. A tampered cache changes `K₁` and `K₂`, and
+  every other public matrix, for any prover or verifier on that machine.
+  The response setup's own check (`AkitaResponseProver::setup`, refused
+  when too narrow) is about size, not content. No code here; the fix
+  belongs to akita-setup.
 - A2, A3 and A12 from W4 are resolved by §4.3, §4.6 and §5.4.
 
 ## 11. Questions for the paper authors

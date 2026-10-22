@@ -116,6 +116,7 @@ struct CheatDigits {
     committed: Vec<i8>,
     rows: Vec<i8>,
     range: Vec<i8>,
+    padding: Vec<i8>,
 }
 
 impl CheatDigits {
@@ -125,6 +126,7 @@ impl CheatDigits {
             committed: e.clone(),
             rows: e.clone(),
             range: e,
+            padding: Vec::new(),
         }
     }
 }
@@ -205,6 +207,17 @@ fn unlinked_range(_: &ResponseLayoutPositions, e: &[i8]) -> CheatDigits {
         committed: e.to_vec(),
         rows: e.to_vec(),
         range,
+        padding: Vec::new(),
+    }
+}
+
+/// `e` holds, but a `−1` is committed past its end: `−1` is in the digit
+/// alphabet and a root of `E(E + 1)`, and the padding lies outside `I_bin`,
+/// so only the padding term can reject.
+fn nonzero_padding(_: &ResponseLayoutPositions, e: &[i8]) -> CheatDigits {
+    CheatDigits {
+        padding: vec![-1],
+        ..CheatDigits::everywhere(e.to_vec())
     }
 }
 
@@ -232,6 +245,7 @@ impl<const D: usize> ResponseProver<F, D> for Cheating<'_> {
                 committed: &digits.committed,
                 rows: &digits.rows,
                 range: &digits.range,
+                padding: &digits.padding,
             },
             transcript,
         )
@@ -261,14 +275,15 @@ fn rejection(error: &ZkError) -> Option<&WhiteoutError> {
 /// commit a digit outside `[−8, 7]`, the range session cannot hold one, and
 /// Stage 1's leaf rejects any range image off its roots (akita-verifier's
 /// stage-1 tests); here the fused sumcheck rejects a range table other than
-/// the committed `E`, the link that ties Stage 1 to `E`.
+/// the committed `E`, the link that ties Stage 1 to `E`. A nonzero entry
+/// committed past `e`'s end fails the padding term.
 #[test]
 fn rejects_each_item_violation() {
     on_big_stack(|| {
         let sigma = SyntheticSigma::<64>::new(3, 1);
         let akita = akita_for(sigma.response_len(&CompressionShape::<Cfg>::default()));
         let rejected = |item| Err(WhiteoutError::ResponseRejected(item));
-        let cases: [(Edit, Result<(), WhiteoutError>, &str); 5] = [
+        let cases: [(Edit, Result<(), WhiteoutError>, &str); 6] = [
             (
                 |at, e| {
                     let mut e = e.to_vec();
@@ -279,6 +294,7 @@ fn rejects_each_item_violation() {
                 "fused sumcheck",
             ),
             (unlinked_range, Ok(()), "fused sumcheck"),
+            (nonzero_padding, Ok(()), "fused sumcheck"),
             (
                 |at, e| bumped(e, at.v),
                 rejected("V commitment"),
@@ -369,7 +385,7 @@ impl<const D: usize> ResponseProver<F, D> for WeightOracle<'_> {
         let product_vars = ceil_log2(statement.row_shape().products.max(1));
         let product_point = challenges(transcript, product_vars);
         let eta = challenges(transcript, row_variables(statement, &chains).unwrap());
-        let padding = padding_mask(transcript, shape);
+        let padding = padding_term(transcript, shape);
         let r = challenges(transcript, shape.num_vars);
         let range_point = challenges(transcript, shape.num_vars);
         let gamma: F = transcript.challenge();
@@ -394,7 +410,7 @@ impl<const D: usize> ResponseProver<F, D> for WeightOracle<'_> {
             })
             .collect();
         let eq_pad = EqPolynomial::evals(&padding.point).unwrap();
-        columns.extend(eq_pad[shape.len..].iter().map(|eq| padding.delta * *eq));
+        columns.extend(eq_pad[shape.len..].iter().copied());
         let eq_r = EqPolynomial::evals(&r).unwrap();
         let contracted: F = columns.iter().zip(&eq_r).map(|(h, e)| *h * *e).sum();
         let b = weights.target(claims) - weights.rows.dot(&zero).unwrap();
@@ -841,4 +857,68 @@ fn refuses_a_setup_without_the_chains_maps() {
     let setup = AkitaResponseProver::setup(&scheme, num_vars).unwrap();
     assert!(setup.expanded.shared_matrix().num_field_elements() >= needed);
     AkitaResponseProver::new(scheme, setup).unwrap();
+}
+
+/// The chains' relation at a point against the MLE of its dense weights,
+/// for images of one to three chunks placed at unaligned offsets.
+#[test]
+fn chain_relation_at_a_point_matches_its_dense_weights() {
+    on_big_stack(|| {
+        let sigma = SyntheticSigma::<64>::new(14, 1);
+        let akita = akita_for(sigma.response_len(&CompressionShape::<Cfg>::default()));
+        let profile = Cfg::sis_modulus_profile();
+        let mut rng = rand::thread_rng();
+        for (image_len, offset) in [(640, 2017), (1100, 3), (1024, 4159), (513, 1)] {
+            let image: Vec<F> = (0..image_len).map(|_| F::random(&mut rng)).collect();
+            let compressed = akita.compress(&image).unwrap();
+            let len = compressed.witness.len();
+            let chains = compression::Chains::of_targets(
+                profile,
+                akita.expanded(),
+                vec![CompressedTarget {
+                    digits: offset..offset + len,
+                    image_len,
+                    payload: &compressed.payload,
+                }],
+            );
+            let rows = chains.rows().unwrap();
+            let weights: Vec<F> = (0..rows).map(|_| F::random(&mut rng)).collect();
+            let alpha = F::random(&mut rng);
+            let padded = (offset + len).next_power_of_two();
+            let mut a = vec![F::zero(); padded];
+            chains.accumulate(alpha, &weights, &mut a).unwrap();
+            let point: Vec<F> = (0..padded.trailing_zeros())
+                .map(|_| F::random(&mut rng))
+                .collect();
+            assert_eq!(
+                chains.evaluate(alpha, &weights, &point).unwrap(),
+                multilinear_eval(&a, &point).unwrap(),
+                "{image_len} at {offset}"
+            );
+        }
+    });
+}
+
+/// The padding term's dense weights are `eq(τ_pad, ·)` on `[len, 2^ν)`,
+/// and its value at a point is their MLE.
+#[test]
+fn padding_term_matches_its_dense_weights() {
+    let mut rng = rand::thread_rng();
+    for len in [1, 2, 3, 63, 64, 65, 1023, 1024, 1025, 4097] {
+        let shape = ResponseShape::new(len).unwrap();
+        let padding = PaddingTerm {
+            point: (0..shape.num_vars).map(|_| F::random(&mut rng)).collect(),
+        };
+        let weights = padding.weights(shape).unwrap();
+        let eq = EqPolynomial::evals(&padding.point).unwrap();
+        assert_eq!(weights, eq[len..], "{len}");
+        let mut dense = vec![F::zero(); len];
+        dense.extend(&weights);
+        let point: Vec<F> = (0..shape.num_vars).map(|_| F::random(&mut rng)).collect();
+        assert_eq!(
+            padding.at(shape, &point).unwrap(),
+            multilinear_eval(&dense, &point).unwrap(),
+            "{len}"
+        );
+    }
 }
