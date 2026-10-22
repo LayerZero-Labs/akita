@@ -697,6 +697,15 @@ code does, and why.
 - **Raw images.** Paper `04_protocol.tex:303-313,329-330`: `ξ_a, ξ_p, ξ_D`
   join `e` and Item 2 carries the compression equations. W5a keeps the
   raw images; W5c (now in RP4) adds them.
+- **Measured cost (W5-e, A30).** Paper `06_evaluation.tex:173-241` and
+  `numbers.tex`: `|e| = 65.5M`, `+7.3 KB`, `+1.15 s`, `+0.8 ms`. Measured
+  with `examples/zk_response.rs` on the synthetic instance at
+  `|e| = 89.7M` (`ν = 27`, 10 Gaussian digits): 72,516 B of response proof,
+  12 s prover, 3.8 s verifier, of which the dense row batch and `A(r)`
+  take about 98% and the Akita opening 0.1 s. The raw images add about
+  `(768 + 768 + 320)·16 ≈ 29.7 KB` outside it. The direct scan misses the
+  verifier budget by three orders of magnitude, so structured weights
+  (W5b or a factored `A(r)`) must land in RP4.
 - **The opening schedule is planned at runtime** for tests and W5-e. Paper
   `04_protocol.tex:489`: an ordinary Akita opening. Code: the recursive
   `ResponseDigits` family (`log_commit_bound = 4`), planned by
