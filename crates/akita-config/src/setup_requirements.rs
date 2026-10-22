@@ -170,6 +170,18 @@ impl<F> SetupRequirements<F> {
         &self.prefix_slot_ids
     }
 
+    /// These requirements with a shared matrix of at least
+    /// `num_field_elements`, for a caller whose public maps read past the
+    /// catalog's envelope.
+    #[must_use]
+    pub fn covering(mut self, num_field_elements: usize) -> Self {
+        self.matrix_capacity.num_field_elements = self
+            .matrix_capacity
+            .num_field_elements
+            .max(num_field_elements);
+        self
+    }
+
     /// Combine requirements computed at the same capacity bound.
     ///
     /// The result covers the larger matrix envelope and the sorted union of
