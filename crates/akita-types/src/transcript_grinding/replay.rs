@@ -8,7 +8,7 @@ use akita_params::{FoldResponseSearch, GrindingPlan, GrindingQueryKind, Grinding
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_sumcheck::{ProverRoundContext, SumcheckError, SumcheckSite, VerifierRoundContext};
 use jolt_transcript::{
-    Channel, Fork, PrivateChannel, ProverTranscript, SiteId, Sponge, TranscriptError,
+    Channel, Fork, PadSlots, PrivateChannel, ProverTranscript, SiteId, Sponge, TranscriptError,
     VerifierTranscript, FORK_SEED_LEN,
 };
 use std::marker::PhantomData;
@@ -267,6 +267,22 @@ pub trait GrindingReplay {
     /// Returns [`AkitaError`] when `site` is not the next plan entry, the
     /// search is exhausted, or the received nonce is invalid.
     fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError>;
+
+    /// Check a predicate on public values: values the verifier reads in the
+    /// clear in every mode, such as Stage 3's setup-product reduction.
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidProof`] if `holds` is false. The counting
+    /// replay, which runs over arbitrary bytes and returns no verdict, checks
+    /// nothing.
+    fn check_public(&mut self, holds: bool) -> Result<(), AkitaError> {
+        if holds {
+            Ok(())
+        } else {
+            Err(AkitaError::InvalidProof)
+        }
+    }
 
     /// Apply scheduled work and draw the site's extension-field challenge.
     ///
@@ -939,6 +955,203 @@ where
                 stage: self.stage,
                 round: site.round,
             })
+    }
+}
+
+/// Sumcheck round context whose round messages are public in both modes:
+/// every private exchange goes out as an ordinary public message, with no
+/// pads, and the input claim is bound as a public value, so the verifier
+/// folds and checks the rounds in the clear even over a masked channel.
+///
+/// For a sumcheck whose round polynomials are functions of public data alone,
+/// such as Stage 3's setup product (`specs/whiteout-akita.md` §4.3). Over the
+/// clear transcript, whose private exchanges already are public messages, it
+/// sends exactly the bytes [`GrindingSumcheckProver`] and
+/// [`GrindingSumcheckVerifier`] do.
+pub struct PublicGrindingSumcheck<'context, F, E, G> {
+    grinding: &'context mut G,
+    protocol: akita_params::SumcheckProtocol,
+    level: u32,
+    stage: u32,
+    _fields: PhantomData<fn() -> (F, E)>,
+}
+
+impl<'context, F, E, G> PublicGrindingSumcheck<'context, F, E, G> {
+    /// Bind one sumcheck invocation to its scheduled grinding-site coordinates.
+    #[must_use]
+    pub fn new(
+        grinding: &'context mut G,
+        protocol: akita_params::SumcheckProtocol,
+        level: u32,
+        stage: u32,
+    ) -> Self {
+        Self {
+            grinding,
+            protocol,
+            level,
+            stage,
+            _fields: PhantomData,
+        }
+    }
+
+    fn sumcheck_site(&self, site: SumcheckSite) -> SiteId {
+        grinding_sumcheck_site(self.protocol, self.level, self.stage, site)
+    }
+}
+
+impl<F, E, G> PublicGrindingSumcheck<'_, F, E, G>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    G: GrindingReplay,
+{
+    fn draw(&mut self, site: SumcheckSite) -> Result<E, AkitaError> {
+        if site.invocation != 0 {
+            return Err(AkitaError::InvalidInput(
+                "public grinding sumcheck invocation is not zero".into(),
+            ));
+        }
+        self.grinding
+            .grinded_ext_challenge::<F, E>(GrindingSite::SumcheckRound {
+                protocol: self.protocol,
+                level: self.level,
+                stage: self.stage,
+                round: site.round,
+            })
+    }
+}
+
+impl<F, E, G: GrindingReplay> Channel for PublicGrindingSumcheck<'_, F, E, G> {
+    type Sponge = <G::State as Channel>::Sponge;
+
+    fn site(&mut self, site: SiteId) {
+        self.grinding.state_mut().site(site);
+    }
+
+    fn record_fork_draw(&mut self, absorbed: usize, squeezed: usize) {
+        self.grinding
+            .state_mut()
+            .record_fork_draw(absorbed, squeezed);
+    }
+
+    fn public<A: jolt_algebra::CanonicalBytes>(&mut self, value: &A) {
+        self.grinding.state_mut().public(value);
+    }
+
+    fn public_all<A: jolt_algebra::CanonicalBytes>(&mut self, values: &[A]) {
+        self.grinding.state_mut().public_all(values);
+    }
+
+    fn public_bytes(&mut self, bytes: &[u8]) {
+        self.grinding.state_mut().public_bytes(bytes);
+    }
+
+    fn exchange<A: jolt_algebra::CanonicalDecode>(
+        &mut self,
+        value: &mut A,
+    ) -> Result<(), TranscriptError> {
+        self.grinding.state_mut().exchange(value)
+    }
+
+    fn exchange_all<A: jolt_algebra::CanonicalDecode>(
+        &mut self,
+        values: &mut [A],
+    ) -> Result<(), TranscriptError> {
+        self.grinding.state_mut().exchange_all(values)
+    }
+
+    fn challenge<C: Field>(&mut self) -> C {
+        self.grinding.state_mut().challenge()
+    }
+
+    fn challenge_small<C: CanonicalEncoding>(&mut self) -> C {
+        self.grinding.state_mut().challenge_small()
+    }
+
+    fn challenge_bytes<const N: usize>(&mut self) -> [u8; N] {
+        self.grinding.state_mut().challenge_bytes()
+    }
+}
+
+impl<F, E, G: GrindingReplay> PrivateChannel for PublicGrindingSumcheck<'_, F, E, G> {
+    type Error = TranscriptError;
+
+    fn exchange_private<B, X>(&mut self, values: &mut [X]) -> Result<PadSlots, TranscriptError>
+    where
+        B: Field + CanonicalEncoding,
+        X: ExtField<B> + jolt_algebra::CanonicalDecode,
+    {
+        self.exchange_all(values)?;
+        Ok(PadSlots::default())
+    }
+
+    fn bind_derived<B, X>(&mut self, claim: &X) -> Result<(), TranscriptError>
+    where
+        B: Field + CanonicalEncoding,
+        X: ExtField<B> + jolt_algebra::CanonicalDecode,
+    {
+        self.public(claim);
+        Ok(())
+    }
+
+    fn exchange_private_base<B>(&mut self, values: &mut [B]) -> Result<PadSlots, TranscriptError>
+    where
+        B: Field + CanonicalEncoding,
+    {
+        self.exchange_all(values)?;
+        Ok(PadSlots::default())
+    }
+
+    fn bind_derived_base<B>(&mut self, claim: &B) -> Result<(), TranscriptError>
+    where
+        B: Field + CanonicalEncoding,
+    {
+        self.public(claim);
+        Ok(())
+    }
+}
+
+impl<F, E, G> ProverRoundContext<E> for PublicGrindingSumcheck<'_, F, E, G>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    G: GrindingReplay,
+{
+    type Channel = Self;
+    type Error = AkitaError;
+
+    fn channel_mut(&mut self) -> &mut Self {
+        self
+    }
+
+    fn site(&self, site: SumcheckSite) -> Option<SiteId> {
+        Some(self.sumcheck_site(site))
+    }
+
+    fn challenge(&mut self, site: SumcheckSite) -> Result<E, AkitaError> {
+        self.draw(site)
+    }
+}
+
+impl<F, E, G> VerifierRoundContext<E> for PublicGrindingSumcheck<'_, F, E, G>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    G: GrindingReplay,
+{
+    type Channel = Self;
+    type Error = AkitaError;
+
+    fn channel_mut(&mut self) -> &mut Self {
+        self
+    }
+
+    fn site(&self, site: SumcheckSite) -> Option<SiteId> {
+        Some(self.sumcheck_site(site))
+    }
+
+    fn challenge(&mut self, site: SumcheckSite) -> Result<E, AkitaError> {
+        self.draw(site)
     }
 }
 

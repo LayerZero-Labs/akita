@@ -60,7 +60,8 @@ fn on_large_stack(test: fn()) {
         .unwrap();
 }
 
-fn zk_catalog() -> TrustedScheduleCatalog<Cfg> {
+/// The planner's zero-knowledge row for one dense `NV`-variable polynomial.
+fn dense_zk_row() -> (CommittedGroupBatchProfile, akita_params::FoldSchedule) {
     let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(NV));
     let planned = akita_planner::find_schedule_for_test_zk(
         &key,
@@ -79,35 +80,56 @@ fn zk_catalog() -> TrustedScheduleCatalog<Cfg> {
         .unwrap(),
         precommitteds: Vec::new(),
     };
+    (profiles, planned.schedule)
+}
+
+fn zk_catalog() -> TrustedScheduleCatalog<Cfg> {
     TrustedScheduleCatalog::try_new_with_test_zk(
-        [(profiles, planned.schedule)],
+        [dense_zk_row()],
         ChunkedWitnessCfg::default_non_chunked(),
     )
     .unwrap()
 }
 
-/// One committed polynomial and its claim, with both roles' setups.
-struct Instance {
-    scheme: AkitaCommitmentScheme<Cfg>,
-    setup: AkitaProverSetup<F>,
-    backend: CpuBackend<F, F>,
-    verifier: AkitaVerifier<Cfg>,
+/// One committed group of one polynomial and its claim.
+struct Group {
     commitment: CommittedGroup<F>,
     handle: CommitmentHandle<F, F>,
     point: Vec<F>,
     opening: F,
 }
 
-impl Instance {
+/// Committed groups and their claims, with both roles' setups.
+struct Instance<C: CommitmentConfig<Field = F, ExtField = F> = Cfg> {
+    scheme: AkitaCommitmentScheme<C>,
+    setup: AkitaProverSetup<F>,
+    backend: CpuBackend<F, F>,
+    verifier: AkitaVerifier<C>,
+    groups: Vec<Group>,
+}
+
+fn dense_poly(num_vars: usize) -> (Vec<F>, DensePoly<F>) {
+    let evals: Vec<F> = (0..(1 << num_vars))
+        .map(|index| F::from_u64(3 * index as u64 + 1))
+        .collect();
+    let poly = DensePoly::<F>::from_field_evals(num_vars, &evals).unwrap();
+    (evals, poly)
+}
+
+fn lagrange_opening(evals: &[F], point: &[F]) -> F {
+    evals
+        .iter()
+        .zip(lagrange_weights(point).unwrap())
+        .fold(F::zero(), |sum, (&value, weight)| sum + value * weight)
+}
+
+impl Instance<Cfg> {
     fn new(scheme: AkitaCommitmentScheme<Cfg>) -> Self {
         let setup = scheme.setup_prover(NV, 1).unwrap();
         let backend = CpuBackend::new(setup.expanded.clone())
             .unwrap()
             .with_hiding_rng(StdRng::seed_from_u64(7));
-        let evals: Vec<F> = (0..(1 << NV))
-            .map(|index| F::from_u64(3 * index as u64 + 1))
-            .collect();
-        let poly = DensePoly::<F>::from_field_evals(NV, &evals).unwrap();
+        let (evals, poly) = dense_poly(NV);
         let output = backend
             .commit(
                 scheme.schedules(),
@@ -118,35 +140,78 @@ impl Instance {
         let point: Vec<F> = (0..NV)
             .map(|index| F::from_u64((5 * index + 2) as u64))
             .collect();
-        let opening = evals
-            .iter()
-            .zip(lagrange_weights(&point).unwrap())
-            .fold(F::zero(), |sum, (&value, weight)| sum + value * weight);
-        let verifier = scheme
-            .verifier(scheme.setup_verifier(&setup).unwrap())
-            .unwrap();
-        Self {
+        let opening = lagrange_opening(&evals, &point);
+        Self::with_groups(
             scheme,
             setup,
             backend,
-            verifier,
-            commitment: output.committed_group,
-            handle: output.private_handle,
-            point,
-            opening,
-        }
+            vec![Group {
+                commitment: output.committed_group,
+                handle: output.private_handle,
+                point,
+                opening,
+            }],
+        )
+    }
+}
+
+impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
+    fn with_groups(
+        scheme: AkitaCommitmentScheme<C>,
+        setup: AkitaProverSetup<F>,
+        backend: CpuBackend<F, F>,
+        groups: Vec<Group>,
+    ) -> Self {
+        let mut instance = Self {
+            verifier: scheme
+                .verifier(scheme.setup_verifier(&setup).unwrap())
+                .unwrap(),
+            scheme,
+            setup,
+            backend,
+            groups,
+        };
+        let resolved = instance
+            .scheme
+            .schedules()
+            .resolve_selection(instance.selection())
+            .unwrap();
+        instance.verifier = instance
+            .scheme
+            .verifier(
+                instance
+                    .scheme
+                    .setup_verifier_for_schedule(
+                        &instance.setup,
+                        resolved.schedule(),
+                        instance.opening_data().opening_layout(),
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+        instance
     }
 
     fn opening_data(&self) -> SelectedProverOpeningData<'static, F, CommitmentHandle<F, F>, F> {
-        SelectedProverOpeningData::from_committed_claims::<Cfg>(
-            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                self.point.clone(),
-                vec![self.opening],
-                self.commitment.clone(),
+        SelectedProverOpeningData::from_committed_claims::<C>(
+            OpeningClaims::from_groups(
+                self.groups
+                    .iter()
+                    .map(|group| {
+                        PolynomialGroupClaims::new(
+                            group.point.clone(),
+                            vec![group.opening],
+                            group.commitment.clone(),
+                        )
+                        .unwrap()
+                    })
+                    .collect(),
             )
-            .unwrap()])
             .unwrap(),
-            vec![self.handle.clone()],
+            self.groups
+                .iter()
+                .map(|group| group.handle.clone())
+                .collect(),
             self.scheme.schedules(),
         )
         .unwrap()
@@ -156,17 +221,29 @@ impl Instance {
         self.opening_data().selection()
     }
 
-    /// The verifier's statement: commitment, point and selection. Its
-    /// evaluation is a placeholder the masked verifier never reads.
+    /// The statement claims, in group order.
+    fn openings(&self) -> Vec<F> {
+        self.groups.iter().map(|group| group.opening).collect()
+    }
+
+    /// The verifier's statement: commitments, points and selection. Its
+    /// evaluations are placeholders the masked verifier never reads.
     fn statement(&self) -> GroupBatchStatement<'_, F, F> {
         GroupBatchStatement::new(
             self.selection(),
-            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                self.point.clone(),
-                vec![F::zero()],
-                &self.commitment,
+            OpeningClaims::from_groups(
+                self.groups
+                    .iter()
+                    .map(|group| {
+                        PolynomialGroupClaims::new(
+                            group.point.clone(),
+                            vec![F::zero()],
+                            &group.commitment,
+                        )
+                        .unwrap()
+                    })
+                    .collect(),
             )
-            .unwrap()])
             .unwrap(),
         )
         .unwrap()
@@ -188,15 +265,15 @@ impl Instance {
             .unwrap()
     }
 
-    /// The pad layout from the counting replay over `bytes`: the claim's
-    /// slot, the prefix's message slots, then its auxiliary slots.
+    /// The pad layout from the counting replay over `bytes`: the claims'
+    /// slots, the prefix's message slots, then its auxiliary slots.
     fn layout(&self, bytes: &[u8]) -> PadLayout {
         let mut transcript =
             VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, bytes);
         let mut view = CommittedPadsView::counting();
-        let claim = view
+        let claims = view
             .channel(&mut transcript)
-            .exchange_private_base(&mut [F::zero()])
+            .exchange_private_base(&mut vec![F::zero(); self.groups.len()])
             .unwrap();
         let prefix = self
             .verifier
@@ -204,7 +281,9 @@ impl Instance {
                 &mut transcript,
                 &mut view,
                 self.statement(),
-                vec![AffineRow::masked(F::zero(), PadIndex(claim.start))],
+                (claims.start..claims.start + claims.len)
+                    .map(|slot| AffineRow::masked(F::zero(), PadIndex(slot)))
+                    .collect(),
                 BASIS,
             )
             .unwrap();
@@ -213,23 +292,23 @@ impl Instance {
         shape.layout().unwrap()
     }
 
-    /// Sends the masked claim, proves the masked prefix with `claims` as its
-    /// statement claims (by default the claim just sent), and sends the
-    /// masked auxiliary block.
+    /// Sends the masked claims, proves the masked prefix with `claims` as
+    /// its statement claims (by default the claims just sent, each over its
+    /// own pad), and sends the masked auxiliary block.
     fn prove(
         &self,
         pads: &mut CommittedPads<F, ()>,
-        claims: impl FnOnce(F) -> Vec<AffineRow<F>>,
+        claims: impl FnOnce(Vec<F>) -> Vec<AffineRow<F>>,
     ) -> Result<Proved, AkitaError> {
         let mut transcript = ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION);
-        let masked_claim = pads.send(&[self.opening], &mut transcript)?[0];
-        let (residual, auxiliary) = prove_masked_prefix::<Cfg, _, _, _>(
+        let masked_claims = pads.send(&self.openings(), &mut transcript)?;
+        let (residual, auxiliary) = prove_masked_prefix::<C, _, _, _>(
             self.setup.expanded.descriptor(),
             self.scheme.schedules(),
             &self.backend,
             &self.prefix_slots(),
             self.opening_data(),
-            &claims(masked_claim),
+            &claims(masked_claims),
             pads,
             &mut transcript,
             BASIS,
@@ -239,8 +318,8 @@ impl Instance {
         Ok((transcript.finish(), residual, auxiliary))
     }
 
-    /// Replays `proof` as the verifier: the masked claim, the masked prefix,
-    /// and the masked auxiliary block.
+    /// Replays `proof` as the verifier: the masked claims, the masked
+    /// prefix, and the masked auxiliary block.
     fn verify(
         &self,
         proof: &[u8],
@@ -249,15 +328,19 @@ impl Instance {
         let mut transcript =
             VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, proof);
         let mut view = CommittedPadsView::counting();
-        let mut claim = [F::zero()];
+        let mut claims = vec![F::zero(); self.groups.len()];
         let slots = view
             .channel(&mut transcript)
-            .exchange_private_base(&mut claim)?;
+            .exchange_private_base(&mut claims)?;
         let prefix = self.verifier.verify_masked_prefix(
             &mut transcript,
             &mut view,
             self.statement(),
-            vec![AffineRow::masked(claim[0], PadIndex(slots.start))],
+            claims
+                .iter()
+                .zip(slots.start..)
+                .map(|(&claim, slot)| AffineRow::masked(claim, PadIndex(slot)))
+                .collect(),
             BASIS,
         )?;
         let mut auxiliary = vec![F::zero(); layout.auxiliary.len()];
@@ -269,6 +352,104 @@ impl Instance {
     }
 }
 
+/// Each claim over its own pad, in the order the claims were sent.
+fn own_pads(claims: Vec<F>) -> Vec<AffineRow<F>> {
+    claims
+        .into_iter()
+        .enumerate()
+        .map(|(slot, claim)| AffineRow::masked(claim, PadIndex(slot)))
+        .collect()
+}
+
+/// The recursive one-hot family offloads level 0's setup to a level-1 setup
+/// prefix from 31 variables on (W2b).
+type RecCfg = akita_config::RecursiveCommitmentConfig<fp128::OneHot>;
+const MULTI_NV: usize = 31;
+
+impl Instance<RecCfg> {
+    /// A one-hot `MULTI_NV`-variable root beside one precommitted dense
+    /// polynomial committed under [`dense_zk_row`]'s hiding profile, as Jolt
+    /// commits untrusted advice. The planner's row offloads level 0's setup
+    /// to a setup prefix at the cut level.
+    fn multi_group() -> Self {
+        let precommitted = dense_zk_row().0.final_group;
+        let key = ScheduleLookupKey {
+            final_group: PolynomialGroupLayout::singleton(MULTI_NV),
+            precommitteds: vec![precommitted],
+        };
+        let planned = akita_planner::find_schedule_for_test_zk(
+            &key,
+            RecCfg::committed_source_contract().unwrap(),
+            &[Cfg::committed_source_contract().unwrap()],
+            &policy_of::<RecCfg>(ChunkedWitnessCfg::default_non_chunked()),
+            RecCfg::ring_challenge_config,
+            ZkOpeningSchedule::new(ZK_CUT_LEVEL).unwrap(),
+        )
+        .unwrap();
+        let schedule = &planned.schedule;
+        assert_eq!(schedule.root.params.precommitted_groups().len(), 1);
+        assert!(schedule.recursive_folds[ZK_CUT_LEVEL as usize - 1]
+            .params
+            .setup_prefix()
+            .is_some());
+        let profiles = CommittedGroupBatchProfile {
+            final_group: GroupCommitPhaseParams::try_from_params(
+                key.final_group,
+                &schedule.root.params,
+            )
+            .unwrap(),
+            precommitteds: vec![precommitted],
+        };
+        let scheme = AkitaCommitmentScheme::<RecCfg>::new(
+            TrustedScheduleCatalog::try_new_with_test_zk(
+                [(profiles, planned.schedule)],
+                ChunkedWitnessCfg::default_non_chunked(),
+            )
+            .unwrap(),
+        );
+        let setup = scheme.setup_prover(MULTI_NV, 2).unwrap();
+        let backend = CpuBackend::new(setup.expanded.clone())
+            .unwrap()
+            .with_hiding_rng(StdRng::seed_from_u64(7));
+        let point = common::random_point(MULTI_NV, 0x2b2b);
+
+        let (pre_evals, pre_poly) = dense_poly(NV);
+        let pre = backend
+            .commit(
+                &zk_catalog(),
+                &backend.import_source(vec![pre_poly]).unwrap(),
+                GroupContext::explicit(&precommitted),
+            )
+            .unwrap();
+        let final_poly = common::make_onehot_poly::<RecCfg>(MULTI_NV, 0x2b2b);
+        let final_output = backend
+            .commit(
+                scheme.schedules(),
+                &backend.import_source(vec![final_poly.clone()]).unwrap(),
+                GroupContext::scheduler_with_precommitted_groups(
+                    &akita_params::PrecommittedGroupProfiles::from_profiles(vec![precommitted])
+                        .unwrap(),
+                ),
+            )
+            .unwrap();
+        let groups = vec![
+            Group {
+                commitment: pre.committed_group,
+                handle: pre.private_handle,
+                point: point[..NV].to_vec(),
+                opening: lagrange_opening(&pre_evals, &point[..NV]),
+            },
+            Group {
+                commitment: final_output.committed_group,
+                handle: final_output.private_handle,
+                opening: common::onehot_opening_lagrange(&final_poly, &point),
+                point,
+            },
+        ];
+        Self::with_groups(scheme, setup, backend, groups)
+    }
+}
+
 fn random_pads(layout: &PadLayout, seed: u64) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(seed);
     (0..layout.num_pads)
@@ -277,8 +458,8 @@ fn random_pads(layout: &PadLayout, seed: u64) -> Vec<F> {
 }
 
 /// An honest masked prefix and its residual rows.
-struct Honest {
-    instance: Instance,
+struct Honest<C: CommitmentConfig<Field = F, ExtField = F> = Cfg> {
+    instance: Instance<C>,
     proof: Vec<u8>,
     layout: PadLayout,
     pads: Vec<F>,
@@ -289,17 +470,18 @@ struct Honest {
     relation: ResidualRelation<F>,
 }
 
-impl Honest {
+impl Honest<Cfg> {
     fn new() -> Self {
-        let instance = Instance::new(AkitaCommitmentScheme::new(zk_catalog()));
+        Self::of(Instance::new(AkitaCommitmentScheme::new(zk_catalog())))
+    }
+}
+
+impl<C: CommitmentConfig<Field = F, ExtField = F>> Honest<C> {
+    fn of(instance: Instance<C>) -> Self {
         let layout = instance.layout(&vec![0; COUNTING_BYTES]);
         let pads = random_pads(&layout, 11);
         let mut committed = CommittedPads::uncommitted(layout.clone(), pads.clone()).unwrap();
-        let (proof, residual, prover_auxiliary) = instance
-            .prove(&mut committed, |claim| {
-                vec![AffineRow::masked(claim, PadIndex(0))]
-            })
-            .unwrap();
+        let (proof, residual, prover_auxiliary) = instance.prove(&mut committed, own_pads).unwrap();
         let (prefix, masked_auxiliary) = instance.verify(&proof, &layout).unwrap();
         let mut relation = ResidualRelation::new(layout.clone(), 1);
         prefix
@@ -436,36 +618,39 @@ fn honest_masked_prefix_satisfies_its_residual_rows() {
 /// witness evaluations of both levels.
 #[test]
 fn every_shifted_message_breaks_a_row() {
-    on_large_stack(|| {
-        let honest = Honest::new();
-        assert_eq!(honest.first_violation_recomputed(honest.pads.clone()), None);
-        for slot in 0..honest.layout.auxiliary.start {
-            let mut pads = honest.pads.clone();
-            pads[slot] -= F::one();
-            assert!(
-                honest.first_violation_recomputed(pads).is_some(),
-                "shifting message slot {slot} breaks no row"
-            );
-        }
-        for slot in honest.layout.auxiliary.clone() {
-            let mut pads = honest.pads.clone();
-            pads[slot] -= F::one();
-            assert!(
-                honest
-                    .relation
-                    .first_violation(&pads, &honest.witness())
-                    .unwrap()
-                    .is_some(),
-                "shifting auxiliary slot {slot} breaks no row"
-            );
-        }
-        let wrong_witness = [honest.residual.witness_eval + F::one()];
-        assert!(honest
-            .relation
-            .first_violation(&honest.pads, &wrong_witness)
-            .unwrap()
-            .is_some());
-    });
+    on_large_stack(|| assert_every_shifted_message_breaks_a_row(&Honest::new()));
+}
+
+fn assert_every_shifted_message_breaks_a_row<C: CommitmentConfig<Field = F, ExtField = F>>(
+    honest: &Honest<C>,
+) {
+    assert_eq!(honest.first_violation_recomputed(honest.pads.clone()), None);
+    for slot in 0..honest.layout.auxiliary.start {
+        let mut pads = honest.pads.clone();
+        pads[slot] -= F::one();
+        assert!(
+            honest.first_violation_recomputed(pads).is_some(),
+            "shifting message slot {slot} breaks no row"
+        );
+    }
+    for slot in honest.layout.auxiliary.clone() {
+        let mut pads = honest.pads.clone();
+        pads[slot] -= F::one();
+        assert!(
+            honest
+                .relation
+                .first_violation(&pads, &honest.witness())
+                .unwrap()
+                .is_some(),
+            "shifting auxiliary slot {slot} breaks no row"
+        );
+    }
+    let wrong_witness = [honest.residual.witness_eval + F::one()];
+    assert!(honest
+        .relation
+        .first_violation(&honest.pads, &wrong_witness)
+        .unwrap()
+        .is_some());
 }
 
 /// A masked message altered in the proof reaches the rows: the cut level's
@@ -500,11 +685,57 @@ fn a_tampered_witness_evaluation_breaks_a_row() {
 /// that many.
 #[test]
 fn counting_replay_counts_the_honest_pads() {
+    on_large_stack(|| assert_counting_replay_counts_the_honest_pads(&Honest::new()));
+}
+
+fn assert_counting_replay_counts_the_honest_pads<C: CommitmentConfig<Field = F, ExtField = F>>(
+    honest: &Honest<C>,
+) {
+    let mut rng = StdRng::seed_from_u64(5);
+    let random: Vec<u8> = (0..COUNTING_BYTES).map(|_| rng.gen()).collect();
+    assert_eq!(honest.instance.layout(&random), honest.layout);
+}
+
+/// W2b on the masked path: a root that folds a hiding precommitted group
+/// beside its own, and a cut level that consumes a setup prefix (so level 0
+/// runs Stage 3). Every root group's claim is a masked statement claim; the
+/// honest rows hold, every shifted message breaks one, the counting replay
+/// counts the pads the prover consumes, and the masked claims of both groups
+/// decode to the openings.
+#[test]
+fn multi_group_masked_prefix_with_a_setup_prefix() {
     on_large_stack(|| {
-        let honest = Honest::new();
-        let mut rng = StdRng::seed_from_u64(5);
-        let random: Vec<u8> = (0..COUNTING_BYTES).map(|_| rng.gen()).collect();
-        assert_eq!(honest.instance.layout(&random), honest.layout);
+        let honest = Honest::of(Instance::multi_group());
+        assert_eq!(
+            honest
+                .relation
+                .first_violation(&honest.pads, &honest.witness())
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            honest.prefix.auxiliary_values(&honest.pads).unwrap(),
+            honest.prover_auxiliary
+        );
+        assert_every_shifted_message_breaks_a_row(&honest);
+        assert_counting_replay_counts_the_honest_pads(&honest);
+        // A statement claim of either group that decodes to a wrong value
+        // makes the prover fail before any message.
+        for group in 0..2 {
+            let mut pads =
+                CommittedPads::uncommitted(honest.layout.clone(), honest.pads.clone()).unwrap();
+            let error = honest
+                .instance
+                .prove(&mut pads, |claims| {
+                    let shifted = claims[group] + F::one();
+                    let mut rows = own_pads(claims);
+                    rows[group] = AffineRow::masked(shifted, PadIndex(group));
+                    rows
+                })
+                .err()
+                .unwrap();
+            assert!(matches!(error, AkitaError::InvalidInput(_)), "{error}");
+        }
     });
 }
 
@@ -518,8 +749,8 @@ fn masked_entries_reject_wrong_claims_and_clear_schedules() {
             CommittedPads::uncommitted(honest.layout.clone(), honest.pads.clone()).unwrap();
         let error = honest
             .instance
-            .prove(&mut pads, |claim| {
-                vec![AffineRow::masked(claim + F::one(), PadIndex(0))]
+            .prove(&mut pads, |claims| {
+                vec![AffineRow::masked(claims[0] + F::one(), PadIndex(0))]
             })
             .err()
             .unwrap();
@@ -530,12 +761,7 @@ fn masked_entries_reject_wrong_claims_and_clear_schedules() {
         );
         let mut pads =
             CommittedPads::uncommitted(honest.layout.clone(), honest.pads.clone()).unwrap();
-        let error = clear
-            .prove(&mut pads, |claim| {
-                vec![AffineRow::masked(claim, PadIndex(0))]
-            })
-            .err()
-            .unwrap();
+        let error = clear.prove(&mut pads, own_pads).err().unwrap();
         assert!(
             matches!(error, AkitaError::UnsupportedSchedule(_)),
             "{error}"
@@ -746,9 +972,7 @@ fn two_openings_of_one_statement_differ_in_u_a() {
         let honest = Honest::new();
         let mut pads =
             CommittedPads::uncommitted(honest.layout.clone(), honest.pads.clone()).unwrap();
-        let Ok((_, second, _)) = honest.instance.prove(&mut pads, |claim| {
-            vec![AffineRow::masked(claim, PadIndex(0))]
-        }) else {
+        let Ok((_, second, _)) = honest.instance.prove(&mut pads, own_pads) else {
             panic!("second opening failed");
         };
         assert_ne!(second.r_a, honest.residual.r_a);

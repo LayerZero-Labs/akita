@@ -155,7 +155,8 @@ pub fn residual_point<F: jolt_algebra::Field>(
 }
 pub use transcript_grinding::{
     FoldResponseReplay, GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier,
-    ProverGrinding, ProverGrindingChannel, VerifierGrinding, VerifierGrindingChannel,
+    ProverGrinding, ProverGrindingChannel, PublicGrindingSumcheck, VerifierGrinding,
+    VerifierGrindingChannel,
 };
 
 #[cfg(test)]

@@ -751,7 +751,9 @@ where
                 format: SingleFormat::Compressed,
                 invocation: 0,
             };
-            let mut channel = akita_types::GrindingSumcheckProver::<F, E, _, _>::new(
+            // The setup product's rounds are functions of the public setup
+            // and public challenges, so they are public in both modes.
+            let mut channel = akita_types::PublicGrindingSumcheck::<F, E, _>::new(
                 grinding,
                 akita_params::SumcheckProtocol::Stage3,
                 level,

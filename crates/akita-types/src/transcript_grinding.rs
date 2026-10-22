@@ -9,5 +9,6 @@ mod replay;
 pub use replay::CountingGrinding;
 pub use replay::{
     FoldResponseReplay, GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier,
-    ProverGrinding, ProverGrindingChannel, VerifierGrinding, VerifierGrindingChannel,
+    ProverGrinding, ProverGrindingChannel, PublicGrindingSumcheck, VerifierGrinding,
+    VerifierGrindingChannel,
 };
