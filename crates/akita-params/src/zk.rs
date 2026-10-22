@@ -3,14 +3,18 @@
 //! A zero-knowledge schedule carries a [`ZkOpeningSchedule`] whose cut masks
 //! levels `0..=cut_level`. At each masked level:
 //!
-//! - the fold response is one-shot: the grinding plan schedules it with
-//!   `nonce_bits = 0`, so no nonce precedes the fold challenges, and an
-//!   out-of-range response aborts the proof instead of being retried;
-//! - its fold digit count meets [`ZkOpeningSchedule::fold_failure_target`];
-//! - its B slices and its D image carry fresh hiding randomness columns, sized
-//!   by [`hiding_randomness_columns`]; the randomness hides each image by the
+//! - the fold response of every group is one-shot: the grinding plan
+//!   schedules it with `nonce_bits = 0`, so no nonce precedes the fold
+//!   challenges, and an out-of-range response aborts the proof instead of
+//!   being retried;
+//! - each group's fold digit count meets
+//!   [`ZkOpeningSchedule::fold_failure_target`] for the level's witness
+//!   groups;
+//! - the B slices of every group that carries witness data, and the level's
+//!   D image, carry fresh hiding randomness columns, sized by
+//!   [`hiding_randomness_columns`]; the randomness hides each image by the
 //!   leftover hash lemma once its entropy exceeds the image's bit length by
-//!   `2λ` plus a fixed slack.
+//!   `2λ` plus a fixed slack. A setup prefix is public and carries none.
 //!
 //! [`ZkOpeningSchedule::admit`] checks all of this in release builds. Catalog
 //! admission and the prover both run it; a clear catalog rejects every
@@ -32,18 +36,37 @@ use jolt_crypto::lattice::required_randomness_columns;
 /// The only supported cut: levels 0 and 1 are masked (`k = 2`).
 pub const ZK_CUT_LEVEL: u32 = 1;
 
-/// Every masked fold fails with probability at most
+/// Every one-shot response of a witness group fails with probability at most
 /// `2^-ZK_FOLD_SECURITY_BITS / masked_folds`, so all of them together fail
 /// with probability at most `2^-ZK_FOLD_SECURITY_BITS`.
 pub const ZK_FOLD_SECURITY_BITS: u32 = 136;
 
-/// Failure target of each one-shot fold of an opening masked through
-/// `cut_level`.
-pub(crate) const fn one_shot_fold_target(cut_level: u32) -> FoldFailureTarget {
-    FoldFailureTarget::OneShot {
+/// Failure target of each one-shot group response at a level of an opening
+/// masked through `cut_level` that folds `witness_groups` groups carrying
+/// witness data.
+///
+/// Each of the `cut_level + 1` masked levels gets an equal share of the
+/// budget, split equally among its witness groups, so the union over every
+/// witness response is `2^-ZK_FOLD_SECURITY_BITS`. A setup prefix takes its
+/// level's target too, but its response is a function of public data, so its
+/// failure is a completeness term outside that budget.
+pub(crate) fn one_shot_fold_target(
+    cut_level: u32,
+    witness_groups: usize,
+) -> Result<FoldFailureTarget, AkitaError> {
+    let masked_folds = u32::try_from(witness_groups)
+        .ok()
+        .filter(|&groups| groups != 0)
+        .and_then(|groups| groups.checked_mul(cut_level.checked_add(1)?))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "a masked level cannot fold {witness_groups} witness groups"
+            ))
+        })?;
+    Ok(FoldFailureTarget::OneShot {
         security_bits: ZK_FOLD_SECURITY_BITS,
-        masked_folds: cut_level + 1,
-    }
+        masked_folds,
+    })
 }
 
 /// The zero-knowledge part of a fold schedule: the cut that masks levels
@@ -111,38 +134,49 @@ impl ZkOpeningSchedule {
         level <= self.cut_level as usize
     }
 
-    /// Failure target of each masked fold's one-shot response.
-    #[must_use]
-    pub const fn fold_failure_target(self) -> FoldFailureTarget {
-        one_shot_fold_target(self.cut_level)
+    /// Failure target of each one-shot group response at a masked level that
+    /// folds `witness_groups` groups carrying witness data (every group but
+    /// a setup prefix).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] for zero witness groups or an
+    /// overflowing response count.
+    pub fn fold_failure_target(
+        self,
+        witness_groups: usize,
+    ) -> Result<FoldFailureTarget, AkitaError> {
+        one_shot_fold_target(self.cut_level, witness_groups)
     }
 
     /// The one admission check of a zero-knowledge schedule, in release
     /// builds.
     ///
-    /// `root_source` is the contract the root's single committed group is
-    /// produced under, and `claim_extension_degree` the degree of the claim
-    /// field over the base field. The check requires:
+    /// `root_source` is the contract the root's own group is produced under,
+    /// and `claim_extension_degree` the degree of the claim field over the
+    /// base field. The check requires:
     ///
     /// - `schedule.zk` is a supported cut that precedes the last nonterminal
     ///   fold, whose output is the terminal witness, sent in the clear;
     /// - claims in the base field (`E::DEGREE = 1`): the masked stage checks
     ///   have no extension-field products;
-    /// - the root commits exactly one group, and no masked level consumes a
-    ///   preceding group (a setup prefix or precommitted group), whose
-    ///   response would share the one-shot probe unsized; nor does the level
-    ///   after the cut, so the cut level runs no Stage 3;
+    /// - no setup prefix at the level after the cut, so the cut level runs no
+    ///   Stage 3;
     /// - the residual commitment, which the level after the cut opens, has
     ///   d_A = d_B;
     /// - every masked level uses the ℓ∞ route (an ℓ2 route reveals the
     ///   response energy and carries a per-attempt ℓ2 cap and an
     ///   operator-norm challenge family, none of which is one-shot sized),
-    ///   the quotient relation (not reduced evaluation), the open basis b = 8,
-    ///   and one witness chunk; it carries exactly [`b_randomness_columns`]
-    ///   for its own group's B slices and [`d_randomness_columns`] for its D
-    ///   image, and at least the fold digits its honest-fold policy derives
-    ///   for [`fold_failure_target`](Self::fold_failure_target);
-    /// - every later level, and every preceding group, carries no randomness.
+    ///   the quotient relation (not reduced evaluation), the open basis b = 8
+    ///   for every group, and one witness chunk, and carries exactly
+    ///   [`d_randomness_columns`] for its D image;
+    /// - every group a masked level folds has at least the fold digits its
+    ///   [`MaskedFoldSizing`] derives for the level's
+    ///   [`fold_failure_target`](Self::fold_failure_target), and its B slices
+    ///   carry exactly [`b_randomness_columns`] if it carries witness data
+    ///   (the level's own group, a precommitted group) and none if it is a
+    ///   setup prefix, whose commitment is public setup data;
+    /// - every group of every later level carries no randomness.
     ///
     /// # Errors
     ///
@@ -169,11 +203,6 @@ impl ZkOpeningSchedule {
                 "zero knowledge needs claims in the base field".into(),
             ));
         }
-        if !schedule.root.params.precommitted_groups().is_empty() {
-            return Err(AkitaError::InvalidSetup(
-                "a masked root must commit exactly one group".into(),
-            ));
-        }
         if after_cut.params.setup_prefix().is_some() {
             return Err(AkitaError::InvalidSetup(
                 "the cut level must not run Stage 3".into(),
@@ -185,13 +214,12 @@ impl ZkOpeningSchedule {
                 "the residual commitment needs d_A = d_B".into(),
             ));
         }
-        let target = zk.fold_failure_target();
         let levels = std::iter::once(&schedule.root.params)
             .chain(schedule.recursive_folds.iter().map(|fold| &fold.params));
         for (level, params) in levels.enumerate() {
             let invalid = |what: &str| AkitaError::InvalidSetup(format!("level {level} {what}"));
-            let own = params.own_group();
-            let (expected_b, expected_d) = if zk.masks(level) {
+            let own_index = params.groups().len() - 1;
+            let expected_d = if zk.masks(level) {
                 if !matches!(
                     params.inner().matrix.security_route(),
                     InnerCommitSecurityRoute::Linf(_)
@@ -201,53 +229,93 @@ impl ZkOpeningSchedule {
                 if params.ring_relation_mode.is_reduced_evaluation() {
                     return Err(invalid("is masked under reduced evaluation"));
                 }
-                if params.open().digits.log_basis != MASKED_LOG_BASIS {
+                if params.open().digits.log_basis != MASKED_LOG_BASIS
+                    || params
+                        .groups()
+                        .iter()
+                        .any(|group| group.opening.log_basis_open != MASKED_LOG_BASIS)
+                {
                     return Err(invalid("is masked with an open basis other than 8"));
                 }
                 if params.witness_chunk.num_chunks != 1 {
                     return Err(invalid("is masked across several witness chunks"));
                 }
-                if params.preceding_group_iter().next().is_some() {
-                    return Err(invalid("is masked but consumes a preceding group"));
+                let target = zk.fold_failure_target(witness_group_count(params))?;
+                for (index, group) in params.groups().iter().enumerate() {
+                    let sizing = MaskedFoldSizing::for_group(schedule, level, index, root_source)?;
+                    let required = sizing.num_digits_fold(target)?;
+                    if group.opening.num_digits_fold < required {
+                        return Err(invalid(&format!(
+                            "has {} fold digits in group {index}; its one-shot target needs \
+                             {required}",
+                            group.opening.num_digits_fold
+                        )));
+                    }
+                    let expected_b = if group.setup_natural_len.is_some() {
+                        0
+                    } else {
+                        b_randomness_columns(group)?
+                    };
+                    if group.profile.randomness_columns != expected_b {
+                        return Err(invalid(if index == own_index {
+                            "has the wrong B hiding randomness"
+                        } else {
+                            "gives a preceding group the wrong B hiding randomness"
+                        }));
+                    }
                 }
-                let sizing = MaskedFoldSizing::new(schedule, level, root_source)?;
-                let required = sizing.num_digits_fold(target)?;
-                if params.num_digits_fold() < required {
-                    return Err(invalid(&format!(
-                        "has {} fold digits; its one-shot target needs {required}",
-                        params.num_digits_fold()
-                    )));
-                }
-                (b_randomness_columns(own)?, d_randomness_columns(params)?)
+                d_randomness_columns(params)?
             } else {
-                (0, 0)
+                if params.own_group().profile.randomness_columns != 0 {
+                    return Err(invalid("has the wrong B hiding randomness"));
+                }
+                if params
+                    .preceding_group_iter()
+                    .any(|group| group.profile.randomness_columns != 0)
+                {
+                    return Err(invalid(
+                        "gives a preceding group the wrong B hiding randomness",
+                    ));
+                }
+                0
             };
-            if own.profile.randomness_columns != expected_b {
-                return Err(invalid("has the wrong B hiding randomness"));
-            }
             if params.open_randomness_columns != expected_d {
                 return Err(invalid("has the wrong D hiding randomness"));
-            }
-            if params
-                .preceding_group_iter()
-                .any(|group| group.profile.randomness_columns != 0)
-            {
-                return Err(invalid("gives a preceding group hiding randomness"));
             }
         }
         Ok(zk)
     }
 }
 
+/// Groups of a fold that carry witness data: every group but a setup prefix,
+/// whose source is public setup data.
+#[must_use]
+pub fn witness_group_count(params: &CommittedGroupParams) -> usize {
+    params
+        .groups()
+        .iter()
+        .filter(|group| group.setup_natural_len.is_none())
+        .count()
+}
+
 /// Base-two logarithm of the open basis the masked stage checks assume
 /// (b = 8: no Stage-1 product stages).
 pub const MASKED_LOG_BASIS: u32 = 3;
 
-/// The honest-fold sizing inputs of one masked fold level, read from its
-/// scheduled parameters: the root's source contract and group geometry at
-/// level 0, and the balanced digits of the previous witness above it.
+/// The honest-fold sizing inputs of one group a masked level folds, read
+/// from its scheduled parameters.
+///
+/// - The root's own group is sized by the root's source contract.
+/// - A recursive level's own group holds the balanced digits of the previous
+///   witness.
+/// - A preceding group (a setup prefix or a precommitted group) is sized by
+///   the universal balanced policy on its own inner digit alphabet. Every
+///   committed digit lies in that alphabet whatever its producer, so the
+///   bound holds without the producer contract, which the schedule does not
+///   record.
 pub struct MaskedFoldSizing<'a> {
     params: &'a CommittedGroupParams,
+    group: &'a GroupOpenPhaseParams,
     policy: HonestFoldPolicySpec,
     challenge: SparseChallengeConfig,
     num_claims: usize,
@@ -255,63 +323,74 @@ pub struct MaskedFoldSizing<'a> {
 }
 
 impl<'a> MaskedFoldSizing<'a> {
-    /// The sizing inputs of fold `level` of `schedule`.
+    /// The sizing inputs of the own group of fold `level` of `schedule`.
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::UnsupportedSchedule`] for a root with
-    /// precommitted groups, or a level that is not a nonterminal fold.
+    /// Returns [`AkitaError::UnsupportedSchedule`] for a level that is not a
+    /// nonterminal fold.
     pub fn new(
         schedule: &'a FoldSchedule,
         level: usize,
         root_source: CommittedSourceContract,
     ) -> Result<Self, AkitaError> {
+        let own_index = level_params(schedule, level)?.groups().len() - 1;
+        Self::for_group(schedule, level, own_index, root_source)
+    }
+
+    /// The sizing inputs of group `group_index`, in canonical group order,
+    /// of fold `level` of `schedule`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::UnsupportedSchedule`] for a level that is not a
+    /// nonterminal fold or a missing group.
+    pub fn for_group(
+        schedule: &'a FoldSchedule,
+        level: usize,
+        group_index: usize,
+        root_source: CommittedSourceContract,
+    ) -> Result<Self, AkitaError> {
         let field_bits = root_source.decomposition().field_bits();
-        let params = match level.checked_sub(1) {
-            None => &schedule.root.params,
-            Some(index) => {
-                &schedule
-                    .recursive_folds
-                    .get(index)
-                    .ok_or_else(|| {
-                        AkitaError::UnsupportedSchedule(
-                            "a masked level must be a nonterminal fold".into(),
-                        )
-                    })?
-                    .params
-            }
-        };
-        let inner = params.inner().digits;
-        let (policy, num_claims, witness_norms) = if level == 0 {
-            if !params.precommitted_groups().is_empty() {
-                return Err(AkitaError::UnsupportedSchedule(
-                    "a masked root must commit exactly one group".into(),
-                ));
-            }
-            let group = params.final_group().profile.group;
-            let source_len = jolt_algebra::checked::pow2(group.num_vars())
-                .and_then(|len| len.checked_mul(group.num_polynomials()))
+        let params = level_params(schedule, level)?;
+        let group = params.groups().get(group_index).ok_or_else(|| {
+            AkitaError::UnsupportedSchedule(format!("level {level} has no group {group_index}"))
+        })?;
+        let inner = group.profile.inner.digits;
+        let d_a = group.profile.inner.matrix.ring_dimension();
+        let universal = HonestFoldPolicySpec::BalancedSignedDigit(
+            BalancedSignedDigitFoldPolicy::universal(field_bits),
+        );
+        let (policy, num_claims, witness_norms) = if group_index + 1 != params.groups().len() {
+            (
+                universal,
+                group.profile.group.num_polynomials(),
+                FoldWitnessNorms::bounded(inner.log_basis, d_a),
+            )
+        } else if level == 0 {
+            let source = group.profile.group;
+            let source_len = jolt_algebra::checked::pow2(source.num_vars())
+                .and_then(|len| len.checked_mul(source.num_polynomials()))
                 .ok_or_else(|| AkitaError::InvalidSetup("source length overflow".into()))?;
             (
                 root_source.class().honest_fold_policy(field_bits),
-                group.num_polynomials(),
+                source.num_polynomials(),
                 root_source
-                    .source_norms(inner.log_basis, inner.num_digits, params.d_a(), source_len)?
+                    .source_norms(inner.log_basis, inner.num_digits, d_a, source_len)?
                     .fold_witness,
             )
         } else {
             (
-                HonestFoldPolicySpec::BalancedSignedDigit(
-                    BalancedSignedDigitFoldPolicy::universal(field_bits),
-                ),
+                universal,
                 1,
-                FoldWitnessNorms::bounded(inner.log_basis, params.d_a()),
+                FoldWitnessNorms::bounded(inner.log_basis, d_a),
             )
         };
         Ok(Self {
             params,
+            group,
             policy,
-            challenge: params.fold_challenge_config(),
+            challenge: group.opening.fold_challenge_config,
             num_claims,
             witness_norms,
         })
@@ -323,10 +402,16 @@ impl<'a> MaskedFoldSizing<'a> {
         self.params
     }
 
-    /// The level's honest-fold policy.
+    /// The group's honest-fold policy.
     #[must_use]
     pub const fn policy(&self) -> &HonestFoldPolicySpec {
         &self.policy
+    }
+
+    /// The group's scheduled parameters.
+    #[must_use]
+    pub const fn group(&self) -> &'a GroupOpenPhaseParams {
+        self.group
     }
 
     /// The sizing query for `failure_target`.
@@ -338,29 +423,47 @@ impl<'a> MaskedFoldSizing<'a> {
         &self,
         failure_target: FoldFailureTarget,
     ) -> Result<HonestFoldSizingQuery<'_>, AkitaError> {
-        let params = self.params;
+        let group = self.group;
+        let d_a = group.profile.inner.matrix.ring_dimension();
         HonestFoldSizingQuery::new(
-            params.d_a(),
-            match params.opening_method() {
-                OpeningMethod::EvaluationTrace => params.d_a(),
+            d_a,
+            match group.opening.opening_method {
+                OpeningMethod::EvaluationTrace => d_a,
                 OpeningMethod::SubringCoefficientPacking {
                     challenge_subring_dimension,
                 } => challenge_subring_dimension,
             },
             self.num_claims,
-            params.blocks(),
-            params.witness_chunk.num_chunks,
-            params.inner().matrix.input_width(),
+            group.profile.blocks,
+            self.params.witness_chunk.num_chunks,
+            group.profile.inner.matrix.input_width(),
             self.witness_norms,
-            params.open().digits.log_basis,
+            group.opening.log_basis_open,
             &self.challenge,
             failure_target,
         )
     }
 
-    /// The fold digit count the level's policy derives for `failure_target`.
+    /// The fold digit count the group's policy derives for `failure_target`.
     pub fn num_digits_fold(&self, failure_target: FoldFailureTarget) -> Result<usize, AkitaError> {
         self.policy.num_digits_fold(self.query(failure_target)?)
+    }
+}
+
+/// The parameters of nonterminal fold `level` of `schedule`.
+fn level_params(
+    schedule: &FoldSchedule,
+    level: usize,
+) -> Result<&CommittedGroupParams, AkitaError> {
+    match level.checked_sub(1) {
+        None => Ok(&schedule.root.params),
+        Some(index) => schedule
+            .recursive_folds
+            .get(index)
+            .map(|fold| &fold.params)
+            .ok_or_else(|| {
+                AkitaError::UnsupportedSchedule("a masked level must be a nonterminal fold".into())
+            }),
     }
 }
 
@@ -511,6 +614,18 @@ mod tests {
             hiding_randomness_columns(image, DigitAlphabet { log_basis: 4 }).unwrap(),
             97
         );
+    }
+
+    #[test]
+    fn witness_groups_split_each_masked_level_share() {
+        let target = |groups| one_shot_fold_target(ZK_CUT_LEVEL, groups);
+        let one_shot = |masked_folds| FoldFailureTarget::OneShot {
+            security_bits: ZK_FOLD_SECURITY_BITS,
+            masked_folds,
+        };
+        assert_eq!(target(1), Ok(one_shot(2)));
+        assert_eq!(target(3), Ok(one_shot(6)));
+        assert!(target(0).is_err());
     }
 
     #[test]

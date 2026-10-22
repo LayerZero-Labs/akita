@@ -13,6 +13,7 @@ struct SetupPrefixSearchKey {
     inner_ring_dimension: usize,
     outer_ring_dimension: usize,
     guide: Option<SetupPrefixLayoutGuide>,
+    masking: LevelMasking,
 }
 
 #[derive(Default)]
@@ -37,6 +38,10 @@ pub(crate) struct SetupPrefixSearchRequest<'a> {
     pub(crate) inner_ring_dimension: usize,
     pub(crate) outer_ring_dimension: usize,
     pub(crate) guide: Option<SetupPrefixLayoutGuide>,
+    /// Masking of the consuming level. A masked level sizes the prefix's
+    /// one-shot response for the level's target; its public commitment
+    /// carries no randomness either way.
+    pub(crate) masking: LevelMasking,
 }
 
 type SetupPrefixFrontierEntry = (
@@ -66,6 +71,7 @@ struct SetupPrefixCandidateContext<'a> {
     num_chunks: usize,
     num_digits_outer: usize,
     num_digits_open: usize,
+    masking: LevelMasking,
 }
 
 impl SetupPrefixCandidateContext<'_> {
@@ -112,7 +118,7 @@ impl SetupPrefixCandidateContext<'_> {
             log_basis_open: self.log_basis_open,
             width_s: split.width_s,
             modeled_linf_cap,
-            masking: LevelMasking::Clear,
+            masking: self.masking,
         })
     }
 
@@ -223,6 +229,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         inner_ring_dimension,
         outer_ring_dimension,
         guide,
+        masking,
     } = request;
     let cache_key = SetupPrefixSearchKey {
         opening_method: opening.method(),
@@ -233,6 +240,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         inner_ring_dimension,
         outer_ring_dimension,
         guide,
+        masking,
     };
     if let Some(cached) = cache.entries.get(&cache_key) {
         cache.hits = cache.hits.saturating_add(1);
@@ -287,6 +295,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         num_chunks,
         num_digits_outer,
         num_digits_open: num_digits_open_val,
+        masking,
     };
 
     let (inner_basis_min, inner_basis_max) = crate::InnerBasisSource::RawCoefficients {
@@ -422,6 +431,7 @@ mod tests {
             inner_ring_dimension: 64,
             outer_ring_dimension: 64,
             guide,
+            masking: LevelMasking::Clear,
         };
         let unguided = derive_setup_prefix_groups(&mut cache, request(None))
             .expect("unguided setup-prefix frontier");

@@ -60,7 +60,7 @@ fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
             derive(LevelMasking::Clear).num_digits_fold,
             params.num_digits_fold()
         );
-        let one_shot = derive(LevelMasking::Masked(zk));
+        let one_shot = derive(LevelMasking::Masked(zk.fold_failure_target(1).unwrap()));
         assert_eq!(
             one_shot.inner_commit_matrix.output_rank(),
             params.inner().matrix.output_rank(),

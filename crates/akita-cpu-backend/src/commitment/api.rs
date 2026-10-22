@@ -86,6 +86,10 @@ impl<'a> GroupContext<'a> {
     /// The profile fully determines the A/B commitment. Any opening schedule the
     /// caller intends to use later — including a grouped root over precommitted
     /// groups — is validated where the opening consumes it, not at commit time.
+    ///
+    /// A profile with hiding randomness commits with fresh randomness from the
+    /// backend's hiding source, drawn from the open alphabet of a masked level,
+    /// the only kind of level that can consume it.
     #[must_use]
     pub const fn explicit(profile: &'a GroupCommitPhaseParams) -> Self {
         Self {
@@ -345,9 +349,10 @@ where
 }
 
 /// Resolve the frozen commit params of one root commitment and admit its
-/// sources, returning the open alphabet of the scheduled root opening (the
-/// alphabet of any hiding randomness; unknown for explicit params) and the
-/// producer contract that admitted them.
+/// sources, returning the alphabet of any hiding randomness (the open
+/// alphabet of the scheduled root opening, the masked one for a hiding
+/// explicit profile, none for a clear explicit profile) and the producer
+/// contract that admitted them.
 pub(crate) fn resolve_commit_params<Cfg, P>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
@@ -373,7 +378,14 @@ where
                         .into(),
                 ));
             }
-            (*commit_params, None)
+            // A hiding frozen profile is admissible only as a group of a
+            // masked level (zero-knowledge admission gives every unmasked
+            // group zero randomness, and a clear catalog rejects any), and a
+            // masked level opens every group at base 8, so that is the
+            // alphabet its randomness is drawn from.
+            let randomness_log_basis = (commit_params.randomness_columns != 0)
+                .then_some(akita_params::zk::MASKED_LOG_BASIS);
+            (*commit_params, randomness_log_basis)
         } else {
             let key = ScheduleLookupKey {
                 final_group: polynomial_group_layout,

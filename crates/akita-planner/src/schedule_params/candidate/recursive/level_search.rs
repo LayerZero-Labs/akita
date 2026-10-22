@@ -67,6 +67,7 @@ pub(super) fn prepare_recursive_level_search(
                     inner_ring_dimension: d_a,
                     outer_ring_dimension: dimensions.d_b(),
                     guide: request.guide.and_then(|guide| guide.setup_prefix),
+                    masking: request.masking,
                 },
             )?;
             if groups.is_empty() {

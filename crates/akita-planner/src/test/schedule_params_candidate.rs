@@ -637,6 +637,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         opening,
         &[precommit_opening],
         Dense::opening_basis_range().0,
+        crate::schedule_params::LevelMasking::Clear,
     )
     .expect("root preparation")
     .expect("supported root preparation");
@@ -1097,6 +1098,7 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
         inner_ring_dimension: dimensions.d_a(),
         outer_ring_dimension: dimensions.d_b(),
         guide: None,
+        masking: crate::schedule_params::LevelMasking::Clear,
     };
     let trace_groups = derive_setup_prefix_groups(&mut cache, request(trace)).unwrap();
     let exact_groups = derive_setup_prefix_groups(&mut cache, request(exact_packing)).unwrap();
@@ -1181,6 +1183,7 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
             inner_ring_dimension: params.d_a(),
             outer_ring_dimension: params.outer().matrix.ring_dimension(),
             guide: None,
+            masking: crate::schedule_params::LevelMasking::Clear,
         },
     )
     .expect("setup-prefix candidates")
@@ -1260,6 +1263,7 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
                 inner_ring_dimension: 64,
                 outer_ring_dimension: 64,
                 guide: None,
+                masking: crate::schedule_params::LevelMasking::Clear,
             },
         )
         .expect("setup-prefix frontier");

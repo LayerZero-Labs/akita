@@ -623,7 +623,8 @@ impl<'a> CandidateDomain<'a> {
                         log_basis_inner: inner_lb,
                         log_basis_open: open_lb,
                         fold_level: state.level,
-                        masking: crate::schedule_params::LevelMasking::at(ctx.zk, state.level),
+                        // A recursive level folds one witness group, its own.
+                        masking: crate::schedule_params::LevelMasking::at(ctx.zk, state.level, 1)?,
                         source_moment: state.source_moment,
                         relation_traversal_order: ctx.relation_traversal_order,
                         guide,
@@ -731,6 +732,10 @@ impl<'a> CandidateDomain<'a> {
         let final_source_contract = ctx.root_source_contract.ok_or_else(|| {
             AkitaError::InvalidSetup("root batch is missing its source contract".into())
         })?;
+        // Every root group carries witness data: the precommitted groups and
+        // the final group.
+        let masking =
+            crate::schedule_params::LevelMasking::at(ctx.zk, 0, root_key.precommitteds.len() + 1)?;
         for work in &self.opening_work {
             let Some(preparation) = PreparedRootProducers::prepare(
                 root_key,
@@ -740,6 +745,7 @@ impl<'a> CandidateDomain<'a> {
                 work.opening,
                 &work.precommitted_class_openings,
                 open_lb,
+                masking,
             )?
             else {
                 continue;
@@ -755,7 +761,7 @@ impl<'a> CandidateDomain<'a> {
                     inner_lb,
                     open_lb,
                     self.root_main_constraint.map(candidate_layout_guide),
-                    crate::schedule_params::LevelMasking::at(ctx.zk, 0),
+                    masking,
                 )?;
                 if let Some(constraint) = self.root_main_constraint {
                     dimension_candidates.retain(|(params, _)| {

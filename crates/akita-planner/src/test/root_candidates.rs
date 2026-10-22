@@ -23,6 +23,7 @@ pub(crate) fn root_level_candidates_with_fresh_preparation(
         opening,
         precommitted_class_openings,
         candidate_log_basis_open,
+        crate::schedule_params::LevelMasking::Clear,
     )?
     else {
         return Ok(Vec::new());
