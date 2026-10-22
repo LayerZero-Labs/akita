@@ -96,6 +96,16 @@ impl<F: jolt_algebra::Field> From<jolt_sumcheck::SumcheckError<F>> for AkitaErro
         use jolt_sumcheck::SumcheckError;
         match error {
             SumcheckError::Transcript(error) => error.into(),
+            // A masked channel's error crosses the driver boxed; it keeps the
+            // masked channel's classification, so a truncated or malformed
+            // masked round rejects the proof.
+            #[cfg(feature = "zk")]
+            SumcheckError::PrivateChannel(source) => {
+                match source.downcast::<jolt_zk::masking::ZkError>() {
+                    Ok(error) => (*error).into(),
+                    Err(source) => Self::Internal(source.to_string()),
+                }
+            }
             SumcheckError::ZeroDegreeBound
             | SumcheckError::ShapeOverflow { .. }
             | SumcheckError::EqFactoredZeroRounds

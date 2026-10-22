@@ -583,8 +583,7 @@ where
             );
             grinding
                 .state_mut()
-                .transcript_mut()
-                .send_all(public_commitment.coeffs());
+                .exchange_all(&mut public_commitment.coeffs().to_vec())?;
             NextWitnessState::OuterPayload(public_commitment)
         }
         (
@@ -612,15 +611,15 @@ where
                     .id()?
                     .into(),
             );
-            grinding.state_mut().transcript_mut().send_all(sent);
+            grinding.state_mut().exchange_all(&mut sent.to_vec())?;
             if akita_params::RECOMPUTE_LAST_BLOCK {
                 akita_types::send_field_digest(
-                    grinding.state_mut().transcript_mut(),
+                    grinding.state_mut(),
                     akita_types::FoldSite::NextWitnessInnerStateDigest { level }
                         .id()?
                         .into(),
                     last_block,
-                );
+                )?;
             } else if !last_block.is_empty() {
                 return Err(AkitaError::Internal(
                     "terminal inner state is longer than its scheduled length".into(),

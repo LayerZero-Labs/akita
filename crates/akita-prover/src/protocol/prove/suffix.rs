@@ -352,15 +352,15 @@ where
                         .id()?
                         .into(),
                 );
-                grinding.state_mut().transcript_mut().send_all(e_sent);
+                grinding.state_mut().exchange_all(&mut e_sent.to_vec())?;
                 if akita_params::RECOMPUTE_LAST_BLOCK {
                     akita_types::send_field_digest(
-                        grinding.state_mut().transcript_mut(),
+                        grinding.state_mut(),
                         akita_types::FoldSite::TerminalEDigest { level: fold_level }
                             .id()?
                             .into(),
                         e_last_block,
-                    );
+                    )?;
                 } else if !e_last_block.is_empty() {
                     return Err(AkitaError::Internal(
                         "terminal folded opening is longer than its scheduled length".into(),
@@ -411,12 +411,7 @@ where
             .id()?
             .into(),
     );
-    state
-        .transcript_mut()
-        .send_bounded_bytes(z_payload, group.z_payload_bytes)
-        .map_err(|_| {
-            AkitaError::InvalidInput("terminal z payload exceeds its scheduled bound".into())
-        })
+    state.send_bounded_public_bytes(z_payload, group.z_payload_bytes)
 }
 #[allow(clippy::too_many_arguments)]
 fn prepare_suffix<F, E, B, H: Sponge, C: crate::protocol::ProverFoldChannel<E, Sponge = H>>(

@@ -18,6 +18,11 @@ use jolt_transcript::{Channel, Fork, PrivateChannel, FORK_SEED_LEN};
 /// accepts. Its fold responses draw the fork at counter 0, the one-shot
 /// counter of every masked level. It produces a pad count and an operand list
 /// through its channel, never a verdict on a proof.
+///
+/// Run it over zero bytes, or a reader that never fails, and never over proof
+/// bytes: the layout is a function of the public schedule, and a proof's
+/// bytes can end early or fail to decode, which would make the layout depend
+/// on the proof.
 pub struct CountingGrinding<'a, C> {
     state: &'a mut C,
     cursor: GrindingPlanCursor<'a>,

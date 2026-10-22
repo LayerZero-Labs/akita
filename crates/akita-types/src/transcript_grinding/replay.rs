@@ -136,31 +136,106 @@ fn fold_response_site(site: GrindingSite, nonce_bits: u8) -> SiteId {
 
 /// A prover channel Akita runs its grinding plan over: the clear transcript,
 /// or a masked channel over it (`specs/whiteout-akita.md` §4.5).
-/// Witness-dependent messages go through its [`PrivateChannel`]; the public
-/// proof-of-work nonces and fold-response counters go to the transcript
-/// underneath.
+/// Witness-dependent messages go through its [`PrivateChannel`]. Beside it
+/// the channel offers only the public proof-of-work messages, which depend on
+/// public transcript state alone, and the clear-only byte messages of the
+/// terminal.
 pub trait ProverGrindingChannel: Channel + PrivateChannel<Error: Into<AkitaError>> {
-    /// The transcript this channel writes to.
-    fn transcript_mut(&mut self) -> &mut ProverTranscript<Self::Sponge>;
+    /// Finds and sends the proof-of-work nonce for `bits` (`ProverTranscript::grind`).
+    ///
+    /// # Errors
+    ///
+    /// As `ProverTranscript::grind`.
+    fn grind(&mut self, bits: u8) -> Result<u32, TranscriptError>;
+
+    /// Sends a fold-response counter (`ProverTranscript::send_nonce`).
+    fn send_nonce(&mut self, nonce: u32);
+
+    /// The length of the argument string so far.
+    fn narg_len(&self) -> usize;
+
+    /// Sends `bytes`, whose length the verifier knows: the terminal's field
+    /// digests under `dev-protocol`.
+    ///
+    /// # Errors
+    ///
+    /// A masked channel, which never reaches the terminal, returns
+    /// [`AkitaError::UnsupportedSchedule`].
+    fn send_public_bytes(&mut self, bytes: &[u8]) -> Result<(), AkitaError>;
+
+    /// Sends `bytes` with their length, at most `max_len`: the terminal's
+    /// `z` payload.
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidInput`] past `max_len`; a masked channel returns
+    /// [`AkitaError::UnsupportedSchedule`].
+    fn send_bounded_public_bytes(&mut self, bytes: &[u8], max_len: usize)
+        -> Result<(), AkitaError>;
 }
 
 impl<H: Sponge> ProverGrindingChannel for ProverTranscript<H> {
-    fn transcript_mut(&mut self) -> &mut Self {
-        self
+    fn grind(&mut self, bits: u8) -> Result<u32, TranscriptError> {
+        Self::grind(self, bits)
+    }
+
+    fn send_nonce(&mut self, nonce: u32) {
+        Self::send_nonce(self, nonce);
+    }
+
+    fn narg_len(&self) -> usize {
+        self.narg().len()
+    }
+
+    fn send_public_bytes(&mut self, bytes: &[u8]) -> Result<(), AkitaError> {
+        self.send_bytes(bytes);
+        Ok(())
+    }
+
+    fn send_bounded_public_bytes(
+        &mut self,
+        bytes: &[u8],
+        max_len: usize,
+    ) -> Result<(), AkitaError> {
+        self.send_bounded_bytes(bytes, max_len).map_err(|_| {
+            AkitaError::InvalidInput("public byte message exceeds its scheduled bound".into())
+        })
     }
 }
 
-/// The verifier's mirror of [`ProverGrindingChannel`].
-pub trait VerifierGrindingChannel<'proof>:
-    Channel + PrivateChannel<Error: Into<AkitaError>>
-{
-    /// The transcript this channel reads from.
-    fn transcript_mut(&mut self) -> &mut VerifierTranscript<'proof, Self::Sponge>;
+/// The verifier's mirror of [`ProverGrindingChannel`]: the public
+/// proof-of-work reads.
+pub trait VerifierGrindingChannel: Channel + PrivateChannel<Error: Into<AkitaError>> {
+    /// Reads and checks the proof-of-work nonce for `bits`
+    /// (`VerifierTranscript::check_grind`).
+    ///
+    /// # Errors
+    ///
+    /// As `VerifierTranscript::check_grind`.
+    fn check_grind(&mut self, bits: u8) -> Result<u32, TranscriptError>;
+
+    /// Reads a fold-response counter (`VerifierTranscript::receive_nonce`).
+    ///
+    /// # Errors
+    ///
+    /// As `VerifierTranscript::receive_nonce`.
+    fn receive_nonce(&mut self, nonce_bits: u8) -> Result<u32, TranscriptError>;
+
+    /// The unread proof bytes.
+    fn remaining(&self) -> usize;
 }
 
-impl<'proof, H: Sponge> VerifierGrindingChannel<'proof> for VerifierTranscript<'proof, H> {
-    fn transcript_mut(&mut self) -> &mut Self {
-        self
+impl<H: Sponge> VerifierGrindingChannel for VerifierTranscript<'_, H> {
+    fn check_grind(&mut self, bits: u8) -> Result<u32, TranscriptError> {
+        Self::check_grind(self, bits)
+    }
+
+    fn receive_nonce(&mut self, nonce_bits: u8) -> Result<u32, TranscriptError> {
+        Self::receive_nonce(self, nonce_bits)
+    }
+
+    fn remaining(&self) -> usize {
+        Self::remaining(self)
     }
 }
 
@@ -271,7 +346,7 @@ impl<H: Sponge, C: ProverGrindingChannel<Sponge = H>> GrindingReplay for ProverG
     }
 }
 
-impl<'proof, H: Sponge, C: VerifierGrindingChannel<'proof, Sponge = H>> GrindingReplay
+impl<'proof, H: Sponge, C: VerifierGrindingChannel<Sponge = H>> GrindingReplay
     for VerifierGrinding<'_, 'proof, H, C>
 {
     type State = C;
@@ -329,9 +404,8 @@ impl<'a, H: Sponge, C: ProverGrindingChannel<Sponge = H>> ProverGrinding<'a, H, 
         }
         self.state
             .site(grinding_site(site, entry.grind_bits, entry.nonce_bits));
-        let transcript = self.state.transcript_mut();
-        let start = transcript.narg().len();
-        transcript
+        let start = self.state.narg_len();
+        self.state
             .grind(entry.grind_bits)
             .map_err(|error| match error {
                 TranscriptError::GrindingExhausted => {
@@ -347,7 +421,7 @@ impl<'a, H: Sponge, C: ProverGrindingChannel<Sponge = H>> ProverGrinding<'a, H, 
     }
 
     fn record_nonce_bytes(&mut self, start: usize) -> Result<usize, AkitaError> {
-        let len = self.state.transcript_mut().narg().len() - start;
+        let len = self.state.narg_len() - start;
         self.serialized_nonce_bytes = self
             .serialized_nonce_bytes
             .checked_add(len)
@@ -456,9 +530,8 @@ impl<'a, H: Sponge, C: ProverGrindingChannel<Sponge = H>> ProverGrinding<'a, H, 
             return Ok(Fork::new(&seed, counter));
         }
         self.state.site(fold_response_site(site, entry.nonce_bits));
-        let transcript = self.state.transcript_mut();
-        let start = transcript.narg().len();
-        transcript.send_nonce(counter);
+        let start = self.state.narg_len();
+        self.state.send_nonce(counter);
         let encoded_bytes = self.record_nonce_bytes(start)?;
         tracing::info!(
             role = "prover",
@@ -544,7 +617,7 @@ pub struct VerifierGrinding<'a, 'proof, H: Sponge, C = VerifierTranscript<'proof
     _transcript: PhantomData<fn() -> &'proof H>,
 }
 
-impl<'a, 'proof, H: Sponge, C: VerifierGrindingChannel<'proof, Sponge = H>>
+impl<'a, 'proof, H: Sponge, C: VerifierGrindingChannel<Sponge = H>>
     VerifierGrinding<'a, 'proof, H, C>
 {
     /// Attach the caller's verifier channel to its public grinding plan.
@@ -568,9 +641,8 @@ impl<'a, 'proof, H: Sponge, C: VerifierGrindingChannel<'proof, Sponge = H>>
         }
         self.state
             .site(grinding_site(site, entry.grind_bits, entry.nonce_bits));
-        let transcript = self.state.transcript_mut();
-        let remaining = transcript.remaining();
-        transcript.check_grind(entry.grind_bits)?;
+        let remaining = self.state.remaining();
+        self.state.check_grind(entry.grind_bits)?;
         self.record_nonce_bytes(remaining)
     }
 
@@ -579,7 +651,7 @@ impl<'a, 'proof, H: Sponge, C: VerifierGrindingChannel<'proof, Sponge = H>>
             .serialized_nonce_bytes
             .checked_add(
                 remaining_before
-                    .checked_sub(self.state.transcript_mut().remaining())
+                    .checked_sub(self.state.remaining())
                     .ok_or(AkitaError::InvalidProof)?,
             )
             .ok_or(AkitaError::InvalidProof)?;
@@ -605,9 +677,8 @@ impl<'a, 'proof, H: Sponge, C: VerifierGrindingChannel<'proof, Sponge = H>>
         if entry.fold_search == Some(FoldResponseSearch::OneShot) {
             return Ok(Fork::new(&seed, 0));
         }
-        let transcript = self.state.transcript_mut();
-        let remaining = transcript.remaining();
-        let counter = transcript.receive_nonce(entry.nonce_bits)?;
+        let remaining = self.state.remaining();
+        let counter = self.state.receive_nonce(entry.nonce_bits)?;
         self.record_nonce_bytes(remaining)?;
         Ok(Fork::new(&seed, counter))
     }
@@ -697,7 +768,7 @@ pub trait FoldResponseReplay: GrindingReplay {
     ) -> Result<(), AkitaError>;
 }
 
-impl<'proof, H: Sponge, C: VerifierGrindingChannel<'proof, Sponge = H>> FoldResponseReplay
+impl<'proof, H: Sponge, C: VerifierGrindingChannel<Sponge = H>> FoldResponseReplay
     for VerifierGrinding<'_, 'proof, H, C>
 {
     type Sponge = H;
