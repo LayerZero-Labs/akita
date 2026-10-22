@@ -1053,6 +1053,98 @@ The verifier receives raw u_a.
 - **W3-f.** C0 (golden test) after the M3b and M2b fixups and the S-seams.
 - **W3-g.** `ZkOpeningSchedule::admit` rejects each §4.1 violation.
 
+### 4.8 W3c as built: deviations from the paper and from §4.4–4.6
+
+W3c (`wo/akita-w3c`) runs levels 0..=`cut_level` masked and stops at the cut.
+Each departure below states its argument.
+
+- **Checks are recorded, then lowered (§4.5 "no separate recorded-check
+  list").** The rows domain needs the masked auxiliary values, which W6
+  sends after the cut (§7, step 6), so the masked verifier cannot push rows
+  during its replay. The fold verifier is written once over a `ClaimReplay`
+  trait (`akita-verifier/src/claims.rs`). The clear instance checks each
+  claim on the spot; the masked instance (`MaskedReplay`) holds each claim as
+  an `AffineRow` and records each level's two stage checks as data: the
+  leaf, the Stage-2 weights, and the claim forms. `MaskedPrefix::lower` then
+  runs the one formula in `akita-types` (`check_range_leaf`,
+  `check_stage2_oracle`) in any `ClaimDomain`: `RowsDomain` (`rows`),
+  `OperandShapeDomain` (`shape`) and `ValuesDomain` (`auxiliary_values`). No
+  formula is restated, and the three domains allocate the same slots
+  because they share one lowering routine. The paper's verifier holds the
+  same data.
+- **The packing-sum check needs no row.** The clear verifier compares the
+  per-group authenticated sum with the batched trace target. Both are formed
+  from the same openings with public coefficients. The masked replay
+  therefore compares the two forms coefficient by coefficient, which is a
+  public check. It is a tautology for honest layouts, and no mutation of
+  the transcript can make it fail.
+- **The cut row.** `MaskedPrefixRows` appends
+  `Witness(0) − w̃_k(r₂) = 0` after the stage-check rows. r₂ is the cut
+  level's Stage-2 challenge vector converted once from `LOW_TO_HIGH` to
+  `HIGH_TO_LOW` (`CutState::new`, `ResidualOpening::point`). That this is
+  Akita's MLE order (A18) is not verified, because W3c exports no w_k
+  digits (below).
+- **Counts.** At b = 8 on the ℓ∞ route, each masked level lowers into three
+  product pairs (`u = ri²`, the leaf row, the Stage-2 row), one auxiliary
+  slot and three operand pads (ri, u, w_eval). The test row at k = 2 has 6
+  products, 2 auxiliary slots, 6 operand pads and one affine row, the cut
+  row. These are the paper's counts (§6.1).
+- **The prover's auxiliary values.** The prover lowers the leaf check over
+  its own decoded values (`ProveLevelOutput::range_leaf`), with
+  `check_range_leaf` in `ValuesDomain`, and runs the same check in the clear
+  domain as a release self-check. The test compares the result with
+  `MaskedPrefix::auxiliary_values` under the pads. The Stage-2 check takes
+  no auxiliary slot, so the prover does not lower it.
+- **Statement claims.** The masked root takes `MaskedOpeningClaims` (one
+  `AffineRow` per claim). The `GroupBatchStatement` supplies only the
+  commitments, points and selection, and its evaluations are not read. The
+  prover checks in release builds that each form decodes, under the pads, to
+  its own claim.
+- **One backend.** `prove_masked_prefix` proves every masked level on one
+  backend and bypasses the registry's dyn executors. Those executors stay
+  typed on the clear transcript. Routing masked levels across backends
+  needs the executor trait to become generic over the channel.
+- **Counting replay.** `CountingGrinding` consumes proof-of-work plan
+  entries without reading a nonce, and forks every fold response at counter
+  0. W6's `ShapeTranscript` makes the same choice for Jolt's grinding. The
+  replay runs over a `VerifierTranscript` on zero or random bytes, which
+  must be long enough for the prefix's messages.
+- **Stopping at the cut.** Both roles check
+  `finish_through(cut_level)`: the replay consumed every grinding-plan entry
+  of levels 0..=`cut_level` and nothing after. The schedule's plan and
+  descriptor still cover the clear levels after the cut.
+- **`ResidualOpening` is partial.** It carries the cut level, r₂
+  (`HIGH_TO_LOW`), the decoded w̃_k(r₂) and raw u_a. It does not carry
+  w_k's digits, t̂_a, r_a, `public_segments` or `blocks`. Two pieces are
+  missing:
+  - a backend kernel that exports the cut level's successor witness and
+    inner digits;
+  - `ResidualCutParams`.
+
+  Today the level after the cut carries no hiding randomness (`admit`), so
+  u_a is the commitment to w_k without r_a. That departs from the paper
+  ("commits to the residual witness w_k in the same way", 04_protocol.tex:81)
+  and from §4.1. It must land before any ZK schedule is selectable.
+- **Composition with Jolt's rows.** `MaskedPrefix::rows` numbers auxiliary
+  slots from `layout.auxiliary.start`, as `RowsDomain::new` does. Appending
+  it after Jolt's `JoltResidualRows` in one relation needs an offset
+  constructor for `RowsDomain` (W6).
+- **Channel transcript access (M6b fixup).** `MaskedProver::transcript_mut`
+  and `MaskedVerifier::transcript_mut` lend the transcript underneath for the
+  public proof-of-work nonces and fold-response counters (`grind`,
+  `check_grind`, `send_nonce`, `receive_nonce`) and the other public sends.
+  `CommittedPads::uncommitted`, behind jolt-zk's `test-support` feature, builds
+  pads with no commitment for Akita's tests. Until W6, only a `ZkBackend`
+  builds `CommittedPads`.
+- **Not exercised.** The tests cover k = 2 at b = 8 on `fp128::Dense`
+  14:1. They do not exercise product stages, extension-field claims or
+  Stage 3 at a masked level. Admission rejects all three today. The masked
+  replay fails closed on the first two: product stages fail through
+  `verify_single`'s `MaskedRoundInClearReplay`, and extension claims fail
+  with `UnsupportedSchedule`. Stage 3 is public (§4.2), so the replay carries
+  its claim and prefix evaluation as constants. That path is untested until
+  the precommit work admits it.
+
 ## 5. W5: `ResponseProver` for Akita
 
 ### 5.1 Scope
