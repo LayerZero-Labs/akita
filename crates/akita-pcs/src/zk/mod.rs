@@ -15,6 +15,7 @@
 //! setup's prefix views directly (W5a); it never builds `H`. Test support
 //! until the zero-knowledge mode is published (§5.5).
 
+mod compression;
 mod rounds;
 mod rows;
 #[cfg(test)]
@@ -35,16 +36,21 @@ use akita_prover::{prove_digit_range, SelectedProverOpeningData};
 use akita_sumcheck::{multilinear_eval, FusedRounds};
 use akita_types::{
     AkitaVerifierSetup, Commitment, CommittedGroup, DigitRangeEqualityPoint, GroupBatchStatement,
-    OpeningClaims, PolynomialGroupClaims, ProverGrinding, RingVec, VerifierGrinding,
+    NegativeBinarySupport, OpeningClaims, PolynomialGroupClaims, ProverGrinding, RingVec,
+    VerifierGrinding,
 };
 use akita_verifier::{AkitaVerifier, Stage1Verifier};
 use jolt_algebra::{One, Prime128OffsetA7F7, Ring, Zero};
 use jolt_sumcheck::{prove_single, verify_single, SingleFormat, SingleInstance};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 use jolt_zk::masking::ZkError;
-use jolt_zk::whiteout::{ResponseProver, ResponseStatement, ResponseWitness, WhiteoutError};
+use jolt_zk::whiteout::{
+    CompressedImage, ImageCompression, ResponseProver, ResponseStatement, ResponseWitness,
+    WhiteoutError,
+};
 
 use crate::AkitaCommitmentScheme;
+use compression::Chains;
 use rounds::{ClearProverRounds, ClearVerifierRounds, FusedKernel, ProductKernel};
 use rows::{
     batch_rows, ceil_log2, eq_table, row_variables, zk_error, ProductClaims, ResponseShape,
@@ -139,6 +145,23 @@ where
         })
     }
 
+    /// The setup stream that holds the compression maps.
+    fn stream(&self) -> &[F] {
+        self.verifier
+            .setup()
+            .expanded()
+            .shared_matrix()
+            .as_field_slice()
+    }
+
+    /// The compression chains of `statement`'s images.
+    fn chains<'s, const D: usize>(
+        &'s self,
+        statement: &'s ResponseStatement<'_, F, D>,
+    ) -> Result<Chains<'s>, ZkError> {
+        Chains::new(Cfg::sis_modulus_profile(), self.stream(), statement)
+    }
+
     /// Proves the statement on `digits`, without checking that it holds:
     /// [`ResponseProver::prove_response`] checks first.
     fn prove<H: Sponge, const D: usize>(
@@ -152,7 +175,7 @@ where
                 "a verifier-only response prover cannot prove".into(),
             ))
         })?;
-        let shape = ResponseShape::new(statement.layout().len()).map_err(zk_error)?;
+        let shape = ResponseShape::new(statement.layout()?.len()).map_err(zk_error)?;
         let plan = range_plan::<Cfg, D>(statement).map_err(zk_error)?;
         if [digits.committed, digits.rows, digits.range]
             .iter()
@@ -208,9 +231,13 @@ where
         transcript.send(&claims.y);
 
         // 3. The row batch at η.
-        let eta: Vec<F> = challenges(transcript, row_variables(statement, shape));
-        let weights = RowWeights::new(statement, shape, &eta, &product_point)?;
-        let batch = batch_rows(statement, shape, alpha, weights, claims)?;
+        let chains = self.chains(statement)?;
+        let eta: Vec<F> = challenges(
+            transcript,
+            row_variables(statement, shape, &chains).map_err(zk_error)?,
+        );
+        let weights = RowWeights::new(statement, shape, &eta, &product_point, &chains)?;
+        let batch = batch_rows(statement, shape, alpha, weights, claims, &chains)?;
 
         // 4. The digit range of e.
         let tau: Vec<F> = challenges(transcript, shape.num_vars);
@@ -239,13 +266,20 @@ where
         .map_err(zk_error)?;
         grinding.finish().map_err(zk_error)?;
 
-        // 5. The fused range-and-relation sumcheck.
+        // 5. The fused range-and-relation sumcheck, with the binary
+        // constraint on the compression digits.
         let gamma: F = transcript.challenge();
+        let zeta: F = transcript.challenge();
+        let binary = chains
+            .support(shape.padded_len())
+            .map_err(zk_error)?
+            .materialize::<F>();
         let mut fused = FusedKernel {
             a: batch.a,
             b: eq_table(&range.point)
                 .into_iter()
-                .map(|weight| weight * gamma)
+                .zip(binary)
+                .map(|(weight, binary)| weight * (gamma + zeta * binary))
                 .collect(),
             e,
         };
@@ -285,7 +319,7 @@ where
         statement: &ResponseStatement<'_, F, D>,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<(), ZkError> {
-        let shape = ResponseShape::new(statement.layout().len()).map_err(zk_error)?;
+        let shape = ResponseShape::new(statement.layout()?.len()).map_err(zk_error)?;
         let row = self
             .scheme
             .schedules()
@@ -337,9 +371,13 @@ where
         }
 
         // 3. The row batch at η.
-        let eta: Vec<F> = challenges(transcript, row_variables(statement, shape));
-        let weights = RowWeights::new(statement, shape, &eta, &product.challenges)?;
-        let batch = batch_rows(statement, shape, alpha, weights, claims)?;
+        let chains = self.chains(statement)?;
+        let eta: Vec<F> = challenges(
+            transcript,
+            row_variables(statement, shape, &chains).map_err(zk_error)?,
+        );
+        let weights = RowWeights::new(statement, shape, &eta, &product.challenges, &chains)?;
+        let batch = batch_rows(statement, shape, alpha, weights, claims, &chains)?;
 
         // 4. The digit range of e.
         let tau: Vec<F> = challenges(transcript, shape.num_vars);
@@ -357,8 +395,10 @@ where
         .map_err(zk_error)?;
         grinding.finish().map_err(zk_error)?;
 
-        // 5. The fused range-and-relation sumcheck.
+        // 5. The fused range-and-relation sumcheck, with the binary
+        // constraint on the compression digits.
         let gamma: F = transcript.challenge();
+        let zeta: F = transcript.challenge();
         let fused = verify_single::<F, F, AkitaError, _>(
             &compressed(
                 batch.b + gamma * range.range_image_evaluation,
@@ -370,7 +410,14 @@ where
         .map_err(zk_error)?;
         let v: F = transcript.receive()?;
         let a = multilinear_eval(&batch.a, &fused.challenges).map_err(zk_error)?;
-        let b = gamma * EqPolynomial::mle(&range.point, &fused.challenges).map_err(zk_error)?;
+        let b = range_weight_at(
+            gamma,
+            zeta,
+            &chains.support(shape.padded_len()).map_err(zk_error)?,
+            &range.point,
+            &fused.challenges,
+        )
+        .map_err(zk_error)?;
         if a * v + b * v * (v + F::one()) != fused.output_claim {
             return Err(WhiteoutError::ResponseRejected("fused sumcheck").into());
         }
@@ -393,6 +440,10 @@ impl<Cfg, const D: usize> ResponseProver<F, D> for AkitaResponseProver<Cfg>
 where
     Cfg: CommitmentConfig<Field = F, ExtField = F> + 'static,
 {
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        self
+    }
+
     fn prove_response<H: Sponge>(
         &self,
         statement: &ResponseStatement<'_, F, D>,
@@ -410,6 +461,19 @@ where
     ) -> Result<(), ZkError> {
         self.verify(statement, transcript)
     }
+}
+
+/// `B(r) = Σ_j (γ + ζ·1_{I_bin}(j))·eq(τ, j)·eq(r, j)`: the range image's
+/// weight and the binary constraint on `I_bin`, at the range point `τ`.
+fn range_weight_at(
+    gamma: F,
+    zeta: F,
+    binary: &NegativeBinarySupport,
+    range_point: &[F],
+    point: &[F],
+) -> Result<F, AkitaError> {
+    Ok(gamma * EqPolynomial::mle(range_point, point)?
+        + zeta * binary.evaluate_restricted_equality_at_point(range_point, point)?)
 }
 
 /// A compressed single-instance sumcheck of `degree` over `rounds` variables.
@@ -439,4 +503,106 @@ fn first(table: &[F]) -> Result<F, ZkError> {
 
 fn challenges<C: Channel>(channel: &mut C, count: usize) -> Vec<F> {
     (0..count).map(|_| channel.challenge()).collect()
+}
+
+/// Akita's image compression without a prover backend: its lengths and
+/// reconstruction, for sizing `e` before a prover exists. It cannot
+/// compress.
+pub struct CompressionShape<Cfg>(std::marker::PhantomData<Cfg>);
+
+impl<Cfg> Default for CompressionShape<Cfg> {
+    fn default() -> Self {
+        Self(std::marker::PhantomData)
+    }
+}
+
+impl<Cfg: CommitmentConfig> ImageCompression<F> for CompressionShape<Cfg> {
+    fn payload_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        Ok(compression::chunks(Cfg::sis_modulus_profile(), image_len)
+            .map_err(compression::whiteout_error)?
+            .iter()
+            .map(|chunk| chunk.plan.terminal_coefficients())
+            .sum())
+    }
+
+    fn witness_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        compression::chunks(Cfg::sis_modulus_profile(), image_len)
+            .and_then(|chunks| chunks.iter().map(compression::Chunk::witness_len).sum())
+            .map_err(compression::whiteout_error)
+    }
+
+    fn compress(&self, _image: &[F]) -> Result<CompressedImage<F>, WhiteoutError> {
+        Err(WhiteoutError::InvalidRelation(
+            "compression needs a prover backend",
+        ))
+    }
+
+    fn reconstruct(&self, image_len: usize, witness: &[i8]) -> Result<Vec<F>, WhiteoutError> {
+        compression::reconstruct(Cfg::sis_modulus_profile(), image_len, witness)
+            .map_err(compression::whiteout_error)
+    }
+
+    fn reconstruct_transpose(
+        &self,
+        image_len: usize,
+        weights: &[F],
+    ) -> Result<Vec<F>, WhiteoutError> {
+        compression::reconstruct_transpose(Cfg::sis_modulus_profile(), image_len, weights)
+            .map_err(compression::whiteout_error)
+    }
+
+    fn check(&self, _payload: &[F], _witness: &[i8]) -> Result<(), WhiteoutError> {
+        Err(WhiteoutError::InvalidRelation(
+            "checking a compression needs a prover backend",
+        ))
+    }
+}
+
+impl<Cfg> ImageCompression<F> for AkitaResponseProver<Cfg>
+where
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + 'static,
+{
+    fn payload_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        CompressionShape::<Cfg>::default().payload_len(image_len)
+    }
+
+    fn witness_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        CompressionShape::<Cfg>::default().witness_len(image_len)
+    }
+
+    fn compress(&self, image: &[F]) -> Result<CompressedImage<F>, WhiteoutError> {
+        let side = self.prover.as_ref().ok_or(WhiteoutError::InvalidRelation(
+            "a verifier-only response prover cannot compress",
+        ))?;
+        compression::compress(&side.backend, Cfg::sis_modulus_profile(), image)
+            .map_err(compression::whiteout_error)
+    }
+
+    fn reconstruct(&self, image_len: usize, witness: &[i8]) -> Result<Vec<F>, WhiteoutError> {
+        CompressionShape::<Cfg>::default().reconstruct(image_len, witness)
+    }
+
+    fn reconstruct_transpose(
+        &self,
+        image_len: usize,
+        weights: &[F],
+    ) -> Result<Vec<F>, WhiteoutError> {
+        CompressionShape::<Cfg>::default().reconstruct_transpose(image_len, weights)
+    }
+
+    /// The canonical witness only: Akita's chain is deterministic in the
+    /// image, so `witness` opens `payload` exactly when compressing the
+    /// image it reconstructs gives both back. The verifier enforces the
+    /// chain equations and the binary digits instead (§5.7).
+    fn check(&self, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError> {
+        let image_len =
+            compression::image_len(Cfg::sis_modulus_profile(), payload.len(), witness.len())
+                .map_err(compression::whiteout_error)?;
+        let compressed = self.compress(&self.reconstruct(image_len, witness)?)?;
+        if compressed.payload == payload && compressed.witness == witness {
+            Ok(())
+        } else {
+            Err(WhiteoutError::ResponseRejected("compressed image"))
+        }
+    }
 }

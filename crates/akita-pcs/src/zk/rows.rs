@@ -11,6 +11,9 @@ use jolt_poly::EqPolynomial;
 use jolt_zk::masking::ZkError;
 use jolt_zk::whiteout::{ResponseRows, ResponseStatement};
 
+use super::compression::Chains;
+use super::F;
+
 /// The padded size of `e`: `2^ν` entries, the first `len` of them `e`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ResponseShape {
@@ -62,25 +65,33 @@ pub(crate) struct BatchedRows<F> {
 }
 
 /// Row indices: Items 2, 3 and 5 in [`ResponseRows`] order, the product
-/// target, the `U` and `W` claims, then the padding rows `e_j = 0` for
-/// `j ∈ [len, 2^ν)`.
+/// target, the `U` and `W` claims, the compression chains' rows, then the
+/// padding rows `e_j = 0` for `j ∈ [len, 2^ν)`.
 struct RowOrder {
     v_image: usize,
     linear: usize,
+    chains: usize,
     padding: usize,
 }
 
 impl RowOrder {
-    fn new<F: JoltField, const D: usize>(
+    fn new<const D: usize>(
         statement: &ResponseStatement<'_, F, D>,
         shape: ResponseShape,
-    ) -> Self {
+        chains: &Chains<'_>,
+    ) -> Result<Self, AkitaError> {
         let rows = statement.row_shape();
-        Self {
+        Ok(Self {
             v_image: rows.v_image,
             linear: rows.linear,
+            chains: chains.rows()?,
             padding: shape.padded_len() - shape.len,
-        }
+        })
+    }
+
+    fn chains(&self) -> std::ops::Range<usize> {
+        let start = self.product_target() + 3;
+        start..start + self.chains
     }
 
     fn ct_h(&self) -> usize {
@@ -92,27 +103,29 @@ impl RowOrder {
     }
 
     fn len(&self) -> usize {
-        self.product_target() + 3 + self.padding
+        self.chains().end + self.padding
     }
 }
 
 /// The number of coordinates of `η`.
-pub(crate) fn row_variables<F: JoltField, const D: usize>(
+pub(crate) fn row_variables<const D: usize>(
     statement: &ResponseStatement<'_, F, D>,
     shape: ResponseShape,
-) -> usize {
-    ceil_log2(RowOrder::new(statement, shape).len())
+    chains: &Chains<'_>,
+) -> Result<usize, AkitaError> {
+    Ok(ceil_log2(RowOrder::new(statement, shape, chains)?.len()))
 }
 
 /// The batch weights `eq(η, l)`: on [`ResponseRows`], on the padding
 /// entries of `e`, and on the three product claims.
 pub(crate) struct RowWeights<F> {
     pub(crate) rows: ResponseRows<F>,
+    pub(crate) chains: Vec<F>,
     pub(crate) padding: Vec<F>,
     pub(crate) claims: ProductClaims<F>,
 }
 
-impl<F: JoltField> RowWeights<F> {
+impl RowWeights<F> {
     /// `eq(η, l)` on every row; `product_point` is `r_×`, at which the `U`
     /// and `W` claims hold.
     pub(crate) fn new<const D: usize>(
@@ -120,8 +133,9 @@ impl<F: JoltField> RowWeights<F> {
         shape: ResponseShape,
         eta: &[F],
         product_point: &[F],
+        chains: &Chains<'_>,
     ) -> Result<Self, ZkError> {
-        let order = RowOrder::new(statement, shape);
+        let order = RowOrder::new(statement, shape, chains).map_err(zk_error)?;
         if eta.len() != ceil_log2(order.len()) {
             return Err(zk_error(AkitaError::InvalidInput(
                 "row batching point width".into(),
@@ -153,7 +167,8 @@ impl<F: JoltField> RowWeights<F> {
                 product_x: kappa.iter().map(|k| *k * x_weight).collect(),
                 product_y: kappa.iter().map(|k| *k * y_weight).collect(),
             },
-            padding: slice(target + 3..order.len())?,
+            chains: slice(order.chains())?,
+            padding: slice(order.chains().end..order.len())?,
             claims: ProductClaims {
                 target: target_weight,
                 x: x_weight,
@@ -170,18 +185,22 @@ impl<F: JoltField> RowWeights<F> {
 
 /// Batches every row at `eta`: `A_j = Σ_l eq(η, l) H_{l,j}` and
 /// `b_η = Σ_l eq(η, l) b_l`, through the rows' transpose.
-pub(crate) fn batch_rows<F: JoltField, const D: usize>(
+pub(crate) fn batch_rows<const D: usize>(
     statement: &ResponseStatement<'_, F, D>,
     shape: ResponseShape,
     alpha: F,
     weights: RowWeights<F>,
     claims: ProductClaims<F>,
+    chains: &Chains<'_>,
 ) -> Result<BatchedRows<F>, ZkError> {
     let (mut a, constant) = statement.weigh(&weights.rows, alpha)?;
     if a.len() != shape.len {
         return Err(zk_error(AkitaError::Internal("row weights length".into())));
     }
-    let b = weights.target(claims) - constant;
+    let chain_constant = chains
+        .transpose(&weights.chains, &mut a)
+        .map_err(zk_error)?;
+    let b = weights.target(claims) - constant - chain_constant;
     a.extend(weights.padding);
     Ok(BatchedRows { a, b })
 }

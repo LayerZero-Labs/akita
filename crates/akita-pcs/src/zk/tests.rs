@@ -12,9 +12,10 @@ use akita_params::{ChunkedWitnessCfg, CommittedGroupBatchProfile, GroupCommitPha
 use akita_schedules::ValidatedScheduleCatalog;
 use jolt_algebra::cfg_into_iter;
 use jolt_algebra::solinas::parallel::*;
-use jolt_algebra::Zero;
+use jolt_algebra::{Field, Zero};
 use jolt_zk::whiteout::test_support::{CheckingResponseProver, SyntheticSigma};
 use jolt_zk::whiteout::ResponseSegment;
+use rand::RngCore;
 
 type Cfg = RecursiveCommitmentConfig<ResponseDigits>;
 
@@ -76,7 +77,7 @@ fn accepts_what_the_statement_checker_accepts() {
             let sigma = SyntheticSigma::<D>::new(seed, 1);
             let checked = sigma.prove(&CheckingResponseProver, seed).unwrap();
             sigma.verify(&checked, &CheckingResponseProver).unwrap();
-            let akita = akita_for(sigma.response_len());
+            let akita = akita_for(sigma.response_len(&CompressionShape::<Cfg>::default()));
             let proof = sigma.prove(&akita, seed).unwrap();
             sigma.verify(&proof, &akita).unwrap();
         }
@@ -122,13 +123,15 @@ struct ResponseLayoutPositions {
     z_levels: usize,
     v: usize,
     theta: usize,
+    /// The first `ξ₂` digit of the first compressed image's first chunk.
+    xi_2: usize,
 }
 
 impl ResponseLayoutPositions {
     fn new<const D: usize>(statement: &ResponseStatement<'_, F, D>) -> Self {
         let mut offset = 0;
         let (mut v, mut theta, mut z) = (0, 0, None);
-        for segment in statement.layout().segments {
+        for segment in statement.layout().unwrap().segments {
             match segment {
                 ResponseSegment::Response {
                     coefficients,
@@ -139,15 +142,20 @@ impl ResponseLayoutPositions {
                 }
                 ResponseSegment::V { .. } => v = offset,
                 ResponseSegment::Theta => theta = offset,
+                ResponseSegment::Compression { .. } => {}
             }
             offset += segment.num_digits();
         }
         let (z_coefficients, z_levels) = z.unwrap();
+        let first = statement.compressed_targets().unwrap()[0].clone();
+        let chunk = compression::chunks(Cfg::sis_modulus_profile(), first.image_len).unwrap();
+        let xi_1 = chunk[0].plan.maps()[0].real_digit_count();
         Self {
             z_coefficients,
             z_levels,
             v,
             theta,
+            xi_2: first.digits.start + xi_1,
         }
     }
 }
@@ -187,6 +195,10 @@ fn unlinked_range(_: &ResponseLayoutPositions, e: &[i8]) -> CheatDigits {
 }
 
 impl<const D: usize> ResponseProver<F, D> for Cheating<'_> {
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        self.akita
+    }
+
     fn prove_response<H: Sponge>(
         &self,
         statement: &ResponseStatement<'_, F, D>,
@@ -229,8 +241,9 @@ fn rejection(error: &ZkError) -> Option<&WhiteoutError> {
 }
 
 /// W5-a: the verifier rejects each violation the statement's checker names,
-/// at the check that catches it: Items 2–4 by editing `e`, Item 5 on a
-/// statement whose relation fails. Item 1: the response schedule refuses to
+/// at the check that catches it: Items 2–4 by editing `e` (Item 2's
+/// compression chain by flipping a `ξ₂` digit, which leaves the image `ξ₁`
+/// reconstructs unchanged), Item 5 on a statement whose relation fails. Item 1: the response schedule refuses to
 /// commit a digit outside `[−8, 7]`, the range session cannot hold one, and
 /// Stage 1's leaf rejects any range image off its roots (akita-verifier's
 /// stage-1 tests); here the fused sumcheck rejects a range table other than
@@ -239,9 +252,18 @@ fn rejection(error: &ZkError) -> Option<&WhiteoutError> {
 fn rejects_each_item_violation() {
     on_big_stack(|| {
         let sigma = SyntheticSigma::<64>::new(3, 1);
-        let akita = akita_for(sigma.response_len());
+        let akita = akita_for(sigma.response_len(&CompressionShape::<Cfg>::default()));
         let rejected = |item| Err(WhiteoutError::ResponseRejected(item));
-        let cases: [(Edit, Result<(), WhiteoutError>, &str); 4] = [
+        let cases: [(Edit, Result<(), WhiteoutError>, &str); 5] = [
+            (
+                |at, e| {
+                    let mut e = e.to_vec();
+                    e[at.xi_2] = -1 - e[at.xi_2];
+                    CheatDigits::everywhere(e)
+                },
+                rejected("compressed image"),
+                "fused sumcheck",
+            ),
             (unlinked_range, Ok(()), "fused sumcheck"),
             (
                 |at, e| bumped(e, at.v),
@@ -309,30 +331,43 @@ fn rejects_each_item_violation() {
 }
 
 /// Compares the batched weights with `H` built column by column.
-struct WeightOracle;
+struct WeightOracle<'a> {
+    akita: &'a AkitaResponseProver<Cfg>,
+}
 
-impl<const D: usize> ResponseProver<F, D> for WeightOracle {
+impl<const D: usize> ResponseProver<F, D> for WeightOracle<'_> {
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        self.akita
+    }
+
     fn prove_response<H: Sponge>(
         &self,
         statement: &ResponseStatement<'_, F, D>,
         witness: &ResponseWitness,
         transcript: &mut ProverTranscript<H>,
     ) -> Result<(), ZkError> {
-        let shape = ResponseShape::new(statement.layout().len()).unwrap();
+        let shape = ResponseShape::new(statement.layout().unwrap().len()).unwrap();
+        let chains = self.akita.chains(statement).unwrap();
         let alpha: F = transcript.challenge();
         let product_vars = ceil_log2(statement.row_shape().products.max(1));
         let product_point = challenges(transcript, product_vars);
-        let eta = challenges(transcript, row_variables(statement, shape));
+        let eta = challenges(
+            transcript,
+            row_variables(statement, shape, &chains).unwrap(),
+        );
         let r = challenges(transcript, shape.num_vars);
         let range_point = challenges(transcript, shape.num_vars);
         let gamma: F = transcript.challenge();
+        let zeta: F = transcript.challenge();
         let claims = ProductClaims {
             target: transcript.challenge(),
             x: transcript.challenge(),
             y: transcript.challenge(),
         };
 
-        let weights = RowWeights::new(statement, shape, &eta, &product_point).unwrap();
+        // jolt-zk's rows only: the chains' rows have their own test.
+        let mut weights = RowWeights::new(statement, shape, &eta, &product_point, &chains).unwrap();
+        weights.chains.fill(F::zero());
         let zero = statement.rows(&vec![0; shape.len], alpha).unwrap();
         let mut columns: Vec<F> = cfg_into_iter!(0..shape.len)
             .map(|j| {
@@ -347,17 +382,30 @@ impl<const D: usize> ResponseProver<F, D> for WeightOracle {
         let contracted: F = columns.iter().zip(&eq_r).map(|(h, e)| *h * *e).sum();
         let b = weights.target(claims) - weights.rows.dot(&zero).unwrap();
 
-        let batch = batch_rows(statement, shape, alpha, weights, claims).unwrap();
+        let batch = batch_rows(statement, shape, alpha, weights, claims, &chains).unwrap();
         assert_eq!(multilinear_eval(&batch.a, &r).unwrap(), contracted);
         assert_eq!(batch.b, b);
+
+        let mut binary = vec![false; shape.padded_len()];
+        for target in statement.compressed_targets().unwrap() {
+            binary[target.digits].fill(true);
+        }
         let b_table: F = EqPolynomial::evals(&range_point)
             .unwrap()
             .iter()
             .zip(&eq_r)
-            .map(|(eq, e)| gamma * *eq * *e)
+            .zip(&binary)
+            .map(|((eq, e), &binary)| (gamma + if binary { zeta } else { F::zero() }) * *eq * *e)
             .sum();
         assert_eq!(
-            gamma * EqPolynomial::mle(&range_point, &r).unwrap(),
+            range_weight_at(
+                gamma,
+                zeta,
+                &chains.support(shape.padded_len()).unwrap(),
+                &range_point,
+                &r
+            )
+            .unwrap(),
             b_table
         );
         assert!(statement.check_witness(witness).is_ok());
@@ -382,6 +430,53 @@ impl<const D: usize> ResponseProver<F, D> for WeightOracle {
 fn batched_weights_match_h_column_by_column() {
     on_big_stack(|| {
         let sigma = SyntheticSigma::<64>::new(8, 1);
-        sigma.prove(&WeightOracle, 9).unwrap();
+        let akita = akita_for(sigma.response_len(&CompressionShape::<Cfg>::default()));
+        sigma.prove(&WeightOracle { akita: &akita }, 9).unwrap();
+    });
+}
+
+/// The chain rows' transpose against their definition: on digits in
+/// `{−1, 0}`, `⟨transpose(ω), ξ⟩ + c = ⟨ω, rows(ξ)⟩`; and Akita's executor's
+/// witness reconstructs the image and satisfies every row.
+#[test]
+fn chain_rows_transpose_and_vanish_on_the_executor_witness() {
+    on_big_stack(|| {
+        let sigma = SyntheticSigma::<64>::new(10, 1);
+        let akita = akita_for(sigma.response_len(&CompressionShape::<Cfg>::default()));
+        let stream = akita.stream();
+        let profile = Cfg::sis_modulus_profile();
+        let mut rng = rand::thread_rng();
+        for image_len in [64, 512, 640] {
+            let image: Vec<F> = (0..image_len).map(|_| F::random(&mut rng)).collect();
+            let compressed = akita.compress(&image).unwrap();
+            assert_eq!(
+                akita.reconstruct(image_len, &compressed.witness).unwrap(),
+                image
+            );
+            let mut digit = 0;
+            let mut payload = compressed.payload.as_slice();
+            for chunk in compression::chunks(profile, image_len).unwrap() {
+                let len = chunk.witness_len().unwrap();
+                let (head, tail) = payload.split_at(chunk.plan.terminal_coefficients());
+                payload = tail;
+                let witness = &compressed.witness[digit..digit + len];
+                digit += len;
+                let rows = compression::chain_rows(stream, &chunk, witness, head).unwrap();
+                assert!(rows.iter().all(F::is_zero));
+
+                let weights: Vec<F> = (0..rows.len()).map(|_| F::random(&mut rng)).collect();
+                let (a, c) = compression::chain_transpose(stream, &chunk, &weights, head).unwrap();
+                let xi: Vec<i8> = (0..len).map(|_| -((rng.next_u32() & 1) as i8)).collect();
+                let lhs: F = a
+                    .iter()
+                    .zip(&xi)
+                    .map(|(a, &x)| *a * F::from_i64(i64::from(x)))
+                    .sum::<F>()
+                    + c;
+                let rows = compression::chain_rows(stream, &chunk, &xi, head).unwrap();
+                let rhs: F = weights.iter().zip(&rows).map(|(w, r)| *w * *r).sum();
+                assert_eq!(lhs, rhs);
+            }
+        }
     });
 }
