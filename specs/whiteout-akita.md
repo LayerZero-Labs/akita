@@ -1789,7 +1789,26 @@ padding rows; 5% building A plane by plane.
   (`ClassIndexedRangeLeafProver::round_q_coefficients`), 12% session setup
   (`CompactDigitSource::new`). It is the shared Stage-1 kernel of every
   fold, so it is left to an Akita-wide change.
-- **P2, W5b.** After P1, about 80% of the verifier is the σ_N scan; W5b moves
+- **P2, W5b: shelved (2026-10-22).** Measured at the headline N shapes
+  (A_a 3×1024 R_256 on 45 blocks, [B|B′] 3×4417, A_p 3×922, A_D 1×18144
+  R_64; about 44M field entries) after parallelizing the scan over blocks
+  and column chunks: 114 ms on one thread, 47 ms on 16 threads at load
+  average ≈ 110, so about 10–14 ms idle on 12 performance cores. The `F`
+  copy of each matrix (`PreparedMatrix::field_entries`) is built once per
+  verifier setup, not per proof. The offload would cost, from the planner
+  with the root offload forced and the prefix grown to cover N (2^22):
+  about +2.9 KB of proof (70,995 → 73,879 B; Stage 3 736 B), the setup
+  growing from 0.70M to 4.19M field elements, and a precommitted 2^22
+  setup-prefix group at fold 0. The paper estimates 1.2 KB. Under the
+  decision rule (scan under ≈ 15 ms idle), the offload is optional and not
+  built. Building it needs: a response-family planner policy that forces a
+  root offload with a minimum prefix length (the planner never picks one
+  for this family; the root is QuotientLift with a Compressed payload, so
+  it is admissible), Akita views of A_a, [B_a|B′_a] and A_D with A_p and
+  L allocated through the same accessor, and N's weights as eq-pair tensor
+  families in the root's Stage 3 (the shifted-eq evaluator; no A15
+  alignment). The original plan follows.
+- **P2, W5b (original plan).** After P1, about 80% of the verifier is the σ_N scan; W5b moves
   it into Stage 3 (§5.3). Stage 3's random column point needs ω̃ evaluated
   succinctly, which needs A15 segment alignment (C_k = 2^{c_k}, aligned o_k)
   or an O(P·ν) shifted-eq evaluator. Estimate ≈ 12–15 ms total, response
