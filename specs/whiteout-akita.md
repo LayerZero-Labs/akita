@@ -1236,13 +1236,24 @@ code does, and why.
   row, its negacyclically reduced residual evaluated at the product
   challenge `α`, exactly as Akita's `ReducedEvaluation` relation evaluates
   its own compression maps. The rows come from Akita's owner,
-  `ReducedCompressionRelationWeights::for_standalone_chains`, which also
-  evaluates them at a point for the verifier. Each `ξ` is padded with zero
-  digits to its map's ring row (Akita's padded span). `K₁` and `K₂` are the
-  shared matrix's offset-0 prefix, as in Akita's own compression. Why: one
-  owner for the map transpose and the layout law; a nonzero residual of
-  degree below `d` vanishes at `α` with probability at most `d/q`, and `α`
-  is drawn after `e` is committed and after every `cm` is fixed.
+  `ReducedCompressionRelationWeights::for_standalone_chains`: the prover
+  accumulates them into the dense `A` (`accumulate_dense`); the verifier
+  contracted that table at W5c and evaluates them at the point
+  (`evaluate_at_point`) from W5-P1 on. Each `ξ` occupies its map's padded
+  span (Akita's span law). The honest prover writes zero digits past the
+  real ones, and nothing enforces it: padding digits stay inside `I_bin`,
+  so they are in `{−1, 0}`, and inside the map's input width, which is the
+  width Akita's SIS sizing covers; they change `cm`, not `t`, so binding is
+  untouched. Over A7F7 every chain map's digits fill its ring rows, so the
+  padding is empty (asserted in `chain_relation_matches_its_rows…`). `K₁`
+  and `K₂` are the shared matrix's offset-0 prefix, as in Akita's own
+  compression; the response setup is sized to cover them
+  (`AkitaResponseProver::setup`, refused otherwise). Why: one owner for
+  the map transpose and the layout law. A nonzero residual has degree at
+  most `d − 1`, so it vanishes at `α` with probability at most
+  `(d − 1)/q ≤ 15/q` at `d = 16`; `α` is drawn after `e` and every `cm`
+  are fixed. No union over maps is needed: a cheat survives only if every
+  violated row vanishes, which is at most as likely as one of them.
 - **Binary constraint.** Paper `04_protocol.tex:401-410`:
   `B_j = (γ + ζ_bin·1_{I_bin}(j))·eq(τ, j)`. Code: the same, `ζ` drawn
   right after `γ`; `I_bin` is every compression-witness segment of `e`.
