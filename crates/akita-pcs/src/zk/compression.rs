@@ -3,10 +3,13 @@
 //! at most Akita's compression input cap, and each chunk runs Akita's
 //! two-map negative-binary chain: `ξ₁ = Bin(t)`, `j = K₁ξ₁`, `ξ₂ = Bin(j)`,
 //! `cm = K₂ξ₂`, with `K₁` and `K₂` the offset-0 prefix of the setup stream.
-//! A chunk's witness is `ξ₁` then `ξ₂`, each in Akita's bit-major order;
-//! its rows are the chain equations `K₁ξ₁ − G(ξ₂) = 0` and `K₂ξ₂ = cm`,
-//! which the response proof batches with jolt-zk's rows. The prover's
-//! chain is Akita's compression executor.
+//! A chunk's witness is `ξ₁` then `ξ₂`, each in Akita's bit-major order and
+//! padded with zero digits to its map's ring row; its rows are the chain
+//! equations `K₁ξ₁ − G(ξ₂) = 0` and `K₂ξ₂ = cm`, each evaluated at `α` as
+//! Akita's reduced relation evaluates its own compression maps
+//! ([`ReducedCompressionRelationWeights`]), and the response proof batches
+//! them with jolt-zk's rows. The prover's chain is Akita's compression
+//! executor.
 
 use akita_cpu_backend::CpuBackend;
 use akita_error::AkitaError;
@@ -14,7 +17,9 @@ use akita_params::{
     CompressionChainPlan, CompressionMapPlan, PackedNegativeBinary, RingRelationMode,
     SisModulusProfileId, MAX_COMPRESSION_INPUT_BYTES,
 };
-use akita_types::{NegativeBinarySupport, RingVec};
+use akita_types::{
+    AkitaExpandedSetup, NegativeBinarySupport, ReducedCompressionRelationWeights, RingVec,
+};
 use jolt_algebra::{CanonicalBytes, One, Ring, Zero};
 use jolt_zk::masking::ZkError;
 use jolt_zk::whiteout::{CompressedImage, CompressedTarget, ResponseStatement, WhiteoutError};
@@ -35,18 +40,27 @@ impl Chunk {
             .map_err(|_| AkitaError::InvalidSetup("compression chain is not two maps".into()))
     }
 
-    /// Witness digits: `ξ₁` then `ξ₂`.
+    /// Witness digits: `ξ₁` then `ξ₂`, each padded to its map's ring row.
     pub(crate) fn witness_len(&self) -> Result<usize, AkitaError> {
         let [first, second] = self.maps()?;
-        Ok(first.real_digit_count() + second.real_digit_count())
+        Ok(first.padded_digit_count() + second.padded_digit_count())
     }
 
-    /// Chain rows: `K₁ξ₁ − G(ξ₂)`, then `K₂ξ₂ − cm`.
-    pub(crate) fn rows(&self) -> Result<usize, AkitaError> {
-        let [first, second] = self.maps()?;
-        Ok(first.output_coefficients() + second.output_coefficients())
+    /// The bits of each image coefficient in `ξ₁`.
+    fn bits(&self) -> Result<usize, AkitaError> {
+        let [first, _] = self.maps()?;
+        let bits = self.plan.field_bits();
+        if first.real_digit_count() != bits * self.coefficients.len() {
+            return Err(AkitaError::InvalidSetup(
+                "compression map digits disagree with its source".into(),
+            ));
+        }
+        Ok(bits)
     }
 }
+
+/// Chain rows per chunk: `K₁ξ₁ − G(ξ₂)`, then `K₂ξ₂ − cm`.
+const CHUNK_ROWS: usize = 2;
 
 /// The chunks of an image of `image_len` coefficients.
 pub(crate) fn chunks(
@@ -90,13 +104,18 @@ pub(crate) fn compress(
         compressed.payload.extend_from_slice(payload.coeffs());
         for stage in state.witness().stages() {
             compressed.witness.extend(digits(stage));
+            compressed.witness.resize(
+                compressed.witness.len() + stage.map().padded_digit_count()
+                    - stage.map().real_digit_count(),
+                0,
+            );
         }
     }
     Ok(compressed)
 }
 
 /// The `{−1, 0}` digits of one packed stage, its real digits only.
-fn digits(stage: &PackedNegativeBinary) -> impl Iterator<Item = i8> + '_ {
+pub(crate) fn digits(stage: &PackedNegativeBinary) -> impl Iterator<Item = i8> + '_ {
     (0..stage.map().real_digit_count())
         .map(|index| -i8::from(stage.bytes()[index / 8] >> (index % 8) & 1 == 1))
 }
@@ -114,7 +133,8 @@ fn recompose(digits: &[i8], n: usize) -> Vec<F> {
     out
 }
 
-/// The transpose of [`recompose`]: digit `b·n + k` takes `2^b w_k`.
+/// The transpose of [`recompose`] over `bits` planes: digit `b·n + k`
+/// takes `2^b w_k`.
 fn recompose_transpose(weights: &[F], bits: usize, out: &mut [F]) {
     let n = weights.len();
     let mut power = F::one();
@@ -135,7 +155,6 @@ pub(crate) fn reconstruct(
     let mut image = Vec::with_capacity(image_len);
     let mut rest = witness;
     for chunk in chunks(profile, image_len)? {
-        let [first, _] = chunk.maps()?;
         let len = chunk.witness_len()?;
         if rest.len() < len {
             return Err(AkitaError::InvalidSize {
@@ -145,9 +164,10 @@ pub(crate) fn reconstruct(
         }
         let (digits, tail) = rest.split_at(len);
         rest = tail;
+        let xi_1 = chunk.bits()? * chunk.coefficients.len();
         image.extend(recompose(
             digits
-                .get(..first.real_digit_count())
+                .get(..xi_1)
                 .ok_or_else(|| AkitaError::Internal("ξ₁ outside the chunk".into()))?,
             chunk.coefficients.len(),
         ));
@@ -177,12 +197,11 @@ pub(crate) fn reconstruct_transpose(
     for chunk in chunks(profile, image_len)? {
         let start = out.len();
         out.resize(start + chunk.witness_len()?, F::zero());
-        let bits = F::NUM_BYTES * 8;
         recompose_transpose(
             weights
                 .get(chunk.coefficients.clone())
                 .ok_or_else(|| AkitaError::Internal("chunk outside the image".into()))?,
-            bits,
+            chunk.bits()?,
             out.get_mut(start..)
                 .ok_or_else(|| AkitaError::Internal("chunk witness".into()))?,
         );
@@ -191,10 +210,10 @@ pub(crate) fn reconstruct_transpose(
 }
 
 /// `Σ_c K[c]·x[c]` in `Z_q[X]/(X^d + 1)`, `K[c]` the `c`-th `d`-coefficient
-/// block of `stream` and `x[c]` digits `c·d..(c + 1)·d` of `digits`
-/// (zero past its end).
+/// block of `stream` and `x[c]` digits `c·d..(c + 1)·d` of `digits`: the
+/// schoolbook definition of a compression map.
 #[cfg(test)]
-fn apply_row(stream: &[F], d: usize, digits: &[i8]) -> Vec<F> {
+pub(crate) fn apply_row(stream: &[F], d: usize, digits: &[i8]) -> Vec<F> {
     let mut out = vec![F::zero(); d];
     for (column, x) in digits.chunks(d).enumerate() {
         let k = &stream[column * d..(column + 1) * d];
@@ -213,107 +232,39 @@ fn apply_row(stream: &[F], d: usize, digits: &[i8]) -> Vec<F> {
     out
 }
 
-/// The transpose of `x ↦ Σ_c K[c]·x[c]`: digit `c·d + i` takes
-/// `Σ_j ω_j·[X^j](K[c]·X^i)`, for the first `len` digits.
-fn apply_row_transpose(
-    stream: &[F],
-    d: usize,
-    weights: &[F],
-    len: usize,
-    out: &mut [F],
-) -> Result<(), AkitaError> {
-    let k_len = len.div_ceil(d) * d;
-    let entries = stream.get(..k_len).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup stream shorter than a compression map".into())
-    })?;
-    let out = out
-        .get_mut(..len)
-        .ok_or_else(|| AkitaError::Internal("compression digits outside the witness".into()))?;
-    for (k, out) in entries.chunks_exact(d).zip(out.chunks_mut(d)) {
-        for (i, dst) in out.iter_mut().enumerate() {
-            let mut weight = F::zero();
-            for (j, &entry) in k.iter().enumerate() {
-                // X^j · X^i lands on X^{i+j}, negated past X^d.
-                let target = i + j;
-                if target < d {
-                    weight += weights.get(target).copied().unwrap_or_default() * entry;
-                } else {
-                    weight -= weights.get(target - d).copied().unwrap_or_default() * entry;
-                }
-            }
-            *dst += weight;
-        }
-    }
-    Ok(())
-}
-
-/// The chain rows of one chunk at `witness` minus their targets: `K₁ξ₁ −
-/// G(ξ₂)` and `K₂ξ₂ − payload`. The definition of the rows that
-/// [`chain_transpose`] transposes.
+/// The chain rows of one chunk at `witness`, coefficient by coefficient:
+/// `K₁ξ₁ − G(ξ₂)` and `K₂ξ₂ − payload`. The definition of the rows that
+/// [`Chains::relation`] evaluates at `α`.
 #[cfg(test)]
 pub(crate) fn chain_rows(
     stream: &[F],
     chunk: &Chunk,
     witness: &[i8],
     payload: &[F],
-) -> Result<Vec<F>, AkitaError> {
+) -> Result<[Vec<F>; CHUNK_ROWS], AkitaError> {
     let [first, second] = chunk.maps()?;
-    let (xi_1, xi_2) = witness.split_at(first.real_digit_count());
+    let (xi_1, xi_2) = witness.split_at(first.padded_digit_count());
     let mut rows = apply_row(stream, first.ring_dimension(), xi_1);
-    for (row, g) in rows
-        .iter_mut()
-        .zip(recompose(xi_2, first.output_coefficients()))
-    {
+    for (row, g) in rows.iter_mut().zip(recompose(
+        &xi_2[..chunk.plan.field_bits() * first.output_coefficients()],
+        first.output_coefficients(),
+    )) {
         *row -= g;
     }
     let mut second_rows = apply_row(stream, second.ring_dimension(), xi_2);
     for (row, target) in second_rows.iter_mut().zip(payload) {
         *row -= *target;
     }
-    rows.extend(second_rows);
-    Ok(rows)
+    Ok([rows, second_rows])
 }
 
-/// The weight on each witness digit of `⟨weights, chain rows⟩`, and the
-/// rows' constant `−⟨weights₂, payload⟩`.
-pub(crate) fn chain_transpose(
-    stream: &[F],
-    chunk: &Chunk,
-    weights: &[F],
-    payload: &[F],
-) -> Result<(Vec<F>, F), AkitaError> {
-    let [first, second] = chunk.maps()?;
-    let (first_weights, second_weights) =
-        weights.split_at(first.output_coefficients().min(weights.len()));
-    let mut out = vec![F::zero(); chunk.witness_len()?];
-    let (xi_1, xi_2) = out.split_at_mut(first.real_digit_count());
-    apply_row_transpose(
-        stream,
-        first.ring_dimension(),
-        first_weights,
-        first.real_digit_count(),
-        xi_1,
-    )?;
-    let negated: Vec<F> = first_weights.iter().map(|w| -*w).collect();
-    recompose_transpose(&negated, F::NUM_BYTES * 8, xi_2);
-    apply_row_transpose(
-        stream,
-        second.ring_dimension(),
-        second_weights,
-        second.real_digit_count(),
-        xi_2,
-    )?;
-    let constant = second_weights
-        .iter()
-        .zip(payload)
-        .fold(F::zero(), |sum, (w, p)| sum - *w * *p);
-    Ok((out, constant))
-}
-
-/// A Whiteout error carrying an Akita failure's message.
+/// A Whiteout error carrying an Akita failure's message: a size or input
+/// mismatch is the statement's fault, so the verifier rejects it.
 pub(crate) fn whiteout_error(error: AkitaError) -> WhiteoutError {
     match error {
-        AkitaError::InvalidProof => WhiteoutError::ResponseRejected("compressed image"),
+        AkitaError::InvalidProof | AkitaError::InvalidSize { .. } | AkitaError::InvalidInput(_) => {
+            WhiteoutError::ResponseRejected("compressed image")
+        }
         _ => WhiteoutError::InvariantViolation("compression"),
     }
 }
@@ -326,24 +277,38 @@ struct PlacedChunk<'a> {
 }
 
 /// The chains of every compressed image of a statement, against the setup
-/// stream that holds `K₁` and `K₂`.
+/// whose shared matrix holds `K₁` and `K₂`.
 pub(crate) struct Chains<'a> {
     profile: SisModulusProfileId,
-    stream: &'a [F],
+    setup: &'a AkitaExpandedSetup<F>,
     targets: Vec<CompressedTarget<'a, F>>,
 }
 
 impl<'a> Chains<'a> {
     pub(crate) fn new<const D: usize>(
         profile: SisModulusProfileId,
-        stream: &'a [F],
+        setup: &'a AkitaExpandedSetup<F>,
         statement: &'a ResponseStatement<'_, F, D>,
     ) -> Result<Self, ZkError> {
         Ok(Self {
             profile,
-            stream,
+            setup,
             targets: statement.compressed_targets()?,
         })
+    }
+
+    /// The chains of `targets` alone.
+    #[cfg(test)]
+    pub(crate) fn of_targets(
+        profile: SisModulusProfileId,
+        setup: &'a AkitaExpandedSetup<F>,
+        targets: Vec<CompressedTarget<'a, F>>,
+    ) -> Self {
+        Self {
+            profile,
+            setup,
+            targets,
+        }
     }
 
     /// Every target's chunks, with the first witness digit of each in `e`
@@ -353,8 +318,14 @@ impl<'a> Chains<'a> {
         for target in &self.targets {
             let (mut digit, mut payload) = (target.digits.start, target.payload);
             for chunk in chunks(self.profile, target.image_len)? {
-                let (head, tail) =
-                    payload.split_at(chunk.plan.terminal_coefficients().min(payload.len()));
+                let terminal = chunk.plan.terminal_coefficients();
+                if payload.len() < terminal {
+                    return Err(AkitaError::InvalidSize {
+                        expected: terminal,
+                        actual: payload.len(),
+                    });
+                }
+                let (head, tail) = payload.split_at(terminal);
                 payload = tail;
                 let len = chunk.witness_len()?;
                 out.push(PlacedChunk {
@@ -364,40 +335,57 @@ impl<'a> Chains<'a> {
                 });
                 digit += len;
             }
+            if !payload.is_empty() || digit != target.digits.end {
+                return Err(AkitaError::InvalidSize {
+                    expected: target.digits.end,
+                    actual: digit,
+                });
+            }
         }
         Ok(out)
     }
 
     /// The number of chain rows.
     pub(crate) fn rows(&self) -> Result<usize, AkitaError> {
-        self.chunks()?
-            .iter()
-            .map(|placed| placed.chunk.rows())
-            .sum()
+        Ok(self.chunks()?.len() * CHUNK_ROWS)
     }
 
-    /// Adds to `a` (over `e`) the weights of `⟨weights, chain rows⟩`, in
-    /// target and chunk order, and returns their constant.
-    pub(crate) fn transpose(&self, weights: &[F], a: &mut [F]) -> Result<F, AkitaError> {
+    /// `⟨weights, chain rows at α⟩` over the padded `e` of
+    /// `physical_field_len` entries, as Akita's reduced compression
+    /// relation, and its constant `−Σ w₂·cm(α)` from the payloads.
+    pub(crate) fn relation(
+        &self,
+        alpha: F,
+        weights: &[F],
+        physical_field_len: usize,
+    ) -> Result<(ReducedCompressionRelationWeights<F>, F), AkitaError> {
+        let placed = self.chunks()?;
+        let relation = ReducedCompressionRelationWeights::for_standalone_chains::<F>(
+            alpha,
+            &placed
+                .iter()
+                .map(|placed| (placed.chunk.plan.clone(), placed.digit))
+                .collect::<Vec<_>>(),
+            weights,
+            physical_field_len,
+        )?;
         let mut constant = F::zero();
-        let mut rest = weights;
-        for PlacedChunk {
-            chunk,
-            digit,
-            payload,
-        } in self.chunks()?
-        {
-            let (chunk_weights, tail) = rest.split_at(chunk.rows()?.min(rest.len()));
-            rest = tail;
-            let (digits, c) = chain_transpose(self.stream, &chunk, chunk_weights, payload)?;
-            constant += c;
-            let targets = a
-                .get_mut(digit..digit + digits.len())
-                .ok_or_else(|| AkitaError::Internal("chain digits outside e".into()))?;
-            for (dst, w) in targets.iter_mut().zip(digits) {
-                *dst += w;
-            }
+        for (placed, weights) in placed.iter().zip(weights.chunks_exact(CHUNK_ROWS)) {
+            let at_alpha = placed
+                .payload
+                .iter()
+                .rev()
+                .fold(F::zero(), |sum, coefficient| sum * alpha + *coefficient);
+            constant -= weights[CHUNK_ROWS - 1] * at_alpha;
         }
+        Ok((relation, constant))
+    }
+
+    /// Adds `⟨weights, chain rows at α⟩`'s weights to `a` over the padded
+    /// `e`, and returns their constant.
+    pub(crate) fn accumulate(&self, alpha: F, weights: &[F], a: &mut [F]) -> Result<F, AkitaError> {
+        let (relation, constant) = self.relation(alpha, weights, a.len())?;
+        relation.accumulate_dense(self.setup, a)?;
         Ok(constant)
     }
 
@@ -412,26 +400,4 @@ impl<'a> Chains<'a> {
             padded_len,
         )
     }
-}
-
-/// The length of the image whose compression has a `payload_len` payload
-/// and a `witness_len` witness.
-pub(crate) fn image_len(
-    profile: SisModulusProfileId,
-    payload_len: usize,
-    witness_len: usize,
-) -> Result<usize, AkitaError> {
-    let cap = MAX_COMPRESSION_INPUT_BYTES / F::NUM_BYTES;
-    let bits = F::NUM_BYTES * 8;
-    let terminal = CompressionChainPlan::for_complete_source(profile, cap)?.terminal_coefficients();
-    let chunks = payload_len.div_ceil(terminal.max(1));
-    let full = CompressionChainPlan::for_complete_source(profile, cap)?;
-    let tail = full.maps().get(1).map_or(0, |map| map.real_digit_count());
-    witness_len
-        .checked_sub(chunks * tail)
-        .map(|digits| digits / bits)
-        .ok_or_else(|| AkitaError::InvalidSize {
-            expected: chunks * tail,
-            actual: witness_len,
-        })
 }

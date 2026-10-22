@@ -15,6 +15,10 @@ use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{Field, Zero};
 use jolt_zk::whiteout::test_support::{CheckingResponseProver, SyntheticSigma};
 use jolt_zk::whiteout::ResponseSegment;
+use std::sync::Mutex;
+
+use akita_params::PackedNegativeBinary;
+use jolt_zk::whiteout::{CompressedImage, CompressedTarget};
 use rand::RngCore;
 
 type Cfg = RecursiveCommitmentConfig<ResponseDigits>;
@@ -93,6 +97,8 @@ fn accepts_what_the_statement_checker_accepts() {
 /// so only the verifier's checks can reject.
 struct Cheating<'a> {
     akita: &'a AkitaResponseProver<Cfg>,
+    /// The compression the prover's images and witnesses come from.
+    compression: &'a dyn ImageCompression<F>,
     edit: Edit,
     expected: Result<(), WhiteoutError>,
 }
@@ -149,7 +155,7 @@ impl ResponseLayoutPositions {
         let (z_coefficients, z_levels) = z.unwrap();
         let first = statement.compressed_targets().unwrap()[0].clone();
         let chunk = compression::chunks(Cfg::sis_modulus_profile(), first.image_len).unwrap();
-        let xi_1 = chunk[0].plan.maps()[0].real_digit_count();
+        let xi_1 = chunk[0].plan.maps()[0].padded_digit_count();
         Self {
             z_coefficients,
             z_levels,
@@ -196,7 +202,7 @@ fn unlinked_range(_: &ResponseLayoutPositions, e: &[i8]) -> CheatDigits {
 
 impl<const D: usize> ResponseProver<F, D> for Cheating<'_> {
     fn compression(&self) -> &dyn ImageCompression<F> {
-        self.akita
+        self.compression
     }
 
     fn prove_response<H: Sponge>(
@@ -285,6 +291,7 @@ fn rejects_each_item_violation() {
         for (edit, expected, _) in cases.iter().cloned() {
             let cheating = Cheating {
                 akita: &akita,
+                compression: &akita,
                 edit,
                 expected,
             };
@@ -303,6 +310,7 @@ fn rejects_each_item_violation() {
 
         let committing = Cheating {
             akita: &akita,
+            compression: &akita,
             edit: |at, e| CheatDigits::everywhere(out_of_alphabet(at, e)),
             expected: rejected("digit outside its alphabet"),
         };
@@ -317,6 +325,7 @@ fn rejects_each_item_violation() {
         assert!(format!("{checked:?}").contains("ct(h)"), "{checked:?}");
         let cheating = Cheating {
             akita: &akita,
+            compression: &akita,
             edit: |_, e| CheatDigits::everywhere(e.to_vec()),
             expected: rejected("ct(h)"),
         };
@@ -435,15 +444,17 @@ fn batched_weights_match_h_column_by_column() {
     });
 }
 
-/// The chain rows' transpose against their definition: on digits in
-/// `{−1, 0}`, `⟨transpose(ω), ξ⟩ + c = ⟨ω, rows(ξ)⟩`; and Akita's executor's
-/// witness reconstructs the image and satisfies every row.
+/// The chain relation against its definition: on digits in `{−1, 0}`,
+/// `⟨A, ξ⟩ + c = Σ_m w_m·row_m(ξ)(α)` with each row
+/// [`compression::chain_rows`] coefficient by coefficient, and its constant
+/// `−w₂·cm(α)` from a nonzero payload; and Akita's executor's witness
+/// reconstructs the image and satisfies every row.
 #[test]
-fn chain_rows_transpose_and_vanish_on_the_executor_witness() {
+fn chain_relation_matches_its_rows_and_vanishes_on_the_executor_witness() {
     on_big_stack(|| {
         let sigma = SyntheticSigma::<64>::new(10, 1);
         let akita = akita_for(sigma.response_len(&CompressionShape::<Cfg>::default()));
-        let stream = akita.stream();
+        let stream = akita.expanded().shared_matrix().as_field_slice();
         let profile = Cfg::sis_modulus_profile();
         let mut rng = rand::thread_rng();
         for image_len in [64, 512, 640] {
@@ -453,29 +464,292 @@ fn chain_rows_transpose_and_vanish_on_the_executor_witness() {
                 akita.reconstruct(image_len, &compressed.witness).unwrap(),
                 image
             );
-            let mut digit = 0;
-            let mut payload = compressed.payload.as_slice();
-            for chunk in compression::chunks(profile, image_len).unwrap() {
-                let len = chunk.witness_len().unwrap();
+            let chunks = compression::chunks(profile, image_len).unwrap();
+            let len = compressed.witness.len();
+            let padded_len = len.next_power_of_two();
+            let xi: Vec<i8> = (0..len).map(|_| -((rng.next_u32() & 1) as i8)).collect();
+            let alpha = F::random(&mut rng);
+            let weights: Vec<F> = (0..chunks.len() * 2).map(|_| F::random(&mut rng)).collect();
+            let (mut digit, mut payload) = (0, compressed.payload.as_slice());
+            let mut expected = F::zero();
+            for (chunk, weights) in chunks.iter().zip(weights.chunks_exact(2)) {
+                let width = chunk.witness_len().unwrap();
                 let (head, tail) = payload.split_at(chunk.plan.terminal_coefficients());
                 payload = tail;
-                let witness = &compressed.witness[digit..digit + len];
-                digit += len;
-                let rows = compression::chain_rows(stream, &chunk, witness, head).unwrap();
-                assert!(rows.iter().all(F::is_zero));
+                let honest = compression::chain_rows(
+                    stream,
+                    chunk,
+                    &compressed.witness[digit..digit + width],
+                    head,
+                )
+                .unwrap();
+                assert!(honest.iter().flatten().all(F::is_zero));
+                let rows = compression::chain_rows(stream, chunk, &xi[digit..digit + width], head)
+                    .unwrap();
+                for (weight, row) in weights.iter().zip(&rows) {
+                    let at_alpha = row.iter().rev().fold(F::zero(), |sum, c| sum * alpha + *c);
+                    expected += *weight * at_alpha;
+                }
+                digit += width;
+            }
+            let chains = compression::Chains::of_targets(
+                profile,
+                akita.expanded(),
+                vec![CompressedTarget {
+                    digits: 0..len,
+                    image_len,
+                    payload: &compressed.payload,
+                }],
+            );
+            let mut a = vec![F::zero(); padded_len];
+            let constant = chains.accumulate(alpha, &weights, &mut a).unwrap();
+            assert_ne!(constant, F::zero());
+            let actual: F = a
+                .iter()
+                .zip(&xi)
+                .map(|(a, &x)| *a * F::from_i64(i64::from(x)))
+                .sum::<F>()
+                + constant;
+            assert_eq!(actual, expected);
+        }
+    });
+}
 
-                let weights: Vec<F> = (0..rows.len()).map(|_| F::random(&mut rng)).collect();
-                let (a, c) = compression::chain_transpose(stream, &chunk, &weights, head).unwrap();
-                let xi: Vec<i8> = (0..len).map(|_| -((rng.next_u32() & 1) as i8)).collect();
-                let lhs: F = a
-                    .iter()
-                    .zip(&xi)
-                    .map(|(a, &x)| *a * F::from_i64(i64::from(x)))
-                    .sum::<F>()
-                    + c;
-                let rows = compression::chain_rows(stream, &chunk, &xi, head).unwrap();
-                let rhs: F = weights.iter().zip(&rows).map(|(w, r)| *w * *r).sum();
-                assert_eq!(lhs, rhs);
+/// A prover-chosen compression: Akita's executor, then one edit to the
+/// chain of chunk `chunk` of every image of `image_len` coefficients.
+struct Forging<'a> {
+    akita: &'a AkitaResponseProver<Cfg>,
+    forgery: Forgery,
+    image_len: usize,
+    chunk: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Forgery {
+    /// A `ξ₁` coefficient's bits `(0, −1)` at `(b, b + 1)` rewritten as
+    /// `(−2, 0)`, `ξ₂ = Bin(K₁ξ₁)` and `cm = K₂ξ₂` recomputed: the image
+    /// and both chain rows are unchanged, one digit leaves `{−1, 0}`.
+    Carry,
+    /// A `ξ₂` digit flipped and `cm = K₂ξ₂` recomputed: only `K₁`'s row
+    /// fails.
+    FlipXi2,
+    /// A payload coefficient moved: only `K₂`'s row fails.
+    BumpPayload,
+}
+
+impl Forging<'_> {
+    /// Edits `compressed` in place and returns the chunk's rows after the
+    /// edit.
+    fn forge(&self, compressed: &mut CompressedImage<F>) -> [Vec<F>; 2] {
+        let stream = self.akita.expanded().shared_matrix().as_field_slice();
+        let chunks = compression::chunks(Cfg::sis_modulus_profile(), self.image_len).unwrap();
+        let chunk = &chunks[self.chunk];
+        let digit: usize = chunks[..self.chunk]
+            .iter()
+            .map(|chunk| chunk.witness_len().unwrap())
+            .sum();
+        let start: usize = chunks[..self.chunk]
+            .iter()
+            .map(|chunk| chunk.plan.terminal_coefficients())
+            .sum();
+        let payload = &mut compressed.payload[start..start + chunk.plan.terminal_coefficients()];
+        let witness = &mut compressed.witness[digit..digit + chunk.witness_len().unwrap()];
+        let [first, second] = <[_; 2]>::try_from(chunk.plan.maps()).unwrap();
+        let (xi_1, xi_2) = witness.split_at_mut(first.padded_digit_count());
+        let n = chunk.coefficients.len();
+        let recompute_cm = |xi_2: &[i8], payload: &mut [F]| {
+            let cm = compression::apply_row(stream, second.ring_dimension(), xi_2);
+            payload.copy_from_slice(&cm[..payload.len()]);
+        };
+        match self.forgery {
+            Forgery::Carry => {
+                let at = (0..n * (chunk.plan.field_bits() - 1))
+                    .find(|&i| xi_1[i] == 0 && xi_1[i + n] == -1)
+                    .unwrap();
+                xi_1[at] = -2;
+                xi_1[at + n] = 0;
+                let j = compression::apply_row(stream, first.ring_dimension(), xi_1);
+                let packed = PackedNegativeBinary::from_coefficients(
+                    second,
+                    &j[..second.input_coefficients()],
+                )
+                .unwrap();
+                xi_2.fill(0);
+                for (dst, digit) in xi_2.iter_mut().zip(compression::digits(&packed)) {
+                    *dst = digit;
+                }
+                recompute_cm(xi_2, payload);
+            }
+            Forgery::FlipXi2 => {
+                xi_2[0] = -1 - xi_2[0];
+                recompute_cm(xi_2, payload);
+            }
+            Forgery::BumpPayload => payload[0] += F::one(),
+        }
+        compression::chain_rows(stream, chunk, witness, payload).unwrap()
+    }
+}
+
+impl ImageCompression<F> for Forging<'_> {
+    fn payload_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        self.akita.payload_len(image_len)
+    }
+
+    fn witness_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        self.akita.witness_len(image_len)
+    }
+
+    fn compress(&self, image: &[F]) -> Result<CompressedImage<F>, WhiteoutError> {
+        let mut compressed = self.akita.compress(image)?;
+        if image.len() == self.image_len {
+            self.forge(&mut compressed);
+        }
+        Ok(compressed)
+    }
+
+    fn reconstruct(&self, image_len: usize, witness: &[i8]) -> Result<Vec<F>, WhiteoutError> {
+        self.akita.reconstruct(image_len, witness)
+    }
+
+    fn reconstruct_transpose(
+        &self,
+        image_len: usize,
+        weights: &[F],
+    ) -> Result<Vec<F>, WhiteoutError> {
+        self.akita.reconstruct_transpose(image_len, weights)
+    }
+
+    fn check(&self, image_len: usize, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError> {
+        self.akita.check(image_len, payload, witness)
+    }
+}
+
+/// Records the image length of each compressed target.
+struct ImageLens<'a> {
+    akita: &'a AkitaResponseProver<Cfg>,
+    lens: Mutex<Vec<usize>>,
+}
+
+impl<const D: usize> ResponseProver<F, D> for ImageLens<'_> {
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        self.akita
+    }
+
+    fn prove_response<H: Sponge>(
+        &self,
+        statement: &ResponseStatement<'_, F, D>,
+        _: &ResponseWitness,
+        _: &mut ProverTranscript<H>,
+    ) -> Result<(), ZkError> {
+        *self.lens.lock().unwrap() = statement
+            .compressed_targets()?
+            .iter()
+            .map(|target| target.image_len)
+            .collect();
+        Ok(())
+    }
+
+    fn verify_response<H: Sponge>(
+        &self,
+        _: &ResponseStatement<'_, F, D>,
+        _: &mut VerifierTranscript<'_, H>,
+    ) -> Result<(), ZkError> {
+        Ok(())
+    }
+}
+
+/// The prover chooses `cm`, so each chain constraint is load-bearing: a
+/// carry inside `ξ₁` keeps the image and both chain rows and is caught
+/// only by the binary constraint `ζ`; a `ξ₂` flip with `cm` recomputed
+/// fails only `K₁`'s row; a moved payload fails only `K₂`'s row. Each
+/// moves the chain relation off zero on a non-first chunk (the carry
+/// excepted), and the verifier rejects each at the fused sumcheck on the
+/// first image's chain and on `t_D`'s. The synthetic images fit one chunk.
+#[test]
+fn rejects_prover_chosen_compressions() {
+    on_big_stack(|| {
+        let sigma = SyntheticSigma::<64>::new(11, 3);
+        let akita = akita_for(sigma.response_len(&CompressionShape::<Cfg>::default()));
+        let profile = Cfg::sis_modulus_profile();
+        let recorder = ImageLens {
+            akita: &akita,
+            lens: Mutex::new(Vec::new()),
+        };
+        sigma.prove(&recorder, 12).unwrap();
+        let lens = recorder.lens.into_inner().unwrap();
+        let (first, t_d) = (lens[0], *lens.last().unwrap());
+        assert_eq!(lens.iter().filter(|&&len| len == t_d).count(), 1);
+        let rejected = |item| Err(WhiteoutError::ResponseRejected(item));
+        let mut rng = rand::thread_rng();
+        for forgery in [Forgery::Carry, Forgery::FlipXi2, Forgery::BumpPayload] {
+            // The chain relation at a random α, on a non-first chunk.
+            let image_len = 640;
+            let forging = Forging {
+                akita: &akita,
+                forgery,
+                image_len,
+                chunk: 1,
+            };
+            let image: Vec<F> = (0..image_len).map(|_| F::random(&mut rng)).collect();
+            let mut compressed = akita.compress(&image).unwrap();
+            let rows = forging.forge(&mut compressed);
+            let holds = match forgery {
+                Forgery::Carry => [true, true],
+                Forgery::FlipXi2 => [false, true],
+                Forgery::BumpPayload => [true, false],
+            };
+            assert_eq!(
+                rows.map(|row| row.iter().all(F::is_zero)),
+                holds,
+                "{forgery:?}"
+            );
+            assert_eq!(
+                akita.reconstruct(image_len, &compressed.witness).unwrap(),
+                image
+            );
+            let chains = compression::Chains::of_targets(
+                profile,
+                akita.expanded(),
+                vec![CompressedTarget {
+                    digits: 0..compressed.witness.len(),
+                    image_len,
+                    payload: &compressed.payload,
+                }],
+            );
+            let weights: Vec<F> = (0..4).map(|_| F::random(&mut rng)).collect();
+            let mut a = vec![F::zero(); compressed.witness.len().next_power_of_two()];
+            let constant = chains
+                .accumulate(F::random(&mut rng), &weights, &mut a)
+                .unwrap();
+            let value = a
+                .iter()
+                .zip(&compressed.witness)
+                .map(|(a, &x)| *a * F::from_i64(i64::from(x)))
+                .sum::<F>()
+                + constant;
+            assert_eq!(value.is_zero(), holds == [true, true], "{forgery:?}");
+
+            // End to end, on the first image's chain and on t_D's.
+            for image_len in [first, t_d] {
+                let forging = Forging {
+                    akita: &akita,
+                    forgery,
+                    image_len,
+                    chunk: 0,
+                };
+                let cheating = Cheating {
+                    akita: &akita,
+                    compression: &forging,
+                    edit: |_, e| CheatDigits::everywhere(e.to_vec()),
+                    expected: rejected("compressed image"),
+                };
+                let proof = sigma.prove(&cheating, 13).unwrap();
+                let error = sigma.verify(&proof, &akita).unwrap_err();
+                assert_eq!(
+                    rejection(&error),
+                    Some(&WhiteoutError::ResponseRejected("fused sumcheck")),
+                    "{forgery:?} on an image of {image_len}: {error:?}"
+                );
             }
         }
     });

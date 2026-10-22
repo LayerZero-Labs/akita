@@ -35,9 +35,9 @@ use akita_params::{
 use akita_prover::{prove_digit_range, SelectedProverOpeningData};
 use akita_sumcheck::{multilinear_eval, FusedRounds};
 use akita_types::{
-    AkitaVerifierSetup, Commitment, CommittedGroup, DigitRangeEqualityPoint, GroupBatchStatement,
-    NegativeBinarySupport, OpeningClaims, PolynomialGroupClaims, ProverGrinding, RingVec,
-    VerifierGrinding,
+    AkitaExpandedSetup, AkitaVerifierSetup, Commitment, CommittedGroup, DigitRangeEqualityPoint,
+    GroupBatchStatement, NegativeBinarySupport, OpeningClaims, PolynomialGroupClaims,
+    ProverGrinding, RingVec, VerifierGrinding,
 };
 use akita_verifier::{AkitaVerifier, Stage1Verifier};
 use jolt_algebra::{One, Prime128OffsetA7F7, Ring, Zero};
@@ -145,13 +145,9 @@ where
         })
     }
 
-    /// The setup stream that holds the compression maps.
-    fn stream(&self) -> &[F] {
-        self.verifier
-            .setup()
-            .expanded()
-            .shared_matrix()
-            .as_field_slice()
+    /// The setup whose shared matrix holds the compression maps.
+    fn expanded(&self) -> &AkitaExpandedSetup<F> {
+        self.verifier.setup().expanded()
     }
 
     /// The compression chains of `statement`'s images.
@@ -159,7 +155,7 @@ where
         &'s self,
         statement: &'s ResponseStatement<'_, F, D>,
     ) -> Result<Chains<'s>, ZkError> {
-        Chains::new(Cfg::sis_modulus_profile(), self.stream(), statement)
+        Chains::new(Cfg::sis_modulus_profile(), self.expanded(), statement)
     }
 
     /// Proves the statement on `digits`, without checking that it holds:
@@ -551,7 +547,12 @@ impl<Cfg: CommitmentConfig> ImageCompression<F> for CompressionShape<Cfg> {
             .map_err(compression::whiteout_error)
     }
 
-    fn check(&self, _payload: &[F], _witness: &[i8]) -> Result<(), WhiteoutError> {
+    fn check(
+        &self,
+        _image_len: usize,
+        _payload: &[F],
+        _witness: &[i8],
+    ) -> Result<(), WhiteoutError> {
         Err(WhiteoutError::InvalidRelation(
             "checking a compression needs a prover backend",
         ))
@@ -594,10 +595,7 @@ where
     /// image, so `witness` opens `payload` exactly when compressing the
     /// image it reconstructs gives both back. The verifier enforces the
     /// chain equations and the binary digits instead (§5.7).
-    fn check(&self, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError> {
-        let image_len =
-            compression::image_len(Cfg::sis_modulus_profile(), payload.len(), witness.len())
-                .map_err(compression::whiteout_error)?;
+    fn check(&self, image_len: usize, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError> {
         let compressed = self.compress(&self.reconstruct(image_len, witness)?)?;
         if compressed.payload == payload && compressed.witness == witness {
             Ok(())

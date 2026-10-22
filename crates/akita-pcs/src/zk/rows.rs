@@ -197,11 +197,12 @@ pub(crate) fn batch_rows<const D: usize>(
     if a.len() != shape.len {
         return Err(zk_error(AkitaError::Internal("row weights length".into())));
     }
-    let chain_constant = chains
-        .transpose(&weights.chains, &mut a)
-        .map_err(zk_error)?;
-    let b = weights.target(claims) - constant - chain_constant;
+    let target = weights.target(claims);
     a.extend(weights.padding);
+    let chain_constant = chains
+        .accumulate(alpha, &weights.chains, &mut a)
+        .map_err(zk_error)?;
+    let b = target - constant - chain_constant;
     Ok(BatchedRows { a, b })
 }
 
