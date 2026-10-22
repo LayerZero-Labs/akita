@@ -1087,6 +1087,37 @@ The remaining tests:
 - **W5-e.** Proof bytes, prover time and verifier time are reported against
   the paper's model at the headline, including the raw-image surcharge.
 
+### 5.8 Performance plan (W5-e follow-up)
+
+W5a's measured verifier is 3.8 s at the synthetic headline (|e| ≈ 2^27), about
+300× the paper's no-offload model; the prover is 12 s, about 10× the paper's
++1.15 s. Sampled shares (verifier): 51% `apply_transposed` over CRT limbs for
+Nᵀη; 28% single-threaded `multilinear_eval` of dense A over 2^27; 6% the
+constant b computed as `rows(zeros)`; 5.5% `eq_table(η)` over 2^26 for the
+padding rows; 5% building A plane by plane.
+
+- **P1, factored A(r) (no layout change).** In segment k, entry
+  o_k + p·C_k + 256j + u has weight radix^p·w_k[256j+u]; with C_k and o_k
+  multiples of 256, eq(r,·) splits as eq(r_lo8,u)·eq(r_hi,·), so the column
+  weights cost O(|e|/256) and the Nᵀ term is one σ_N scan plus one ring
+  product per row on F-coefficients. Padding leaves the η batch: A gains
+  δ·1[j ≥ len]·eq(τ_pad, j), evaluated by an O(ν) bit-DP (adds ν/q to the
+  error; paper delta). b comes from the targets, with no matrix application.
+  Estimate ≈ 60–65 ms synthetic, ≈ +12 ms at the paper's geometry.
+- **P2, W5b.** After P1, about 80% of the verifier is the σ_N scan; W5b moves
+  it into Stage 3 (§5.3). Stage 3's random column point needs ω̃ evaluated
+  succinctly, which needs A15 segment alignment (C_k = 2^{c_k}, aligned o_k)
+  or an O(P·ν) shifted-eq evaluator. Estimate ≈ 12–15 ms total, response
+  overhead ≈ 1–3 ms.
+- **Prover.** Top costs: the fused degree-3 sumcheck over three dense 2^27
+  tables (32%), the same transposed pass (24%), the digit range (13%).
+  Fixes: keep e as i8 in early rounds, split-eq (Gruen) for B, build A from
+  ω × radix planes, a direct F ring transpose.
+- **Ownership.** jolt-zk gains `ResponseStatement::weight_at` (factored A(r)
+  with the σ_N scan inside), `ResponseStatement::constant`, an F-coefficient
+  view of `PreparedMatrix`, and for W5b a `SetupContraction` accessor; `weigh`
+  stays for the prover and the small-shape W5-b test.
+
 ## 6. M6e
 
 M6e changes the following:
