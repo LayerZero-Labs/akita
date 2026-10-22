@@ -52,10 +52,10 @@ use jolt_zk::whiteout::{
 
 use crate::AkitaCommitmentScheme;
 use compression::Chains;
-use rounds::{ClearProverRounds, ClearVerifierRounds, FusedE, FusedKernel, ProductKernel};
+use rounds::{ClearProverRounds, ClearVerifierRounds, FusedE, FusedKernel, ProductKernel, SplitB};
 use rows::{
-    batch_rows, batch_target, batch_weight_at, ceil_log2, eq_table, row_variables, zk_error,
-    PaddingTerm, ProductClaims, ResponseShape, RowWeights,
+    batch_rows, batch_target, batch_weight_at, ceil_log2, row_variables, zk_error, PaddingTerm,
+    ProductClaims, ResponseShape, RowWeights,
 };
 
 /// The response statement's field.
@@ -307,7 +307,7 @@ where
         let support = chains.support(shape.padded_len()).map_err(zk_error)?;
         let mut fused = FusedKernel {
             a: batch.a,
-            b: range_weights(&range.point, gamma, zeta, &support),
+            b: SplitB::new(&range.point, gamma, zeta, support.intervals()),
             e: FusedE::Digits(committed),
         };
         let claim = batch.b + gamma * range.range_image;
@@ -496,24 +496,6 @@ where
     ) -> Result<(), ZkError> {
         self.verify(statement, transcript)
     }
-}
-
-/// `B_j = (γ + ζ·1_{I_bin}(j))·eq(τ, j)` for every `j`, scaled in place
-/// over `eq(τ, ·)` interval by interval.
-fn range_weights(range_point: &[F], gamma: F, zeta: F, binary: &NegativeBinarySupport) -> Vec<F> {
-    let mut weights = eq_table(range_point);
-    let mut start = 0;
-    for interval in binary.intervals() {
-        weights[start..interval.start]
-            .par_iter_mut()
-            .for_each(|w| *w *= gamma);
-        weights[interval.clone()]
-            .par_iter_mut()
-            .for_each(|w| *w *= gamma + zeta);
-        start = interval.end;
-    }
-    weights[start..].par_iter_mut().for_each(|w| *w *= gamma);
-    weights
 }
 
 /// `B(r) = Σ_j (γ + ζ·1_{I_bin}(j))·eq(τ, j)·eq(r, j)`: the range image's
