@@ -36,6 +36,7 @@ akita-config = { version = "0.1.0", path = "../akita-config", default-features =
 ] }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false, features = [
   "test-support",
+  "zk",
 ] }
 
 [[bin]]

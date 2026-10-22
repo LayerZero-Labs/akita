@@ -64,30 +64,15 @@ pub fn transcript_grinding_cost_for_planner_edge(
 }
 
 /// Derive the only accepted grinding plan from field metadata and public protocol shape.
+///
+/// The fold responses at the levels a zero-knowledge cut masks are one-shot.
 pub fn derive_transcript_grinding_plan_from_public_shape(
     schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
     challenge_order: ChallengeFieldOrder,
     claim_extension_degree: usize,
 ) -> Result<GrindingPlan, AkitaError> {
-    derive_grinding_plan(
-        schedule,
-        root_layout,
-        challenge_order,
-        claim_extension_degree,
-        None,
-    )
-}
-
-/// Derive a schedule's grinding plan. Fold responses at levels up to
-/// `one_shot_through` are one-shot; every other run is the clear plan's.
-pub(crate) fn derive_grinding_plan(
-    schedule: &FoldSchedule,
-    root_layout: &OpeningClaimsLayout,
-    challenge_order: ChallengeFieldOrder,
-    claim_extension_degree: usize,
-    one_shot_through: Option<u32>,
-) -> Result<GrindingPlan, AkitaError> {
+    let one_shot_through = schedule.zk.map(|zk| zk.cut_level());
     schedule.validate_structure()?;
     schedule.validate_nonterminal_opening_execution(claim_extension_degree)?;
     root_layout.check()?;

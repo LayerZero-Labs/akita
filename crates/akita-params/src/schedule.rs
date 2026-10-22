@@ -335,6 +335,13 @@ pub struct FoldSchedule {
     pub root: FoldParams,
     pub recursive_folds: Vec<FoldParams>,
     pub terminal: TerminalFoldParams,
+    /// Zero-knowledge cut: `Some` masks the levels up to its cut. Clear
+    /// schedules carry `None`, which neither the artifact encoding nor the
+    /// descriptor bytes record.
+    ///
+    /// Extension seam: Whiteout zero knowledge (akita#120).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zk: Option<crate::zk::ZkOpeningSchedule>,
 }
 
 /// Borrowed nonterminal step used to encode a checked planner candidate

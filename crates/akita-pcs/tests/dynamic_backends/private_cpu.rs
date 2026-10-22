@@ -1,7 +1,7 @@
 // A distinct handle family; CPU storage is private to this test backend.
 use super::{Cfg, E, F};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
-use akita_cpu_backend::{CpuBackend, CpuImportPacket, GroupContext, OneHotPoly};
+use akita_cpu_backend::{CpuBackend, CpuImportPacket, CpuSource, GroupContext};
 use akita_error::AkitaError;
 use akita_params::{FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout};
 use akita_prover::backend::*;
@@ -119,10 +119,10 @@ impl PrivateCpu {
         }
         prefixes
     }
-    pub(crate) fn commit_onehot(
+    pub(crate) fn commit<P: CpuSource<F, E>>(
         &self,
         schedules: &TrustedScheduleCatalog<Cfg>,
-        polys: Vec<OneHotPoly<F, u8>>,
+        polys: Vec<P>,
     ) -> Result<(akita_types::CommittedGroup<F>, OwnedCommitment), AkitaError> {
         let source = self.inner.import_source(polys)?;
         let output = self.inner.commit(

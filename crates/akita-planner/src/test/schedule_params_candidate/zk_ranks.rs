@@ -21,9 +21,9 @@ fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
         ))
         .expect("headline-shaped row");
     let source = Cfg::committed_source_contract().unwrap();
-    let zk = ZkOpeningSchedule::for_tests(row.schedule().clone(), ZK_CUT_LEVEL, source).unwrap();
+    let zk = ZkOpeningSchedule::new(ZK_CUT_LEVEL).unwrap();
     for level in 0..=ZK_CUT_LEVEL as usize {
-        let sizing = MaskedFoldSizing::new(zk.schedule(), level, source).unwrap();
+        let sizing = MaskedFoldSizing::new(row.schedule(), level, source).unwrap();
         let params = sizing.params;
         assert!(
             matches!(
@@ -32,8 +32,8 @@ fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
             ),
             "masked level {level} must use the Linf route"
         );
-        let derive = |failure_target| {
-            let query = sizing.query(failure_target);
+        let derive = |masking: LevelMasking| {
+            let query = sizing.query(masking.failure_target());
             derive_inner_commitment_candidate(InnerCommitmentCandidateRequest {
                 policy: &policy,
                 fold_policy: &sizing.policy,
@@ -49,7 +49,7 @@ fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
                 log_basis_open: query.log_basis_response,
                 width_s: params.inner().matrix.input_width(),
                 modeled_linf_cap: None,
-                failure_target,
+                masking,
             })
             .unwrap()
             .expect("admitted candidate")
@@ -57,10 +57,10 @@ fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
         // The scheduled digits are the policy's own at both levels: neither
         // carries a modeled cap below the universal bound.
         assert_eq!(
-            derive(FoldFailureTarget::PerAttempt).num_digits_fold,
+            derive(LevelMasking::Clear).num_digits_fold,
             params.num_digits_fold()
         );
-        let one_shot = derive(zk.fold_failure_target());
+        let one_shot = derive(LevelMasking::Masked(zk));
         assert_eq!(
             one_shot.inner_commit_matrix.output_rank(),
             params.inner().matrix.output_rank(),

@@ -738,6 +738,7 @@ pub fn materialize_candidate_schedule(
             input_witness_len: terminal_response.input_witness_len,
             ..terminal_response.params.clone()
         },
+        zk: None,
     };
     crate::resolve::validate_canonical_transition_lengths(root_layout, &schedule, policy)?;
     let mut estimate = FoldScheduleEstimate {

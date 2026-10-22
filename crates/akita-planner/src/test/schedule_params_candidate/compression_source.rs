@@ -38,8 +38,7 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
         width_s,
         num_digits_outer: 2,
         modeled_linf_cap: None,
-        failure_target: FoldFailureTarget::PerAttempt,
-        hiding: false,
+        masking: LevelMasking::Clear,
     })
     .unwrap()
     .expect("raw candidate has certified minimum A/B ranks");

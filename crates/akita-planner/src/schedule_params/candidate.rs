@@ -26,9 +26,38 @@ pub(crate) struct AbCommitmentCandidateRequest<'a> {
     /// Optional typed-model cap for the Linf response. The universal policy
     /// remains the dominance guard.
     pub(crate) modeled_linf_cap: Option<u128>,
-    pub(crate) failure_target: FoldFailureTarget,
-    /// Whether the commitment gets hiding-randomness columns.
-    pub(crate) hiding: bool,
+    pub(crate) masking: LevelMasking,
+}
+
+/// Whether a planned fold level is masked by a zero-knowledge cut.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LevelMasking {
+    Clear,
+    /// The level's B slices and D image carry hiding randomness, its fold
+    /// response is one-shot and sized for the cut's failure target, and it
+    /// uses the ℓ∞ route only.
+    Masked(akita_params::zk::ZkOpeningSchedule),
+}
+
+impl LevelMasking {
+    /// The masking of fold `level` under `zk`.
+    pub(crate) fn at(zk: Option<akita_params::zk::ZkOpeningSchedule>, level: usize) -> Self {
+        match zk {
+            Some(zk) if zk.masks(level) => Self::Masked(zk),
+            _ => Self::Clear,
+        }
+    }
+
+    pub(crate) const fn hiding(self) -> bool {
+        matches!(self, Self::Masked(_))
+    }
+
+    pub(crate) const fn failure_target(self) -> FoldFailureTarget {
+        match self {
+            Self::Clear => FoldFailureTarget::PerAttempt,
+            Self::Masked(zk) => zk.fold_failure_target(),
+        }
+    }
 }
 
 pub(crate) struct AbCommitmentCandidate {
@@ -55,7 +84,7 @@ pub(super) struct InnerCommitmentCandidateRequest<'a> {
     pub(super) width_s: usize,
     /// Optional per-attempt typed-model cap for the Linf response.
     pub(super) modeled_linf_cap: Option<u128>,
-    pub(super) failure_target: FoldFailureTarget,
+    pub(super) masking: LevelMasking,
 }
 
 pub(super) struct InnerCommitmentCandidate {
@@ -232,8 +261,9 @@ pub(super) fn derive_inner_commitment_candidate(
         log_basis_open,
         width_s,
         modeled_linf_cap,
-        failure_target,
+        masking,
     } = request;
+    let failure_target = masking.failure_target();
     let d_a = dimensions.d_a();
     let num_fold_coeffs = width_s
         .checked_mul(d_a)
@@ -317,8 +347,7 @@ pub(crate) fn derive_ab_commitment_candidate(
         width_s,
         num_digits_outer,
         modeled_linf_cap,
-        failure_target,
-        hiding,
+        masking,
     } = request;
     let Some(inner_candidate) =
         derive_inner_commitment_candidate(InnerCommitmentCandidateRequest {
@@ -336,7 +365,7 @@ pub(crate) fn derive_ab_commitment_candidate(
             log_basis_open,
             width_s,
             modeled_linf_cap,
-            failure_target,
+            masking,
         })?
     else {
         return Ok(None);
@@ -354,7 +383,7 @@ pub(crate) fn derive_ab_commitment_candidate(
             log_basis_open,
             num_digits_outer,
             inner_output_rank: inner_commit_matrix.output_rank(),
-            hiding,
+            hiding: masking.hiding(),
         })?
     else {
         return Ok(None);

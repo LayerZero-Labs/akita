@@ -37,8 +37,6 @@ rayon = { version = "1.10", optional = true }
 
 [features]
 benchmark-support = []
-# Test-only zero-knowledge entry points; zero-knowledge mode is not published.
-test-support = ["akita-params/test-support"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",

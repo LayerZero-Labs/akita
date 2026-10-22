@@ -46,7 +46,7 @@ pub(crate) struct ScheduleSearchOptions<'a> {
     pub(crate) relation_mode_filter: super::schedule_params::RelationModeFilter,
     pub(crate) root_main_constraint: Option<&'a CommittedGroupParams>,
     pub(crate) adaptation_guide: Option<&'a akita_params::FoldSchedule>,
-    pub(crate) hiding_cut_level: Option<usize>,
+    pub(crate) zk: Option<akita_params::zk::ZkOpeningSchedule>,
     #[cfg(test)]
     pub(crate) query_prefix_count: u64,
 }
@@ -58,7 +58,7 @@ impl ScheduleSearchOptions<'_> {
             relation_mode_filter: super::schedule_params::RelationModeFilter::All,
             root_main_constraint: None,
             adaptation_guide: None,
-            hiding_cut_level: None,
+            zk: None,
             #[cfg(test)]
             query_prefix_count: 0,
         }
@@ -205,7 +205,7 @@ struct MultiGroupRootCandidateCtx<'a> {
     final_num_vars: usize,
     main_num_polys: usize,
     source: crate::InnerBasisSource,
-    hiding: bool,
+    masking: crate::schedule_params::LevelMasking,
 }
 
 struct RootFinalGroupCandidateInput<'a> {
@@ -350,7 +350,7 @@ pub(crate) fn root_level_candidates_for_prepared_producers(
     candidate_log_basis_inner: u32,
     candidate_log_basis_open: u32,
     guide: Option<crate::schedule_params::CandidateLayoutGuide>,
-    hiding: bool,
+    masking: crate::schedule_params::LevelMasking,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     dimensions.validate_role_projection()?;
     opening.validate_for(policy.claim_ext_degree, dimensions)?;
@@ -368,7 +368,7 @@ pub(crate) fn root_level_candidates_for_prepared_producers(
         final_num_vars: key.final_group.num_vars(),
         main_num_polys: key.final_group.num_polynomials(),
         source: crate::schedule_params::root_inner_basis_source(final_source_contract),
-        hiding,
+        masking,
     };
     let opening_batch = key.opening_layout()?;
     let min_block_index_bits: usize = if reduced_vars >= 3 { 1 } else { 0 };
@@ -541,8 +541,7 @@ fn root_final_group_level_params_candidate(
         width_s,
         num_digits_outer,
         modeled_linf_cap: None,
-        failure_target: FoldFailureTarget::PerAttempt,
-        hiding: ctx.hiding,
+        masking: ctx.masking,
     })?
     else {
         return Ok(None);
@@ -579,7 +578,7 @@ fn root_final_group_level_params_candidate(
         .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
     let Some((open_commit_matrix, open_randomness_columns)) =
         crate::schedule_params::price_with_hiding_randomness(
-            ctx.hiding,
+            ctx.masking.hiding(),
             d_width,
             dimensions.d_d(),
             policy.sis_modulus_profile,
@@ -825,16 +824,20 @@ pub fn find_schedule_for_test_relation_mode(
     )
 }
 
-/// Build a schedule whose levels up to `cut_level` carry hiding randomness.
+/// Plan a test-only zero-knowledge schedule masked through `zk`'s cut.
 ///
-/// Every outer commitment consumed at those levels and every D image they
-/// make gets randomness columns sized by
-/// [`akita_params::zk::hiding_randomness_columns`]; the result passes
-/// [`akita_params::zk::validate_hiding_randomness`]. The schedule still runs
-/// the clear protocol, so tests can prove and verify with nonzero
-/// randomness before the masked levels exist.
+/// At every masked level the planner sizes the fold digits for
+/// [`akita_params::zk::ZkOpeningSchedule::fold_failure_target`] with no
+/// modeled cap, gives the level's B slices and D image hiding randomness
+/// sized by [`akita_params::zk::hiding_randomness_columns`], and admits only
+/// the ℓ∞ route. The result carries `zk` and passes
+/// [`akita_params::zk::ZkOpeningSchedule::admit`].
+///
+/// The search prices every fold response at the clear nonce width, so it may
+/// rank candidates by up to two nonce bytes per masked level more than the
+/// one-shot plan sends.
 #[cfg(all(feature = "test-support", feature = "zk"))]
-pub fn find_schedule_for_test_hiding(
+pub fn find_schedule_for_test_zk(
     key: &ScheduleLookupKey,
     final_source_contract: CommittedSourceContract,
     policy: &PlannerPolicy,
@@ -842,20 +845,21 @@ pub fn find_schedule_for_test_hiding(
         usize,
     )
         -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>,
-    cut_level: usize,
+    zk: akita_params::zk::ZkOpeningSchedule,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
-    let planned = find_schedule_in_relation_order(
+    let mut planned = find_schedule_in_relation_order(
         key,
         final_source_contract,
         &[],
         policy,
         ring_challenge_config,
         ScheduleSearchOptions {
-            hiding_cut_level: Some(cut_level),
+            zk: Some(zk),
             ..ScheduleSearchOptions::canonical()
         },
     )?;
-    akita_params::zk::validate_hiding_randomness(&planned.schedule, cut_level)?;
+    planned.schedule.zk = Some(zk);
+    akita_params::zk::ZkOpeningSchedule::admit(&planned.schedule, final_source_contract)?;
     Ok(planned)
 }
 
@@ -917,7 +921,7 @@ pub(crate) fn find_schedule_in_relation_order(
         level_zero_is_root: true,
         relation_traversal_order: options.relation_traversal_order,
         relation_mode_filter: options.relation_mode_filter,
-        hiding_cut_level: options.hiding_cut_level,
+        zk: options.zk,
     };
     let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(policy)?;
     let initial_state = SuffixState {

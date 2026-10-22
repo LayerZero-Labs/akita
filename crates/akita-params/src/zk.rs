@@ -1,38 +1,33 @@
 //! Zero-knowledge opening schedules and their hiding randomness.
 //!
-//! A zero-knowledge opening runs levels `0..=cut_level` masked. Their fold
-//! responses are one-shot: the plan schedules each with `nonce_bits = 0`, so
-//! no nonce precedes the fold challenges, and an out-of-range response aborts
-//! the proof instead of being retried.
+//! A zero-knowledge schedule carries a [`ZkOpeningSchedule`] whose cut masks
+//! levels `0..=cut_level`. At each masked level:
 //!
-//! [`ZkOpeningSchedule::for_tests`], the only constructor, admits a fold
-//! schedule only if every masked level carries at least the digit count its
-//! honest-fold policy derives for [`ZkOpeningSchedule::fold_failure_target`].
-//! Zero-knowledge mode is not selectable yet.
+//! - the fold response is one-shot: the grinding plan schedules it with
+//!   `nonce_bits = 0`, so no nonce precedes the fold challenges, and an
+//!   out-of-range response aborts the proof instead of being retried;
+//! - its fold digit count meets [`ZkOpeningSchedule::fold_failure_target`];
+//! - its B slices and its D image carry fresh hiding randomness columns, sized
+//!   by [`hiding_randomness_columns`]; the randomness hides each image by the
+//!   leftover hash lemma once its entropy exceeds the image's bit length by
+//!   `2λ` plus a fixed slack.
 //!
-//! A zero-knowledge schedule also appends fresh randomness columns to every
-//! outer (B) slice and every opening (D) image made at a masked level. The
-//! randomness hides the image by the leftover hash lemma once its entropy
-//! exceeds the image's bit length by `2λ` plus a fixed slack. This module is
-//! the one Akita caller of `jolt_crypto`'s sizing rule; planners and schedule
-//! validation both size widths through [`hiding_randomness_columns`].
+//! [`ZkOpeningSchedule::admit`] checks all of this in release builds. Catalog
+//! admission and the prover both run it; a clear catalog rejects every
+//! zero-knowledge schedule, so zero knowledge is not selectable yet.
 
 use crate::sis::{
     BalancedSignedDigitFoldPolicy, CommittedSourceContract, FoldFailureTarget, FoldWitnessNorms,
-    HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
+    HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery, SisModulusProfileId,
 };
-use crate::transcript_grinding_plan::derive_grinding_plan;
 use crate::{
-    ChallengeFieldOrder, CommittedGroupParams, FoldSchedule, GrindingPlan, OpeningClaimsLayout,
+    CommittedGroupParams, FoldSchedule, GroupOpenPhaseParams, InnerCommitSecurityRoute,
     OpeningMethod,
 };
 use akita_error::AkitaError;
 use jolt_algebra::{Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use jolt_crypto::challenge::SparseChallengeConfig;
 use jolt_crypto::lattice::required_randomness_columns;
-
-use crate::sis::SisModulusProfileId;
-use crate::GroupOpenPhaseParams;
 
 /// The only supported cut: levels 0 and 1 are masked (`k = 2`).
 pub const ZK_CUT_LEVEL: u32 = 1;
@@ -51,123 +46,148 @@ pub(crate) const fn one_shot_fold_target(cut_level: u32) -> FoldFailureTarget {
     }
 }
 
-/// The schedule an opening runs: clear, or zero knowledge.
-#[derive(Clone, Copy, Debug)]
-pub enum OpeningSchedule<'a> {
-    Clear(&'a FoldSchedule),
-    Zk(&'a ZkOpeningSchedule),
-}
-
-impl<'a> From<&'a FoldSchedule> for OpeningSchedule<'a> {
-    fn from(schedule: &'a FoldSchedule) -> Self {
-        Self::Clear(schedule)
-    }
-}
-
-impl<'a> OpeningSchedule<'a> {
-    /// The fold schedule the opening executes.
-    #[must_use]
-    pub fn fold_schedule(self) -> &'a FoldSchedule {
-        match self {
-            Self::Clear(schedule) => schedule,
-            Self::Zk(schedule) => schedule.schedule(),
-        }
-    }
-
-    /// The only accepted grinding plan of this schedule.
-    pub fn grinding_plan(
-        self,
-        root_layout: &OpeningClaimsLayout,
-        challenge_order: ChallengeFieldOrder,
-        claim_extension_degree: usize,
-    ) -> Result<GrindingPlan, AkitaError> {
-        let (schedule, one_shot_through) = match self {
-            Self::Clear(schedule) => (schedule, None),
-            Self::Zk(schedule) => (&schedule.schedule, Some(schedule.cut_level)),
-        };
-        derive_grinding_plan(
-            schedule,
-            root_layout,
-            challenge_order,
-            claim_extension_degree,
-            one_shot_through,
-        )
-    }
-}
-
-/// An opening schedule whose levels up to `cut_level` are masked.
+/// The zero-knowledge part of a fold schedule: the cut that masks levels
+/// `0..=cut_level`.
 ///
-/// The schedule is a clear fold schedule, terminal included: the residual cut
-/// that replaces the levels after `cut_level` is not part of this type yet.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A [`FoldSchedule`] stores it, its descriptor bytes bind it, and its
+/// grinding plan makes the masked fold responses one-shot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ZkOpeningSchedule {
-    schedule: FoldSchedule,
     cut_level: u32,
 }
 
 impl ZkOpeningSchedule {
-    /// Wrap a fold schedule with its cut, for tests only.
-    ///
-    /// `root_source` is the contract the root's single committed group was
-    /// produced under.
+    /// The cut masking levels `0..=cut_level`.
     ///
     /// # Errors
     ///
     /// Returns [`AkitaError::UnsupportedSchedule`] for a cut other than
-    /// [`ZK_CUT_LEVEL`], a cut that is not a nonterminal level, a root with
-    /// precommitted groups, or a masked level whose fold digit count is below
-    /// the one its honest-fold policy derives for the one-shot target.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(
-        schedule: FoldSchedule,
-        cut_level: u32,
-        root_source: CommittedSourceContract,
-    ) -> Result<Self, AkitaError> {
-        schedule.validate_structure()?;
-        if cut_level != ZK_CUT_LEVEL {
-            return Err(AkitaError::UnsupportedSchedule(format!(
-                "zero-knowledge cut level {cut_level} is unsupported; only {ZK_CUT_LEVEL} is"
-            )));
-        }
-        if schedule.recursive_folds.len() < cut_level as usize {
-            return Err(AkitaError::UnsupportedSchedule(
-                "zero-knowledge cut level must precede the terminal fold".into(),
-            ));
-        }
-        let zk = Self {
-            schedule,
-            cut_level,
-        };
-        let target = zk.fold_failure_target();
-        for level in 0..=cut_level as usize {
-            let sizing = MaskedFoldSizing::new(&zk.schedule, level, root_source)?;
-            let required = sizing.num_digits_fold(target)?;
-            let scheduled = sizing.params.num_digits_fold();
-            if scheduled < required {
-                return Err(AkitaError::UnsupportedSchedule(format!(
-                    "masked level {level} has {scheduled} fold digits; its one-shot target needs {required}"
-                )));
-            }
-        }
+    /// [`ZK_CUT_LEVEL`].
+    #[cfg(any(test, feature = "zk"))]
+    pub fn new(cut_level: u32) -> Result<Self, AkitaError> {
+        let zk = Self { cut_level };
+        zk.validate_cut()?;
         Ok(zk)
     }
 
-    /// The fold schedule, terminal included.
-    #[must_use]
-    pub fn schedule(&self) -> &FoldSchedule {
-        &self.schedule
+    fn validate_cut(self) -> Result<(), AkitaError> {
+        if self.cut_level != ZK_CUT_LEVEL {
+            return Err(AkitaError::UnsupportedSchedule(format!(
+                "zero-knowledge cut level {} is unsupported; only {ZK_CUT_LEVEL} is",
+                self.cut_level
+            )));
+        }
+        Ok(())
     }
 
     /// The last masked level.
     #[must_use]
-    pub const fn cut_level(&self) -> u32 {
+    pub const fn cut_level(self) -> u32 {
         self.cut_level
+    }
+
+    /// Whether fold `level` is masked.
+    #[must_use]
+    pub const fn masks(self, level: usize) -> bool {
+        level <= self.cut_level as usize
     }
 
     /// Failure target of each masked fold's one-shot response.
     #[must_use]
-    pub const fn fold_failure_target(&self) -> FoldFailureTarget {
+    pub const fn fold_failure_target(self) -> FoldFailureTarget {
         one_shot_fold_target(self.cut_level)
+    }
+
+    /// The one admission check of a zero-knowledge schedule, in release
+    /// builds.
+    ///
+    /// `root_source` is the contract the root's single committed group is
+    /// produced under. The check requires:
+    ///
+    /// - `schedule.zk` is a supported cut that precedes the last nonterminal
+    ///   fold, whose output is the terminal witness, sent in the clear;
+    /// - the root commits exactly one group, and no masked level consumes a
+    ///   setup prefix, whose response would share the one-shot probe unsized;
+    /// - every masked level uses the ℓ∞ route (an ℓ2 route reveals the
+    ///   response energy and carries a per-attempt ℓ2 cap and an
+    ///   operator-norm challenge family, none of which is one-shot sized),
+    ///   uses one witness chunk, carries exactly [`b_randomness_columns`] for
+    ///   its own group's B slices and [`d_randomness_columns`] for its D
+    ///   image, and at least the fold digits its honest-fold policy derives
+    ///   for [`fold_failure_target`](Self::fold_failure_target);
+    /// - every later level, and every preceding group, carries no randomness.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::UnsupportedSchedule`] for a missing or
+    /// unsupported cut and [`AkitaError::InvalidSetup`] naming the first
+    /// violating level otherwise.
+    pub fn admit(
+        schedule: &FoldSchedule,
+        root_source: CommittedSourceContract,
+    ) -> Result<Self, AkitaError> {
+        let zk = schedule.zk.ok_or_else(|| {
+            AkitaError::UnsupportedSchedule("schedule has no zero-knowledge cut".into())
+        })?;
+        zk.validate_cut()?;
+        if zk.cut_level as usize >= schedule.recursive_folds.len() {
+            return Err(AkitaError::InvalidSetup(format!(
+                "zero-knowledge cut level {} reaches the terminal witness",
+                zk.cut_level
+            )));
+        }
+        if !schedule.root.params.precommitted_groups().is_empty() {
+            return Err(AkitaError::InvalidSetup(
+                "a masked root must commit exactly one group".into(),
+            ));
+        }
+        let target = zk.fold_failure_target();
+        let levels = std::iter::once(&schedule.root.params)
+            .chain(schedule.recursive_folds.iter().map(|fold| &fold.params));
+        for (level, params) in levels.enumerate() {
+            let invalid = |what: &str| AkitaError::InvalidSetup(format!("level {level} {what}"));
+            let own = params.own_group();
+            let (expected_b, expected_d) = if zk.masks(level) {
+                if !matches!(
+                    params.inner().matrix.security_route(),
+                    InnerCommitSecurityRoute::Linf(_)
+                ) {
+                    return Err(invalid("is masked on an L2 route"));
+                }
+                if params.witness_chunk.num_chunks != 1 {
+                    return Err(invalid("is masked across several witness chunks"));
+                }
+                // A setup prefix or precommitted group folds in the same
+                // one-shot probe, and its digits are not one-shot sized.
+                if params.preceding_group_iter().next().is_some() {
+                    return Err(invalid("is masked but consumes a preceding group"));
+                }
+                let sizing = MaskedFoldSizing::new(schedule, level, root_source)?;
+                let required = sizing.num_digits_fold(target)?;
+                if params.num_digits_fold() < required {
+                    return Err(invalid(&format!(
+                        "has {} fold digits; its one-shot target needs {required}",
+                        params.num_digits_fold()
+                    )));
+                }
+                (b_randomness_columns(own)?, d_randomness_columns(params)?)
+            } else {
+                (0, 0)
+            };
+            if own.profile.randomness_columns != expected_b {
+                return Err(invalid("has the wrong B hiding randomness"));
+            }
+            if params.open_randomness_columns != expected_d {
+                return Err(invalid("has the wrong D hiding randomness"));
+            }
+            if params
+                .preceding_group_iter()
+                .any(|group| group.profile.randomness_columns != 0)
+            {
+                return Err(invalid("gives a precommitted group hiding randomness"));
+            }
+        }
+        Ok(zk)
     }
 }
 
@@ -397,62 +417,6 @@ pub fn d_randomness_columns(params: &CommittedGroupParams) -> Result<usize, Akit
             log_basis: open.digits.log_basis,
         },
     )
-}
-
-/// Recompute every hiding-randomness width of `schedule` and reject any
-/// mismatch, in release builds.
-///
-/// Each level up to `cut_level` must carry exactly [`b_randomness_columns`]
-/// for its own group's B slices and [`d_randomness_columns`] for its D
-/// image. Both are sized at the level's open alphabet, the one its range
-/// check proves. Preceding groups (setup prefixes, committed
-/// programs, trusted advice) and every level after the cut carry none, and a
-/// hiding level uses one witness chunk. The cut must precede the last
-/// nonterminal fold, whose output is the terminal witness.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidSetup`] naming the first violating level.
-pub fn validate_hiding_randomness(
-    schedule: &FoldSchedule,
-    cut_level: usize,
-) -> Result<(), AkitaError> {
-    // The last nonterminal fold's output is the terminal witness, sent in the
-    // clear, so a cut there would publish that fold's randomness.
-    if cut_level >= schedule.recursive_folds.len() {
-        return Err(AkitaError::InvalidSetup(format!(
-            "hiding cut level {cut_level} reaches the terminal witness"
-        )));
-    }
-    let levels = std::iter::once(&schedule.root.params)
-        .chain(schedule.recursive_folds.iter().map(|fold| &fold.params));
-    for (level, params) in levels.enumerate() {
-        let invalid = |what: &str| {
-            AkitaError::InvalidSetup(format!("level {level} {what} hiding randomness"))
-        };
-        let own = params.own_group();
-        let (expected_b, expected_d) = if level <= cut_level {
-            if params.witness_chunk.num_chunks != 1 {
-                return Err(invalid("splits across witness chunks its"));
-            }
-            (b_randomness_columns(own)?, d_randomness_columns(params)?)
-        } else {
-            (0, 0)
-        };
-        if own.profile.randomness_columns != expected_b {
-            return Err(invalid("has the wrong B"));
-        }
-        if params.open_randomness_columns != expected_d {
-            return Err(invalid("has the wrong D"));
-        }
-        if params
-            .preceding_group_iter()
-            .any(|group| group.profile.randomness_columns != 0)
-        {
-            return Err(invalid("gives a precommitted group"));
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

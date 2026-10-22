@@ -9,8 +9,9 @@
 
 use crate::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_error::AkitaError;
-use akita_params::zk::OpeningSchedule;
-use akita_params::{BasisMode, GrindingPlan, OpeningClaimsLayout, OpeningScheduleSelection};
+use akita_params::{
+    BasisMode, FoldSchedule, GrindingPlan, OpeningClaimsLayout, OpeningScheduleSelection,
+};
 use akita_types::{
     AkitaInstanceDescriptor, AkitaSetupDescriptor, AlgebraSection, CallSection, FpExtEncoding,
     PlanSection, SetupSection, TranscriptGrindingBinding,
@@ -29,9 +30,6 @@ use jolt_algebra::{CanonicalEncoding, Field};
 /// binds every expanded fold `CommittedGroupParams`, so there is no separate
 /// setup-level digest to compute here.
 ///
-/// A zero-knowledge `schedule` has its own grinding plan, and the plan digest
-/// in the descriptor is what separates the two modes.
-///
 /// # Errors
 ///
 /// Returns an error when:
@@ -41,7 +39,7 @@ pub fn transcript_instance_descriptor<F, Cfg>(
     setup: &AkitaSetupDescriptor,
     opening_batch: &OpeningClaimsLayout,
     selection: OpeningScheduleSelection,
-    schedule: OpeningSchedule<'_>,
+    schedule: &FoldSchedule,
     basis: BasisMode,
 ) -> Result<(GrindingPlan, Vec<u8>), AkitaError>
 where
@@ -58,7 +56,7 @@ where
             &setup.setup_seed,
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
-        PlanSection::from_schedule(selection, schedule.fold_schedule()),
+        PlanSection::from_schedule(selection, schedule),
         TranscriptGrindingBinding::for_plan(&grinding_plan)?,
         CallSection::from_layout(opening_batch, basis)?,
     );

@@ -48,6 +48,7 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
             input_witness_len: ring_dimension,
             ..terminal_witness
         },
+        zk: None,
     }
 }
 

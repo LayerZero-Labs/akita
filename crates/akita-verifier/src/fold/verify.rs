@@ -7,7 +7,6 @@ use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Valid};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
-use akita_params::zk::{OpeningSchedule, ZkOpeningSchedule};
 use akita_params::{
     validate_schedule_ring_dims, BasisMode, CommittedGroupBatchProfile, ProtocolSiteId,
 };
@@ -62,37 +61,6 @@ where
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
-        self.verify_on_schedule(transcript, statement, None, basis)
-    }
-
-    /// [`batched_verify`](Self::batched_verify) under the zero-knowledge
-    /// schedule `zk`, which replaces the selected row's schedule: fold
-    /// responses up to its cut carry no nonce.
-    ///
-    /// The clear and zero-knowledge modes are separated only by the grinding
-    /// plan digest in the instance descriptor, which Fiat-Shamir absorbs
-    /// first. The proof carries no mode tag, and none may be added: the
-    /// verifier's own choice of schedule decides the mode.
-    ///
-    /// Test-only until zero-knowledge mode is published.
-    #[cfg(feature = "test-support")]
-    pub fn batched_verify_zk<H: Sponge>(
-        &self,
-        transcript: &mut VerifierTranscript<'_, H>,
-        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
-        basis: BasisMode,
-        zk: &ZkOpeningSchedule,
-    ) -> Result<(), AkitaError> {
-        self.verify_on_schedule(transcript, statement, Some(zk), basis)
-    }
-
-    fn verify_on_schedule<H: Sponge>(
-        &self,
-        transcript: &mut VerifierTranscript<'_, H>,
-        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
-        zk: Option<&ZkOpeningSchedule>,
-        basis: BasisMode,
-    ) -> Result<(), AkitaError> {
         let setup = &self.setup;
         let schedules = &self.schedules;
         let selection = statement.selection();
@@ -137,11 +105,7 @@ where
                 "commitment profiles do not match the selected schedule row".to_string(),
             ));
         }
-        let opening_schedule = zk.map_or(
-            OpeningSchedule::Clear(resolved.schedule()),
-            OpeningSchedule::Zk,
-        );
-        let schedule = opening_schedule.fold_schedule();
+        let schedule = resolved.schedule();
         let root_params = &schedule.root_fold().params;
         let expected_final_descriptor = akita_params::GroupCommitPhaseParams::try_from_params(
             final_descriptor.group,
@@ -171,7 +135,7 @@ where
             &setup.expanded().descriptor,
             &opening_batch,
             selection,
-            opening_schedule,
+            schedule,
             basis,
         )?;
         transcript.site(

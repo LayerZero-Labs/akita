@@ -8,11 +8,10 @@ pub(super) fn resolve_root<'a, 's, Cfg, H>(
     expanded: &akita_types::AkitaSetupDescriptor,
     schedules: &'s TrustedScheduleCatalog<Cfg>,
     opening: SelectedProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
-    zk: Option<&'s akita_params::zk::ZkOpeningSchedule>,
     basis: BasisMode,
 ) -> Result<
     (
-        &'s FoldSchedule,
+        &'s akita_config::ResolvedScheduleRow,
         ProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
         akita_params::GrindingPlan,
         Vec<u8>,
@@ -36,24 +35,23 @@ where
     let (selection, claims) = opening.into_low_level_parts();
     let resolved = schedules.resolve_selection(selection)?;
     resolved.validate_opening_layout(claims.opening_layout())?;
-    let schedule = zk.map_or(
-        akita_params::zk::OpeningSchedule::Clear(resolved.schedule()),
-        akita_params::zk::OpeningSchedule::Zk,
-    );
+    // A zero-knowledge row samples hiding randomness and probes masked fold
+    // responses once; recheck it here, in release builds, before either.
+    if resolved.schedule().zk.is_some() {
+        akita_params::zk::ZkOpeningSchedule::admit(
+            resolved.schedule(),
+            Cfg::committed_source_contract()?,
+        )?;
+    }
     let (grinding_plan, descriptor_bytes) =
         akita_config::transcript_instance_descriptor::<Cfg::Field, Cfg>(
             expanded,
             claims.opening_layout(),
             selection,
-            schedule,
+            resolved.schedule(),
             basis,
         )?;
-    Ok((
-        schedule.fold_schedule(),
-        claims,
-        grinding_plan,
-        descriptor_bytes,
-    ))
+    Ok((resolved, claims, grinding_plan, descriptor_bytes))
 }
 
 #[allow(clippy::too_many_arguments)]

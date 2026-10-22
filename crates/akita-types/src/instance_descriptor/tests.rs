@@ -47,6 +47,7 @@ fn sample_schedule() -> FoldSchedule {
             input_witness_len: 256,
             ..terminal_witness
         },
+        zk: None,
     }
 }
 

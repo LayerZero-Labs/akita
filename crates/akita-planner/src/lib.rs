@@ -40,10 +40,10 @@ pub use emit::{
     publish_artifact_outputs, render_schedule_artifact_outputs_with_validation, ArtifactOutput,
     EmitSpec, MaterializationDiagnostics,
 };
-#[cfg(all(feature = "test-support", feature = "zk"))]
-pub use planner::find_schedule_for_test_hiding;
 #[cfg(feature = "test-support")]
 pub use planner::find_schedule_for_test_relation_mode;
+#[cfg(all(feature = "test-support", feature = "zk"))]
+pub use planner::find_schedule_for_test_zk;
 pub use planner::{find_adapted_schedule, find_schedule};
 pub use policy::InnerBasisSource;
 pub use schedule_params::suffix_opening_layout;

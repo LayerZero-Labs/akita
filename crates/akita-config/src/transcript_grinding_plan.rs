@@ -2,13 +2,12 @@
 
 use crate::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_params::zk::OpeningSchedule;
-use akita_params::{ChallengeFieldOrder, GrindingPlan, OpeningClaimsLayout};
+use akita_params::{ChallengeFieldOrder, FoldSchedule, GrindingPlan, OpeningClaimsLayout};
 use jolt_algebra::{CanonicalEncoding, ExtField};
 
 /// Derive the only accepted grinding plan for one effective schedule and call.
-pub fn derive_transcript_grinding_plan<'a, Cfg: CommitmentConfig>(
-    schedule: impl Into<OpeningSchedule<'a>>,
+pub fn derive_transcript_grinding_plan<Cfg: CommitmentConfig>(
+    schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
 ) -> Result<GrindingPlan, AkitaError>
 where
@@ -27,9 +26,12 @@ where
         extension_degree,
         Cfg::sis_modulus_profile().modulus(),
     )?;
-    schedule
-        .into()
-        .grinding_plan(root_layout, challenge_order, extension_degree)
+    akita_params::derive_transcript_grinding_plan_from_public_shape(
+        schedule,
+        root_layout,
+        challenge_order,
+        extension_degree,
+    )
 }
 
 #[cfg(test)]
@@ -95,196 +97,6 @@ mod tests {
                 ],
             )
         );
-    }
-
-    /// The five-level `fp128_onehot final=16:2` row and its opening layout:
-    /// the smallest one-hot row whose masked levels meet the one-shot target.
-    fn five_level_onehot_row() -> (OpeningClaimsLayout, akita_params::FoldSchedule) {
-        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>(
-            akita_params::ChunkedWitnessCfg::default_non_chunked(),
-        )
-        .expect("one-hot schedule catalog");
-        let layout = OpeningClaimsLayout::new(16, 2).expect("opening layout");
-        let row = catalog
-            .resolve_key(&akita_params::ScheduleLookupKey::single(
-                layout.root_final_group_layout().expect("root group"),
-            ))
-            .expect("generated production row");
-        (layout, row.schedule().clone())
-    }
-
-    fn zk_schedule(
-        schedule: akita_params::FoldSchedule,
-        cut_level: u32,
-    ) -> Result<akita_params::zk::ZkOpeningSchedule, AkitaError> {
-        akita_params::zk::ZkOpeningSchedule::for_tests(
-            schedule,
-            cut_level,
-            fp128::OneHot::committed_source_contract().unwrap(),
-        )
-    }
-
-    #[test]
-    fn zero_knowledge_plan_is_the_clear_plan_with_one_shot_responses_up_to_the_cut() {
-        use akita_params::zk::{OpeningSchedule, ZK_CUT_LEVEL};
-        use akita_params::FOLD_RESPONSE_NONCE_BITS;
-
-        let (layout, schedule) = five_level_onehot_row();
-        let clear = derive_transcript_grinding_plan::<fp128::OneHot>(&schedule, &layout)
-            .expect("clear plan");
-        let zk = zk_schedule(schedule.clone(), ZK_CUT_LEVEL).expect("zk schedule");
-        let one_shot =
-            derive_transcript_grinding_plan::<fp128::OneHot>(OpeningSchedule::Zk(&zk), &layout)
-                .expect("zk plan");
-
-        assert_eq!(clear.runs().len(), one_shot.runs().len());
-        let mut fold_levels = Vec::new();
-        for (clear_run, zk_run) in clear.runs().iter().zip(one_shot.runs()) {
-            assert_eq!(clear_run.site(), zk_run.site());
-            if let GrindingSite::FoldResponse { level } = zk_run.site() {
-                fold_levels.push(level);
-                assert_eq!(clear_run.nonce_bits(), FOLD_RESPONSE_NONCE_BITS);
-                let expected = if level <= ZK_CUT_LEVEL {
-                    0
-                } else {
-                    FOLD_RESPONSE_NONCE_BITS
-                };
-                assert_eq!(zk_run.nonce_bits(), expected, "level {level}");
-            } else {
-                assert_eq!(clear_run, zk_run);
-            }
-        }
-        assert_eq!(
-            fold_levels,
-            (0..schedule.num_fold_levels() as u32).collect::<Vec<_>>()
-        );
-        assert_ne!(clear.digest().unwrap(), one_shot.digest().unwrap());
-    }
-
-    #[test]
-    fn zero_knowledge_schedule_rejects_an_unsupported_cut_or_a_short_masked_level() {
-        use akita_params::zk::ZK_CUT_LEVEL;
-
-        let (_, schedule) = five_level_onehot_row();
-        assert!(zk_schedule(schedule.clone(), ZK_CUT_LEVEL).is_ok());
-        assert!(matches!(
-            zk_schedule(schedule.clone(), ZK_CUT_LEVEL + 1),
-            Err(AkitaError::UnsupportedSchedule(_))
-        ));
-        for level in 0..=ZK_CUT_LEVEL as usize {
-            let mut short = schedule.clone();
-            let params = match level {
-                0 => &mut short.root.params,
-                _ => &mut short.recursive_folds[level - 1].params,
-            };
-            params.own_group_mut().opening.num_digits_fold -= 1;
-            assert!(
-                matches!(
-                    zk_schedule(short, ZK_CUT_LEVEL),
-                    Err(AkitaError::UnsupportedSchedule(message)) if message.contains("fold digits")
-                ),
-                "level {level}"
-            );
-        }
-        // A short level after the cut is not masked.
-        let mut short = schedule;
-        short.recursive_folds[ZK_CUT_LEVEL as usize]
-            .params
-            .own_group_mut()
-            .opening
-            .num_digits_fold -= 1;
-        assert!(zk_schedule(short, ZK_CUT_LEVEL).is_ok());
-    }
-
-    /// The one-shot fold response at level 0 of a zero-knowledge plan sends
-    /// no nonce and forks at counter 0, and the verifier rejects a nonce in
-    /// its place.
-    #[test]
-    fn one_shot_fold_response_replays_without_a_nonce() {
-        use akita_params::zk::{OpeningSchedule, ZK_CUT_LEVEL};
-        use akita_params::FoldResponseSearch;
-        use akita_types::{
-            AkitaSponge, FoldDrawRecord, GrindingReplay, ProverGrinding, VerifierGrinding,
-            PROOF_STREAM_PROTOCOL,
-        };
-        use jolt_transcript::{ProverTranscript, VerifierTranscript};
-        type F = <fp128::OneHot as CommitmentConfig>::Field;
-        const SESSION: &[u8] = b"one-shot-fold-response";
-
-        let (layout, schedule) = five_level_onehot_row();
-        let zk = zk_schedule(schedule, ZK_CUT_LEVEL).expect("zk schedule");
-        let plan =
-            derive_transcript_grinding_plan::<fp128::OneHot>(OpeningSchedule::Zk(&zk), &layout)
-                .expect("zk plan");
-        let site = GrindingSite::FoldResponse { level: 0 };
-        let start = plan
-            .runs()
-            .iter()
-            .position(|run| run.site() == site)
-            .expect("level-0 fold response");
-        // Every run before the response is a proof-of-work query.
-        let earlier = &plan.runs()[..start];
-        assert!(earlier
-            .iter()
-            .all(|run| run.kind() == GrindingQueryKind::ProofOfWork));
-        let [group, next, ..] = &plan.runs()[start + 1..] else {
-            panic!("plan too short");
-        };
-        let GrindingSite::FoldChallengeGroup { level: 0, group: 0 } = group.site() else {
-            panic!("the response's challenge group follows it");
-        };
-        let coordinates = usize::try_from(group.fold_coordinate_count().unwrap()).unwrap();
-
-        let mut transcript = ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION);
-        let mut prover = ProverGrinding::new(&mut transcript, &plan);
-        for run in earlier {
-            prover.grinded_ext_challenge::<F, F>(run.site()).unwrap();
-        }
-        assert_eq!(
-            prover.begin_fold_response(site).unwrap(),
-            FoldResponseSearch::OneShot
-        );
-        assert!(prover.fold_response_fork(site, 1).is_err());
-        let sent = prover.state_mut().narg().len();
-        let mut prover_fork = prover.commit_fold_response(site, 0).unwrap();
-        assert_eq!(prover.state_mut().narg().len(), sent, "no nonce is sent");
-        prover
-            .record_fold_challenges(0, 0, coordinates, &FoldDrawRecord::default())
-            .unwrap();
-        prover.grinded_ext_challenge::<F, F>(next.site()).unwrap();
-        let proof = transcript.finish();
-
-        let verify = |proof: &[u8]| -> Result<[u8; 32], AkitaError> {
-            let mut transcript =
-                VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, proof);
-            let mut verifier = VerifierGrinding::new(&mut transcript, &plan);
-            for run in earlier {
-                verifier.grinded_ext_challenge::<F, F>(run.site())?;
-            }
-            let mut fork = verifier.read_fold_response(site)?;
-            verifier.record_fold_challenges(0, 0, coordinates, &FoldDrawRecord::default())?;
-            verifier.grinded_ext_challenge::<F, F>(next.site())?;
-            transcript.finish()?;
-            Ok(fork.squeeze::<32>())
-        };
-        assert_eq!(verify(&proof), Ok(prover_fork.squeeze::<32>()));
-        // A clear prover's nonce for counter 0 where the response sits: after
-        // the bytes of the earlier queries.
-        let mut transcript = ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION);
-        let mut prover = ProverGrinding::new(&mut transcript, &plan);
-        for run in earlier {
-            prover.grinded_ext_challenge::<F, F>(run.site()).unwrap();
-        }
-        let at_response = prover.state_mut().narg().len();
-        let mut with_nonce = proof;
-        with_nonce.insert(at_response, 0);
-        assert!(verify(&with_nonce).is_err());
-
-        prover.begin_fold_response(site).unwrap();
-        assert!(matches!(
-            prover.commit_fold_response(site, 1),
-            Err(AkitaError::InvalidInput(_))
-        ));
     }
 
     #[test]

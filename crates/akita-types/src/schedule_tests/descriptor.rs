@@ -41,6 +41,7 @@ fn borrowed_schedule_descriptor_matches_materialized_schedule() {
         &mut borrowed_descriptor,
         steps.into_iter(),
         terminal,
+        schedule.zk,
     )
     .unwrap();
     assert_eq!(borrowed_descriptor, schedule.canonical_descriptor_bytes());

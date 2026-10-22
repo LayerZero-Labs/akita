@@ -26,6 +26,7 @@ impl FoldSchedule {
         bytes: &mut Vec<u8>,
         mut folds: impl ExactSizeIterator<Item = FoldScheduleDescriptorStep<'a>>,
         terminal: &TerminalFoldParams,
+        zk: Option<crate::zk::ZkOpeningSchedule>,
     ) -> Result<(), AkitaError> {
         let root = folds.next().ok_or_else(|| {
             AkitaError::UnsupportedSchedule(
@@ -63,6 +64,7 @@ impl FoldSchedule {
             );
         }
         terminal.append_descriptor_bytes(bytes);
+        append_zk_descriptor_bytes(bytes, zk);
         Ok(())
     }
 
@@ -99,8 +101,21 @@ impl FoldSchedule {
             );
         }
         self.terminal.append_descriptor_bytes(bytes);
+        append_zk_descriptor_bytes(bytes, self.zk);
     }
 }
+
+/// A zero-knowledge cut appends a tag and the cut level after the terminal
+/// fold; a clear schedule appends nothing, so its bytes are unchanged.
+fn append_zk_descriptor_bytes(bytes: &mut Vec<u8>, zk: Option<crate::zk::ZkOpeningSchedule>) {
+    if let Some(zk) = zk {
+        bytes.push(ZK_CUT_DESCRIPTOR_TAG);
+        crate::descriptor_bytes::push_u32(bytes, zk.cut_level());
+    }
+}
+
+/// Tag of the zero-knowledge cut in schedule descriptor bytes.
+const ZK_CUT_DESCRIPTOR_TAG: u8 = 0x5a;
 
 /// Number of witness chunks this fold declares.
 ///

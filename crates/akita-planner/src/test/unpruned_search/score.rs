@@ -50,6 +50,7 @@ pub(super) fn schedule_descriptor_bytes(
         &mut descriptor,
         steps,
         &terminal,
+        None,
     )?;
     Ok(descriptor)
 }

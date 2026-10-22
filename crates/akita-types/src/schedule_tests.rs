@@ -220,6 +220,7 @@ fn recursive_schedule(
             input_witness_len: successor_ring_dimension,
             ..terminal
         },
+        zk: None,
     }
 }
 
