@@ -79,6 +79,10 @@ impl<C: Channel + PrivateChannel<Error: Into<AkitaError>>> GrindingReplay
         let result = next_entry(&mut self.cursor, site, GrindingQueryKind::ProofOfWork).map(|_| ());
         self.checked(result)
     }
+
+    fn check_public(&mut self, _holds: bool) -> Result<(), AkitaError> {
+        Ok(())
+    }
 }
 
 impl<C: Channel + PrivateChannel<Error: Into<AkitaError>>> FoldResponseReplay

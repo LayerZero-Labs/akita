@@ -94,6 +94,10 @@ impl<G: GrindingReplay, F> GrindingReplay for MaskedReplay<'_, G, F> {
     fn grind_query(&mut self, site: akita_params::GrindingSite) -> Result<(), AkitaError> {
         self.grinding.grind_query(site)
     }
+
+    fn check_public(&mut self, holds: bool) -> Result<(), AkitaError> {
+        self.grinding.check_public(holds)
+    }
 }
 
 impl<G: FoldResponseReplay, F> FoldResponseReplay for MaskedReplay<'_, G, F> {

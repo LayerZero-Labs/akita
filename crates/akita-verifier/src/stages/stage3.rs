@@ -105,7 +105,9 @@ impl<E: Field> SetupSumcheckVerifier<E> {
             level,
         )?;
         let claim = akita_types::stage3_claim::<F, E, _>(grinding, level, E::zero())?;
-        let mut channel = akita_types::GrindingSumcheckVerifier::<F, E, _>::new(
+        // Public in both modes, as the prover sends them: the rounds fold and
+        // check in the clear even over a masked channel.
+        let mut channel = akita_types::PublicGrindingSumcheck::<F, E, _>::new(
             grinding,
             akita_params::SumcheckProtocol::Stage3,
             level,
@@ -128,9 +130,9 @@ impl<E: Field> SetupSumcheckVerifier<E> {
             .setup_index_weight
             .evaluate(rho_setup_idx, self.alpha)?;
         let alpha_val = evaluate_power_sequence_mle(self.alpha, rho_y);
-        if replay.output_claim != setup_prefix_eval * setup_index_weight * alpha_val {
-            return Err(AkitaError::InvalidProof);
-        }
+        grinding.check_public(
+            replay.output_claim == setup_prefix_eval * setup_index_weight * alpha_val,
+        )?;
         Ok(SetupSumcheckReplay {
             claim,
             setup_prefix_eval,

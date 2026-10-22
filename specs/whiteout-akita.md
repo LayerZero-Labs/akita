@@ -199,18 +199,22 @@ Each policy reads the target:
   admission (`TrustedScheduleCatalog::try_new_with_test_zk`, which takes the
   root source and claim degree from the configuration) and again where the
   backend first samples hiding randomness (commit). It requires
-  `E::DEGREE = 1`, a cut before the last nonterminal fold, a single root
-  group, no setup prefix at the level after the cut (no Stage 3 at the cut),
-  and d_A = d_B for the residual commitment. At every level ≤ `cut_level` it
-  requires the ℓ∞ route, the quotient relation, the open basis b = 8, one
-  witness chunk, no preceding group, the exact B and D randomness widths of
-  §3.2, and at least the `OneShot` policy's fold digits; later levels and
-  preceding groups carry no randomness. The planner's masked path skips
-  every candidate admission would refuse. A trusted catalog rejects any row
-  with a cut, or with randomness, with distinct errors.
+  `E::DEGREE = 1`, a cut before the last nonterminal fold, no setup prefix
+  at the level after the cut (no Stage 3 at the cut), and d_A = d_B for the
+  residual commitment. At every level ≤ `cut_level` it requires the ℓ∞
+  route, the quotient relation, the open basis b = 8 for every group, one
+  witness chunk, and the exact D randomness width of §3.2; for every group
+  the level folds it requires at least the `OneShot` policy's fold digits
+  and the B randomness width of §3.5 (exact for witness groups, zero for a
+  setup prefix). Later levels carry no randomness in any group. The
+  planner's masked path skips every candidate admission would refuse. A
+  trusted catalog rejects any row with a cut, or with randomness, with
+  distinct errors.
 
-The parameters are `security_bits = 136` and `masked_folds = cut_level + 1 = 2`,
-so δ_fold ≤ 2^−136 in total by construction.
+The parameters are `security_bits = 136` and
+`masked_folds = (cut_level + 1) · W_ℓ`, where W_ℓ counts the groups that
+carry witness data at level ℓ (§3.5). A single-group level has
+`masked_folds = 2`, so δ_fold ≤ 2^−136 in total by construction.
 
 **Challenge families at the masked levels.** The paper assumes the unfiltered
 d = 64 family (η² = 71) at folds ≤ the cut. In Akita:
@@ -262,13 +266,9 @@ So ZK rows come from the planner, never from a clear row.
   sized for a retrying prover: the rejection rate there is a
   witness-dependent constant, not δ_fold. Admission and the planner exclude
   it until one-shot ℓ2 sizing and a hidden energy check exist (Q8).
-- *No preceding groups at masked levels.* Admission rejects precommitted root
-  groups and setup prefixes at levels ≤ the cut: their responses share the
-  one-shot probe, but their digits are not sized for it, and their sources
-  are not in the masked sizing inputs. The headline instance therefore needs
-  one-shot sizing for the level-1 setup prefix before it is admissible (it
-  offloads level 0's setup to level 1, §1), and Jolt's precommitted groups
-  need their own source contracts at admission.
+- *Preceding groups at masked levels.* Superseded by §3.5: every group a
+  masked level folds is one-shot sized, precommitted groups are hiding, and a
+  setup prefix stays public.
 - *Quotient relation at masked levels.* Admission and the planner exclude
   reduced evaluation at levels ≤ the cut: the masked stage checks of §4.4 are
   written for the quotient relation, and with the cut fixed at 1 no test
@@ -748,9 +748,11 @@ Level ℓ's relation, over its output witness, checks the B rows of its input
 commitment and its own D rows (`akita-params/src/layout/relation_rows.rs:139`).
 Each randomness vector therefore sits where its image is already checked.
 
-Precommitted groups keep zero randomness: the committed program, trusted
-advice, and the setup-prefix slot. Zero knowledge holds relative to them, as in
-paper §3.1, "Advice and committed programs".
+The setup-prefix slot keeps zero randomness: it is public setup data. A
+precommitted group folded at a masked level carries randomness like the root
+(§3.5): Akita cannot tell a per-proof group (untrusted advice, `FieldInc`)
+from a statement-fixed one (trusted advice, a committed program), so it hides
+all of them.
 
 ### 3.2 Sizing, one owner
 
@@ -837,6 +839,218 @@ k = 2; W1-d tests that.
   widths and ranks. A frozen-shape test pins the headline: rank 1 at levels 0
   and 1, and 45 columns per slice.
 
+### 3.5 Groups at masked levels (W2b)
+
+A masked level folds one or more groups (`CommittedGroupParams::groups`, in
+canonical order): an optional setup prefix, the root's precommitted groups,
+and the level's own group. All of their responses share the level's one
+probe, and all of their D segments lie in the level's one D image. This
+section decides each kind. Recursive levels have no precommitted groups, and
+the root has no setup prefix.
+
+| Group | Source | Commitment | Opening evaluation | Response z_g | B randomness | Fold sizing |
+|---|---|---|---|---|---|---|
+| own, level 0 | witness | `commit` on a ZK row, hiding (W1) | Jolt's masked claim | next witness | `b_randomness_columns` | root source contract |
+| own, level ≥ 1 | witness | `NextWitnessPayload`, hiding (W1) | masked `w_eval` | next witness | `b_randomness_columns` | universal balanced, bounded digits |
+| precommitted (root only) | witness (untrusted advice, `FieldInc`) or statement-fixed (trusted advice, program) | caller's `commit` with `GroupContext::explicit`, before the opening | Jolt's masked claim | next witness | `b_randomness_columns`, always | universal balanced, bounded digits, no contract |
+| setup prefix (level ≥ 1; level 1 in the headline) | public setup slot | setup-derived, public | public: the slot's MLE at a public point (§4.2) | next witness; a function of public data | 0 | universal balanced, bounded digits |
+
+Let W_ℓ be the number of groups at level ℓ that carry witness data: every
+group but a setup prefix (`zk::witness_group_count`). W_0 = 1 + the number of
+precommitted groups, and W_ℓ = 1 above the root.
+
+**Hiding (W1 extended).**
+
+- *Precommitted groups.* Each one's B slice images depend on its source, so
+  each slice gets `b_randomness_columns(group)` columns, the same helper and
+  alphabet as the root. The width is a field of the frozen profile
+  (`GroupCommitPhaseParams::randomness_columns`), so the caller fixes it when
+  it picks the profile, from a ZK row of the precommit's shape. The commit
+  path is the existing one: `CpuBackend::commit` with
+  `GroupContext::explicit(&profile)` samples fresh randomness from the
+  backend's hiding source whenever the profile's width is nonzero, and keeps
+  it in the commitment handle. An explicit profile does not say which opening
+  consumes it, so the alphabet is fixed by admission instead: a hiding
+  profile is admissible only at a masked level, and every group there opens
+  at b = 8, so the randomness is drawn from `MASKED_LOG_BASIS`
+  (`akita-cpu-backend/src/commitment/api.rs`, `resolve_commit_params`). At the
+  opening, the handle's randomness is placed in level 0's output witness in
+  the group's `RandomnessOwner::Outer` span, which W1 already lays out per
+  group in relation order. W6's `HidingCommitment` for a precommitted group
+  is therefore this call on a hiding profile; no new Akita API is needed.
+- *Statement-fixed precommitted groups.* The paper lets a commitment fixed
+  in preprocessing (trusted advice, a committed program) carry no randomness,
+  with zero knowledge relative to it (paper §3.1). Akita cannot see
+  provenance: "precommitted" is a layout notion. Admission therefore
+  requires the full width for every precommitted group at a masked level.
+  Jolt makes those preprocessing commitments hiding too, and keeps their
+  randomness with the prover's preprocessing. W6 therefore produces ZK
+  preprocessing separately from clear preprocessing: a hiding profile comes
+  from a ZK row, a clear catalog rejects it, and a clear profile fails ZK
+  admission, so one preprocessed commitment never serves both modes. Admitting an exempt group
+  would need a typed per-group mode bound in the row; it is not built.
+- *Setup prefix.* Zero randomness. Its commitment is setup-derived and known
+  to the verifier.
+
+**Public data in the setup prefix.** The prefix polynomial is a slot of the
+public setup. Its evaluation claim is the slot's MLE at a point drawn from
+public challenges (Stage 3 of the previous level, §4.3). Its response
+z_S = Σ_b c_b · ŝ_b is a function of the setup and of the level's public fold
+challenges, so it, and whether it overflows its digit range, can be
+computed by the simulator. Its D segment lies in the level's D image, which
+r′ hides as a whole (`d_randomness_columns` depends only on the D matrix
+shape). In the next witness z_S is covered by that witness's commitment
+randomness; at the cut it sits in w_k as a public segment (§4.6). No message
+of a masked level depends on witness data through the setup prefix.
+
+**Sizing and the union bound.** Each group's one-shot digit range is sized
+for `fold_failure_target(W_ℓ)`:
+`OneShot { security_bits: 136, masked_folds: (cut_level + 1) · W_ℓ }`. Each
+masked level gets an equal share of 2^−136, split equally among its witness
+groups, so the union over all witness responses is
+Σ_ℓ W_ℓ · 2^−136 / ((cut_level + 1) · W_ℓ) = 2^−136 = δ_fold. A setup prefix
+is sized for the same per-response target, but it is not counted in W_ℓ: its
+overflow is a public event, so it costs completeness (at most 2^−137 per
+masked level) but not zero knowledge. Single-group levels keep
+`masked_folds = 2`, so every existing ZK row is unchanged.
+
+The sizing inputs (`MaskedFoldSizing::for_group`) are per group:
+
+- the root's own group: the root source contract, as before;
+- a recursive own group: the universal balanced policy over
+  `FoldWitnessNorms::bounded(log_basis_inner, d_A)`, as before;
+- a precommitted group or a setup prefix: the universal balanced policy over
+  the group's own inner digit alphabet, with its claim count, blocks, inner
+  width, challenge family and open basis.
+
+A schedule row does not record a precommitted group's producer contract
+(`akita-prover/src/opening.rs` checks only the final group's). The universal
+bound needs none: every committed digit lies in the balanced alphabet of its
+inner basis, so ‖w‖∞ ≤ 2^(log_basis_inner − 1) for every producer, and the
+sub-Gaussian tail of the response holds for every witness with that bound.
+For a balanced-digit producer this equals or exceeds the contract's own
+sizing (its reach per plane is at most the alphabet's); for a one-hot
+producer it is looser than the Chernoff solve. Jolt's precommitted groups are
+dense, so the cost is nil there. The planner sizes masked precommits the same
+way, so admission and planning agree.
+
+**Several root groups.** Each root group is a witness group with its own B
+randomness and its own one-shot sizing; the one D image and its r′ cover all
+of them; every group opens at b = 8, the alphabet its randomness is drawn
+from. The frozen A bound of a precommitted profile must cover its one-shot
+digits at the larger `masked_folds`; the planner skips a profile whose bound
+or randomness width does not fit.
+
+**Zero-knowledge argument, per case.**
+
+- *Precommitted witness group.* Its B images are hidden by Lemma
+  `wo:lem:stat-hiding` exactly as the root's: the same width, fresh uniform
+  digits per commit from the alphabet the next range check proves. Its
+  response, D segment and evaluation are handled by the hybrids that already
+  cover the root: the response sits in the next witness, the D segment in
+  the hidden D image, and the evaluation is one of Jolt's masked claims. Its
+  overflow event counts in δ_fold. A commitment reused across proofs is still
+  one commitment: its randomness enters each proof only inside a witness that
+  is itself committed with fresh randomness.
+- *Statement-fixed precommitted group.* Hidden as above, which is stronger
+  than the paper requires.
+- *Setup prefix.* Every value it contributes is public or inside a hidden
+  image (above); its overflow is simulatable.
+- *Several root groups.* The hybrids apply per image; δ_fold is the union
+  bound above.
+
+**Admission** (`ZkOpeningSchedule::admit`), per masked level: every group
+opens at b = 8; every group has at least `MaskedFoldSizing::for_group`'s
+digits for `fold_failure_target(W_ℓ)`; a setup prefix has zero B randomness
+and every other group exactly `b_randomness_columns`. It still rejects a
+setup prefix at the level after the cut. At unmasked levels no group carries
+randomness.
+
+**Planner.** `LevelMasking::Masked` carries the level's one-shot target. A
+masked level may consume a setup prefix (`allows_setup_prefix` is false only
+after the cut), whose search sizes the prefix for that target with no
+modeled cap. A masked root folds precommitted groups, sized as above, and
+skips a frozen profile whose randomness width is not
+`b_randomness_columns`. `find_schedule_for_test_zk` takes the precommitted
+source contracts, which it still needs for equivalence classes and the
+clear planner.
+
+**Headline.** For `RecursiveCommitmentConfig<fp128::OneHot>` at 36:1 the ZK
+planner offloads level 0's setup to a level-1 setup prefix (7 digits, no
+randomness) and the row passes admission.
+
+**Paper deltas.**
+
+- *Multi-group union bound.* The paper's δ_fold sums over one response per
+  masked fold. Akita splits each fold's share among its witness groups and
+  counts a setup prefix's public overflow as a completeness term only.
+  Argument: union bound over witness responses; a public event is
+  simulatable.
+- *Precommitted groups are always hiding.* Stricter than paper §3.1, which
+  exempts preprocessing commitments; Akita cannot see provenance. Closes jolt
+  D24.
+- *Contract-free sizing for preceding groups.* The universal bound replaces
+  the producer contract, which no row records. It only widens digit ranges,
+  so δ_fold only shrinks.
+- *The setup group's response at a masked level.* The paper adds the setup
+  group to the next fold (`04_protocol.tex:493-505`) and lists offloading
+  claims among public messages (`03_setting.tex:48-51`) but does not say that
+  the setup group's response joins a masked witness. It is a function of
+  public data and is covered as above.
+
+**Tests (W2b).** Admission accepts the planner's row with a precommitted
+group and a level-1 setup prefix, and rejects each violation: a precommitted
+group with no or wrong randomness, a setup prefix with randomness, short fold
+digits in a preceding group, a preceding group opened at a basis other than
+8, randomness on any group after the cut, and a setup prefix after the cut.
+An e2e ZK proof over that row verifies and rejects a wrong opening. Two
+explicit commits of one source under a hiding precommitted profile differ.
+
+#### 3.5.1 The masked path for these groups
+
+W3c's masked prover and verifier (§4.5, §4.8) run the admitted shapes of
+§3.5 as follows.
+
+**Several root groups.** `MaskedOpeningClaims` holds one affine form per
+claim of every group, in group order (the order of
+`OpeningClaims::flat_evaluations`). The prover rejects forms that do not
+decode to the claims (`prove_masked_prefix`). The forms are bound to the
+transcript by the caller's masked claim messages (`exchange_private_base`),
+sent before Akita runs; `MaskedReplay::bind_openings` passes placeholders to
+the masked `bind_derived`, which binds nothing, and binds only a public
+prefix evaluation. The verifier then batches each form through
+`ClaimReplay`, so every group's claim enters the level-0 rows. Nothing new is
+sent in the clear.
+
+**Stage 3 at masked level 0.** A setup prefix at level 1 means level 0 runs
+Stage 3. Each value it sends is public, with this argument:
+
+| Value | Send | Why it is witness-independent |
+|---|---|---|
+| setup-prefix slot id | `stage3_public_slot`, public bytes | schedule and setup data |
+| input claim σ_S | `stage3_claim`, `exchange_all` (unchanged) | σ_S = Σ_p S(p)·ω(p): S is the public setup, and ω is a function of the ring-switch challenge α and of τ₁ and r_x, which are Fiat–Shamir challenges, public in the masked transcript (§4.3) |
+| round polynomials | `PublicGrindingSumcheck`, public messages (were private) | round i is the partial sum of S·ω over the unbound variables, with the bound ones at earlier Stage-3 challenges: a function of S, ω and public challenges |
+| input-claim binding | `bind_derived` → `public` | re-absorbs σ_S, already sent; it adds no value |
+| setup-prefix evaluation | `stage3_prefix_eval`, `exchange_all` (unchanged); at level 1 also `bind_fold_openings`' `public` (unchanged) | the slot's MLE at the Stage-3 challenge point |
+
+The verifier folds the rounds in the clear (`verify_single`) and checks
+`output = prefix_eval · weight · α̃` through `GrindingReplay::check_public`:
+the clear and masked verifiers reject a mismatch, and the counting replay,
+which runs over arbitrary bytes and returns no verdict, checks nothing. The
+stage-2 relation weight multiplies w by σ_S only, a public value, so the
+level-0 oracle row stays one product (§4.4).
+
+**Clear bytes.** `PublicGrindingSumcheck` sends what the clear transcript's
+private exchanges send (`exchange_private` is `exchange_all`, `bind_derived`
+is `public`), so clear proofs do not change.
+
+**Tests.** `masked_prefix::multi_group_masked_prefix_with_a_setup_prefix`
+runs the §3.5 row (a dense precommit beside a one-hot root at 31 variables,
+a level-1 setup prefix) through the masked prover and verifier: the honest
+pads satisfy every row; shifting any masked message, the two statement
+claims included, breaks a row; the counting replay counts the pads the
+prover consumes; and a wrong claim of either group stops the prover.
+
 ## 4. W3: the masked levels and the cut
 
 ### 4.1 The cut
@@ -879,7 +1093,7 @@ Akita's SIS tables price the matrices at the Gaussian radius (rule 3).
 | ring switch α, τ₀, τ₁ | public | public |
 | stage-1 rounds, `stage1_range_image` | `exchange_private` | masked |
 | stage-2 rounds, `stage2_w_eval` | `exchange_private` | masked |
-| Stage 3 (level 0 only): claim, rounds, prefix eval | `exchange_private` | public and verified in the clear (M3b fixup) |
+| Stage 3 (level 0 only): claim, rounds, prefix eval | `exchange_private` | public and verified in the clear (claim and evaluation: M3b fixup; rounds: `PublicGrindingSumcheck`, §3.5.1) |
 | level-1 scalar openings: predecessor `w_eval` and setup-prefix eval | `public_all` | `w_eval` through `bind_derived_base`; the setup-prefix eval stays `public_all` |
 
 These rows assume the Jolt fp128 shape: E = F, b = 8 (no stage-1 product
@@ -1052,15 +1266,10 @@ The verifier receives raw u_a.
   - Akita's commitment kernels agree with `TwoLevelLayout` semantics.
 - **W3-f.** C0 (golden test) after the M3b and M2b fixups and the S-seams.
 - **W3-g.** `ZkOpeningSchedule::admit` rejects each §4.1 violation.
-- **After W2b.** W2b (§3.5) rebases onto W3c and makes two more shapes
-  admissible at masked levels: multi-group masked roots, whose
-  `MaskedOpeningClaims` then hold one form per claim of every group in group
-  order, and Stage 3 at masked level 0. W3c's masked path accepts the first
-  unchanged, because the root binds and batches its openings through
-  `ClaimReplay` per claim. For the second, Stage 3's rounds must go through
-  the clear sumcheck path, since its claim, rounds and prefix evaluation are
-  public (§4.2). Today the driver sends them as private messages, and a
-  masked replay fails closed with `MaskedRoundInClearReplay`.
+- **After W2b.** W2b (§3.5) makes two more shapes admissible at masked
+  levels: multi-group masked roots, whose `MaskedOpeningClaims` hold one form
+  per claim of every group in group order, and Stage 3 at masked level 0,
+  whose claim, rounds and prefix evaluation are public messages (§3.5.1).
 
 ### 4.8 W3c as built: deviations from the paper and from §4.4–4.6
 
@@ -1161,13 +1370,12 @@ Each departure below states its argument.
   pads with no commitment for Akita's tests. Until W6, only a `ZkBackend`
   builds `CommittedPads`.
 - **Not exercised.** The tests cover k = 2 at b = 8 on `fp128::Dense`
-  14:1. They do not exercise product stages, extension-field claims or
-  Stage 3 at a masked level, and admission rejects all three. The masked
-  replay also fails closed on each. Product stages and Stage 3 run their
-  rounds through `verify_single`, whose rounds arrive masked over a masked
-  channel and fail with `MaskedRoundInClearReplay` (§4.2 makes Stage 3's
-  claim and prefix evaluation public, but the sumcheck driver still sends its
-  rounds as private messages). Extension claims fail with
+  14:1 and, since W2b, the §3.5 row with Stage 3 at masked level 0
+  (§3.5.1). They do not exercise product stages or extension-field claims,
+  and admission rejects both. The masked replay also fails closed on each:
+  product stages run their rounds through `verify_single`, whose rounds
+  arrive masked over a masked channel and fail with
+  `MaskedRoundInClearReplay`, and extension claims fail with
   `UnsupportedSchedule`.
 
 #### 4.8.1 Hiding the residual commitment
@@ -1702,7 +1910,8 @@ selectable.
 | `nonce_bits = 0` runs; one probe; whole-proof rerun with all randomness fresh | §4.1 "Fold responses"; Lemma `wo:lem:fold-overflow`; H1 |
 | L2 routes rejected at masked levels (‖z‖₂² is sent in the clear). After Q8: `PublicRetry` (skip only on pool run-out; ℓ∞ and ℓ2 overflow abort), worst-case ℓ2 cap, ℓ2 SIS re-pricing | Thm `wo:thm:zk` H1 (with freshness), H2 (ΔQ in Q_tot); Lemma `wo:lem:fold-overflow` in tuple or Bernstein form; Lemma `wo:lem:randomized-base` re-pricing (§2.5, Lemmas 2.5a, 2.5b) |
 | One-shot targets on every policy (2^−136/2 per fold); modeled cap off before the cut; A re-priced | Lemma `wo:lem:randomized-base`; Thm `wo:thm:zk` (2δ_fold) |
-| Randomness per slice, sized by one helper, open alphabet, in the next witness; precommitted groups excluded | §4.1 "Commitment randomness"; Lemma `wo:lem:stat-hiding`; H9; §3.1 advice |
+| Randomness per slice, sized by one helper, open alphabet, in the next witness; every precommitted group at a masked level hiding, the setup prefix public (§3.5) | §4.1 "Commitment randomness"; Lemma `wo:lem:stat-hiding`; H9; §3.1 advice (stricter) |
+| One-shot sizing per group, `masked_folds = (cut_level + 1) · W_ℓ`; setup-prefix overflow public | Lemma `wo:lem:fold-overflow`; Thm `wo:thm:zk` (2δ_fold, union over witness responses) |
 | Residual 3 × R_256, d_A = d_B | §4.1 "The residual commitment"; A7 |
 | Stage 3 public; no setup claim from `cut_level` | §3.1; Def. `wo:def:source-cutoff` |
 | One `ClaimDomain` formula per check; rows never dropped | Lemma `wo:lem:residual-correct` |

@@ -903,15 +903,19 @@ fn emit_witness_randomness<F: Field + CanonicalEncoding>(
 ) -> Result<(), AkitaError> {
     let randomness = layout.randomness();
     for (group_index, group) in groups.iter().enumerate() {
-        let range = randomness.outer(group_index);
-        if range.len() != group.outer_randomness.len() {
+        if randomness.outer(group_index).len() != group.outer_randomness.len() {
             return Err(AkitaError::Internal(
                 "B randomness disagrees with its witness span".into(),
             ));
         }
-        if !range.is_empty() {
-            out.write_at(range.start, &group.outer_randomness)?;
-        }
+    }
+    // The writer takes spans in physical order, which is relation order (the
+    // final group first), not group order.
+    for (group_index, range) in randomness.outer_spans() {
+        let group = groups.get(*group_index).ok_or_else(|| {
+            AkitaError::Internal("B randomness span names a missing group".into())
+        })?;
+        out.write_at(range.start, &group.outer_randomness)?;
     }
     let range = randomness.opening();
     if range.len() != d_randomness.len() {

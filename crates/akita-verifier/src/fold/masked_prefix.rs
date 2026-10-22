@@ -36,7 +36,9 @@ where
     ///
     /// `statement` supplies the commitments, points and schedule selection;
     /// its evaluations are not read. The claims are `openings`, affine forms
-    /// over the pads in group order.
+    /// over the pads in group order. The caller must already have absorbed
+    /// the masked statement claims those forms are built from into
+    /// `transcript`, before this call: the replay binds none of them.
     ///
     /// # Errors
     ///

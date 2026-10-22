@@ -34,7 +34,7 @@ use akita_types::{
 };
 use jolt_algebra::{One, Ring, Zero};
 use jolt_transcript::{ProverTranscript, VerifierTranscript};
-use private_cpu::PrivateCpu;
+use private_cpu::{Fault, PrivateCpu};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -63,6 +63,7 @@ fn zk_row() -> (CommittedGroupBatchProfile, FoldSchedule) {
     let planned = akita_planner::find_schedule_for_test_zk(
         &key,
         Cfg::committed_source_contract().unwrap(),
+        &[],
         &policy(),
         Cfg::ring_challenge_config,
         zk(),
@@ -333,27 +334,13 @@ fn admission_recomputes_the_masked_levels() {
             &|s| s.recursive_folds.truncate(ZK_CUT_LEVEL as usize),
             "reaches the terminal witness",
         );
-        rejects(
-            &|s| {
-                let group = *s.root.params.own_group();
-                s.root.params.set_precommitted_groups(vec![group]).unwrap();
-            },
-            "exactly one group",
-        );
-        // A setup prefix at a masked level, and at the level after the cut,
-        // which would give the cut level a Stage 3.
+        // A setup prefix after the cut would give the cut level a Stage 3.
         let prefix = |s: &FoldSchedule| {
             let mut group = *s.recursive_folds[after_cut].params.own_group();
+            group.profile.randomness_columns = 0;
             group.setup_natural_len = Some(1);
             group
         };
-        rejects(
-            &|s| {
-                let group = prefix(s);
-                levels_mut(s)[masked].set_setup_prefix(Some(group)).unwrap();
-            },
-            "consumes a preceding group",
-        );
         rejects(
             &|s| {
                 let group = prefix(s);
@@ -371,7 +358,7 @@ fn admission_recomputes_the_masked_levels() {
                 let last = s.recursive_folds.len();
                 levels_mut(s)[last].set_setup_prefix(Some(group)).unwrap();
             },
-            "gives a preceding group hiding randomness",
+            "gives a preceding group the wrong B hiding randomness",
         );
         let error =
             ZkOpeningSchedule::admit(&schedule, Cfg::committed_source_contract().unwrap(), 2)
@@ -508,6 +495,35 @@ fn hiding_commitments_to_one_polynomial_differ() {
         };
         let first = commit();
         let second = commit();
+        assert_eq!(first.profile(), second.profile());
+        assert_ne!(first.commitment(), second.commitment());
+    });
+}
+
+/// A precommitted group is committed before the opening under a frozen
+/// hiding profile, and every such commit draws fresh randomness.
+#[test]
+fn hiding_precommitted_commitments_to_one_polynomial_differ() {
+    on_large_stack(|| {
+        let (profiles, _) = zk_row();
+        let profile = profiles.final_group;
+        assert_ne!(profile.randomness_columns, 0);
+        let scheme = AkitaCommitmentScheme::<Cfg>::new(zk_catalog());
+        let setup = scheme.setup_prover(NV, 1).unwrap();
+        let backend = backend(&setup, 4);
+        let commit = || {
+            backend
+                .commit(
+                    scheme.schedules(),
+                    &backend.import_source(vec![polynomial().1]).unwrap(),
+                    GroupContext::explicit(&profile),
+                )
+                .unwrap()
+                .committed_group
+        };
+        let first = commit();
+        let second = commit();
+        assert_eq!(*first.profile(), profile);
         assert_eq!(first.profile(), second.profile());
         assert_ne!(first.commitment(), second.commitment());
     });
@@ -710,4 +726,362 @@ fn one_shot_fold_response_replays_without_a_nonce() {
             Err(AkitaError::InvalidInput(_))
         ));
     });
+}
+
+/// W2b: groups at masked levels. The headline-shaped recursive one-hot
+/// family offloads level 0's setup to a level-1 setup prefix from 31
+/// variables on; its root here also folds one precommitted dense group, the
+/// shape of Jolt's untrusted advice.
+type RecCfg = akita_config::RecursiveCommitmentConfig<fp128::OneHot>;
+const MULTI_NV: usize = 31;
+
+/// The planner's row for one `MULTI_NV`-variable one-hot polynomial beside
+/// one precommitted dense polynomial committed under [`zk_row`]'s hiding
+/// root profile.
+fn multi_group_zk_row() -> (CommittedGroupBatchProfile, FoldSchedule) {
+    let precommitted = zk_row().0.final_group;
+    let key = ScheduleLookupKey {
+        final_group: PolynomialGroupLayout::singleton(MULTI_NV),
+        precommitteds: vec![precommitted],
+    };
+    let planned = akita_planner::find_schedule_for_test_zk(
+        &key,
+        RecCfg::committed_source_contract().unwrap(),
+        &[Cfg::committed_source_contract().unwrap()],
+        &policy_of::<RecCfg>(ChunkedWitnessCfg::default_non_chunked()),
+        RecCfg::ring_challenge_config,
+        zk(),
+    )
+    .unwrap();
+    let profiles = CommittedGroupBatchProfile {
+        final_group: GroupCommitPhaseParams::try_from_params(
+            key.final_group,
+            &planned.schedule.root.params,
+        )
+        .unwrap(),
+        precommitteds: vec![precommitted],
+    };
+    (profiles, planned.schedule)
+}
+
+fn admit_multi(schedule: &FoldSchedule) -> Result<ZkOpeningSchedule, AkitaError> {
+    ZkOpeningSchedule::admit(
+        schedule,
+        RecCfg::committed_source_contract().unwrap(),
+        RecCfg::EXT_DEGREE,
+    )
+}
+
+#[test]
+fn masked_levels_admit_a_hiding_precommitted_group_and_a_public_setup_prefix() {
+    on_large_stack(|| {
+        let (_, schedule) = multi_group_zk_row();
+        assert_eq!(admit_multi(&schedule), Ok(zk()));
+        let root = &schedule.root.params;
+        let [root_precommitted] = root.precommitted_groups() else {
+            panic!("one precommitted root group");
+        };
+        assert_eq!(
+            root_precommitted.profile.randomness_columns,
+            akita_params::zk::b_randomness_columns(root_precommitted).unwrap()
+        );
+        let level1 = &schedule.recursive_folds[0].params;
+        let level1_prefix = level1.setup_prefix().expect("a level-1 setup prefix");
+        assert_eq!(level1_prefix.profile.randomness_columns, 0);
+        assert_eq!(akita_params::zk::witness_group_count(root), 2);
+        assert_eq!(akita_params::zk::witness_group_count(level1), 1);
+
+        let rejects = |mutate: &dyn Fn(&mut FoldSchedule), what: &str| {
+            let mut mutated = schedule.clone();
+            mutate(&mut mutated);
+            let error = admit_multi(&mutated).unwrap_err();
+            assert!(error.to_string().contains(what), "{what}: {error}");
+        };
+        fn precommitted(s: &mut FoldSchedule) -> &mut akita_params::GroupOpenPhaseParams {
+            s.root.params.preceding_group_mut_for_test(0).unwrap()
+        }
+        fn prefix(s: &mut FoldSchedule) -> &mut akita_params::GroupOpenPhaseParams {
+            s.recursive_folds[0]
+                .params
+                .preceding_group_mut_for_test(0)
+                .unwrap()
+        }
+        let hiding = "level 0 gives a preceding group the wrong B hiding randomness";
+        rejects(&|s| precommitted(s).profile.randomness_columns = 0, hiding);
+        rejects(&|s| precommitted(s).profile.randomness_columns -= 1, hiding);
+        rejects(
+            &|s| prefix(s).profile.randomness_columns = 1,
+            "level 1 gives a preceding group the wrong B hiding randomness",
+        );
+        rejects(
+            &|s| precommitted(s).opening.num_digits_fold -= 1,
+            "level 0 has",
+        );
+        rejects(&|s| prefix(s).opening.num_digits_fold -= 1, "level 1 has");
+        rejects(
+            &|s| precommitted(s).opening.log_basis_open += 1,
+            "level 0 is masked with an open basis other than 8",
+        );
+    });
+}
+
+/// The headline shape, Jolt's one-hot root at 36 variables: the planner's
+/// zero-knowledge row offloads level 0's setup to a public setup prefix at
+/// the cut level, and admission accepts it.
+#[test]
+fn headline_row_offloads_to_a_setup_prefix_at_the_cut_level() {
+    on_large_stack(|| {
+        let planned = akita_planner::find_schedule_for_test_zk(
+            &ScheduleLookupKey::single(PolynomialGroupLayout::singleton(36)),
+            RecCfg::committed_source_contract().unwrap(),
+            &[],
+            &policy_of::<RecCfg>(ChunkedWitnessCfg::default_non_chunked()),
+            RecCfg::ring_challenge_config,
+            zk(),
+        )
+        .unwrap();
+        assert_eq!(admit_multi(&planned.schedule), Ok(zk()));
+        let cut = &planned.schedule.recursive_folds[ZK_CUT_LEVEL as usize - 1].params;
+        let prefix = cut.setup_prefix().expect("a setup prefix at the cut level");
+        assert_eq!(prefix.profile.randomness_columns, 0);
+    });
+}
+
+/// The root's two witness groups each get a quarter of the 2^-136 budget
+/// (two masked levels, two groups); level 1's setup prefix is public, so its
+/// own group keeps half.
+#[test]
+fn witness_groups_split_the_one_shot_budget_per_level() {
+    on_large_stack(|| {
+        let (_, schedule) = multi_group_zk_row();
+        let target = |params: &akita_params::CommittedGroupParams| {
+            zk().fold_failure_target(akita_params::zk::witness_group_count(params))
+                .unwrap()
+        };
+        let one_shot = |masked_folds| akita_params::sis::FoldFailureTarget::OneShot {
+            security_bits: akita_params::zk::ZK_FOLD_SECURITY_BITS,
+            masked_folds,
+        };
+        assert_eq!(target(&schedule.root.params), one_shot(4));
+        assert_eq!(target(&schedule.recursive_folds[0].params), one_shot(2));
+    });
+}
+
+/// One zero-knowledge proof over a hiding precommitted group at the root and
+/// a setup prefix at the cut level.
+#[test]
+fn zero_knowledge_proof_with_a_precommitted_group_and_a_setup_prefix_verifies() {
+    on_large_stack(|| {
+        let (profiles, schedule) = multi_group_zk_row();
+        let precommitted_profile = profiles.precommitteds[0];
+        let opening_layout = ScheduleLookupKey {
+            final_group: profiles.final_group.group,
+            precommitteds: profiles.precommitteds.clone(),
+        }
+        .opening_layout()
+        .unwrap();
+        let scheme = AkitaCommitmentScheme::<RecCfg>::new(
+            TrustedScheduleCatalog::try_new_with_test_zk(
+                [(profiles, schedule.clone())],
+                ChunkedWitnessCfg::default_non_chunked(),
+            )
+            .unwrap(),
+        );
+        let setup = scheme.setup_prover(MULTI_NV, 2).unwrap();
+        let backend = CpuBackend::new(setup.expanded.clone())
+            .unwrap()
+            .with_hiding_rng(StdRng::seed_from_u64(5));
+
+        // The precommitted dense group, committed under its hiding profile
+        // by the dense producer, as Jolt commits untrusted advice.
+        let (pre_evals, pre_poly) = polynomial();
+        let pre = backend
+            .commit(
+                &zk_catalog(),
+                &backend.import_source(vec![pre_poly]).unwrap(),
+                GroupContext::explicit(&precommitted_profile),
+            )
+            .unwrap();
+        let final_poly = common::make_onehot_poly::<RecCfg>(MULTI_NV, 0x2b2b);
+        let final_output = backend
+            .commit(
+                scheme.schedules(),
+                &backend.import_source(vec![final_poly.clone()]).unwrap(),
+                GroupContext::scheduler_with_precommitted_groups(
+                    &akita_params::PrecommittedGroupProfiles::from_profiles(vec![
+                        precommitted_profile,
+                    ])
+                    .unwrap(),
+                ),
+            )
+            .unwrap();
+
+        let point = common::random_point(MULTI_NV, 0x2b2b);
+        let pre_opening = pre_evals
+            .iter()
+            .zip(lagrange_weights(&point[..NV]).unwrap())
+            .fold(F::zero(), |sum, (&value, weight)| sum + value * weight);
+        let final_opening = common::onehot_opening_lagrange(&final_poly, &point);
+        let claims = |final_opening: F| {
+            OpeningClaims::from_groups(vec![
+                PolynomialGroupClaims::new(
+                    point[..NV].to_vec(),
+                    vec![pre_opening],
+                    &pre.committed_group,
+                )
+                .unwrap(),
+                PolynomialGroupClaims::new(
+                    point.clone(),
+                    vec![final_opening],
+                    &final_output.committed_group,
+                )
+                .unwrap(),
+            ])
+            .unwrap()
+        };
+        let prover_data = SelectedProverOpeningData::from_committed_claims::<RecCfg>(
+            OpeningClaims::from_groups(vec![
+                PolynomialGroupClaims::new(
+                    point[..NV].to_vec(),
+                    vec![pre_opening],
+                    pre.committed_group.clone(),
+                )
+                .unwrap(),
+                PolynomialGroupClaims::new(
+                    point.clone(),
+                    vec![final_opening],
+                    final_output.committed_group.clone(),
+                )
+                .unwrap(),
+            ])
+            .unwrap(),
+            vec![pre.private_handle, final_output.private_handle],
+            scheme.schedules(),
+        )
+        .unwrap();
+        let selection = prover_data.selection();
+        let proof = scheme
+            .batched_prove(&setup, prover_data, &backend, SESSION, BasisMode::Lagrange)
+            .unwrap();
+
+        let verifier = scheme
+            .verifier(
+                scheme
+                    .setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
+                    .unwrap(),
+            )
+            .unwrap();
+        let verify = |final_opening: F| {
+            verifier.verify_standalone(
+                &proof,
+                SESSION,
+                GroupBatchStatement::new(selection, claims(final_opening)).unwrap(),
+                BasisMode::Lagrange,
+            )
+        };
+        verify(final_opening).unwrap();
+        assert!(verify(final_opening + F::one()).is_err());
+    });
+}
+
+/// Only the Stage-3 output check can reject: the backend adds `X − X²` to the
+/// last Stage-3 round at level 0, so every round sums correctly, the prover's
+/// checks pass, and the setup-prefix evaluation and every later message stay
+/// honest at the drawn point. The verifier, which reads Stage 3 in the clear,
+/// rejects the proof; the same backend without the fault proves one it
+/// accepts.
+#[test]
+fn a_stage3_output_miss_is_rejected() {
+    on_large_stack(|| run_stage3_output_miss().unwrap());
+}
+
+fn run_stage3_output_miss() -> Result<(), AkitaError> {
+    let (profiles, schedule) = multi_group_zk_row();
+    let precommitted = profiles.precommitteds[0];
+    let layout = ScheduleLookupKey {
+        final_group: profiles.final_group.group,
+        precommitteds: profiles.precommitteds.clone(),
+    }
+    .opening_layout()?;
+    let scheme =
+        AkitaCommitmentScheme::<RecCfg>::new(TrustedScheduleCatalog::try_new_with_test_zk(
+            [(profiles, schedule.clone())],
+            ChunkedWitnessCfg::default_non_chunked(),
+        )?);
+    let setup = scheme.setup_prover(MULTI_NV, 2)?;
+    let private = PrivateCpu::new(backend(&setup, 6));
+    let (pre_evals, pre_poly) = polynomial();
+    let (pre, pre_handle) = private.commit_in(
+        &zk_catalog(),
+        vec![pre_poly],
+        GroupContext::explicit(&precommitted),
+    )?;
+    let final_poly = common::make_onehot_poly::<RecCfg>(MULTI_NV, 0x2b2b);
+    let (root, root_handle) = private.commit_in(
+        scheme.schedules(),
+        vec![final_poly.clone()],
+        GroupContext::scheduler_with_precommitted_groups(
+            &akita_params::PrecommittedGroupProfiles::from_profiles(vec![precommitted])?,
+        ),
+    )?;
+    let point = common::random_point(MULTI_NV, 0x2b2b);
+    let pre_opening = pre_evals
+        .iter()
+        .zip(lagrange_weights(&point[..NV])?)
+        .fold(F::zero(), |sum, (&value, weight)| sum + value * weight);
+    let root_opening = common::onehot_opening_lagrange(&final_poly, &point);
+    let input = || {
+        SelectedProverOpeningData::from_committed_claims::<RecCfg>(
+            OpeningClaims::from_groups(vec![
+                PolynomialGroupClaims::new(point[..NV].to_vec(), vec![pre_opening], pre.clone())?,
+                PolynomialGroupClaims::new(point.clone(), vec![root_opening], root.clone())?,
+            ])?,
+            vec![pre_handle.clone(), root_handle.clone()],
+            scheme.schedules(),
+        )
+    };
+    let selection = input()?.selection();
+    let resolved = scheme.schedules().resolve_selection(selection)?;
+    let levels = resolved.schedule().num_fold_levels();
+    let prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
+        resolved.schedule(),
+        input()?.opening_layout(),
+    )?;
+    let prefixes = private.prefixes(&setup, &prefix_ids);
+    let mut registry = BackendRegistry::<RecCfg>::new()?;
+    let id = registry.register(&private, &prefixes)?;
+    let prove = || {
+        common::prove_on_session(SESSION, |transcript| {
+            akita_pcs::batched_prove(
+                setup.expanded.descriptor(),
+                scheme.schedules(),
+                &registry,
+                input()?,
+                transcript,
+                BasisMode::Lagrange,
+                &mut FixedFoldRoute::new(vec![id; levels]),
+            )
+        })
+    };
+    let verifier =
+        scheme.verifier(scheme.setup_verifier_for_schedule(&setup, &schedule, &layout)?)?;
+    let verify = |proof: &[u8]| {
+        verifier.verify_standalone(
+            proof,
+            SESSION,
+            GroupBatchStatement::new(
+                selection,
+                OpeningClaims::from_groups(vec![
+                    PolynomialGroupClaims::new(point[..NV].to_vec(), vec![pre_opening], &pre)?,
+                    PolynomialGroupClaims::new(point.clone(), vec![root_opening], &root)?,
+                ])?,
+            )?,
+            BasisMode::Lagrange,
+        )
+    };
+
+    verify(&prove()?)?;
+    private.fault.set(Fault::Stage3OutputMiss);
+    assert_eq!(verify(&prove()?), Err(AkitaError::InvalidProof));
+    Ok(())
 }

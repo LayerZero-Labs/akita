@@ -650,7 +650,7 @@ mod tests {
     }
 
     fn zk_target() -> FoldFailureTarget {
-        crate::zk::one_shot_fold_target(crate::zk::ZK_CUT_LEVEL)
+        crate::zk::one_shot_fold_target(crate::zk::ZK_CUT_LEVEL, 1).unwrap()
     }
 
     /// Level 0 of `fp128_onehot_recursive final=36:1`: the one-hot root,
