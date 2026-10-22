@@ -8,7 +8,7 @@ use akita_params::{
 use akita_types::GrindingReplay;
 use akita_types::{Commitment, CommittedGroup, OpeningClaims, PolynomialGroupClaims};
 use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_transcript::{Channel, Sponge};
+use jolt_transcript::Sponge;
 
 pub struct SelectedProverOpeningData<'a, E: Clone, H, F: Field> {
     selection: OpeningScheduleSelection,
@@ -149,10 +149,10 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
             .map(PolynomialGroupClaims::commitment)
             .collect()
     }
-    pub(crate) fn append_to<H: Sponge>(
+    pub(crate) fn append_to<H: Sponge, C: crate::protocol::ProverFoldChannel<PointF, Sponge = H>>(
         &self,
         root_params: &CommittedGroupParams,
-        grinding: &mut akita_types::ProverGrinding<'_, H>,
+        grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     ) -> Result<(), AkitaError>
     where
         CommitF: CanonicalEncoding,

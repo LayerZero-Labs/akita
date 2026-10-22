@@ -130,6 +130,34 @@ impl<F: jolt_algebra::Field> From<jolt_sumcheck::SumcheckError<F>> for AkitaErro
     }
 }
 
+/// A masked channel's failure (`specs/whiteout-akita.md` §4.5). A transcript
+/// failure rejects the proof as [`jolt_transcript::TranscriptError`] does; a
+/// pad schedule or message field that disagrees with the schedule is a setup
+/// error; a decoded value failing its check is a failed prover invariant.
+#[cfg(feature = "zk")]
+impl From<jolt_zk::masking::ZkError> for AkitaError {
+    fn from(error: jolt_zk::masking::ZkError) -> Self {
+        use jolt_zk::masking::ZkError;
+        match error {
+            ZkError::Transcript(error) => error.into(),
+            ZkError::PadsExhausted { .. }
+            | ZkError::PadCountMismatch { .. }
+            | ZkError::InvalidLayout { .. }
+            | ZkError::OperandPadsMismatch
+            | ZkError::MessageFieldMismatch
+            | ZkError::RoundWidthMismatch { .. }
+            | ZkError::RoundCountMismatch { .. } => Self::InvalidSetup(error.to_string()),
+            ZkError::InvalidRelation { .. }
+            | ZkError::ClaimMismatch(_)
+            | ZkError::Sumcheck(_)
+            | ZkError::BlindFoldShape(_)
+            | ZkError::BlindFoldProver(_)
+            | ZkError::BlindFoldRejected(_)
+            | ZkError::Whiteout(_) => Self::Internal(error.to_string()),
+        }
+    }
+}
+
 /// Algebra errors keep their classification: every [`AlgebraError`] variant
 /// reports a rejected argument, so each maps to the same-named variant.
 impl From<AlgebraError> for AkitaError {

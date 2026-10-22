@@ -19,11 +19,16 @@ pub struct SuffixProverState<F: Field, E: Field, MaterialHandle, WitnessHandle> 
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
-pub(super) fn prove_recursive_step<Cfg, B, H: Sponge>(
+pub(super) fn prove_recursive_step<
+    Cfg,
+    B,
+    H: Sponge,
+    C: crate::protocol::ProverFoldChannel<Cfg::ExtField, Sponge = H>,
+>(
     expanded: &akita_types::AkitaSetupDescriptor,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
     backend: &B,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     current_state: SuffixProverState<
         Cfg::Field,
         Cfg::ExtField,
@@ -33,9 +38,9 @@ pub(super) fn prove_recursive_step<Cfg, B, H: Sponge>(
     schedule: &FoldSchedule,
     session: &B::ProofSessionHandle,
     index: usize,
-    handoff: &mut super::registry::FoldHandoff<'_, '_, '_, Cfg, H>,
+    handoff: &mut impl super::registry::SuccessorHandoff<Cfg, B>,
 ) -> Result<
-    SuffixProverState<Cfg::Field, Cfg::ExtField, B::CommitmentMaterialHandle, B::WitnessHandle>,
+    ProveLevelOutput<Cfg::Field, Cfg::ExtField, B::CommitmentMaterialHandle, B::WitnessHandle>,
     AkitaError,
 >
 where
@@ -79,7 +84,7 @@ where
             )
         },
     );
-    let prepared = prepare_suffix::<Cfg::Field, Cfg::ExtField, B, _>(
+    let prepared = prepare_suffix::<Cfg::Field, Cfg::ExtField, B, _, _>(
         backend,
         prefix_slots,
         grinding,
@@ -90,7 +95,7 @@ where
         step.output_witness_len,
         next_params.inner_ring_dimension(),
     )?;
-    let output = prove_fold::<Cfg::Field, Cfg::ExtField, B, _>(
+    prove_fold::<Cfg::Field, Cfg::ExtField, B, _, _>(
         expanded,
         prefix_slots,
         backend,
@@ -115,14 +120,19 @@ where
                 material,
             )
         },
-    )?;
-    Ok(output.next_state)
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prove_terminal_suffix<F, E, B, H: Sponge>(
+pub(super) fn prove_terminal_suffix<
+    F,
+    E,
+    B,
+    H: Sponge,
+    C: crate::protocol::ProverFoldChannel<E, Sponge = H>,
+>(
     backend: &B,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     level: usize,
     current_state: SuffixProverState<F, E, B::CommitmentMaterialHandle, B::WitnessHandle>,
     scheduled: &TerminalFoldParams,
@@ -240,7 +250,7 @@ where
                 point: &sumcheck_challenges,
                 ring_dimension: params.d_a(),
             }];
-            let proved = prove_extension_opening_reduction::<F, E, B, _>(
+            let proved = prove_extension_opening_reduction::<F, E, B, _, _>(
                 backend,
                 session,
                 &context,
@@ -305,7 +315,7 @@ where
                     );
                     grinding.state_mut().public_all(&scalar_openings);
                 }
-                let trace = crate::protocol::prove::prepare_evaluation_trace_claim::<F, E, _>(
+                let trace = crate::protocol::prove::prepare_evaluation_trace_claim::<F, E, _, _>(
                     &reduction,
                     &scalar_openings,
                     &opening_batch,
@@ -342,10 +352,10 @@ where
                         .id()?
                         .into(),
                 );
-                grinding.state_mut().send_all(e_sent);
+                grinding.state_mut().transcript_mut().send_all(e_sent);
                 if akita_params::RECOMPUTE_LAST_BLOCK {
                     akita_types::send_field_digest(
-                        grinding.state_mut(),
+                        grinding.state_mut().transcript_mut(),
                         akita_types::FoldSite::TerminalEDigest { level: fold_level }
                             .id()?
                             .into(),
@@ -362,6 +372,7 @@ where
                     B::WitnessHandle,
                     _,
                     D,
+                    _,
                     _,
                 >(
                     consumer,
@@ -401,16 +412,17 @@ where
             .into(),
     );
     state
+        .transcript_mut()
         .send_bounded_bytes(z_payload, group.z_payload_bytes)
         .map_err(|_| {
             AkitaError::InvalidInput("terminal z payload exceeds its scheduled bound".into())
         })
 }
 #[allow(clippy::too_many_arguments)]
-fn prepare_suffix<F, E, B, H: Sponge>(
+fn prepare_suffix<F, E, B, H: Sponge, C: crate::protocol::ProverFoldChannel<E, Sponge = H>>(
     backend: &B,
     prefix_slots: &SetupPrefixProverRegistry<F, B::CommitmentHandle>,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     current_state: SuffixProverState<F, E, B::CommitmentMaterialHandle, B::WitnessHandle>,
     level: usize,
     level_params: &CommittedGroupParams,
@@ -547,7 +559,7 @@ where
             .rows()
             .coeffs(),
     );
-    let prepared = prepare_fold::<F, E, B, _>(
+    let prepared = prepare_fold::<F, E, B, _, _>(
         backend,
         claims,
         materials,
@@ -606,7 +618,7 @@ mod tests {
         );
         let plan = evaluation_batch_plan();
         let mut grinding = akita_types::ProverGrinding::new(&mut transcript, &plan);
-        let err = match prepare_evaluation_trace_claim::<TestF, TestF, _>(
+        let err = match prepare_evaluation_trace_claim::<TestF, TestF, _, _>(
             &reduction,
             &openings,
             &opening_batch,
@@ -640,7 +652,7 @@ mod tests {
         );
         let plan = evaluation_batch_plan();
         let mut grinding = akita_types::ProverGrinding::new(&mut transcript, &plan);
-        let result = prepare_evaluation_trace_claim::<TestF, TestF, _>(
+        let result = prepare_evaluation_trace_claim::<TestF, TestF, _, _>(
             &reduction,
             &openings,
             &opening_batch,

@@ -63,9 +63,17 @@ pub(crate) struct TerminalFoldGrindOutput {
 /// cap. The returned witness retains centered `z` coefficients only; terminal
 /// `e` and `t` are never gadget decomposed.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn sample_terminal_fold_response<F, E, H, B, const D: usize, S: Sponge>(
+pub(crate) fn sample_terminal_fold_response<
+    F,
+    E,
+    H,
+    B,
+    const D: usize,
+    S: Sponge,
+    C: super::ProverFoldChannel<E, Sponge = S>,
+>(
     backend: &B,
-    grinding: &mut akita_types::ProverGrinding<'_, S>,
+    grinding: &mut akita_types::ProverGrinding<'_, S, C>,
     level: u32,
     params: &TerminalFoldParams,
     sparse: &jolt_crypto::challenge::SparseChallengeConfig,
@@ -234,9 +242,15 @@ fn accepted_fold_response<T>(
 /// Probe every group at its native A dimension as one transcript transaction
 /// for each candidate nonce.
 #[allow(clippy::too_many_arguments)]
-fn replay_multi_group_fold_decompose_witnesses<F, E, B, H: Sponge>(
+fn replay_multi_group_fold_decompose_witnesses<
+    F,
+    E,
+    B,
+    H: Sponge,
+    C: super::ProverFoldChannel<E, Sponge = H>,
+>(
     opening_ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     level: u32,
     root_lp: &CommittedGroupParams,
     groups: &[PreparedFoldGrindGroup<'_, B::PreparedOpeningHandle>],
@@ -401,9 +415,15 @@ where
 /// When `tail_t_vectors` is set, the terminal response must fit the exact cap
 /// and Golomb-Rice byte budget carried by its scheduled response shape.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, B, H: Sponge>(
+pub(crate) fn sample_multi_group_fold_decompose_witnesses<
+    F,
+    E,
+    B,
+    H: Sponge,
+    C: super::ProverFoldChannel<E, Sponge = H>,
+>(
     opening_ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     level: u32,
     root_lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
@@ -464,7 +484,7 @@ where
             ),
         });
     }
-    replay_multi_group_fold_decompose_witnesses::<F, E, B, _>(
+    replay_multi_group_fold_decompose_witnesses::<F, E, B, _, _>(
         opening_ctx,
         grinding,
         level,

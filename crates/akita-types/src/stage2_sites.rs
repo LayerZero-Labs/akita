@@ -4,7 +4,7 @@ use crate::GrindingReplay;
 use akita_error::AkitaError;
 use akita_params::transcript_site::{ProtocolSiteId, SITE_FAMILY_STAGE2};
 use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_transcript::{Channel, PrivateChannel};
+use jolt_transcript::{Channel, PadSlots, PrivateChannel};
 
 fn witness_evaluation_site(level: u32) -> ProtocolSiteId {
     ProtocolSiteId {
@@ -19,11 +19,13 @@ fn witness_evaluation_site(level: u32) -> ProtocolSiteId {
 ///
 /// The prover emits `evaluation`; the verifier passes a placeholder and gets
 /// the received value back.
+/// It returns the value and the pad slots it took, which are empty in the
+/// clear.
 pub fn stage2_w_eval<F, E, G>(
     grinding: &mut G,
     level: u32,
     mut evaluation: E,
-) -> Result<E, AkitaError>
+) -> Result<(E, PadSlots), AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + CanonicalDecode,
@@ -31,10 +33,10 @@ where
 {
     let state = grinding.state_mut();
     state.site(witness_evaluation_site(level).into());
-    state
+    let slots = state
         .exchange_private::<F, E>(std::slice::from_mut(&mut evaluation))
         .map_err(Into::<AkitaError>::into)?;
-    Ok(evaluation)
+    Ok((evaluation, slots))
 }
 
 #[cfg(test)]
@@ -66,7 +68,9 @@ mod tests {
         let mut transcript = new_verifier(b"native-stage2", &proof);
         let mut verifier = VerifierGrinding::new(&mut transcript, &plan);
         assert_eq!(
-            stage2_w_eval::<F, E, _>(&mut verifier, 7, E::zero()).unwrap(),
+            stage2_w_eval::<F, E, _>(&mut verifier, 7, E::zero())
+                .unwrap()
+                .0,
             evaluation
         );
         verifier.finish().unwrap();

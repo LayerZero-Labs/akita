@@ -119,9 +119,18 @@ pub use trace_weight::{
 pub use transcript::{
     extension_slots, AkitaSponge, PROOF_STREAM_PROTOCOL, PROOF_STREAM_PROTOCOL_NAME,
 };
+#[cfg(feature = "zk")]
+pub use transcript_grinding::CountingGrinding;
+
+/// The statement claims of a zero-knowledge opening's masked root, in group
+/// order: each an affine form over the committed pads, built by the caller
+/// (W6: Jolt's masked stage-8 claims). They replace the clear evaluations a
+/// clear root absorbs (`specs/whiteout-akita.md` §4.6).
+#[cfg(feature = "zk")]
+pub type MaskedOpeningClaims<F> = Vec<jolt_zk::masking::AffineRow<F>>;
 pub use transcript_grinding::{
-    GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProverGrinding,
-    ProverGrindingChannel, VerifierGrinding, VerifierGrindingChannel,
+    FoldResponseReplay, GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier,
+    ProverGrinding, ProverGrindingChannel, VerifierGrinding, VerifierGrindingChannel,
 };
 
 #[cfg(test)]

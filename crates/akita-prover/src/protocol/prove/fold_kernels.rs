@@ -73,11 +73,16 @@ where
         .collect()
 }
 
-pub(in crate::protocol) fn prepare_evaluation_trace_claim<F, E, H: Sponge>(
+pub(in crate::protocol) fn prepare_evaluation_trace_claim<
+    F,
+    E,
+    H: Sponge,
+    C: crate::protocol::ProverFoldChannel<E, Sponge = H>,
+>(
     reduction: &Option<ExtensionOpeningReduction<E>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     level: u32,
 ) -> Result<(PreparedEvaluationTraceClaim<E>, Vec<E>), AkitaError>
 where

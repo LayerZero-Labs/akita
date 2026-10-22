@@ -10,6 +10,7 @@ use jolt_transcript::ClaimDomain;
 
 /// The batched range-leaf polynomial `Σ_{k≤4} c_k·X^k`, zero-padded to
 /// [`DigitRangePlan::MAX_LEAF_DEGREE`], the largest leaf of any supported basis.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RangeLeaf<E>([E; DigitRangePlan::MAX_LEAF_DEGREE + 1]);
 
 impl<E: Field> RangeLeaf<E> {

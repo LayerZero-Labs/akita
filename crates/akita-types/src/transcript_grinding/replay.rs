@@ -85,6 +85,18 @@ impl<'a> GrindingPlanCursor<'a> {
     fn is_finished(&self) -> bool {
         self.run_index == self.plan.runs().len() && self.run_offset == 0
     }
+
+    /// Whether every unconsumed entry belongs to a level after `cut_level`:
+    /// a replay that stops at a zero-knowledge cut consumed exactly the
+    /// masked levels' entries.
+    fn is_finished_through(&self, cut_level: u32) -> bool {
+        self.run_offset == 0
+            && self
+                .plan
+                .runs()
+                .get(self.run_index..)
+                .is_some_and(|rest| rest.iter().all(|run| run.site().level() > cut_level))
+    }
 }
 
 const fn value_fits(value: u32, width: u8) -> bool {
@@ -487,6 +499,18 @@ impl<'a, H: Sponge, C: ProverGrindingChannel<Sponge = H>> ProverGrinding<'a, H, 
         result
     }
 
+    /// Require that replay consumed exactly the grinding plan of levels
+    /// `0..=cut_level` without error: a zero-knowledge opening stops at its
+    /// cut (`specs/whiteout-akita.md` §4.6).
+    pub fn finish_through(self, cut_level: u32) -> Result<(), AkitaError> {
+        if self.invalid || !self.cursor.is_finished_through(cut_level) {
+            return Err(AkitaError::InvalidInput(
+                "the grinding replay did not stop exactly at the cut".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Require that replay consumed the complete grinding plan without error.
     ///
     /// The proof bytes stay in the caller's transcript.
@@ -615,6 +639,15 @@ impl<'a, 'proof, H: Sponge, C: VerifierGrindingChannel<'proof, Sponge = H>>
         result
     }
 
+    /// Require that replay consumed exactly the grinding plan of levels
+    /// `0..=cut_level` without error.
+    pub fn finish_through(self, cut_level: u32) -> Result<(), AkitaError> {
+        if self.invalid || !self.cursor.is_finished_through(cut_level) {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(())
+    }
+
     /// Require that replay consumed the complete grinding plan without error.
     ///
     /// Proof exhaustion is the caller's check: the outermost verifier finishes
@@ -629,6 +662,58 @@ impl<'a, 'proof, H: Sponge, C: VerifierGrindingChannel<'proof, Sponge = H>>
             "native proof nonce bytes"
         );
         Ok(())
+    }
+}
+
+/// The verifier side of grinding replay: the fold-response reads and the
+/// fold-challenge records the fold verifier needs beyond [`GrindingReplay`].
+/// [`VerifierGrinding`] checks the proof; `CountingGrinding` only counts the
+/// pads a masked replay takes.
+pub trait FoldResponseReplay: GrindingReplay {
+    /// The sponge of the forks the fold challenges are drawn from.
+    type Sponge: Sponge;
+
+    /// Squeezes the next scheduled fold-response fork seed, reads the
+    /// counter, and returns the fork the fold challenges are drawn from.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError`] when `site` is not the next plan entry or the
+    /// counter is invalid.
+    fn read_fold_response(&mut self, site: GrindingSite) -> Result<Fork<Self::Sponge>, AkitaError>;
+
+    /// Consumes the plan entries of one sparse fold group and logs its fork
+    /// draws.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError`] when the group is not the next plan run.
+    fn record_fold_challenges(
+        &mut self,
+        level: u32,
+        group: u32,
+        coordinate_count: usize,
+        draws: &FoldDrawRecord,
+    ) -> Result<(), AkitaError>;
+}
+
+impl<'proof, H: Sponge, C: VerifierGrindingChannel<'proof, Sponge = H>> FoldResponseReplay
+    for VerifierGrinding<'_, 'proof, H, C>
+{
+    type Sponge = H;
+
+    fn read_fold_response(&mut self, site: GrindingSite) -> Result<Fork<H>, AkitaError> {
+        Self::read_fold_response(self, site)
+    }
+
+    fn record_fold_challenges(
+        &mut self,
+        level: u32,
+        group: u32,
+        coordinate_count: usize,
+        draws: &FoldDrawRecord,
+    ) -> Result<(), AkitaError> {
+        Self::record_fold_challenges(self, level, group, coordinate_count, draws)
     }
 }
 
@@ -718,30 +803,22 @@ where
     }
 }
 
-/// Sumcheck round context borrowing a verifier grinding context.
-pub struct GrindingSumcheckVerifier<
-    'context,
-    'a,
-    'proof,
-    F,
-    E,
-    H: Sponge,
-    C = VerifierTranscript<'proof, H>,
-> {
-    grinding: &'context mut VerifierGrinding<'a, 'proof, H, C>,
+/// Sumcheck round context borrowing a verifier-side grinding replay: the
+/// verifier's [`VerifierGrinding`] over the clear transcript or a masked
+/// channel, or a [`CountingGrinding`] pad-layout replay.
+pub struct GrindingSumcheckVerifier<'context, F, E, G> {
+    grinding: &'context mut G,
     protocol: akita_params::SumcheckProtocol,
     level: u32,
     stage: u32,
     _fields: PhantomData<fn() -> (F, E)>,
 }
 
-impl<'context, 'a, 'proof, F, E, H: Sponge, C>
-    GrindingSumcheckVerifier<'context, 'a, 'proof, F, E, H, C>
-{
+impl<'context, F, E, G> GrindingSumcheckVerifier<'context, F, E, G> {
     /// Bind one sumcheck invocation to its scheduled grinding-site coordinates.
     #[must_use]
     pub fn new(
-        grinding: &'context mut VerifierGrinding<'a, 'proof, H, C>,
+        grinding: &'context mut G,
         protocol: akita_params::SumcheckProtocol,
         level: u32,
         stage: u32,
@@ -756,18 +833,16 @@ impl<'context, 'a, 'proof, F, E, H: Sponge, C>
     }
 }
 
-impl<'proof, F, E, H, C> VerifierRoundContext<E>
-    for GrindingSumcheckVerifier<'_, '_, 'proof, F, E, H, C>
+impl<F, E, G> VerifierRoundContext<E> for GrindingSumcheckVerifier<'_, F, E, G>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    H: Sponge,
-    C: VerifierGrindingChannel<'proof, Sponge = H, Error: Into<SumcheckError<E>>>,
+    G: GrindingReplay<State: PrivateChannel<Error: Into<SumcheckError<E>>>>,
 {
-    type Channel = C;
+    type Channel = G::State;
     type Error = AkitaError;
 
-    fn channel_mut(&mut self) -> &mut C {
+    fn channel_mut(&mut self) -> &mut G::State {
         self.grinding.state_mut()
     }
 
@@ -795,6 +870,12 @@ where
             })
     }
 }
+
+#[cfg(feature = "zk")]
+#[path = "replay/counting.rs"]
+mod counting;
+#[cfg(feature = "zk")]
+pub use counting::CountingGrinding;
 
 #[cfg(test)]
 #[path = "replay/tests.rs"]

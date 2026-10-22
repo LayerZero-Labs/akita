@@ -62,9 +62,46 @@ where
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         let setup = &self.setup;
-        let schedules = &self.schedules;
         let selection = statement.selection();
         let claims = statement.into_claims();
+        let opening = self.plan_opening(selection, &claims, basis)?;
+        opening.absorb_descriptor(transcript);
+        let schedule = opening.schedule;
+        let mut grinding = akita_types::VerifierGrinding::new(transcript, &opening.grinding_plan);
+        let raw_claims = opening.raw_claims(&claims)?;
+        let root = verify_root::<Cfg::Field, Cfg::ExtField, _>(
+            setup,
+            &mut grinding,
+            &raw_claims,
+            raw_claims.flat_evaluations(),
+            &opening.opening_batch,
+            basis,
+            &schedule.root_fold().params,
+            schedule.recursive_folds.first(),
+            &schedule.terminal,
+        )?;
+        verify_suffix::<Cfg::Field, Cfg::ExtField, _>(
+            setup,
+            &self.terminal_ntt,
+            &mut grinding,
+            schedule,
+            SuffixVerifierState::from_root(root, schedule.root_fold().output_witness_len),
+        )?;
+        grinding.finish()
+    }
+
+    /// The checks and the transcript instance of one opening, before its
+    /// first transcript operation: the statement against the catalog row it
+    /// selects and this verifier's setup, and the descriptor and grinding
+    /// plan of that row.
+    pub(crate) fn plan_opening(
+        &self,
+        selection: akita_params::OpeningScheduleSelection,
+        claims: &OpeningClaims<'_, Cfg::ExtField, &akita_types::CommittedGroup<Cfg::Field>>,
+        basis: BasisMode,
+    ) -> Result<OpeningPlan<'_>, AkitaError> {
+        let setup = &self.setup;
+        let schedules = &self.schedules;
         claims.validate(setup.expanded().descriptor())?;
         let opening_batch = claims.committed_layout()?;
         let (final_group, precommitteds) = claims
@@ -138,15 +175,43 @@ where
             schedule,
             basis,
         )?;
-        transcript.site(
+        Ok(OpeningPlan {
+            schedule,
+            grinding_plan,
+            descriptor_bytes,
+            opening_batch,
+        })
+    }
+}
+
+/// One opening's checked instance, from [`AkitaVerifier::plan_opening`].
+pub(crate) struct OpeningPlan<'s> {
+    pub(crate) schedule: &'s akita_params::FoldSchedule,
+    pub(crate) grinding_plan: akita_params::GrindingPlan,
+    descriptor_bytes: Vec<u8>,
+    pub(crate) opening_batch: akita_params::OpeningClaimsLayout,
+}
+
+impl OpeningPlan<'_> {
+    /// The opening's first transcript operation: its instance descriptor,
+    /// public.
+    pub(crate) fn absorb_descriptor<C: Channel>(&self, channel: &mut C) {
+        channel.site(
             ProtocolSiteId {
                 family: akita_params::transcript_site::SITE_FAMILY_ROOT_STATEMENT,
                 ..ProtocolSiteId::default()
             }
             .into(),
         );
-        transcript.public_bytes(&descriptor_bytes);
-        let mut grinding = akita_types::VerifierGrinding::new(transcript, &grinding_plan);
+        channel.public_bytes(&self.descriptor_bytes);
+    }
+
+    /// The statement's claims over raw commitments, as the root fold reads
+    /// them.
+    pub(crate) fn raw_claims<'c, E: Clone, F: Field>(
+        &self,
+        claims: &'c OpeningClaims<'_, E, &akita_types::CommittedGroup<F>>,
+    ) -> Result<OpeningClaims<'c, E, &'c akita_types::Commitment<F>>, AkitaError> {
         let raw_groups = claims
             .groups()
             .iter()
@@ -158,33 +223,7 @@ where
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let raw_claims = OpeningClaims::from_groups(raw_groups)?;
-        let root = verify_root::<Cfg::Field, Cfg::ExtField, _>(
-            setup,
-            &mut grinding,
-            &raw_claims,
-            &opening_batch,
-            basis,
-            root_params,
-            schedule.recursive_folds.first(),
-            &schedule.terminal,
-        )?;
-        verify_suffix::<Cfg::Field, Cfg::ExtField, _>(
-            setup,
-            &self.terminal_ntt,
-            &mut grinding,
-            schedule,
-            SuffixVerifierState {
-                opening_point: root.challenges,
-                opening: root.opening,
-                witness: root.next_witness,
-                witness_last_block_digest: root.next_witness_last_block_digest,
-                basis: BasisMode::Lagrange,
-                witness_len: schedule.root_fold().output_witness_len,
-                setup_prefix_opening: root.setup_prefix_opening,
-            },
-        )?;
-        grinding.finish()
+        OpeningClaims::from_groups(raw_groups)
     }
 }
 

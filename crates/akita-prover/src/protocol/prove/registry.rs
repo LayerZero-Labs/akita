@@ -347,6 +347,55 @@ impl<Cfg: CommitmentConfig, S: Sponge> Drop for RegistryProofGuard<'_, '_, Cfg, 
     }
 }
 
+/// Where a fold's committed successor goes before the producer's sumchecks:
+/// to the next fold's owner through the registry ([`FoldHandoff`]), or
+/// nowhere when one backend proves every level.
+pub(super) trait SuccessorHandoff<
+    Cfg: CommitmentConfig,
+    B: ProverBackend<Cfg::Field, Cfg::ExtField>,
+>
+{
+    #[allow(clippy::too_many_arguments)]
+    fn handoff_successor(
+        &mut self,
+        backend: &B,
+        session: &B::ProofSessionHandle,
+        level: usize,
+        producer: &akita_params::CommittedGroupParams,
+        relation: &akita_types::RingRelationInstance<Cfg::Field>,
+        commitment: &ValidatedRecursiveWitnessCommitPlan,
+        binding: &NextWitnessState<Cfg::Field>,
+        witness: &B::WitnessHandle,
+        material: &B::CommitmentMaterialHandle,
+    ) -> Result<(), AkitaError>;
+}
+
+impl<Cfg, S, B> SuccessorHandoff<Cfg, B> for FoldHandoff<'_, '_, '_, Cfg, S>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: CanonicalEncoding,
+    S: Sponge,
+    B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
+{
+    fn handoff_successor(
+        &mut self,
+        backend: &B,
+        session: &B::ProofSessionHandle,
+        level: usize,
+        producer: &akita_params::CommittedGroupParams,
+        relation: &akita_types::RingRelationInstance<Cfg::Field>,
+        commitment: &ValidatedRecursiveWitnessCommitPlan,
+        binding: &NextWitnessState<Cfg::Field>,
+        witness: &B::WitnessHandle,
+        material: &B::CommitmentMaterialHandle,
+    ) -> Result<(), AkitaError> {
+        Self::handoff_successor(
+            self, backend, session, level, producer, relation, commitment, binding, witness,
+            material,
+        )
+    }
+}
+
 impl<Cfg: CommitmentConfig, S: Sponge> FoldHandoff<'_, '_, '_, Cfg, S> {
     pub(super) fn complete<B: ProverBackend<Cfg::Field, Cfg::ExtField>>(
         &mut self,

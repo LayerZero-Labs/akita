@@ -27,7 +27,7 @@ use akita_types::{
 use jolt_algebra::CyclotomicRing;
 use jolt_algebra::{CanonicalDecode, Fold, Unreduced};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
-use jolt_transcript::{Channel, Sponge};
+use jolt_transcript::Sponge;
 
 pub(crate) struct ExtensionOpeningReduction<E: Field> {
     pub(crate) final_claims: Vec<E>,
@@ -40,6 +40,8 @@ pub(crate) struct ExtensionOpeningReduction<E: Field> {
 pub mod execution;
 mod fold;
 mod fold_kernels;
+#[cfg(all(feature = "zk", feature = "test-support"))]
+mod masked;
 mod opening_reduction;
 mod registry;
 mod root;
@@ -48,6 +50,8 @@ mod suffix;
 pub use execution::{batched_prove, catch_prover_panic};
 pub(in crate::protocol::prove) use fold::{prepare_fold, prove_fold, PreparedFold};
 pub(in crate::protocol) use fold_kernels::*;
+#[cfg(all(feature = "zk", feature = "test-support"))]
+pub use masked::{prove_masked_prefix, ResidualOpening};
 pub(crate) use opening_reduction::*;
 pub(crate) use suffix::FoldPublicState;
 pub use suffix::SuffixProverState;
@@ -56,6 +60,26 @@ pub use suffix::SuffixProverState;
 pub struct ProveLevelOutput<F: Field, E: Field, MaterialHandle, WitnessHandle> {
     /// Suffix prover state for the next level.
     pub next_state: SuffixProverState<F, E, MaterialHandle, WitnessHandle>,
+    /// The Stage-1 leaf check's inputs, on the ℓ∞ route.
+    #[cfg_attr(
+        not(all(feature = "zk", feature = "test-support")),
+        expect(dead_code, reason = "read only by the zero-knowledge prefix prover")
+    )]
+    pub(crate) range_leaf: Option<RangeLeafClaim<E>>,
+}
+
+/// The decoded inputs of one level's Stage-1 leaf check
+/// (`akita_types::check_range_leaf`): the batched leaf, the range image, and
+/// Stage 1's running output claim. A zero-knowledge opening lowers the check
+/// on them into its auxiliary values.
+#[cfg_attr(
+    not(all(feature = "zk", feature = "test-support")),
+    expect(dead_code, reason = "read only by the zero-knowledge prefix prover")
+)]
+pub(crate) struct RangeLeafClaim<E> {
+    pub(crate) leaf: akita_types::RangeLeaf<E>,
+    pub(crate) range_image: E,
+    pub(crate) claim: E,
 }
 
 pub(in crate::protocol::prove) struct Stage3ProveOutput<E: Field> {
