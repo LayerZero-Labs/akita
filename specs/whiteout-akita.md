@@ -1268,6 +1268,35 @@ code does, and why.
   rejected ones included, by Akita's executor, which is not constant time
   (A24). The executor must therefore be constant time in its image.
 
+**W5-P1 deltas.**
+
+- **Masked padding term.** Paper `04_protocol.tex:386-387,453`: the
+  zero-padding equations `e_j = 0` for `j ∈ [|e|, 2^ν)` are rows of `H`,
+  batched by `eq(η, ·)`. Code: no padding rows; after `η` the verifier
+  draws `δ` and `τ_pad ∈ F^ν`, and `A` gains
+  `δ·1[j ≥ |e|]·eq(τ_pad, j)`. The verifier evaluates it as one restricted
+  equality over the interval `[|e|, 2^ν)` (`NegativeBinarySupport`). Why:
+  `η` then ranges over the real rows only, and the term is one interval
+  evaluation instead of an `eq(η, ·)` window at an unaligned row offset.
+  Cost: a nonzero padding entry survives unless `Σ_{j ≥ |e|}
+  eq(τ_pad, j)e_j = 0`, probability at most `ν/q`, added to the batching
+  error; `ν + 1` more challenges.
+- **`A(r)` without `A`.** Paper `04_protocol.tex:446-456`: the verifier
+  evaluates the contractions with structured-weight algorithms. Code:
+  `ResponseStatement::weight_at` (jolt-zk) factors `eq(r, ·)` at the
+  native ring dimension `D`; every response segment starts and ends on a
+  native element, so `z` reads as one scale per native element times one
+  common ring, and `N`, `L` and the lifted forms apply with one column
+  combination per row (`PreparedMatrix::combine_columns`). Item 2 reads
+  `V`'s digit columns per 64-coefficient quarter of `eq(r_lo, ·)`. The
+  chains' rows are Akita's `ReducedCompressionRelationWeights::
+  evaluate_at_point`. `b_η` comes from `ResponseStatement::constant` and the
+  payloads, without `rows(0)`. The prover keeps the dense `A`.
+  Tests: jolt-zk checks `weight_at` against the MLE of `weigh`'s dense
+  weights at a random point for every row family at `D = 64, 256`;
+  W5-b checks the factored `A(r)`, the dense `A` at `r` and `H` contracted
+  column by column against each other.
+
 ### 5.8 Performance plan (W5-e follow-up)
 
 W5a's measured verifier is 3.8 s at the synthetic headline (|e| ≈ 2^27), about
