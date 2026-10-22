@@ -12,7 +12,7 @@ use akita_params::{ChunkedWitnessCfg, CommittedGroupBatchProfile, GroupCommitPha
 use akita_schedules::ValidatedScheduleCatalog;
 use jolt_algebra::cfg_into_iter;
 use jolt_algebra::solinas::parallel::*;
-use jolt_algebra::{Field, Zero};
+use jolt_algebra::{Field, Ring, Zero};
 use jolt_zk::whiteout::test_support::{CheckingResponseProver, SyntheticSigma};
 use jolt_zk::whiteout::ResponseSegment;
 use std::sync::Mutex;

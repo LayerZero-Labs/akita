@@ -8,12 +8,63 @@
 use akita_error::AkitaError;
 use akita_sumcheck::{fold_evals_in_place, SumcheckKernel};
 
+use jolt_zk::whiteout::lift_ct;
+use zeroize::{Zeroize, Zeroizing};
+
 use super::rows::eq_table;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{cfg_fold_reduce, cfg_into_iter, Field, Fold, JoltField};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProverRoundContext, SumcheckSite, VerifierRoundContext};
 use jolt_transcript::{Channel, ProverTranscript, SiteId, Sponge, VerifierTranscript};
+
+/// A table of values derived from `e`, zeroed over its whole capacity when
+/// dropped. Folding builds the next table and drops the previous one, so no
+/// freed buffer keeps `e`-derived values.
+pub(crate) struct SecretTable<F: Copy + Send>(Vec<F>);
+
+impl<F: Field> SecretTable<F> {
+    /// `values` zero-padded to `len`, in a buffer of exactly that capacity;
+    /// `values`' own buffer is wiped.
+    pub(crate) fn padded(values: Vec<F>, len: usize) -> Self {
+        let source = Self(values);
+        let mut table = Vec::with_capacity(len.max(source.0.len()));
+        table.extend_from_slice(&source.0);
+        table.resize(len.max(source.0.len()), F::zero());
+        Self(table)
+    }
+
+    /// `low + r·(high − low)` over each pair.
+    fn fold(&mut self, r: F) {
+        let source = &self.0;
+        let folded = cfg_into_iter!(0..source.len().div_ceil(2))
+            .map(|i| {
+                let low = source[2 * i];
+                let high = source.get(2 * i + 1).copied().unwrap_or_default();
+                low + r * (high - low)
+            })
+            .collect();
+        *self = Self(folded);
+    }
+}
+
+impl<F: Copy + Send> std::ops::Deref for SecretTable<F> {
+    type Target = [F];
+
+    fn deref(&self) -> &[F] {
+        &self.0
+    }
+}
+
+impl<F: Copy + Send> Drop for SecretTable<F> {
+    fn drop(&mut self) {
+        self.0.clear();
+        self.0
+            .spare_capacity_mut()
+            .par_chunks_mut(1 << 16)
+            .for_each(|chunk| chunk.zeroize());
+    }
+}
 
 /// Round evaluations at `0..=DEGREE` of `Σ_i f(t_i(X))`, where `t_i(X)` are
 /// the tables' pairs `(2i, 2i + 1)` interpolated on the line.
@@ -66,12 +117,12 @@ fn round_polynomial<F: Field, const N: usize>(
 }
 
 /// `Σ_i U_i W_i` over `a` variables.
-pub(crate) struct ProductKernel<F> {
-    pub(crate) u: Vec<F>,
-    pub(crate) w: Vec<F>,
+pub(crate) struct ProductKernel<F: Copy + Send> {
+    pub(crate) u: SecretTable<F>,
+    pub(crate) w: SecretTable<F>,
 }
 
-impl<F: Field + Fold> SumcheckKernel<F> for ProductKernel<F> {
+impl<F: Field + Fold + Send> SumcheckKernel<F> for ProductKernel<F> {
     fn num_rounds(&self) -> usize {
         self.u.len().trailing_zeros() as usize
     }
@@ -86,8 +137,8 @@ impl<F: Field + Fold> SumcheckKernel<F> for ProductKernel<F> {
     }
 
     fn bind_challenge(&mut self, _round: usize, challenge: F) -> Result<(), AkitaError> {
-        fold_evals_in_place(&mut self.u, challenge);
-        fold_evals_in_place(&mut self.w, challenge);
+        self.u.fold(challenge);
+        self.w.fold(challenge);
         Ok(())
     }
 }
@@ -96,7 +147,7 @@ impl<F: Field + Fold> SumcheckKernel<F> for ProductKernel<F> {
 /// `B(x) = γ·eq(τ, x) + S(x)`: the dense part held as its point and the
 /// product of its bound factors (split eq), the sparse part `S = ζ·eq(τ, ·)`
 /// on `I_bin` as its nonzero entries.
-pub(crate) struct FusedKernel<F> {
+pub(crate) struct FusedKernel<F: Copy + Send> {
     pub(crate) a: Vec<F>,
     pub(crate) e: FusedE<F>,
     pub(crate) b: SplitB<F>,
@@ -146,16 +197,19 @@ impl<F: JoltField> SplitB<F> {
 
 /// `E` as committed digits until the first challenge binds it, then over
 /// `F`: the first round reads one byte per entry instead of a field element.
-pub(crate) enum FusedE<F> {
-    Digits(Vec<i8>),
-    Field(Vec<F>),
+///
+/// Constant time in `e`: every read is at a public index, and digits enter
+/// `F` through [`lift_ct`], which does not branch on their sign.
+pub(crate) enum FusedE<F: Copy + Send> {
+    Digits(Zeroizing<Vec<i8>>),
+    Field(SecretTable<F>),
 }
 
 impl<F: Field> FusedE<F> {
     /// The value a table bound in every variable holds.
     pub(crate) fn first(&self) -> Option<F> {
         match self {
-            Self::Digits(digits) => digits.first().map(|&digit| F::from_i64(i64::from(digit))),
+            Self::Digits(digits) => digits.first().map(|&digit| lift_ct(i64::from(digit))),
             Self::Field(values) => values.first().copied(),
         }
     }
@@ -255,8 +309,8 @@ impl<F: JoltField + Fold> SumcheckKernel<F> for FusedKernel<F> {
                 let e_pair = |i: usize| {
                     let low = i64::from(digits[2 * i]);
                     (
-                        F::from_i64(low),
-                        F::from_i64(i64::from(digits[2 * i + 1]) - low),
+                        lift_ct::<F>(low),
+                        lift_ct::<F>(i64::from(digits[2 * i + 1]) - low),
                     )
                 };
                 (
@@ -272,16 +326,16 @@ impl<F: JoltField + Fold> SumcheckKernel<F> for FusedKernel<F> {
     fn bind_challenge(&mut self, _round: usize, challenge: F) -> Result<(), AkitaError> {
         fold_evals_in_place(&mut self.a, challenge);
         match &mut self.e {
-            FusedE::Field(e) => fold_evals_in_place(e, challenge),
+            FusedE::Field(e) => e.fold(challenge),
             FusedE::Digits(digits) => {
                 let folded = cfg_into_iter!(0..digits.len() / 2)
                     .map(|i| {
                         let low = i64::from(digits[2 * i]);
-                        F::from_i64(low)
-                            + challenge * F::from_i64(i64::from(digits[2 * i + 1]) - low)
+                        lift_ct::<F>(low)
+                            + challenge * lift_ct::<F>(i64::from(digits[2 * i + 1]) - low)
                     })
                     .collect();
-                self.e = FusedE::Field(folded);
+                self.e = FusedE::Field(SecretTable(folded));
             }
         }
         let b = &mut self.b;

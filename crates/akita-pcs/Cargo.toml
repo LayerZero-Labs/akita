@@ -81,6 +81,7 @@ test-support = [
   "dep:jolt-zk",
   "dep:akita-sumcheck",
   "dep:jolt-poly",
+  "dep:zeroize",
   "akita-config/test-support",
 ]
 [dependencies]
@@ -112,6 +113,7 @@ jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15
   "whiteout-prover",
 ], optional = true }
 jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, optional = true }
+zeroize = { version = "1.8", default-features = false, features = ["alloc"], optional = true }
 
 [dev-dependencies]
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }

@@ -41,18 +41,22 @@ use akita_types::{
 };
 use akita_verifier::{AkitaVerifier, Stage1Verifier};
 use jolt_algebra::solinas::parallel::*;
-use jolt_algebra::{One, Prime128OffsetA7F7, Ring, Zero};
+use jolt_algebra::{One, Prime128OffsetA7F7};
 use jolt_sumcheck::{prove_single, verify_single, SingleFormat, SingleInstance};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 use jolt_zk::masking::ZkError;
+use jolt_zk::whiteout::lift_ct;
 use jolt_zk::whiteout::{
     CompressedImage, ImageCompression, ResponseProver, ResponseStatement, ResponseWitness,
     WhiteoutError,
 };
+use zeroize::Zeroizing;
 
 use crate::AkitaCommitmentScheme;
 use compression::Chains;
-use rounds::{ClearProverRounds, ClearVerifierRounds, FusedE, FusedKernel, ProductKernel, SplitB};
+use rounds::{
+    ClearProverRounds, ClearVerifierRounds, FusedE, FusedKernel, ProductKernel, SecretTable, SplitB,
+};
 use rows::{
     batch_rows, batch_target, batch_weight_at, ceil_log2, row_variables, zk_error, PaddingTerm,
     ProductClaims, ResponseShape, RowWeights,
@@ -211,7 +215,9 @@ where
         {
             return Err(WhiteoutError::ResponseRejected("response length").into());
         }
-        let mut committed = Vec::with_capacity(shape.padded_len());
+        // `e`'s digits and every table derived from them are wiped when
+        // freed (`Zeroizing`, `SecretTable`), and enter `F` through `lift_ct`.
+        let mut committed = Zeroizing::new(Vec::with_capacity(shape.padded_len()));
         committed.extend_from_slice(digits.committed);
         committed.extend_from_slice(digits.padding);
         if committed.len() > shape.padded_len() {
@@ -220,10 +226,13 @@ where
         committed.resize(shape.padded_len(), 0);
 
         // 1. Commit to e.
-        let e: Vec<F> = cfg_iter!(committed)
-            .map(|&digit| F::from_i64(i64::from(digit)))
-            .collect();
-        let poly = DensePoly::from_field_evals(shape.num_vars, &e).map_err(zk_error)?;
+        let e = SecretTable::padded(
+            cfg_iter!(committed)
+                .map(|&digit| lift_ct::<F>(i64::from(digit)))
+                .collect(),
+            0,
+        );
+        let poly = DensePoly::from_field_evals(shape.num_vars, &e[..]).map_err(zk_error)?;
         drop(e);
         let source = side.backend.import_source(vec![poly]).map_err(zk_error)?;
         let output = side
@@ -241,8 +250,8 @@ where
         let rows = statement.rows(digits.rows, alpha)?;
         let product_vars = ceil_log2(rows.product_x.len().max(1));
         let mut product = ProductKernel {
-            u: padded(rows.product_x, product_vars),
-            w: padded(rows.product_y, product_vars),
+            u: SecretTable::padded(rows.product_x, 1 << product_vars),
+            w: SecretTable::padded(rows.product_y, 1 << product_vars),
         };
         // t_× is the product lift's right side at α (Whiteout (4)); for a
         // true statement it equals Σ_i U_i W_i.
@@ -520,12 +529,6 @@ fn compressed(input_claim: F, rounds: usize, degree: usize) -> SingleInstance<F>
         format: SingleFormat::Compressed,
         invocation: 0,
     }
-}
-
-/// `values`, zero-padded to `2^num_vars`.
-fn padded(mut values: Vec<F>, num_vars: usize) -> Vec<F> {
-    values.resize(1 << num_vars, F::zero());
-    values
 }
 
 /// The value a table bound in every variable holds.
