@@ -34,7 +34,7 @@ use akita_types::{
 };
 use jolt_algebra::{One, Ring, Zero};
 use jolt_transcript::{ProverTranscript, VerifierTranscript};
-use private_cpu::PrivateCpu;
+use private_cpu::{Fault, PrivateCpu};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -982,4 +982,106 @@ fn zero_knowledge_proof_with_a_precommitted_group_and_a_setup_prefix_verifies() 
         verify(final_opening).unwrap();
         assert!(verify(final_opening + F::one()).is_err());
     });
+}
+
+/// Only the Stage-3 output check can reject: the backend adds `X − X²` to the
+/// last Stage-3 round at level 0, so every round sums correctly, the prover's
+/// checks pass, and the setup-prefix evaluation and every later message stay
+/// honest at the drawn point. The verifier, which reads Stage 3 in the clear,
+/// rejects the proof; the same backend without the fault proves one it
+/// accepts.
+#[test]
+fn a_stage3_output_miss_is_rejected() {
+    on_large_stack(|| run_stage3_output_miss().unwrap());
+}
+
+fn run_stage3_output_miss() -> Result<(), AkitaError> {
+    let (profiles, schedule) = multi_group_zk_row();
+    let precommitted = profiles.precommitteds[0];
+    let layout = ScheduleLookupKey {
+        final_group: profiles.final_group.group,
+        precommitteds: profiles.precommitteds.clone(),
+    }
+    .opening_layout()?;
+    let scheme =
+        AkitaCommitmentScheme::<RecCfg>::new(TrustedScheduleCatalog::try_new_with_test_zk(
+            [(profiles, schedule.clone())],
+            ChunkedWitnessCfg::default_non_chunked(),
+        )?);
+    let setup = scheme.setup_prover(MULTI_NV, 2)?;
+    let private = PrivateCpu::new(backend(&setup, 6));
+    let (pre_evals, pre_poly) = polynomial();
+    let (pre, pre_handle) = private.commit_in(
+        &zk_catalog(),
+        vec![pre_poly],
+        GroupContext::explicit(&precommitted),
+    )?;
+    let final_poly = common::make_onehot_poly::<RecCfg>(MULTI_NV, 0x2b2b);
+    let (root, root_handle) = private.commit_in(
+        scheme.schedules(),
+        vec![final_poly.clone()],
+        GroupContext::scheduler_with_precommitted_groups(
+            &akita_params::PrecommittedGroupProfiles::from_profiles(vec![precommitted])?,
+        ),
+    )?;
+    let point = common::random_point(MULTI_NV, 0x2b2b);
+    let pre_opening = pre_evals
+        .iter()
+        .zip(lagrange_weights(&point[..NV])?)
+        .fold(F::zero(), |sum, (&value, weight)| sum + value * weight);
+    let root_opening = common::onehot_opening_lagrange(&final_poly, &point);
+    let input = || {
+        SelectedProverOpeningData::from_committed_claims::<RecCfg>(
+            OpeningClaims::from_groups(vec![
+                PolynomialGroupClaims::new(point[..NV].to_vec(), vec![pre_opening], pre.clone())?,
+                PolynomialGroupClaims::new(point.clone(), vec![root_opening], root.clone())?,
+            ])?,
+            vec![pre_handle.clone(), root_handle.clone()],
+            scheme.schedules(),
+        )
+    };
+    let selection = input()?.selection();
+    let resolved = scheme.schedules().resolve_selection(selection)?;
+    let levels = resolved.schedule().num_fold_levels();
+    let prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
+        resolved.schedule(),
+        input()?.opening_layout(),
+    )?;
+    let prefixes = private.prefixes(&setup, &prefix_ids);
+    let mut registry = BackendRegistry::<RecCfg>::new()?;
+    let id = registry.register(&private, &prefixes)?;
+    let prove = || {
+        common::prove_on_session(SESSION, |transcript| {
+            akita_pcs::batched_prove(
+                setup.expanded.descriptor(),
+                scheme.schedules(),
+                &registry,
+                input()?,
+                transcript,
+                BasisMode::Lagrange,
+                &mut FixedFoldRoute::new(vec![id; levels]),
+            )
+        })
+    };
+    let verifier =
+        scheme.verifier(scheme.setup_verifier_for_schedule(&setup, &schedule, &layout)?)?;
+    let verify = |proof: &[u8]| {
+        verifier.verify_standalone(
+            proof,
+            SESSION,
+            GroupBatchStatement::new(
+                selection,
+                OpeningClaims::from_groups(vec![
+                    PolynomialGroupClaims::new(point[..NV].to_vec(), vec![pre_opening], &pre)?,
+                    PolynomialGroupClaims::new(point.clone(), vec![root_opening], &root)?,
+                ])?,
+            )?,
+            BasisMode::Lagrange,
+        )
+    };
+
+    verify(&prove()?)?;
+    private.fault.set(Fault::Stage3OutputMiss);
+    assert_eq!(verify(&prove()?), Err(AkitaError::InvalidProof));
+    Ok(())
 }

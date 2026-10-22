@@ -11,6 +11,8 @@
 #![allow(missing_docs)]
 
 mod common;
+#[path = "dynamic_backends/private_cpu.rs"]
+mod private_cpu;
 
 use akita_config::{policy_of, proof_optimized::fp128, CommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::{AkitaProverSetup, CommitmentHandle, CpuBackend, DensePoly, GroupContext};
@@ -40,6 +42,7 @@ use rand::{Rng, SeedableRng};
 
 type Cfg = fp128::Dense;
 type F = <Cfg as CommitmentConfig>::Field;
+type E = F;
 
 const NV: usize = 14;
 const SESSION: &[u8] = b"masked-prefix";
@@ -268,6 +271,12 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
     /// The pad layout from the counting replay over `bytes`: the claims'
     /// slots, the prefix's message slots, then its auxiliary slots.
     fn layout(&self, bytes: &[u8]) -> PadLayout {
+        self.layout_for(bytes, self.statement())
+    }
+
+    /// [`layout`](Self::layout) for another statement of this instance's
+    /// shape.
+    fn layout_for(&self, bytes: &[u8], statement: GroupBatchStatement<'_, F, F>) -> PadLayout {
         let mut transcript =
             VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, bytes);
         let mut view = CommittedPadsView::counting();
@@ -280,7 +289,7 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
             .count_masked_prefix(
                 &mut transcript,
                 &mut view,
-                self.statement(),
+                statement,
                 (claims.start..claims.start + claims.len)
                     .map(|slot| AffineRow::masked(F::zero(), PadIndex(slot)))
                     .collect(),
@@ -325,6 +334,17 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
         proof: &[u8],
         layout: &PadLayout,
     ) -> Result<(MaskedPrefix<F, F>, Vec<F>), AkitaError> {
+        self.verify_for(proof, layout, self.statement())
+    }
+
+    /// [`verify`](Self::verify) against another statement of this
+    /// instance's shape.
+    fn verify_for(
+        &self,
+        proof: &[u8],
+        layout: &PadLayout,
+        statement: GroupBatchStatement<'_, F, F>,
+    ) -> Result<(MaskedPrefix<F, F>, Vec<F>), AkitaError> {
         let mut transcript =
             VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, proof);
         let mut view = CommittedPadsView::counting();
@@ -335,7 +355,7 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
         let prefix = self.verifier.verify_masked_prefix(
             &mut transcript,
             &mut view,
-            self.statement(),
+            statement,
             claims
                 .iter()
                 .zip(slots.start..)
@@ -1054,5 +1074,139 @@ fn the_masked_levels_grind() {
                 "level {level} has no proof-of-work query"
             );
         }
+    });
+}
+
+/// Only the Stage-3 output check can reject: the backend adds `X − X²` to the
+/// last Stage-3 round, so every round sums correctly, the prover's checks
+/// pass, and the setup-prefix evaluation and every later message stay honest
+/// at the drawn point. The masked verifier, which reads Stage 3 in the clear,
+/// rejects the proof; the same backend without the fault proves a prefix it
+/// accepts.
+#[test]
+fn a_stage3_output_miss_is_rejected_at_a_masked_level() {
+    on_large_stack(|| {
+        use private_cpu::{Fault, PrivateCpu};
+
+        let instance = Instance::multi_group();
+        let private = PrivateCpu::new(
+            CpuBackend::new(instance.setup.expanded.clone())
+                .unwrap()
+                .with_hiding_rng(StdRng::seed_from_u64(9)),
+        );
+        let precommitted = *instance.groups[0].commitment.profile();
+        let (_, pre_poly) = dense_poly(NV);
+        let (pre, pre_handle) = private
+            .commit_in(
+                &zk_catalog(),
+                vec![pre_poly],
+                GroupContext::explicit(&precommitted),
+            )
+            .unwrap();
+        let final_poly = common::make_onehot_poly::<RecCfg>(MULTI_NV, 0x2b2b);
+        let (root, root_handle) = private
+            .commit_in(
+                instance.scheme.schedules(),
+                vec![final_poly],
+                GroupContext::scheduler_with_precommitted_groups(
+                    &akita_params::PrecommittedGroupProfiles::from_profiles(vec![precommitted])
+                        .unwrap(),
+                ),
+            )
+            .unwrap();
+        let commitments = [&pre, &root];
+        let claims = |evaluations: [F; 2]| {
+            OpeningClaims::from_groups(
+                instance
+                    .groups
+                    .iter()
+                    .zip(commitments)
+                    .zip(evaluations)
+                    .map(|((group, commitment), evaluation)| {
+                        PolynomialGroupClaims::new(
+                            group.point.clone(),
+                            vec![evaluation],
+                            commitment.clone(),
+                        )
+                        .unwrap()
+                    })
+                    .collect(),
+            )
+            .unwrap()
+        };
+        let openings = [instance.groups[0].opening, instance.groups[1].opening];
+        let opening_data = || {
+            SelectedProverOpeningData::from_committed_claims::<RecCfg>(
+                claims(openings),
+                vec![pre_handle.clone(), root_handle.clone()],
+                instance.scheme.schedules(),
+            )
+            .unwrap()
+        };
+        let statement = || {
+            GroupBatchStatement::new(
+                opening_data().selection(),
+                OpeningClaims::from_groups(
+                    instance
+                        .groups
+                        .iter()
+                        .zip(commitments)
+                        .map(|(group, commitment)| {
+                            PolynomialGroupClaims::new(
+                                group.point.clone(),
+                                vec![F::zero()],
+                                commitment,
+                            )
+                            .unwrap()
+                        })
+                        .collect(),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let resolved = instance
+            .scheme
+            .schedules()
+            .resolve_selection(opening_data().selection())
+            .unwrap();
+        let prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
+            resolved.schedule(),
+            opening_data().opening_layout(),
+        )
+        .unwrap();
+        let prefixes = private.prefixes(&instance.setup, &prefix_ids);
+        let layout = instance.layout_for(&vec![0; COUNTING_BYTES], statement());
+        let pads = random_pads(&layout, 13);
+        let prove = || {
+            let mut pads = CommittedPads::uncommitted(layout.clone(), pads.clone()).unwrap();
+            let mut transcript =
+                ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION);
+            let masked = pads.send(&openings, &mut transcript).unwrap();
+            let (_, auxiliary) = prove_masked_prefix::<RecCfg, _, _, _>(
+                instance.setup.expanded.descriptor(),
+                instance.scheme.schedules(),
+                &private,
+                &prefixes,
+                opening_data(),
+                &own_pads(masked),
+                &mut pads,
+                &mut transcript,
+                BASIS,
+            )
+            .unwrap();
+            pads.send(&auxiliary, &mut transcript).unwrap();
+            pads.finish().unwrap();
+            transcript.finish()
+        };
+
+        let honest = prove();
+        assert!(instance.verify_for(&honest, &layout, statement()).is_ok());
+        private.fault.set(Fault::Stage3OutputMiss);
+        let cheating = prove();
+        assert_eq!(
+            instance.verify_for(&cheating, &layout, statement()).err(),
+            Some(AkitaError::InvalidProof)
+        );
     });
 }

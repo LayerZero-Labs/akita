@@ -53,6 +53,12 @@ pub(crate) enum Fault {
     /// the prover's self-checks pass and only the verifier's Stage-2 output
     /// check can reject the proof.
     Stage2OracleMiss,
+    /// Adds `X − X²` to the last Stage-3 round polynomial. Every round still
+    /// sums correctly, so the prover's self-checks pass, and the setup-prefix
+    /// evaluation stays honest at the drawn point, so the next level's opening
+    /// of the prefix holds; only the verifier's Stage-3 output check
+    /// (`output = prefix_eval · weight · α̃`) can reject the proof.
+    Stage3OutputMiss,
 }
 
 pub(crate) struct PrivateCpu {
@@ -72,6 +78,8 @@ pub(crate) struct PrivateCpu {
     pub(crate) reject_fold_probe: Cell<Option<usize>>,
     /// The last Stage-2 challenge, recorded under [`Fault::Stage2OracleMiss`].
     stage2_last_challenge: Cell<Option<E>>,
+    /// Round count of the running Stage-3 sumcheck.
+    stage3_rounds: Cell<usize>,
 }
 impl PrivateCpu {
     pub(crate) fn new(inner: Cpu) -> Self {
@@ -88,6 +96,7 @@ impl PrivateCpu {
             fold_probes: Cell::new(0),
             reject_fold_probe: Cell::new(None),
             stage2_last_challenge: Cell::new(None),
+            stage3_rounds: Cell::new(0),
         }
     }
     fn fail(&self, fault: Fault) -> Result<(), AkitaError> {
@@ -119,17 +128,33 @@ impl PrivateCpu {
         }
         prefixes
     }
+    #[allow(dead_code)]
     pub(crate) fn commit<P: CpuSource<F, E>>(
         &self,
         schedules: &TrustedScheduleCatalog<Cfg>,
         polys: Vec<P>,
     ) -> Result<(akita_types::CommittedGroup<F>, OwnedCommitment), AkitaError> {
-        let source = self.inner.import_source(polys)?;
-        let output = self.inner.commit(
+        self.commit_in(
             schedules,
-            &source,
+            polys,
             GroupContext::scheduler_without_precommitted_groups(),
-        )?;
+        )
+    }
+    /// [`commit`](Self::commit) under any family sharing `F` and `E`, in an
+    /// explicit group context.
+    #[allow(dead_code)]
+    pub(crate) fn commit_in<C, P>(
+        &self,
+        schedules: &TrustedScheduleCatalog<C>,
+        polys: Vec<P>,
+        context: GroupContext<'_>,
+    ) -> Result<(akita_types::CommittedGroup<F>, OwnedCommitment), AkitaError>
+    where
+        C: CommitmentConfig<Field = F, ExtField = E>,
+        P: CpuSource<F, E>,
+    {
+        let source = self.inner.import_source(polys)?;
+        let output = self.inner.commit(schedules, &source, context)?;
         Ok((
             output.committed_group,
             OwnedCommitment(output.private_handle),
@@ -556,6 +581,12 @@ impl OpaqueStage3Kernel<F, E> for PrivateCpu {
         &self,
         request: Stage3Request<'_, F, E, Self::ProofSessionHandle>,
     ) -> Result<(E, Self::Stage3SessionHandle), AkitaError> {
+        let prefix_len = request
+            .prefix
+            .natural_len
+            .checked_next_power_of_two()
+            .ok_or_else(|| AkitaError::InvalidSetup("setup prefix length overflow".into()))?;
+        self.stage3_rounds.set(prefix_len.trailing_zeros() as usize);
         self.inner.begin_stage3(request)
     }
     fn stage3_round_polynomial(
@@ -564,7 +595,15 @@ impl OpaqueStage3Kernel<F, E> for PrivateCpu {
         round: usize,
         claim: E,
     ) -> Result<UnivariatePoly<E>, AkitaError> {
-        self.inner.stage3_round_polynomial(session, round, claim)
+        let poly = self.inner.stage3_round_polynomial(session, round, claim)?;
+        if self.fault.get() != Fault::Stage3OutputMiss || round + 1 != self.stage3_rounds.get() {
+            return Ok(poly);
+        }
+        let mut coefficients = poly.into_coefficients();
+        coefficients.resize(coefficients.len().max(3), E::zero());
+        coefficients[1] += E::one();
+        coefficients[2] -= E::one();
+        Ok(UnivariatePoly::new(coefficients))
     }
     fn bind_stage3_challenge(
         &self,
@@ -576,6 +615,17 @@ impl OpaqueStage3Kernel<F, E> for PrivateCpu {
     }
     fn finish_stage3(&self, session: Self::Stage3SessionHandle) -> Result<E, AkitaError> {
         self.inner.finish_stage3(session)
+    }
+}
+
+impl ResidualExportKernel<F, E> for PrivateCpu {
+    fn export_residual(
+        &self,
+        witness: &Self::WitnessHandle,
+        material: &Self::CommitmentMaterialHandle,
+        params: &akita_params::CommittedGroupParams,
+    ) -> Result<ResidualWitness, AkitaError> {
+        self.inner.export_residual(&witness.0, &material.0, params)
     }
 }
 

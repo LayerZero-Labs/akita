@@ -326,3 +326,112 @@ fn public_checks_reject_unless_counting() {
         assert_eq!(counting.check_public(false), Ok(()));
     }
 }
+
+/// A dense multilinear table summed by a degree-1 sumcheck, binding its top
+/// variable first.
+struct DenseSum(Vec<F>);
+
+impl DenseSum {
+    fn bind(&mut self, challenge: F) {
+        let half = self.0.len() / 2;
+        let (low, high) = self.0.split_at(half);
+        self.0 = low
+            .iter()
+            .zip(high)
+            .map(|(&low, &high)| low + challenge * (high - low))
+            .collect();
+    }
+}
+
+impl jolt_sumcheck::ProveRounds<F, AkitaError> for DenseSum {
+    fn num_rounds(&self) -> usize {
+        self.0.len().trailing_zeros() as usize
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        _previous_claim: F,
+    ) -> Result<jolt_poly::UnivariatePoly<F>, AkitaError> {
+        if let Some(challenge) = bind {
+            self.bind(challenge);
+        }
+        let half = self.0.len() / 2;
+        let low: F = self.0[..half].iter().copied().sum();
+        let high: F = self.0[half..].iter().copied().sum();
+        Ok(jolt_poly::UnivariatePoly::new(vec![low, high - low]))
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), AkitaError> {
+        self.bind(bind);
+        Ok(())
+    }
+}
+
+/// Over the clear transcript, a sumcheck proved through
+/// [`PublicGrindingSumcheck`] sends exactly the bytes it sends through
+/// [`GrindingSumcheckProver`], so moving Stage 3 onto public rounds leaves
+/// clear proofs unchanged.
+#[test]
+fn public_rounds_send_the_clear_bytes() {
+    const ROUNDS: u32 = 3;
+    let protocol = akita_params::SumcheckProtocol::Stage3;
+    let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
+    let plan = GrindingPlan::new(
+        (0..ROUNDS)
+            .map(|round| {
+                GrindingRun::proof_of_work(
+                    GrindingSite::SumcheckRound {
+                        protocol,
+                        level: 0,
+                        stage: 0,
+                        round,
+                    },
+                    2,
+                    order,
+                )
+                .unwrap()
+            })
+            .collect(),
+        order,
+    )
+    .unwrap();
+    use jolt_algebra::Ring;
+    let table: Vec<F> = (0..1u64 << ROUNDS)
+        .map(|value| F::from_u64(3 * value + 1))
+        .collect();
+    let instance = jolt_sumcheck::SingleInstance {
+        input_claim: table.iter().copied().sum(),
+        rounds: ROUNDS as usize,
+        degree: 1,
+        format: jolt_sumcheck::SingleFormat::Compressed,
+        invocation: 0,
+    };
+    let prove = |public: bool| {
+        let mut transcript = new_prover(b"public-rounds");
+        let mut grinding = ProverGrinding::new(&mut transcript, &plan);
+        let mut member = DenseSum(table.clone());
+        let reduction = if public {
+            jolt_sumcheck::prove_single::<F, F, AkitaError, _>(
+                &mut member,
+                &instance,
+                &mut PublicGrindingSumcheck::<F, F, _>::new(&mut grinding, protocol, 0, 0),
+            )
+        } else {
+            jolt_sumcheck::prove_single::<F, F, AkitaError, _>(
+                &mut member,
+                &instance,
+                &mut GrindingSumcheckProver::<F, F, _, _>::new(&mut grinding, protocol, 0, 0),
+            )
+        }
+        .unwrap();
+        grinding.finish().unwrap();
+        (transcript.finish(), reduction.challenges)
+    };
+    let (clear, clear_challenges) = prove(false);
+    let (public, public_challenges) = prove(true);
+    assert!(!clear.is_empty());
+    assert_eq!(public, clear);
+    assert_eq!(public_challenges, clear_challenges);
+}
