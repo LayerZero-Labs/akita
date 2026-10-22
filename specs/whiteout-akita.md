@@ -1006,6 +1006,47 @@ digits in a preceding group, a preceding group opened at a basis other than
 An e2e ZK proof over that row verifies and rejects a wrong opening. Two
 explicit commits of one source under a hiding precommitted profile differ.
 
+#### 3.5.1 The masked path for these groups
+
+W3c's masked prover and verifier (§4.5, §4.8) run the admitted shapes of
+§3.5 as follows.
+
+**Several root groups.** `MaskedOpeningClaims` holds one affine form per
+claim of every group, in group order (the order of
+`OpeningClaims::flat_evaluations`). The prover rejects forms that do not
+decode to the claims (`prove_masked_prefix`), and the verifier binds and
+batches each form through `ClaimReplay`, so every group's claim enters the
+level-0 rows. Nothing new is sent in the clear.
+
+**Stage 3 at masked level 0.** A setup prefix at level 1 means level 0 runs
+Stage 3. Each value it sends is public, with this argument:
+
+| Value | Send | Why it is witness-independent |
+|---|---|---|
+| setup-prefix slot id | `stage3_public_slot`, public bytes | schedule and setup data |
+| input claim σ_S | `stage3_claim`, `exchange_all` (unchanged) | σ_S = Σ_p S(p)·ω(p): S is the public setup, and ω is a function of the ring-switch challenge α and of τ₁ and r_x, which are Fiat–Shamir challenges, public in the masked transcript (§4.3) |
+| round polynomials | `PublicGrindingSumcheck`, public messages (were private) | round i is the partial sum of S·ω over the unbound variables, with the bound ones at earlier Stage-3 challenges: a function of S, ω and public challenges |
+| input-claim binding | `bind_derived` → `public` | re-absorbs σ_S, already sent; it adds no value |
+| setup-prefix evaluation | `stage3_prefix_eval`, `exchange_all` (unchanged); at level 1 also `bind_fold_openings`' `public` (unchanged) | the slot's MLE at the Stage-3 challenge point |
+
+The verifier folds the rounds in the clear (`verify_single`) and checks
+`output = prefix_eval · weight · α̃` through `GrindingReplay::check_public`:
+the clear and masked verifiers reject a mismatch, and the counting replay,
+which runs over arbitrary bytes and returns no verdict, checks nothing. The
+stage-2 relation weight multiplies w by σ_S only, a public value, so the
+level-0 oracle row stays one product (§4.4).
+
+**Clear bytes.** `PublicGrindingSumcheck` sends what the clear transcript's
+private exchanges send (`exchange_private` is `exchange_all`, `bind_derived`
+is `public`), so clear proofs do not change.
+
+**Tests.** `masked_prefix::multi_group_masked_prefix_with_a_setup_prefix`
+runs the §3.5 row (a dense precommit beside a one-hot root at 31 variables,
+a level-1 setup prefix) through the masked prover and verifier: the honest
+pads satisfy every row; shifting any masked message, the two statement
+claims included, breaks a row; the counting replay counts the pads the
+prover consumes; and a wrong claim of either group stops the prover.
+
 ## 4. W3: the masked levels and the cut
 
 ### 4.1 The cut
@@ -1048,7 +1089,7 @@ Akita's SIS tables price the matrices at the Gaussian radius (rule 3).
 | ring switch α, τ₀, τ₁ | public | public |
 | stage-1 rounds, `stage1_range_image` | `exchange_private` | masked |
 | stage-2 rounds, `stage2_w_eval` | `exchange_private` | masked |
-| Stage 3 (level 0 only): claim, rounds, prefix eval | `exchange_private` | public and verified in the clear (M3b fixup) |
+| Stage 3 (level 0 only): claim, rounds, prefix eval | `exchange_private` | public and verified in the clear (claim and evaluation: M3b fixup; rounds: `PublicGrindingSumcheck`, §3.5.1) |
 | level-1 scalar openings: predecessor `w_eval` and setup-prefix eval | `public_all` | `w_eval` through `bind_derived_base`; the setup-prefix eval stays `public_all` |
 
 These rows assume the Jolt fp128 shape: E = F, b = 8 (no stage-1 product
@@ -1221,15 +1262,10 @@ The verifier receives raw u_a.
   - Akita's commitment kernels agree with `TwoLevelLayout` semantics.
 - **W3-f.** C0 (golden test) after the M3b and M2b fixups and the S-seams.
 - **W3-g.** `ZkOpeningSchedule::admit` rejects each §4.1 violation.
-- **After W2b.** W2b (§3.5) rebases onto W3c and makes two more shapes
-  admissible at masked levels: multi-group masked roots, whose
-  `MaskedOpeningClaims` then hold one form per claim of every group in group
-  order, and Stage 3 at masked level 0. W3c's masked path accepts the first
-  unchanged, because the root binds and batches its openings through
-  `ClaimReplay` per claim. For the second, Stage 3's rounds must go through
-  the clear sumcheck path, since its claim, rounds and prefix evaluation are
-  public (§4.2). Today the driver sends them as private messages, and a
-  masked replay fails closed with `MaskedRoundInClearReplay`.
+- **After W2b.** W2b (§3.5) makes two more shapes admissible at masked
+  levels: multi-group masked roots, whose `MaskedOpeningClaims` hold one form
+  per claim of every group in group order, and Stage 3 at masked level 0,
+  whose claim, rounds and prefix evaluation are public messages (§3.5.1).
 
 ### 4.8 W3c as built: deviations from the paper and from §4.4–4.6
 
@@ -1330,13 +1366,12 @@ Each departure below states its argument.
   pads with no commitment for Akita's tests. Until W6, only a `ZkBackend`
   builds `CommittedPads`.
 - **Not exercised.** The tests cover k = 2 at b = 8 on `fp128::Dense`
-  14:1. They do not exercise product stages, extension-field claims or
-  Stage 3 at a masked level, and admission rejects all three. The masked
-  replay also fails closed on each. Product stages and Stage 3 run their
-  rounds through `verify_single`, whose rounds arrive masked over a masked
-  channel and fail with `MaskedRoundInClearReplay` (§4.2 makes Stage 3's
-  claim and prefix evaluation public, but the sumcheck driver still sends its
-  rounds as private messages). Extension claims fail with
+  14:1 and, since W2b, the §3.5 row with Stage 3 at masked level 0
+  (§3.5.1). They do not exercise product stages or extension-field claims,
+  and admission rejects both. The masked replay also fails closed on each:
+  product stages run their rounds through `verify_single`, whose rounds
+  arrive masked over a masked channel and fail with
+  `MaskedRoundInClearReplay`, and extension claims fail with
   `UnsupportedSchedule`.
 
 #### 4.8.1 Hiding the residual commitment
