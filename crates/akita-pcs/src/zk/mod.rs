@@ -47,7 +47,8 @@ use jolt_zk::whiteout::{ResponseProver, ResponseStatement, ResponseWitness, Whit
 use crate::AkitaCommitmentScheme;
 use rounds::{ClearProverRounds, ClearVerifierRounds, FusedKernel, ProductKernel};
 use rows::{
-    batch_rows, ceil_log2, row_variables, zk_error, ProductClaims, ResponseShape, RowWeights,
+    batch_rows, ceil_log2, eq_table, row_variables, zk_error, ProductClaims, ResponseShape,
+    RowWeights,
 };
 
 /// The response statement's field.
@@ -236,8 +237,7 @@ where
         let gamma: F = transcript.challenge();
         let mut fused = FusedKernel {
             a: batch.a,
-            b: EqPolynomial::evals(&range.point)
-                .map_err(zk_error)?
+            b: eq_table(&range.point)
                 .into_iter()
                 .map(|weight| weight * gamma)
                 .collect(),

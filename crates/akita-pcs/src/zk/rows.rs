@@ -5,9 +5,9 @@
 //! jolt-zk's ([`ResponseStatement::rows`], [`ResponseStatement::weigh`]);
 //! this module owns the row order.
 
-use akita_algebra::EqPolynomial;
 use akita_error::AkitaError;
 use jolt_algebra::JoltField;
+use jolt_poly::EqPolynomial;
 use jolt_zk::masking::ZkError;
 use jolt_zk::whiteout::{ResponseRows, ResponseStatement};
 
@@ -32,6 +32,14 @@ impl ResponseShape {
     pub(crate) fn padded_len(self) -> usize {
         1 << self.num_vars
     }
+}
+
+/// `eq(point, j)` for every `j`, the point little-endian (`point[0]` is the
+/// least significant index bit), as Akita's tables and sumchecks bind it.
+/// Unlike Akita's budgeted tables, it materializes the full `2^27` domain
+/// of the response vector.
+pub(crate) fn eq_table<F: JoltField>(point: &[F]) -> Vec<F> {
+    EqPolynomial::new(point.iter().rev().copied().collect()).evaluations()
 }
 
 /// `⌈log₂ n⌉` for `n ≥ 1`.
@@ -119,7 +127,7 @@ impl<F: JoltField> RowWeights<F> {
                 "row batching point width".into(),
             )));
         }
-        let weights = EqPolynomial::evals(eta).map_err(zk_error)?;
+        let weights = eq_table(eta);
         let slice = |range: std::ops::Range<usize>| {
             weights
                 .get(range)
@@ -130,7 +138,7 @@ impl<F: JoltField> RowWeights<F> {
         let [target_weight, x_weight, y_weight] = <[F; 3]>::try_from(slice(target..target + 3)?)
             .map_err(|_| zk_error(AkitaError::Internal("product rows".into())))?;
         let products = statement.row_shape().products;
-        let kappa = EqPolynomial::evals(product_point).map_err(zk_error)?;
+        let kappa = eq_table(product_point);
         let kappa = kappa
             .get(..products)
             .ok_or_else(|| zk_error(AkitaError::InvalidInput("product point too short".into())))?;
