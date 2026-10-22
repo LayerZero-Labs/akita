@@ -85,7 +85,7 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
     let private = PrivateCpu::new(CpuBackend::new(setup.expanded.clone())?);
     let cpu = CpuBackend::<F, E>::new(setup.expanded.clone())?;
 
-    let (committed_group, private_handle) = private.commit_onehot(scheme.schedules(), polys)?;
+    let (committed_group, private_handle) = private.commit(scheme.schedules(), polys)?;
     let opening = || {
         SelectedProverOpeningData::from_committed_claims::<Cfg>(
             OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(

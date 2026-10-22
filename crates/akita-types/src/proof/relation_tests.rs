@@ -201,6 +201,7 @@ fn group_local_a_b_dims_share_d_in_rhs_and_claim() {
                 n_a: 1,
                 physical_b_rows: 1,
                 outer_slice_count: CommitmentSliceCount::ONE,
+                randomness_columns: 0,
             },
             RelationGroupRows {
                 group_index: 1,
@@ -210,6 +211,7 @@ fn group_local_a_b_dims_share_d_in_rhs_and_claim() {
                 n_a: 2,
                 physical_b_rows: 2,
                 outer_slice_count: CommitmentSliceCount::ONE,
+                randomness_columns: 0,
             },
         ],
     );
@@ -277,6 +279,7 @@ fn rows_allow_group_a_larger_than_final_group_a() {
                 n_a: 1,
                 physical_b_rows: 1,
                 outer_slice_count: CommitmentSliceCount::ONE,
+                randomness_columns: 0,
             },
             RelationGroupRows {
                 group_index: 1,
@@ -290,6 +293,7 @@ fn rows_allow_group_a_larger_than_final_group_a() {
                 n_a: 1,
                 physical_b_rows: 1,
                 outer_slice_count: CommitmentSliceCount::ONE,
+                randomness_columns: 0,
             },
         ],
     );

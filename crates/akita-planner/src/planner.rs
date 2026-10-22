@@ -5,8 +5,8 @@ use std::time::Instant;
 use akita_error::AkitaError;
 use akita_params::sis::{
     decomposed_s_block_ring_count, num_digits_open, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, CommittedSourceContract, HonestFoldPolicy, HonestFoldSizingQuery,
-    OpenCommitMatrixParams, SisMatrixRole,
+    rounded_up_role_a_inf_norm, CommittedSourceContract, FoldFailureTarget, HonestFoldPolicy,
+    HonestFoldSizingQuery, OpenCommitMatrixParams, SisMatrixRole,
 };
 use akita_params::ScheduleLookupKey;
 use akita_params::{
@@ -46,6 +46,7 @@ pub(crate) struct ScheduleSearchOptions<'a> {
     pub(crate) relation_mode_filter: super::schedule_params::RelationModeFilter,
     pub(crate) root_main_constraint: Option<&'a CommittedGroupParams>,
     pub(crate) adaptation_guide: Option<&'a akita_params::FoldSchedule>,
+    pub(crate) zk: Option<akita_params::zk::ZkOpeningSchedule>,
     #[cfg(test)]
     pub(crate) query_prefix_count: u64,
 }
@@ -57,6 +58,7 @@ impl ScheduleSearchOptions<'_> {
             relation_mode_filter: super::schedule_params::RelationModeFilter::All,
             root_main_constraint: None,
             adaptation_guide: None,
+            zk: None,
             #[cfg(test)]
             query_prefix_count: 0,
         }
@@ -146,6 +148,7 @@ fn materialize_precommitted_group_for_open_basis(
             .fold_witness,
         log_basis_response: log_basis_open,
         challenge_config: &opening.challenge_config(),
+        failure_target: FoldFailureTarget::PerAttempt,
     })?;
     let Some(required_a_bound) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
@@ -202,6 +205,7 @@ struct MultiGroupRootCandidateCtx<'a> {
     final_num_vars: usize,
     main_num_polys: usize,
     source: crate::InnerBasisSource,
+    masking: crate::schedule_params::LevelMasking,
 }
 
 struct RootFinalGroupCandidateInput<'a> {
@@ -346,8 +350,17 @@ pub(crate) fn root_level_candidates_for_prepared_producers(
     candidate_log_basis_inner: u32,
     candidate_log_basis_open: u32,
     guide: Option<crate::schedule_params::CandidateLayoutGuide>,
+    masking: crate::schedule_params::LevelMasking,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     dimensions.validate_role_projection()?;
+    // A masked root commits one group and opens at base 8; admission refuses
+    // anything else.
+    if masking.hiding()
+        && (!key.precommitteds.is_empty()
+            || candidate_log_basis_open != akita_params::zk::MASKED_LOG_BASIS)
+    {
+        return Ok(Vec::new());
+    }
     opening.validate_for(policy.claim_ext_degree, dimensions)?;
     let field_bits = policy.decomposition.field_bits();
     let alpha = dimensions.d_a().trailing_zeros() as usize;
@@ -363,6 +376,7 @@ pub(crate) fn root_level_candidates_for_prepared_producers(
         final_num_vars: key.final_group.num_vars(),
         main_num_polys: key.final_group.num_polynomials(),
         source: crate::schedule_params::root_inner_basis_source(final_source_contract),
+        masking,
     };
     let opening_batch = key.opening_layout()?;
     let min_block_index_bits: usize = if reduced_vars >= 3 { 1 } else { 0 };
@@ -535,6 +549,7 @@ fn root_final_group_level_params_candidate(
         width_s,
         num_digits_outer,
         modeled_linf_cap: None,
+        masking: ctx.masking,
     })?
     else {
         return Ok(None);
@@ -569,7 +584,16 @@ fn root_final_group_level_params_candidate(
     let d_width = main_d_width
         .checked_add(precommitted_d_width)
         .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
-    let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(open_key, d_width)
+    let Some((open_commit_matrix, open_randomness_columns)) =
+        crate::schedule_params::price_with_hiding_randomness(
+            ctx.masking.hiding(),
+            d_width,
+            dimensions.d_d(),
+            policy.sis_modulus_profile,
+            log_basis_open,
+            |width| OpenCommitMatrixParams::try_new_with_min_rank(open_key, width).ok(),
+            OpenCommitMatrixParams::output_rank,
+        )?
     else {
         return Ok(None);
     };
@@ -579,6 +603,7 @@ fn root_final_group_level_params_candidate(
         .copied()
         .chain(std::iter::once(akita_params::GroupOpenPhaseParams {
             profile: akita_params::GroupCommitPhaseParams {
+                randomness_columns: ab_candidate.outer_randomness_columns,
                 version: akita_params::GroupCommitPhaseParams::VERSION,
                 group: akita_params::PolynomialGroupLayout::new(
                     ctx.final_num_vars,
@@ -609,7 +634,7 @@ fn root_final_group_level_params_candidate(
             setup_natural_len: None,
         }))
         .collect();
-    let params = CommittedGroupParams::try_new(
+    let mut params = CommittedGroupParams::try_new(
         groups,
         open_commit_matrix,
         akita_params::CommitmentPayloadMode::Compressed,
@@ -625,6 +650,7 @@ fn root_final_group_level_params_candidate(
         // schedule-level chunk policy is applied.
         akita_params::ChunkedWitnessCfg::default(),
     )?;
+    params.open_randomness_columns = open_randomness_columns;
 
     Ok(Some(params))
 }
@@ -806,6 +832,54 @@ pub fn find_schedule_for_test_relation_mode(
     )
 }
 
+/// Plan a test-only zero-knowledge schedule masked through `zk`'s cut.
+///
+/// At every masked level the planner sizes the fold digits for
+/// [`akita_params::zk::ZkOpeningSchedule::fold_failure_target`] with no
+/// modeled cap, gives the level's B slices and D image hiding randomness
+/// sized by [`akita_params::zk::hiding_randomness_columns`], and admits only
+/// the ℓ∞ route. The result carries `zk` and passes
+/// [`akita_params::zk::ZkOpeningSchedule::admit`].
+///
+/// The search prices every fold response at the clear nonce width, so it may
+/// rank candidates by up to two nonce bytes per masked level more than the
+/// one-shot plan sends.
+#[cfg(all(feature = "test-support", feature = "zk"))]
+pub fn find_schedule_for_test_zk(
+    key: &ScheduleLookupKey,
+    final_source_contract: CommittedSourceContract,
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(
+        usize,
+    )
+        -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>,
+    zk: akita_params::zk::ZkOpeningSchedule,
+) -> Result<PlannedFoldSchedule, AkitaError> {
+    if !key.precommitteds.is_empty() {
+        return Err(AkitaError::UnsupportedSchedule(
+            "a zero-knowledge schedule commits one root group".into(),
+        ));
+    }
+    let mut planned = find_schedule_in_relation_order(
+        key,
+        final_source_contract,
+        &[],
+        policy,
+        ring_challenge_config,
+        ScheduleSearchOptions {
+            zk: Some(zk),
+            ..ScheduleSearchOptions::canonical()
+        },
+    )?;
+    planned.schedule.zk = Some(zk);
+    akita_params::zk::ZkOpeningSchedule::admit(
+        &planned.schedule,
+        final_source_contract,
+        policy.claim_ext_degree,
+    )?;
+    Ok(planned)
+}
+
 /// Canonical schedule search with an internal traversal-order seam used to
 /// prove that candidate enumeration does not affect selection.
 pub(crate) fn find_schedule_in_relation_order(
@@ -864,6 +938,7 @@ pub(crate) fn find_schedule_in_relation_order(
         level_zero_is_root: true,
         relation_traversal_order: options.relation_traversal_order,
         relation_mode_filter: options.relation_mode_filter,
+        zk: options.zk,
     };
     let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(policy)?;
     let initial_state = SuffixState {

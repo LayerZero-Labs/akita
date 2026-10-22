@@ -10,6 +10,7 @@ use akita_serialization::{
 use akita_types::RingVec;
 use jolt_algebra::Field;
 use std::io::{Read, Write};
+use zeroize::Zeroizing;
 
 fn validate_compression_stage_count(stage_count: usize) -> Result<(), SerializationError> {
     if matches!(stage_count, 0 | COMPRESSION_MAP_COUNT) {
@@ -62,6 +63,8 @@ pub(crate) struct PortableCommitmentHandle<F: Field> {
     ring_dim: usize,
     outer_compression_stages: Vec<Vec<u8>>,
     outer_compression_quotients: Vec<RingVec<F>>,
+    /// Slice-major B hiding-randomness coefficients; empty when clear.
+    outer_randomness: Zeroizing<Vec<i8>>,
 }
 
 impl<F: Field> core::fmt::Debug for PortableCommitmentHandle<F> {
@@ -86,6 +89,7 @@ impl<F: Field> PortableCommitmentHandle<F> {
             ring_dim,
             outer_compression_stages: Vec::new(),
             outer_compression_quotients: Vec::new(),
+            outer_randomness: Zeroizing::new(Vec::new()),
         };
         hint.validate_shape()
             .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
@@ -114,6 +118,7 @@ impl<F: Field> PortableCommitmentHandle<F> {
                 .map(|stage| stage.bytes().to_vec())
                 .collect(),
             outer_compression_quotients: quotients.to_vec(),
+            outer_randomness: Zeroizing::new(Vec::new()),
         };
         hint.validate_shape()
             .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
@@ -150,10 +155,22 @@ impl<F: Field> PortableCommitmentHandle<F> {
                 .map(|stage| stage.bytes().to_vec())
                 .collect(),
             outer_compression_quotients: Vec::new(),
+            outer_randomness: Zeroizing::new(Vec::new()),
         };
         hint.validate_shape()
             .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
         Ok(hint)
+    }
+
+    /// Attach the B hiding randomness the commitment was made with.
+    pub(crate) fn with_outer_randomness(mut self, outer_randomness: Zeroizing<Vec<i8>>) -> Self {
+        self.outer_randomness = outer_randomness;
+        self
+    }
+
+    /// Slice-major B hiding-randomness coefficients; empty when clear.
+    pub(crate) fn outer_randomness(&self) -> &[i8] {
+        &self.outer_randomness
     }
 
     /// Shared A ring dimension.
@@ -364,6 +381,13 @@ impl<F: Field + AkitaSerialize> PortableCommitmentHandle<F> {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         self.validate_shape()?;
+        if !self.outer_randomness.is_empty() {
+            // The persisted hint format predates hiding randomness, so a
+            // hiding commitment's hint is not persisted.
+            return Err(SerializationError::InvalidData(
+                "hiding commitment hints cannot be persisted".into(),
+            ));
+        }
         self.inner_rows
             .len()
             .serialize_with_mode(&mut writer, compress)?;
@@ -588,6 +612,7 @@ where
             ring_dim,
             outer_compression_stages,
             outer_compression_quotients,
+            outer_randomness: Zeroizing::new(Vec::new()),
         };
         hint.validate_shape()?;
         if validate == Validate::Yes {

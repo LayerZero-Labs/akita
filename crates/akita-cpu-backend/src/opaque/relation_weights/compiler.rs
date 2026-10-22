@@ -226,6 +226,8 @@ where
 pub(super) struct RelationWeightCompilationPlan<E> {
     pub(super) groups: Vec<RelationWeightGroupPlan<E>>,
     pub(super) d_row_weights: Vec<(usize, Vec<E>)>,
+    /// D hiding-randomness columns, after every group's opening columns.
+    pub(super) d_randomness_columns: std::ops::Range<usize>,
     d_column_count: usize,
 }
 
@@ -301,11 +303,14 @@ impl<E: Field> RelationWeightCompilationPlan<E> {
     {
         let relation_geometry = relation_plan.relation_witness_geometry();
         let d_column_ranges = relation_d_column_ranges(lp, opening_batch, relation_geometry)?;
-        let d_column_count = d_column_ranges
+        let d_message_columns = d_column_ranges
             .iter()
             .map(|range| range.end)
             .max()
             .unwrap_or(0);
+        let d_column_count = d_message_columns
+            .checked_add(lp.open_randomness_columns)
+            .ok_or_else(|| AkitaError::Internal("D randomness column overflow".into()))?;
         let d_start = row_families
             .iter()
             .position(|row| matches!(row, RelationRowFamily::Opening { .. }))
@@ -353,6 +358,7 @@ impl<E: Field> RelationWeightCompilationPlan<E> {
         Ok(Self {
             groups,
             d_row_weights,
+            d_randomness_columns: d_message_columns..d_column_count,
             d_column_count,
         })
     }
@@ -421,7 +427,8 @@ impl<E: Field> RelationWeightCompilationPlan<E> {
             depth_commit,
             group_d_a,
             group_d_b,
-        )?;
+        )?
+        .with_randomness_columns(group_lp.profile.randomness_columns)?;
         let physical_n_b = group_lp.b_rows_len();
         let b_width = slice_geometry.physical_input_width();
         let slice_count = group_lp.outer_slice_count().get();

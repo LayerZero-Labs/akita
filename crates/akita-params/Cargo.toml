@@ -34,6 +34,9 @@ labinius-sis = ["dep:akita-challenges", "akita-challenges/labinius-challenges"]
 # `artifacts/schedules-dev`. See docs/branches.md.
 dev-protocol = []
 test-support = []
+# Whiteout zero-knowledge sizing helpers. Compiles the `zk` module only; it
+# selects nothing (docs/branches.md rule 3).
+zk = []
 parallel = ["akita-algebra/parallel", "jolt-algebra/parallel"]
 
 [dev-dependencies]

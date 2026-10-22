@@ -112,6 +112,7 @@ impl SetupPrefixCandidateContext<'_> {
             log_basis_open: self.log_basis_open,
             width_s: split.width_s,
             modeled_linf_cap,
+            masking: LevelMasking::Clear,
         })
     }
 
@@ -121,7 +122,7 @@ impl SetupPrefixCandidateContext<'_> {
         inner_candidate: &InnerCommitmentCandidate,
         outer_slice_count: akita_params::CommitmentSliceCount,
     ) -> Result<Option<SetupPrefixFrontierEntry>, AkitaError> {
-        let Some(outer_commit_matrix) =
+        let Some((outer_commit_matrix, _)) =
             derive_outer_commitment_candidate(OuterCommitmentCandidateRequest {
                 policy: self.policy,
                 dimensions: self.dimensions,
@@ -132,11 +133,13 @@ impl SetupPrefixCandidateContext<'_> {
                 log_basis_open: self.log_basis_open,
                 num_digits_outer: self.num_digits_outer,
                 inner_output_rank: inner_candidate.inner_commit_matrix.output_rank(),
+                hiding: false,
             })?
         else {
             return Ok(None);
         };
         let profile = GroupCommitPhaseParams {
+            randomness_columns: 0,
             version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::singleton(self.prefix_num_vars),
 

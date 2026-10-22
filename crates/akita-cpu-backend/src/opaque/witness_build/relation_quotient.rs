@@ -630,7 +630,8 @@ where
             num_digits_outer,
             group_dims.d_a(),
             group_dims.d_b(),
-        )?;
+        )?
+        .with_randomness_columns(group.params.profile.randomness_columns)?;
 
         let (consistency_quotient, a_quotients) = akita_params::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -727,6 +728,7 @@ where
                 let mut b_cyclic = Vec::with_capacity(n_b);
                 for_each_outer_slice_input::<D_B>(
                     t_hat_planes.chunks(planes_per_claim),
+                    &crate::arithmetic::randomness_planes::<D_B>(&group.outer_randomness)?,
                     &slice_geometry,
                     |slice_input| {
                         let b_rows = RingSwitchRelationKernel::relation_rows(

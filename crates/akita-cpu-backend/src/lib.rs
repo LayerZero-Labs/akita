@@ -7,6 +7,7 @@
 pub(crate) mod arithmetic;
 mod cache;
 pub(crate) mod commitment;
+mod hiding;
 pub(crate) mod kernels;
 pub(crate) mod opaque;
 mod portable_witness;

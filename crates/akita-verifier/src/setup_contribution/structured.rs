@@ -142,8 +142,13 @@ impl<E: Field> DirectScan<E> {
         let weights = scan_groups.get(group_index).ok_or_else(|| {
             AkitaError::InvalidSetup("lifted direct-scan group is missing".into())
         })?;
-        if weights.e.len() != e_len
-            || weights.t.len() != t_len
+        // The column tables end with any hiding-randomness columns, which
+        // carry only setup terms and no structured term.
+        let e_randomness = group.d_column_len() - group.d_col_range().len();
+        let t_randomness =
+            group.physical_b().column_len()? - group.physical_b().logical_input_width();
+        if weights.e.len() != e_len + e_randomness
+            || weights.t.len() != t_len + t_randomness
             || weights.z.len() != z_cols
             || group.a_row_weights().len() != group.n_a()
         {

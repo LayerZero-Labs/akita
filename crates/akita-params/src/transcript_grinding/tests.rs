@@ -274,3 +274,43 @@ fn planner_accumulator_prices_an_oversized_edge_without_plan_validation() {
         }
     );
 }
+
+#[test]
+fn only_a_zero_knowledge_plan_admits_one_shot_responses_and_only_up_to_its_cut() {
+    let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
+    let one_shot = GrindingRun::one_shot_fold_response(0);
+    assert_eq!(one_shot.nonce_bits(), 0);
+    assert!(matches!(
+        GrindingPlan::new(vec![one_shot], order),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+
+    let runs = |nonce_bits: [u8; 3]| {
+        (0..3u32)
+            .zip(nonce_bits)
+            .map(|(level, bits)| {
+                if bits == 0 {
+                    GrindingRun::one_shot_fold_response(level)
+                } else {
+                    GrindingRun::fold_response(level)
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+    let grind = FOLD_RESPONSE_NONCE_BITS;
+    let accepted = GrindingPlan::validated(runs([0, 0, grind]), order, Some(1)).unwrap();
+    assert_eq!(accepted.nonce_max_bytes(), nonce_max_bytes(grind));
+    assert_ne!(
+        accepted.digest().unwrap(),
+        GrindingPlan::new(runs([grind; 3]), order)
+            .unwrap()
+            .digest()
+            .unwrap()
+    );
+    for wrong in [[grind, 0, grind], [0, grind, grind], [0, 0, 0]] {
+        assert!(matches!(
+            GrindingPlan::validated(runs(wrong), order, Some(1)),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
+}

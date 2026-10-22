@@ -446,6 +446,7 @@ pub(in crate::schedule_params) fn prepend_root(
             input_witness_len: candidate.terminal.input_witness_len,
             ..candidate.terminal.params.clone()
         },
+        zk: None,
     };
     let plan = akita_params::derive_transcript_grinding_plan_from_public_shape(
         &schedule,

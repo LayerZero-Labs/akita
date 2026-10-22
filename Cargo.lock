@@ -86,8 +86,10 @@ dependencies = [
  "jolt-sumcheck",
  "jolt-transcript",
  "rand 0.8.8",
+ "rand_core 0.6.4",
  "rayon",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -1220,6 +1222,7 @@ dependencies = [
  "spongefish",
  "subtle",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]
@@ -1344,6 +1347,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]

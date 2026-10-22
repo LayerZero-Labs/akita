@@ -307,6 +307,7 @@ mod tests {
         let commitment_params = GroupOpenPhaseParams {
             setup_natural_len: None,
             profile: GroupCommitPhaseParams {
+                randomness_columns: 0,
                 version: GroupCommitPhaseParams::VERSION,
                 group: PolynomialGroupLayout::singleton(PREFIX_D.trailing_zeros() as usize),
                 blocks: akita_params::BlockGeometry::new(1, 1, 1),

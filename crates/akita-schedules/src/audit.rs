@@ -301,8 +301,11 @@ fn audit_committed_params(
         dims.d_a(),
         dims.d_b(),
     )?
+    .with_randomness_columns(params.own_group().profile.randomness_columns)?
     .physical_input_width();
-    let expected_d_width = expected_d_width(label, params, num_claims, policy.claim_ext_degree)?;
+    let expected_d_width = expected_d_width(label, params, num_claims, policy.claim_ext_degree)?
+        .checked_add(params.open_randomness_columns)
+        .ok_or_else(|| invalid(label, "D width overflow"))?;
     if params.inner().matrix.input_width() != expected_a_width
         || params.outer().matrix.input_width() != expected_b_width
         || params.open().matrix.input_width() != expected_d_width
@@ -536,13 +539,60 @@ fn audit_terminal(
     Ok(())
 }
 
+/// Which rows catalog admission accepts.
+#[derive(Clone, Copy)]
+pub(crate) enum ZkAdmission {
+    /// Clear rows only: zero knowledge is not selectable yet, so no row has a
+    /// zero-knowledge cut or any hiding randomness.
+    Clear,
+    /// Test-only catalogs, which also admit zero-knowledge rows that pass
+    /// [`akita_params::zk::ZkOpeningSchedule::admit`] for the root source.
+    #[cfg(all(feature = "test-support", feature = "zk"))]
+    TestZk(akita_params::sis::CommittedSourceContract),
+}
+
 /// Re-audit one complete expanded row against the policy the verifier trusts.
 pub(crate) fn audit_resolved_schedule(
     profiles: &CommittedGroupBatchProfile,
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,
+    admission: ZkAdmission,
 ) -> Result<(), AkitaError> {
     validate_policy(policy)?;
+    match (admission, schedule.zk) {
+        (_, None) => {
+            let levels = std::iter::once(&schedule.root)
+                .chain(&schedule.recursive_folds)
+                .map(|fold| &fold.params);
+            for params in levels {
+                if params.open_randomness_columns != 0
+                    || params
+                        .preceding_group_iter()
+                        .chain(std::iter::once(params.own_group()))
+                        .any(|group| group.profile.randomness_columns != 0)
+                {
+                    return Err(invalid(
+                        "schedule",
+                        "hiding randomness is not selectable in a clear schedule",
+                    ));
+                }
+            }
+        }
+        (ZkAdmission::Clear, Some(_)) => {
+            return Err(invalid(
+                "schedule",
+                "a zero-knowledge cut is not selectable in a trusted catalog",
+            ));
+        }
+        #[cfg(all(feature = "test-support", feature = "zk"))]
+        (ZkAdmission::TestZk(root_source), Some(_)) => {
+            akita_params::zk::ZkOpeningSchedule::admit(
+                schedule,
+                root_source,
+                policy.claim_ext_degree,
+            )?;
+        }
+    }
     profiles.validate(policy.decomposition.field_bits())?;
     schedule.validate_structure()?;
     audit_digit_ranges(schedule, policy.decomposition.field_bits())?;

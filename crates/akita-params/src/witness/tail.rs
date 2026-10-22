@@ -5,6 +5,7 @@ use akita_error::AkitaError;
 use super::{
     align_witness_offset, collect_quotient_rows, witness_range, CompressionWitnessLayerLayout,
     CompressionWitnessSpan, RelationQuotientLayout, WitnessQuotientRowLayout,
+    WitnessRandomnessLayout,
 };
 use crate::{
     CommittedGroupParams, CompressionMapPlan, RelationRhsLayout, RelationRowFamily,
@@ -71,7 +72,17 @@ pub(super) struct MaterializedWitnessTail {
     pub(super) compression_layers: Vec<CompressionWitnessLayerLayout>,
     pub(super) compression_alignment_ranges: Vec<std::ops::Range<usize>>,
     pub(super) relation_quotients: RelationQuotientLayout,
+    pub(super) randomness: WitnessRandomnessLayout,
     pub(super) end: usize,
+}
+
+/// Owner of one hiding-randomness span in the witness tail.
+#[derive(Clone, Copy)]
+enum RandomnessOwner {
+    /// Slice-major B randomness of one relation group.
+    Outer { group_index: usize },
+    /// Randomness of the level-shared D image.
+    Opening,
 }
 
 trait TailSink: Sized {
@@ -94,6 +105,7 @@ trait TailSink: Sized {
         range_overflow: &'static str,
     ) -> Result<(), AkitaError>;
     fn record_f_quotient_row(&mut self, group_index: usize, row_index: usize);
+    fn place_randomness(&mut self, owner: RandomnessOwner, len: usize) -> Result<(), AkitaError>;
     fn finish_compression_layer(
         &mut self,
         map_index: usize,
@@ -111,6 +123,7 @@ struct MaterializingTailSink {
     current_f_spans: Vec<(usize, CompressionWitnessSpan)>,
     current_f_quotient_rows: Vec<(usize, usize)>,
     current_h_span: Option<CompressionWitnessSpan>,
+    randomness: WitnessRandomnessLayout,
 }
 
 impl MaterializingTailSink {
@@ -123,6 +136,7 @@ impl MaterializingTailSink {
             current_f_spans: Vec::new(),
             current_f_quotient_rows: Vec::new(),
             current_h_span: None,
+            randomness: WitnessRandomnessLayout::default(),
         }
     }
 }
@@ -195,6 +209,18 @@ impl TailSink for MaterializingTailSink {
         self.current_f_quotient_rows.push((group_index, row_index));
     }
 
+    fn place_randomness(&mut self, owner: RandomnessOwner, len: usize) -> Result<(), AkitaError> {
+        let range = witness_range(self.cursor, len, "witness randomness range overflow")?;
+        self.cursor = range.end;
+        match owner {
+            RandomnessOwner::Outer { group_index } => {
+                self.randomness.outer.push((group_index, range));
+            }
+            RandomnessOwner::Opening => self.randomness.opening = range,
+        }
+        Ok(())
+    }
+
     fn finish_compression_layer(
         &mut self,
         map_index: usize,
@@ -236,6 +262,7 @@ impl TailSink for MaterializingTailSink {
             compression_layers: self.compression_layers,
             compression_alignment_ranges: self.compression_alignment_ranges,
             relation_quotients,
+            randomness: self.randomness,
             end: self.cursor,
         })
     }
@@ -296,6 +323,11 @@ impl TailSink for MeasuringTailSink {
     }
 
     fn record_f_quotient_row(&mut self, _group_index: usize, _row_index: usize) {}
+
+    fn place_randomness(&mut self, _owner: RandomnessOwner, len: usize) -> Result<(), AkitaError> {
+        self.cursor = witness_range(self.cursor, len, "witness randomness range overflow")?.end;
+        Ok(())
+    }
 
     fn finish_compression_layer(
         &mut self,
@@ -392,6 +424,7 @@ fn resolve<S: TailSink>(
         }
     }
     if !params.payload_mode.is_compressed() {
+        place_randomness(relation_layout, &mut sink)?;
         return sink.finish(start, plan);
     }
 
@@ -487,9 +520,51 @@ fn resolve<S: TailSink>(
         };
         sink.finish_compression_layer(map_index, h_quotient_row, plan)?;
     }
+    place_randomness(relation_layout, &mut sink)?;
     sink.align(
         successor_a_alignment,
         "compression witness suffix alignment overflow",
     )?;
     sink.finish(start, plan)
+}
+
+/// Place the hiding-randomness section: every group's slice-major B
+/// randomness in relation order, then the D randomness. Each nonempty span
+/// starts at a multiple of its ring dimension, so its rings are whole relation
+/// lanes. Clear layouts place nothing and keep every offset.
+fn place_randomness<S: TailSink>(
+    relation_layout: &RelationRhsLayout,
+    sink: &mut S,
+) -> Result<(), AkitaError> {
+    for group in &relation_layout.groups {
+        let len = group
+            .randomness_columns
+            .checked_mul(group.outer_slice_count.get())
+            .and_then(|columns| columns.checked_mul(group.role_dims.d_b()))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness B randomness size overflow".into()))?;
+        if len != 0 {
+            sink.align(
+                group.role_dims.d_b(),
+                "witness randomness alignment overflow",
+            )?;
+            sink.place_randomness(
+                RandomnessOwner::Outer {
+                    group_index: group.group_index,
+                },
+                len,
+            )?;
+        }
+    }
+    let len = relation_layout
+        .d_randomness_columns
+        .checked_mul(relation_layout.d_ring_dimension)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness D randomness size overflow".into()))?;
+    if len != 0 {
+        sink.align(
+            relation_layout.d_ring_dimension,
+            "witness randomness alignment overflow",
+        )?;
+        sink.place_randomness(RandomnessOwner::Opening, len)?;
+    }
+    Ok(())
 }
