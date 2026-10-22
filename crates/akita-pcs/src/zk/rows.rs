@@ -1,12 +1,15 @@
 //! The response proof's row batch (Whiteout §4.3, "One opening for the
 //! response"): the affine rows of Items 2, 3 and 5, the three product
-//! claims, and the zero-padding rows, weighted by `eq(η, ·)` into one
-//! equation `⟨A, e⟩ = b_η`. The row maps and their transposes are
+//! claims and the compression chains, weighted by `eq(η, ·)`, plus the
+//! masked padding term `δ·Σ_{j ≥ len} eq(τ_pad, j)·e_j`, into one equation
+//! `⟨A, e⟩ = b_η`. The prover builds `A`; the verifier evaluates `A(r)`
+//! from the factored rows (§5.8, P1). The row maps and their transposes are
 //! jolt-zk's ([`ResponseStatement::rows`], [`ResponseStatement::weigh`]);
 //! this module owns the row order.
 
 use akita_error::AkitaError;
-use jolt_algebra::JoltField;
+use akita_types::NegativeBinarySupport;
+use jolt_algebra::{JoltField, Zero};
 use jolt_poly::EqPolynomial;
 use jolt_zk::masking::ZkError;
 use jolt_zk::whiteout::{ResponseRows, ResponseStatement};
@@ -65,19 +68,16 @@ pub(crate) struct BatchedRows<F> {
 }
 
 /// Row indices: Items 2, 3 and 5 in [`ResponseRows`] order, the product
-/// target, the `U` and `W` claims, the compression chains' rows, then the
-/// padding rows `e_j = 0` for `j ∈ [len, 2^ν)`.
+/// target, the `U` and `W` claims, then the compression chains' rows.
 struct RowOrder {
     v_image: usize,
     linear: usize,
     chains: usize,
-    padding: usize,
 }
 
 impl RowOrder {
     fn new<const D: usize>(
         statement: &ResponseStatement<'_, F, D>,
-        shape: ResponseShape,
         chains: &Chains<'_>,
     ) -> Result<Self, AkitaError> {
         let rows = statement.row_shape();
@@ -85,7 +85,6 @@ impl RowOrder {
             v_image: rows.v_image,
             linear: rows.linear,
             chains: chains.rows()?,
-            padding: shape.padded_len() - shape.len,
         })
     }
 
@@ -103,26 +102,69 @@ impl RowOrder {
     }
 
     fn len(&self) -> usize {
-        self.chains().end + self.padding
+        self.chains().end
     }
 }
 
 /// The number of coordinates of `η`.
 pub(crate) fn row_variables<const D: usize>(
     statement: &ResponseStatement<'_, F, D>,
-    shape: ResponseShape,
     chains: &Chains<'_>,
 ) -> Result<usize, AkitaError> {
-    Ok(ceil_log2(RowOrder::new(statement, shape, chains)?.len()))
+    Ok(ceil_log2(RowOrder::new(statement, chains)?.len()))
 }
 
-/// The batch weights `eq(η, l)`: on [`ResponseRows`], on the padding
-/// entries of `e`, and on the three product claims.
+/// The batch weights `eq(η, l)`: on [`ResponseRows`], on the chains' rows,
+/// and on the three product claims.
 pub(crate) struct RowWeights<F> {
     pub(crate) rows: ResponseRows<F>,
     pub(crate) chains: Vec<F>,
-    pub(crate) padding: Vec<F>,
     pub(crate) claims: ProductClaims<F>,
+}
+
+/// The padding term `δ·Σ_{j ∈ [len, 2^ν)} eq(τ_pad, j)·e_j`, which vanishes
+/// for every `τ_pad` exactly when `e` is zero past `len`, and otherwise
+/// with probability at most `ν/q`.
+pub(crate) struct PaddingMask<F> {
+    pub(crate) delta: F,
+    pub(crate) point: Vec<F>,
+}
+
+impl PaddingMask<F> {
+    /// The padding entries of `e` and their weights.
+    fn support(&self, shape: ResponseShape) -> Result<Option<NegativeBinarySupport>, AkitaError> {
+        if shape.len == shape.padded_len() {
+            return Ok(None);
+        }
+        NegativeBinarySupport::from_intervals(
+            std::iter::once(shape.len..shape.padded_len()).collect(),
+            shape.padded_len(),
+        )
+        .map(Some)
+    }
+
+    /// The term's weights on `e`'s padding entries.
+    fn weights(&self, shape: ResponseShape) -> Result<Vec<F>, AkitaError> {
+        if self.point.len() != shape.num_vars {
+            return Err(AkitaError::InvalidInput("padding point width".into()));
+        }
+        let half = shape.num_vars / 2;
+        let (lo, hi) = (eq_table(&self.point[..half]), eq_table(&self.point[half..]));
+        let mask = (1 << half) - 1;
+        Ok((shape.len..shape.padded_len())
+            .map(|j| self.delta * lo[j & mask] * hi[j >> half])
+            .collect())
+    }
+
+    /// The term's weight at `point`: `δ·Σ_{j ≥ len} eq(τ_pad, j)·eq(point, j)`.
+    fn at(&self, shape: ResponseShape, point: &[F]) -> Result<F, AkitaError> {
+        Ok(match self.support(shape)? {
+            Some(support) => {
+                self.delta * support.evaluate_restricted_equality_at_point(&self.point, point)?
+            }
+            None => F::zero(),
+        })
+    }
 }
 
 impl RowWeights<F> {
@@ -130,12 +172,11 @@ impl RowWeights<F> {
     /// and `W` claims hold.
     pub(crate) fn new<const D: usize>(
         statement: &ResponseStatement<'_, F, D>,
-        shape: ResponseShape,
         eta: &[F],
         product_point: &[F],
         chains: &Chains<'_>,
     ) -> Result<Self, ZkError> {
-        let order = RowOrder::new(statement, shape, chains).map_err(zk_error)?;
+        let order = RowOrder::new(statement, chains).map_err(zk_error)?;
         if eta.len() != ceil_log2(order.len()) {
             return Err(zk_error(AkitaError::InvalidInput(
                 "row batching point width".into(),
@@ -168,7 +209,6 @@ impl RowWeights<F> {
                 product_y: kappa.iter().map(|k| *k * y_weight).collect(),
             },
             chains: slice(order.chains())?,
-            padding: slice(order.chains().end..order.len())?,
             claims: ProductClaims {
                 target: target_weight,
                 x: x_weight,
@@ -183,27 +223,61 @@ impl RowWeights<F> {
     }
 }
 
-/// Batches every row at `eta`: `A_j = Σ_l eq(η, l) H_{l,j}` and
-/// `b_η = Σ_l eq(η, l) b_l`, through the rows' transpose.
+/// `b_η = Σ_l eq(η, l)·b_l`: the product claims' targets less the rows'
+/// constants, from the public targets and payloads alone.
+pub(crate) fn batch_target<const D: usize>(
+    statement: &ResponseStatement<'_, F, D>,
+    alpha: F,
+    weights: &RowWeights<F>,
+    claims: ProductClaims<F>,
+    chains: &Chains<'_>,
+) -> Result<F, ZkError> {
+    let constant = statement.constant(&weights.rows, alpha)?;
+    let chain_constant = chains.constant(alpha, &weights.chains).map_err(zk_error)?;
+    Ok(weights.target(claims) - constant - chain_constant)
+}
+
+/// Batches every row at `η` for the prover: `A_j = Σ_l eq(η, l) H_{l,j}`
+/// through the rows' transpose, plus the padding term, and `b_η`.
 pub(crate) fn batch_rows<const D: usize>(
     statement: &ResponseStatement<'_, F, D>,
     shape: ResponseShape,
     alpha: F,
-    weights: RowWeights<F>,
+    weights: &RowWeights<F>,
+    padding: &PaddingMask<F>,
     claims: ProductClaims<F>,
     chains: &Chains<'_>,
 ) -> Result<BatchedRows<F>, ZkError> {
-    let (mut a, constant) = statement.weigh(&weights.rows, alpha)?;
+    let (mut a, _) = statement.weigh(&weights.rows, alpha)?;
     if a.len() != shape.len {
         return Err(zk_error(AkitaError::Internal("row weights length".into())));
     }
-    let target = weights.target(claims);
-    a.extend(weights.padding);
-    let chain_constant = chains
+    a.extend(padding.weights(shape).map_err(zk_error)?);
+    chains
         .accumulate(alpha, &weights.chains, &mut a)
         .map_err(zk_error)?;
-    let b = target - constant - chain_constant;
-    Ok(BatchedRows { a, b })
+    Ok(BatchedRows {
+        a,
+        b: batch_target(statement, alpha, weights, claims, chains)?,
+    })
+}
+
+/// `A(r)` for the verifier, without `A`: jolt-zk's factored rows, the
+/// chains' relation and the padding term, each at `point`.
+pub(crate) fn batch_weight_at<const D: usize>(
+    statement: &ResponseStatement<'_, F, D>,
+    shape: ResponseShape,
+    alpha: F,
+    weights: &RowWeights<F>,
+    padding: &PaddingMask<F>,
+    chains: &Chains<'_>,
+    point: &[F],
+) -> Result<F, ZkError> {
+    Ok(statement.weight_at(&weights.rows, alpha, point)?
+        + chains
+            .evaluate(alpha, &weights.chains, point)
+            .map_err(zk_error)?
+        + padding.at(shape, point).map_err(zk_error)?)
 }
 
 /// An Akita failure, carried as a [`ZkError`].

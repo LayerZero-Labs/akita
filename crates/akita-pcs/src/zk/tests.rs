@@ -18,6 +18,7 @@ use jolt_zk::whiteout::ResponseSegment;
 use std::sync::Mutex;
 
 use akita_params::PackedNegativeBinary;
+use akita_sumcheck::multilinear_eval;
 use jolt_zk::whiteout::{CompressedImage, CompressedTarget};
 use rand::RngCore;
 
@@ -360,10 +361,8 @@ impl<const D: usize> ResponseProver<F, D> for WeightOracle<'_> {
         let alpha: F = transcript.challenge();
         let product_vars = ceil_log2(statement.row_shape().products.max(1));
         let product_point = challenges(transcript, product_vars);
-        let eta = challenges(
-            transcript,
-            row_variables(statement, shape, &chains).unwrap(),
-        );
+        let eta = challenges(transcript, row_variables(statement, &chains).unwrap());
+        let padding = padding_mask(transcript, shape);
         let r = challenges(transcript, shape.num_vars);
         let range_point = challenges(transcript, shape.num_vars);
         let gamma: F = transcript.challenge();
@@ -374,8 +373,9 @@ impl<const D: usize> ResponseProver<F, D> for WeightOracle<'_> {
             y: transcript.challenge(),
         };
 
-        // jolt-zk's rows only: the chains' rows have their own test.
-        let mut weights = RowWeights::new(statement, shape, &eta, &product_point, &chains).unwrap();
+        // jolt-zk's rows and the padding term; the chains' rows have their
+        // own test against their definition.
+        let mut weights = RowWeights::new(statement, &eta, &product_point, &chains).unwrap();
         weights.chains.fill(F::zero());
         let zero = statement.rows(&vec![0; shape.len], alpha).unwrap();
         let mut columns: Vec<F> = cfg_into_iter!(0..shape.len)
@@ -386,14 +386,31 @@ impl<const D: usize> ResponseProver<F, D> for WeightOracle<'_> {
                 weights.rows.dot(&column).unwrap() - weights.rows.dot(&zero).unwrap()
             })
             .collect();
-        columns.extend(weights.padding.iter().copied());
+        let eq_pad = EqPolynomial::evals(&padding.point).unwrap();
+        columns.extend(eq_pad[shape.len..].iter().map(|eq| padding.delta * *eq));
         let eq_r = EqPolynomial::evals(&r).unwrap();
         let contracted: F = columns.iter().zip(&eq_r).map(|(h, e)| *h * *e).sum();
         let b = weights.target(claims) - weights.rows.dot(&zero).unwrap();
 
-        let batch = batch_rows(statement, shape, alpha, weights, claims, &chains).unwrap();
+        let batch =
+            batch_rows(statement, shape, alpha, &weights, &padding, claims, &chains).unwrap();
         assert_eq!(multilinear_eval(&batch.a, &r).unwrap(), contracted);
+        let at = |weights: &RowWeights<F>| {
+            batch_weight_at(statement, shape, alpha, weights, &padding, &chains, &r).unwrap()
+        };
+        assert_eq!(at(&weights), contracted);
         assert_eq!(batch.b, b);
+
+        // With the chains' rows: the verifier's factored A(r) against the
+        // prover's dense A.
+        let weights = RowWeights::new(statement, &eta, &product_point, &chains).unwrap();
+        let batch =
+            batch_rows(statement, shape, alpha, &weights, &padding, claims, &chains).unwrap();
+        assert_eq!(at(&weights), multilinear_eval(&batch.a, &r).unwrap());
+        assert_eq!(
+            batch_target(statement, alpha, &weights, claims, &chains).unwrap(),
+            batch.b
+        );
 
         let mut binary = vec![false; shape.padded_len()];
         for target in statement.compressed_targets().unwrap() {
@@ -431,8 +448,8 @@ impl<const D: usize> ResponseProver<F, D> for WeightOracle<'_> {
     }
 }
 
-/// W5-b: on the smallest synthetic shape, the verifier's `A(r)` and `B(r)`
-/// equal `Σ_j eq(r, j)·Σ_l eq(η, l)·H_{l,j}` and `Σ_j eq(r, j)·B_j`, with
+/// W5-b: on the smallest synthetic shape, the verifier's factored `A(r)`,
+/// the prover's dense `A` at `r`, and `B(r)` equal `Σ_j eq(r, j)·Σ_l eq(η, l)·H_{l,j}` and `Σ_j eq(r, j)·B_j`, with
 /// each column `H_{·,j}` read from the statement's own rows at the unit
 /// vector `δ_j`.
 #[test]
@@ -502,7 +519,8 @@ fn chain_relation_matches_its_rows_and_vanishes_on_the_executor_witness() {
                 }],
             );
             let mut a = vec![F::zero(); padded_len];
-            let constant = chains.accumulate(alpha, &weights, &mut a).unwrap();
+            chains.accumulate(alpha, &weights, &mut a).unwrap();
+            let constant = chains.constant(alpha, &weights).unwrap();
             assert_ne!(constant, F::zero());
             let actual: F = a
                 .iter()
@@ -718,9 +736,9 @@ fn rejects_prover_chosen_compressions() {
             );
             let weights: Vec<F> = (0..4).map(|_| F::random(&mut rng)).collect();
             let mut a = vec![F::zero(); compressed.witness.len().next_power_of_two()];
-            let constant = chains
-                .accumulate(F::random(&mut rng), &weights, &mut a)
-                .unwrap();
+            let alpha = F::random(&mut rng);
+            chains.accumulate(alpha, &weights, &mut a).unwrap();
+            let constant = chains.constant(alpha, &weights).unwrap();
             let value = a
                 .iter()
                 .zip(&compressed.witness)

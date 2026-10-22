@@ -33,7 +33,7 @@ use akita_params::{
     RelationWitnessGeometry, ScheduleLookupKey,
 };
 use akita_prover::{prove_digit_range, SelectedProverOpeningData};
-use akita_sumcheck::{multilinear_eval, FusedRounds};
+use akita_sumcheck::FusedRounds;
 use akita_types::{
     AkitaExpandedSetup, AkitaVerifierSetup, Commitment, CommittedGroup, DigitRangeEqualityPoint,
     GroupBatchStatement, NegativeBinarySupport, OpeningClaims, PolynomialGroupClaims,
@@ -53,8 +53,8 @@ use crate::AkitaCommitmentScheme;
 use compression::Chains;
 use rounds::{ClearProverRounds, ClearVerifierRounds, FusedKernel, ProductKernel};
 use rows::{
-    batch_rows, ceil_log2, eq_table, row_variables, zk_error, ProductClaims, ResponseShape,
-    RowWeights,
+    batch_rows, batch_target, batch_weight_at, ceil_log2, eq_table, row_variables, zk_error,
+    PaddingMask, ProductClaims, ResponseShape, RowWeights,
 };
 
 /// The response statement's field.
@@ -226,14 +226,15 @@ where
         transcript.send(&claims.x);
         transcript.send(&claims.y);
 
-        // 3. The row batch at η.
+        // 3. The row batch at η, and the padding term at (δ, τ_pad).
         let chains = self.chains(statement)?;
         let eta: Vec<F> = challenges(
             transcript,
-            row_variables(statement, shape, &chains).map_err(zk_error)?,
+            row_variables(statement, &chains).map_err(zk_error)?,
         );
-        let weights = RowWeights::new(statement, shape, &eta, &product_point, &chains)?;
-        let batch = batch_rows(statement, shape, alpha, weights, claims, &chains)?;
+        let weights = RowWeights::new(statement, &eta, &product_point, &chains)?;
+        let padding = padding_mask(transcript, shape);
+        let batch = batch_rows(statement, shape, alpha, &weights, &padding, claims, &chains)?;
 
         // 4. The digit range of e.
         let tau: Vec<F> = challenges(transcript, shape.num_vars);
@@ -366,14 +367,15 @@ where
             return Err(WhiteoutError::ResponseRejected("product sumcheck").into());
         }
 
-        // 3. The row batch at η.
+        // 3. The row batch at η, and the padding term at (δ, τ_pad).
         let chains = self.chains(statement)?;
         let eta: Vec<F> = challenges(
             transcript,
-            row_variables(statement, shape, &chains).map_err(zk_error)?,
+            row_variables(statement, &chains).map_err(zk_error)?,
         );
-        let weights = RowWeights::new(statement, shape, &eta, &product.challenges, &chains)?;
-        let batch = batch_rows(statement, shape, alpha, weights, claims, &chains)?;
+        let weights = RowWeights::new(statement, &eta, &product.challenges, &chains)?;
+        let padding = padding_mask(transcript, shape);
+        let b = batch_target(statement, alpha, &weights, claims, &chains)?;
 
         // 4. The digit range of e.
         let tau: Vec<F> = challenges(transcript, shape.num_vars);
@@ -396,16 +398,20 @@ where
         let gamma: F = transcript.challenge();
         let zeta: F = transcript.challenge();
         let fused = verify_single::<F, F, AkitaError, _>(
-            &compressed(
-                batch.b + gamma * range.range_image_evaluation,
-                shape.num_vars,
-                3,
-            ),
+            &compressed(b + gamma * range.range_image_evaluation, shape.num_vars, 3),
             &mut ClearVerifierRounds(transcript),
         )
         .map_err(zk_error)?;
         let v: F = transcript.receive()?;
-        let a = multilinear_eval(&batch.a, &fused.challenges).map_err(zk_error)?;
+        let a = batch_weight_at(
+            statement,
+            shape,
+            alpha,
+            &weights,
+            &padding,
+            &chains,
+            &fused.challenges,
+        )?;
         let b = range_weight_at(
             gamma,
             zeta,
@@ -499,6 +505,14 @@ fn first(table: &[F]) -> Result<F, ZkError> {
 
 fn challenges<C: Channel>(channel: &mut C, count: usize) -> Vec<F> {
     (0..count).map(|_| channel.challenge()).collect()
+}
+
+/// The padding term's `δ` and `τ_pad`, drawn after `η`.
+fn padding_mask<C: Channel>(channel: &mut C, shape: ResponseShape) -> PaddingMask<F> {
+    PaddingMask {
+        delta: channel.challenge(),
+        point: challenges(channel, shape.num_vars),
+    }
 }
 
 /// Akita's image compression without a prover backend: its lengths and

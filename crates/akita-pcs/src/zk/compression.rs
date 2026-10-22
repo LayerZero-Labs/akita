@@ -352,15 +352,15 @@ impl<'a> Chains<'a> {
 
     /// `⟨weights, chain rows at α⟩` over the padded `e` of
     /// `physical_field_len` entries, as Akita's reduced compression
-    /// relation, and its constant `−Σ w₂·cm(α)` from the payloads.
+    /// relation.
     pub(crate) fn relation(
         &self,
         alpha: F,
         weights: &[F],
         physical_field_len: usize,
-    ) -> Result<(ReducedCompressionRelationWeights<F>, F), AkitaError> {
+    ) -> Result<ReducedCompressionRelationWeights<F>, AkitaError> {
         let placed = self.chunks()?;
-        let relation = ReducedCompressionRelationWeights::for_standalone_chains::<F>(
+        ReducedCompressionRelationWeights::for_standalone_chains::<F>(
             alpha,
             &placed
                 .iter()
@@ -368,25 +368,51 @@ impl<'a> Chains<'a> {
                 .collect::<Vec<_>>(),
             weights,
             physical_field_len,
-        )?;
-        let mut constant = F::zero();
-        for (placed, weights) in placed.iter().zip(weights.chunks_exact(CHUNK_ROWS)) {
-            let at_alpha = placed
-                .payload
-                .iter()
-                .rev()
-                .fold(F::zero(), |sum, coefficient| sum * alpha + *coefficient);
-            constant -= weights[CHUNK_ROWS - 1] * at_alpha;
+        )
+    }
+
+    /// The constant `−Σ w₂·cm(α)` of `⟨weights, chain rows at α⟩`.
+    pub(crate) fn constant(&self, alpha: F, weights: &[F]) -> Result<F, AkitaError> {
+        let placed = self.chunks()?;
+        if weights.len() != placed.len() * CHUNK_ROWS {
+            return Err(AkitaError::InvalidSize {
+                expected: placed.len() * CHUNK_ROWS,
+                actual: weights.len(),
+            });
         }
-        Ok((relation, constant))
+        Ok(placed.iter().zip(weights.chunks_exact(CHUNK_ROWS)).fold(
+            F::zero(),
+            |constant, (placed, weights)| {
+                let at_alpha = placed
+                    .payload
+                    .iter()
+                    .rev()
+                    .fold(F::zero(), |sum, coefficient| sum * alpha + *coefficient);
+                constant - weights[CHUNK_ROWS - 1] * at_alpha
+            },
+        ))
+    }
+
+    /// `Σ_j A_j·eq(point, j)` for the weights [`Self::accumulate`] adds.
+    pub(crate) fn evaluate(&self, alpha: F, weights: &[F], point: &[F]) -> Result<F, AkitaError> {
+        let len = u32::try_from(point.len())
+            .ok()
+            .and_then(|bits| 1usize.checked_shl(bits))
+            .ok_or_else(|| AkitaError::InvalidInput("evaluation point width".into()))?;
+        self.relation(alpha, weights, len)?
+            .evaluate_at_point(self.setup, point)
     }
 
     /// Adds `⟨weights, chain rows at α⟩`'s weights to `a` over the padded
-    /// `e`, and returns their constant.
-    pub(crate) fn accumulate(&self, alpha: F, weights: &[F], a: &mut [F]) -> Result<F, AkitaError> {
-        let (relation, constant) = self.relation(alpha, weights, a.len())?;
-        relation.accumulate_dense(self.setup, a)?;
-        Ok(constant)
+    /// `e`.
+    pub(crate) fn accumulate(
+        &self,
+        alpha: F,
+        weights: &[F],
+        a: &mut [F],
+    ) -> Result<(), AkitaError> {
+        self.relation(alpha, weights, a.len())?
+            .accumulate_dense(self.setup, a)
     }
 
     /// Where `ξ` sits in `e` padded to `padded_len`: the binary constraint's
