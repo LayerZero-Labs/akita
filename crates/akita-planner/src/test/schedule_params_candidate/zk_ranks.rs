@@ -24,7 +24,7 @@ fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
     let zk = ZkOpeningSchedule::new(ZK_CUT_LEVEL).unwrap();
     for level in 0..=ZK_CUT_LEVEL as usize {
         let sizing = MaskedFoldSizing::new(row.schedule(), level, source).unwrap();
-        let params = sizing.params;
+        let params = sizing.params();
         assert!(
             matches!(
                 params.inner().matrix.security_route(),
@@ -33,10 +33,10 @@ fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
             "masked level {level} must use the Linf route"
         );
         let derive = |masking: LevelMasking| {
-            let query = sizing.query(masking.failure_target());
+            let query = sizing.query(masking.failure_target()).unwrap();
             derive_inner_commitment_candidate(InnerCommitmentCandidateRequest {
                 policy: &policy,
-                fold_policy: &sizing.policy,
+                fold_policy: sizing.policy(),
                 ring_challenge_cfg: query.challenge_config,
                 challenge_dimension: query.challenge_dimension,
                 dimensions: params.role_dims(),

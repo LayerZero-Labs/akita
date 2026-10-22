@@ -154,6 +154,11 @@ impl ValidatedScheduleCatalog {
     /// Build a test-only catalog that also admits zero-knowledge rows, each
     /// checked by [`akita_params::zk::ZkOpeningSchedule::admit`] against
     /// `root_source`.
+    ///
+    /// Callers go through `akita_config::TrustedScheduleCatalog::try_new_with_test_zk`,
+    /// which takes `root_source` from the configuration, so the prover's
+    /// recheck and admission read one source contract.
+    #[doc(hidden)]
     #[cfg(all(feature = "test-support", feature = "zk"))]
     pub fn try_new_with_test_zk(
         family_name: impl Into<String>,

@@ -35,14 +35,6 @@ where
     let (selection, claims) = opening.into_low_level_parts();
     let resolved = schedules.resolve_selection(selection)?;
     resolved.validate_opening_layout(claims.opening_layout())?;
-    // A zero-knowledge row samples hiding randomness and probes masked fold
-    // responses once; recheck it here, in release builds, before either.
-    if resolved.schedule().zk.is_some() {
-        akita_params::zk::ZkOpeningSchedule::admit(
-            resolved.schedule(),
-            Cfg::committed_source_contract()?,
-        )?;
-    }
     let (grinding_plan, descriptor_bytes) =
         akita_config::transcript_instance_descriptor::<Cfg::Field, Cfg>(
             expanded,

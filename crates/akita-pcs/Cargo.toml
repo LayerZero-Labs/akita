@@ -108,6 +108,12 @@ jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f
 # seed. Schedule rows remain checked-in external artifacts loaded at runtime.
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
+  "zk",
+] }
+# Test-only: construct zero-knowledge cuts.
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false, features = [
+  "test-support",
+  "zk",
 ] }
 akita-planner = { version = "0.1.0", path = "../akita-planner", default-features = false, features = [
   "test-support",

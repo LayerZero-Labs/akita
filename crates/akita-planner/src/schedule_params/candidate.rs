@@ -29,14 +29,17 @@ pub(crate) struct AbCommitmentCandidateRequest<'a> {
     pub(crate) masking: LevelMasking,
 }
 
-/// Whether a planned fold level is masked by a zero-knowledge cut.
+/// How a planned fold level sits relative to a zero-knowledge cut.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LevelMasking {
     Clear,
     /// The level's B slices and D image carry hiding randomness, its fold
     /// response is one-shot and sized for the cut's failure target, and it
-    /// uses the ℓ∞ route only.
+    /// uses the ℓ∞ route, the quotient relation, base 8, and no setup prefix.
     Masked(akita_params::zk::ZkOpeningSchedule),
+    /// The clear level after the cut: it opens the residual commitment
+    /// (d_A = d_B) and consumes no setup prefix, so the cut runs no Stage 3.
+    AfterCut,
 }
 
 impl LevelMasking {
@@ -44,6 +47,7 @@ impl LevelMasking {
     pub(crate) fn at(zk: Option<akita_params::zk::ZkOpeningSchedule>, level: usize) -> Self {
         match zk {
             Some(zk) if zk.masks(level) => Self::Masked(zk),
+            Some(zk) if level == zk.cut_level() as usize + 1 => Self::AfterCut,
             _ => Self::Clear,
         }
     }
@@ -52,9 +56,17 @@ impl LevelMasking {
         matches!(self, Self::Masked(_))
     }
 
+    pub(crate) const fn allows_setup_prefix(self) -> bool {
+        matches!(self, Self::Clear)
+    }
+
+    pub(crate) const fn opens_residual(self) -> bool {
+        matches!(self, Self::AfterCut)
+    }
+
     pub(crate) const fn failure_target(self) -> FoldFailureTarget {
         match self {
-            Self::Clear => FoldFailureTarget::PerAttempt,
+            Self::Clear | Self::AfterCut => FoldFailureTarget::PerAttempt,
             Self::Masked(zk) => zk.fold_failure_target(),
         }
     }
@@ -265,24 +277,23 @@ pub(super) fn derive_inner_commitment_candidate(
     } = request;
     let failure_target = masking.failure_target();
     let d_a = dimensions.d_a();
-    let num_fold_coeffs = width_s
-        .checked_mul(d_a)
-        .and_then(|count| count.checked_mul(num_chunks))
-        .ok_or_else(|| AkitaError::InvalidSetup("fold response width overflow".into()))?;
-    let Ok(universal_digits) = fold_policy.num_digits_fold(HonestFoldSizingQuery {
-        ring_dimension: d_a,
+    let query = HonestFoldSizingQuery::new(
+        d_a,
         challenge_dimension,
         num_claims,
-        num_live_ring_elements_per_claim,
-        num_live_blocks,
-        num_positions_per_block,
+        akita_params::BlockGeometry::new(
+            num_live_ring_elements_per_claim,
+            num_positions_per_block,
+            num_live_blocks,
+        ),
         num_chunks,
-        num_fold_coeffs,
+        width_s,
         witness_norms,
-        log_basis_response: log_basis_open,
-        challenge_config: ring_challenge_cfg,
+        log_basis_open,
+        ring_challenge_cfg,
         failure_target,
-    }) else {
+    )?;
+    let Ok(universal_digits) = fold_policy.num_digits_fold(query) else {
         return Ok(None);
     };
     // The modeled cap is a per-attempt bound, never a one-shot one.

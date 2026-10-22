@@ -865,6 +865,30 @@ pub(crate) fn derive_fold_candidates(
     policy: FoldCandidatePolicy,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     let (setup_prefix, relation_domain) = work.into_search_parts();
+    // A zero-knowledge schedule admits no setup prefix through the level after
+    // the cut, ℓ∞-only quotient folds at base 8 at masked levels, and a
+    // residual commitment with d_A = d_B; skip what admission would refuse.
+    let masking = request.masking;
+    if !masking.allows_setup_prefix() && matches!(setup_prefix, RecursiveSetupPrefix::Search { .. })
+    {
+        return Ok(Vec::new());
+    }
+    if masking.opens_residual() && request.dimensions.d_a() != request.dimensions.d_b() {
+        return Ok(Vec::new());
+    }
+    let relation_domain = if masking.hiding() {
+        if request.log_basis_open != akita_params::zk::MASKED_LOG_BASIS {
+            return Ok(Vec::new());
+        }
+        match relation_domain {
+            RelationSearchDomain::QuotientOnly | RelationSearchDomain::QuotientAndReduced => {
+                RelationSearchDomain::QuotientOnly
+            }
+            RelationSearchDomain::ReducedOnly => return Ok(Vec::new()),
+        }
+    } else {
+        relation_domain
+    };
     match policy {
         FoldCandidatePolicy::Best => {
             derive_best_fold_candidates(request, setup_prefix, relation_domain)

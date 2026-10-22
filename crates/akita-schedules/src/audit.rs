@@ -581,12 +581,16 @@ pub(crate) fn audit_resolved_schedule(
         (ZkAdmission::Clear, Some(_)) => {
             return Err(invalid(
                 "schedule",
-                "zero knowledge is not selectable in a trusted catalog",
+                "a zero-knowledge cut is not selectable in a trusted catalog",
             ));
         }
         #[cfg(all(feature = "test-support", feature = "zk"))]
         (ZkAdmission::TestZk(root_source), Some(_)) => {
-            akita_params::zk::ZkOpeningSchedule::admit(schedule, root_source)?;
+            akita_params::zk::ZkOpeningSchedule::admit(
+                schedule,
+                root_source,
+                policy.claim_ext_degree,
+            )?;
         }
     }
     profiles.validate(policy.decomposition.field_bits())?;

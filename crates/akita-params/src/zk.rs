@@ -50,24 +50,43 @@ pub(crate) const fn one_shot_fold_target(cut_level: u32) -> FoldFailureTarget {
 /// `0..=cut_level`.
 ///
 /// A [`FoldSchedule`] stores it, its descriptor bytes bind it, and its
-/// grinding plan makes the masked fold responses one-shot.
+/// grinding plan makes the masked fold responses one-shot. Deserializing one
+/// validates the cut.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "ZkCutEncoding")]
 pub struct ZkOpeningSchedule {
     cut_level: u32,
 }
 
+/// The serialized form of a [`ZkOpeningSchedule`], before its cut is checked.
+#[derive(serde::Deserialize)]
+struct ZkCutEncoding {
+    cut_level: u32,
+}
+
+impl TryFrom<ZkCutEncoding> for ZkOpeningSchedule {
+    type Error = AkitaError;
+
+    fn try_from(encoding: ZkCutEncoding) -> Result<Self, AkitaError> {
+        let zk = Self {
+            cut_level: encoding.cut_level,
+        };
+        zk.validate_cut()?;
+        Ok(zk)
+    }
+}
+
 impl ZkOpeningSchedule {
-    /// The cut masking levels `0..=cut_level`.
+    /// The cut masking levels `0..=cut_level`, for tests until zero
+    /// knowledge is published.
     ///
     /// # Errors
     ///
     /// Returns [`AkitaError::UnsupportedSchedule`] for a cut other than
     /// [`ZK_CUT_LEVEL`].
-    #[cfg(any(test, feature = "zk"))]
+    #[cfg(any(test, all(feature = "test-support", feature = "zk")))]
     pub fn new(cut_level: u32) -> Result<Self, AkitaError> {
-        let zk = Self { cut_level };
-        zk.validate_cut()?;
-        Ok(zk)
+        Self::try_from(ZkCutEncoding { cut_level })
     }
 
     fn validate_cut(self) -> Result<(), AkitaError> {
@@ -102,17 +121,25 @@ impl ZkOpeningSchedule {
     /// builds.
     ///
     /// `root_source` is the contract the root's single committed group is
-    /// produced under. The check requires:
+    /// produced under, and `claim_extension_degree` the degree of the claim
+    /// field over the base field. The check requires:
     ///
     /// - `schedule.zk` is a supported cut that precedes the last nonterminal
     ///   fold, whose output is the terminal witness, sent in the clear;
+    /// - claims in the base field (`E::DEGREE = 1`): the masked stage checks
+    ///   have no extension-field products;
     /// - the root commits exactly one group, and no masked level consumes a
-    ///   setup prefix, whose response would share the one-shot probe unsized;
+    ///   preceding group (a setup prefix or precommitted group), whose
+    ///   response would share the one-shot probe unsized; nor does the level
+    ///   after the cut, so the cut level runs no Stage 3;
+    /// - the residual commitment, which the level after the cut opens, has
+    ///   d_A = d_B;
     /// - every masked level uses the ℓ∞ route (an ℓ2 route reveals the
     ///   response energy and carries a per-attempt ℓ2 cap and an
     ///   operator-norm challenge family, none of which is one-shot sized),
-    ///   uses one witness chunk, carries exactly [`b_randomness_columns`] for
-    ///   its own group's B slices and [`d_randomness_columns`] for its D
+    ///   the quotient relation (not reduced evaluation), the open basis b = 8,
+    ///   and one witness chunk; it carries exactly [`b_randomness_columns`]
+    ///   for its own group's B slices and [`d_randomness_columns`] for its D
     ///   image, and at least the fold digits its honest-fold policy derives
     ///   for [`fold_failure_target`](Self::fold_failure_target);
     /// - every later level, and every preceding group, carries no randomness.
@@ -121,24 +148,41 @@ impl ZkOpeningSchedule {
     ///
     /// Returns [`AkitaError::UnsupportedSchedule`] for a missing or
     /// unsupported cut and [`AkitaError::InvalidSetup`] naming the first
-    /// violating level otherwise.
+    /// violating condition otherwise.
     pub fn admit(
         schedule: &FoldSchedule,
         root_source: CommittedSourceContract,
+        claim_extension_degree: usize,
     ) -> Result<Self, AkitaError> {
         let zk = schedule.zk.ok_or_else(|| {
             AkitaError::UnsupportedSchedule("schedule has no zero-knowledge cut".into())
         })?;
         zk.validate_cut()?;
-        if zk.cut_level as usize >= schedule.recursive_folds.len() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "zero-knowledge cut level {} reaches the terminal witness",
-                zk.cut_level
-            )));
+        let cut = zk.cut_level as usize;
+        let after_cut = schedule.recursive_folds.get(cut).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "zero-knowledge cut level {cut} reaches the terminal witness"
+            ))
+        })?;
+        if claim_extension_degree != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "zero knowledge needs claims in the base field".into(),
+            ));
         }
         if !schedule.root.params.precommitted_groups().is_empty() {
             return Err(AkitaError::InvalidSetup(
                 "a masked root must commit exactly one group".into(),
+            ));
+        }
+        if after_cut.params.setup_prefix().is_some() {
+            return Err(AkitaError::InvalidSetup(
+                "the cut level must not run Stage 3".into(),
+            ));
+        }
+        let residual = after_cut.params.role_dims();
+        if residual.d_a() != residual.d_b() {
+            return Err(AkitaError::InvalidSetup(
+                "the residual commitment needs d_A = d_B".into(),
             ));
         }
         let target = zk.fold_failure_target();
@@ -154,11 +198,15 @@ impl ZkOpeningSchedule {
                 ) {
                     return Err(invalid("is masked on an L2 route"));
                 }
+                if params.ring_relation_mode.is_reduced_evaluation() {
+                    return Err(invalid("is masked under reduced evaluation"));
+                }
+                if params.open().digits.log_basis != MASKED_LOG_BASIS {
+                    return Err(invalid("is masked with an open basis other than 8"));
+                }
                 if params.witness_chunk.num_chunks != 1 {
                     return Err(invalid("is masked across several witness chunks"));
                 }
-                // A setup prefix or precommitted group folds in the same
-                // one-shot probe, and its digits are not one-shot sized.
                 if params.preceding_group_iter().next().is_some() {
                     return Err(invalid("is masked but consumes a preceding group"));
                 }
@@ -184,24 +232,26 @@ impl ZkOpeningSchedule {
                 .preceding_group_iter()
                 .any(|group| group.profile.randomness_columns != 0)
             {
-                return Err(invalid("gives a precommitted group hiding randomness"));
+                return Err(invalid("gives a preceding group hiding randomness"));
             }
         }
         Ok(zk)
     }
 }
 
+/// Base-two logarithm of the open basis the masked stage checks assume
+/// (b = 8: no Stage-1 product stages).
+pub const MASKED_LOG_BASIS: u32 = 3;
+
 /// The honest-fold sizing inputs of one masked fold level, read from its
 /// scheduled parameters: the root's source contract and group geometry at
 /// level 0, and the balanced digits of the previous witness above it.
 pub struct MaskedFoldSizing<'a> {
-    pub params: &'a CommittedGroupParams,
-    pub policy: HonestFoldPolicySpec,
-    pub challenge: SparseChallengeConfig,
-    pub num_claims: usize,
-    /// Response coefficients across every physical window.
-    pub num_fold_coeffs: usize,
-    pub witness_norms: FoldWitnessNorms,
+    params: &'a CommittedGroupParams,
+    policy: HonestFoldPolicySpec,
+    challenge: SparseChallengeConfig,
+    num_claims: usize,
+    witness_norms: FoldWitnessNorms,
 }
 
 impl<'a> MaskedFoldSizing<'a> {
@@ -258,49 +308,59 @@ impl<'a> MaskedFoldSizing<'a> {
                 FoldWitnessNorms::bounded(inner.log_basis, params.d_a()),
             )
         };
-        let num_fold_coeffs = usize::try_from(params.num_fold_coeffs())
-            .ok()
-            .and_then(|coeffs| coeffs.checked_mul(params.witness_chunk.num_chunks))
-            .ok_or_else(|| AkitaError::InvalidSetup("fold response width overflow".into()))?;
         Ok(Self {
             params,
             policy,
             challenge: params.fold_challenge_config(),
             num_claims,
-            num_fold_coeffs,
             witness_norms,
         })
     }
 
-    /// The sizing query for `failure_target`.
+    /// The level's scheduled parameters.
     #[must_use]
-    pub fn query(&self, failure_target: FoldFailureTarget) -> HonestFoldSizingQuery<'_> {
+    pub const fn params(&self) -> &'a CommittedGroupParams {
+        self.params
+    }
+
+    /// The level's honest-fold policy.
+    #[must_use]
+    pub const fn policy(&self) -> &HonestFoldPolicySpec {
+        &self.policy
+    }
+
+    /// The sizing query for `failure_target`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the response size overflows.
+    pub fn query(
+        &self,
+        failure_target: FoldFailureTarget,
+    ) -> Result<HonestFoldSizingQuery<'_>, AkitaError> {
         let params = self.params;
-        let blocks = params.blocks();
-        HonestFoldSizingQuery {
-            ring_dimension: params.d_a(),
-            challenge_dimension: match params.opening_method() {
+        HonestFoldSizingQuery::new(
+            params.d_a(),
+            match params.opening_method() {
                 OpeningMethod::EvaluationTrace => params.d_a(),
                 OpeningMethod::SubringCoefficientPacking {
                     challenge_subring_dimension,
                 } => challenge_subring_dimension,
             },
-            num_claims: self.num_claims,
-            num_live_ring_elements_per_claim: blocks.live_ring_elements_per_claim,
-            num_positions_per_block: blocks.positions_per_block,
-            num_live_blocks: blocks.live_blocks,
-            num_chunks: params.witness_chunk.num_chunks,
-            num_fold_coeffs: self.num_fold_coeffs,
-            witness_norms: self.witness_norms,
-            log_basis_response: params.open().digits.log_basis,
-            challenge_config: &self.challenge,
+            self.num_claims,
+            params.blocks(),
+            params.witness_chunk.num_chunks,
+            params.inner().matrix.input_width(),
+            self.witness_norms,
+            params.open().digits.log_basis,
+            &self.challenge,
             failure_target,
-        }
+        )
     }
 
     /// The fold digit count the level's policy derives for `failure_target`.
     pub fn num_digits_fold(&self, failure_target: FoldFailureTarget) -> Result<usize, AkitaError> {
-        self.policy.num_digits_fold(self.query(failure_target))
+        self.policy.num_digits_fold(self.query(failure_target)?)
     }
 }
 

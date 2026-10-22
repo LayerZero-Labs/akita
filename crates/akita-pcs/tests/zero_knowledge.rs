@@ -23,7 +23,8 @@ use akita_params::{
     lagrange_weights, suffix_opening_layout, BasisMode, ChunkedWitnessCfg,
     CommittedGroupBatchProfile, FoldResponseSearch, FoldSchedule, GrindingQueryKind, GrindingSite,
     GroupCommitPhaseParams, InnerCommitSecurityRoute, PolynomialGroupLayout, RelationQuotientPlan,
-    RelationWitnessGeometry, ScheduleLookupKey, WitnessLayout, FOLD_RESPONSE_NONCE_BITS,
+    RelationWitnessGeometry, RingRelationMode, ScheduleLookupKey, WitnessLayout,
+    FOLD_RESPONSE_NONCE_BITS,
 };
 use akita_pcs::{AkitaCommitmentScheme, BackendRegistry, FixedFoldRoute};
 use akita_prover::SelectedProverOpeningData;
@@ -79,19 +80,19 @@ fn zk_row() -> (CommittedGroupBatchProfile, FoldSchedule) {
 }
 
 fn admit(schedule: &FoldSchedule) -> Result<ZkOpeningSchedule, AkitaError> {
-    ZkOpeningSchedule::admit(schedule, Cfg::committed_source_contract().unwrap())
+    ZkOpeningSchedule::admit(
+        schedule,
+        Cfg::committed_source_contract().unwrap(),
+        Cfg::EXT_DEGREE,
+    )
 }
 
 fn zk_catalog() -> TrustedScheduleCatalog<Cfg> {
-    let validated = ValidatedScheduleCatalog::try_new_with_test_zk(
-        Cfg::schedule_family_name(),
+    TrustedScheduleCatalog::try_new_with_test_zk(
         [zk_row()],
-        &policy(),
-        Cfg::ring_challenge_config,
-        Cfg::committed_source_contract().unwrap(),
+        ChunkedWitnessCfg::default_non_chunked(),
     )
-    .unwrap();
-    TrustedScheduleCatalog::new(validated, ChunkedWitnessCfg::default_non_chunked()).unwrap()
+    .unwrap()
 }
 
 /// The parameters of every nonterminal fold, in level order.
@@ -187,14 +188,30 @@ fn planner_masks_every_level_up_to_the_cut() {
 #[test]
 fn trusted_catalogs_reject_zero_knowledge_rows() {
     on_large_stack(|| {
-        let error = ValidatedScheduleCatalog::try_new(
-            Cfg::schedule_family_name(),
-            [zk_row()],
-            &policy(),
-            Cfg::ring_challenge_config,
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("not selectable"), "{error}");
+        let trusted = |row| {
+            ValidatedScheduleCatalog::try_new(
+                Cfg::schedule_family_name(),
+                [row],
+                &policy(),
+                Cfg::ring_challenge_config,
+            )
+            .unwrap_err()
+            .to_string()
+        };
+        let (profiles, schedule) = zk_row();
+        let error = trusted((profiles.clone(), schedule.clone()));
+        assert!(
+            error.contains("zero-knowledge cut is not selectable"),
+            "{error}"
+        );
+        // The same folds without the cut still carry hiding randomness.
+        let mut no_cut = schedule;
+        no_cut.zk = None;
+        let error = trusted((profiles, no_cut));
+        assert!(
+            error.contains("hiding randomness is not selectable"),
+            "{error}"
+        );
     });
 }
 
@@ -233,10 +250,81 @@ fn admission_recomputes_the_masked_levels() {
             );
         }
         // The first unmasked level carries no randomness.
+        let after_cut = ZK_CUT_LEVEL as usize + 1;
         rejects(
-            &|s| levels_mut(s)[ZK_CUT_LEVEL as usize + 1].open_randomness_columns += 1,
+            &|s| levels_mut(s)[after_cut].open_randomness_columns += 1,
             "wrong D hiding randomness",
         );
+        rejects(
+            &|s| {
+                levels_mut(s)[after_cut]
+                    .own_group_mut()
+                    .profile
+                    .randomness_columns += 1
+            },
+            "wrong B hiding randomness",
+        );
+        let masked = ZK_CUT_LEVEL as usize;
+        rejects(
+            &|s| levels_mut(s)[masked].ring_relation_mode = RingRelationMode::ReducedEvaluation,
+            "reduced evaluation",
+        );
+        rejects(
+            &|s| levels_mut(s)[masked].own_group_mut().opening.log_basis_open += 1,
+            "open basis other than 8",
+        );
+        rejects(
+            &|s| levels_mut(s)[masked].witness_chunk.num_chunks = 2,
+            "several witness chunks",
+        );
+        rejects(
+            &|s| s.recursive_folds.truncate(ZK_CUT_LEVEL as usize),
+            "reaches the terminal witness",
+        );
+        rejects(
+            &|s| {
+                let group = *s.root.params.own_group();
+                s.root.params.set_precommitted_groups(vec![group]).unwrap();
+            },
+            "exactly one group",
+        );
+        // A setup prefix at a masked level, and at the level after the cut,
+        // which would give the cut level a Stage 3.
+        let prefix = |s: &FoldSchedule| {
+            let mut group = *s.recursive_folds[after_cut].params.own_group();
+            group.setup_natural_len = Some(1);
+            group
+        };
+        rejects(
+            &|s| {
+                let group = prefix(s);
+                levels_mut(s)[masked].set_setup_prefix(Some(group)).unwrap();
+            },
+            "consumes a preceding group",
+        );
+        rejects(
+            &|s| {
+                let group = prefix(s);
+                levels_mut(s)[after_cut]
+                    .set_setup_prefix(Some(group))
+                    .unwrap();
+            },
+            "Stage 3",
+        );
+        // Hiding randomness on a preceding group of an unmasked level.
+        rejects(
+            &|s| {
+                let mut group = prefix(s);
+                group.profile.randomness_columns = 1;
+                let last = s.recursive_folds.len();
+                levels_mut(s)[last].set_setup_prefix(Some(group)).unwrap();
+            },
+            "gives a preceding group hiding randomness",
+        );
+        let error =
+            ZkOpeningSchedule::admit(&schedule, Cfg::committed_source_contract().unwrap(), 2)
+                .unwrap_err();
+        assert!(error.to_string().contains("base field"), "{error}");
         // An ℓ2-route level at the cut, taken from a clear catalog row.
         let clear_catalog =
             common::load_workspace_scheme::<Cfg>(ChunkedWitnessCfg::default_non_chunked()).unwrap();
@@ -256,6 +344,17 @@ fn admission_recomputes_the_masked_levels() {
         rejects(
             &|s| s.recursive_folds[ZK_CUT_LEVEL as usize - 1] = l2_level.clone(),
             "L2 route",
+        );
+        // A residual commitment with d_A ≠ d_B after the cut, from any clear
+        // fp128 dense level with unequal A and B rings.
+        let unequal = std::iter::once(&clear_row.schedule().root)
+            .chain(&clear_row.schedule().recursive_folds)
+            .find(|fold| fold.params.role_dims().d_a() != fold.params.role_dims().d_b())
+            .expect("a clear level with d_A != d_B")
+            .clone();
+        rejects(
+            &|s| s.recursive_folds[ZK_CUT_LEVEL as usize] = unequal.clone(),
+            "d_A = d_B",
         );
     });
 }

@@ -52,6 +52,47 @@ pub struct HonestFoldSizingQuery<'a> {
     pub failure_target: FoldFailureTarget,
 }
 
+impl<'a> HonestFoldSizingQuery<'a> {
+    /// The query of a fold over `blocks` whose response has `width_s` rings
+    /// per block in each of `num_chunks` windows of a `ring_dimension` ring.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the response size overflows.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        ring_dimension: usize,
+        challenge_dimension: usize,
+        num_claims: usize,
+        blocks: crate::BlockGeometry,
+        num_chunks: usize,
+        width_s: usize,
+        witness_norms: FoldWitnessNorms,
+        log_basis_response: u32,
+        challenge_config: &'a SparseChallengeConfig,
+        failure_target: FoldFailureTarget,
+    ) -> Result<Self, AkitaError> {
+        let num_fold_coeffs = width_s
+            .checked_mul(ring_dimension)
+            .and_then(|count| count.checked_mul(num_chunks))
+            .ok_or_else(|| AkitaError::InvalidSetup("fold response width overflow".into()))?;
+        Ok(Self {
+            ring_dimension,
+            challenge_dimension,
+            num_claims,
+            num_live_ring_elements_per_claim: blocks.live_ring_elements_per_claim,
+            num_live_blocks: blocks.live_blocks,
+            num_positions_per_block: blocks.positions_per_block,
+            num_chunks,
+            num_fold_coeffs,
+            witness_norms,
+            log_basis_response,
+            challenge_config,
+            failure_target,
+        })
+    }
+}
+
 /// One group-owned offline rule for selecting its folded-witness digit depth.
 pub trait HonestFoldPolicy {
     /// Return the final digit depth selected by the policy.

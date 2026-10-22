@@ -353,6 +353,14 @@ pub(crate) fn root_level_candidates_for_prepared_producers(
     masking: crate::schedule_params::LevelMasking,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     dimensions.validate_role_projection()?;
+    // A masked root commits one group and opens at base 8; admission refuses
+    // anything else.
+    if masking.hiding()
+        && (!key.precommitteds.is_empty()
+            || candidate_log_basis_open != akita_params::zk::MASKED_LOG_BASIS)
+    {
+        return Ok(Vec::new());
+    }
     opening.validate_for(policy.claim_ext_degree, dimensions)?;
     let field_bits = policy.decomposition.field_bits();
     let alpha = dimensions.d_a().trailing_zeros() as usize;
@@ -847,6 +855,11 @@ pub fn find_schedule_for_test_zk(
         -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>,
     zk: akita_params::zk::ZkOpeningSchedule,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    if !key.precommitteds.is_empty() {
+        return Err(AkitaError::UnsupportedSchedule(
+            "a zero-knowledge schedule commits one root group".into(),
+        ));
+    }
     let mut planned = find_schedule_in_relation_order(
         key,
         final_source_contract,
@@ -859,7 +872,11 @@ pub fn find_schedule_for_test_zk(
         },
     )?;
     planned.schedule.zk = Some(zk);
-    akita_params::zk::ZkOpeningSchedule::admit(&planned.schedule, final_source_contract)?;
+    akita_params::zk::ZkOpeningSchedule::admit(
+        &planned.schedule,
+        final_source_contract,
+        policy.claim_ext_degree,
+    )?;
     Ok(planned)
 }
 
