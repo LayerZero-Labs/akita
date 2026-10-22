@@ -1231,17 +1231,30 @@ code does, and why.
   cap; the script's `FCHAIN_MAX_IMAGE = 884` has no Akita counterpart.
 - **Rows after reduction.** Paper `02_preliminaries.tex:199-203` and
   `04_protocol.tex:329-330`: the verifier checks `t = G₁ξ₁`,
-  `K₁ξ₁ = G₂ξ₂`, `K₂ξ₂ = cm(t)`. Code: the same three as coefficient rows
-  after negacyclic reduction (Akita's `ReducedEvaluation` mode): `t = G₁ξ₁`
-  inside jolt-zk's Items 2 and 3, and the two chain equations as Akita's
-  rows in the batch. `K₁` and `K₂` are the setup stream's offset-0 prefix,
-  as in Akita's own compression.
+  `K₁ξ₁ = G₂ξ₂`, `K₂ξ₂ = cm(t)`. Code: `t = G₁ξ₁` coefficient by
+  coefficient inside jolt-zk's Items 2 and 3; each chain equation is one
+  row, its negacyclically reduced residual evaluated at the product
+  challenge `α`, exactly as Akita's `ReducedEvaluation` relation evaluates
+  its own compression maps. The rows come from Akita's owner,
+  `ReducedCompressionRelationWeights::for_standalone_chains`, which also
+  evaluates them at a point for the verifier. Each `ξ` is padded with zero
+  digits to its map's ring row (Akita's padded span). `K₁` and `K₂` are the
+  shared matrix's offset-0 prefix, as in Akita's own compression. Why: one
+  owner for the map transpose and the layout law; a nonzero residual of
+  degree below `d` vanishes at `α` with probability at most `d/q`, and `α`
+  is drawn after `e` is committed and after every `cm` is fixed.
 - **Binary constraint.** Paper `04_protocol.tex:401-410`:
   `B_j = (γ + ζ_bin·1_{I_bin}(j))·eq(τ, j)`. Code: the same, `ζ` drawn
   right after `γ`; `I_bin` is every compression-witness segment of `e`.
-  No test can isolate `ζ`: a non-binary witness that keeps every chain row
-  needs a `{−1, 0, 1}` kernel vector of `K₁` or `K₂` (Lemma
-  `wo:lem:compressed-binding`).
+  `ζ` is load-bearing because the prover chooses `cm`: rewriting a `ξ₁`
+  coefficient's bits `(0, −1)` at `(b, b + 1)` as `(−2, 0)` keeps `G₁ξ₁`,
+  and recomputing `ξ₂ = Bin(K₁ξ₁)` and `cm = K₂ξ₂` keeps both chain rows,
+  so Items 2 and 3, the chain rows and the `[−8, 7]` range all pass. The
+  range cannot stand in for it: Lemma `wo:lem:compressed-binding` needs
+  `{−1, 0}` digits, and Akita certifies compression SIS only at `ℓ∞ = 1`
+  (`compression_sis_cell(A7F7, 8, 2)` is `None`). The test
+  `rejects_prover_chosen_compressions` sends that forgery and the verifier
+  rejects at the fused sumcheck; with `ζ` zeroed it accepts.
 - **The statement's compression check is canonical.** jolt-zk's
   `check_witness` asks the response prover's map whether a witness opens a
   payload; Akita answers by recompressing the reconstructed image, so only
@@ -1253,7 +1266,7 @@ code does, and why.
   is also what the prover sends (§5.4).
 - **Compression per attempt (A36).** `t_D` is compressed in every attempt,
   rejected ones included, by Akita's executor, which is not constant time
-  (A24).
+  (A24). The executor must therefore be constant time in its image.
 
 ### 5.8 Performance plan (W5-e follow-up)
 
@@ -1434,9 +1447,13 @@ The numbering continues the W4 note's A1–A23.
   preset bounds committed digits to `[−8, 7]`; the planner chooses the A
   basis within `(3, 4)` and pins the root opening basis to 3.
 - **A36, compressing rejected attempts.** Each Σ attempt compresses its
-  `t_D` with Akita's executor before the accept bit; the executor is not
-  audited for constant time, so a rejected attempt's timing may depend on
-  its `t_D` (§5.7).
+  `t_D` with Akita's executor before the accept bit, so a rejected
+  attempt's timing may depend on its `t_D` unless the executor is
+  constant time in its image. That is a requirement on the executor
+  (`CpuBackend::compress_relation_image`: negative-binary packing and the
+  map products). It is not verified: jolt-zk's dudect harness
+  (`examples/sigma_dudect.rs`) cannot reach Akita's executor, and Akita has
+  no dudect harness; a case for it is open (§5.7).
 - A2, A3 and A12 from W4 are resolved by §4.3, §4.6 and §5.4.
 
 ## 11. Questions for the paper authors
