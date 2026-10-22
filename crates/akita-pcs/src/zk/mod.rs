@@ -181,7 +181,9 @@ where
             u: padded(rows.product_x, product_vars),
             w: padded(rows.product_y, product_vars),
         };
-        let target: F = product.u.iter().zip(&product.w).map(|(u, w)| *u * *w).sum();
+        // t_× is the product lift's right side at α (Whiteout (4)); for a
+        // true statement it equals Σ_i U_i W_i.
+        let target = rows.product_target;
         transcript.send(&target);
         let product_point = prove_single::<F, F, AkitaError, _>(
             &mut FusedRounds(&mut product),

@@ -45,6 +45,24 @@ fn round_evaluations<F: Field, const TABLES: usize, const POINTS: usize>(
     )
 }
 
+/// The round polynomial through `evals` at `0..N`. Test-only: it is shifted
+/// by half its gap to the running claim, so a prover of a false statement
+/// still sends consistent rounds and only the verifier's final check can
+/// reject it; an honest round has no gap.
+fn round_polynomial<F: Field, const N: usize>(
+    #[cfg_attr(not(test), expect(unused_mut))] mut evals: [F; N],
+    #[cfg_attr(not(test), expect(unused_variables))] claim: F,
+) -> UnivariatePoly<F> {
+    #[cfg(test)]
+    {
+        let shift = (claim - evals[0] - evals[1]).half();
+        for eval in &mut evals {
+            *eval += shift;
+        }
+    }
+    UnivariatePoly::from_evals(&evals)
+}
+
 /// `Σ_i U_i W_i` over `a` variables.
 pub(crate) struct ProductKernel<F> {
     pub(crate) u: Vec<F>,
@@ -59,10 +77,10 @@ impl<F: Field + Fold> SumcheckKernel<F> for ProductKernel<F> {
     fn round_polynomial(
         &mut self,
         _round: usize,
-        _claim: F,
+        claim: F,
     ) -> Result<UnivariatePoly<F>, AkitaError> {
         let evals: [F; 3] = round_evaluations([&self.u, &self.w], |[u, w]| *u * *w);
-        Ok(UnivariatePoly::from_evals(&evals))
+        Ok(round_polynomial(evals, claim))
     }
 
     fn bind_challenge(&mut self, _round: usize, challenge: F) -> Result<(), AkitaError> {
@@ -89,23 +107,10 @@ impl<F: Field + Fold> SumcheckKernel<F> for FusedKernel<F> {
         _round: usize,
         claim: F,
     ) -> Result<UnivariatePoly<F>, AkitaError> {
-        #[cfg_attr(not(test), expect(unused_mut))]
-        let mut evals: [F; 4] = round_evaluations([&self.a, &self.b, &self.e], |[a, b, e]| {
+        let evals: [F; 4] = round_evaluations([&self.a, &self.b, &self.e], |[a, b, e]| {
             *e * (*a + *b * (*e + F::one()))
         });
-        // Test-only: a prover of a false statement shifts each round by
-        // half its gap to the running claim, so only the verifier's final
-        // check can catch it.
-        #[cfg(test)]
-        {
-            let shift = (claim - evals[0] - evals[1]).half();
-            for eval in &mut evals {
-                *eval += shift;
-            }
-        }
-        #[cfg(not(test))]
-        let _ = claim;
-        Ok(UnivariatePoly::from_evals(&evals))
+        Ok(round_polynomial(evals, claim))
     }
 
     fn bind_challenge(&mut self, _round: usize, challenge: F) -> Result<(), AkitaError> {
