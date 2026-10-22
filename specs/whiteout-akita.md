@@ -1014,9 +1014,13 @@ W3c's masked prover and verifier (§4.5, §4.8) run the admitted shapes of
 **Several root groups.** `MaskedOpeningClaims` holds one affine form per
 claim of every group, in group order (the order of
 `OpeningClaims::flat_evaluations`). The prover rejects forms that do not
-decode to the claims (`prove_masked_prefix`), and the verifier binds and
-batches each form through `ClaimReplay`, so every group's claim enters the
-level-0 rows. Nothing new is sent in the clear.
+decode to the claims (`prove_masked_prefix`). The forms are bound to the
+transcript by the caller's masked claim messages (`exchange_private_base`),
+sent before Akita runs; `MaskedReplay::bind_openings` passes placeholders to
+the masked `bind_derived`, which binds nothing, and binds only a public
+prefix evaluation. The verifier then batches each form through
+`ClaimReplay`, so every group's claim enters the level-0 rows. Nothing new is
+sent in the clear.
 
 **Stage 3 at masked level 0.** A setup prefix at level 1 means level 0 runs
 Stage 3. Each value it sends is public, with this argument:
