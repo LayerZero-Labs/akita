@@ -593,7 +593,7 @@ and A_D.
   in RP4 if the direct scan exceeds the verifier budget measured in W5-e, and
   is deferred otherwise (A30).
 
-### 5.4 Compression contract (W5c, deferred)
+### 5.4 Compression contract (W5c)
 
 Compression of u_a, t_p and t_D is deferred out of RP4, together with its
 jolt-side hook. Until then those images travel raw. That costs about 25 KB at
@@ -669,7 +669,7 @@ The remaining tests:
 - **W5-e.** Proof bytes, prover time and verifier time are reported against
   the paper's model at the headline, including the raw-image surcharge.
 
-### 5.7 Paper deltas (W5a)
+### 5.7 Paper deltas (W5a, W5c)
 
 Each entry gives the paper (`akita-paper/sections/whiteout/`), what the
 code does, and why.
@@ -712,6 +712,40 @@ code does, and why.
   `akita_planner::find_schedule`; artifacts land in W5d. The planner, not
   the preset, picks the A basis (3 or 4); the root opening basis is pinned
   to 3 (A32).
+
+**W5c deltas.**
+
+- **Chunked images.** Paper `02_preliminaries.tex:184-199`: one two-map
+  chain per image, `cm(t)` of 128 B. Code: an image is cut into
+  `⌈len/512⌉` chunks of at most Akita's 8 KiB compression input
+  (`MAX_COMPRESSION_INPUT_BYTES`), each with its own chain, so `cm(t)` is
+  `8·⌈len/512⌉` coefficients (Q4). Why: Akita's chain plans stop at that
+  cap; the script's `FCHAIN_MAX_IMAGE = 884` has no Akita counterpart.
+- **Rows after reduction.** Paper `02_preliminaries.tex:199-203` and
+  `04_protocol.tex:329-330`: the verifier checks `t = G₁ξ₁`,
+  `K₁ξ₁ = G₂ξ₂`, `K₂ξ₂ = cm(t)`. Code: the same three as coefficient rows
+  after negacyclic reduction (Akita's `ReducedEvaluation` mode): `t = G₁ξ₁`
+  inside jolt-zk's Items 2 and 3, and the two chain equations as Akita's
+  rows in the batch. `K₁` and `K₂` are the setup stream's offset-0 prefix,
+  as in Akita's own compression.
+- **Binary constraint.** Paper `04_protocol.tex:401-410`:
+  `B_j = (γ + ζ_bin·1_{I_bin}(j))·eq(τ, j)`. Code: the same, `ζ` drawn
+  right after `γ`; `I_bin` is every compression-witness segment of `e`.
+  No test can isolate `ζ`: a non-binary witness that keeps every chain row
+  needs a `{−1, 0, 1}` kernel vector of `K₁` or `K₂` (Lemma
+  `wo:lem:compressed-binding`).
+- **The statement's compression check is canonical.** jolt-zk's
+  `check_witness` asks the response prover's map whether a witness opens a
+  payload; Akita answers by recompressing the reconstructed image, so only
+  the canonical witness passes. The verifier enforces the weaker chain
+  equations and binary digits. Completeness is unchanged; soundness is the
+  verifier's.
+- **The Σ-protocol's seed.** Paper `04_protocol.tex` Protocol
+  `wo:prot:sigma`: the attempt fork absorbs `t_D`. Code: `cm(t_D)`, which
+  is also what the prover sends (§5.4).
+- **Compression per attempt (A33).** `t_D` is compressed in every attempt,
+  rejected ones included, by Akita's executor, which is not constant time
+  (A24).
 
 ## 6. M6e
 
@@ -853,6 +887,10 @@ The numbering continues the W4 note's A1–A23.
 - **A32, "log_basis 4".** §5.2 asks for a dense family at log_basis 4. The
   preset bounds committed digits to `[−8, 7]`; the planner chooses the A
   basis within `(3, 4)` and pins the root opening basis to 3.
+- **A33, compressing rejected attempts.** Each Σ attempt compresses its
+  `t_D` with Akita's executor before the accept bit; the executor is not
+  audited for constant time, so a rejected attempt's timing may depend on
+  its `t_D` (§5.8).
 - A2, A3 and A12 from W4 are resolved by §4.3, §4.6 and §5.4.
 
 ## 11. Questions for the paper authors
