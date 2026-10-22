@@ -20,13 +20,13 @@ use akita_params::{
     ChunkedWitnessCfg, CommittedGroupBatchProfile, GroupCommitPhaseParams, PolynomialGroupLayout,
     ScheduleLookupKey,
 };
-use akita_pcs::zk::AkitaResponseProver;
+use akita_pcs::zk::{AkitaResponseProver, CompressionShape};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_schedules::ValidatedScheduleCatalog;
 use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
 use jolt_zk::masking::ZkError;
 use jolt_zk::whiteout::test_support::{SyntheticSigma, F};
-use jolt_zk::whiteout::{ResponseProver, ResponseStatement, ResponseWitness};
+use jolt_zk::whiteout::{ImageCompression, ResponseProver, ResponseStatement, ResponseWitness};
 
 type Cfg = RecursiveCommitmentConfig<ResponseDigits>;
 const D: usize = 256;
@@ -39,6 +39,10 @@ struct Measured<'a> {
 }
 
 impl ResponseProver<F, D> for Measured<'_> {
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        self.inner
+    }
+
     fn prove_response<H: Sponge>(
         &self,
         statement: &ResponseStatement<'_, F, D>,
@@ -78,7 +82,7 @@ fn main() {
 
 fn run(scale: usize) {
     let sigma = SyntheticSigma::<D>::new(1, scale);
-    let len = sigma.response_len();
+    let len = sigma.response_len(&CompressionShape::<Cfg>::default());
     let num_vars = len.next_power_of_two().trailing_zeros() as usize;
     println!("scale {scale}: |e| = {len}, nu = {num_vars}");
 
