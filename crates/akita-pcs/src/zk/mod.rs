@@ -52,7 +52,7 @@ use jolt_zk::whiteout::{
 
 use crate::AkitaCommitmentScheme;
 use compression::Chains;
-use rounds::{ClearProverRounds, ClearVerifierRounds, FusedKernel, ProductKernel};
+use rounds::{ClearProverRounds, ClearVerifierRounds, FusedE, FusedKernel, ProductKernel};
 use rows::{
     batch_rows, batch_target, batch_weight_at, ceil_log2, eq_table, row_variables, zk_error,
     PaddingTerm, ProductClaims, ResponseShape, RowWeights,
@@ -211,24 +211,20 @@ where
         {
             return Err(WhiteoutError::ResponseRejected("response length").into());
         }
-        let mut e: Vec<F> = digits
-            .committed
-            .iter()
-            .map(|&digit| F::from_i64(i64::from(digit)))
-            .collect();
-        e.extend(
-            digits
-                .padding
-                .iter()
-                .map(|&digit| F::from_i64(i64::from(digit))),
-        );
-        if e.len() > shape.padded_len() {
+        let mut committed = Vec::with_capacity(shape.padded_len());
+        committed.extend_from_slice(digits.committed);
+        committed.extend_from_slice(digits.padding);
+        if committed.len() > shape.padded_len() {
             return Err(WhiteoutError::ResponseRejected("response length").into());
         }
-        e.resize(shape.padded_len(), F::zero());
+        committed.resize(shape.padded_len(), 0);
 
         // 1. Commit to e.
+        let e: Vec<F> = cfg_iter!(committed)
+            .map(|&digit| F::from_i64(i64::from(digit)))
+            .collect();
         let poly = DensePoly::from_field_evals(shape.num_vars, &e).map_err(zk_error)?;
+        drop(e);
         let source = side.backend.import_source(vec![poly]).map_err(zk_error)?;
         let output = side
             .backend
@@ -312,7 +308,7 @@ where
         let mut fused = FusedKernel {
             a: batch.a,
             b: range_weights(&range.point, gamma, zeta, &support),
-            e,
+            e: FusedE::Digits(committed),
         };
         let claim = batch.b + gamma * range.range_image;
         let point = prove_single::<F, F, AkitaError, _>(
@@ -322,7 +318,10 @@ where
         )
         .map_err(zk_error)?
         .challenges;
-        let v = first(&fused.e)?;
+        let v = fused
+            .e
+            .first()
+            .ok_or_else(|| zk_error(AkitaError::Internal("a bound table is empty".into())))?;
         transcript.send(&v);
 
         // 6. Open E(r) = v.

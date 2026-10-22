@@ -8,7 +8,7 @@
 use akita_error::AkitaError;
 use akita_sumcheck::{fold_evals_in_place, SumcheckKernel};
 use jolt_algebra::solinas::parallel::*;
-use jolt_algebra::{cfg_fold_reduce, Field, Fold};
+use jolt_algebra::{cfg_fold_reduce, cfg_into_iter, Field, Fold};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProverRoundContext, SumcheckSite, VerifierRoundContext};
 use jolt_transcript::{Channel, ProverTranscript, SiteId, Sponge, VerifierTranscript};
@@ -94,12 +94,34 @@ impl<F: Field + Fold> SumcheckKernel<F> for ProductKernel<F> {
 pub(crate) struct FusedKernel<F> {
     pub(crate) a: Vec<F>,
     pub(crate) b: Vec<F>,
-    pub(crate) e: Vec<F>,
+    pub(crate) e: FusedE<F>,
+}
+
+/// `E` as committed digits until the first challenge binds it, then over
+/// `F`: the first round reads one byte per entry instead of a field element.
+pub(crate) enum FusedE<F> {
+    Digits(Vec<i8>),
+    Field(Vec<F>),
+}
+
+impl<F: Field> FusedE<F> {
+    /// The value a table bound in every variable holds.
+    pub(crate) fn first(&self) -> Option<F> {
+        match self {
+            Self::Digits(digits) => digits.first().map(|&digit| F::from_i64(i64::from(digit))),
+            Self::Field(values) => values.first().copied(),
+        }
+    }
+}
+
+/// `e·(a + b·(e + 1))`, the fused sumcheck's summand.
+fn fused_term<F: Field>(a: F, b: F, e: F) -> F {
+    e * (a + b * (e + F::one()))
 }
 
 impl<F: Field + Fold> SumcheckKernel<F> for FusedKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.e.len().trailing_zeros() as usize
+        self.a.len().trailing_zeros() as usize
     }
 
     fn round_polynomial(
@@ -107,15 +129,54 @@ impl<F: Field + Fold> SumcheckKernel<F> for FusedKernel<F> {
         _round: usize,
         claim: F,
     ) -> Result<UnivariatePoly<F>, AkitaError> {
-        let evals: [F; 4] = round_evaluations([&self.a, &self.b, &self.e], |[a, b, e]| {
-            *e * (*a + *b * (*e + F::one()))
-        });
+        let evals: [F; 4] = match &self.e {
+            FusedE::Field(e) => {
+                round_evaluations([&self.a, &self.b, e], |[a, b, e]| fused_term(*a, *b, *e))
+            }
+            FusedE::Digits(digits) => {
+                let (a, b) = (&self.a, &self.b);
+                cfg_fold_reduce!(
+                    0..a.len() / 2,
+                    || [F::zero(); 4],
+                    |mut sums: [F; 4], i: usize| {
+                        let (low, high) = (i64::from(digits[2 * i]), i64::from(digits[2 * i + 1]));
+                        let (a_slope, b_slope) = (a[2 * i + 1] - a[2 * i], b[2 * i + 1] - b[2 * i]);
+                        let (mut a_t, mut b_t) = (a[2 * i], b[2 * i]);
+                        for (t, sum) in (0i64..).zip(sums.iter_mut()) {
+                            *sum += fused_term(a_t, b_t, F::from_i64(low + t * (high - low)));
+                            a_t += a_slope;
+                            b_t += b_slope;
+                        }
+                        sums
+                    },
+                    |mut x: [F; 4], y: [F; 4]| {
+                        for (x, y) in x.iter_mut().zip(y) {
+                            *x += y;
+                        }
+                        x
+                    }
+                )
+            }
+        };
         Ok(round_polynomial(evals, claim))
     }
 
     fn bind_challenge(&mut self, _round: usize, challenge: F) -> Result<(), AkitaError> {
-        for table in [&mut self.a, &mut self.b, &mut self.e] {
+        for table in [&mut self.a, &mut self.b] {
             fold_evals_in_place(table, challenge);
+        }
+        match &mut self.e {
+            FusedE::Field(e) => fold_evals_in_place(e, challenge),
+            FusedE::Digits(digits) => {
+                let folded = cfg_into_iter!(0..digits.len() / 2)
+                    .map(|i| {
+                        let low = i64::from(digits[2 * i]);
+                        F::from_i64(low)
+                            + challenge * F::from_i64(i64::from(digits[2 * i + 1]) - low)
+                    })
+                    .collect();
+                self.e = FusedE::Field(folded);
+            }
         }
         Ok(())
     }
