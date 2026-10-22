@@ -95,7 +95,7 @@ carried `main` seams (§8).
 - **Artifacts.** ZK schedule rows are new files in the ZK family; existing
   rows are never modified (rule 6). Until the last PR they exist only as
   test rows from `akita_planner::find_schedule_for_test_zk`, admitted by
-  `ValidatedScheduleCatalog::try_new_with_test_zk` (test-support + zk).
+  `TrustedScheduleCatalog::try_new_with_test_zk` (test-support + zk).
 - **Visibility.** Before the last PR, `ZkCommitmentConfig` and the ZK
   entry points are `#[cfg(feature = "test-support")] pub`. Nothing in a
   default or `zk`-only build can select ZK.
@@ -194,13 +194,20 @@ Each policy reads the target:
 - **Planner.** `akita_planner::find_schedule_for_test_zk` (test-support + zk)
   plans masked levels with the `OneShot` target, hiding columns at their
   rank fixed point, and the ℓ∞ route, and stores the cut in the schedule.
-- **Admission.** `ZkOpeningSchedule::admit` is the one check, run in release
-  at catalog admission (`ValidatedScheduleCatalog::try_new_with_test_zk`), in
-  the prover before it probes, and before commit samples root randomness. At
-  every level ≤ `cut_level` it requires the ℓ∞ route, one witness chunk, no
-  preceding group, the exact B and D randomness widths of §3.2, and at least
-  the `OneShot` policy's fold digits; later levels carry no randomness. A
-  trusted catalog rejects any row with a cut or with randomness.
+- **Admission.** `ZkOpeningSchedule::admit(schedule, root_source,
+  claim_extension_degree)` is the one check, run in release at catalog
+  admission (`TrustedScheduleCatalog::try_new_with_test_zk`, which takes the
+  root source and claim degree from the configuration) and again where the
+  backend first samples hiding randomness (commit). It requires
+  `E::DEGREE = 1`, a cut before the last nonterminal fold, a single root
+  group, no setup prefix at the level after the cut (no Stage 3 at the cut),
+  and d_A = d_B for the residual commitment. At every level ≤ `cut_level` it
+  requires the ℓ∞ route, the quotient relation, the open basis b = 8, one
+  witness chunk, no preceding group, the exact B and D randomness widths of
+  §3.2, and at least the `OneShot` policy's fold digits; later levels and
+  preceding groups carry no randomness. The planner's masked path skips
+  every candidate admission would refuse. A trusted catalog rejects any row
+  with a cut, or with randomness, with distinct errors.
 
 The parameters are `security_bits = 136` and `masked_folds = cut_level + 1 = 2`,
 so δ_fold ≤ 2^−136 in total by construction.
@@ -241,9 +248,10 @@ So ZK rows come from the planner, never from a clear row.
   then the cut) only when present, so clear artifacts, row digests and
   descriptors are unchanged. The effective-schedule digest in `PlanSection`
   binds the cut, and the grinding-plan digest binds its `nonce_bits = 0`
-  runs; together they are the only thing that separates the modes (no proof
-  tag). Argument: the verifier derives both from the admitted row, so a proof
-  for one mode fails Fiat–Shamir in the other.
+  runs; until S9's `SetupSection` mode bit lands, these digests are the only
+  thing that separates the modes (no proof tag). Argument: the verifier
+  derives both from the admitted row, so a proof for one mode fails
+  Fiat–Shamir in the other.
 - *One-shot sizing.* The union term is bounded with `⌈log₂⌉·0.71` instead of
   `ln`, over all physical coefficients, so the digit range is at least the
   paper's. Argument: every replacement over-approximates the lemma's tail, so
@@ -261,6 +269,13 @@ So ZK rows come from the planner, never from a clear row.
   one-shot sizing for the level-1 setup prefix before it is admissible (it
   offloads level 0's setup to level 1, §1), and Jolt's precommitted groups
   need their own source contracts at admission.
+- *Quotient relation at masked levels.* Admission and the planner exclude
+  reduced evaluation at levels ≤ the cut: the masked stage checks of §4.4 are
+  written for the quotient relation, and with the cut fixed at 1 no test
+  reaches a reduced-evaluation masked level (W1's cut-2 test is gone).
+  Allowing it needs those checks and a test at a cut that reaches it.
+- *Base 8 and base-field claims at masked levels.* §4.2's rows assume b = 8
+  and E = F; admission now enforces both instead of assuming them.
 - *Challenge families.* The masked levels use the families tabled above, not
   the paper's d = 64 family everywhere; the sizing uses each family's η².
 - *Error terms.* The theorem's terms are unchanged. δ_fold is now
@@ -330,7 +345,7 @@ is the only caller of
 - `DigitAlphabet` is the open basis of the witness that holds the randomness.
 
 No other site passes literal arguments. The helper is called by the planner
-when it builds a ZK schedule, and by `ZkSchedule::validate` in release, which
+when it builds a ZK schedule, and by `ZkOpeningSchedule::admit` in release, which
 recomputes the width for every slice and D image before the cut and rejects
 any mismatch. At d_b = 64, rank 1 and log_basis 3, one slice needs 2,819
 coefficients, which is 45 R_64 columns.
@@ -400,7 +415,7 @@ k = 2; W1-d tests that.
   one polynomial differ.
 - **W1-c.** Flipping one randomness digit in a witness breaks that level's
   relation (prover-side test path).
-- **W1-d.** For every ZK schedule, `ZkSchedule::validate` accepts the planner's
+- **W1-d.** For every ZK schedule, `ZkOpeningSchedule::admit` accepts the planner's
   widths and ranks. A frozen-shape test pins the headline: rank 1 at levels 0
   and 1, and 45 columns per slice.
 
@@ -408,7 +423,7 @@ k = 2; W1-d tests that.
 
 ### 4.1 The cut
 
-`cut_level = 1` (k = 2). `ZkSchedule::validate` enforces Def.
+`cut_level = 1` (k = 2). `ZkOpeningSchedule::admit` enforces Def.
 `wo:def:source-cutoff` in release:
 
 - every level ≤ `cut_level` uses `InnerCommitSecurityRoute::Linf`, so no norm
@@ -618,7 +633,7 @@ The verifier receives raw u_a.
   - A dense `w̃_k(r₂)` equals the decoded `w_eval`, which pins A4/A18.
   - Akita's commitment kernels agree with `TwoLevelLayout` semantics.
 - **W3-f.** C0 (golden test) after the M3b and M2b fixups and the S-seams.
-- **W3-g.** `ZkSchedule::validate` rejects each §4.1 violation.
+- **W3-g.** `ZkOpeningSchedule::admit` rejects each §4.1 violation.
 
 ## 5. W5: `ResponseProver` for Akita
 
@@ -836,7 +851,7 @@ compression, lands with W5c.
 | 1 | **M6e**, plus the golden proof-digest test (C0) for a few catalog rows | — | jolt pin with the §7 fixups | builds with and without `zk`; dependency check; golden digests |
 | 2 | **W2**, plus the test-only ZK planner path and catalog admission | S1, S11, S13 | 1 | W2-a…d |
 | 3 | **W1** (`commit_hiding` in the `zk` module) | S2, S3, S12 | 1 | W1-a…d |
-| 4 | **W3**: the cut, `ZkSchedule::validate`, the masked prover and verifier, `CountingGrinding`, `ResidualOpening` (raw u_a) | S6, S9, S10 | 2, 3, M2b/M3b fixups | W3-a…g |
+| 4 | **W3**: the cut, `ZkOpeningSchedule::admit`, the masked prover and verifier, `CountingGrinding`, `ResidualOpening` (raw u_a) | S6, S9, S10 | 2, 3, M2b/M3b fixups | W3-a…g |
 | 5 | **W5a**: `AkitaResponseProver`, direct σ_N | — | 1 | W5-a, W5-b |
 | 6 | **W5b**: σ_N offload (conditional, §5.3) | S7 | 5 | W5-c |
 | 7 | **W5d (last)**: publish, artifacts, `IS_ZK`, CI `test-zk` | — | 4, 5 (6 if landed) | HT1, coverage, HT3 (gates); HT4, HT5; W5-e |
