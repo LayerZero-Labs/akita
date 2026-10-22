@@ -588,6 +588,14 @@ impl<'a> CandidateDomain<'a> {
         let incoming_setup_prefix = state.topology.incoming_setup_prefix();
         let mut terminal = Vec::new();
         let mut folds = Vec::new();
+        // A recursive level folds one witness group, its own.
+        let masking = crate::schedule_params::LevelMasking::at(ctx.zk, state.level, 1)?;
+        // The level after a zero-knowledge cut opens the residual commitment
+        // at the residual alphabet only; admission refuses any other basis
+        // (and a compressed payload, below).
+        if masking.opens_residual() && open_lb != akita_params::zk::RESIDUAL_RANDOMNESS_LOG_BASIS {
+            return Ok(GeneratedCandidates { terminal, folds });
+        }
 
         for inner_lb in self.inner_basis_range.clone() {
             for work in &self.opening_work {
@@ -599,6 +607,13 @@ impl<'a> CandidateDomain<'a> {
                     if self
                         .guide_fold
                         .is_some_and(|guide| payload_mode != guide.payload_mode)
+                    {
+                        continue;
+                    }
+                    // The residual commitment u_a is sent raw: the Σ-protocol
+                    // opens the outer image itself.
+                    if masking.opens_residual()
+                        && payload_mode != akita_params::CommitmentPayloadMode::Raw
                     {
                         continue;
                     }
@@ -623,8 +638,7 @@ impl<'a> CandidateDomain<'a> {
                         log_basis_inner: inner_lb,
                         log_basis_open: open_lb,
                         fold_level: state.level,
-                        // A recursive level folds one witness group, its own.
-                        masking: crate::schedule_params::LevelMasking::at(ctx.zk, state.level, 1)?,
+                        masking,
                         source_moment: state.source_moment,
                         relation_traversal_order: ctx.relation_traversal_order,
                         guide,

@@ -3,16 +3,16 @@
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
-use akita_types::ForkFoldDraw;
 use akita_types::{draw_group_fold_challenges, GroupFoldChallenges};
+use akita_types::{FoldResponseReplay, ForkFoldDraw};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
-use jolt_transcript::{Fork, Sponge};
+use jolt_transcript::Fork;
 
 /// The sparse fold roots of every group of one recursive level, drawn in
 /// group order from the level's fold-response fork.
-pub(crate) fn derive_multi_group_stage1_challenges<F, E, H: Sponge>(
-    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
-    fork: &mut Fork<H>,
+pub(crate) fn derive_multi_group_stage1_challenges<F, E, G: FoldResponseReplay>(
+    grinding: &mut G,
+    fork: &mut Fork<G::Sponge>,
     level: u32,
     opening_batch: &OpeningClaimsLayout,
     lp: &CommittedGroupParams,

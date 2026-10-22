@@ -61,7 +61,7 @@ where
             .try_borrow_mut()
             .map_err(|_| AkitaError::InvalidInput("root executor re-entry".into()))?;
         let request = handoff.request;
-        let state = root::prove_root::<Cfg, B, S>(
+        let state = root::prove_root::<Cfg, B, S, _>(
             request.setup,
             self.prefixes,
             self.backend,
@@ -165,7 +165,7 @@ where
         let (witness_handle, commitment_material) =
             resident.into_pair::<B::WitnessHandle, B::CommitmentMaterialHandle>(handoff.current)?;
         let request = handoff.request;
-        let state = suffix::prove_recursive_step::<Cfg, B, S>(
+        let state = suffix::prove_recursive_step::<Cfg, B, S, _>(
             request.setup,
             self.prefixes,
             self.backend,
@@ -182,7 +182,8 @@ where
                 .session(),
             index,
             handoff,
-        )?;
+        )?
+        .next_state;
         handoff.complete(self.backend, state)
     }
     fn terminal(
@@ -198,7 +199,7 @@ where
         })?;
         let (witness_handle, commitment_material) =
             resident.into_pair::<B::WitnessHandle, B::CommitmentMaterialHandle>(id)?;
-        suffix::prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, B, S>(
+        suffix::prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, B, S, _>(
             self.backend,
             grinding,
             public.level,

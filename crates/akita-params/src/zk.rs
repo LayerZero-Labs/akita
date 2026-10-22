@@ -25,8 +25,8 @@ use crate::sis::{
     HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery, SisModulusProfileId,
 };
 use crate::{
-    CommittedGroupParams, FoldSchedule, GroupOpenPhaseParams, InnerCommitSecurityRoute,
-    OpeningMethod,
+    CommitmentPayloadMode, CommitmentSliceCount, CommittedGroupParams, FoldSchedule,
+    GroupOpenPhaseParams, InnerCommitSecurityRoute, OpeningMethod,
 };
 use akita_error::AkitaError;
 use jolt_algebra::{Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
@@ -176,6 +176,10 @@ impl ZkOpeningSchedule {
     ///   carry exactly [`b_randomness_columns`] if it carries witness data
     ///   (the level's own group, a precommitted group) and none if it is a
     ///   setup prefix, whose commitment is public setup data;
+    /// - the level after the cut, whose own group is the residual commitment
+    ///   to w_k, opens at [`RESIDUAL_RANDOMNESS_LOG_BASIS`] in one outer
+    ///   slice with a raw payload, carries exactly [`b_randomness_columns`] B
+    ///   columns (r_a), no D randomness and no preceding group;
     /// - every group of every later level carries no randomness.
     ///
     /// # Errors
@@ -265,6 +269,30 @@ impl ZkOpeningSchedule {
                     }
                 }
                 d_randomness_columns(params)?
+            } else if level == cut + 1 {
+                let own = params.own_group();
+                // The cut successor: its own group is the residual commitment
+                // to w_k, hidden by r_a, which the Σ-protocol consumes at
+                // the residual alphabet; the level itself is never folded.
+                // It consumes no preceding group: the Stage-3 check above.
+                if own.opening.log_basis_open != RESIDUAL_RANDOMNESS_LOG_BASIS {
+                    return Err(invalid(
+                        "opens the residual commitment at a basis other than 16",
+                    ));
+                }
+                if own.profile.outer_slice_count != CommitmentSliceCount::ONE {
+                    return Err(invalid("commits the residual in more than one outer slice"));
+                }
+                if params.open_randomness_columns != 0 {
+                    return Err(invalid("carries D hiding randomness after the cut"));
+                }
+                if params.payload_mode != CommitmentPayloadMode::Raw {
+                    return Err(invalid("sends the residual commitment compressed"));
+                }
+                if own.profile.randomness_columns != b_randomness_columns(own)? {
+                    return Err(invalid("has the wrong residual randomness r_a"));
+                }
+                continue;
             } else {
                 if params.own_group().profile.randomness_columns != 0 {
                     return Err(invalid("has the wrong B hiding randomness"));
@@ -301,6 +329,13 @@ pub fn witness_group_count(params: &CommittedGroupParams) -> usize {
 /// Base-two logarithm of the open basis the masked stage checks assume
 /// (b = 8: no Stage-1 product stages).
 pub const MASKED_LOG_BASIS: u32 = 3;
+
+/// Base-two logarithm of the alphabet of r_a, the residual commitment's
+/// hiding randomness (radix 16). The level after the cut opens at this basis,
+/// so [`b_randomness_columns`] sizes r_a, and the backend samples it, at the
+/// alphabet the Σ-protocol's `ResidualRandomness` segment declares
+/// (`specs/whiteout-akita.md` §4.8.1).
+pub const RESIDUAL_RANDOMNESS_LOG_BASIS: u32 = 4;
 
 /// The honest-fold sizing inputs of one group a masked level folds, read
 /// from its scheduled parameters.

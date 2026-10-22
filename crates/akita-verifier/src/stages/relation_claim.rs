@@ -28,11 +28,11 @@ pub(crate) struct RelationClaim<E: Field> {
 
 /// Derive the relation claim, the range-image plan, and the coefficient-packing
 /// batch semantics for one fold.
-pub(crate) fn prepare_relation_claim<F, E>(
+pub(crate) fn prepare_relation_claim<F, E, V>(
     lp: &CommittedGroupParams,
     relation_geometry: RelationWitnessGeometry,
     relation_instance: &RingRelationInstance<F>,
-    prefix: &FoldPrefix<F, E>,
+    prefix: &FoldPrefix<F, E, V>,
     rs: &RingSwitchVerifyOutput<E>,
 ) -> Result<RelationClaim<E>, AkitaError>
 where

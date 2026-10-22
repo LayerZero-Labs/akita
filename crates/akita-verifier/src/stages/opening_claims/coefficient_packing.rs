@@ -1,17 +1,17 @@
 //! Coefficient-packing fold verifier prefix.
 
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
+use crate::claims::ClaimReplay;
 use akita_error::AkitaError;
 use akita_params::{
     BasisMode, CommittedGroupParams, OpeningClaimsLayout, SubringCoefficientPackingGeometry,
 };
 use akita_serialization::AkitaSerialize;
-use akita_types::GrindingReplay;
 use akita_types::{
     Commitment, FpExtEncoding, OpeningClaims, PreparedSubringCoefficientPackingPoint,
 };
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
-use jolt_transcript::{Channel, Sponge};
+use jolt_transcript::Channel;
 
 fn prepare_group<E: Field>(
     point: &[E],
@@ -46,12 +46,12 @@ fn prepare_group<E: Field>(
 
 fn prepare_prefix_points<F: Field, E: ExtField<F>, C>(
     claims: &OpeningClaims<'_, E, C>,
-    openings: &[E],
+    num_openings: usize,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     level_params: &CommittedGroupParams,
 ) -> Result<Vec<PreparedFoldOpeningPoint<F, E>>, AkitaError> {
-    if openings.len() != opening_batch.num_total_polynomials() {
+    if num_openings != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
@@ -71,43 +71,44 @@ fn prepare_prefix_points<F: Field, E: ExtField<F>, C>(
     Ok(prepared_points)
 }
 
-/// Prepare a root packing prefix directly from the authenticated public claims.
-pub(crate) fn verify_coefficient_packing_root_prefix<F, E>(
+/// Prepare a root packing prefix from the statement's points and its
+/// `openings`, the statement claims in group order.
+pub(crate) fn verify_coefficient_packing_root_prefix<F, E, V>(
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
-    openings: &[E],
+    openings: Vec<V>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
-) -> Result<FoldClaimMaterial<F, E>, AkitaError>
+) -> Result<FoldClaimMaterial<F, E, V>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
 {
     let prepared_points =
-        prepare_prefix_points::<F, E, _>(claims, openings, opening_batch, basis, root_lp)?;
+        prepare_prefix_points::<F, E, _>(claims, openings.len(), opening_batch, basis, root_lp)?;
     Ok(FoldClaimMaterial {
         prepared_points,
-        openings: openings.to_vec(),
+        openings,
         reduction_final_claims: None,
         reduction_factors: None,
     })
 }
 
-pub(crate) fn verify_coefficient_packing_suffix_prefix<F, E, H: Sponge>(
+pub(crate) fn verify_coefficient_packing_suffix_prefix<F, E, G: ClaimReplay<F, E>>(
     claims: &OpeningClaims<'_, E>,
-    openings: &[E],
+    openings: Vec<G::Claim>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     lp: &CommittedGroupParams,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
+    grinding: &mut G,
     level: u32,
-) -> Result<FoldClaimMaterial<F, E>, AkitaError>
+) -> Result<FoldClaimMaterial<F, E, G::Claim>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + jolt_algebra::CanonicalDecode,
 {
     let prepared_points =
-        prepare_prefix_points::<F, E, _>(claims, openings, opening_batch, basis, lp)?;
+        prepare_prefix_points::<F, E, _>(claims, openings.len(), opening_batch, basis, lp)?;
     for group_index in 0..opening_batch.num_groups() {
         grinding.state_mut().site(
             akita_types::FoldSite::GroupPoint {
@@ -123,7 +124,7 @@ where
     }
     Ok(FoldClaimMaterial {
         prepared_points,
-        openings: openings.to_vec(),
+        openings,
         reduction_final_claims: None,
         reduction_factors: None,
     })

@@ -49,10 +49,17 @@ pub(crate) struct RingSwitchFinalization<'a, E: Field, RelationHandle> {
 /// Sample the relation challenges and prepare its opaque witness state.
 #[tracing::instrument(skip_all, name = "ring_switch_finalize")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn ring_switch_finalize<'a, F, E, B, H: Sponge>(
+pub(crate) fn ring_switch_finalize<
+    'a,
+    F,
+    E,
+    B,
+    H: Sponge,
+    C: super::ProverFoldChannel<E, Sponge = H>,
+>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
     instance: &RingRelationInstance<F>,
-    grinding: &mut akita_types::ProverGrinding<'_, H>,
+    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
     level: u32,
     witness_handle: &B::WitnessHandle,
     lp: &CommittedGroupParams,

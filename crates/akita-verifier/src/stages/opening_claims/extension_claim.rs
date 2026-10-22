@@ -1,11 +1,11 @@
 //! Extension-claim fold verifier prefix: extension-opening reduction replay.
 
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
+use crate::claims::ClaimReplay;
 use akita_error::AkitaError;
 use akita_params::{dispatch_for_field, TerminalFoldParams};
 use akita_params::{BasisMode, CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
-use akita_types::GrindingReplay;
 use akita_types::{
     canonical_extension_opening_reduction_shape,
     derive_tensor_extension_opening_claim_from_partials, prepare_opening_point,
@@ -15,7 +15,7 @@ use akita_types::{
 };
 use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field, Ring};
 use jolt_sumcheck::{verify_single, SingleFormat, SingleInstance};
-use jolt_transcript::{Channel, Sponge};
+use jolt_transcript::Channel;
 
 pub(crate) struct PreparedProtocolPoint<F: Field, E: Field> {
     pub(crate) prepared: PreparedOpeningPoint<F, E>,
@@ -67,16 +67,16 @@ where
 
     fn final_claims(&mut self, opening_batch: &OpeningClaimsLayout) -> Result<Vec<E>, AkitaError>;
 }
-struct GrindingEorVerifierStream<'a, 'g, 'proof, H: Sponge> {
-    grinding: &'a mut akita_types::VerifierGrinding<'g, 'proof, H>,
+struct GrindingEorVerifierStream<'a, G> {
+    grinding: &'a mut G,
     level: u32,
 }
 
-impl<F, E, H> EorVerifierStream<F, E> for GrindingEorVerifierStream<'_, '_, '_, H>
+impl<F, E, G> EorVerifierStream<F, E> for GrindingEorVerifierStream<'_, G>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + CanonicalDecode,
-    H: Sponge,
+    G: ClaimReplay<F, E>,
 {
     fn prefix(
         &mut self,
@@ -181,12 +181,12 @@ where
         })
         .collect()
 }
-fn verify_eor_sumcheck<F, E, H: Sponge>(
+fn verify_eor_sumcheck<F, E, G: ClaimReplay<F, E>>(
     group_points: &[&[E]],
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     requires_reduction: bool,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
+    grinding: &mut G,
     level: u32,
 ) -> Result<Option<EorSumcheckReplay<E>>, AkitaError>
 where
@@ -209,13 +209,13 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_extension_claim_suffix_prefix<F, E, H: Sponge>(
+pub(crate) fn verify_extension_claim_suffix_prefix<F, E, G: ClaimReplay<F, E>>(
     group_points: &[&[E]],
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     lp: &CommittedGroupParams,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
+    grinding: &mut G,
     level: u32,
 ) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
@@ -286,13 +286,13 @@ where
     })
 }
 
-pub(crate) fn verify_extension_claim_terminal_suffix<F, E, H: Sponge>(
+pub(crate) fn verify_extension_claim_terminal_suffix<F, E, G: ClaimReplay<F, E>>(
     opening_point: &[E],
     opening: E,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     params: &TerminalFoldParams,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
+    grinding: &mut G,
     level: u32,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where

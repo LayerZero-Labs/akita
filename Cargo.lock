@@ -100,6 +100,7 @@ dependencies = [
  "jolt-crypto",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-zk",
  "thiserror",
 ]
 
@@ -198,6 +199,7 @@ dependencies = [
  "jolt-crypto",
  "jolt-poly",
  "jolt-transcript",
+ "jolt-zk",
  "libc",
  "num-bigint 0.5.1",
  "p3-baby-bear",
@@ -245,7 +247,9 @@ dependencies = [
  "jolt-poly",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-zk",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -350,6 +354,7 @@ dependencies = [
  "jolt-poly",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-zk",
  "rayon",
  "tracing",
 ]
