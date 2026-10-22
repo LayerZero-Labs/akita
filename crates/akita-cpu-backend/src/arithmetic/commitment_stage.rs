@@ -15,6 +15,7 @@ use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::mem::size_of;
 use std::sync::Arc;
+use zeroize::Zeroizing;
 
 fn compute_outer_commitment_from_rows<F, B, const D_A: usize, const D_B: usize>(
     backend: &B,
@@ -90,7 +91,7 @@ where
 /// View flat slice-major randomness coefficients as `D`-coefficient rings.
 pub(crate) fn randomness_planes<const D: usize>(
     randomness: &[i8],
-) -> Result<Vec<[i8; D]>, AkitaError> {
+) -> Result<Zeroizing<Vec<[i8; D]>>, AkitaError> {
     randomness
         .chunks(D)
         .map(|ring| {
@@ -98,7 +99,8 @@ pub(crate) fn randomness_planes<const D: usize>(
                 AkitaError::Internal("hiding randomness is not a whole number of rings".into())
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()
+        .map(Zeroizing::new)
 }
 
 fn commit_outer_slices<'a, F, B, const D_B: usize>(

@@ -10,6 +10,7 @@ use akita_serialization::{
 use akita_types::RingVec;
 use jolt_algebra::Field;
 use std::io::{Read, Write};
+use zeroize::Zeroizing;
 
 fn validate_compression_stage_count(stage_count: usize) -> Result<(), SerializationError> {
     if matches!(stage_count, 0 | COMPRESSION_MAP_COUNT) {
@@ -63,7 +64,7 @@ pub(crate) struct PortableCommitmentHandle<F: Field> {
     outer_compression_stages: Vec<Vec<u8>>,
     outer_compression_quotients: Vec<RingVec<F>>,
     /// Slice-major B hiding-randomness coefficients; empty when clear.
-    outer_randomness: Vec<i8>,
+    outer_randomness: Zeroizing<Vec<i8>>,
 }
 
 impl<F: Field> core::fmt::Debug for PortableCommitmentHandle<F> {
@@ -88,7 +89,7 @@ impl<F: Field> PortableCommitmentHandle<F> {
             ring_dim,
             outer_compression_stages: Vec::new(),
             outer_compression_quotients: Vec::new(),
-            outer_randomness: Vec::new(),
+            outer_randomness: Zeroizing::new(Vec::new()),
         };
         hint.validate_shape()
             .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
@@ -117,7 +118,7 @@ impl<F: Field> PortableCommitmentHandle<F> {
                 .map(|stage| stage.bytes().to_vec())
                 .collect(),
             outer_compression_quotients: quotients.to_vec(),
-            outer_randomness: Vec::new(),
+            outer_randomness: Zeroizing::new(Vec::new()),
         };
         hint.validate_shape()
             .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
@@ -154,7 +155,7 @@ impl<F: Field> PortableCommitmentHandle<F> {
                 .map(|stage| stage.bytes().to_vec())
                 .collect(),
             outer_compression_quotients: Vec::new(),
-            outer_randomness: Vec::new(),
+            outer_randomness: Zeroizing::new(Vec::new()),
         };
         hint.validate_shape()
             .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
@@ -162,7 +163,7 @@ impl<F: Field> PortableCommitmentHandle<F> {
     }
 
     /// Attach the B hiding randomness the commitment was made with.
-    pub(crate) fn with_outer_randomness(mut self, outer_randomness: Vec<i8>) -> Self {
+    pub(crate) fn with_outer_randomness(mut self, outer_randomness: Zeroizing<Vec<i8>>) -> Self {
         self.outer_randomness = outer_randomness;
         self
     }
@@ -611,7 +612,7 @@ where
             ring_dim,
             outer_compression_stages,
             outer_compression_quotients,
-            outer_randomness: Vec::new(),
+            outer_randomness: Zeroizing::new(Vec::new()),
         };
         hint.validate_shape()?;
         if validate == Validate::Yes {

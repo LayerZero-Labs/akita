@@ -17,6 +17,7 @@ use akita_params::GroupCommitPhaseParams;
 use akita_types::{AkitaExpandedSetup, CommittedGroup};
 use jolt_algebra::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::sync::Arc;
+use zeroize::Zeroizing;
 
 use super::state_policy::CommitmentStateExporters;
 
@@ -495,7 +496,7 @@ where
             super::CommitmentExecutionMode::InnerOnly,
             inner.into_image(),
             None,
-            Vec::new(),
+            Zeroizing::new(Vec::new()),
             self.state_exporters(plan)?,
         )?;
         self.state_policy.bind(components)
@@ -529,7 +530,7 @@ where
         // The randomness width is part of the plan, so a clear plan samples
         // nothing and keeps the commitment deterministic.
         let randomness = match uncompressed.outer().randomness_coefficient_len()? {
-            0 => Vec::new(),
+            0 => Zeroizing::new(Vec::new()),
             len => {
                 let log_basis = uncompressed.outer().randomness_log_basis().ok_or_else(|| {
                     AkitaError::UnsupportedSchedule(
