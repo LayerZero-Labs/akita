@@ -1760,6 +1760,80 @@ missing API (A38).
   gross leaks only (jolt `whiteout-paper-deltas.md` D30).
 - Public spans and the `u_a` target: jolt D28, D29.
 
+#### 5.5.2 W5e: the residual commitment at the Σ collision radius (A41)
+
+The Σ-protocol extracts `s̄` from three accepting responses and binds it
+through each commitment matrix `M` it opens at radius `4Γ_Δ B_M` (Thm
+`wo:thm:knowledge`, `05_security.tex:229-276`; the bound on `Δ` is
+`05_security.tex:190`; the binding definition `05_security.tex:31-46`). At
+the cut those matrices are the residual commitment's `A_a` and
+`[B_a | B′_a]` (and the pad commitment's `A_p`, which is W6's; A40). They
+must be Module-SIS hard at that radius, not at Akita's honest fold bounds.
+
+**Norm: coefficient ℓ∞.** `‖(c − c′)v‖_∞ ≤ ‖c − c′‖₁‖v‖_∞`, so
+`Γ_Δ = 2κ₁` with `κ₁ = max ‖c‖₁` over the Σ challenge family
+(`02_preliminaries.tex:97-108`). The paper sizes these three matrices
+coefficientwise (`06_evaluation.tex:121-133`, "We size the three matrices
+that commit to s coefficientwise"). The Euclidean alternative is worse here:
+`B_M` would be the ℓ2 norm of the response on the matrix's whole input, up
+to `√n` times the box, and at `[B|B′]`'s widths of 10^5–10^6 coefficients
+its radius passes 2^56, beyond Akita's Euclidean table (squared collisions
+up to 2^84).
+
+**Radius.** `R_Σ = 4Γ_Δ B(D) = 8κ₁ B(D)`, with:
+
+- `κ₁ = 31 + 2·11 = 53` for the D64 selective-ℓ2 family the Σ samples
+  (`D64_SELECTIVE_L2_CHALLENGE_CONFIG`), so `Γ_Δ = 106`;
+- `B(D) = 8(16^D − 1)/15`, the magnitude of the D-digit balanced radix-16
+  certified box `𝓑_cert` (its negative end; the positive end is smaller),
+  the largest response coefficient on any segment of `s`;
+- `D = 10`, the Σ regime of jolt `whiteout-sigma.md` §5.1. Every Gaussian
+  segment of one Σ instance has the same digit count (one width), and public
+  segments have fewer, so `B_M = B(D)` for both residual matrices.
+
+At `D = 10`: `B = 586,406,201,480 ≈ 2^39.09` and `R_Σ =
+248,636,229,427,520 ≈ 2^47.82`. jolt-zk owns both the formula and `D`:
+`jolt_zk::whiteout::BINDING_RESPONSE_DIGITS` and
+`jolt_zk::whiteout::binding_collision_radius()`, and `SigmaParams` rejects a
+table whose response digits exceed `BINDING_RESPONSE_DIGITS`
+(`WhiteoutError::BindingDigitsExceeded`), so no Σ instance is certified at
+a box larger than the commitments were priced for. Akita reads the radius,
+never restates it.
+
+**The lowest-digit restriction does not enter.** W5d made one inner digit
+plane mandatory for the residual (`ResidualShape::new`); `admit` now
+requires it too. So `G⁻¹(w_k) = w_k` and the Σ input of `A_a` is `A_a`'s
+whole matrix, width `positions_per_block`, the same matrix Akita's own
+level prices; no column restriction is needed.
+
+**Which audit function prices it.** A separate generated ℓ∞ width table,
+`akita_params::sis::sigma_binding`, keyed by `(modulus, d, R_Σ)` and giving
+the largest secure width per module rank under the same ADPS16 quantum
+model and generator as Akita's ℓ∞ table
+(`akita-sis-estimator/examples/sigma_binding_width_table.rs`, through the
+generator's explicit-origin seam). It has its own digest: Akita's main ℓ∞
+table, and with it every clear schedule's key and bytes, is unchanged (C0).
+`sigma_binding_min_rank(profile, d, width)` is the lookup; `admit` and the
+planner call it.
+
+- `ZkOpeningSchedule::admit`, at level `cut_level + 1`, requires the own
+  group's inner digits to be one plane, `A_a`'s output rank at least
+  `sigma_binding_min_rank(d_A, positions_per_block)`, and `[B|B′]`'s at least
+  `sigma_binding_min_rank(d_B, physical B width with r_a)`, each failure an
+  `InvalidSetup` naming the matrix.
+- The planner's after-cut search raises both ranks to those minima: `A_a`
+  first, then `[B|B′]` inside the r_a fixed point
+  (`price_with_hiding_randomness`), since r_a's width follows `[B|B′]`'s rank.
+- `FoldSchedule::sis_occurrences` adds the two residual occurrences at
+  `R_Σ` for a zero-knowledge schedule, so `estimate_schedule_security`
+  (`catalog_security --check`) estimates them directly.
+
+A31's last question has the same kind of answer for the ℓ2 route: A's ℓ2
+collision radius is priced by `akita_schedules::selective_l2_inner_matrix`,
+which turns `response_l2_sq_cap` into the squared collision bound
+(`role_a_collision_l2_sq_for_response_bound`) and looks it up with
+`sis_l2_table_key_for_collision_sq`; the catalog audit recomputes it.
+
 ### 5.6 Acceptance (W5a, W5b)
 
 - **W5-a.** `AkitaResponseProver` accepts every statement jolt's
@@ -2103,8 +2177,8 @@ The numbering continues the W4 note's A1–A23.
 - **A31, certified operator-norm rates and the L2 radius.** The rates are
   resolved: p ≥ 2^−2.090 (D64) and p ≥ 2^−1.058 (D128), from the certificate
   exponents (`akita-challenges/src/config.rs:20-23`, `stream.rs:60-71`).
-  Still open: which audit function prices A's L2 collision radius from
-  `response_l2_sq_cap`, needed for the ℓ2 re-pricing of §2.5.5, and whether
+  A's L2 collision radius from `response_l2_sq_cap` is priced by
+  `akita_schedules::selective_l2_inner_matrix` (§5.5.2). Still open: whether
   any production L2 level has W > 218 (§2.5.3).
 - **A34, response-sumcheck grinding.** The product and fused sumchecks
   carry no proof of work (§5.7). Whether RP4 wants them on Akita's
@@ -2143,8 +2217,8 @@ The numbering continues the W4 note's A1–A23.
   The response setup's own check (`AkitaResponseProver::setup`, refused
   when too narrow) is about size, not content. No code here; the fix
   belongs to akita-setup.
-- **A41, the residual commitment is not priced at the Σ radius (soundness
-  blocker, open; fix in W5e).** At level `cut_level + 1`, `admit` makes no
+- **A41, the residual commitment is not priced at the Σ radius (resolved by
+  W5e, §5.5.2).** At level `cut_level + 1`, `admit` makes no
   SIS check, and the planner's after-cut search
   (`schedule_params/candidate/recursive.rs`, `suffix_dp/candidates.rs`)
   prices the residual matrices at their honest bounds: `[B | B′]` at ℓ∞ 15
