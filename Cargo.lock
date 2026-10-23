@@ -170,6 +170,7 @@ dependencies = [
  "jolt-algebra",
  "jolt-crypto",
  "jolt-transcript",
+ "jolt-zk",
  "num-bigint 0.5.1",
  "rand 0.8.8",
  "serde",

@@ -15,6 +15,9 @@ akita-challenges = { version = "0.1.0", path = "../akita-challenges", optional =
 jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
   "lattice",
 ] }
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", features = [
+  "whiteout",
+], optional = true }
 jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
   "asm",
   "solinas",
@@ -34,9 +37,9 @@ labinius-sis = ["dep:akita-challenges", "akita-challenges/labinius-challenges"]
 # `artifacts/schedules-dev`. See docs/branches.md.
 dev-protocol = []
 test-support = []
-# Whiteout zero-knowledge sizing helpers. Compiles the `zk` module only; it
-# selects nothing (docs/branches.md rule 3).
-zk = []
+# Whiteout zero-knowledge sizing helpers and the Σ-binding SIS table. Compiles
+# the `zk` modules only; it selects nothing (docs/branches.md rule 3).
+zk = ["dep:jolt-zk"]
 parallel = ["akita-algebra/parallel", "jolt-algebra/parallel"]
 
 [dev-dependencies]

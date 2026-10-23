@@ -37,6 +37,8 @@ pub mod labinius;
 pub mod norm_bound;
 mod onehot_source;
 mod physical_l2;
+#[cfg(feature = "zk")]
+pub mod sigma_binding;
 
 pub use ajtai_key::{
     ceil_supported_linf_bound, min_secure_rank, sis_table_key_for_linf_bound,
