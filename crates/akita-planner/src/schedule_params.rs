@@ -80,9 +80,11 @@ pub(crate) use relation_transition::{
     ReducedTransitionRejection, RelationModeFilter, RelationSearchDomain, RelationTraversalOrder,
 };
 pub(crate) use setup_score::{level_setup_field_elements, terminal_setup_field_elements};
+#[cfg(feature = "zk")]
+pub(crate) use suffix_dp::CutOffload;
 pub(crate) use suffix_dp::{
     derive_selected_suffix_schedule, QuerySearch, ScheduleMemo, SuffixCtx, SuffixState,
-    SuffixTopology, MAX_PRECOMMIT_OPENING_PRODUCTS,
+    SuffixTopology, ZkSearch, MAX_PRECOMMIT_OPENING_PRODUCTS,
 };
 
 pub(crate) fn root_inner_basis_source(

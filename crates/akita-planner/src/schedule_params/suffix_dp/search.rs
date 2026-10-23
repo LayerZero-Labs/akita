@@ -66,7 +66,9 @@ fn plan_candidate_children(
             .is_some_and(|successor| successor.params.setup_prefix().is_some())
     });
     let input_chunks = plan.chunk_shape.map(Arc::new);
+    let offload_forced = ctx.zk.is_some_and(|zk| zk.forces_offload_from(state.level));
     let direct_child = if guided_successor_is_offloaded == Some(true)
+        || offload_forced
         || !plan.direct_edge_is_admissible
         || plan.prune_direct_edge
     {

@@ -360,7 +360,50 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) relation_mode_filter: RelationModeFilter,
     /// Zero-knowledge cut whose levels are planned masked; `None` plans a
     /// clear schedule.
-    pub(crate) zk: Option<akita_params::zk::ZkOpeningSchedule>,
+    pub(crate) zk: Option<ZkSearch>,
+}
+
+/// A zero-knowledge search: the cut, and how the edge into the cut level
+/// treats a setup prefix.
+#[derive(Clone, Copy)]
+pub(crate) struct ZkSearch {
+    pub(crate) schedule: akita_params::zk::ZkOpeningSchedule,
+    pub(crate) cut_offload: CutOffload,
+}
+
+impl ZkSearch {
+    /// Whether the edge from `level` into the next one must offload the
+    /// parent's setup to a setup prefix the cut level consumes.
+    pub(crate) fn forces_offload_from(self, level: usize) -> bool {
+        matches!(self.cut_offload, CutOffload::Forced)
+            && level + 1 == self.schedule.cut_level() as usize
+    }
+}
+
+/// Whether the cut level's setup prefix is a cost choice or forced.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(feature = "zk"),
+    expect(
+        dead_code,
+        reason = "zero-knowledge searches are planned only under zk"
+    )
+)]
+pub(crate) enum CutOffload {
+    /// The search offloads into the cut level only where that lowers the
+    /// first direct setup, as for a clear schedule.
+    Priced,
+    /// Test support: the edge into the cut level is offloaded only (no
+    /// direct candidate), so a test can prove a masked Stage 3 at a
+    /// statement size where the priced search keeps the cut level direct.
+    #[cfg_attr(
+        all(feature = "zk", not(feature = "test-support")),
+        expect(
+            dead_code,
+            reason = "constructed only by the test-support planner entry"
+        )
+    )]
+    Forced,
 }
 
 #[derive(Clone, Copy)]
