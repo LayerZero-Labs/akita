@@ -161,6 +161,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
     /// Accumulate a short pointwise dot product in CRT+NTT domain.
     ///
+    /// The left matrix may retain extra CRT limbs; its first `K` primes must
+    /// match `params`. This borrows a prime prefix without repacking entries.
+    ///
     /// The prepared backend chooses whether to fuse the products or apply the
     /// canonical single-product primitive repeatedly.
     ///
@@ -169,12 +172,13 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// Panics if the slices differ in length or exceed the backend-independent
     /// six-product arithmetic ceiling.
     #[inline(always)]
-    pub fn add_assign_pointwise_dot(
+    pub fn add_assign_pointwise_dot<const MATRIX_K: usize>(
         &mut self,
-        lhs: &[Self],
+        lhs: &[CyclotomicCrtNtt<W, MATRIX_K, D>],
         rhs: &[Self],
         params: &CrtNttParamSet<W, K, D>,
     ) {
+        const { assert!(MATRIX_K >= K, "matrix CRT prefix is too short") };
         assert_eq!(lhs.len(), rhs.len(), "pointwise dot length mismatch");
         assert!(
             lhs.len() <= I32_LAZY_DOT_BATCH,
@@ -598,12 +602,13 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// On AArch64, this uses the fused NEON pointwise-multiply-accumulate kernel
     /// when available; otherwise it falls back to the scalar loop.
     #[inline(always)]
-    pub fn add_assign_pointwise_mul(
+    pub fn add_assign_pointwise_mul<const MATRIX_K: usize>(
         &mut self,
-        lhs: &Self,
+        lhs: &CyclotomicCrtNtt<W, MATRIX_K, D>,
         rhs: &Self,
         params: &CrtNttParamSet<W, K, D>,
     ) {
+        const { assert!(MATRIX_K >= K, "matrix CRT prefix is too short") };
         #[cfg(target_arch = "aarch64")]
         if params.kernel_plan.uses_neon() {
             for k in 0..K {

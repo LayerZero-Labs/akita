@@ -302,3 +302,27 @@ mod tests {
         );
     }
 }
+
+/// Experimental K=16 one-hot preset; standard one-hot artifacts retain K=256.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OneHotK16;
+impl_proof_optimized_preset!(
+    OneHotK16,
+    Field,
+    Field,
+    akita_params::SisModulusProfileId::Q128OffsetA7F7,
+    128,
+    1,
+    source = 16,
+    schedule_family = "fp128_onehot_k16",
+    ring_dimension_schedule = akita_schedules::RingDimensionSchedule {
+        num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
+        suffix_dimensions: &[64],
+        potential_a_dimensions: &OneHot::A_RING_DIMENSIONS,
+        potential_b_dimensions: &OneHot::B_RING_DIMENSIONS,
+        potential_d_dimensions: &OneHot::D_RING_DIMENSIONS,
+    }
+);
+impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotK16 {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_k16_recursive";
+}

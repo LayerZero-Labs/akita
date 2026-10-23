@@ -48,7 +48,8 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     // from its lookup key. The measured proof size and per-level breakdown are
     // still reported in full.
     validate_against_planner: bool,
-) where
+) -> f64
+where
     FF: CanonicalEncoding
         + CanonicalBytes
         + CanonicalEncoding
@@ -82,7 +83,8 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     );
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
 
-    let (commitments, proof) = {
+    let (commitments, proof, commit_secs) = {
+        let io_read_before = super::mapped_onehot::io_read_bytes();
         let t0 = Instant::now();
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
@@ -94,7 +96,15 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
-        report_timing(label, "commit", t0.elapsed().as_secs_f64());
+        let commit_secs = t0.elapsed().as_secs_f64();
+        report_timing(label, "commit", commit_secs);
+        if let (Some(before), Some(after)) = (io_read_before, super::mapped_onehot::io_read_bytes())
+        {
+            eprintln!(
+                "[{label}] commit_io_read_bytes: {}",
+                after.saturating_sub(before)
+            );
+        }
 
         let commitments = [commitment];
         let selection = scheme
@@ -123,9 +133,21 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             )
             .unwrap();
         report_timing(label, "prove", t0.elapsed().as_secs_f64());
-        (commitments, proof)
+        (commitments, proof, commit_secs)
     };
 
+    if let Ok(prefix) = std::env::var("AKITA_PROFILE_SAVE_BYTES") {
+        let mut bytes = Vec::new();
+        proof
+            .serialize_compressed(&mut bytes)
+            .expect("serialize experiment proof");
+        std::fs::write(format!("{prefix}.proof"), bytes).expect("save experiment proof");
+        let mut bytes = Vec::new();
+        commitments[0]
+            .serialize_compressed(&mut bytes)
+            .expect("serialize experiment commitment");
+        std::fs::write(format!("{prefix}.commitment"), bytes).expect("save experiment commitment");
+    }
     assert_observed_proof_size(label, &proof);
     let opening_batch =
         OpeningClaimsLayout::from_root_groups(&[], group_layout).expect("same-point opening batch");
@@ -234,6 +256,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let verify = |claims| verifier.batched_verify(&proof, b"profile", claims, BasisMode::Lagrange);
     run_verifier_timings(label, pools, "profile", prepare, verify);
     report_verifier_ntt_cache_size(label, verifier.terminal_ntt_cache_bytes());
+    commit_secs
 }
 
 pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -336,6 +359,13 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
+    if std::env::var("AKITA_PROFILE_COMPARE_ORDER").is_ok_and(|order| {
+        order
+            .split(',')
+            .any(|mode| mode.split('@').next() == Some("ntt-exact"))
+    }) {
+        std::env::set_var("AKITA_ONEHOT_NTT_PREWARM_EXACT", "1");
+    }
     if let Some(schedule) = plan {
         backend
             .prewarm(schedule)
@@ -426,6 +456,13 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
+    if std::env::var("AKITA_PROFILE_COMPARE_ORDER").is_ok_and(|order| {
+        order
+            .split(',')
+            .any(|mode| mode.split('@').next() == Some("ntt-exact"))
+    }) {
+        std::env::set_var("AKITA_ONEHOT_NTT_PREWARM_EXACT", "1");
+    }
     if let Some(schedule) = plan {
         backend
             .prewarm(schedule)
@@ -451,18 +488,68 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             .expect("prepared setup CRT profile"),
     );
     let source = backend.import_source(vec![onehot_poly]).unwrap();
-    run_prove::<FF, D, Cfg>(
-        label,
-        scheme,
-        &setup,
-        &backend,
-        &source,
-        &pt,
-        opening,
-        PolynomialGroupLayout::new(nv, 1),
-        plan,
-        validate_against_planner,
-    );
+    if std::env::var("AKITA_PROFILE_COMPARE_ONEHOT").as_deref() == Ok("1") {
+        let save_prefix = std::env::var("AKITA_PROFILE_SAVE_BYTES").ok();
+        let order = std::env::var("AKITA_PROFILE_COMPARE_ORDER")
+            .unwrap_or_else(|_| "accumulation,ntt,ntt,accumulation".to_string());
+        let mut best: Option<(String, f64)> = None;
+        for (trial, requested) in order.split(',').enumerate() {
+            let mode = if requested == "best" {
+                best.as_ref()
+                    .expect("best needs a completed NTT trial")
+                    .0
+                    .clone()
+            } else {
+                requested.to_string()
+            };
+            assert!(
+                mode == "accumulation" || mode.starts_with("ntt"),
+                "unknown commitment kernel"
+            );
+            let (kernel, tuning) = mode.split_once('@').unwrap_or((&mode, "4x96x0"));
+            let tuning = tuning.split('x').collect::<Vec<_>>();
+            assert_eq!(tuning.len(), 3, "expected block/column/prefetch tuning");
+            std::env::set_var("AKITA_ONEHOT_NTT_BLOCKS", tuning[0]);
+            std::env::set_var("AKITA_ONEHOT_NTT_COLUMNS", tuning[1]);
+            std::env::set_var("AKITA_ONEHOT_NTT_PREFETCH", tuning[2]);
+            std::env::set_var("AKITA_ONEHOT_COMMIT", kernel);
+            if let Some(prefix) = &save_prefix {
+                std::env::set_var(
+                    "AKITA_PROFILE_SAVE_BYTES",
+                    format!("{prefix}-{trial}-{mode}"),
+                );
+            }
+            eprintln!("[experiment] trial={trial} onehot_commit={mode} requested={requested}");
+            let elapsed = run_prove::<FF, D, Cfg>(
+                label,
+                scheme,
+                &setup,
+                &backend,
+                &source,
+                &pt,
+                opening,
+                PolynomialGroupLayout::new(nv, 1),
+                plan,
+                validate_against_planner,
+            );
+            if mode.starts_with("ntt") && best.as_ref().is_none_or(|(_, time)| elapsed < *time) {
+                best = Some((mode, elapsed));
+            }
+        }
+    } else {
+        run_prove::<FF, D, Cfg>(
+            label,
+            scheme,
+            &setup,
+            &backend,
+            &source,
+            &pt,
+            opening,
+            PolynomialGroupLayout::new(nv, 1),
+            plan,
+            validate_against_planner,
+        );
+    }
     let post_execution_ntt_metrics = backend
         .shared_ntt_cache_metrics()
         .expect("post-execution setup NTT cache metrics");
