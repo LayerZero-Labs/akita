@@ -203,16 +203,17 @@ const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![
 /// prefix's row (`specs/whiteout-akita.md` §5.5).
 const FP128_DENSE_ZK_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(14)];
 
-/// The headline zero-knowledge row (`specs/whiteout-akita.md` §3.5): 36:1,
-/// whose level 0 offloads its setup to a level-1 setup prefix.
+/// The headline zero-knowledge row (`specs/whiteout-akita.md` §3.5): 36:1.
+/// Its cut level is direct: the residual's Σ-bound setup at level 2 is at
+/// least the root's, so offloading level 0's setup saves none (§5.5.2).
 const FP128_ONEHOT_RECURSIVE_ZK_KEYS: &[PolynomialGroupLayout] = onehot_keys![(36, 1)];
 
 /// Response schedules of Whiteout's response proof (`specs/whiteout-akita.md`
-/// §5.2), one per `e` length `2^ν`: `ν = 23` for the single-group
+/// §5.2), one per `e` length `2^ν`: `ν = 24` for the single-group
 /// end-to-end statement and `ν = 27` for the multi-group one and the
 /// headline.
 const FP128_RESPONSE_DIGITS_RECURSIVE_KEYS: &[PolynomialGroupLayout] = &[
-    PolynomialGroupLayout::singleton(23),
+    PolynomialGroupLayout::singleton(24),
     PolynomialGroupLayout::singleton(27),
 ];
 
@@ -429,7 +430,7 @@ fn fp128_onehot_multichunk_w2r2_grouped_requests(
 /// The multi-group zero-knowledge row (`specs/whiteout-akita.md` §3.5): a
 /// 31:1 one-hot root beside one dense 14:1 group precommitted under the
 /// hiding profile of `fp128_dense_zk`, as Jolt commits untrusted advice. Its
-/// cut level consumes a setup prefix.
+/// cut level is direct, as the headline's (§5.5.2).
 fn fp128_onehot_recursive_zk_grouped_requests(
     preplans: &GenerationPreplans,
     chunking: ChunkedWitnessCfg,
