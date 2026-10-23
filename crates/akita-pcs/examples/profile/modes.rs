@@ -409,6 +409,15 @@ fn run_profile_dense_fp128_multi_chunk_w8r2(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
+    if std::env::var("AKITA_PROFILE_K16").as_deref() == Ok("1") {
+        assert_eq!(
+            profile_setup_contribution_mode(),
+            SetupContributionMode::Recursive
+        );
+        type Cfg = RecursiveCommitmentConfig<fp128::OneHotK16>;
+        run_profile_onehot_fp128_with_cfg::<256, Cfg>("onehot_fp128_k16", nv, num_polys);
+        return;
+    }
     match profile_setup_contribution_mode() {
         SetupContributionMode::Direct => {
             type Cfg = fp128::OneHot;

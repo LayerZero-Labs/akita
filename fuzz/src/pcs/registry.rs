@@ -70,6 +70,7 @@ fn all_families() -> Vec<Box<dyn Family>> {
         FamilyImpl::<RecursiveCommitmentConfig<fp128::OneHotMultiChunkW2R3>>::boxed(),
         FamilyImpl::<RecursiveCommitmentConfig<fp128::OneHotMultiChunkW4R3>>::boxed(),
         FamilyImpl::<RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R3>>::boxed(),
+        FamilyImpl::<RecursiveCommitmentConfig<fp128::OneHotK16>>::boxed(),
     ]
 }
 
