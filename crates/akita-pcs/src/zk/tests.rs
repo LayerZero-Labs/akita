@@ -11,6 +11,7 @@ use akita_config::recursive_commitment::RecursiveCommitmentConfig;
 use akita_params::{ChunkedWitnessCfg, CommittedGroupBatchProfile, GroupCommitPhaseParams};
 use akita_schedules::ValidatedScheduleCatalog;
 use jolt_algebra::cfg_into_iter;
+#[cfg(feature = "parallel")]
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{Field, Ring, Zero};
 use jolt_zk::whiteout::test_support::{CheckingResponseProver, SyntheticSigma};
