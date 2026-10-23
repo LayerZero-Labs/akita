@@ -12,8 +12,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use akita_error::AkitaError;
-use akita_params::zk::ResidualGeometry;
-use akita_params::FoldSchedule;
+use akita_params::zk::{AdmittedZkSchedule, ResidualGeometry};
 use jolt_algebra::{CanonicalEncoding, CyclotomicRing};
 use jolt_crypto::lattice::{MatrixShape, MatrixView, PreparedMatrix, CHALLENGE_RING_DIM};
 use jolt_crypto::CryptoError;
@@ -51,7 +50,7 @@ pub struct ResidualShape {
 }
 
 impl ResidualShape {
-    /// The shape of `schedule`'s cut.
+    /// The shape of an admitted schedule's cut.
     ///
     /// # Errors
     ///
@@ -60,8 +59,8 @@ impl ResidualShape {
     /// dimension is not a multiple of 64 with `d_A = d_B`, or unless the
     /// residual commits w_k in one inner digit plane whose alphabet holds
     /// w_k's (then `G⁻¹(w_k)` is w_k and the inner rows are `A·w_k`).
-    pub fn new(schedule: &FoldSchedule) -> Result<Self, AkitaError> {
-        let geometry = ResidualGeometry::new(schedule, <F as CanonicalEncoding>::MODULUS_BITS)?;
+    pub fn new(admitted: AdmittedZkSchedule<'_>) -> Result<Self, AkitaError> {
+        let geometry = ResidualGeometry::new(admitted, <F as CanonicalEncoding>::MODULUS_BITS)?;
         let profile = geometry.profile;
         let ring_dim = profile.inner.matrix.ring_dimension();
         if ring_dim % CHALLENGE_RING_DIM != 0 || profile.outer.matrix.ring_dimension() != ring_dim {

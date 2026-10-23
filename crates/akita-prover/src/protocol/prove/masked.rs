@@ -16,7 +16,7 @@ use crate::backend::{
 };
 use crate::SelectedProverOpeningData;
 use akita_config::TrustedScheduleCatalog;
-use akita_params::zk::{ResidualGeometry, ZkOpeningSchedule};
+use akita_params::zk::{AdmittedZkSchedule, ResidualGeometry};
 use akita_types::{check_range_leaf, AkitaSetupDescriptor, MaskedOpeningClaims, ProverGrinding};
 use jolt_algebra::AdditiveGroup;
 use jolt_poly::{Point, HIGH_TO_LOW};
@@ -143,9 +143,9 @@ where
             root::resolve_root::<Cfg, B::CommitmentHandle>(expanded, schedules, opening, basis)?;
         let schedule = resolved.schedule();
         let layout = claims.opening_layout();
-        let cut_level =
-            ZkOpeningSchedule::admit(schedule, Cfg::committed_source_contract()?, Cfg::EXT_DEGREE)?
-                .cut_level();
+        let admitted =
+            AdmittedZkSchedule::new(schedule, Cfg::committed_source_contract()?, Cfg::EXT_DEGREE)?;
+        let cut_level = admitted.zk().cut_level();
         let decoded = openings
             .iter()
             .map(|form| form.evaluate(pads.pads(), &[]))
@@ -213,7 +213,7 @@ where
             commitment_material,
         } = level.next_state;
         let geometry =
-            ResidualGeometry::new(schedule, <Cfg::Field as CanonicalEncoding>::MODULUS_BITS)?;
+            ResidualGeometry::new(admitted, <Cfg::Field as CanonicalEncoding>::MODULUS_BITS)?;
         let successor = schedule
             .recursive_folds
             .get(cut_level as usize)
