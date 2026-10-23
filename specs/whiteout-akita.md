@@ -1715,7 +1715,8 @@ missing API (A38).
 
 - *HT1* (`every_received_byte_is_in_one_public_class`): the verifier's event
   log tiles the proof; each message gets one class from an allowlist keyed
-  by site (harness sites, Akita site families, sumcheck protocol tags). A
+  by site (harness sites, Akita site families, sumcheck protocol tags, and
+  the row's grinding-plan sites for proof-of-work nonces). A
   masked class without jolt-transcript's `TranscriptOp::Masked` record, or
   any other class with one, fails. Positive control: the same verifier with
   the statement claims read through the clear transcript is flagged.
@@ -1738,12 +1739,19 @@ missing API (A38).
   committed pads shifted so one message decodes one higher, auxiliary
   products recomputed. The Σ prover refuses (`ResidualUnsatisfied`); with
   `prove_sigma_unchecked` the response prover's statement check refuses
-  (`ResponseRejected`); with `UncheckedResponseProver` as well, the response
-  prover's sumcheck still refuses a round that misses its claim (jolt-sumcheck's
-  release round check), so no proof reaches the verifier. Deviation: the
-  verifier is exercised instead on the honest proof with the masked value
-  shifted in its bytes, which it rejects for every class; a forged
-  response proof is W5-a's `rejects_each_item_violation`.
+  (`ResponseRejected`); with `UncheckedResponseProver` as well (whose
+  rounds are shifted to stay consistent under `test-support`, as the unit
+  tests' `Cheating` prover's are), a forged response proof over Akita's
+  real rows reaches `verify_sigma`, which rejects it (`ResponseRejected`).
+  With the residual rows dropped on both sides the forgery verifies, so the
+  test pins the rows, not only Fiat–Shamir binding.
+- *No unmasked opening*: `require_clear_opening` refuses a zero-knowledge
+  configuration at `batched_prove` and `batched_verify` (and so at the
+  scheme's `batched_prove` and `verify_standalone`); tested by
+  `clear_entry_points_refuse_a_zero_knowledge_configuration`. The W1/W2
+  tests that proved ZK rows in the clear were removed in favour of their
+  masked-path equivalents. `the_descriptor_binds_the_configuration_mode`
+  checks S9.
 - *HT5*: the golden proof digests and the byte-identity dump hold.
 - *HT2*: `examples/zk_distinguisher.rs` (manual): per-byte χ² over the
   whole proof (about 75 KB), Bonferroni at `α = 0.01`. Both injected leaks
