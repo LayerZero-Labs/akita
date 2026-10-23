@@ -288,7 +288,7 @@ fn fold_preview_matches_live_prover_and_verifier() {
         state.prover_message(&NonceAtom::new(nonce));
         match work {
             None => state.grind(WORK_BITS).unwrap(),
-            Some(work) => work.commit(state),
+            Some(work) => work.commit(state).unwrap(),
         }
     }
     let [searched_live, live] = [&mut searched, &mut prover].map(|state| {
@@ -322,6 +322,34 @@ fn fold_preview_matches_live_prover_and_verifier() {
     });
     assert_eq!(replayed, live);
     verifier.check_eof().unwrap();
+}
+
+#[cfg(feature = "prover")]
+#[test]
+fn fold_preview_zero_bit_work_is_a_no_op() {
+    let prover = new_prover_channel(b"fold-preview", b"fixture");
+    let mut preview = FoldPreview::new(&prover, 3);
+    preview.grind(0).unwrap();
+    let work = preview.take_work().unwrap();
+    assert!(work.argument.is_empty());
+    assert_eq!(sponge_fingerprint(&work.sponge), work.start);
+}
+
+#[cfg(feature = "prover")]
+#[test]
+fn fold_work_rejects_a_diverged_live_channel() {
+    let mut prover = new_prover_channel(b"fold-preview", b"fixture");
+    let mut preview = FoldPreview::new(&prover, 3);
+    preview.grind(6).unwrap();
+    let work = preview.take_work().unwrap();
+    // The live channel sends a different nonce than the preview absorbed.
+    prover.prover_message(&NonceAtom::new(4));
+    let before = prover.narg_string().to_vec();
+    assert!(matches!(
+        work.commit(&mut prover),
+        Err(AkitaError::Internal(_))
+    ));
+    assert_eq!(prover.narg_string(), before.as_slice());
 }
 
 #[test]

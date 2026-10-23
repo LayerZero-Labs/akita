@@ -396,10 +396,7 @@ impl<'plan> ProverGrinding<'plan> {
                 level: site.level(),
             },
             GrindingQueryKind::FoldChallengeWork,
-            |state, _bits| {
-                work.commit(state);
-                Ok(())
-            },
+            |state, _bits| work.commit(state),
         )
     }
 

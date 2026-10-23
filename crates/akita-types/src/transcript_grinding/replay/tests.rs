@@ -4,7 +4,7 @@ use akita_challenges::{
     SparseChallengeConfig, VerifierFoldDraw,
 };
 use akita_params::{ChallengeFieldOrder, GrindingRun};
-use akita_transcript::{new_prover_channel, new_verifier_channel, ProverTranscript};
+use akita_transcript::{new_prover_channel, new_verifier_channel, FoldPreview, ProverTranscript};
 use jolt_field::Prime128Offset275 as F;
 use jolt_transcript::Probe;
 use spongefish::Encoding;
@@ -259,6 +259,25 @@ fn grinding_rejects_out_of_range_response_and_incomplete_plan() {
         .unwrap();
     assert!(matches!(
         prover.commit_fold_response(GrindingSite::FoldResponse { level: 1 }, work),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(prover.finish(), Err(AkitaError::InvalidInput(_))));
+
+    // Work whose response nonce exceeds the scheduled width is rejected and
+    // poisons the replay. The preview refuses such a nonce, so the work is
+    // built on a bare preview.
+    let state = new_prover_channel(b"native-grinding", b"fixture");
+    let mut prover = ProverGrinding::new(state, &plan);
+    let mut preview = FoldPreview::new(
+        &new_prover_channel(b"native-grinding", b"fixture"),
+        akita_params::FOLD_RESPONSE_ATTEMPTS,
+    );
+    preview.grind(0).unwrap();
+    assert!(matches!(
+        prover.commit_fold_response(
+            GrindingSite::FoldResponse { level: 0 },
+            preview.take_work().unwrap(),
+        ),
         Err(AkitaError::InvalidInput(_))
     ));
     assert!(matches!(prover.finish(), Err(AkitaError::InvalidInput(_))));

@@ -687,10 +687,10 @@ pub fn verifier_context(_state: &mut VerifierChannel<'_>, record: ProtocolContex
 /// state built from a copy of the sponge, so it cannot mutate the live
 /// argument string or the prover's private randomness. The accepted
 /// candidate's proof of work is carried to the live channel as a
-/// [`FoldWork`], so the live prover does not search again. The live prover
-/// then draws the challenges through the real channel and compares them, so a
-/// preview that diverged from the channel fails loudly instead of producing a
-/// different proof.
+/// [`FoldWork`], so the live prover does not search again. [`FoldWork::commit`]
+/// first checks that the live sponge matches the preview's sponge from before
+/// the work, so a preview that diverged from the channel fails loudly instead
+/// of producing an invalid proof.
 #[cfg(feature = "prover")]
 pub struct FoldPreview {
     state: ProverChannel,
@@ -698,13 +698,23 @@ pub struct FoldPreview {
     work: Option<FoldWork>,
 }
 
-/// The fold's proof of work as found on a [`FoldPreview`]: the sponge right
-/// after the work and the argument bytes the work sent.
+/// The fold's proof of work as found on a [`FoldPreview`]: a fingerprint of
+/// the sponge right before the work, the sponge right after it, and the
+/// argument bytes the work sent.
 #[cfg(feature = "prover")]
 pub struct FoldWork {
     nonce: u32,
+    start: [u8; 32],
     sponge: crate::TranscriptSponge,
     argument: Vec<u8>,
+}
+
+/// 32 bytes squeezed from a copy of `sponge`: equal sponges give equal
+/// fingerprints, and different ones differ except with probability `2^-256`.
+#[cfg(feature = "prover")]
+fn sponge_fingerprint(sponge: &crate::TranscriptSponge) -> [u8; 32] {
+    use spongefish::DuplexSpongeInterface;
+    sponge.clone().squeeze_array()
 }
 
 #[cfg(feature = "prover")]
@@ -716,14 +726,26 @@ impl FoldWork {
     }
 
     /// Carry the work to the live channel, which has just sent the same
-    /// fold-response nonce: send the work's argument bytes one prover message
-    /// each, as Jolt's `grind` does, then take the preview's sponge, which
-    /// already holds the work's check.
-    pub fn commit(self, state: &mut ProverChannel) {
+    /// fold-response nonce: check that the live sponge is the one the preview
+    /// ground from, send the work's argument bytes one prover message each, as
+    /// Jolt's `grind` does, then take the preview's sponge, which already
+    /// holds the work's check.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::Internal`], leaving the channel unchanged, when
+    /// the live sponge differs from the preview's.
+    pub fn commit(self, state: &mut ProverChannel) -> Result<(), AkitaError> {
+        if sponge_fingerprint(&state.duplex_sponge_state) != self.start {
+            return Err(AkitaError::Internal(
+                "live transcript diverged from the fold preview".into(),
+            ));
+        }
         for byte in &self.argument {
             state.prover_message(byte);
         }
         state.duplex_sponge_state = self.sponge;
+        Ok(())
     }
 }
 
@@ -755,10 +777,12 @@ impl FoldPreview {
                 "fold preview ran its proof of work twice".into(),
             ));
         }
+        let start = sponge_fingerprint(&self.state.duplex_sponge_state);
         jolt_transcript::ProverTranscript::grind(&mut self.state, bits)
             .map_err(|_| AkitaError::InvalidSetup("fold preview proof of work failed".into()))?;
         self.work = Some(FoldWork {
             nonce: self.nonce,
+            start,
             sponge: self.state.duplex_sponge_state.clone(),
             argument: self.state.narg_string().to_vec(),
         });
