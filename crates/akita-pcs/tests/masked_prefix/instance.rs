@@ -451,10 +451,38 @@ pub(crate) fn own_pads(claims: Vec<F>) -> Vec<AffineRow<F>> {
         .collect()
 }
 
-/// The recursive one-hot family offloads level 0's setup to a level-1 setup
-/// prefix from 31 variables on (W2b).
+/// The recursive one-hot root of the multi-group instance. At this size the
+/// priced zero-knowledge search keeps the cut level direct, since the
+/// residual's Σ-bound setup outweighs the root's (`specs/whiteout-akita.md`
+/// §5.5.2); the instance plans the admitted row that offloads at the cut
+/// (W2b's masked Stage 3).
 pub(crate) type RecCfg = ZkCommitmentConfig<akita_config::RecursiveCommitmentConfig<fp128::OneHot>>;
 pub(crate) const MULTI_NV: usize = 31;
+
+/// The admitted zero-knowledge row for `key` whose cut level consumes the
+/// root's setup as a setup prefix.
+pub(crate) fn cut_offloading_row(
+    key: &ScheduleLookupKey,
+) -> (CommittedGroupBatchProfile, akita_params::FoldSchedule) {
+    let planned = akita_planner::find_zk_schedule_offloading_at_cut_for_test(
+        key,
+        RecCfg::committed_source_contract().unwrap(),
+        &[Cfg::committed_source_contract().unwrap()],
+        &akita_config::policy_of::<RecCfg>(ChunkedWitnessCfg::default_non_chunked()),
+        RecCfg::ring_challenge_config,
+        akita_params::zk::ZkOpeningSchedule::new(ZK_CUT_LEVEL).unwrap(),
+    )
+    .unwrap();
+    let profiles = CommittedGroupBatchProfile {
+        final_group: akita_params::GroupCommitPhaseParams::try_from_params(
+            key.final_group,
+            &planned.schedule.root.params,
+        )
+        .unwrap(),
+        precommitteds: key.precommitteds.clone(),
+    };
+    (profiles, planned.schedule)
+}
 
 impl Instance<RecCfg> {
     /// A one-hot `MULTI_NV`-variable root beside one precommitted dense
@@ -474,7 +502,8 @@ impl Instance<RecCfg> {
             precommitteds: vec![precommitted],
         };
         let scheme = AkitaCommitmentScheme::<RecCfg>::new(
-            akita_config::test_support::workspace_schedule_catalog::<RecCfg>(
+            TrustedScheduleCatalog::try_from_rows(
+                [cut_offloading_row(&key)],
                 ChunkedWitnessCfg::default_non_chunked(),
             )
             .unwrap(),

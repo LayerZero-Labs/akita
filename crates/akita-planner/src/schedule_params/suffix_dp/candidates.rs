@@ -589,7 +589,8 @@ impl<'a> CandidateDomain<'a> {
         let mut terminal = Vec::new();
         let mut folds = Vec::new();
         // A recursive level folds one witness group, its own.
-        let masking = crate::schedule_params::LevelMasking::at(ctx.zk, state.level, 1)?;
+        let masking =
+            crate::schedule_params::LevelMasking::at(ctx.zk.map(|zk| zk.schedule), state.level, 1)?;
         // The level after a zero-knowledge cut opens the residual commitment
         // at the residual alphabet only; admission refuses any other basis
         // (and a compressed payload, below).
@@ -725,6 +726,9 @@ impl<'a> CandidateDomain<'a> {
                 }
             }
         }
+        if !masking.allows_terminal() {
+            terminal.clear();
+        }
 
         Ok(GeneratedCandidates { terminal, folds })
     }
@@ -748,8 +752,11 @@ impl<'a> CandidateDomain<'a> {
         })?;
         // Every root group carries witness data: the precommitted groups and
         // the final group.
-        let masking =
-            crate::schedule_params::LevelMasking::at(ctx.zk, 0, root_key.precommitteds.len() + 1)?;
+        let masking = crate::schedule_params::LevelMasking::at(
+            ctx.zk.map(|zk| zk.schedule),
+            0,
+            root_key.precommitteds.len() + 1,
+        )?;
         for work in &self.opening_work {
             let Some(preparation) = PreparedRootProducers::prepare(
                 root_key,

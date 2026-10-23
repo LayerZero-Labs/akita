@@ -25,6 +25,8 @@ criterion = { version = "0.8", features = ["html_reports"] }
 [features]
 default = []
 parallel = ["dep:rayon"]
+# The Σ-binding width table (`examples/sigma_binding_width_table.rs`).
+zk = ["akita-params/zk"]
 labinius-sis = [
   "akita-params/labinius-sis",
   "dep:akita-challenges",
@@ -38,6 +40,10 @@ harness = false
 [[bench]]
 name = "infinity_optimizer"
 harness = false
+
+[[example]]
+name = "sigma_binding_width_table"
+required-features = ["zk"]
 
 [[example]]
 name = "labinius_infinity_width_table"

@@ -47,7 +47,7 @@ pub(crate) struct ScheduleSearchOptions<'a> {
     pub(crate) relation_mode_filter: super::schedule_params::RelationModeFilter,
     pub(crate) root_main_constraint: Option<&'a CommittedGroupParams>,
     pub(crate) adaptation_guide: Option<&'a akita_params::FoldSchedule>,
-    pub(crate) zk: Option<akita_params::zk::ZkOpeningSchedule>,
+    pub(crate) zk: Option<super::schedule_params::ZkSearch>,
     #[cfg(test)]
     pub(crate) query_prefix_count: u64,
 }
@@ -884,6 +884,70 @@ pub fn find_zk_schedule(
         -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>,
     zk: akita_params::zk::ZkOpeningSchedule,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    find_zk_schedule_with(
+        key,
+        final_source_contract,
+        precommitted_source_contracts,
+        policy,
+        ring_challenge_config,
+        super::schedule_params::ZkSearch {
+            schedule: zk,
+            cut_offload: super::schedule_params::CutOffload::Priced,
+        },
+    )
+}
+
+/// [`find_zk_schedule`] whose cut level consumes the root's setup as a
+/// setup prefix even where a direct cut level costs less: the search
+/// drops the direct edge into the cut level and keeps every other rule
+/// (the offloaded edge must still lower the first direct setup). Test
+/// support only: the
+/// result is a legitimate statement (it passes the same
+/// [`akita_params::zk::ZkOpeningSchedule::admit`]), but not the priced
+/// optimum, so a test can prove a masked Stage 3 at a size the priced search
+/// no longer offloads at (`specs/whiteout-akita.md` §5.5.2).
+///
+/// # Errors
+///
+/// As [`find_zk_schedule`]; [`AkitaError::UnsupportedSchedule`] when no
+/// admissible row offloads at the cut.
+#[cfg(all(feature = "zk", feature = "test-support"))]
+pub fn find_zk_schedule_offloading_at_cut_for_test(
+    key: &ScheduleLookupKey,
+    final_source_contract: CommittedSourceContract,
+    precommitted_source_contracts: &[CommittedSourceContract],
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(
+        usize,
+    )
+        -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>,
+    zk: akita_params::zk::ZkOpeningSchedule,
+) -> Result<PlannedFoldSchedule, AkitaError> {
+    find_zk_schedule_with(
+        key,
+        final_source_contract,
+        precommitted_source_contracts,
+        policy,
+        ring_challenge_config,
+        super::schedule_params::ZkSearch {
+            schedule: zk,
+            cut_offload: super::schedule_params::CutOffload::Forced,
+        },
+    )
+}
+
+#[cfg(feature = "zk")]
+fn find_zk_schedule_with(
+    key: &ScheduleLookupKey,
+    final_source_contract: CommittedSourceContract,
+    precommitted_source_contracts: &[CommittedSourceContract],
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(
+        usize,
+    )
+        -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>,
+    zk: super::schedule_params::ZkSearch,
+) -> Result<PlannedFoldSchedule, AkitaError> {
     let mut planned = find_schedule_in_relation_order(
         key,
         final_source_contract,
@@ -895,7 +959,7 @@ pub fn find_zk_schedule(
             ..ScheduleSearchOptions::canonical()
         },
     )?;
-    planned.schedule.zk = Some(zk);
+    planned.schedule.zk = Some(zk.schedule);
     akita_params::zk::ZkOpeningSchedule::admit(
         &planned.schedule,
         final_source_contract,

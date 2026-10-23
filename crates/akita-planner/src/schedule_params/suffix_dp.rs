@@ -40,8 +40,10 @@ pub(crate) use candidates::MAX_PRECOMMIT_OPENING_PRODUCTS;
 use frontier::{consider_child_suffixes, price_child_edge, ProjectedFrontier, Projection};
 pub(crate) use search::derive_selected_suffix_schedule;
 use source::attach_source_moments;
+#[cfg(feature = "zk")]
+pub(crate) use state::CutOffload;
 use state::*;
-pub(crate) use state::{ScheduleMemo, SuffixCtx, SuffixState, SuffixTopology};
+pub(crate) use state::{ScheduleMemo, SuffixCtx, SuffixState, SuffixTopology, ZkSearch};
 pub(crate) use terminal::try_terminal_direct_suffix_cost;
 
 const SETUP_AND_PAYLOAD_PROJECTIONS: &[Projection] =

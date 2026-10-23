@@ -44,6 +44,8 @@ pub use emit::{
 pub use planner::find_schedule_for_test_relation_mode;
 #[cfg(feature = "zk")]
 pub use planner::find_zk_schedule;
+#[cfg(all(feature = "zk", feature = "test-support"))]
+pub use planner::find_zk_schedule_offloading_at_cut_for_test;
 pub use planner::{find_adapted_schedule, find_schedule};
 pub use policy::InnerBasisSource;
 pub use schedule_params::suffix_opening_layout;

@@ -180,7 +180,17 @@ impl ZkOpeningSchedule {
     /// - the level after the cut, whose own group is the residual commitment
     ///   to w_k, opens at [`RESIDUAL_RANDOMNESS_LOG_BASIS`] in one outer
     ///   slice with a raw payload, carries exactly [`b_randomness_columns`] B
-    ///   columns (r_a), no D randomness and no preceding group;
+    ///   columns (r_a) and no D randomness, and has no preceding group: a
+    ///   recursive level's preceding group is either a setup prefix, which
+    ///   the Stage-3 check above refuses, or a precommitted group, which
+    ///   [`FoldSchedule::validate_structure`] refuses at every recursive
+    ///   level;
+    /// - that residual commitment takes w_k in one inner digit plane (so the
+    ///   Σ-protocol opens `A_a` on w_k itself), and `A_a` and
+    ///   `[B_a | B′_a]` each have at least their Σ-binding rank
+    ///   (`sis::sigma_binding::sigma_binding_min_rank`, under `zk`): Module-SIS
+    ///   hard at the Σ collision radius, not only at Akita's honest bounds
+    ///   (`specs/whiteout-akita.md` §5.5.2);
     /// - every group of every later level carries no randomness.
     ///
     /// # Errors
@@ -293,6 +303,13 @@ impl ZkOpeningSchedule {
                 if own.profile.randomness_columns != b_randomness_columns(own)? {
                     return Err(invalid("has the wrong residual randomness r_a"));
                 }
+                // The Σ-protocol opens A_a on w_k itself and [B_a | B′_a]
+                // on (t̂_a, r_a): one inner digit plane, and both matrices
+                // Module-SIS hard at the Σ collision radius (§5.5.2).
+                if own.profile.inner.digits.num_digits != 1 {
+                    return Err(invalid("commits w_k in more than one inner digit plane"));
+                }
+                residual_binding(own).map_err(|what| invalid(&what))?;
                 continue;
             } else {
                 if params.own_group().profile.randomness_columns != 0 {
@@ -314,6 +331,50 @@ impl ZkOpeningSchedule {
         }
         Ok(zk)
     }
+}
+
+/// `A_a` and `[B_a | B′_a]` of the residual commitment `own` are Module-SIS
+/// hard at the Σ collision radius (`specs/whiteout-akita.md` §5.5.2), or the
+/// reason they are not, naming the matrix.
+#[cfg(feature = "zk")]
+fn residual_binding(own: &GroupOpenPhaseParams) -> Result<(), String> {
+    use crate::sis::sigma_binding::sigma_binding_min_rank;
+    let inner = &own.profile.inner.matrix;
+    let outer = &own.profile.outer.matrix;
+    for (name, rank, width, ring_dim, modulus) in [
+        (
+            "A_a",
+            inner.output_rank(),
+            inner.input_width(),
+            inner.ring_dimension(),
+            inner.sis_modulus_profile(),
+        ),
+        (
+            "[B_a | B′_a]",
+            outer.output_rank(),
+            outer.input_width(),
+            outer.ring_dimension(),
+            outer.sis_modulus_profile(),
+        ),
+    ] {
+        let binding = sigma_binding_min_rank(modulus, ring_dim, width).ok_or_else(|| {
+            format!("has no Σ-binding rank for residual {name} (d {ring_dim}, width {width})")
+        })?;
+        if rank < binding {
+            return Err(format!(
+                "commits the residual with {name} of rank {rank}, below its Σ-binding rank \
+                 {binding} (d {ring_dim}, width {width})"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Without the `zk` feature the Σ-binding table is not compiled, so no
+/// residual is admitted.
+#[cfg(not(feature = "zk"))]
+fn residual_binding(_own: &GroupOpenPhaseParams) -> Result<(), String> {
+    Err("needs akita-params' zk feature to price the residual at the Σ radius".into())
 }
 
 /// Groups of a fold that carry witness data: every group but a setup prefix,
@@ -618,6 +679,40 @@ pub fn d_randomness_columns(params: &CommittedGroupParams) -> Result<usize, Akit
     )
 }
 
+/// A schedule that passed [`ZkOpeningSchedule::admit`], with its cut: the
+/// only input the residual geometry, and so the Σ setup, is built from.
+#[derive(Clone, Copy, Debug)]
+pub struct AdmittedZkSchedule<'a> {
+    schedule: &'a FoldSchedule,
+    zk: ZkOpeningSchedule,
+}
+
+impl<'a> AdmittedZkSchedule<'a> {
+    /// Admit `schedule` ([`ZkOpeningSchedule::admit`]).
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`ZkOpeningSchedule::admit`].
+    pub fn new(
+        schedule: &'a FoldSchedule,
+        root_source: CommittedSourceContract,
+        claim_extension_degree: usize,
+    ) -> Result<Self, AkitaError> {
+        let zk = ZkOpeningSchedule::admit(schedule, root_source, claim_extension_degree)?;
+        Ok(Self { schedule, zk })
+    }
+
+    #[must_use]
+    pub const fn schedule(self) -> &'a FoldSchedule {
+        self.schedule
+    }
+
+    #[must_use]
+    pub const fn zk(self) -> ZkOpeningSchedule {
+        self.zk
+    }
+}
+
 /// The residual commitment at a zero-knowledge schedule's cut, as public
 /// data: the one source of the Σ-protocol's residual segments, their
 /// alphabets and the opening rows (`specs/whiteout-akita.md` §4.6, §4.8.1).
@@ -643,18 +738,16 @@ pub struct ResidualGeometry {
 }
 
 impl ResidualGeometry {
-    /// The residual geometry of `schedule` over a `field_bits`-bit base
-    /// field.
+    /// The residual geometry of an admitted schedule over a
+    /// `field_bits`-bit base field.
     ///
     /// # Errors
     ///
-    /// [`AkitaError::UnsupportedSchedule`] without a zero-knowledge cut,
     /// [`AkitaError::InvalidSetup`] if the cut has no successor level, and
     /// the witness-layout errors of the cut level.
-    pub fn new(schedule: &FoldSchedule, field_bits: u32) -> Result<Self, AkitaError> {
-        let zk = schedule.zk.ok_or_else(|| {
-            AkitaError::UnsupportedSchedule("schedule has no zero-knowledge cut".into())
-        })?;
+    pub fn new(admitted: AdmittedZkSchedule<'_>, field_bits: u32) -> Result<Self, AkitaError> {
+        let schedule = admitted.schedule();
+        let zk = admitted.zk();
         let cut = zk.cut_level() as usize;
         let successor = schedule.recursive_folds.get(cut).ok_or_else(|| {
             AkitaError::InvalidSetup("the zero-knowledge cut has no successor level".into())

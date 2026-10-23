@@ -140,6 +140,7 @@ impl SetupPrefixCandidateContext<'_> {
                 num_digits_outer: self.num_digits_outer,
                 inner_output_rank: inner_candidate.inner_commit_matrix.output_rank(),
                 hiding: false,
+                sigma_binding: false,
             })?
         else {
             return Ok(None);

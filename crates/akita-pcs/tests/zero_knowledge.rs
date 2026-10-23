@@ -407,6 +407,97 @@ fn admission_recomputes_the_masked_levels() {
     });
 }
 
+/// W5e (A41): the Σ-protocol opens the residual commitment, so admission
+/// prices A_a and [B_a | B′_a] at the Σ collision radius. The W5d rows'
+/// shape (rank-1 `[B_a | B′_a]` over `R_64`, its r_a resized to match) is
+/// rejected naming the matrix, and so is A_a one rank below its binding
+/// rank; the planned row itself sits at both binding ranks.
+#[test]
+fn admission_prices_the_residual_at_the_sigma_radius() {
+    on_large_stack(|| {
+        use akita_params::sis::sigma_binding::sigma_binding_min_rank;
+        use akita_params::{InnerCommitMatrixParams, OuterCommitMatrixParams};
+
+        let (_, schedule) = zk_row();
+        let after_cut = ZK_CUT_LEVEL as usize + 1;
+        let own = *levels(&schedule)[after_cut].own_group();
+        let (inner, outer) = (own.profile.inner.matrix, own.profile.outer.matrix);
+        let binding = |rank, width, d, modulus| {
+            assert_eq!(sigma_binding_min_rank(modulus, d, width), Some(rank));
+        };
+        binding(
+            inner.output_rank(),
+            inner.input_width(),
+            inner.ring_dimension(),
+            inner.sis_modulus_profile(),
+        );
+        binding(
+            outer.output_rank(),
+            outer.input_width(),
+            outer.ring_dimension(),
+            outer.sis_modulus_profile(),
+        );
+
+        let rejects = |mutate: &dyn Fn(&mut akita_params::GroupOpenPhaseParams), what: &str| {
+            let mut mutated = schedule.clone();
+            mutate(levels_mut(&mut mutated)[after_cut].own_group_mut());
+            let error = admit(&mutated).unwrap_err();
+            assert!(
+                matches!(&error, AkitaError::InvalidSetup(message) if message.contains(what)),
+                "{what}: {error}"
+            );
+        };
+        rejects(
+            &|group| {
+                let key = group.profile.outer.matrix.sis_table_key();
+                let t_hat =
+                    group.profile.outer.matrix.input_width() - group.profile.randomness_columns;
+                let rank_one = |width| {
+                    OuterCommitMatrixParams::try_new(
+                        key.policy,
+                        key.table_digest,
+                        key.modulus_profile,
+                        1,
+                        width,
+                        key.coeff_linf_bound,
+                        key.ring_dimension as usize,
+                    )
+                    .unwrap()
+                };
+                group.profile.outer.matrix = rank_one(t_hat + 1);
+                group.profile.randomness_columns =
+                    akita_params::zk::b_randomness_columns(group).unwrap();
+                group.profile.outer.matrix = rank_one(t_hat + group.profile.randomness_columns);
+            },
+            "[B_a | B′_a] of rank 1, below its Σ-binding rank",
+        );
+        rejects(
+            &|group| {
+                let InnerCommitSecurityRoute::Linf(key) =
+                    group.profile.inner.matrix.security_route()
+                else {
+                    panic!("the residual's A is on the ℓ∞ route");
+                };
+                group.profile.inner.matrix = InnerCommitMatrixParams::try_new(
+                    key.policy,
+                    key.table_digest,
+                    key.modulus_profile,
+                    group.profile.inner.matrix.output_rank() - 1,
+                    group.profile.inner.matrix.input_width(),
+                    key.coeff_linf_bound,
+                    key.ring_dimension as usize,
+                )
+                .unwrap();
+            },
+            "A_a of rank",
+        );
+        rejects(
+            &|group| group.profile.inner.digits.num_digits = 2,
+            "more than one inner digit plane",
+        );
+    });
+}
+
 /// Every randomness span lies in the live witness prefix, which the next
 /// level's ring switch requires its digit-range domain to cover exactly, so
 /// the range check proves every randomness digit.
@@ -764,12 +855,14 @@ fn one_shot_fold_response_replays_without_a_nonce() {
     });
 }
 
-/// W2b: groups at masked levels. The headline-shaped recursive one-hot
-/// family offloads level 0's setup to a level-1 setup prefix from 31
-/// variables on; its root here also folds one precommitted dense group, the
-/// shape of Jolt's untrusted advice.
+/// W2b: groups at masked levels. The priced search offloads level 0's setup
+/// to a level-1 setup prefix from 37 variables on: below that the residual's
+/// Σ-bound setup (`specs/whiteout-akita.md` §5.5.2) is at least the root's.
+/// The root here also folds one precommitted dense group, the shape of
+/// Jolt's untrusted advice. These tests only plan, so they take the priced
+/// row; the proving tests offload a 31-variable row instead.
 type RecCfg = ZkCommitmentConfig<akita_config::RecursiveCommitmentConfig<fp128::OneHot>>;
-const MULTI_NV: usize = 31;
+const MULTI_NV: usize = 37;
 
 /// The planner's row for one `MULTI_NV`-variable one-hot polynomial beside
 /// one precommitted dense polynomial committed under [`zk_row`]'s hiding
@@ -861,25 +954,32 @@ fn masked_levels_admit_a_hiding_precommitted_group_and_a_public_setup_prefix() {
     });
 }
 
-/// The headline shape, Jolt's one-hot root at 36 variables: the planner's
-/// zero-knowledge row offloads level 0's setup to a public setup prefix at
-/// the cut level, and admission accepts it.
+/// The headline shape, Jolt's one-hot root at 36 variables: the priced
+/// zero-knowledge row keeps the cut level direct, since level 2's Σ-bound
+/// residual setup is at least the root's; one variable more, the root's
+/// setup outgrows it and the row offloads to a public setup prefix at the
+/// cut level. Admission accepts both.
 #[test]
-fn headline_row_offloads_to_a_setup_prefix_at_the_cut_level() {
+fn the_cut_level_offloads_the_root_setup_from_37_variables() {
     on_large_stack(|| {
-        let planned = akita_planner::find_zk_schedule(
-            &ScheduleLookupKey::single(PolynomialGroupLayout::singleton(36)),
-            RecCfg::committed_source_contract().unwrap(),
-            &[],
-            &policy_of::<RecCfg>(ChunkedWitnessCfg::default_non_chunked()),
-            RecCfg::ring_challenge_config,
-            zk(),
-        )
-        .unwrap();
-        assert_eq!(admit_multi(&planned.schedule), Ok(zk()));
-        let cut = &planned.schedule.recursive_folds[ZK_CUT_LEVEL as usize - 1].params;
-        let prefix = cut.setup_prefix().expect("a setup prefix at the cut level");
-        assert_eq!(prefix.profile.randomness_columns, 0);
+        let cut_prefix = |num_vars| {
+            let planned = akita_planner::find_zk_schedule(
+                &ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars)),
+                RecCfg::committed_source_contract().unwrap(),
+                &[],
+                &policy_of::<RecCfg>(ChunkedWitnessCfg::default_non_chunked()),
+                RecCfg::ring_challenge_config,
+                zk(),
+            )
+            .unwrap();
+            assert_eq!(admit_multi(&planned.schedule), Ok(zk()));
+            planned.schedule.recursive_folds[ZK_CUT_LEVEL as usize - 1]
+                .params
+                .setup_prefix()
+                .map(|prefix| prefix.profile.randomness_columns)
+        };
+        assert_eq!(cut_prefix(36), None);
+        assert_eq!(cut_prefix(37), Some(0));
     });
 }
 

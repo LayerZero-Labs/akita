@@ -133,7 +133,15 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
             .schedules()
             .resolve_selection(instance.selection())
             .unwrap();
-        let shape = ResidualShape::new(resolved.schedule()).unwrap();
+        let shape = ResidualShape::new(
+            akita_params::zk::AdmittedZkSchedule::new(
+                resolved.schedule(),
+                C::committed_source_contract().unwrap(),
+                C::EXT_DEGREE,
+            )
+            .unwrap(),
+        )
+        .unwrap();
         let pad_randomness_columns = akita_params::zk::hiding_randomness_columns(
             akita_params::zk::ImageShape {
                 rows: PAD_RANK,
