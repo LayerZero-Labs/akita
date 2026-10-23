@@ -2379,6 +2379,12 @@ The numbering continues the W4 note's A1–A23.
   Sending them through an explicit public-only method would let jolt-zk drop
   the passthrough. jolt's HT1 census (`fs_obligations` site classes plus the
   runtime census in `tests/soundness/whiteout.rs`) is the backstop meanwhile.
+- **A43, a stable digit-commitment price (open).** jolt's `A_D` rank
+  (`digit_matrix_rank`) calls `akita_schedules::planner_support::projected_collision_role_price`,
+  a `#[doc(hidden)]` module for offline search and artifact validation, then
+  `min_secure_rank`. The price has one owner, but Akita has made no
+  stability promise for it. Expose `digit_commitment_min_rank(policy, width,
+  log_basis)` next to `sigma_binding_min_rank`, and have jolt call that.
 - A2, A3 and A12 from W4 are resolved by §4.3, §4.6 and §5.4.
 
 ## 11. Questions for the paper authors
