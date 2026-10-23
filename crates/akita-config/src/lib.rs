@@ -151,6 +151,24 @@ pub fn admission_of<Cfg: CommitmentConfig>() -> Result<ScheduleAdmission, AkitaE
     }
 }
 
+/// The clear opening's guard, on both roles' entry points: a zero-knowledge
+/// configuration opens only through the masked prefix and the Σ-protocol,
+/// since the clear opening would send its private messages unmasked.
+///
+/// # Errors
+///
+/// [`AkitaError::UnsupportedSchedule`] when `Cfg::IS_ZK`.
+pub fn require_clear_opening<Cfg: CommitmentConfig>() -> Result<(), AkitaError> {
+    if Cfg::IS_ZK {
+        return Err(AkitaError::UnsupportedSchedule(
+            "a zero-knowledge configuration opens only through the masked prefix, never in \
+             the clear"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 /// A validated catalog bound to a concrete [`CommitmentConfig`] and chunking policy.
 ///
 /// The underlying catalog remains ordinary caller-owned data. This handle is

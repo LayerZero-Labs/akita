@@ -429,7 +429,8 @@ fn pads_are_used_once_and_never_reused() {
 }
 
 /// HT3, a forced fold overflow: the backend rejects the one-shot fold
-/// response at a masked level, the prover returns `FoldOverflow`, and the
+/// response at a masked level, the prover returns `FoldOverflow` after that
+/// one probe (W2-b), and the
 /// rerun draws everything fresh. The rerun shares no pad, masked value or
 /// randomized image with the aborted attempt's transcript. (The root
 /// commitment is the statement and is the same in both.)
@@ -496,9 +497,10 @@ fn a_fold_overflow_rerun_reuses_nothing() {
             transcript.site(PAD_SITE);
             transcript.site(CLAIMS_SITE);
             let claims = masking.send(&[group.opening], &mut transcript).unwrap();
+            let first_probe = private.fold_probes.get();
             private
                 .reject_fold_probe
-                .set(reject.map(|level| private.fold_probes.get() + level));
+                .set(reject.map(|level| first_probe + level));
             let result = prove_masked_prefix::<Cfg, _, _, _>(
                 instance.setup.expanded.descriptor(),
                 instance.scheme.schedules(),
@@ -513,16 +515,20 @@ fn a_fold_overflow_rerun_reuses_nothing() {
             private.reject_fold_probe.set(None);
             (
                 result.map(|_| ()),
+                private.fold_probes.get() - first_probe,
                 pads,
                 transcript.narg().to_vec(),
                 transcript.events().to_vec(),
             )
         };
         for level in 0..=ZK_CUT_LEVEL {
-            let (aborted, aborted_pads, aborted_bytes, aborted_events) =
+            let (aborted, probes, aborted_pads, aborted_bytes, aborted_events) =
                 attempt(Some(level as usize));
             assert_eq!(aborted, Err(AkitaError::FoldOverflow { level }));
-            let (rerun, rerun_pads, rerun_bytes, rerun_events) = attempt(None);
+            // One-shot (W2-b): the rejected response is that level's only
+            // probe, and the proof stops there.
+            assert_eq!(probes, level as usize + 1);
+            let (rerun, _, rerun_pads, rerun_bytes, rerun_events) = attempt(None);
             rerun.unwrap();
             let values = |bytes: &[u8], events: &[TranscriptEvent], masked: bool| {
                 events
