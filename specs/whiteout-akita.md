@@ -1683,10 +1683,10 @@ fields of `ResidualOpening` (a deviation from §4.6 and §4.8.1's field list):
   elements, public runs `SegmentMask::Public`; one t̂ segment per Akita
   block; r_a. An element that straddles a public span's end stays Gaussian,
   so no zero cells are added (A27 resolved without padding). It cuts `N`
-  from the setup stream: one block per Akita block, `A·w_b − G·t̂_b = 0`
-  with `A` restricted to each position's lowest digit column (w_k's
-  alphabet fits one inner digit, so `G⁻¹(w_k)` is w_k in that column;
-  checked, `UnsupportedSchedule` otherwise), and `[B | B′](t̂_a, r_a) = u_a`
+  from the setup stream: one block per Akita block, `A·w_b − G·t̂_b = 0`,
+  where the residual must take w_k in one inner digit plane of an alphabet
+  holding w_k's, so `G⁻¹(w_k)` is w_k (every admitted row does; otherwise
+  `UnsupportedSchedule`), and `[B | B′](t̂_a, r_a) = u_a`
   with u_a a public target, as the masked prefix sends it raw. It also
   forms the evaluation claim and checks that w_k's padded span keeps
   ⌈log₂|w_k|⌉ variables.

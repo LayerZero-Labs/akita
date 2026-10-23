@@ -688,6 +688,8 @@ fn setup_prefix_spans(fold: &FoldParams, field_bits: u32) -> Result<Vec<Range<us
         return Ok(Vec::new());
     };
     let layout = crate::suffix_opening_layout(fold.input_witness_len, prefix.setup_natural_len)?;
+    // Extension degree 1: a zero-knowledge schedule's claims are in the base
+    // field (`ZkOpeningSchedule::admit` rejects any other degree).
     let geometry = RelationWitnessGeometry::for_level(params, &layout, 1)?;
     let witness = WitnessLayout::new(
         params,

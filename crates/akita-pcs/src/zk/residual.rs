@@ -57,9 +57,9 @@ impl ResidualShape {
     ///
     /// The errors of [`ResidualGeometry::new`];
     /// [`AkitaError::UnsupportedSchedule`] if the residual commitment's ring
-    /// dimension is not a multiple of 64 with `d_A = d_B`, or if w_k's
-    /// alphabet does not fit in one inner digit (then `G⁻¹(w_k)` is not w_k
-    /// in the lowest digit plane).
+    /// dimension is not a multiple of 64 with `d_A = d_B`, or unless the
+    /// residual commits w_k in one inner digit plane whose alphabet holds
+    /// w_k's (then `G⁻¹(w_k)` is w_k and the inner rows are `A·w_k`).
     pub fn new(schedule: &FoldSchedule) -> Result<Self, AkitaError> {
         let geometry = ResidualGeometry::new(schedule, <F as CanonicalEncoding>::MODULUS_BITS)?;
         let profile = geometry.profile;
@@ -69,9 +69,12 @@ impl ResidualShape {
                 "the residual commitment needs d_A = d_B, a multiple of 64".into(),
             ));
         }
-        if geometry.witness_log_basis > profile.inner.digits.log_basis {
+        if profile.inner.digits.num_digits != 1
+            || geometry.witness_log_basis > profile.inner.digits.log_basis
+        {
             return Err(AkitaError::UnsupportedSchedule(
-                "w_k's alphabet exceeds one inner digit of the residual commitment".into(),
+                "the residual commitment must take w_k in one inner digit plane of its alphabet"
+                    .into(),
             ));
         }
         let stride = ring_dim / CHALLENGE_RING_DIM;
@@ -229,10 +232,9 @@ impl ResidualShape {
     }
 
     /// The opening rows `N` over Akita's setup `stream`, with u_a as the
-    /// verifier received it. `A` is the residual inner matrix restricted to
-    /// each position's lowest digit column, where `G⁻¹(w_k)` puts w_k
-    /// ([`Self::new`] checks the alphabet fits); `[B | B′]` is the outer
-    /// matrix over `(t̂_a, r_a)`.
+    /// verifier received it. `A` is the residual inner matrix, which takes
+    /// w_k itself ([`Self::new`] checks one inner digit plane); `[B | B′]` is
+    /// the outer matrix over `(t̂_a, r_a)`.
     ///
     /// # Errors
     ///
@@ -254,23 +256,6 @@ impl ResidualShape {
         let crypto = |error: CryptoError| AkitaError::InvalidSetup(error.to_string());
         let rows = profile.inner.matrix.output_rank();
         let positions = profile.blocks.positions_per_block;
-        let digits = profile.inner.digits.num_digits;
-        let inner = MatrixView::new(
-            MatrixShape {
-                rows,
-                width: positions * digits,
-                ring_dim: D,
-            },
-            stream,
-        )
-        .map_err(crypto)?;
-        let mut lowest_digit = Vec::with_capacity(rows * positions * D);
-        for row in 0..rows {
-            for position in 0..positions {
-                lowest_digit
-                    .extend_from_slice(inner.entry(row, position * digits).map_err(crypto)?);
-            }
-        }
         let a = Arc::new(
             PreparedMatrix::<F, D>::new(
                 &MatrixView::new(
@@ -279,7 +264,7 @@ impl ResidualShape {
                         width: positions,
                         ring_dim: D,
                     },
-                    &lowest_digit,
+                    stream,
                 )
                 .map_err(crypto)?,
             )
