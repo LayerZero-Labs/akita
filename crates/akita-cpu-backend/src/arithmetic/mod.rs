@@ -21,6 +21,7 @@ pub(crate) mod extension_opening_reduction;
 pub(crate) mod field_reduction;
 #[cfg(test)]
 mod kernel_tests;
+mod onehot_ntt;
 mod prepared;
 #[cfg(test)]
 mod prepared_tests;

@@ -584,3 +584,36 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         CyclotomicRing::from_coefficients(coeffs)
     }
 }
+
+impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
+    /// Transform a binary ring by selecting its prepared Montgomery twists.
+    /// This avoids multiplying signed coefficients by the conversion factors.
+    pub fn assign_binary_with_params(
+        &mut self,
+        digits: &[i8; D],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Result<(), akita_error::AkitaError> {
+        for (limb, tw) in self.limbs.iter_mut().zip(params.twiddles.iter()) {
+            for ((dst, &digit), &twist) in limb.iter_mut().zip(digits).zip(&tw.psi_pows) {
+                *dst = match digit {
+                    0 => MontCoeff::from_raw(W::default()),
+                    1 => twist,
+                    _ => {
+                        return Err(akita_error::AkitaError::InvalidInput(
+                            "binary NTT input is not binary".into(),
+                        ))
+                    }
+                };
+            }
+        }
+        for ((limb, prime), tw) in self
+            .limbs
+            .iter_mut()
+            .zip(params.primes)
+            .zip(params.twiddles.iter())
+        {
+            forward_ntt_cyclic(limb, prime, tw, params.kernel_plan());
+        }
+        Ok(())
+    }
+}

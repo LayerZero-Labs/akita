@@ -1,5 +1,7 @@
+use super::index_storage::OneHotIndices;
 use super::*;
 use akita_error::checked;
+use std::sync::Arc;
 
 /// Borrowed one-hot commitment source independent of [`OneHotPoly`] ownership.
 #[derive(Debug, Clone, Copy)]
@@ -153,7 +155,7 @@ pub struct OneHotPoly<F: Field, I: OneHotIndex = usize> {
     pub(crate) num_vars: usize,
     pub(crate) onehot_k: usize,
     /// Per-chunk hot-position indices. `None` denotes an all-zero chunk.
-    pub(crate) indices: Vec<Option<I>>,
+    pub(crate) indices: OneHotIndices<I>,
     pub(crate) _marker: PhantomData<F>,
 }
 
@@ -180,6 +182,19 @@ impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
     /// Returns an error if dimensions are inconsistent or any index is out of
     /// range.
     pub fn new(onehot_k: usize, indices: Vec<Option<I>>) -> Result<Self, AkitaError> {
+        Self::from_indices(onehot_k, OneHotIndices::Owned(indices))
+    }
+
+    /// Construct from immutable shared storage, such as a read-only mapped fixture.
+    /// The backing owner remains alive throughout every borrowed source view.
+    pub fn from_shared_indices(
+        onehot_k: usize,
+        indices: Arc<dyn AsRef<[Option<I>]> + Send + Sync>,
+    ) -> Result<Self, AkitaError> {
+        Self::from_indices(onehot_k, OneHotIndices::Shared(indices))
+    }
+
+    fn from_indices(onehot_k: usize, indices: OneHotIndices<I>) -> Result<Self, AkitaError> {
         if onehot_k == 0 {
             return Err(AkitaError::InvalidInput(
                 "onehot_k must be nonzero".to_string(),
