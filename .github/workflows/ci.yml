@@ -267,6 +267,13 @@ jobs:
         run: |
           cargo nextest run --workspace --lib --bins --tests --profile ci --cargo-profile ci-test \
             --no-default-features --features parallel,disk-persistence,zk,akita-pcs/test-support,akita-pcs/logging
+      - name: Run the zero-knowledge tests without the setup cache
+        # A cached, wider setup can hide an undersized one (as for the
+        # response proof above).
+        run: |
+          cargo nextest run -p akita-pcs --profile ci --cargo-profile ci-test \
+            --no-default-features --features parallel,test-support,logging \
+            --test zero_knowledge --test zk_end_to_end --test masked_prefix
 
   test-schedule-artifact-drift:
     name: Schedule artifact drift
