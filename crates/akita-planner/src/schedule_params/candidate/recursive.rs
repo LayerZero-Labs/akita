@@ -259,6 +259,25 @@ impl RecursiveCandidateContext<'_, '_> {
         else {
             return Ok(None);
         };
+        // The residual commitment after a zero-knowledge cut: the Σ-protocol
+        // opens A on w_k itself, so one inner digit plane, at A's Σ-binding
+        // rank (`specs/whiteout-akita.md` §5.5.2).
+        let inner_candidate = if request.masking.opens_residual() {
+            if delta_commit != 1 {
+                return Ok(None);
+            }
+            let Some(inner_commit_matrix) =
+                sigma_bound_inner_matrix(inner_candidate.inner_commit_matrix)?
+            else {
+                return Ok(None);
+            };
+            InnerCommitmentCandidate {
+                inner_commit_matrix,
+                ..inner_candidate
+            }
+        } else {
+            inner_candidate
+        };
         let Ok(width_w) = akita_params::opening_d_segment_width(
             request.opening.method(),
             policy.claim_ext_degree,
@@ -359,6 +378,7 @@ impl RecursiveCandidateContext<'_, '_> {
                     num_digits_outer: core.num_digits_open,
                     inner_output_rank: core.inner_commit_matrix.output_rank(),
                     hiding: request.masking.hides_outer(),
+                    sigma_binding: request.masking.opens_residual(),
                 })?
             else {
                 continue;

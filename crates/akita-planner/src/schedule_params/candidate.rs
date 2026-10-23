@@ -72,6 +72,12 @@ impl LevelMasking {
         matches!(self, Self::AfterCut)
     }
 
+    /// Whether the level may end the schedule: a masked level's witness and
+    /// the residual commitment's opening must be folded, never sent.
+    pub(crate) const fn allows_terminal(self) -> bool {
+        matches!(self, Self::Clear)
+    }
+
     /// Whether the commitment this level consumes carries B hiding
     /// randomness: every masked level's, and at the level after the cut the
     /// residual commitment's r_a, at the residual alphabet.
@@ -130,6 +136,9 @@ pub(super) struct OuterCommitmentCandidateRequest<'a> {
     num_digits_outer: usize,
     inner_output_rank: usize,
     hiding: bool,
+    /// The residual commitment after a zero-knowledge cut: B is priced at
+    /// its Σ-binding rank too.
+    sigma_binding: bool,
 }
 
 /// Hiding-randomness columns for an image of `rows` rings of `ring_dim`
@@ -161,6 +170,75 @@ fn hiding_columns(
     Err(AkitaError::UnsupportedSchedule(
         "hiding schedules need the planner's zk feature".into(),
     ))
+}
+
+/// The Σ-binding rank of a `ring_dim`-dimensional matrix of `width` ring
+/// columns: the rank at which the Whiteout Σ-protocol's opening of the
+/// residual commitment binds (`specs/whiteout-akita.md` §5.5.2), or `None`
+/// when no rank does.
+#[cfg(feature = "zk")]
+fn sigma_binding_rank(
+    modulus: akita_params::SisModulusProfileId,
+    ring_dim: usize,
+    width: usize,
+) -> Result<Option<usize>, AkitaError> {
+    Ok(akita_params::sis::sigma_binding::sigma_binding_min_rank(
+        modulus, ring_dim, width,
+    ))
+}
+
+#[cfg(not(feature = "zk"))]
+fn sigma_binding_rank(
+    _modulus: akita_params::SisModulusProfileId,
+    _ring_dim: usize,
+    _width: usize,
+) -> Result<Option<usize>, AkitaError> {
+    Err(AkitaError::UnsupportedSchedule(
+        "the residual commitment's Σ binding needs the planner's zk feature".into(),
+    ))
+}
+
+/// `key`'s matrix of `width` columns at the larger of its SIS floor and its
+/// Σ-binding rank, or `None` if no rank binds.
+fn sigma_bound_linf_matrix<M>(
+    key: akita_params::SisTableKey,
+    width: usize,
+    floor_rank: usize,
+    build: impl Fn(akita_params::SisTableKey, usize, usize) -> Result<M, AkitaError>,
+) -> Result<Option<M>, AkitaError> {
+    let Some(binding) =
+        sigma_binding_rank(key.modulus_profile, key.ring_dimension as usize, width)?
+    else {
+        return Ok(None);
+    };
+    Ok(build(key, floor_rank.max(binding), width).ok())
+}
+
+/// The residual commitment's A matrix (the level after the cut) at its
+/// Σ-binding rank. Only the ℓ∞ route prices it: a residual on the ℓ2 route
+/// is not a candidate.
+pub(crate) fn sigma_bound_inner_matrix(
+    matrix: InnerCommitMatrixParams,
+) -> Result<Option<InnerCommitMatrixParams>, AkitaError> {
+    let akita_params::InnerCommitSecurityRoute::Linf(key) = matrix.security_route() else {
+        return Ok(None);
+    };
+    sigma_bound_linf_matrix(
+        key,
+        matrix.input_width(),
+        matrix.output_rank(),
+        |key, rank, width| {
+            InnerCommitMatrixParams::try_new(
+                key.policy,
+                key.table_digest,
+                key.modulus_profile,
+                rank,
+                width,
+                key.coeff_linf_bound,
+                key.ring_dimension as usize,
+            )
+        },
+    )
 }
 
 /// Price one commitment matrix together with its hiding randomness.
@@ -216,6 +294,7 @@ pub(super) fn derive_outer_commitment_candidate(
         num_digits_outer,
         inner_output_rank,
         hiding,
+        sigma_binding,
     } = request;
     let Ok(slice_geometry) = akita_params::CommitmentSliceGeometry::try_new(
         outer_slice_count,
@@ -249,7 +328,25 @@ pub(super) fn derive_outer_commitment_candidate(
         dimensions.d_b(),
         policy.sis_modulus_profile,
         log_basis_open,
-        |width| OuterCommitMatrixParams::try_new_with_min_rank(key, width).ok(),
+        |width| {
+            let floor = OuterCommitMatrixParams::try_new_with_min_rank(key, width).ok()?;
+            if !sigma_binding {
+                return Some(floor);
+            }
+            sigma_bound_linf_matrix(key, width, floor.output_rank(), |key, rank, width| {
+                OuterCommitMatrixParams::try_new(
+                    key.policy,
+                    key.table_digest,
+                    key.modulus_profile,
+                    rank,
+                    width,
+                    key.coeff_linf_bound,
+                    key.ring_dimension as usize,
+                )
+            })
+            .ok()
+            .flatten()
+        },
         OuterCommitMatrixParams::output_rank,
     )?
     else {
@@ -410,6 +507,7 @@ pub(crate) fn derive_ab_commitment_candidate(
             num_digits_outer,
             inner_output_rank: inner_commit_matrix.output_rank(),
             hiding: masking.hiding(),
+            sigma_binding: false,
         })?
     else {
         return Ok(None);

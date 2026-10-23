@@ -725,6 +725,9 @@ impl<'a> CandidateDomain<'a> {
                 }
             }
         }
+        if !masking.allows_terminal() {
+            terminal.clear();
+        }
 
         Ok(GeneratedCandidates { terminal, folds })
     }

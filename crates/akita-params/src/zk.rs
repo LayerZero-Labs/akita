@@ -293,6 +293,13 @@ impl ZkOpeningSchedule {
                 if own.profile.randomness_columns != b_randomness_columns(own)? {
                     return Err(invalid("has the wrong residual randomness r_a"));
                 }
+                // The Σ-protocol opens A_a on w_k itself and [B_a | B′_a]
+                // on (t̂_a, r_a): one inner digit plane, and both matrices
+                // Module-SIS hard at the Σ collision radius (§5.5.2).
+                if own.profile.inner.digits.num_digits != 1 {
+                    return Err(invalid("commits w_k in more than one inner digit plane"));
+                }
+                residual_binding(own).map_err(|what| invalid(&what))?;
                 continue;
             } else {
                 if params.own_group().profile.randomness_columns != 0 {
@@ -314,6 +321,50 @@ impl ZkOpeningSchedule {
         }
         Ok(zk)
     }
+}
+
+/// `A_a` and `[B_a | B′_a]` of the residual commitment `own` are Module-SIS
+/// hard at the Σ collision radius (`specs/whiteout-akita.md` §5.5.2), or the
+/// reason they are not, naming the matrix.
+#[cfg(feature = "zk")]
+fn residual_binding(own: &GroupOpenPhaseParams) -> Result<(), String> {
+    use crate::sis::sigma_binding::sigma_binding_min_rank;
+    let inner = &own.profile.inner.matrix;
+    let outer = &own.profile.outer.matrix;
+    for (name, rank, width, ring_dim, modulus) in [
+        (
+            "A_a",
+            inner.output_rank(),
+            inner.input_width(),
+            inner.ring_dimension(),
+            inner.sis_modulus_profile(),
+        ),
+        (
+            "[B_a | B′_a]",
+            outer.output_rank(),
+            outer.input_width(),
+            outer.ring_dimension(),
+            outer.sis_modulus_profile(),
+        ),
+    ] {
+        let binding = sigma_binding_min_rank(modulus, ring_dim, width).ok_or_else(|| {
+            format!("has no Σ-binding rank for residual {name} (d {ring_dim}, width {width})")
+        })?;
+        if rank < binding {
+            return Err(format!(
+                "commits the residual with {name} of rank {rank}, below its Σ-binding rank \
+                 {binding} (d {ring_dim}, width {width})"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Without the `zk` feature the Σ-binding table is not compiled, so no
+/// residual is admitted.
+#[cfg(not(feature = "zk"))]
+fn residual_binding(_own: &GroupOpenPhaseParams) -> Result<(), String> {
+    Err("needs akita-params' zk feature to price the residual at the Σ radius".into())
 }
 
 /// Groups of a fold that carry witness data: every group but a setup prefix,
