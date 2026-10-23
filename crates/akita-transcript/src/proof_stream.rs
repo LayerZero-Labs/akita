@@ -238,6 +238,7 @@ pub fn new_verifier_channel<'proof>(
 ) -> Result<VerifierChannel<'proof>, AkitaError> {
     Ok(VerifierChannel::new(
         domain(session, instance)?.to_verifier(TranscriptSponge::default(), proof),
+        proof.len(),
     ))
 }
 
@@ -468,6 +469,10 @@ pub fn send_bytes(state: &mut ProverChannel, bytes: &[u8]) {
 
 /// Receive an exact schedule-bounded number of bytes in fixed-size chunks.
 pub fn receive_bytes(state: &mut VerifierChannel<'_>, len: usize) -> Result<Vec<u8>, AkitaError> {
+    if len > state.proof_len {
+        state.invalidate();
+        return Err(AkitaError::InvalidProof);
+    }
     let mut bytes = Vec::new();
     bytes
         .try_reserve_exact(len)
@@ -1344,6 +1349,34 @@ mod tests {
         assert!(receive_bounded_bytes(&mut verifier, site, 8).is_err());
         assert!(verifier.verifier_message::<[u8; 32]>().is_err());
         assert!(verifier.prover_message::<u32>().is_err());
+        assert!(verifier.check_eof().is_err());
+    }
+
+    #[test]
+    fn byte_receipt_rejects_lengths_larger_than_the_proof() {
+        for len in [1, u32::MAX as usize, usize::MAX] {
+            let mut verifier = new_verifier_channel(b"bytes", b"fixture", &[]).unwrap();
+            assert!(matches!(
+                receive_bytes(&mut verifier, len),
+                Err(AkitaError::InvalidProof)
+            ));
+            assert!(verifier.check_eof().is_err());
+        }
+    }
+
+    #[test]
+    fn bounded_receipt_rejects_a_missing_payload_under_a_large_budget() {
+        let site = ProtocolSiteId::default();
+        let mut prover = new_prover_channel(b"bounded", b"fixture").unwrap();
+        let (length_record, _) = bounded_bytes_sites(site);
+        prover_context(&mut prover, length_record);
+        prover.prover_message(&u32::MAX);
+        let proof = prover.narg_string().to_vec();
+        let mut verifier = new_verifier_channel(b"bounded", b"fixture", &proof).unwrap();
+        assert!(matches!(
+            receive_bounded_bytes(&mut verifier, site, usize::MAX),
+            Err(AkitaError::InvalidProof)
+        ));
         assert!(verifier.check_eof().is_err());
     }
 
