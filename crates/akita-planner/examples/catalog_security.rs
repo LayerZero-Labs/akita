@@ -131,11 +131,13 @@ fn main() -> Result<(), String> {
             .join(format!("{}.aks", family.family_name()));
         let bytes = fs::read(&artifact_path)
             .map_err(|error| format!("read {}: {error}", artifact_path.display()))?;
-        let catalog = akita_schedules::ValidatedScheduleCatalog::from_artifact_bytes(
+        let admission = (family.admission)().map_err(|error| error.to_string())?;
+        let catalog = akita_schedules::ValidatedScheduleCatalog::from_artifact_bytes_admitting(
             &bytes,
             family.family_name(),
             &policy,
             family.ring_challenge_config,
+            admission,
         )
         .map_err(|error| format!("load {}: {error}", artifact_path.display()))?;
         let policy_minimum_bits = SisSecurityPolicy::from(policy.sis_security_policy)

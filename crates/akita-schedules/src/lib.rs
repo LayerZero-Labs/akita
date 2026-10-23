@@ -16,6 +16,7 @@ pub use artifact::{
     ValidatedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
+pub use audit::ScheduleAdmission;
 pub use policy_digest::policy_digest;
 pub use resolve::ResolvedScheduleRow;
 pub use runtime::{

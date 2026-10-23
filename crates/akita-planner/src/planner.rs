@@ -856,7 +856,7 @@ pub fn find_schedule_for_test_relation_mode(
     )
 }
 
-/// Plan a test-only zero-knowledge schedule masked through `zk`'s cut.
+/// Plan a zero-knowledge schedule masked through `zk`'s cut.
 ///
 /// At every masked level the planner sizes each group's fold digits for
 /// [`akita_params::zk::ZkOpeningSchedule::fold_failure_target`] with no
@@ -872,8 +872,8 @@ pub fn find_schedule_for_test_relation_mode(
 /// The search prices every fold response at the clear nonce width, so it may
 /// rank candidates by up to two nonce bytes per masked level more than the
 /// one-shot plan sends.
-#[cfg(all(feature = "test-support", feature = "zk"))]
-pub fn find_schedule_for_test_zk(
+#[cfg(feature = "zk")]
+pub fn find_zk_schedule(
     key: &ScheduleLookupKey,
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],

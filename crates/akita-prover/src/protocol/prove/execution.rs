@@ -241,7 +241,8 @@ where
 /// session binding, and `finish`.
 ///
 /// A panic anywhere in the prover, including a backend kernel, is returned as
-/// [`AkitaError::Internal`] through [`catch_prover_panic`].
+/// [`AkitaError::Internal`] through [`catch_prover_panic`]. A zero-knowledge
+/// configuration is refused ([`akita_config::require_clear_opening`]).
 #[allow(clippy::too_many_arguments)]
 pub fn batched_prove<'a, Cfg, H, S>(
     expanded: &AkitaSetupDescriptor,
@@ -267,6 +268,7 @@ where
     H: CommitmentHandleMetadata + 'static,
     S: Sponge,
 {
+    akita_config::require_clear_opening::<Cfg>()?;
     catch_prover_panic(move || {
         let (resolved, claims, grinding_plan, descriptor_bytes) =
             root::resolve_root::<Cfg, H>(expanded, schedules, opening, basis)?;

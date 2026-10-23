@@ -13,6 +13,7 @@ use akita_params::{FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout};
 use jolt_crypto::challenge::SparseChallengeConfig;
 
 use crate::PlannerPolicy;
+use akita_schedules::ScheduleAdmission;
 
 mod materialize;
 mod publish;
@@ -138,6 +139,9 @@ pub struct EmitSpec {
     pub preplanned: Vec<(ScheduleLookupKey, FoldSchedule)>,
     pub output_path: PathBuf,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    /// Which rows the family admits; a zero-knowledge family plans every row
+    /// with [`crate::find_zk_schedule`].
+    pub admission: ScheduleAdmission,
 }
 
 // Schedule search is memory bound. Keep the default below host-wide

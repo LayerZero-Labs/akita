@@ -44,8 +44,7 @@ akita-types = { version = "0.1.0", path = "../akita-types", default-features = f
 [features]
 response-model-diagnostics = []
 # The masked prefix of a zero-knowledge opening (`specs/whiteout-akita.md`
-# §4.5–4.6). It selects nothing; its entry point also needs `test-support`
-# until zero knowledge is published.
+# §4.5–4.6). It selects nothing: a zero-knowledge configuration does.
 zk = [
   "dep:jolt-zk",
   "dep:zeroize",
@@ -53,7 +52,6 @@ zk = [
   "akita-params/zk",
   "akita-config/zk",
 ]
-test-support = []
 parallel = [
   "jolt-crypto/parallel",
   "jolt-algebra/parallel",

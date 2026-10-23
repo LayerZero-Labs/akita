@@ -39,10 +39,8 @@ jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15
 [features]
 benchmark-support = []
 # The masked prefix of a zero-knowledge opening (`specs/whiteout-akita.md`
-# §4.5–4.6). It selects nothing; its entry points also need `test-support`
-# until zero knowledge is published.
+# §4.5–4.6). It selects nothing: a zero-knowledge configuration does.
 zk = ["dep:jolt-zk", "akita-types/zk", "akita-params/zk", "akita-config/zk"]
-test-support = []
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",

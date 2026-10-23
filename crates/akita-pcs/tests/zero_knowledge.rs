@@ -9,12 +9,10 @@
 #![allow(missing_docs)]
 
 mod common;
-#[path = "dynamic_backends/private_cpu.rs"]
-mod private_cpu;
 
 use akita_config::{
     derive_transcript_grinding_plan, policy_of, proof_optimized::fp128, CommitmentConfig,
-    TrustedScheduleCatalog, ValidatedScheduleCatalog,
+    TrustedScheduleCatalog, ValidatedScheduleCatalog, ZkCommitmentConfig,
 };
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;
@@ -32,13 +30,14 @@ use akita_types::{
     AkitaSponge, FoldDrawRecord, GrindingReplay, GroupBatchStatement, OpeningClaims,
     PolynomialGroupClaims, ProverGrinding, VerifierGrinding, PROOF_STREAM_PROTOCOL,
 };
-use jolt_algebra::{One, Ring, Zero};
+use jolt_algebra::{Ring, Zero};
 use jolt_transcript::{ProverTranscript, VerifierTranscript};
-use private_cpu::{Fault, PrivateCpu};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
-type Cfg = fp128::Dense;
+/// The clear preset whose zero-knowledge family the tests plan in.
+type Clear = fp128::Dense;
+type Cfg = ZkCommitmentConfig<Clear>;
 type F = <Cfg as CommitmentConfig>::Field;
 type E = F;
 
@@ -60,7 +59,7 @@ fn policy() -> akita_schedules::PlannerPolicy {
 /// The planner's zero-knowledge row for one dense `NV`-variable polynomial.
 fn zk_row() -> (CommittedGroupBatchProfile, FoldSchedule) {
     let key = key();
-    let planned = akita_planner::find_schedule_for_test_zk(
+    let planned = akita_planner::find_zk_schedule(
         &key,
         Cfg::committed_source_contract().unwrap(),
         &[],
@@ -89,11 +88,8 @@ fn admit(schedule: &FoldSchedule) -> Result<ZkOpeningSchedule, AkitaError> {
 }
 
 fn zk_catalog() -> TrustedScheduleCatalog<Cfg> {
-    TrustedScheduleCatalog::try_new_with_test_zk(
-        [zk_row()],
-        ChunkedWitnessCfg::default_non_chunked(),
-    )
-    .unwrap()
+    TrustedScheduleCatalog::try_from_rows([zk_row()], ChunkedWitnessCfg::default_non_chunked())
+        .unwrap()
 }
 
 /// The parameters of every nonterminal fold, in level order.
@@ -188,11 +184,11 @@ fn planner_masks_every_level_up_to_the_cut() {
 }
 
 #[test]
-fn trusted_catalogs_reject_zero_knowledge_rows() {
+fn clear_catalogs_reject_zero_knowledge_rows_and_the_reverse() {
     on_large_stack(|| {
         let trusted = |row| {
             ValidatedScheduleCatalog::try_new(
-                Cfg::schedule_family_name(),
+                Clear::schedule_family_name(),
                 [row],
                 &policy(),
                 Cfg::ring_challenge_config,
@@ -209,9 +205,21 @@ fn trusted_catalogs_reject_zero_knowledge_rows() {
         // The same folds without the cut still carry hiding randomness.
         let mut no_cut = schedule;
         no_cut.zk = None;
-        let error = trusted((profiles, no_cut));
+        let error = trusted((profiles.clone(), no_cut.clone()));
         assert!(
             error.contains("hiding randomness is not selectable"),
+            "{error}"
+        );
+        // A zero-knowledge catalog admits no clear row.
+        let error = TrustedScheduleCatalog::<Cfg>::try_from_rows(
+            [(profiles, no_cut)],
+            ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(
+            error.contains("admits only zero-knowledge schedules"),
             "{error}"
         );
     });
@@ -366,7 +374,8 @@ fn admission_recomputes_the_masked_levels() {
         assert!(error.to_string().contains("base field"), "{error}");
         // An ℓ2-route level at the cut, taken from a clear catalog row.
         let clear_catalog =
-            common::load_workspace_scheme::<Cfg>(ChunkedWitnessCfg::default_non_chunked()).unwrap();
+            common::load_workspace_scheme::<Clear>(ChunkedWitnessCfg::default_non_chunked())
+                .unwrap();
         let clear_row = clear_catalog.schedules().resolve_key(&key()).unwrap();
         let l2_level = clear_row
             .schedule()
@@ -529,11 +538,23 @@ fn hiding_precommitted_commitments_to_one_polynomial_differ() {
     });
 }
 
-/// One proof exercises both: hiding randomness at the masked levels and
-/// one-shot fold responses there.
+/// No unmasked proof under a zero-knowledge configuration: the clear
+/// entry points of both roles (`AkitaCommitmentScheme::batched_prove`,
+/// `akita_pcs::batched_prove`, `AkitaVerifier::verify_standalone`) refuse
+/// before any transcript operation. The masked path is `masked_prefix.rs`
+/// and `zk_end_to_end.rs`.
 #[test]
-fn zero_knowledge_proof_verifies_and_rejects_a_wrong_opening() {
+fn clear_entry_points_refuse_a_zero_knowledge_configuration() {
     on_large_stack(|| {
+        fn refused<T>(result: Result<T, AkitaError>) {
+            match result {
+                Err(AkitaError::UnsupportedSchedule(message)) => {
+                    assert!(message.contains("masked prefix"), "{message}")
+                }
+                Err(error) => panic!("refused for another reason: {error}"),
+                Ok(_) => panic!("a zero-knowledge configuration opened in the clear"),
+            }
+        }
         let scheme = AkitaCommitmentScheme::<Cfg>::new(zk_catalog());
         let setup = scheme.setup_prover(NV, 1).unwrap();
         let backend = backend(&setup, 2);
@@ -547,106 +568,121 @@ fn zero_knowledge_proof_verifies_and_rejects_a_wrong_opening() {
             .unwrap();
         let commitment = output.committed_group;
         let (point, opening) = point_and_opening(&evals);
-        let group =
-            PolynomialGroupClaims::new(point.clone(), vec![opening], commitment.clone()).unwrap();
-        let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
-            OpeningClaims::from_groups(vec![group]).unwrap(),
-            vec![output.private_handle],
-            scheme.schedules(),
+        let prover_data = || {
+            SelectedProverOpeningData::from_committed_claims::<Cfg>(
+                OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                    point.clone(),
+                    vec![opening],
+                    commitment.clone(),
+                )
+                .unwrap()])
+                .unwrap(),
+                vec![output.private_handle.clone()],
+                scheme.schedules(),
+            )
+            .unwrap()
+        };
+        let selection = prover_data().selection();
+        refused(scheme.batched_prove(
+            &setup,
+            prover_data(),
+            &backend,
+            SESSION,
+            BasisMode::Lagrange,
+        ));
+
+        let resolved = scheme.schedules().resolve_selection(selection).unwrap();
+        let ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
+            resolved.schedule(),
+            prover_data().opening_layout(),
         )
         .unwrap();
-        let selection = prover_data.selection();
-        let proof = scheme
-            .batched_prove(&setup, prover_data, &backend, SESSION, BasisMode::Lagrange)
+        let prefixes = backend
+            .import_setup_prefixes(&setup.prefix_slots, &ids)
             .unwrap();
+        let mut registry = BackendRegistry::<Cfg>::new().unwrap();
+        let id = registry.register(&backend, &prefixes).unwrap();
+        let mut transcript = ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION);
+        refused(akita_pcs::batched_prove(
+            setup.expanded.descriptor(),
+            scheme.schedules(),
+            &registry,
+            prover_data(),
+            &mut transcript,
+            BasisMode::Lagrange,
+            &mut FixedFoldRoute::new(vec![id; resolved.schedule().num_fold_levels()]),
+        ));
+        assert!(
+            transcript.finish().is_empty(),
+            "the prover wrote before refusing"
+        );
 
         let verifier = scheme
             .verifier(scheme.setup_verifier(&setup).unwrap())
             .unwrap();
-        let verify = |claimed: F| {
-            let group =
-                PolynomialGroupClaims::new(point.clone(), vec![claimed], &commitment).unwrap();
-            let claims = OpeningClaims::from_groups(vec![group]).unwrap();
-            let statement = GroupBatchStatement::new(selection, claims).unwrap();
-            verifier.verify_standalone(&proof, SESSION, statement, BasisMode::Lagrange)
-        };
-        verify(opening).unwrap();
-        assert!(verify(opening + F::one()).is_err());
-    });
-}
-
-/// W2-b: a fold response the backend rejects at a masked level aborts the
-/// proof after that one probe.
-#[test]
-fn rejected_masked_fold_response_overflows_after_one_probe() {
-    on_large_stack(|| run_overflow().unwrap());
-}
-
-fn run_overflow() -> Result<(), AkitaError> {
-    let scheme = AkitaCommitmentScheme::<Cfg>::new(zk_catalog());
-    let setup = scheme.setup_prover(NV, 1)?;
-    let private = PrivateCpu::new(backend(&setup, 3));
-    let (evals, poly) = polynomial();
-    let (committed_group, handle) = private.commit(scheme.schedules(), vec![poly])?;
-    let (point, opening) = point_and_opening(&evals);
-    let input = || {
-        SelectedProverOpeningData::from_committed_claims::<Cfg>(
-            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                point.clone(),
-                vec![opening],
-                committed_group.clone(),
-            )?])?,
-            vec![handle.clone()],
-            scheme.schedules(),
-        )
-    };
-    let selection = input()?.selection();
-    let resolved = scheme.schedules().resolve_selection(selection)?;
-    let levels = resolved.schedule().num_fold_levels();
-    let prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
-        resolved.schedule(),
-        input()?.opening_layout(),
-    )?;
-    let prefixes = private.prefixes(&setup, &prefix_ids);
-    let mut registry = BackendRegistry::<Cfg>::new()?;
-    let id = registry.register(&private, &prefixes)?;
-    let prove = || {
-        common::prove_on_session(SESSION, |transcript| {
-            akita_pcs::batched_prove(
-                setup.expanded.descriptor(),
-                scheme.schedules(),
-                &registry,
-                input()?,
-                transcript,
-                BasisMode::Lagrange,
-                &mut FixedFoldRoute::new(vec![id; levels]),
-            )
-        })
-    };
-
-    let proof = prove()?;
-    let verifier = scheme.verifier(scheme.setup_verifier(&setup)?)?;
-    verifier.verify_standalone(
-        &proof,
-        SESSION,
-        GroupBatchStatement::new(
+        let statement = GroupBatchStatement::new(
             selection,
             OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                 point.clone(),
                 vec![opening],
-                &committed_group,
-            )?])?,
-        )?,
-        BasisMode::Lagrange,
-    )?;
+                &commitment,
+            )
+            .unwrap()])
+            .unwrap(),
+        )
+        .unwrap();
+        refused(verifier.verify_standalone(&[], SESSION, statement, BasisMode::Lagrange));
+    });
+}
 
-    for level in 0..=ZK_CUT_LEVEL {
-        let start = private.fold_probes.get();
-        private.reject_fold_probe.set(Some(start + level as usize));
-        assert_eq!(prove(), Err(AkitaError::FoldOverflow { level }));
-        assert_eq!(private.fold_probes.get(), start + level as usize + 1);
-    }
-    Ok(())
+/// S9: a zero-knowledge configuration's descriptor binds `zk = true`, so it
+/// decodes only against that feature set, and a clear configuration's only
+/// against `zk = false`, for the same row and setup.
+#[test]
+fn the_descriptor_binds_the_configuration_mode() {
+    on_large_stack(|| {
+        use akita_serialization::AkitaDeserialize;
+        use akita_types::{AkitaInstanceDescriptor, ProtocolFeatureSet};
+
+        let scheme = AkitaCommitmentScheme::<Cfg>::new(zk_catalog());
+        let setup = scheme.setup_prover(NV, 1).unwrap();
+        let row = scheme.schedules().resolve_key(&key()).unwrap();
+        let layout = key().opening_layout().unwrap();
+        let descriptor = |zk: bool| {
+            let bytes = if zk {
+                akita_config::transcript_instance_descriptor::<F, Cfg>(
+                    setup.expanded.descriptor(),
+                    &layout,
+                    row.selection(),
+                    row.schedule(),
+                    BasisMode::Lagrange,
+                )
+            } else {
+                akita_config::transcript_instance_descriptor::<F, Clear>(
+                    setup.expanded.descriptor(),
+                    &layout,
+                    row.selection(),
+                    row.schedule(),
+                    BasisMode::Lagrange,
+                )
+            };
+            bytes.unwrap().1
+        };
+        for (bound, other) in [(true, false), (false, true)] {
+            let bytes = descriptor(bound);
+            let decode = |zk| {
+                AkitaInstanceDescriptor::deserialize_uncompressed_exact(
+                    &bytes,
+                    &ProtocolFeatureSet { zk },
+                )
+            };
+            assert_eq!(decode(bound).unwrap().setup.protocol_features.zk, bound);
+            assert!(
+                decode(other).is_err(),
+                "a zk = {bound} descriptor decodes as {other}"
+            );
+        }
+    });
 }
 
 /// A one-shot fold response sends no nonce and forks at counter 0, and the
@@ -732,7 +768,7 @@ fn one_shot_fold_response_replays_without_a_nonce() {
 /// family offloads level 0's setup to a level-1 setup prefix from 31
 /// variables on; its root here also folds one precommitted dense group, the
 /// shape of Jolt's untrusted advice.
-type RecCfg = akita_config::RecursiveCommitmentConfig<fp128::OneHot>;
+type RecCfg = ZkCommitmentConfig<akita_config::RecursiveCommitmentConfig<fp128::OneHot>>;
 const MULTI_NV: usize = 31;
 
 /// The planner's row for one `MULTI_NV`-variable one-hot polynomial beside
@@ -744,7 +780,7 @@ fn multi_group_zk_row() -> (CommittedGroupBatchProfile, FoldSchedule) {
         final_group: PolynomialGroupLayout::singleton(MULTI_NV),
         precommitteds: vec![precommitted],
     };
-    let planned = akita_planner::find_schedule_for_test_zk(
+    let planned = akita_planner::find_zk_schedule(
         &key,
         RecCfg::committed_source_contract().unwrap(),
         &[Cfg::committed_source_contract().unwrap()],
@@ -831,7 +867,7 @@ fn masked_levels_admit_a_hiding_precommitted_group_and_a_public_setup_prefix() {
 #[test]
 fn headline_row_offloads_to_a_setup_prefix_at_the_cut_level() {
     on_large_stack(|| {
-        let planned = akita_planner::find_schedule_for_test_zk(
+        let planned = akita_planner::find_zk_schedule(
             &ScheduleLookupKey::single(PolynomialGroupLayout::singleton(36)),
             RecCfg::committed_source_contract().unwrap(),
             &[],
@@ -865,223 +901,4 @@ fn witness_groups_split_the_one_shot_budget_per_level() {
         assert_eq!(target(&schedule.root.params), one_shot(4));
         assert_eq!(target(&schedule.recursive_folds[0].params), one_shot(2));
     });
-}
-
-/// One zero-knowledge proof over a hiding precommitted group at the root and
-/// a setup prefix at the cut level.
-#[test]
-fn zero_knowledge_proof_with_a_precommitted_group_and_a_setup_prefix_verifies() {
-    on_large_stack(|| {
-        let (profiles, schedule) = multi_group_zk_row();
-        let precommitted_profile = profiles.precommitteds[0];
-        let opening_layout = ScheduleLookupKey {
-            final_group: profiles.final_group.group,
-            precommitteds: profiles.precommitteds.clone(),
-        }
-        .opening_layout()
-        .unwrap();
-        let scheme = AkitaCommitmentScheme::<RecCfg>::new(
-            TrustedScheduleCatalog::try_new_with_test_zk(
-                [(profiles, schedule.clone())],
-                ChunkedWitnessCfg::default_non_chunked(),
-            )
-            .unwrap(),
-        );
-        let setup = scheme.setup_prover(MULTI_NV, 2).unwrap();
-        let backend = CpuBackend::new(setup.expanded.clone())
-            .unwrap()
-            .with_hiding_rng(StdRng::seed_from_u64(5));
-
-        // The precommitted dense group, committed under its hiding profile
-        // by the dense producer, as Jolt commits untrusted advice.
-        let (pre_evals, pre_poly) = polynomial();
-        let pre = backend
-            .commit(
-                &zk_catalog(),
-                &backend.import_source(vec![pre_poly]).unwrap(),
-                GroupContext::explicit(&precommitted_profile),
-            )
-            .unwrap();
-        let final_poly = common::make_onehot_poly::<RecCfg>(MULTI_NV, 0x2b2b);
-        let final_output = backend
-            .commit(
-                scheme.schedules(),
-                &backend.import_source(vec![final_poly.clone()]).unwrap(),
-                GroupContext::scheduler_with_precommitted_groups(
-                    &akita_params::PrecommittedGroupProfiles::from_profiles(vec![
-                        precommitted_profile,
-                    ])
-                    .unwrap(),
-                ),
-            )
-            .unwrap();
-
-        let point = common::random_point(MULTI_NV, 0x2b2b);
-        let pre_opening = pre_evals
-            .iter()
-            .zip(lagrange_weights(&point[..NV]).unwrap())
-            .fold(F::zero(), |sum, (&value, weight)| sum + value * weight);
-        let final_opening = common::onehot_opening_lagrange(&final_poly, &point);
-        let claims = |final_opening: F| {
-            OpeningClaims::from_groups(vec![
-                PolynomialGroupClaims::new(
-                    point[..NV].to_vec(),
-                    vec![pre_opening],
-                    &pre.committed_group,
-                )
-                .unwrap(),
-                PolynomialGroupClaims::new(
-                    point.clone(),
-                    vec![final_opening],
-                    &final_output.committed_group,
-                )
-                .unwrap(),
-            ])
-            .unwrap()
-        };
-        let prover_data = SelectedProverOpeningData::from_committed_claims::<RecCfg>(
-            OpeningClaims::from_groups(vec![
-                PolynomialGroupClaims::new(
-                    point[..NV].to_vec(),
-                    vec![pre_opening],
-                    pre.committed_group.clone(),
-                )
-                .unwrap(),
-                PolynomialGroupClaims::new(
-                    point.clone(),
-                    vec![final_opening],
-                    final_output.committed_group.clone(),
-                )
-                .unwrap(),
-            ])
-            .unwrap(),
-            vec![pre.private_handle, final_output.private_handle],
-            scheme.schedules(),
-        )
-        .unwrap();
-        let selection = prover_data.selection();
-        let proof = scheme
-            .batched_prove(&setup, prover_data, &backend, SESSION, BasisMode::Lagrange)
-            .unwrap();
-
-        let verifier = scheme
-            .verifier(
-                scheme
-                    .setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
-                    .unwrap(),
-            )
-            .unwrap();
-        let verify = |final_opening: F| {
-            verifier.verify_standalone(
-                &proof,
-                SESSION,
-                GroupBatchStatement::new(selection, claims(final_opening)).unwrap(),
-                BasisMode::Lagrange,
-            )
-        };
-        verify(final_opening).unwrap();
-        assert!(verify(final_opening + F::one()).is_err());
-    });
-}
-
-/// Only the Stage-3 output check can reject: the backend adds `X − X²` to the
-/// last Stage-3 round at level 0, so every round sums correctly, the prover's
-/// checks pass, and the setup-prefix evaluation and every later message stay
-/// honest at the drawn point. The verifier, which reads Stage 3 in the clear,
-/// rejects the proof; the same backend without the fault proves one it
-/// accepts.
-#[test]
-fn a_stage3_output_miss_is_rejected() {
-    on_large_stack(|| run_stage3_output_miss().unwrap());
-}
-
-fn run_stage3_output_miss() -> Result<(), AkitaError> {
-    let (profiles, schedule) = multi_group_zk_row();
-    let precommitted = profiles.precommitteds[0];
-    let layout = ScheduleLookupKey {
-        final_group: profiles.final_group.group,
-        precommitteds: profiles.precommitteds.clone(),
-    }
-    .opening_layout()?;
-    let scheme =
-        AkitaCommitmentScheme::<RecCfg>::new(TrustedScheduleCatalog::try_new_with_test_zk(
-            [(profiles, schedule.clone())],
-            ChunkedWitnessCfg::default_non_chunked(),
-        )?);
-    let setup = scheme.setup_prover(MULTI_NV, 2)?;
-    let private = PrivateCpu::new(backend(&setup, 6));
-    let (pre_evals, pre_poly) = polynomial();
-    let (pre, pre_handle) = private.commit_in(
-        &zk_catalog(),
-        vec![pre_poly],
-        GroupContext::explicit(&precommitted),
-    )?;
-    let final_poly = common::make_onehot_poly::<RecCfg>(MULTI_NV, 0x2b2b);
-    let (root, root_handle) = private.commit_in(
-        scheme.schedules(),
-        vec![final_poly.clone()],
-        GroupContext::scheduler_with_precommitted_groups(
-            &akita_params::PrecommittedGroupProfiles::from_profiles(vec![precommitted])?,
-        ),
-    )?;
-    let point = common::random_point(MULTI_NV, 0x2b2b);
-    let pre_opening = pre_evals
-        .iter()
-        .zip(lagrange_weights(&point[..NV])?)
-        .fold(F::zero(), |sum, (&value, weight)| sum + value * weight);
-    let root_opening = common::onehot_opening_lagrange(&final_poly, &point);
-    let input = || {
-        SelectedProverOpeningData::from_committed_claims::<RecCfg>(
-            OpeningClaims::from_groups(vec![
-                PolynomialGroupClaims::new(point[..NV].to_vec(), vec![pre_opening], pre.clone())?,
-                PolynomialGroupClaims::new(point.clone(), vec![root_opening], root.clone())?,
-            ])?,
-            vec![pre_handle.clone(), root_handle.clone()],
-            scheme.schedules(),
-        )
-    };
-    let selection = input()?.selection();
-    let resolved = scheme.schedules().resolve_selection(selection)?;
-    let levels = resolved.schedule().num_fold_levels();
-    let prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
-        resolved.schedule(),
-        input()?.opening_layout(),
-    )?;
-    let prefixes = private.prefixes(&setup, &prefix_ids);
-    let mut registry = BackendRegistry::<RecCfg>::new()?;
-    let id = registry.register(&private, &prefixes)?;
-    let prove = || {
-        common::prove_on_session(SESSION, |transcript| {
-            akita_pcs::batched_prove(
-                setup.expanded.descriptor(),
-                scheme.schedules(),
-                &registry,
-                input()?,
-                transcript,
-                BasisMode::Lagrange,
-                &mut FixedFoldRoute::new(vec![id; levels]),
-            )
-        })
-    };
-    let verifier =
-        scheme.verifier(scheme.setup_verifier_for_schedule(&setup, &schedule, &layout)?)?;
-    let verify = |proof: &[u8]| {
-        verifier.verify_standalone(
-            proof,
-            SESSION,
-            GroupBatchStatement::new(
-                selection,
-                OpeningClaims::from_groups(vec![
-                    PolynomialGroupClaims::new(point[..NV].to_vec(), vec![pre_opening], &pre)?,
-                    PolynomialGroupClaims::new(point.clone(), vec![root_opening], &root)?,
-                ])?,
-            )?,
-            BasisMode::Lagrange,
-        )
-    };
-
-    verify(&prove()?)?;
-    private.fault.set(Fault::Stage3OutputMiss);
-    assert_eq!(verify(&prove()?), Err(AkitaError::InvalidProof));
-    Ok(())
 }

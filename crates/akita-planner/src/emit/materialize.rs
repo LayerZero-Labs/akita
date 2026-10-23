@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(feature = "zk")]
+use akita_params::zk::{ZkOpeningSchedule, ZK_CUT_LEVEL};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
@@ -240,13 +242,24 @@ fn materialized_entry(
     let reused_preplan = preplanned.is_some();
     let result = match preplanned {
         Some((_, schedule)) => Ok(schedule.clone()),
-        None => crate::find_schedule(
-            &key,
-            spec.source_contract,
-            &contracts,
-            &spec.policy,
-            spec.ring_challenge_config,
-        )
+        None => match spec.admission {
+            ScheduleAdmission::Clear => crate::find_schedule(
+                &key,
+                spec.source_contract,
+                &contracts,
+                &spec.policy,
+                spec.ring_challenge_config,
+            ),
+            #[cfg(feature = "zk")]
+            ScheduleAdmission::ZeroKnowledge(_) => crate::find_zk_schedule(
+                &key,
+                spec.source_contract,
+                &contracts,
+                &spec.policy,
+                spec.ring_challenge_config,
+                ZkOpeningSchedule::new(ZK_CUT_LEVEL).map_err(|error| error.to_string())?,
+            ),
+        }
         .map(|planned| planned.schedule),
     };
     let entry = |schedule| MaterializedEntry {

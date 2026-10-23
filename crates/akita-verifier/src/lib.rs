@@ -27,7 +27,7 @@ mod benchmark_support;
 mod claims;
 mod coefficient_packing_relation;
 mod fold;
-#[cfg(all(feature = "zk", feature = "test-support"))]
+#[cfg(feature = "zk")]
 mod masked;
 mod prepared_cache;
 mod relation;
@@ -43,7 +43,7 @@ pub use benchmark_support::{
     relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
     RelationEvaluatorBenchmarkCase,
 };
-#[cfg(all(feature = "zk", feature = "test-support"))]
+#[cfg(feature = "zk")]
 pub use masked::{MaskedPrefix, MaskedPrefixRows, ResidualClaim};
 pub use prepared_cache::build_riscv64_terminal_ntt_cache;
 pub use relation::RelationMatrixEvaluator;

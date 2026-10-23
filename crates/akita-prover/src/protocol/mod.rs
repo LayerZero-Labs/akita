@@ -28,7 +28,7 @@ pub use prove::{
     batched_prove, catch_prover_panic, prove_digit_range, DigitRangeOutput, ProveLevelOutput,
     SuffixProverState,
 };
-#[cfg(all(feature = "zk", feature = "test-support"))]
+#[cfg(feature = "zk")]
 pub use prove::{prove_masked_prefix, ResidualOpening};
 pub use ring_relation::{
     validate_chunked_witness_cfg, validate_prepared_relation_groups, RingRelationProver,

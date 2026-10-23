@@ -52,7 +52,9 @@ where
     ///
     /// The first transcript operation absorbs the instance descriptor as a
     /// public message. The caller owns the transcript's protocol id, session
-    /// binding, and the final [`VerifierTranscript::finish`] check.
+    /// binding, and the final [`VerifierTranscript::finish`] check. A
+    /// zero-knowledge configuration is refused before any transcript
+    /// operation ([`akita_config::require_clear_opening`]).
     #[inline(never)]
     #[tracing::instrument(skip_all, name = "AkitaVerifier::batched_verify")]
     pub fn batched_verify<H: Sponge>(
@@ -61,6 +63,7 @@ where
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
+        akita_config::require_clear_opening::<Cfg>()?;
         let setup = &self.setup;
         let selection = statement.selection();
         let claims = statement.into_claims();

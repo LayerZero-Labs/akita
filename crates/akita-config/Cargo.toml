@@ -12,7 +12,8 @@ readme = "../../README.md"
 [features]
 test-support = []
 dev-protocol = ["akita-params/dev-protocol"]
-# Test-only zero-knowledge catalogs; zero knowledge is not selectable yet.
+# Zero-knowledge configurations (`ZkCommitmentConfig`) and their catalogs,
+# and the response proof's preset (`fp128::ResponseDigits`).
 zk = ["akita-params/zk", "akita-schedules/zk"]
 
 [dependencies]

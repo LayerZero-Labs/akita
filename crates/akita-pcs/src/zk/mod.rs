@@ -12,10 +12,14 @@
 //! 6. open `E(r) = v` under the response schedule.
 //!
 //! The verifier evaluates `A(r)` from the transposed rows and scans the
-//! setup's prefix views directly (W5a); it never builds `H`. Test support
-//! until the zero-knowledge mode is published (§5.5).
+//! setup's prefix views directly (W5a); it never builds `H`.
+//!
+//! The module also gathers the zero-knowledge opening's public pieces:
+//! [`ZkCommitmentConfig`], the masked prefix's prover and verifier, and the
+//! residual hand-off.
 
 mod compression;
+mod residual;
 mod rounds;
 mod rows;
 #[cfg(test)]
@@ -32,6 +36,7 @@ use akita_params::{
     BasisMode, DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout, PolynomialGroupLayout,
     RelationWitnessGeometry, ScheduleLookupKey,
 };
+use akita_prover::backend::ResidualExportKernel;
 use akita_prover::{prove_digit_range, SelectedProverOpeningData};
 use akita_sumcheck::FusedRounds;
 use akita_types::{
@@ -43,17 +48,21 @@ use akita_verifier::{AkitaVerifier, Stage1Verifier};
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{One, Prime128OffsetA7F7};
 use jolt_sumcheck::{prove_single, verify_single, SingleFormat, SingleInstance};
-use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
+use jolt_transcript::{Channel, ProverTranscript, SiteId, Sponge, VerifierTranscript};
 use jolt_zk::masking::ZkError;
 use jolt_zk::whiteout::lift_ct;
 use jolt_zk::whiteout::{
-    CompressedImage, ImageCompression, ResponseProver, ResponseStatement, ResponseWitness,
-    WhiteoutError,
+    CompressedImage, ImageCompression, ResponseLayout, ResponseProver, ResponseStatement,
+    ResponseWitness, WhiteoutError,
 };
 use zeroize::Zeroizing;
 
 use crate::AkitaCommitmentScheme;
+pub use akita_config::ZkCommitmentConfig;
+pub use akita_prover::{prove_masked_prefix, ResidualOpening};
+pub use akita_verifier::{MaskedPrefix, MaskedPrefixRows, ResidualClaim};
 use compression::Chains;
+pub use residual::ResidualShape;
 use rounds::{
     ClearProverRounds, ClearVerifierRounds, FusedE, FusedKernel, ProductKernel, SecretTable, SplitB,
 };
@@ -64,6 +73,15 @@ use rows::{
 
 /// The response statement's field.
 type F = Prime128OffsetA7F7;
+
+/// The `zk` feature makes the CPU backend a masked-prefix backend: it exports
+/// the residual opening at the cut (`ResidualExportKernel`) and samples hiding
+/// randomness from the OS. Fails to compile if `zk` stops enabling
+/// `akita-cpu-backend/zk`, which workspace dev-dependencies would hide.
+const _: fn() = || {
+    fn exports_the_residual<B: ResidualExportKernel<F, F>>() {}
+    exports_the_residual::<CpuBackend<F, F>>();
+};
 
 /// Grinding-plan level of the standalone digit-range reduction.
 const RANGE_LEVEL: u32 = 0;
@@ -165,6 +183,17 @@ where
             verifier,
             prover: Some(ProverSetup { setup, backend }),
         })
+    }
+
+    /// The variable count of the committed table for a response vector of
+    /// `layout`'s length: the `max_num_vars` its [`Self::setup`] needs and
+    /// the key of its response schedule.
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidInput`] for an empty layout.
+    pub fn num_vars(layout: &ResponseLayout) -> Result<usize, AkitaError> {
+        Ok(ResponseShape::new(layout.len())?.num_vars)
     }
 
     /// A verifier only.
@@ -495,6 +524,7 @@ where
         transcript: &mut ProverTranscript<H>,
     ) -> Result<(), ZkError> {
         statement.check_witness(witness)?;
+        transcript.site(RESPONSE_SITE);
         self.prove(statement, ProverDigits::honest(&witness.digits), transcript)
     }
 
@@ -503,7 +533,53 @@ where
         statement: &ResponseStatement<'_, F, D>,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<(), ZkError> {
+        transcript.site(RESPONSE_SITE);
         self.verify(statement, transcript)
+    }
+}
+
+/// The diagnostic site the response proof opens with, so an event log can
+/// tell its messages from the Σ-protocol's (sites never reach the sponge).
+pub const RESPONSE_SITE: SiteId = SiteId::label("whiteout/response");
+
+/// [`AkitaResponseProver`] that proves without checking the statement, so a
+/// test reaches the verifier with a false one (the consistent-cheat tests,
+/// `specs/whiteout-akita.md` §5.5 HT4): the unit tests' `Cheating` prover
+/// with `CheatDigits::everywhere`. Under `test-support` the sumcheck rounds
+/// of a false statement are shifted to stay consistent, so the proof it
+/// sends is a forgery only the verifier's checks can reject. Test support
+/// only.
+#[cfg(feature = "test-support")]
+pub struct UncheckedResponseProver<'a, Cfg: CommitmentConfig>(pub &'a AkitaResponseProver<Cfg>);
+
+#[cfg(feature = "test-support")]
+impl<Cfg, const D: usize> ResponseProver<F, D> for UncheckedResponseProver<'_, Cfg>
+where
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + 'static,
+{
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        self.0
+    }
+
+    fn prove_response<H: Sponge>(
+        &self,
+        statement: &ResponseStatement<'_, F, D>,
+        witness: &ResponseWitness,
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<(), ZkError> {
+        transcript.site(RESPONSE_SITE);
+        self.0
+            .prove(statement, ProverDigits::honest(&witness.digits), transcript)
+    }
+
+    fn verify_response<H: Sponge>(
+        &self,
+        statement: &ResponseStatement<'_, F, D>,
+        transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<(), ZkError> {
+        <AkitaResponseProver<Cfg> as ResponseProver<F, D>>::verify_response(
+            self.0, statement, transcript,
+        )
     }
 }
 
