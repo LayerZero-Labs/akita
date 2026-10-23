@@ -98,15 +98,17 @@ fn round_evaluations<F: Field, const TABLES: usize, const POINTS: usize>(
     )
 }
 
-/// The round polynomial through `evals` at `0..N`. Test-only: it is shifted
-/// by half its gap to the running claim, so a prover of a false statement
-/// still sends consistent rounds and only the verifier's final check can
-/// reject it; an honest round has no gap.
+/// The round polynomial through `evals` at `0..N`. In tests and under
+/// `test-support` it is shifted by half its gap to the running claim, so a
+/// prover of a false statement (`UncheckedResponseProver`, the unit tests'
+/// `Cheating`) still sends consistent rounds and only the verifier's checks
+/// can reject it; an honest round has no gap, so honest proofs are
+/// unchanged.
 fn round_polynomial<F: Field, const N: usize>(
-    #[cfg_attr(not(test), expect(unused_mut))] mut evals: [F; N],
-    #[cfg_attr(not(test), expect(unused_variables))] claim: F,
+    #[cfg_attr(not(any(test, feature = "test-support")), expect(unused_mut))] mut evals: [F; N],
+    #[cfg_attr(not(any(test, feature = "test-support")), expect(unused_variables))] claim: F,
 ) -> UnivariatePoly<F> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     {
         let shift = (claim - evals[0] - evals[1]).half();
         for eval in &mut evals {

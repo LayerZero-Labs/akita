@@ -594,11 +594,11 @@ fn a_fold_overflow_rerun_reuses_nothing() {
 /// commits pads that decode one message to one more than its true value and
 /// recomputes the auxiliary products to follow it. The Σ prover's per-row
 /// check refuses; with it skipped the response prover's statement check
-/// refuses; with both skipped the response prover's sumcheck refuses to
-/// send a round that misses its claim, so no proof reaches the verifier (a
-/// proof that did would have to fail it). The verifier's own rejection of
-/// the shift is checked on the honest proof with the masked value shifted
-/// in its bytes.
+/// refuses; with both skipped (`UncheckedResponseProver`, whose rounds stay
+/// consistent) the prover sends a forged response proof for the false
+/// statement over Akita's real rows, and `verify_sigma` rejects it. The
+/// honest proof with the masked value shifted in its bytes is rejected too,
+/// though that alone is only Fiat–Shamir binding.
 #[test]
 fn a_consistent_cheat_fails_at_every_layer() {
     on_large_stack(|| {
@@ -654,26 +654,21 @@ fn a_consistent_cheat_fails_at_every_layer() {
                 matches!(whiteout(&error), Some(WhiteoutError::ResponseRejected(_))),
                 "{kind:?}: {error:?}"
             );
-            // With both checks skipped, the response prover's sumcheck
-            // kernels still refuse to send a round whose sum misses its
-            // claim; a proof that does arise must fail the verifier.
-            match harness.prove(
-                15,
-                Cheat {
-                    unchecked_sigma: true,
-                    unchecked_response: true,
-                    ..cheat
-                },
-            ) {
-                Ok(proved) => assert!(
-                    harness.verify(&proved.proof).is_err(),
-                    "{kind:?}: the verifier accepts"
-                ),
-                Err(error) => assert!(
-                    format!("{error:?}").contains("expected sum"),
-                    "{kind:?}: {error:?}"
-                ),
-            }
+            let forged = harness
+                .prove(
+                    15,
+                    Cheat {
+                        unchecked_sigma: true,
+                        unchecked_response: true,
+                        ..cheat
+                    },
+                )
+                .unwrap();
+            let error = harness.verify(&forged.proof).err().unwrap();
+            assert!(
+                matches!(whiteout(&error), Some(WhiteoutError::ResponseRejected(_))),
+                "{kind:?}: {error:?}"
+            );
         }
     });
 }

@@ -544,7 +544,11 @@ pub const RESPONSE_SITE: SiteId = SiteId::label("whiteout/response");
 
 /// [`AkitaResponseProver`] that proves without checking the statement, so a
 /// test reaches the verifier with a false one (the consistent-cheat tests,
-/// `specs/whiteout-akita.md` §5.5 HT4). Test support only.
+/// `specs/whiteout-akita.md` §5.5 HT4): the unit tests' `Cheating` prover
+/// with `CheatDigits::everywhere`. Under `test-support` the sumcheck rounds
+/// of a false statement are shifted to stay consistent, so the proof it
+/// sends is a forgery only the verifier's checks can reject. Test support
+/// only.
 #[cfg(feature = "test-support")]
 pub struct UncheckedResponseProver<'a, Cfg: CommitmentConfig>(pub &'a AkitaResponseProver<Cfg>);
 
