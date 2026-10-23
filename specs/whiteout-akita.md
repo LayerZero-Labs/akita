@@ -2365,7 +2365,20 @@ The numbering continues the W4 note's A1–A23.
   does not: it commits range-checked radix-16 digits, not `s`, and the
   knowledge extractor uses an `A_D` collision on digit vectors
   (`05_security.tex:31-33`, Thm `wo:thm:knowledge`), so it needs Module-SIS
-  only at the digit-difference bound.
+  only at the digit-difference bound. Resolved in jolt by W6e: `A_p` takes
+  `sigma_binding_min_rank` at jolt-zk's `binding_collision_radius()`, and
+  `A_D` takes the planner's own digit-commitment price
+  (`planner_support::projected_collision_role_price`, then `min_secure_rank`).
+- **A42, public payloads on the masked channel (open).** Akita's prover
+  sends its public payloads through `Channel::exchange_all` on jolt-zk's
+  masked `MaskedProver`: the D image
+  (`crates/akita-prover/src/protocol/ring_relation.rs:278`) and `u_a`
+  (`crates/akita-prover/src/protocol/prove/suffix.rs:355`). So
+  `MaskedProver` must pass `exchange`/`exchange_all` through unmasked, and a
+  private value sent that way would go out clear without a compile error.
+  Sending them through an explicit public-only method would let jolt-zk drop
+  the passthrough. jolt's HT1 census (`fs_obligations` site classes plus the
+  runtime census in `tests/soundness/whiteout.rs`) is the backstop meanwhile.
 - A2, A3 and A12 from W4 are resolved by §4.3, §4.6 and §5.4.
 
 ## 11. Questions for the paper authors
