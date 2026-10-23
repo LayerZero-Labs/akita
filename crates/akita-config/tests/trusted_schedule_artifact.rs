@@ -14,3 +14,5 @@ mod semantics;
 mod setup;
 #[path = "trusted_schedule_artifact/support.rs"]
 mod support;
+#[path = "trusted_schedule_artifact/verifier_view.rs"]
+mod verifier_view;

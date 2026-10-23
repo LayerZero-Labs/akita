@@ -14,6 +14,7 @@ pub use challenge_order::ChallengeFieldOrder;
 
 /// Target work factor for every grinding-priced Fiat-Shamir query.
 pub const TRANSCRIPT_SECURITY_BITS: u16 = 128;
+const _: () = assert!(TRANSCRIPT_SECURITY_BITS as u32 == jolt_transcript::SECURITY_BITS);
 /// Packed width of the existing fold-response search nonce.
 pub const FOLD_RESPONSE_NONCE_BITS: u8 = 12;
 /// Exclusive upper bound for the existing fold-response search.
