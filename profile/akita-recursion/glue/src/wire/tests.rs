@@ -2,8 +2,15 @@ use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_config::proof_optimized::{fp128, fp32};
 use akita_params::sis::sis_table_key_for_linf_bound;
-use akita_types::{derive_public_matrix_prefix, sample_akita_setup_seed, RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierSlot};
-use akita_params::{scheduled_setup_prefix, CompressionChainPlan, GroupCommitPhaseParams, GroupOpenPhaseParams, GroupOpeningPlan, InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout, SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY};
+use akita_params::{
+    scheduled_setup_prefix, CompressionChainPlan, GroupCommitPhaseParams, GroupOpenPhaseParams,
+    GroupOpeningPlan, InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+    SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+};
+use akita_types::{
+    derive_public_matrix_prefix, sample_akita_setup_seed, RingVec, SetupPrefixPublicCommitment,
+    SetupPrefixVerifierSlot,
+};
 use jolt_field::Zero;
 
 type TestCfg = fp128::OneHot;

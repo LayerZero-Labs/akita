@@ -17,13 +17,18 @@
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_cpu_backend::{AkitaProverSetup, CommitOutput, CpuBackend, GroupContext, OneHotPoly};
+use akita_params::ScheduleLookupKey;
+use akita_params::{
+    lagrange_weights, BasisMode, OpeningClaimsLayout, PolynomialGroupLayout,
+    PrecommittedGroupProfiles,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::{CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-use akita_params::ScheduleLookupKey;
-use akita_params::{lagrange_weights, BasisMode, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupProfiles};
+use akita_types::{
+    CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
+};
 use akita_verifier::AkitaVerifier;
 use clap::Parser;
 use jolt_field::{

@@ -147,6 +147,14 @@ jobs:
       - name: Require one jolt-field identity and no akita-field
         run: scripts/check-shared-field-identity.sh
 
+  jolt-pins:
+    name: Jolt pins on main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require every a16z/jolt rev to be an ancestor of Jolt main
+        run: scripts/check-jolt-pins-on-main.sh
+
   doc:
     name: Documentation
     runs-on: ubuntu-latest

@@ -19,9 +19,9 @@ use std::time::Instant;
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_params::BasisMode;
 use akita_recursion_glue::{read_blob_case, AkitaJoltCase, AkitaJoltInputs, MAX_JOLT_BLOB_BYTES};
-use akita_types::{prepared_verifier_ntt_cache_metadata};
-use akita_params::{BasisMode};
+use akita_types::prepared_verifier_ntt_cache_metadata;
 use akita_verifier::{build_riscv64_terminal_ntt_cache, AkitaVerifier};
 use clap::Parser;
 use tracing::info;
@@ -355,12 +355,10 @@ macro_rules! run_selected_guest {
         );
 
         let now = Instant::now();
-        let is_valid = verify($blob, output, program_io.panic, proof);
+        let verified = verify($blob, output, program_io.panic, proof);
         let verifier_secs = now.elapsed().as_secs_f64();
-        info!(verifier_secs, is_valid, "Jolt verifier finished");
-        if !is_valid {
-            return Err("Jolt verifier rejected the proof".to_string());
-        }
+        info!(verifier_secs, accepted = verified.is_ok(), "Jolt verifier finished");
+        verified.map_err(|err| format!("Jolt verifier rejected the proof: {err}"))?;
         if output != 0 {
             return Err(format!("guest reported Akita-verify failure: {output}"));
         }
