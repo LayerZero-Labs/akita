@@ -36,6 +36,7 @@ use akita_params::{
     BasisMode, DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout, PolynomialGroupLayout,
     RelationWitnessGeometry, ScheduleLookupKey,
 };
+use akita_prover::backend::ResidualExportKernel;
 use akita_prover::{prove_digit_range, SelectedProverOpeningData};
 use akita_sumcheck::FusedRounds;
 use akita_types::{
@@ -72,6 +73,15 @@ use rows::{
 
 /// The response statement's field.
 type F = Prime128OffsetA7F7;
+
+/// The `zk` feature makes the CPU backend a masked-prefix backend: it exports
+/// the residual opening at the cut (`ResidualExportKernel`) and samples hiding
+/// randomness from the OS. Fails to compile if `zk` stops enabling
+/// `akita-cpu-backend/zk`, which workspace dev-dependencies would hide.
+const _: fn() = || {
+    fn exports_the_residual<B: ResidualExportKernel<F, F>>() {}
+    exports_the_residual::<CpuBackend<F, F>>();
+};
 
 /// Grinding-plan level of the standalone digit-range reduction.
 const RANGE_LEVEL: u32 = 0;

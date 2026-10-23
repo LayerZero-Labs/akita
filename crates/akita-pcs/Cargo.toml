@@ -89,6 +89,7 @@ zk = [
   "akita-verifier/zk",
   "akita-types/zk",
   "akita-params/zk",
+  "akita-cpu-backend/zk",
 ]
 # Test hooks of the zero-knowledge mode (the response prover's unchecked
 # path, for the consistent-cheat tests).

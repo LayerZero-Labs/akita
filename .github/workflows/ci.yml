@@ -259,6 +259,10 @@ jobs:
         uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # carg-nextest
         with:
           tool: cargo-nextest
+      - name: The zk feature alone wires every zero-knowledge backend
+        # Downstream-shaped: the library without dev-dependencies, which
+        # would otherwise turn on akita-cpu-backend/zk for it.
+        run: cargo check -p akita-pcs --lib --no-default-features --features zk
       - name: Run the workspace tests with zero knowledge
         run: |
           cargo nextest run --workspace --lib --bins --tests --profile ci --cargo-profile ci-test \
