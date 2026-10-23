@@ -281,5 +281,5 @@ pub(crate) fn batch_weight_at<const D: usize>(
 
 /// An Akita failure, carried as a [`ZkError`].
 pub(crate) fn zk_error(error: AkitaError) -> ZkError {
-    ZkError::Whiteout(Box::new(error))
+    error.into()
 }

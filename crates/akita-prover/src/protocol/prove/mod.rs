@@ -40,7 +40,7 @@ pub(crate) struct ExtensionOpeningReduction<E: Field> {
 pub mod execution;
 mod fold;
 mod fold_kernels;
-#[cfg(all(feature = "zk", feature = "test-support"))]
+#[cfg(feature = "zk")]
 mod masked;
 mod opening_reduction;
 mod registry;
@@ -51,7 +51,7 @@ pub use execution::{batched_prove, catch_prover_panic};
 pub(in crate::protocol::prove) use fold::{prepare_fold, prove_fold, PreparedFold};
 pub use fold::{prove_digit_range, DigitRangeOutput};
 pub(in crate::protocol) use fold_kernels::*;
-#[cfg(all(feature = "zk", feature = "test-support"))]
+#[cfg(feature = "zk")]
 pub use masked::{prove_masked_prefix, ResidualOpening};
 pub(crate) use opening_reduction::*;
 pub(crate) use suffix::FoldPublicState;
@@ -63,7 +63,7 @@ pub struct ProveLevelOutput<F: Field, E: Field, MaterialHandle, WitnessHandle> {
     pub next_state: SuffixProverState<F, E, MaterialHandle, WitnessHandle>,
     /// The Stage-1 leaf check's inputs, on the ℓ∞ route.
     #[cfg_attr(
-        not(all(feature = "zk", feature = "test-support")),
+        not(feature = "zk"),
         expect(dead_code, reason = "read only by the zero-knowledge prefix prover")
     )]
     pub(crate) range_leaf: Option<RangeLeafClaim<E>>,
@@ -74,7 +74,7 @@ pub struct ProveLevelOutput<F: Field, E: Field, MaterialHandle, WitnessHandle> {
 /// Stage 1's running output claim. A zero-knowledge opening lowers the check
 /// on them into its auxiliary values.
 #[cfg_attr(
-    not(all(feature = "zk", feature = "test-support")),
+    not(feature = "zk"),
     expect(dead_code, reason = "read only by the zero-knowledge prefix prover")
 )]
 pub(crate) struct RangeLeafClaim<E> {

@@ -72,8 +72,11 @@ pub use setup_requirements::{validate_setup_capacity_metadata, SetupRequirements
 pub mod test_support;
 mod transcript_binding;
 mod transcript_grinding_plan;
+#[cfg(feature = "zk")]
+mod zk_commitment;
 pub use akita_schedules::ResolvedScheduleRow;
 pub use akita_schedules::RingDimensionSchedule;
+use akita_schedules::ScheduleAdmission;
 pub use akita_schedules::{
     ValidatedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
@@ -84,6 +87,8 @@ pub use transcript_binding::transcript_instance_descriptor;
 pub use transcript_grinding_plan::{
     derive_digit_range_grinding_plan, derive_transcript_grinding_plan,
 };
+#[cfg(feature = "zk")]
+pub use zk_commitment::ZkCommitmentConfig;
 
 /// Derive the schedule policy from fixed cryptographic policy and runtime chunking.
 ///
@@ -118,6 +123,31 @@ pub fn policy_of<Cfg: CommitmentConfig>(chunking: ChunkedWitnessCfg) -> PlannerP
         opening_basis_range: Cfg::opening_basis_range(),
         witness_chunk: chunking,
         recursive_setup_planning,
+    }
+}
+
+/// The rows a catalog for `Cfg` admits: zero-knowledge rows, against `Cfg`'s
+/// committed-source contract, exactly when `Cfg::IS_ZK`.
+///
+/// # Errors
+///
+/// [`AkitaError::UnsupportedSchedule`] for a zero-knowledge configuration in a build
+/// without the `zk` feature, and `Cfg`'s contract errors.
+pub fn admission_of<Cfg: CommitmentConfig>() -> Result<ScheduleAdmission, AkitaError> {
+    if !Cfg::IS_ZK {
+        return Ok(ScheduleAdmission::Clear);
+    }
+    #[cfg(feature = "zk")]
+    {
+        Ok(ScheduleAdmission::ZeroKnowledge(
+            Cfg::committed_source_contract()?,
+        ))
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        Err(AkitaError::UnsupportedSchedule(
+            "a zero-knowledge configuration needs the `zk` feature".into(),
+        ))
     }
 }
 
@@ -170,18 +200,23 @@ impl<Cfg: CommitmentConfig> TrustedScheduleCatalog<Cfg> {
             &policy,
             Cfg::ring_challenge_config,
         )?;
+        if catalog.admission() != admission_of::<Cfg>()? {
+            return Err(AkitaError::InvalidSetup(
+                "catalog admission does not match the configuration's mode".into(),
+            ));
+        }
         Ok(Self::from_validated(catalog))
     }
 
-    /// Build a test-only catalog that also admits zero-knowledge rows. Each
-    /// is checked by [`akita_params::zk::ZkOpeningSchedule::admit`] against
-    /// `Cfg`'s own committed-source contract and claim degree.
+    /// Build a catalog of `rows` admitted as `Cfg` admits them
+    /// ([`admission_of`]): clear rows for a clear configuration, and rows that
+    /// pass [`akita_params::zk::ZkOpeningSchedule::admit`] against `Cfg`'s
+    /// committed-source contract for a zero-knowledge one.
     ///
     /// # Errors
     ///
     /// Rejects invalid chunking or any row admission refuses.
-    #[cfg(all(feature = "test-support", feature = "zk"))]
-    pub fn try_new_with_test_zk(
+    pub fn try_from_rows(
         rows: impl IntoIterator<
             Item = (
                 akita_params::CommittedGroupBatchProfile,
@@ -191,12 +226,12 @@ impl<Cfg: CommitmentConfig> TrustedScheduleCatalog<Cfg> {
         chunking: ChunkedWitnessCfg,
     ) -> Result<Self, AkitaError> {
         validate_config_policy::<Cfg>(chunking)?;
-        let catalog = ValidatedScheduleCatalog::try_new_with_test_zk(
+        let catalog = ValidatedScheduleCatalog::try_new_admitting(
             Cfg::schedule_family_name(),
             rows,
             &policy_of::<Cfg>(chunking),
             Cfg::ring_challenge_config,
-            Cfg::committed_source_contract()?,
+            admission_of::<Cfg>()?,
         )?;
         Ok(Self::from_validated(catalog))
     }
@@ -215,11 +250,12 @@ impl<Cfg: CommitmentConfig> TrustedScheduleCatalog<Cfg> {
     ) -> Result<Self, AkitaError> {
         validate_config_policy::<Cfg>(chunking)?;
         let policy = policy_of::<Cfg>(chunking);
-        let catalog = ValidatedScheduleCatalog::from_artifact_bytes(
+        let catalog = ValidatedScheduleCatalog::from_artifact_bytes_admitting(
             bytes,
             Cfg::schedule_family_name(),
             &policy,
             Cfg::ring_challenge_config,
+            admission_of::<Cfg>()?,
         )?;
         Ok(Self::from_validated(catalog))
     }
@@ -488,6 +524,17 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Stable trusted schedule family identity for external artifact loading.
     fn schedule_family_name() -> &'static str;
+
+    /// Whether this configuration proves in zero knowledge. It is bound into
+    /// every proof's descriptor (`SetupSection::protocol_features`) and
+    /// selects the catalog's admission; it is `true` only for
+    /// `ZkCommitmentConfig`.
+    const IS_ZK: bool = false;
+
+    /// The family of this configuration's zero-knowledge schedules, if it
+    /// has one. `ZkCommitmentConfig<Self>` exists only when it does: the
+    /// adapter resolves this name at compile time.
+    const ZK_SCHEDULE_FAMILY_NAME: Option<&'static str> = None;
 }
 
 #[cfg(test)]

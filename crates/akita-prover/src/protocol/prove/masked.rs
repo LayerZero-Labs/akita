@@ -16,7 +16,7 @@ use crate::backend::{
 };
 use crate::SelectedProverOpeningData;
 use akita_config::TrustedScheduleCatalog;
-use akita_params::zk::ZkOpeningSchedule;
+use akita_params::zk::{ResidualGeometry, ZkOpeningSchedule};
 use akita_types::{check_range_leaf, AkitaSetupDescriptor, MaskedOpeningClaims, ProverGrinding};
 use jolt_algebra::AdditiveGroup;
 use jolt_poly::{Point, HIGH_TO_LOW};
@@ -31,7 +31,9 @@ use zeroize::Zeroizing;
 /// (`specs/whiteout-akita.md` §4.6, §4.8.1). The digit orders are
 /// [`ResidualWitness`]'s.
 ///
-/// `public_segments` and the matrix `blocks` of §4.6 are not built yet.
+/// The digit alphabets come from the schedule's
+/// [`ResidualGeometry`], which also places the public spans of w_k and the
+/// opening rows for the Σ-protocol (`akita_pcs::zk::ResidualShape`).
 pub struct ResidualOpening<F, E> {
     /// The last masked level.
     pub cut_level: u32,
@@ -210,16 +212,8 @@ where
             witness_handle,
             commitment_material,
         } = level.next_state;
-        let cut_params = match (cut_level as usize).checked_sub(1) {
-            None => &schedule.root.params,
-            Some(index) => {
-                &schedule
-                    .recursive_folds
-                    .get(index)
-                    .ok_or_else(|| AkitaError::Internal("the cut level is not scheduled".into()))?
-                    .params
-            }
-        };
+        let geometry =
+            ResidualGeometry::new(schedule, <Cfg::Field as CanonicalEncoding>::MODULUS_BITS)?;
         let successor = schedule
             .recursive_folds
             .get(cut_level as usize)
@@ -234,7 +228,6 @@ where
                 "the cut level's successor is not a recursive commitment".into(),
             ));
         };
-        let residual = &successor.params.own_group().profile;
         Ok((
             ResidualOpening {
                 cut_level,
@@ -242,11 +235,11 @@ where
                 witness_eval: public.opening,
                 residual_commitment: residual_commitment.coeffs().to_vec(),
                 w_k,
-                w_k_log_basis: cut_params.open().digits.log_basis,
+                w_k_log_basis: geometry.witness_log_basis,
                 t_hat_a: t_hat,
-                t_hat_log_basis: residual.outer.digits.log_basis,
+                t_hat_log_basis: geometry.profile.outer.digits.log_basis,
                 r_a,
-                r_a_log_basis: successor.params.own_group().opening.log_basis_open,
+                r_a_log_basis: geometry.randomness_log_basis,
             },
             auxiliary.auxiliary,
         ))

@@ -10,7 +10,7 @@
 
 use crate::claims::ClaimReplay;
 mod challenges;
-#[cfg(all(feature = "zk", feature = "test-support"))]
+#[cfg(feature = "zk")]
 mod masked_prefix;
 mod relation_instance;
 mod root;

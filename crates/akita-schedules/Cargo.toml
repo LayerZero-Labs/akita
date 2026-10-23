@@ -9,8 +9,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
-# Test-only admission of rows that carry hiding randomness.
-test-support = []
+# Zero-knowledge catalogs (`ScheduleAdmission::ZeroKnowledge`).
 zk = ["akita-params/zk"]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }

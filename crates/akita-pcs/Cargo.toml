@@ -74,16 +74,25 @@ keccak-test-sponge = []
 response-model-diagnostics = ["akita-cpu-backend/response-model-diagnostics"]
 # Dev-only terminal wire variant; see `akita-params`.
 dev-protocol = ["akita-params/dev-protocol"]
-# Whiteout's response prover (`specs/whiteout-akita.md` §5), test support
-# until the zero-knowledge mode is published (§5.5).
-test-support = [
+# Zero knowledge (`specs/whiteout-akita.md`): `ZkCommitmentConfig`, the
+# masked prefix's prover and verifier, and Whiteout's response prover
+# (`zk::AkitaResponseProver`). It selects nothing: a zero-knowledge
+# configuration does.
+zk = [
   "dep:jolt-sumcheck",
   "dep:jolt-zk",
   "dep:akita-sumcheck",
   "dep:jolt-poly",
   "dep:zeroize",
-  "akita-config/test-support",
+  "akita-config/zk",
+  "akita-prover/zk",
+  "akita-verifier/zk",
+  "akita-types/zk",
+  "akita-params/zk",
 ]
+# Test hooks of the zero-knowledge mode (the response prover's unchecked
+# path, for the consistent-cheat tests).
+test-support = ["zk"]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
@@ -145,14 +154,11 @@ akita-planner = { version = "0.1.0", path = "../akita-planner", default-features
   "test-support",
   "zk",
 ] }
-# Test-only: the masked prefix of a zero-knowledge opening, both roles, and
-# pads with no commitment to run it over.
+# Test-only: the masked prefix of a zero-knowledge opening, both roles.
 akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false, features = [
-  "test-support",
   "zk",
 ] }
 akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false, features = [
-  "test-support",
   "zk",
 ] }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [
@@ -164,7 +170,6 @@ akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-
   "zk",
 ] }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false, features = [
-  "test-support",
   "zk",
 ] }
 rand = "0.8"
@@ -191,9 +196,17 @@ libc = "0.2"
 name = "profile"
 path = "examples/profile/main.rs"
 
+[[test]]
+name = "zk_end_to_end"
+required-features = ["test-support", "logging"]
+
+[[example]]
+name = "zk_distinguisher"
+required-features = ["test-support", "logging"]
+
 [[example]]
 name = "zk_response"
-required-features = ["test-support"]
+required-features = ["zk"]
 
 [[bench]]
 name = "ring_ntt"

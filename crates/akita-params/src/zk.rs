@@ -17,18 +17,21 @@
 //!   `2λ` plus a fixed slack. A setup prefix is public and carries none.
 //!
 //! [`ZkOpeningSchedule::admit`] checks all of this in release builds. Catalog
-//! admission and the prover both run it; a clear catalog rejects every
-//! zero-knowledge schedule, so zero knowledge is not selectable yet.
+//! admission and the prover both run it. A clear catalog rejects every
+//! zero-knowledge schedule and a zero-knowledge catalog every clear one, so
+//! only a zero-knowledge configuration selects one.
 
 use crate::sis::{
     BalancedSignedDigitFoldPolicy, CommittedSourceContract, FoldFailureTarget, FoldWitnessNorms,
     HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery, SisModulusProfileId,
 };
 use crate::{
-    CommitmentPayloadMode, CommitmentSliceCount, CommittedGroupParams, FoldSchedule,
-    GroupOpenPhaseParams, InnerCommitSecurityRoute, OpeningMethod,
+    CommitmentPayloadMode, CommitmentSliceCount, CommittedGroupParams, FoldParams, FoldSchedule,
+    GroupCommitPhaseParams, GroupOpenPhaseParams, InnerCommitSecurityRoute, OpeningMethod,
+    RelationQuotientPlan, RelationWitnessGeometry, WitnessLayout,
 };
 use akita_error::AkitaError;
+use core::ops::Range;
 use jolt_algebra::{Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use jolt_crypto::challenge::SparseChallengeConfig;
 use jolt_crypto::lattice::required_randomness_columns;
@@ -100,14 +103,12 @@ impl TryFrom<ZkCutEncoding> for ZkOpeningSchedule {
 }
 
 impl ZkOpeningSchedule {
-    /// The cut masking levels `0..=cut_level`, for tests until zero
-    /// knowledge is published.
+    /// The cut masking levels `0..=cut_level`.
     ///
     /// # Errors
     ///
     /// Returns [`AkitaError::UnsupportedSchedule`] for a cut other than
     /// [`ZK_CUT_LEVEL`].
-    #[cfg(any(test, all(feature = "test-support", feature = "zk")))]
     pub fn new(cut_level: u32) -> Result<Self, AkitaError> {
         Self::try_from(ZkCutEncoding { cut_level })
     }
@@ -615,6 +616,96 @@ pub fn d_randomness_columns(params: &CommittedGroupParams) -> Result<usize, Akit
             log_basis: open.digits.log_basis,
         },
     )
+}
+
+/// The residual commitment at a zero-knowledge schedule's cut, as public
+/// data: the one source of the Σ-protocol's residual segments, their
+/// alphabets and the opening rows (`specs/whiteout-akita.md` §4.6, §4.8.1).
+/// The prover's hand-off and both roles' Σ setup read it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResidualGeometry {
+    /// The last masked level.
+    pub cut_level: u32,
+    /// Base-two logarithm of w_k's balanced alphabet: the cut level's open
+    /// basis, which its range check proves.
+    pub witness_log_basis: u32,
+    /// The residual commitment to w_k: the cut successor's own group. Its
+    /// inner digits t̂_a are `profile.outer.digits`.
+    pub profile: GroupCommitPhaseParams,
+    /// Base-two logarithm of r_a's alphabet: the cut successor's open basis
+    /// ([`RESIDUAL_RANDOMNESS_LOG_BASIS`] after admission).
+    pub randomness_log_basis: u32,
+    /// Coefficient ranges of w_k that hold only public data, ascending and
+    /// disjoint: the response and inner digits of the cut level's setup
+    /// prefix (§3.5), a function of the setup and of public challenges.
+    /// Empty when the cut level consumes no setup prefix.
+    pub public_spans: Vec<Range<usize>>,
+}
+
+impl ResidualGeometry {
+    /// The residual geometry of `schedule` over a `field_bits`-bit base
+    /// field.
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::UnsupportedSchedule`] without a zero-knowledge cut,
+    /// [`AkitaError::InvalidSetup`] if the cut has no successor level, and
+    /// the witness-layout errors of the cut level.
+    pub fn new(schedule: &FoldSchedule, field_bits: u32) -> Result<Self, AkitaError> {
+        let zk = schedule.zk.ok_or_else(|| {
+            AkitaError::UnsupportedSchedule("schedule has no zero-knowledge cut".into())
+        })?;
+        let cut = zk.cut_level() as usize;
+        let successor = schedule.recursive_folds.get(cut).ok_or_else(|| {
+            AkitaError::InvalidSetup("the zero-knowledge cut has no successor level".into())
+        })?;
+        let (cut_params, public_spans) = match cut.checked_sub(1) {
+            // The root consumes no setup prefix.
+            None => (&schedule.root.params, Vec::new()),
+            Some(index) => {
+                let fold = schedule.recursive_folds.get(index).ok_or_else(|| {
+                    AkitaError::InvalidSetup("the cut level is not scheduled".into())
+                })?;
+                (&fold.params, setup_prefix_spans(fold, field_bits)?)
+            }
+        };
+        let own = successor.params.own_group();
+        Ok(Self {
+            cut_level: zk.cut_level(),
+            witness_log_basis: cut_params.open().digits.log_basis,
+            profile: own.profile,
+            randomness_log_basis: own.opening.log_basis_open,
+            public_spans,
+        })
+    }
+}
+
+/// The witness ranges of `fold`'s output that its setup prefix fills: the
+/// prefix group's response and inner digits.
+fn setup_prefix_spans(fold: &FoldParams, field_bits: u32) -> Result<Vec<Range<usize>>, AkitaError> {
+    let params = &fold.params;
+    let Some(prefix) = params.setup_prefix() else {
+        return Ok(Vec::new());
+    };
+    let layout = crate::suffix_opening_layout(fold.input_witness_len, prefix.setup_natural_len)?;
+    let geometry = RelationWitnessGeometry::for_level(params, &layout, 1)?;
+    let witness = WitnessLayout::new(
+        params,
+        &layout,
+        &geometry,
+        params.witness_chunk.num_chunks,
+        RelationQuotientPlan::for_field_bits(params, field_bits)?,
+    )?;
+    // The setup prefix is the fold's group 0 (`suffix_opening_layout`).
+    let mut spans = witness
+        .units()
+        .iter()
+        .filter(|unit| unit.group_index() == 0)
+        .flat_map(|unit| [unit.z_range(), unit.t_range()])
+        .filter(|range| !range.is_empty())
+        .collect::<Vec<_>>();
+    spans.sort_by_key(|range| range.start);
+    Ok(spans)
 }
 
 #[cfg(test)]

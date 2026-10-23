@@ -237,6 +237,33 @@ jobs:
       - name: Run the response-proof tests without disk-persistence
         run: cargo nextest run -p akita-pcs --lib --profile ci --cargo-profile ci-test --no-default-features --features parallel,test-support 'zk::'
 
+  test-zk:
+    # Zero knowledge (`specs/whiteout-akita.md` §5.5): the workspace tests
+    # with the `zk` feature, and the end-to-end gating tests (public-site
+    # allowlist, pad coverage, pad freshness), which also need the response
+    # prover's test hooks and the transcript event log.
+    name: Test zero knowledge
+    runs-on: GitHubRunner-Large-Public
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: false
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-test-zk
+          add-job-id-key: false
+          cache-on-failure: true
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # carg-nextest
+        with:
+          tool: cargo-nextest
+      - name: Run the workspace tests with zero knowledge
+        run: |
+          cargo nextest run --workspace --lib --bins --tests --profile ci --cargo-profile ci-test \
+            --no-default-features --features parallel,disk-persistence,zk,akita-pcs/test-support,akita-pcs/logging
+
   test-schedule-artifact-drift:
     name: Schedule artifact drift
     runs-on: ubuntu-latest

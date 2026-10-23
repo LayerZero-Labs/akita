@@ -295,11 +295,12 @@ fn validate_materialized_catalog(
             ))
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let regenerated = akita_schedules::ValidatedScheduleCatalog::try_new(
+    let regenerated = akita_schedules::ValidatedScheduleCatalog::try_new_admitting(
         spec.family_name,
         rows,
         &spec.policy,
         spec.ring_challenge_config,
+        spec.admission,
     )
     .map_err(|error| format!("build regenerated catalog: {error}"))?
     .to_artifact_bytes()

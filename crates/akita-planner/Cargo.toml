@@ -22,13 +22,15 @@ jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev =
 libm = "0.2"
 
 [features]
-catalog-gen = ["dep:akita-config"]
+# Generates every family, the zero-knowledge ones included.
+catalog-gen = ["dep:akita-config", "zk", "akita-config/zk"]
 catalog-check = ["catalog-gen"]
 catalog-security = ["catalog-check", "dep:akita-sis-estimator"]
 test-support = []
 dev-protocol = ["akita-params/dev-protocol"]
-# Sizes the hiding-randomness columns of zero-knowledge schedules.
-zk = ["akita-params/zk"]
+# Plans zero-knowledge schedules (`find_zk_schedule`) and emits their
+# catalogs.
+zk = ["akita-params/zk", "akita-schedules/zk"]
 
 [dev-dependencies]
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [

@@ -132,6 +132,7 @@ impl_proof_optimized_preset!(
     128,
     source = balanced_digits,
     schedule_family = "fp128_dense",
+    zk_schedule_family = "fp128_dense_zk",
     ring_dimension_schedule = akita_schedules::RingDimensionSchedule {
         num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
         suffix_dimensions: &[64],
@@ -181,6 +182,8 @@ impl_catalog_family!(OneHotMultiChunk, OneHot, "fp128_onehot_multi_chunk");
 
 impl crate::recursive_commitment::RecursiveScheduleConfig for OneHot {
     const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive";
+    const RECURSIVE_ZK_SCHEDULE_FAMILY_NAME: Option<&'static str> =
+        Some("fp128_onehot_recursive_zk");
 }
 
 impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunk {
@@ -237,13 +240,12 @@ impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunkW8
 /// Dense preset for balanced radix-16 digits, the centered range `[-8, 7]`
 /// (a signed bit width of 4): the committed vector `e` of Whiteout's
 /// response proof (`specs/whiteout-akita.md` §5.2). Its recursive companion
-/// is the response opening's schedule family. Test support until the zero
-/// knowledge mode is published (§5.5).
-#[cfg(feature = "test-support")]
+/// is the response opening's schedule family.
+#[cfg(feature = "zk")]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ResponseDigits;
 
-#[cfg(feature = "test-support")]
+#[cfg(feature = "zk")]
 impl_proof_optimized_preset!(
     ResponseDigits,
     Field,
@@ -262,7 +264,7 @@ impl_proof_optimized_preset!(
     }
 );
 
-#[cfg(feature = "test-support")]
+#[cfg(feature = "zk")]
 impl crate::recursive_commitment::RecursiveScheduleConfig for ResponseDigits {
     const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_response_digits_recursive";
 }

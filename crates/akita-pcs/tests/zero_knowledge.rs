@@ -14,7 +14,7 @@ mod private_cpu;
 
 use akita_config::{
     derive_transcript_grinding_plan, policy_of, proof_optimized::fp128, CommitmentConfig,
-    TrustedScheduleCatalog, ValidatedScheduleCatalog,
+    TrustedScheduleCatalog, ValidatedScheduleCatalog, ZkCommitmentConfig,
 };
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;
@@ -38,7 +38,9 @@ use private_cpu::{Fault, PrivateCpu};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
-type Cfg = fp128::Dense;
+/// The clear preset whose zero-knowledge family the tests plan in.
+type Clear = fp128::Dense;
+type Cfg = ZkCommitmentConfig<Clear>;
 type F = <Cfg as CommitmentConfig>::Field;
 type E = F;
 
@@ -60,7 +62,7 @@ fn policy() -> akita_schedules::PlannerPolicy {
 /// The planner's zero-knowledge row for one dense `NV`-variable polynomial.
 fn zk_row() -> (CommittedGroupBatchProfile, FoldSchedule) {
     let key = key();
-    let planned = akita_planner::find_schedule_for_test_zk(
+    let planned = akita_planner::find_zk_schedule(
         &key,
         Cfg::committed_source_contract().unwrap(),
         &[],
@@ -89,11 +91,8 @@ fn admit(schedule: &FoldSchedule) -> Result<ZkOpeningSchedule, AkitaError> {
 }
 
 fn zk_catalog() -> TrustedScheduleCatalog<Cfg> {
-    TrustedScheduleCatalog::try_new_with_test_zk(
-        [zk_row()],
-        ChunkedWitnessCfg::default_non_chunked(),
-    )
-    .unwrap()
+    TrustedScheduleCatalog::try_from_rows([zk_row()], ChunkedWitnessCfg::default_non_chunked())
+        .unwrap()
 }
 
 /// The parameters of every nonterminal fold, in level order.
@@ -188,11 +187,11 @@ fn planner_masks_every_level_up_to_the_cut() {
 }
 
 #[test]
-fn trusted_catalogs_reject_zero_knowledge_rows() {
+fn clear_catalogs_reject_zero_knowledge_rows_and_the_reverse() {
     on_large_stack(|| {
         let trusted = |row| {
             ValidatedScheduleCatalog::try_new(
-                Cfg::schedule_family_name(),
+                Clear::schedule_family_name(),
                 [row],
                 &policy(),
                 Cfg::ring_challenge_config,
@@ -209,9 +208,21 @@ fn trusted_catalogs_reject_zero_knowledge_rows() {
         // The same folds without the cut still carry hiding randomness.
         let mut no_cut = schedule;
         no_cut.zk = None;
-        let error = trusted((profiles, no_cut));
+        let error = trusted((profiles.clone(), no_cut.clone()));
         assert!(
             error.contains("hiding randomness is not selectable"),
+            "{error}"
+        );
+        // A zero-knowledge catalog admits no clear row.
+        let error = TrustedScheduleCatalog::<Cfg>::try_from_rows(
+            [(profiles, no_cut)],
+            ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(
+            error.contains("admits only zero-knowledge schedules"),
             "{error}"
         );
     });
@@ -366,7 +377,8 @@ fn admission_recomputes_the_masked_levels() {
         assert!(error.to_string().contains("base field"), "{error}");
         // An ℓ2-route level at the cut, taken from a clear catalog row.
         let clear_catalog =
-            common::load_workspace_scheme::<Cfg>(ChunkedWitnessCfg::default_non_chunked()).unwrap();
+            common::load_workspace_scheme::<Clear>(ChunkedWitnessCfg::default_non_chunked())
+                .unwrap();
         let clear_row = clear_catalog.schedules().resolve_key(&key()).unwrap();
         let l2_level = clear_row
             .schedule()
@@ -732,7 +744,7 @@ fn one_shot_fold_response_replays_without_a_nonce() {
 /// family offloads level 0's setup to a level-1 setup prefix from 31
 /// variables on; its root here also folds one precommitted dense group, the
 /// shape of Jolt's untrusted advice.
-type RecCfg = akita_config::RecursiveCommitmentConfig<fp128::OneHot>;
+type RecCfg = ZkCommitmentConfig<akita_config::RecursiveCommitmentConfig<fp128::OneHot>>;
 const MULTI_NV: usize = 31;
 
 /// The planner's row for one `MULTI_NV`-variable one-hot polynomial beside
@@ -744,7 +756,7 @@ fn multi_group_zk_row() -> (CommittedGroupBatchProfile, FoldSchedule) {
         final_group: PolynomialGroupLayout::singleton(MULTI_NV),
         precommitteds: vec![precommitted],
     };
-    let planned = akita_planner::find_schedule_for_test_zk(
+    let planned = akita_planner::find_zk_schedule(
         &key,
         RecCfg::committed_source_contract().unwrap(),
         &[Cfg::committed_source_contract().unwrap()],
@@ -831,7 +843,7 @@ fn masked_levels_admit_a_hiding_precommitted_group_and_a_public_setup_prefix() {
 #[test]
 fn headline_row_offloads_to_a_setup_prefix_at_the_cut_level() {
     on_large_stack(|| {
-        let planned = akita_planner::find_schedule_for_test_zk(
+        let planned = akita_planner::find_zk_schedule(
             &ScheduleLookupKey::single(PolynomialGroupLayout::singleton(36)),
             RecCfg::committed_source_contract().unwrap(),
             &[],
@@ -881,7 +893,7 @@ fn zero_knowledge_proof_with_a_precommitted_group_and_a_setup_prefix_verifies() 
         .opening_layout()
         .unwrap();
         let scheme = AkitaCommitmentScheme::<RecCfg>::new(
-            TrustedScheduleCatalog::try_new_with_test_zk(
+            TrustedScheduleCatalog::try_from_rows(
                 [(profiles, schedule.clone())],
                 ChunkedWitnessCfg::default_non_chunked(),
             )
@@ -1003,11 +1015,10 @@ fn run_stage3_output_miss() -> Result<(), AkitaError> {
         precommitteds: profiles.precommitteds.clone(),
     }
     .opening_layout()?;
-    let scheme =
-        AkitaCommitmentScheme::<RecCfg>::new(TrustedScheduleCatalog::try_new_with_test_zk(
-            [(profiles, schedule.clone())],
-            ChunkedWitnessCfg::default_non_chunked(),
-        )?);
+    let scheme = AkitaCommitmentScheme::<RecCfg>::new(TrustedScheduleCatalog::try_from_rows(
+        [(profiles, schedule.clone())],
+        ChunkedWitnessCfg::default_non_chunked(),
+    )?);
     let setup = scheme.setup_prover(MULTI_NV, 2)?;
     let private = PrivateCpu::new(backend(&setup, 6));
     let (pre_evals, pre_poly) = polynomial();

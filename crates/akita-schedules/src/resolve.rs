@@ -1,6 +1,6 @@
 //! Strict runtime schedule resolution.
 
-use crate::audit::{audit_resolved_schedule, ZkAdmission};
+use crate::audit::{audit_resolved_schedule, ScheduleAdmission};
 use crate::runtime::planned_next_witness_len;
 use crate::PlannerPolicy;
 use akita_error::AkitaError;
@@ -35,14 +35,14 @@ impl ResolvedScheduleRow {
         schedule: FoldSchedule,
         policy: &PlannerPolicy,
     ) -> Result<Self, AkitaError> {
-        Self::try_new_admitting(profiles, schedule, policy, ZkAdmission::Clear)
+        Self::try_new_admitting(profiles, schedule, policy, ScheduleAdmission::Clear)
     }
 
     pub(crate) fn try_new_admitting(
         profiles: CommittedGroupBatchProfile,
         schedule: FoldSchedule,
         policy: &PlannerPolicy,
-        admission: ZkAdmission,
+        admission: ScheduleAdmission,
     ) -> Result<Self, AkitaError> {
         schedule.validate_nonterminal_opening_execution(policy.claim_ext_degree)?;
         audit_resolved_schedule(&profiles, &schedule, policy, admission)?;

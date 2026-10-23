@@ -539,16 +539,17 @@ fn audit_terminal(
     Ok(())
 }
 
-/// Which rows catalog admission accepts.
-#[derive(Clone, Copy)]
-pub(crate) enum ZkAdmission {
-    /// Clear rows only: zero knowledge is not selectable yet, so no row has a
-    /// zero-knowledge cut or any hiding randomness.
+/// Which rows a catalog admits: a clear catalog admits only clear rows, and a
+/// zero-knowledge catalog only rows that pass
+/// [`akita_params::zk::ZkOpeningSchedule::admit`] for its root source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScheduleAdmission {
+    /// Clear rows only: no zero-knowledge cut and no hiding randomness.
     Clear,
-    /// Test-only catalogs, which also admit zero-knowledge rows that pass
-    /// [`akita_params::zk::ZkOpeningSchedule::admit`] for the root source.
-    #[cfg(all(feature = "test-support", feature = "zk"))]
-    TestZk(akita_params::sis::CommittedSourceContract),
+    /// Zero-knowledge rows only, admitted against the root's producer
+    /// contract.
+    #[cfg(feature = "zk")]
+    ZeroKnowledge(akita_params::sis::CommittedSourceContract),
 }
 
 /// Re-audit one complete expanded row against the policy the verifier trusts.
@@ -556,11 +557,11 @@ pub(crate) fn audit_resolved_schedule(
     profiles: &CommittedGroupBatchProfile,
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,
-    admission: ZkAdmission,
+    admission: ScheduleAdmission,
 ) -> Result<(), AkitaError> {
     validate_policy(policy)?;
     match (admission, schedule.zk) {
-        (_, None) => {
+        (ScheduleAdmission::Clear, None) => {
             let levels = std::iter::once(&schedule.root)
                 .chain(&schedule.recursive_folds)
                 .map(|fold| &fold.params);
@@ -578,14 +579,21 @@ pub(crate) fn audit_resolved_schedule(
                 }
             }
         }
-        (ZkAdmission::Clear, Some(_)) => {
+        (ScheduleAdmission::Clear, Some(_)) => {
             return Err(invalid(
                 "schedule",
-                "a zero-knowledge cut is not selectable in a trusted catalog",
+                "a zero-knowledge cut is not selectable in a clear catalog",
             ));
         }
-        #[cfg(all(feature = "test-support", feature = "zk"))]
-        (ZkAdmission::TestZk(root_source), Some(_)) => {
+        #[cfg(feature = "zk")]
+        (ScheduleAdmission::ZeroKnowledge(_), None) => {
+            return Err(invalid(
+                "schedule",
+                "a zero-knowledge catalog admits only zero-knowledge schedules",
+            ));
+        }
+        #[cfg(feature = "zk")]
+        (ScheduleAdmission::ZeroKnowledge(root_source), Some(_)) => {
             akita_params::zk::ZkOpeningSchedule::admit(
                 schedule,
                 root_source,
