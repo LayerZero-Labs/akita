@@ -8,6 +8,10 @@
 //! table (`akita-sis-estimator/examples/sigma_binding_width_table.rs`, the
 //! same ADPS16 quantum ℓ∞ model as Akita's table) with its own digest; the
 //! clear table, and every clear schedule, is unaffected.
+//!
+//! A commitment to range-checked digits, which the extractor needs bound only
+//! at the digit-difference bound, is priced by the planner instead
+//! (`akita_schedules::digit_commitment_min_rank`).
 
 mod generated;
 

@@ -2,7 +2,8 @@
 //!
 //! Every stage-3 message is public in both modes: the setup-product claim and
 //! the prefix evaluation depend only on the public setup and public
-//! challenges, so they go through [`Channel`], never `PrivateChannel`.
+//! challenges, so they go through [`Channel::exchange_public_all`], never
+//! `PrivateChannel`.
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
@@ -66,7 +67,7 @@ where
 {
     let state = grinding.state_mut();
     state.site(site.into());
-    state.exchange_all(std::slice::from_mut(&mut value))?;
+    state.exchange_public_all(std::slice::from_mut(&mut value))?;
     Ok(value)
 }
 

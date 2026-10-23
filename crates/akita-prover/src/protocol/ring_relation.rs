@@ -275,7 +275,7 @@ impl RingRelationProver {
         // unchanged; the relation below still reads `opening_payload`.
         grinding
             .state_mut()
-            .exchange_all(opening_payload.coeffs_mut())?;
+            .exchange_public_all(opening_payload.coeffs_mut())?;
         drop(opening_rows_span);
 
         // Public claim batching is intentionally delayed until every

@@ -75,13 +75,29 @@ pub enum AkitaError {
 
 /// A transcript failure on the verifier side rejects the proof: a verifier
 /// transcript fails only on malformed, missing, or out-of-range proof bytes.
+/// A clear message on a masked channel is a schedule that sends one at a
+/// masked level, on either side.
 ///
 /// Prover-only transcript failures (grinding exhaustion, an over-bound
 /// message) are classified at their call sites instead, since they are input
 /// or setup errors rather than rejections.
 impl From<jolt_transcript::TranscriptError> for AkitaError {
-    fn from(_: jolt_transcript::TranscriptError) -> Self {
-        Self::InvalidProof
+    fn from(error: jolt_transcript::TranscriptError) -> Self {
+        use jolt_transcript::TranscriptError;
+        match error {
+            TranscriptError::ClearMessageOnMaskedChannel => {
+                Self::UnsupportedSchedule(error.to_string())
+            }
+            TranscriptError::Truncated
+            | TranscriptError::NonCanonical
+            | TranscriptError::OutOfBounds
+            | TranscriptError::TrailingBytes
+            | TranscriptError::CursorMismatch
+            | TranscriptError::GrindingRejected
+            | TranscriptError::UnsupportedGrinding
+            | TranscriptError::GrindingExhausted
+            | TranscriptError::Poisoned => Self::InvalidProof,
+        }
     }
 }
 
