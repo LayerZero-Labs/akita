@@ -437,6 +437,10 @@ fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MON
         next.try_reserve_exact(next_capacity).map_err(|_| {
             AkitaError::InvalidInput("paired tensor recurrence state allocation failed".into())
         })?;
+        let bit_factors = basis_pair_factors::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+            left_challenges.get(bit).copied(),
+            right_challenges.get(bit).copied(),
+        );
         for ((left_carry, right_carry), state_weight) in states {
             for &(left_add, right_add, multiplicity) in &choices {
                 let left = left_carry.checked_add(left_add).ok_or_else(|| {
@@ -445,21 +449,12 @@ fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MON
                 let right = right_carry.checked_add(right_add).ok_or_else(|| {
                     AkitaError::InvalidInput("paired tensor right carry overflow".into())
                 })?;
-                let Some(left_factor) = basis_bit_factor::<F, LEFT_MONOMIAL>(
-                    left_challenges.get(bit).copied(),
-                    left & 1,
-                ) else {
-                    continue;
-                };
-                let Some(right_factor) = basis_bit_factor::<F, RIGHT_MONOMIAL>(
-                    right_challenges.get(bit).copied(),
-                    right & 1,
-                ) else {
+                let Some(factor) = bit_factors[(left & 1) * 2 + (right & 1)] else {
                     continue;
                 };
                 next.push((
                     (left >> 1, right >> 1),
-                    state_weight * multiplicity * left_factor * right_factor,
+                    state_weight * multiplicity * factor,
                 ));
             }
         }
@@ -477,24 +472,16 @@ fn merge_pair_states<F: Field>(
     mut states: Vec<PairState<F>>,
 ) -> Result<Vec<PairState<F>>, AkitaError> {
     states.sort_unstable_by_key(|(key, _)| *key);
-    let mut merged: Vec<PairState<F>> = Vec::new();
-    merged
-        .try_reserve_exact(states.len())
-        .map_err(|_| AkitaError::InvalidInput("paired tensor state allocation failed".into()))?;
-    for (key, weight) in states {
-        if weight.is_zero() {
-            continue;
+    states.dedup_by(|next, previous| {
+        if next.0 == previous.0 {
+            previous.1 += next.1;
+            true
+        } else {
+            false
         }
-        if let Some((last_key, last_weight)) = merged.last_mut() {
-            if *last_key == key {
-                *last_weight += weight;
-                continue;
-            }
-        }
-        merged.push((key, weight));
-    }
-    merged.retain(|(_, weight)| !weight.is_zero());
-    Ok(merged)
+    });
+    states.retain(|(_, weight)| !weight.is_zero());
+    Ok(states)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -615,6 +602,17 @@ fn bit_axis_choices<F: Field>(
         .into_iter()
         .filter_map(|((left, right), weight)| (!weight.is_zero()).then_some((left, right, weight)))
         .collect())
+}
+
+fn basis_pair_factors<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
+    left: Option<F>,
+    right: Option<F>,
+) -> [Option<F>; 4] {
+    let left: [Option<F>; 2] =
+        std::array::from_fn(|bit| basis_bit_factor::<F, LEFT_MONOMIAL>(left, bit));
+    let right: [Option<F>; 2] =
+        std::array::from_fn(|bit| basis_bit_factor::<F, RIGHT_MONOMIAL>(right, bit));
+    std::array::from_fn(|pair| Some(left[pair / 2]? * right[pair % 2]?))
 }
 
 fn basis_bit_factor<F: Field, const MONOMIAL: bool>(challenge: Option<F>, bit: usize) -> Option<F> {
@@ -802,6 +800,10 @@ fn eval_tensor_seed_batch<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOM
                     "tensor seed right challenge bit exceeds validated arity".into(),
                 )
             })?;
+            let bit_factors = basis_pair_factors::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+                Some(left_challenge),
+                Some(right_challenge),
+            );
             let next_capacity = states.len().checked_mul(2).ok_or_else(|| {
                 AkitaError::InvalidInput("paired tensor state count overflow".into())
             })?;
@@ -825,24 +827,11 @@ fn eval_tensor_seed_batch<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOM
                             AkitaError::InvalidInput("paired tensor right carry overflow".into())
                         })?
                     };
-                    let left_factor =
-                        basis_bit_factor::<F, LEFT_MONOMIAL>(Some(left_challenge), left_sum & 1)
-                            .ok_or_else(|| {
-                                AkitaError::Internal(
-                                    "tensor seed left binary factor is absent".into(),
-                                )
-                            })?;
-                    let right_factor =
-                        basis_bit_factor::<F, RIGHT_MONOMIAL>(Some(right_challenge), right_sum & 1)
-                            .ok_or_else(|| {
-                                AkitaError::Internal(
-                                    "tensor seed right binary factor is absent".into(),
-                                )
-                            })?;
-                    next.push((
-                        (left_sum >> 1, right_sum >> 1),
-                        state_weight * left_factor * right_factor,
-                    ));
+                    let factor =
+                        bit_factors[(left_sum & 1) * 2 + (right_sum & 1)].ok_or_else(|| {
+                            AkitaError::Internal("tensor seed binary factor is absent".into())
+                        })?;
+                    next.push(((left_sum >> 1, right_sum >> 1), state_weight * factor));
                 }
             }
             states = merge_pair_states(next)?;

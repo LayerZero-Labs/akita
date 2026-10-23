@@ -279,3 +279,24 @@ fn mutable_bit_product_axis_rejects_missing_factors() {
         ));
     }
 }
+
+#[test]
+fn materialization_of_zero_weight_residuals_is_zero() {
+    // The residual product is 2^27 coordinates, but every one carries a zero
+    // weight, so the residual table must stay empty.
+    let challenges = [F::from_u64(3); 8];
+    let equality = OffsetEqWindow::new(&challenges).unwrap();
+    let families = [EqPairTensorFamily::new(
+        0,
+        0,
+        F::one(),
+        vec![
+            EqPairTensorAxis::unit(2, 1, 1),
+            EqPairTensorAxis::dense(0, 0, vec![F::zero(); 2]),
+            EqPairTensorAxis::unit(1 << 26, 0, 1),
+        ],
+    )
+    .unwrap()];
+    let got = materialize_eq_tensor_left(&equality, &families, 2).unwrap();
+    assert_eq!(got, vec![F::zero(); 2]);
+}
