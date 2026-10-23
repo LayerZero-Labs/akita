@@ -19,6 +19,7 @@ pub(crate) use oracle::{
 };
 pub(crate) use split::recursive_split_search_domain;
 use split::recursive_witness_body_lower_bound;
+use split::SplitFrontier;
 pub(super) use split::{
     recursive_candidate_order_key, recursive_split_lower_bound, RecursiveSplitLowerBoundInput,
 };
@@ -414,6 +415,9 @@ impl RecursiveCandidateContext<'_, '_> {
 struct RecursiveSplitBounds {
     score: Option<usize>,
     witness_body: Option<usize>,
+    /// Least live block count of the split's candidates, or zero when it
+    /// does not fit.
+    live_blocks: usize,
 }
 
 impl RecursiveCandidateContext<'_, '_> {
@@ -421,7 +425,12 @@ impl RecursiveCandidateContext<'_, '_> {
         &self,
         relation_domain: RelationSearchDomain,
         mut admit_split: impl FnMut(usize, RecursiveSplitBounds) -> bool,
-        mut visit: impl FnMut(LayoutCandidateScore, usize, CommittedGroupParams, usize),
+        mut visit: impl FnMut(
+            LayoutCandidateScore,
+            usize,
+            CommittedGroupParams,
+            usize,
+        ) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
         let request = self.request;
         let policy = request.policy;
@@ -468,6 +477,8 @@ impl RecursiveCandidateContext<'_, '_> {
             let bounds = RecursiveSplitBounds {
                 score: recursive_split_lower_bound(lower_bound_input),
                 witness_body: recursive_witness_body_lower_bound(lower_bound_input),
+                live_blocks: checked::pow2(search.reduced_vars - r)
+                    .map_or(0, |positions| search.num_ring_elems.div_ceil(positions)),
             };
             if !admit_split(r, bounds) {
                 continue;
@@ -509,7 +520,7 @@ impl RecursiveCandidateContext<'_, '_> {
                                     .into(),
                             ));
                         }
-                        visit(score, r, params, next_witness_len);
+                        visit(score, r, params, next_witness_len)?;
                     }
                 }
             }
@@ -525,42 +536,37 @@ fn best_linf_candidates_for(
     relation_domain: RelationSearchDomain,
 ) -> Result<Vec<BestLinfCandidate>, AkitaError> {
     // Larger `r` wins exact score ties independently for each relation mode.
-    let mut best = std::collections::BTreeMap::<
+    let best = std::cell::RefCell::new(std::collections::BTreeMap::<
         akita_params::RingRelationMode,
-        (LayoutCandidateScore, usize, CommittedGroupParams, usize),
-    >::new();
-    let best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
+        SplitFrontier,
+    >::new());
     context.walk_splits(
         relation_domain,
         |_, bounds| {
             relation_domain.has_multiple_modes()
-                || best_score
-                    .get()
-                    .is_none_or(|score| bounds.score.is_none_or(|bound| bound <= score.0))
+                || best
+                    .borrow()
+                    .values()
+                    .all(|frontier| frontier.admits(bounds))
         },
         |score, r, candidate, next_witness_len| {
             if !context
                 .successor_policy
                 .admits(context.search.current_witness_len, next_witness_len)
             {
-                return;
+                return Ok(());
             }
-            let mode = candidate.ring_relation_mode;
-            if best.get(&mode).is_none_or(|(best_score, best_r, _, _)| {
-                recursive_candidate_order_key(score, r)
-                    < recursive_candidate_order_key(*best_score, *best_r)
-            }) {
-                if !relation_domain.has_multiple_modes() {
-                    best_score.set(Some(score));
-                }
-                best.insert(mode, (score, r, candidate, next_witness_len));
-            }
+            best.borrow_mut()
+                .entry(candidate.ring_relation_mode)
+                .or_default()
+                .offer(score, r, candidate, next_witness_len)
         },
     )?;
 
     Ok(best
+        .into_inner()
         .into_values()
-        .map(|(_, r, candidate, next)| (r, candidate, next))
+        .flat_map(SplitFrontier::into_candidates)
         .collect())
 }
 
@@ -582,6 +588,7 @@ fn all_linf_candidates_for(
             {
                 candidates.push((split, candidate, next_witness_len));
             }
+            Ok(())
         },
     )?;
     Ok(candidates)

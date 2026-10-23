@@ -59,6 +59,9 @@ enum GrindingSuccessorKey {
         d_a: usize,
         opening_vars: usize,
         live_blocks: u64,
+        /// `log2` size of the terminal challenge set that prices the
+        /// terminal fold proof of work.
+        challenge_set_bits: u32,
     },
 }
 
@@ -91,6 +94,10 @@ impl ParentObservableKey {
                             "terminal live-block count exceeds grinding query width".into(),
                         )
                     })?,
+                    challenge_set_bits: terminal
+                        .fold_challenge_family()?
+                        .stream(terminal.blocks.live_blocks)?
+                        .set_bits(),
                 },
             });
         };

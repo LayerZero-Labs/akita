@@ -100,7 +100,8 @@ pub use transcript_grinding::{
     TRANSCRIPT_GRINDING_QUERY_LIMIT, TRANSCRIPT_SECURITY_BITS,
 };
 pub use transcript_grinding_plan::{
-    derive_transcript_grinding_plan_from_public_shape, transcript_grinding_cost_for_planner_edge,
+    derive_transcript_grinding_plan_from_public_shape, fold_challenge_runs,
+    transcript_grinding_cost_for_planner_edge,
 };
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,

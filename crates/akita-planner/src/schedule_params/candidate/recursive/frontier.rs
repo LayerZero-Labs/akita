@@ -85,6 +85,7 @@ pub(super) fn derive_fold_candidate_frontier(
                 {
                     candidates.push((candidate, next_witness_len));
                 }
+                Ok(())
             },
         )?;
         if request.source_moment.is_none() {

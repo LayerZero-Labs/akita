@@ -146,3 +146,85 @@ pub(in super::super) fn recursive_candidate_order_key(
 ) -> (LayoutCandidateScore, std::cmp::Reverse<usize>) {
     (score, std::cmp::Reverse(block_index_bits))
 }
+
+/// Best materialized splits of one relation mode in layout order, one per
+/// fold proof-of-work size.
+///
+/// The layout score does not see the fold proof of work, whose nonce grows
+/// with the live block count. A split with a worse score but fewer live
+/// blocks can still send fewer nonce bytes, so a split is dropped only when
+/// another has a layout key and a fold proof-of-work nonce no larger.
+#[derive(Default)]
+pub(super) struct SplitFrontier {
+    entries: Vec<SplitFrontierEntry>,
+}
+
+struct SplitFrontierEntry {
+    score: LayoutCandidateScore,
+    split: usize,
+    live_blocks: usize,
+    nonce_bits: u8,
+    candidate: CommittedGroupParams,
+    next_witness_len: usize,
+}
+
+impl SplitFrontier {
+    /// Whether a split with these bounds can still enter. The nonce never
+    /// shrinks as live blocks grow, so an entry with no more live blocks and a
+    /// smaller score than the split's lower bound dominates all of it.
+    pub(super) fn admits(&self, bounds: RecursiveSplitBounds) -> bool {
+        bounds.score.is_none_or(|bound| {
+            self.entries
+                .iter()
+                .all(|entry| entry.live_blocks > bounds.live_blocks || bound <= entry.score.0)
+        })
+    }
+
+    pub(super) fn offer(
+        &mut self,
+        score: LayoutCandidateScore,
+        split: usize,
+        candidate: CommittedGroupParams,
+        next_witness_len: usize,
+    ) -> Result<(), AkitaError> {
+        let layout = candidate.opening_layout_for_final_group(candidate.group())?;
+        // A split whose fold cannot be priced, such as one whose challenge
+        // message exceeds the message limit, can never be planned.
+        let nonce_bits = match akita_params::fold_challenge_runs(0, &candidate, &layout) {
+            Ok((work, _)) => work.nonce_bits(),
+            Err(AkitaError::InvalidSetup(_)) => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let key = recursive_candidate_order_key(score, split);
+        let entry_key =
+            |entry: &SplitFrontierEntry| recursive_candidate_order_key(entry.score, entry.split);
+        if self
+            .entries
+            .iter()
+            .any(|entry| entry.nonce_bits <= nonce_bits && entry_key(entry) <= key)
+        {
+            return Ok(());
+        }
+        self.entries
+            .retain(|entry| !(nonce_bits <= entry.nonce_bits && key <= entry_key(entry)));
+        self.entries.push(SplitFrontierEntry {
+            score,
+            split,
+            live_blocks: candidate.blocks().live_blocks,
+            nonce_bits,
+            candidate,
+            next_witness_len,
+        });
+        Ok(())
+    }
+
+    /// Retained splits as `(split, candidate, next witness length)`, best
+    /// layout key first.
+    pub(super) fn into_candidates(mut self) -> impl Iterator<Item = BestLinfCandidate> {
+        self.entries
+            .sort_by_key(|entry| recursive_candidate_order_key(entry.score, entry.split));
+        self.entries
+            .into_iter()
+            .map(|entry| (entry.split, entry.candidate, entry.next_witness_len))
+    }
+}

@@ -333,6 +333,24 @@ fn append_fold_queries(
     params: &CommittedGroupParams,
     layout: &OpeningClaimsLayout,
 ) -> Result<(), AkitaError> {
+    let (work, groups) = fold_challenge_runs(level, params, layout)?;
+    sink.push(work)?;
+    for run in groups {
+        sink.push(run)?;
+    }
+    Ok(())
+}
+
+/// The fold proof of work at `level` and the challenge-message run of each
+/// commitment group, in plan order.
+///
+/// One proof of work protects every group message of the fold, so it is
+/// priced for all of the fold's challenges against its smallest set.
+pub fn fold_challenge_runs(
+    level: u32,
+    params: &CommittedGroupParams,
+    layout: &OpeningClaimsLayout,
+) -> Result<(GrindingRun, Vec<GrindingRun>), AkitaError> {
     let groups = params.validated_groups(layout)?;
     let mut runs = Vec::with_capacity(groups.len());
     let mut challenges = 0u64;
@@ -357,15 +375,8 @@ fn append_fold_queries(
             .ok_or_else(|| AkitaError::InvalidSetup("fold challenge count overflow".into()))?;
         runs.push(GrindingRun::fold_challenge_group(level, group, count)?);
     }
-    // One proof of work protects every group message of the fold, so it is
-    // priced for all of the fold's challenges against its smallest set.
-    sink.push(GrindingRun::fold_challenge_work(
-        level, challenges, set_bits,
-    )?)?;
-    for run in runs {
-        sink.push(run)?;
-    }
-    Ok(())
+    let work = GrindingRun::fold_challenge_work(level, challenges, set_bits)?;
+    Ok((work, runs))
 }
 
 fn append_eor(
