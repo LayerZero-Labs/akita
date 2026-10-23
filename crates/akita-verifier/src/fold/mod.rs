@@ -225,7 +225,10 @@ where
     let mut payload = akita_types::extension_slots::<F>(coefficient_count)?;
     let state = grinding.state_mut();
     state.site(site.id()?.into());
-    state.exchange_all(&mut payload)?;
+    match prepared.next_witness {
+        NextWitnessPlan::OuterPayload { .. } => state.exchange_public_all(&mut payload)?,
+        NextWitnessPlan::TerminalT { .. } => state.exchange_all(&mut payload)?,
+    }
     let next_witness = RingVec::from_coeffs(payload);
     if prepared.next_witness_ring_dim == 0
         || matches!(prepared.next_witness, NextWitnessPlan::TerminalT { .. })

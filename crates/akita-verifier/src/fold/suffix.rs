@@ -254,7 +254,7 @@ where
             .id()?
             .into(),
         );
-        state.exchange_all(&mut payload)?;
+        state.exchange_public_all(&mut payload)?;
         RingVec::from_coeffs(payload)
     };
     let prefix = finalize_claims::<F, E, _>(&opening_batch, material, grinding, level)?;

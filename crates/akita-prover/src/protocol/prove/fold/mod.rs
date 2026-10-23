@@ -581,9 +581,11 @@ where
                     .id()?
                     .into(),
             );
+            // Public in both modes: at the cut level this is u_a, hidden by
+            // its own randomness r_a.
             grinding
                 .state_mut()
-                .exchange_all(&mut public_commitment.coeffs().to_vec())?;
+                .exchange_public_all(&mut public_commitment.coeffs().to_vec())?;
             NextWitnessState::OuterPayload(public_commitment)
         }
         (

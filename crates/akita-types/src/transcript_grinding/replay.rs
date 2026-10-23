@@ -1060,6 +1060,20 @@ impl<F, E, G: GrindingReplay> Channel for PublicGrindingSumcheck<'_, F, E, G> {
         self.grinding.state_mut().exchange_all(values)
     }
 
+    fn exchange_public<A: jolt_algebra::CanonicalDecode>(
+        &mut self,
+        value: &mut A,
+    ) -> Result<(), TranscriptError> {
+        self.grinding.state_mut().exchange_public(value)
+    }
+
+    fn exchange_public_all<A: jolt_algebra::CanonicalDecode>(
+        &mut self,
+        values: &mut [A],
+    ) -> Result<(), TranscriptError> {
+        self.grinding.state_mut().exchange_public_all(values)
+    }
+
     fn challenge<C: Field>(&mut self) -> C {
         self.grinding.state_mut().challenge()
     }
@@ -1081,7 +1095,7 @@ impl<F, E, G: GrindingReplay> PrivateChannel for PublicGrindingSumcheck<'_, F, E
         B: Field + CanonicalEncoding,
         X: ExtField<B> + jolt_algebra::CanonicalDecode,
     {
-        self.exchange_all(values)?;
+        self.exchange_public_all(values)?;
         Ok(PadSlots::default())
     }
 
@@ -1098,7 +1112,7 @@ impl<F, E, G: GrindingReplay> PrivateChannel for PublicGrindingSumcheck<'_, F, E
     where
         B: Field + CanonicalEncoding,
     {
-        self.exchange_all(values)?;
+        self.exchange_public_all(values)?;
         Ok(PadSlots::default())
     }
 

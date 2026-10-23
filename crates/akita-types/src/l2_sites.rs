@@ -36,7 +36,9 @@ where
 {
     let state = grinding.state_mut();
     state.site(site(level, ROLE_INTEGER).into());
-    // A u128 travels as its sixteen little-endian bytes.
+    // A u128 travels as its sixteen little-endian bytes, as a clear message:
+    // the L2 route is never scheduled at a masked level
+    // (`specs/whiteout-akita.md` §2.5.0, Q8), whose channel would refuse it.
     let mut integer = response_l2_sq.to_le_bytes();
     state.exchange(&mut integer)?;
     let integer = u128::from_le_bytes(integer);

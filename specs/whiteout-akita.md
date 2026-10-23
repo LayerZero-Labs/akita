@@ -1028,10 +1028,10 @@ Stage 3. Each value it sends is public, with this argument:
 | Value | Send | Why it is witness-independent |
 |---|---|---|
 | setup-prefix slot id | `stage3_public_slot`, public bytes | schedule and setup data |
-| input claim σ_S | `stage3_claim`, `exchange_all` (unchanged) | σ_S = Σ_p S(p)·ω(p): S is the public setup, and ω is a function of the ring-switch challenge α and of τ₁ and r_x, which are Fiat–Shamir challenges, public in the masked transcript (§4.3) |
+| input claim σ_S | `stage3_claim`, `exchange_public_all` (A42) | σ_S = Σ_p S(p)·ω(p): S is the public setup, and ω is a function of the ring-switch challenge α and of τ₁ and r_x, which are Fiat–Shamir challenges, public in the masked transcript (§4.3) |
 | round polynomials | `PublicGrindingSumcheck`, public messages (were private) | round i is the partial sum of S·ω over the unbound variables, with the bound ones at earlier Stage-3 challenges: a function of S, ω and public challenges |
 | input-claim binding | `bind_derived` → `public` | re-absorbs σ_S, already sent; it adds no value |
-| setup-prefix evaluation | `stage3_prefix_eval`, `exchange_all` (unchanged); at level 1 also `bind_fold_openings`' `public` (unchanged) | the slot's MLE at the Stage-3 challenge point |
+| setup-prefix evaluation | `stage3_prefix_eval`, `exchange_public_all` (A42); at level 1 also `bind_fold_openings`' `public` (unchanged) | the slot's MLE at the Stage-3 challenge point |
 
 The verifier folds the rounds in the clear (`verify_single`) and checks
 `output = prefix_eval · weight · α̃` through `GrindingReplay::check_public`:
@@ -1041,7 +1041,7 @@ stage-2 relation weight multiplies w by σ_S only, a public value, so the
 level-0 oracle row stays one product (§4.4).
 
 **Clear bytes.** `PublicGrindingSumcheck` sends what the clear transcript's
-private exchanges send (`exchange_private` is `exchange_all`, `bind_derived`
+private exchanges send (`exchange_private` is `exchange_public_all`, `bind_derived`
 is `public`), so clear proofs do not change.
 
 **Tests.** `masked_prefix::multi_group_masked_prefix_with_a_setup_prefix`
@@ -1087,7 +1087,7 @@ Akita's SIS tables price the matrices at the Gaussian radius (rule 3).
 |---|---|---|
 | `RootCommitment`, `RootPoint` | `public_all` | unchanged (hiding commitment, public point) |
 | `Openings` (level 0 statement claims) | `public_all` | `bind_derived_base` per claim. The verifier holds them as Jolt affine forms (§4.6) |
-| `OpeningPayload` (D image or its compressed form) | `exchange_private_base` | `exchange_all`, public, hidden by r′ (M3b fixup) |
+| `OpeningPayload` (D image or its compressed form) | `exchange_private_base` | `exchange_public_all`, public, hidden by r′ (M3b fixup, A42) |
 | fold seed, challenges | nonce + fork | fork(seed, 0) (W2) |
 | `NextWitnessPayload` (at `cut_level`: u_a) | public | public, hidden by r |
 | ring switch α, τ₀, τ₁ | public | public |
@@ -1361,7 +1361,8 @@ Each departure below states its argument.
   `ProverGrindingChannel` and `VerifierGrindingChannel` are these operations.
   Their terminal byte sends (`send_public_bytes`,
   `send_bounded_public_bytes`) return `UnsupportedSchedule` on a masked
-  channel, and public field messages go through `Channel::exchange_all`.
+  channel, and public field messages go through `Channel::exchange_public_all`;
+  a masked channel refuses `exchange`/`exchange_all` (A42).
 - **Error classification.** Under `zk`, a masked channel's error that
   crosses the sumcheck driver (`SumcheckError::PrivateChannel`) maps through
   `From<ZkError>`. A truncated or malformed masked round is therefore
@@ -2370,16 +2371,23 @@ The numbering continues the W4 note's A1–A23.
   `A_D` takes the planner's own digit-commitment price
   (`planner_support::projected_collision_role_price`, then `min_secure_rank`;
   `digit_commitment_min_rank` since A43).
-- **A42, public payloads on the masked channel (open).** Akita's prover
-  sends its public payloads through `Channel::exchange_all` on jolt-zk's
-  masked `MaskedProver`: the D image
-  (`crates/akita-prover/src/protocol/ring_relation.rs:278`) and `u_a`
-  (`crates/akita-prover/src/protocol/prove/suffix.rs:355`). So
-  `MaskedProver` must pass `exchange`/`exchange_all` through unmasked, and a
-  private value sent that way would go out clear without a compile error.
-  Sending them through an explicit public-only method would let jolt-zk drop
-  the passthrough. jolt's HT1 census (`fs_obligations` site classes plus the
-  runtime census in `tests/soundness/whiteout.rs`) is the backstop meanwhile.
+- **A42, public payloads on the masked channel (resolved).** Akita's
+  prover sent its public payloads through `Channel::exchange_all` on
+  jolt-zk's masked `MaskedProver`, so the masked channel had to pass
+  `exchange`/`exchange_all` through unmasked, and a private value sent that
+  way would have gone out clear. jolt-transcript's `Channel` now has an
+  explicit public send, `exchange_public`/`exchange_public_all` (the mirror
+  of `PrivateChannel::exchange_private`; same bytes as `exchange` on a clear
+  transcript), and jolt-zk's `MaskedProver` and `MaskedVerifier` refuse
+  `exchange`/`exchange_all` with `TranscriptError::ClearMessageOnMaskedChannel`
+  (Akita: `AkitaError::UnsupportedSchedule`). The messages public in both
+  modes use it on both sides: the D image (`OpeningPayload`), the
+  next-witness payload (`NextWitnessPayload`, u_a at the cut level), Stage
+  3's claim and prefix evaluation, and `PublicGrindingSumcheck`'s rounds.
+  The terminal's messages (`NextWitnessInnerState`, `TerminalEFields`) and
+  the L2 route's integer stay clear `exchange`s: no masked level sends them
+  (§2.5.0, Q8), and a masked channel now refuses them instead of sending them
+  clear. Clear proofs are byte-identical.
 - **A43, a stable digit-commitment price (resolved).** jolt's `A_D` rank
   (`digit_matrix_rank`) called `akita_schedules::planner_support::projected_collision_role_price`,
   a `#[doc(hidden)]` module for offline search and artifact validation, then
