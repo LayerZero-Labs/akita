@@ -1,6 +1,7 @@
 mod batched_onehot;
 mod cache;
 mod claims;
+mod mapped_onehot;
 mod multi_group;
 mod profile_data;
 mod proof_size;

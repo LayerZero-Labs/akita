@@ -421,6 +421,15 @@ fn run_profile_dense_fp128_multi_chunk_w8r2(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
+    if std::env::var("AKITA_PROFILE_K16").as_deref() == Ok("1") {
+        assert_eq!(
+            profile_setup_contribution_mode(),
+            SetupContributionMode::Recursive
+        );
+        type Cfg = RecursiveCommitmentConfig<fp128::OneHotK16>;
+        run_profile_onehot_fp128_with_cfg::<256, Cfg>("onehot_fp128", nv, num_polys);
+        return;
+    }
     match profile_setup_contribution_mode() {
         SetupContributionMode::Direct => {
             type Cfg = fp128::OneHot;
@@ -443,8 +452,8 @@ fn run_profile_onehot_fp128_with_cfg<
     num_polys: usize,
 ) {
     assert!(
-        matches!(nv, 32 | 36 | 40),
-        "fp128 one-hot profile supports generated nv=32, nv=36, and nv=40 rows"
+        matches!(nv, 32 | 36 | 38 | 40),
+        "fp128 one-hot profile supports generated nv=32, nv=36, nv=38, and nv=40 rows"
     );
     assert_singleton_mode(label, num_polys);
 

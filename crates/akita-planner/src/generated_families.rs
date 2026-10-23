@@ -691,6 +691,18 @@ fn explicit_precommitted_group<Cfg: CommitmentConfig + 'static>(
 /// automatically.
 pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     family_row!(
+        recursive,
+        &[
+            PolynomialGroupLayout::singleton(32),
+            PolynomialGroupLayout::singleton(38),
+            PolynomialGroupLayout::singleton(40)
+        ],
+        RecursiveCommitmentConfig<fp128::OneHotK16>,
+        fp128::OneHotK16,
+        no_grouped_requests,
+        ChunkedWitnessCfg::default_non_chunked()
+    ),
+    family_row!(
         FP128_ONEHOT_KEYS,
         fp128::OneHot,
         fp128_onehot_grouped_requests,
