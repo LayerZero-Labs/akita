@@ -59,6 +59,15 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ZkCommitmentConfig<Cfg> {
         Cfg::committed_source_class()
     }
 
+    fn committed_source_contract() -> Result<akita_params::sis::CommittedSourceContract, AkitaError>
+    {
+        Cfg::committed_source_contract()
+    }
+
+    fn validate_sis_modulus_profile() -> Result<(), AkitaError> {
+        Cfg::validate_sis_modulus_profile()
+    }
+
     fn recursive_setup_planning() -> bool {
         Cfg::recursive_setup_planning()
     }

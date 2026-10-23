@@ -635,6 +635,56 @@ fn clear_entry_points_refuse_a_zero_knowledge_configuration() {
     });
 }
 
+/// S9: a zero-knowledge configuration's descriptor binds `zk = true`, so it
+/// decodes only against that feature set, and a clear configuration's only
+/// against `zk = false`, for the same row and setup.
+#[test]
+fn the_descriptor_binds_the_configuration_mode() {
+    on_large_stack(|| {
+        use akita_serialization::AkitaDeserialize;
+        use akita_types::{AkitaInstanceDescriptor, ProtocolFeatureSet};
+
+        let scheme = AkitaCommitmentScheme::<Cfg>::new(zk_catalog());
+        let setup = scheme.setup_prover(NV, 1).unwrap();
+        let row = scheme.schedules().resolve_key(&key()).unwrap();
+        let layout = key().opening_layout().unwrap();
+        let descriptor = |zk: bool| {
+            let bytes = if zk {
+                akita_config::transcript_instance_descriptor::<F, Cfg>(
+                    setup.expanded.descriptor(),
+                    &layout,
+                    row.selection(),
+                    row.schedule(),
+                    BasisMode::Lagrange,
+                )
+            } else {
+                akita_config::transcript_instance_descriptor::<F, Clear>(
+                    setup.expanded.descriptor(),
+                    &layout,
+                    row.selection(),
+                    row.schedule(),
+                    BasisMode::Lagrange,
+                )
+            };
+            bytes.unwrap().1
+        };
+        for (bound, other) in [(true, false), (false, true)] {
+            let bytes = descriptor(bound);
+            let decode = |zk| {
+                AkitaInstanceDescriptor::deserialize_uncompressed_exact(
+                    &bytes,
+                    &ProtocolFeatureSet { zk },
+                )
+            };
+            assert_eq!(decode(bound).unwrap().setup.protocol_features.zk, bound);
+            assert!(
+                decode(other).is_err(),
+                "a zk = {bound} descriptor decodes as {other}"
+            );
+        }
+    });
+}
+
 /// A one-shot fold response sends no nonce and forks at counter 0, and the
 /// verifier rejects a nonce in its place.
 #[test]
