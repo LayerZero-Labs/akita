@@ -28,6 +28,7 @@ use crate::{OperatorNormRejection, SparseChallenge, SparseChallengeConfig};
 use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// Largest ring dimension the decoder supports.
 const MAX_RING_DIM: usize = 2048;
@@ -39,8 +40,10 @@ const POOL_CHERNOFF_SCALE: u128 = 224;
 const MAX_POOL_CANDIDATES: u128 = 1 << 32;
 /// Largest message, matching Jolt's per-message squeeze limit.
 const MAX_MESSAGE_BYTES: usize = 1 << 24;
+/// Most binomial tables kept for reuse across decodes.
+const MAX_CACHED_BINOMIAL_TABLES: usize = 8;
 #[cfg(feature = "parallel")]
-const PARALLEL_DECODE_WORK_THRESHOLD: usize = 1 << 14;
+const PARALLEL_DECODE_WORK_THRESHOLD: usize = 1 << 12;
 
 /// Lower bounds used to size an operator-norm pool.
 ///
@@ -220,7 +223,7 @@ impl SparseChallengeStream {
             ));
         }
         let policy = ChallengePolicy::new(self.ring_d, &self.config, self.rejection)?;
-        let binomials = BinomialTable::new(
+        let binomials = binomial_table(
             self.ring_d,
             self.config.count_pm1.max(self.config.count_pm2),
         )?;
@@ -273,13 +276,22 @@ impl SparseChallengeStream {
         accepted
             .try_reserve_exact(self.count)
             .map_err(|_| AkitaError::InvalidInput("sparse challenge allocation failed".into()))?;
+        // In parallel, decode the pool in order in chunks of twice the
+        // challenge count and stop after the chunk that fills the count.
         #[cfg(feature = "parallel")]
         if self.parallel() {
-            let decoded = (0..self.candidates)
-                .into_par_iter()
-                .map(&accept)
-                .collect::<Result<Vec<_>, _>>()?;
-            accepted.extend(decoded.into_iter().flatten().take(self.count));
+            let chunk = self.count.saturating_mul(2);
+            let mut start = 0;
+            while accepted.len() < self.count && start < self.candidates {
+                let end = start.saturating_add(chunk).min(self.candidates);
+                let decoded = (start..end)
+                    .into_par_iter()
+                    .map(&accept)
+                    .collect::<Result<Vec<_>, _>>()?;
+                let missing = self.count - accepted.len();
+                accepted.extend(decoded.into_iter().flatten().take(missing));
+                start = end;
+            }
             return Ok(self.full(accepted));
         }
         for index in 0..self.candidates {
@@ -377,45 +389,81 @@ fn binomial(n: usize, k: usize) -> Result<u128, AkitaError> {
     Ok(value)
 }
 
+/// The binomial table for `n <= max_n`, `k <= max_k`, built once and then
+/// shared by every decode of a family with that ring dimension and weight.
+fn binomial_table(max_n: usize, max_k: usize) -> Result<Arc<BinomialTable>, AkitaError> {
+    static TABLES: Mutex<Vec<Arc<BinomialTable>>> = Mutex::new(Vec::new());
+    let mut tables = TABLES.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(table) = tables
+        .iter()
+        .find(|table| table.max_n == max_n && table.max_k == max_k)
+    {
+        return Ok(Arc::clone(table));
+    }
+    let table = Arc::new(BinomialTable::new(max_n, max_k)?);
+    if tables.len() < MAX_CACHED_BINOMIAL_TABLES {
+        tables.push(Arc::clone(&table));
+    }
+    Ok(table)
+}
+
 /// Pascal's triangle `C(n, k)` for `n <= max_n`, `k <= max_k`, saturating at
-/// `u128::MAX`. Every rank the decoder unranks is below `u128::MAX`, so a
-/// saturated entry still compares correctly as "too large".
+/// `u128::MAX`, stored by column so that `C(0..=max_n, k)` is contiguous.
+/// Every rank the decoder unranks is below `u128::MAX`, so a saturated entry
+/// still compares correctly as "too large".
 struct BinomialTable {
-    columns: usize,
+    max_n: usize,
+    max_k: usize,
     entries: Vec<u128>,
 }
 
 impl BinomialTable {
     fn new(max_n: usize, max_k: usize) -> Result<Self, AkitaError> {
-        let columns = max_k + 1;
-        let len = (max_n + 1)
-            .checked_mul(columns)
+        let rows = max_n + 1;
+        let len = rows
+            .checked_mul(max_k + 1)
             .ok_or_else(|| AkitaError::InvalidSetup("sparse binomial table overflow".into()))?;
         let mut entries: Vec<u128> = Vec::new();
         entries.try_reserve_exact(len).map_err(|_| {
             AkitaError::InvalidInput("sparse binomial table allocation failed".into())
         })?;
         entries.resize(len, 0);
-        for n in 0..=max_n {
-            entries[n * columns] = 1;
-            for k in 1..=max_k.min(n) {
-                let above = entries[(n - 1) * columns + k];
-                let diagonal = entries[(n - 1) * columns + k - 1];
-                entries[n * columns + k] = above.saturating_add(diagonal);
+        let mut columns = entries.chunks_exact_mut(rows);
+        if let Some(mut previous) = columns.next() {
+            previous.fill(1);
+            for column in columns {
+                // `C(n, k) = C(n - 1, k) + C(n - 1, k - 1)`, with `C(0, k) = 0`.
+                let mut above = 0u128;
+                for (entry, &diagonal) in column.iter_mut().skip(1).zip(previous.iter()) {
+                    above = above.saturating_add(diagonal);
+                    *entry = above;
+                }
+                previous = column;
             }
         }
-        Ok(Self { columns, entries })
+        Ok(Self {
+            max_n,
+            max_k,
+            entries,
+        })
     }
 
-    fn get(&self, n: usize, k: usize) -> u128 {
-        self.entries
-            .get(n * self.columns + k)
-            .copied()
-            .unwrap_or(u128::MAX)
+    /// `C(0..upper, k)`.
+    fn column(&self, k: usize, upper: usize) -> Result<&[u128], AkitaError> {
+        let rows = self.max_n + 1;
+        (k <= self.max_k && upper <= rows)
+            .then(|| self.entries.get(k * rows..k * rows + upper))
+            .flatten()
+            .ok_or_else(|| AkitaError::Internal("sparse binomial table is too small".into()))
     }
 
     /// Unrank `rank < C(n, k)` into a `k`-subset of `0..n`, colexicographic,
     /// written in increasing order into `out`.
+    ///
+    /// Element `i` (from 1) is the largest `c` below element `i + 1` with
+    /// `C(c, i) <= rank`. The elements decrease, so one downward scan over all
+    /// of `0..n` finds them all; it beats a binary search per element, whose
+    /// comparisons the CPU cannot predict.
     fn unrank(
         &self,
         mut rank: u128,
@@ -423,25 +471,21 @@ impl BinomialTable {
         k: usize,
         out: &mut [u32],
     ) -> Result<(), AkitaError> {
+        let out = out
+            .get_mut(..k)
+            .ok_or_else(|| AkitaError::Internal("sparse unrank output is too short".into()))?;
         let mut upper = n;
-        for i in (1..=k).rev() {
-            // Largest `c` in `[i - 1, upper)` with `C(c, i) <= rank`.
-            let (mut low, mut high) = (i - 1, upper);
-            while high - low > 1 {
-                let mid = low + (high - low) / 2;
-                if self.get(mid, i) <= rank {
-                    low = mid;
-                } else {
-                    high = mid;
-                }
-            }
-            rank -= self.get(low, i);
-            let slot = out
-                .get_mut(i - 1)
-                .ok_or_else(|| AkitaError::Internal("sparse unrank output is too short".into()))?;
-            *slot = u32::try_from(low)
+        for (i, slot) in out.iter_mut().enumerate().rev() {
+            let column = self.column(i + 1, upper)?;
+            let (element, &value) = column
+                .iter()
+                .enumerate()
+                .rfind(|&(_, &value)| value <= rank)
+                .ok_or_else(|| AkitaError::Internal("sparse rank was out of range".into()))?;
+            rank -= value;
+            *slot = u32::try_from(element)
                 .map_err(|_| AkitaError::Internal("sparse position exceeds u32".into()))?;
-            upper = low;
+            upper = element;
         }
         if rank != 0 {
             return Err(AkitaError::Internal("sparse rank was out of range".into()));
@@ -470,26 +514,30 @@ impl CandidateDecoder<'_> {
         if rank >= stream.rank_space {
             return Ok(None);
         }
-        let pm1_rank = rank % stream.pm1_rank_space;
-        let pm2_rank = rank / stream.pm1_rank_space;
+        // One `u128` division, skipped for a ±1-only family.
+        let pm2_rank = if b == 0 {
+            0
+        } else {
+            rank / stream.pm1_rank_space
+        };
+        let pm1_rank = rank - pm2_rank * stream.pm1_rank_space;
         let mut positions = crate::SparseChallengePositions::from_elem(0, weight);
         let (pm1, pm2) = positions.split_at_mut(a);
         self.binomials.unrank(pm1_rank, stream.ring_d, a, pm1)?;
         if b > 0 {
             self.binomials.unrank(pm2_rank, stream.ring_d - a, b, pm2)?;
-            map_to_complement(pm1, pm2)?;
+            map_to_complement(pm1, pm2, stream.ring_d)?;
         }
         let mut coeffs = crate::SparseChallengeCoefficients::with_capacity(weight);
         for offset in (0..weight).step_by(u64::BITS as usize) {
             let take = (weight - offset).min(u64::BITS as usize);
             let signs = read_bits(self.message, start + offset, take as u32)?;
             for bit in 0..take {
-                let magnitude = if offset + bit < a { 1 } else { 2 };
-                coeffs.push(if (signs >> bit) & 1 == 0 {
-                    magnitude
-                } else {
-                    -magnitude
-                });
+                // Branch-free: the sign bits are random, so a branch on them
+                // mispredicts half the time.
+                let magnitude = 1 + i8::from(offset + bit >= a);
+                let negative = ((signs >> bit) & 1) as i8;
+                coeffs.push(magnitude - 2 * negative * magnitude);
             }
         }
         Ok(Some(SparseChallenge { positions, coeffs }))
@@ -497,29 +545,26 @@ impl CandidateDecoder<'_> {
 }
 
 /// Replace each increasing index in `slots` by the index-th position, in
-/// increasing order, that is not in the increasing set `taken`.
-fn map_to_complement(taken: &[u32], slots: &mut [u32]) -> Result<(), AkitaError> {
-    let mut taken = taken.iter().copied().peekable();
-    let mut free_index = 0u32;
-    let mut position = 0u32;
+/// increasing order, of `0..ring_d` that is not in the increasing set `taken`.
+fn map_to_complement(taken: &[u32], slots: &mut [u32], ring_d: usize) -> Result<(), AkitaError> {
+    // Positions of `taken` passed so far; the slots increase, so it only grows.
+    let mut skipped = 0usize;
     for slot in slots.iter_mut() {
-        loop {
-            if position as usize >= MAX_RING_DIM {
-                return Err(AkitaError::Internal(
-                    "sparse complement slot out of range".into(),
-                ));
-            }
-            if taken.next_if_eq(&position).is_none() {
-                if free_index == *slot {
-                    break;
-                }
-                free_index += 1;
-            }
+        let mut position = *slot as usize + skipped;
+        while taken
+            .get(skipped)
+            .is_some_and(|&taken| taken as usize <= position)
+        {
+            skipped += 1;
             position += 1;
         }
-        *slot = position;
-        free_index += 1;
-        position += 1;
+        if position >= ring_d {
+            return Err(AkitaError::Internal(
+                "sparse complement slot out of range".into(),
+            ));
+        }
+        *slot = u32::try_from(position)
+            .map_err(|_| AkitaError::Internal("sparse position exceeds u32".into()))?;
     }
     Ok(())
 }
@@ -527,19 +572,21 @@ fn map_to_complement(taken: &[u32], slots: &mut [u32]) -> Result<(), AkitaError>
 /// Read `width <= 128` bits starting at bit `offset` of a little-endian bit
 /// stream.
 fn read_bits(message: &[u8], offset: usize, width: u32) -> Result<u128, AkitaError> {
-    let mut value = 0u128;
-    let mut filled = 0u32;
-    let mut position = offset;
-    while filled < width {
-        let byte = *message
-            .get(position / 8)
-            .ok_or_else(|| AkitaError::Internal("sparse message read past its end".into()))?;
-        let shift = (position % 8) as u32;
-        let take = (8 - shift).min(width - filled);
-        let bits = (u128::from(byte) >> shift) & ((1u128 << take) - 1);
-        value |= bits << filled;
-        filled += take;
-        position += take as usize;
+    let shift = offset % 8;
+    let bytes = message
+        .get(offset / 8..(offset + width as usize).div_ceil(8))
+        .filter(|_| width <= u128::BITS)
+        .ok_or_else(|| AkitaError::Internal("sparse message read past its end".into()))?;
+    let mut window = [0u8; 16];
+    let low = bytes.len().min(16);
+    window[..low].copy_from_slice(&bytes[..low]);
+    let mut value = u128::from_le_bytes(window) >> shift;
+    // A read of up to 128 bits spans 17 bytes only when it starts mid-byte.
+    if let Some(&high) = bytes.get(16) {
+        value |= u128::from(high) << (128 - shift);
+    }
+    if width < u128::BITS {
+        value &= (1u128 << width) - 1;
     }
     Ok(value)
 }

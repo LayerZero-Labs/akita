@@ -193,8 +193,12 @@ fn replacing_one_candidate_changes_only_its_challenge() {
 #[test]
 fn operator_norm_decode_accepts_only_predicate_challenges() {
     let mut rng = SplitMix(3);
-    for (d, config, rejection) in operator_norm_families() {
-        let stream = SparseChallengeStream::new(d, &config, Some(rejection), 6).unwrap();
+    // 512 challenges take the chunked parallel path when it is enabled.
+    for ((d, config, rejection), count) in operator_norm_families()
+        .into_iter()
+        .flat_map(|family| [(family, 6), (family, 512)])
+    {
+        let stream = SparseChallengeStream::new(d, &config, Some(rejection), count).unwrap();
         let ChallengePolicy::OperatorNorm { threshold, table } =
             ChallengePolicy::new(d, &config, Some(rejection)).unwrap()
         else {
@@ -203,7 +207,7 @@ fn operator_norm_decode_accepts_only_predicate_challenges() {
         for _ in 0..4 {
             let message = rng.message(stream.message_len());
             let challenges = stream.decode(&message).unwrap().unwrap();
-            assert_eq!(challenges.len(), 6);
+            assert_eq!(challenges.len(), count);
             let binomials = BinomialTable::new(d, config.count_pm1.max(config.count_pm2)).unwrap();
             let decoder = CandidateDecoder {
                 stream: &stream,
@@ -217,7 +221,7 @@ fn operator_norm_decode_accepts_only_predicate_challenges() {
                         .accept_strict_parts(&c.positions, &c.coeffs, u64::from(threshold))
                         .unwrap()
                 })
-                .take(6)
+                .take(count)
                 .collect::<Vec<_>>();
             assert_eq!(challenges, expected);
         }
