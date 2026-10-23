@@ -98,7 +98,7 @@ pub struct UnitOneHotFoldPolicy {
 }
 
 /// Canonical logical chunk size of the shipping unit one-hot representation.
-pub const DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE: usize = 256;
+pub const DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE: usize = 16;
 
 impl UnitOneHotFoldPolicy {
     /// Construct a unit one-hot policy for one base/extension field profile.
