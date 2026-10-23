@@ -31,6 +31,7 @@ mod private_cpu;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_params::zk::ZK_CUT_LEVEL;
+use akita_params::ProtocolSiteId;
 use akita_pcs::zk::RESPONSE_SITE;
 use akita_types::{AkitaSponge, PROOF_STREAM_PROTOCOL};
 use harness::*;
@@ -97,7 +98,12 @@ struct Received {
 /// may carry, and whether it must arrive masked. A site outside it, a masked
 /// message at a clear site, or a private message without its masking is an
 /// error naming the message.
-fn class_of(phase: Phase, site: SiteId, masked: bool) -> Result<Class, String> {
+fn class_of(
+    phase: Phase,
+    site: SiteId,
+    masked: bool,
+    grinding: &[ProtocolSiteId],
+) -> Result<Class, String> {
     use akita_params::transcript_site::*;
     use akita_params::SumcheckProtocol;
     let class = match phase {
@@ -108,7 +114,7 @@ fn class_of(phase: Phase, site: SiteId, masked: bool) -> Result<Class, String> {
         Phase::Statement if site == CLAIMS_SITE => Class::Masked(MaskedKind::Claim),
         Phase::Statement if site == AUXILIARY_SITE => Class::Masked(MaskedKind::Auxiliary),
         Phase::Statement => {
-            let id = akita_params::ProtocolSiteId::from_bytes(site.0);
+            let id = ProtocolSiteId::from_bytes(site.0);
             match id.family {
                 SITE_FAMILY_SUMCHECK if id.invocation == SumcheckProtocol::Stage1.tag() => {
                     Class::Masked(MaskedKind::Stage1Round)
@@ -125,8 +131,11 @@ fn class_of(phase: Phase, site: SiteId, masked: bool) -> Result<Class, String> {
                 SITE_FAMILY_OPENING_PAYLOAD | SITE_FAMILY_NEXT_WITNESS => {
                     Class::RandomizedCommitment
                 }
-                // Proof-of-work nonces (`GrindingSite::site_id`).
-                family if family >= 100 => Class::PublicChallengeDerived,
+                // Proof-of-work nonces: exactly the schedule's grinding
+                // sites (`GrindingSite::site_id`; the detail carries widths).
+                _ if grinding.contains(&ProtocolSiteId { detail: 0, ..id }) => {
+                    Class::PublicChallengeDerived
+                }
                 _ => return Err(format!("site {id:?} is outside the allowlist")),
             }
         }
@@ -141,7 +150,11 @@ fn class_of(phase: Phase, site: SiteId, masked: bool) -> Result<Class, String> {
 
 /// HT1's classifier: every received byte of `proof_len` in exactly one
 /// class, in order, from the verifier's event log.
-fn classify(events: &[TranscriptEvent], proof_len: usize) -> Result<Vec<Received>, String> {
+fn classify(
+    events: &[TranscriptEvent],
+    proof_len: usize,
+    grinding: &[ProtocolSiteId],
+) -> Result<Vec<Received>, String> {
     let mut phase = Phase::Start;
     let mut received = Vec::new();
     let mut cursor = 0;
@@ -172,7 +185,7 @@ fn classify(events: &[TranscriptEvent], proof_len: usize) -> Result<Vec<Received
             }) => Some(*first_pad..first_pad + len),
             _ => None,
         };
-        let class = class_of(phase, event.site, pads.is_some())
+        let class = class_of(phase, event.site, pads.is_some(), grinding)
             .map_err(|error| format!("bytes {bytes:?}: {error}"))?;
         received.push(Received { bytes, class, pads });
     }
@@ -222,7 +235,8 @@ fn honest_proofs_verify_end_to_end() {
         fn check<C: CommitmentConfig<Field = F, ExtField = F>>(harness: &Harness<C>, seed: u64) {
             let proved = harness.prove(seed, Cheat::default()).unwrap();
             let events = harness.verify(&proved.proof).unwrap();
-            let received = classify(&events, proved.proof.len()).unwrap();
+            let received =
+                classify(&events, proved.proof.len(), &harness.grinding_sites()).unwrap();
             for class in [Class::Sigma, Class::Response] {
                 let message = received.iter().find(|m| m.class == class).unwrap();
                 let mut proof = proved.proof.clone();
@@ -252,7 +266,8 @@ fn every_received_byte_is_in_one_public_class() {
         fn check<C: CommitmentConfig<Field = F, ExtField = F>>(harness: &Harness<C>, seed: u64) {
             let proved = harness.prove(seed, Cheat::default()).unwrap();
             let events = harness.verify(&proved.proof).unwrap();
-            let received = classify(&events, proved.proof.len()).unwrap();
+            let received =
+                classify(&events, proved.proof.len(), &harness.grinding_sites()).unwrap();
             let kinds = received
                 .iter()
                 .filter_map(|message| match message.class {
@@ -284,7 +299,8 @@ fn every_received_byte_is_in_one_public_class() {
 
             // Positive control: one private site routed clear.
             let events = harness.verify_with_clear_claims(&proved.proof);
-            let error = classify(&events, proved.proof.len()).unwrap_err();
+            let error =
+                classify(&events, proved.proof.len(), &harness.grinding_sites()).unwrap_err();
             assert!(
                 error.contains("Claim message reached a clear channel"),
                 "{error}"
@@ -376,7 +392,8 @@ fn pads_are_used_once_and_never_reused() {
         let mut seen = Vec::new();
         for (harness, proved) in &proofs {
             let events = harness.verify(&proved.proof).unwrap();
-            let received = classify(&events, proved.proof.len()).unwrap();
+            let received =
+                classify(&events, proved.proof.len(), &harness.grinding_sites()).unwrap();
             let mut next = 0;
             for pads in masked_pads(&received) {
                 assert_eq!(pads.start, next, "pads {pads:?} out of order");
@@ -588,7 +605,7 @@ fn a_consistent_cheat_fails_at_every_layer() {
         let harness = single();
         let honest = harness.prove(14, Cheat::default()).unwrap();
         let events = harness.verify(&honest.proof).unwrap();
-        let received = classify(&events, honest.proof.len()).unwrap();
+        let received = classify(&events, honest.proof.len(), &harness.grinding_sites()).unwrap();
         for kind in [
             MaskedKind::Claim,
             MaskedKind::Stage1Round,

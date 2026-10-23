@@ -6,9 +6,9 @@
 
 use crate::instance::*;
 use akita_config::proof_optimized::fp128;
-use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_error::AkitaError;
-use akita_params::ChunkedWitnessCfg;
+use akita_params::{ChunkedWitnessCfg, ProtocolSiteId};
 use akita_pcs::zk::{
     AkitaResponseProver, MaskedPrefix, ResidualOpening, ResidualShape, UncheckedResponseProver,
 };
@@ -161,6 +161,27 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
         );
         harness.response = Some(response_prover(num_vars));
         harness
+    }
+
+    /// The opening's proof-of-work sites, detail zeroed: the grinding plan
+    /// of the statement's row.
+    pub(crate) fn grinding_sites(&self) -> Vec<ProtocolSiteId> {
+        let selection = self.instance.selection();
+        let resolved = self
+            .instance
+            .scheme
+            .schedules()
+            .resolve_selection(selection)
+            .unwrap();
+        derive_transcript_grinding_plan::<C>(
+            resolved.schedule(),
+            self.instance.opening_data().opening_layout(),
+        )
+        .unwrap()
+        .runs()
+        .iter()
+        .map(|run| run.site().site_id(0))
+        .collect()
     }
 
     pub(crate) fn response(&self) -> &AkitaResponseProver<ResponseCfg> {
