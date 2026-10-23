@@ -73,11 +73,11 @@ akita-types = { path = "../crates/akita-types", default-features = false, featur
 akita-verifier = { path = "../crates/akita-verifier", default-features = false, features = [
   "transcript-keccak",
 ] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1f543ca45c053446d39c0506afbb429a5df5922c", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "efae45b3dd484770e8630f8bcec0b82b0196e303", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1f543ca45c053446d39c0506afbb429a5df5922c", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "efae45b3dd484770e8630f8bcec0b82b0196e303", default-features = false }
 libfuzzer-sys = "0.4.12"
 num-bigint = "0.4"
 rayon = "1.10"

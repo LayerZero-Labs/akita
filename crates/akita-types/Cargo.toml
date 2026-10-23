@@ -13,11 +13,11 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1f543ca45c053446d39c0506afbb429a5df5922c", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "efae45b3dd484770e8630f8bcec0b82b0196e303", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1f543ca45c053446d39c0506afbb429a5df5922c", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "efae45b3dd484770e8630f8bcec0b82b0196e303", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
@@ -57,7 +57,7 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
   "test-support",
 ] }
 criterion = { version = "0.8", features = ["html_reports"] }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1f543ca45c053446d39c0506afbb429a5df5922c", default-features = false, features = [
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "efae45b3dd484770e8630f8bcec0b82b0196e303", default-features = false, features = [
   "prover-grinding",
 ] }
 rand = "0.8"
