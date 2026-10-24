@@ -139,20 +139,26 @@ fn byte_group_sends_its_bytes_and_absorbs_them_padded_to_a_word() {
         let bytes = (0..len)
             .map(|index| (index as u8).wrapping_mul(29).wrapping_add(7))
             .collect::<Vec<_>>();
+        let next = *b"next-msg";
         let mut grouped = new_prover_channel(b"bytes", b"fixture");
         send_byte_group(&mut grouped, site(SITE_FAMILY_TERMINAL, 3), &bytes).unwrap();
+        public_bytes(&mut grouped, site(SITE_FAMILY_TERMINAL, 4), &next).unwrap();
         let grouped_challenge = grouped.verifier_message::<[u8; 32]>();
         assert_eq!(grouped.narg_string(), bytes);
 
         let mut padded = bytes.clone();
         padded.resize(len.next_multiple_of(8), 0);
+        padded.extend_from_slice(&next);
         assert_eq!(
             grouped_challenge,
             reference_prover(b"bytes", &padded).verifier_message::<[u8; 32]>()
         );
-        // The padding is absorbed: unpadded bytes give a different sponge
-        // unless the length is already a whole number of words.
-        let unpadded = reference_prover(b"bytes", &bytes).verifier_message::<[u8; 32]>();
+        // The padding is absorbed: it moves the next message to a word
+        // boundary, which unpadded bytes do not unless the length is already
+        // a whole number of words.
+        let mut unpadded = bytes.clone();
+        unpadded.extend_from_slice(&next);
+        let unpadded = reference_prover(b"bytes", &unpadded).verifier_message::<[u8; 32]>();
         assert_eq!(grouped_challenge == unpadded, len % 8 == 0);
 
         let proof = grouped.narg_string().to_vec();
@@ -409,6 +415,6 @@ fn transcript_has_a_known_answer() {
     #[cfg(feature = "transcript-blake2b")]
     let expected = "[FpExt4 { coeffs: [Fp32(2296752781), Fp32(3059908793), Fp32(163358452), Fp32(2723312530)] }, FpExt4 { coeffs: [Fp32(2502126249), Fp32(3189731935), Fp32(3152105171), Fp32(824640072)] }] [98, 125, 201, 141, 153, 47, 101, 191, 117, 29, 12, 58, 241, 63, 212, 69, 33, 96, 155, 121, 58, 0, 53, 70, 233, 251, 121, 199, 80, 159, 172, 29]";
     #[cfg(feature = "transcript-keccak")]
-    let expected = "[FpExt4 { coeffs: [Fp32(2650355531), Fp32(1950568104), Fp32(649483776), Fp32(1708084815)] }, FpExt4 { coeffs: [Fp32(1259572985), Fp32(1159280445), Fp32(2772604853), Fp32(24547)] }] [85, 83, 10, 250, 166, 246, 86, 55, 11, 212, 159, 173, 193, 164, 90, 147, 131, 202, 9, 62, 149, 120, 59, 138, 169, 75, 42, 229, 153, 52, 139, 25]";
+    let expected = "[FpExt4 { coeffs: [Fp32(2720649912), Fp32(1564638090), Fp32(265913417), Fp32(3965890575)] }, FpExt4 { coeffs: [Fp32(1375908699), Fp32(4239959122), Fp32(4049503832), Fp32(3332595443)] }] [224, 134, 9, 164, 23, 50, 96, 139, 70, 58, 213, 112, 253, 140, 67, 15, 213, 246, 41, 116, 136, 54, 216, 15, 227, 171, 80, 218, 183, 234, 141, 155]";
     assert_eq!(rendered, expected);
 }
