@@ -313,12 +313,17 @@ fn append_terminal(
     if extension_degree > 1 {
         append_eor(sink, challenge_order, extension_degree, level, &layout)?;
     }
+    let live_blocks = terminal.blocks.live_blocks;
+    let set_bits = terminal
+        .fold_challenge_family()?
+        .stream(live_blocks)?
+        .set_bits();
+    let challenges = usize_to_u64(live_blocks, "terminal fold coordinates")?;
     sink.push(GrindingRun::fold_response(level))?;
-    sink.push(GrindingRun::fold_challenge_group(
-        level,
-        0,
-        usize_to_u64(terminal.blocks.live_blocks, "terminal fold coordinates")?,
+    sink.push(GrindingRun::fold_challenge_work(
+        level, challenges, set_bits,
     )?)?;
+    sink.push(GrindingRun::fold_challenge_group(level, 0, challenges)?)?;
     Ok(())
 }
 
@@ -328,22 +333,50 @@ fn append_fold_queries(
     params: &CommittedGroupParams,
     layout: &OpeningClaimsLayout,
 ) -> Result<(), AkitaError> {
+    let (work, groups) = fold_challenge_runs(level, params, layout)?;
+    sink.push(work)?;
+    for run in groups {
+        sink.push(run)?;
+    }
+    Ok(())
+}
+
+/// The fold proof of work at `level` and the challenge-message run of each
+/// commitment group, in plan order.
+///
+/// One proof of work protects every group message of the fold, so it is
+/// priced for all of the fold's challenges against its smallest set.
+pub fn fold_challenge_runs(
+    level: u32,
+    params: &CommittedGroupParams,
+    layout: &OpeningClaimsLayout,
+) -> Result<(GrindingRun, Vec<GrindingRun>), AkitaError> {
     let groups = params.validated_groups(layout)?;
+    let mut runs = Vec::with_capacity(groups.len());
+    let mut challenges = 0u64;
+    let mut set_bits = u32::MAX;
     for (group_index, (group_layout, group_params)) in
         layout.groups().iter().zip(groups).enumerate()
     {
         let group = usize_to_u32(group_index, "fold challenge group")?;
-        let multiplicity = group_layout
+        let count = group_layout
             .num_polynomials()
             .checked_mul(group_params.num_live_blocks())
             .ok_or_else(|| AkitaError::InvalidSetup("fold coordinate count overflow".into()))?;
-        sink.push(GrindingRun::fold_challenge_group(
-            level,
-            group,
-            usize_to_u64(multiplicity, "fold coordinate count")?,
-        )?)?;
+        set_bits = set_bits.min(
+            group_params
+                .fold_challenge_family()?
+                .stream(count)?
+                .set_bits(),
+        );
+        let count = usize_to_u64(count, "fold coordinate count")?;
+        challenges = challenges
+            .checked_add(count)
+            .ok_or_else(|| AkitaError::InvalidSetup("fold challenge count overflow".into()))?;
+        runs.push(GrindingRun::fold_challenge_group(level, group, count)?);
     }
-    Ok(())
+    let work = GrindingRun::fold_challenge_work(level, challenges, set_bits)?;
+    Ok((work, runs))
 }
 
 fn append_eor(
@@ -436,7 +469,8 @@ mod tests {
             2,
             2,
             2,
-            SparseChallengeConfig::pm1_only(3),
+            SparseChallengeConfig::production_for_ring_dim(ring_dimension)
+                .expect("production challenge"),
         )
         .with_decomp(1, 1, 2, 2, 2)
         .expect("test fold params")

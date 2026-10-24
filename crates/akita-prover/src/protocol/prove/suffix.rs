@@ -325,7 +325,6 @@ where
                     grinding,
                     fold_level,
                     params,
-                    &scheduled.fold_challenge_config,
                     witness_source,
                     &scheduled.response_shape,
                 )?;

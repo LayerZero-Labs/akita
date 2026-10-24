@@ -191,13 +191,14 @@ Depending on the public layout, the plan contains:
 
 - an optional evaluation/row batching challenge (see
   [claim batching](#claim-batching-sites));
-- exactly one 12-bit fold-response search for the level; and
+- exactly one 12-bit fold-response search for the level;
+- one fold-challenge proof-of-work entry for the level, priced against the
+  level's pair count and smallest sparse challenge set; and
 - one zero-width fold-challenge-group entry per commitment group, with
-  multiplicity covering the group root and every indexed sparse coordinate.
+  multiplicity covering the group message and its challenge count.
 
-The sparse fold challenges themselves do not receive extra proof-of-work.
-Their certified support and the indexed-address soundness bound are
-described in the [transcript grinding specification](transcript-grinding.md#indexed-address-fold-bound).
+The fold proof of work and its soundness bound are described in the
+[transcript grinding specification](transcript-grinding.md#fold-message-bound).
 
 #### Ring switch and evaluation points
 

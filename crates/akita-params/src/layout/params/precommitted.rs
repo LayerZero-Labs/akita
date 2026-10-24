@@ -1,12 +1,12 @@
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::{FoldChallengeDrawDomain, FoldChallengeFamily, SparseChallengeConfig};
 use akita_error::AkitaError;
 
 use crate::descriptor_bytes::push_usize;
 use crate::schedule::GroupCommitPhaseParams;
 use crate::sis::{
     num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    InnerCommitMatrixParams, SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId,
-    SisTableDigest,
+    InnerCommitMatrixParams, InnerCommitSecurityRoute, SisMatrixRole, SisModulusProfileId,
+    SisSecurityPolicyId, SisTableDigest,
 };
 use crate::{CommitmentRingDims, DecompositionParams};
 
@@ -501,6 +501,50 @@ impl GroupOpenPhaseParams {
     #[must_use]
     pub fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
         &self.profile.inner.matrix
+    }
+
+    /// Fold-challenge family this group draws under its opening method and
+    /// certified A-security route.
+    ///
+    /// Transcript pricing and both fold draws read this one value, so the
+    /// challenge set the proof of work is priced against is the set drawn.
+    pub fn fold_challenge_family(&self) -> Result<FoldChallengeFamily, AkitaError> {
+        let matrix = self.inner_commit_matrix_params();
+        let d_a = matrix.ring_dimension();
+        let config = self.fold_challenge_config();
+        match self.opening_method() {
+            OpeningMethod::EvaluationTrace => {
+                let rejection =
+                    matches!(matrix.security_route(), InnerCommitSecurityRoute::L2 { .. })
+                        .then(|| {
+                            akita_challenges::selective_l2_operator_norm_rejection(d_a, &config)
+                        })
+                        .flatten();
+                FoldChallengeFamily::new(
+                    FoldChallengeDrawDomain::EvaluationTrace,
+                    d_a,
+                    config,
+                    rejection,
+                )
+            }
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            } => {
+                if !matches!(matrix.security_route(), InnerCommitSecurityRoute::Linf(_)) {
+                    return Err(AkitaError::InvalidSetup(
+                        "coefficient packing requires an L-infinity A security route".into(),
+                    ));
+                }
+                FoldChallengeFamily::new(
+                    FoldChallengeDrawDomain::SubringCoefficientPacking {
+                        challenge_subring_dimension,
+                    },
+                    challenge_subring_dimension,
+                    config,
+                    None,
+                )
+            }
+        }
     }
 
     #[inline]

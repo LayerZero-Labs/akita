@@ -17,7 +17,7 @@ Production uses Spongefish v0.8.0 prover and verifier states through Jolt's
 starts from three inputs:
 
 1. A session identifier derived with TurboSHAKE128 from Akita's protocol tag.
-   The tag names the protocol version (currently 8), the sponge, the field
+   The tag names the protocol version (currently 9), the sponge, the field
    challenge codec, and the proof-of-work encoding. Changing any of them
    changes every challenge.
 2. The caller's session bytes, with a `u64` little-endian length prefix.
@@ -77,94 +77,115 @@ not establish that agreement.
 ## Sparse fold challenges
 
 A fold needs one sparse ring challenge for every `(claim, live block)` pair.
-Akita draws them in claim-major order. It performs only one live transcript
-squeeze per commitment group, while still giving each pair an independently
-forkable random-oracle coordinate.
+Akita draws them in claim-major order: pair `claim * num_live_blocks + block`.
+Each commitment group gets one squeezed message, and the message decodes
+directly into that group's challenges.
 
-### The group root
+### Order within one fold
 
-Before the squeeze, the transcript absorbs the complete public draw context:
+Each fold runs these steps, in order:
+
+1. The prover sends the fold-response nonce, and both sides absorb it.
+2. The fold proof of work. When its bit count `g` is positive, the prover runs
+   the sponge's grinding search and the verifier checks it. When `g` is zero
+   nothing happens.
+3. For each commitment group, in canonical order: the transcript absorbs the
+   public draw context, then squeezes exactly the message length for that
+   group.
+
+No prover message lies between the proof of work and the last group message,
+so the work covers every group message of the fold.
+
+The public draw context names the whole challenge family:
 
 - group index, number of live blocks, and number of claims;
-- total number of challenge coordinates;
+- total number of challenges;
 - challenge ring dimension;
 - counts of coefficients at magnitude 1 and magnitude 2;
-- the shared fold-response grinding nonce;
 - the coefficient-packing method domain and challenge-subring dimension, when
   coefficient packing is selected; and
 - the operator-norm rejection policy, when the selected L2 route requires it.
 
-The transcript then squeezes one 32-byte group root. Evaluation trace preserves
-its established domain encoding. Coefficient packing adds a distinct method
-domain so the same transcript state cannot reinterpret a draw under the two
-opening methods.
+Coefficient packing adds a distinct method domain, so the same transcript
+state cannot reinterpret a message under the two opening methods. The nonce is
+not repeated in the context, because the transcript state already holds it.
 
-### One indexed stream per coordinate
+### Decoding one challenge
 
-For coordinate index $i$, the sampler initializes a fresh SHAKE256 reader
-from
+Suppose the challenge ring has dimension $d$ and a challenge has $a$
+coefficients of magnitude 1 and $b$ of magnitude 2, with $w = a + b$. The set
+of all such vectors, the shell $S$, has
 
-```text
-group_root || little_endian_u64(i).
-```
+$$
+|S| = \binom{d}{a} \binom{d-a}{b} 2^w
+$$
 
-Coordinate $i$ is `claim * num_live_blocks + block`. Expanding one coordinate
-does not mutate either the live transcript or another coordinate's reader.
-This gives the extraction argument the required fork: one challenge can change
-while every other challenge and the surrounding transcript remain fixed.
+elements. Every challenge of a group occupies $K$ consecutive bits of the
+message, read as a little-endian bit stream. The decoder splits those bits
+into two fields:
 
-Expanding the whole challenge vector from one shared cursor would give a
-different oracle dependency. Each accepted nonce has one canonical unsigned
-LEB128 representation: those exact proof bytes are absorbed into the live
-transcript before the challenge context is derived. There is no second compact
-nonce representation or separate nonce absorption.
+- the low $w$ bits are the signs. The output lists the magnitude-1 positions
+  in ascending order, then the magnitude-2 positions in ascending order. Bit
+  $t$, least significant first, is the sign of output coefficient $t$.
+- the next $K - w$ bits are a rank $r$. Write
+  $r = r_a + \binom{d}{a} r_b$ with $r_a < \binom{d}{a}$. The value $r_a$
+  names the magnitude-1 positions as a subset of `0..d`, and $r_b$ names the
+  magnitude-2 positions as a subset of the $d - a$ remaining positions.
 
-The indexed readers are an expansion of one transcript root, not additional
-Fiat--Shamir squeezes and not additional proof data.
+A rank names a subset by colexicographic order: for $k$ from the subset size
+down to 1, take the largest $c$ with $\binom{c}{k} \le r$, emit position $c$,
+and subtract $\binom{c}{k}$ from $r$. Every binomial coefficient the decoder
+needs fits in 128 bits, and so does every field it reads. The map from
+$[0, |S|)$ to $S$ is a bijection.
 
-### Positions, magnitudes, and signs
+**Families without a norm filter.** $K = \lfloor \log_2 |S| \rfloor$. Every
+$K$-bit value is accepted, so the challenge set is the first $2^K$ elements of
+the shell in this order. A subset of the shell keeps everything the fold
+argument uses: the difference of two distinct challenges is still invertible,
+and every challenge has the same norms. The message holds exactly one $K$-bit
+slot per challenge.
 
-Suppose the challenge ring has dimension $D$. A configured challenge has
-`count_pm1` coefficients at magnitude 1 and `count_pm2` coefficients at
-magnitude 2. The sampler first chooses their distinct positions by a partial
-Fisher--Yates shuffle of `0..D`.
+**Families with operator-norm rejection.** An L2 fold may require a challenge
+whose negacyclic convolution operator norm is below a scheduled threshold. The
+certificate for that threshold counts accepted elements of the whole shell, so
+these families decode over the whole shell: $K = \lceil \log_2 |S| \rceil$.
+A candidate whose rank is at least $\binom{d}{a}\binom{d-a}{b}$ is rejected;
+an in-range candidate is accepted when the certified predicate accepts it.
+The first accepted candidates, in message order, are the challenges.
 
-When the challenge is very sparse, the implementation stores only the swaps
-touched by that partial shuffle, using $O(w)$ scratch for Hamming weight
-$w$. Denser cases use a fixed stack permutation for better locality. These
-are two implementations of the same ordered partial shuffle and consume the
-same random stream.
-
-Every bounded integer draw uses bitmask rejection rather than `% D`, so the
-position law has no modulo bias. After positions are fixed, fresh low bits
-choose independent signs. The first `count_pm1` positions receive $\pm1$;
-the remainder receive $\pm2$.
-
-### Optional operator-norm rejection
-
-An L2 fold may require a challenge whose negacyclic convolution operator norm
-is below a scheduled threshold. For supported D64 and D128 challenge families,
-the sampler tests each indexed candidate against the certified predicate and
-continues reading the same coordinate stream until one is accepted. The search
-is capped at 4096 candidates.
-
-This rejection rule is part of the public challenge method. The policy and
-threshold are bound before the group root is squeezed, and the verifier repeats
-the same deterministic search. Coefficient-packing folds use the L-infinity
+The message holds a fixed pool of candidates, sized so that an honest message
+runs out with negligible probability. If a message does run out, the
+verifier rejects and the honest prover tries the next fold-response nonce.
+Running out depends only on which candidates pass, never on the values of the
+accepted ones, so conditioned on not running out the challenges are
+independent and exactly uniform on the accepted set. The pool size therefore
+affects only completeness. Coefficient-packing folds use the L-infinity
 security route and reject an operator-norm policy.
+
+### Why the fold has a proof of work
+
+Every Akita challenge message is priced so that one hash call buys at most
+about $2^{-128}$ chance of breaking soundness. Fold extraction fails at a
+fixed transcript prefix with probability at most $W / 2^K$, where $W$ is the
+number of pairs in the fold and $2^K$ is the size of the smallest challenge
+set among its groups. With $W$ in the thousands at the first fold, one message
+would miss the target by up to 11 bits. The proof of work restores it: the
+plan chooses the least $g$ with $W \cdot 2^{128} \le 2^K \cdot 2^g$, so a
+fresh fold message costs about $2^g$ hash calls. The prover pays this once per
+fold-response attempt; the verifier pays one check per fold.
+
+Operator-norm families price $K$ as 128, the size their certificate proves.
 
 Implementation:
 
 - `crates/akita-challenges/src/fold_draw.rs` binds the group context and owns
-  the single transcript squeeze.
-- `crates/akita-challenges/src/sampler/xof.rs` defines the indexed SHAKE256
-  stream and unbiased bounded draws.
-- `crates/akita-challenges/src/sampler/position_sample.rs` implements the
-  partial Fisher--Yates paths.
-- `crates/akita-challenges/src/sampler/signed_sparse.rs` assigns magnitudes and
-  signs.
+  the one squeeze per group.
+- `crates/akita-challenges/src/sampler/stream.rs` defines message lengths,
+  pool sizes and the decoder.
 - `crates/akita-challenges/src/sampler/op_norm.rs` checks the certified
   operator-norm predicate.
+- `crates/akita-params/src/transcript_grinding.rs` prices the fold proof of
+  work as its own run kind, `FoldChallengeWork`.
 
 ## AkitaInstanceDescriptor
 
@@ -429,8 +450,8 @@ nonce encoding are documented in
 - `crates/akita-params/src/transcript_grinding/plan.rs` defines the ordered
   plan; `crates/akita-types/src/transcript_grinding/replay.rs` couples
   nonce transport, proof-of-work checks, challenges, and plan progress.
-- `crates/akita-challenges/src/sampler/xof.rs` derives the indexed sparse
-  challenge streams.
+- `crates/akita-challenges/src/sampler/stream.rs` decodes each group's sparse
+  challenge message.
 - `crates/akita-verifier/src/fold/mod.rs` and
   `crates/akita-verifier/src/fold/terminal.rs` enforce fold and
   terminal replay order.

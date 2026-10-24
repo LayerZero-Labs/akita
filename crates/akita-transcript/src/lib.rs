@@ -27,21 +27,21 @@ pub use logging::{
 };
 #[cfg(feature = "logging-transcript")]
 pub use proof_stream::finish_proof_ranges;
-#[cfg(feature = "prover")]
-pub use proof_stream::FoldPreview;
 pub use proof_stream::{
-    exchange_extension_group, ext_challenge, ext_challenges, extension_slots, fold_root,
-    new_prover_channel, new_verifier_channel, nonce_encoded_len, nonce_max_bytes, prover_context,
-    public_bytes, public_extensions, public_fields, receive_bounded_bytes, receive_byte_group,
-    receive_extension, receive_field, receive_field_group, reject, send_bounded_bytes,
-    send_byte_group, send_extension, send_field, send_field_group, verifier_context, ExtensionAtom,
-    FieldAtom, NonceAtom, ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
-    CONTEXT_DOMAIN, PROTOCOL_VERSION, SESSION_TAG, SITE_FAMILY_EXTENSION_OPENING_REDUCTION,
-    SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_FOLD_CHALLENGE, SITE_FAMILY_NEXT_WITNESS,
-    SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_PHYSICAL_L2, SITE_FAMILY_ROOT_STATEMENT,
-    SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_STAGE3, SITE_FAMILY_SUMCHECK,
-    SITE_FAMILY_TERMINAL,
+    exchange_extension_group, ext_challenge, ext_challenges, extension_slots,
+    fold_challenge_message, new_prover_channel, new_verifier_channel, nonce_encoded_len,
+    nonce_max_bytes, prover_context, public_bytes, public_extensions, public_fields,
+    receive_bounded_bytes, receive_byte_group, receive_extension, receive_field,
+    receive_field_group, reject, send_bounded_bytes, send_byte_group, send_extension, send_field,
+    send_field_group, verifier_context, ExtensionAtom, FieldAtom, NonceAtom, ProofChannel,
+    ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, CONTEXT_DOMAIN, PROTOCOL_VERSION,
+    SESSION_TAG, SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_FOLD_BINDING,
+    SITE_FAMILY_FOLD_CHALLENGE, SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD,
+    SITE_FAMILY_PHYSICAL_L2, SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2,
+    SITE_FAMILY_STAGE3, SITE_FAMILY_SUMCHECK, SITE_FAMILY_TERMINAL,
 };
+#[cfg(feature = "prover")]
+pub use proof_stream::{FoldPreview, FoldWork};
 
 /// Sponge backend selected by the active transcript feature.
 #[cfg(feature = "transcript-blake2b")]
@@ -60,6 +60,3 @@ pub type ProverChannel = spongefish::ProverState<TranscriptSponge>;
 /// [`reject`] all poison the state, so `check_eof` fails afterwards even when
 /// the caller drops the error.
 pub type VerifierChannel<'proof> = spongefish::VerifierState<'proof, TranscriptSponge>;
-
-/// Byte length of every fold-challenge seed.
-pub const FOLD_CHALLENGE_SEED_LEN: usize = 32;

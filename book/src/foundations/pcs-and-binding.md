@@ -168,17 +168,14 @@ share the prover messages sent before the challenge, and each has its own
 accepting proof for the later checks. Repeating this construction at every
 fold produces an accepting transcript tree.
 
-Akita's sampler exposes each coordinate separately. At fold level $j$,
-commitment group $g$ has
+At fold level $j$, commitment group $g$ has
 $W_{j,g}=\text{num\_claims}_{j,g}\text{num\_live\_blocks}_{j,g}$
-coordinates. A coordinate is one sparse ring element for a claim and source
-block. The sampler squeezes
-one 32-byte group root, then uses
-`SHAKE256(root || little_endian_u64(index))`, with
-`index = claim * num_live_blocks + block`. The group payload binds the method,
-dimension, challenge family, group index, and counts. In the ideal-oracle
-model, each indexed input has its own random answer. The extractor can
-therefore change one coordinate while keeping the others fixed.
+pairs, the coordinates of CWSS. Each pair's challenge is one sparse ring element for a claim and
+source block. The transcript squeezes one message per group and splits it
+into fixed-width slots, one per pair in claim-major order, each decoded into
+a challenge. The group payload binds the method, dimension, challenge family,
+group index, and counts. In the ideal-oracle model the message is uniform, so
+the extractor can replace one slot while keeping the others fixed.
 
 There are two opening methods. Evaluation trace uses the scheduled challenge
 ring and permits coefficient-Linf or selective-L2 response security. Subring
@@ -228,92 +225,62 @@ gives the extraction and collision steps in more detail.
 Fiat–Shamir derives each verifier challenge from the public statement and the
 proof prefix through a random oracle. A dishonest prover can try several proof
 prefixes, including different fold-response nonces, before submitting one
-proof. The security bound therefore counts the oracle inputs that the prover
-actually explores.
+proof. The security bound therefore counts the oracle queries that the prover
+actually makes.
 
-### What one coordinate query means
+### The loss of one fold message
 
-A fold coordinate address is the pair `(group root, claim-major index)`.
-Requesting any bytes from its indexed SHAKE256 stream touches that address.
-Further reads from the same stream use the same answer. A different root or
-index gives a different address. The 32-byte group root is also an oracle
-output; it belongs in the total query budget. Distinct transcript contexts
-that produce the same root are covered by the separate root-collision term.
-
-For each possible address $a$, let $q_a=1$ when the original dishonest
-prover touches it during any attempted proof, and let $q_a=0$ otherwise.
-Let $r_a=1$ when verification of the final submitted proof first needs
-that address and the prover did not touch it. Thus $q_a$ and $r_a$
-mark disjoint sets. The extractor's replay queries affect its running
-time; the security charge uses the original prover's queries.
-
-$Q_{\mathrm{coord}}$ bounds $\sum_a q_a$ in every execution of the
-dishonest prover. $R_{\mathrm{coord}}$ is the maximum number of previously
-untouched addresses in one final proof under the selected schedule. One
-final proof uses at most one address for each scheduled fold coordinate, so
+Fix a transcript prefix just before a fold's challenges. Let
+$W_j=\sum_g W_{j,g}$ be the number of pairs at fold $j$, and let $2^{K_j}$
+be the size of the smallest challenge set among its groups. For one pair,
+hold every other challenge fixed and vary that pair's challenge. Two suitable
+accepted values give the fork the extractor needs, so the matching-input
+failure occupies at most one of the $2^{K_j}$ equally likely values. A union
+over the pairs gives
 
 $$
-R_{\mathrm{coord}}\leq\sum_{j,g}W_{j,g}.
+\Pr[\text{fold } j \text{ fails at one prefix}]
+\leq \frac{W_j}{2^{K_j}}.
 \tag{5}
 $$
 
-For example, suppose the final proof has three fold coordinates. If the
-prover has already read two streams for that proof, final verification
-completes one address: those three addresses contribute two to the
-observed query count and one to the completion count. Reading all three
-coordinates under a second candidate root adds three more query addresses.
+The fold's challenge messages come from one transcript state, so the whole
+fold is one priced query, like any other challenge site.
 
-### The fold bound
+### The fold proof of work
 
-Let $C(a)$ be the set of possible values at address $a$ after the
-sampler's fixed filters, and let $C_{\min}$ be the smallest such set in
-the schedule. Fixed operator filtering changes this set; the
-source-dependent test that a fold response fits its bounds changes which
-proof the prover submits and is charged through its oracle queries.
-The indexed streams are uniform on their respective accepted sets in
-the ideal-oracle model, conditional on sampler success.
-
-The fold extraction argument gives
+Each Akita challenge site is priced so that one hash call buys at most about
+$2^{-128}$ chance of failure. At the first fold of a large proof $W_j$ is in
+the thousands, so (5) alone would miss that rate by several bits. The plan
+therefore puts a proof of work of $g_j$ bits in front of every fold's
+messages, with $g_j$ the least integer satisfying
 
 $$
-\varepsilon_{\mathrm{fold}}
-\leq
-\mathbb E\!\left[\sum_a\frac{q_a+r_a}{|C(a)|}\right]
-\leq
-\frac{Q_{\mathrm{coord}}+R_{\mathrm{coord}}}{C_{\min}}.
+W_j \cdot 2^{128} \leq 2^{K_j}\cdot 2^{g_j}.
 \tag{6}
 $$
 
-The expectation covers the dishonest prover's choices and the random
-oracle. To understand the one-value numerator, keep the original selected
-accepting run, fix every other oracle answer, and vary the answer at one
-selected coordinate address. Two suitable accepted values at that address
-provide the coordinate fork used by the accepting-tree extractor.
-The remaining matching-input failure can therefore occupy at most one
-accepted value at that address. An address contributes only when the
-original prover touched it or final verification completes it. Applying
-this charge through the tree gives (6). The
-[grinding specification](../../../specs/transcript-grinding.md#indexed-address-fold-bound)
-states the exact conditional sampling and tree argument.
+A fresh fold message then costs about $2^{g_j}$ hash calls, and each call buys
+at most $2^{-g_j}W_j/2^{K_j}\leq 2^{-128}$. The honest prover pays the same
+work once per fold-response attempt; the verifier checks it once. No design
+that draws a fold from one message can price lower: an attacker can always do
+what the honest prover does.
 
-Every production accepted coordinate set contains at least $2^{128}$
-values. Equation (6) therefore assigns at most $2^{-128}$ to each
-charged fold address with zero additional fold proof of work. A
-12-bit fold-response nonce lets the prover try more prefixes; the
-coordinate streams read during those trials increase
-$Q_{\mathrm{coord}}$. This accounts for that choice directly.
+The operator-norm families are priced at $K_j=128$, the size their
+certificates prove. The 12-bit fold-response nonce lets the prover try more
+prefixes; every such trial pays the fold proof of work again and is counted
+among the prover's queries.
 
 ### From the fold bound to a security claim
 
-For a particular attacker budget, substitute its maximum number of
-distinct coordinate addresses and the schedule's verifier-completion
-bound into (6). For example, $Q_{\mathrm{coord}}+R_{\mathrm{coord}}=2^{12}$
-gives a fold term of at most $2^{-116}$
-when $C_{\min}=2^{128}$. An aggregate 128-bit target requires enough
-support margin to cover the declared query and completion counts.
+With $Q$ the adversary's hash calls and $R$ the fold messages the final
+verifier completes itself, the fold term is at most $(Q+R)\cdot 2^{-128}$.
+For example, $Q+R=2^{12}$ gives a fold term of at most $2^{-116}$. An
+aggregate 128-bit target requires enough margin to cover the declared query
+budget.
 
 The full knowledge-soundness calculation also includes the other
-challenge checks, setup distance, compressed-root collisions, and
+challenge checks, setup distance and
 scheduled matrix-collision advantages. Each field challenge must use
 the loss of its actual position in the complete extraction tree when
 pricing the full calculation. The current grinding plan prices its
@@ -343,8 +310,8 @@ folding, ring-relation, sumcheck, and Fiat–Shamir bounds.
   Schedule validation checks the selected geometry against those parameters.
 - `crates/akita-prover/src/protocol/fold_grind.rs` performs bounded honest
   response search.
-- `crates/akita-challenges/src/sampler/xof.rs` gives sparse challenge
-  coordinates distinct oracle inputs.
+- `crates/akita-challenges/src/sampler/stream.rs` decodes one group message
+  into sparse challenges.
 - `crates/akita-types/src/instance_descriptor/` binds schedule identity and
   the protocol-wide grinding contract.
 - `crates/akita-verifier/src/terminal/direct.rs` checks the

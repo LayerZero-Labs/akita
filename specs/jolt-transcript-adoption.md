@@ -63,10 +63,10 @@ Akita challenge and proof-of-work step goes through Jolt's audited code.
   plan bytes do not change from this move.
 - **Verifier rejection.** Every verifier failure poisons the Spongefish state
   (`reject`, malformed atoms, failed proof of work, and errors routed through
-  `ProofChannel::guard`). A rejected verifier cannot draw a fold root.
+  `ProofChannel::guard`). A rejected verifier cannot draw a fold challenge message.
   Acceptance requires `check_eof`, which fails on a poisoned state or unread
   bytes. Tests: `record_size_overflow_is_rejected_before_receipt`,
-  `rejected_verifier_draws_no_fold_root`.
+  `rejected_verifier_draws_no_fold_challenge_message`.
 - **Feature isolation.** Nonce search and fold-response preview copy the
   sponge state, which Spongefish exposes only under `yolocrypto`. The
   `prover` feature of `akita-transcript`, `akita-challenges` and `akita-types`
@@ -122,7 +122,7 @@ from one squeeze.
 |---|---|
 | Spongefish 0.8.0 | Sponge state, NARG bytes, poisoning, EOF |
 | `jolt-transcript` | `ChallengeCodec`, `grind_bits_for_loss`, `grind`/`check_grind`, `MessageSearch` |
-| `akita-transcript` | Session tag, `FieldAtom`/`ExtensionAtom`/`NonceAtom`, site and context records, `ProofChannel`, `fold_root`, `FoldPreview` |
+| `akita-transcript` | Session tag, `FieldAtom`/`ExtensionAtom`/`NonceAtom`, site and context records, `ProofChannel`, `fold_challenge_message`, `FoldPreview` |
 | `akita-types` | Grinding plan replay over the above |
 
 `ProofChannel` is implemented directly on `ProverState` and `VerifierState`.

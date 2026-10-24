@@ -117,6 +117,7 @@ pub(crate) fn terminal_direct_suffix_cost(
                     || l2_matrix.output_rank() < terminal_params.inner.matrix.output_rank()
                 {
                     terminal_params.inner.matrix = l2_matrix;
+                    terminal_params.fold_challenge_config = l2_challenge;
                     sparse_challenge_config = l2_challenge;
                 }
             }

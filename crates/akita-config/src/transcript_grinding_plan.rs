@@ -88,12 +88,12 @@ mod tests {
                 plan.digest().unwrap(),
             ),
             (
-                43,
-                50,
-                400,
+                45,
+                52,
+                410,
                 [
-                    124, 246, 231, 65, 32, 135, 174, 82, 77, 56, 202, 2, 4, 11, 49, 56, 103, 95,
-                    156, 223, 186, 16, 196, 127, 159, 53, 107, 252, 106, 122, 244, 236
+                    69, 107, 111, 119, 115, 25, 174, 174, 170, 19, 154, 28, 73, 168, 137, 113, 225,
+                    148, 28, 187, 221, 16, 73, 176, 124, 232, 195, 2, 66, 228, 205, 9
                 ],
             )
         );
@@ -181,6 +181,10 @@ mod tests {
                 let count = |kind| plan.runs().iter().filter(|run| run.kind() == kind).count();
                 assert_eq!(
                     count(GrindingQueryKind::FoldResponse),
+                    row.schedule().num_fold_levels()
+                );
+                assert_eq!(
+                    count(GrindingQueryKind::FoldChallengeWork),
                     row.schedule().num_fold_levels()
                 );
                 let expected_evaluation_batch_levels =

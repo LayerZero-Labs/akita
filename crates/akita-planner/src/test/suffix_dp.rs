@@ -124,8 +124,8 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
     let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
-    let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
-        .expect("D64 challenge");
+    let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(256)
+        .expect("D256 challenge");
     let mut shell = akita_params::CommittedGroupParams::params_only(
         akita_params::SisModulusProfileId::Q128OffsetA7F7,
         256,
@@ -292,7 +292,8 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
     let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
-    let challenge = akita_challenges::SparseChallengeConfig::pm1_only(3);
+    let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
+        .expect("D64 challenge");
     let mut params = akita_params::CommittedGroupParams::params_only(
         akita_params::SisModulusProfileId::Q128OffsetA7F7,
         64,
@@ -315,7 +316,7 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            4_095,
+            (1 << 22) - 1,
             inner.ring_dimension(),
         );
     let successor_params = params.clone().with_decomp(4, 4096, 2, 2, 2).unwrap();

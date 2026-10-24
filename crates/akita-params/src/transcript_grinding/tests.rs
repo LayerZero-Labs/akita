@@ -176,6 +176,7 @@ fn plan_encoding_covers_every_discriminator() {
         })
         .collect::<Vec<_>>();
     runs.push(GrindingRun::fold_response(2));
+    runs.push(GrindingRun::fold_challenge_work(2, 3, 128).unwrap());
     runs.push(GrindingRun::fold_challenge_group(2, 3, 4).unwrap());
     let plan = GrindingPlan::new(
         runs,
@@ -184,13 +185,13 @@ fn plan_encoding_covers_every_discriminator() {
     .unwrap();
     let bytes = plan.canonical_bytes().unwrap();
     assert!(bytes.starts_with(GRINDING_PLAN_DOMAIN));
-    assert_eq!(plan.expanded_query_count(), 23);
-    assert_eq!(plan.total_nonce_bits(), 17 * 9 + 12);
+    assert_eq!(plan.expanded_query_count(), 24);
+    assert_eq!(plan.total_nonce_bits(), 18 * 9 + 12);
     assert_eq!(
         plan.digest().unwrap(),
         [
-            117, 146, 91, 80, 213, 48, 170, 23, 3, 118, 17, 47, 178, 47, 50, 105, 17, 224, 204,
-            253, 31, 232, 254, 132, 100, 174, 58, 167, 85, 27, 67, 116,
+            182, 224, 249, 161, 94, 199, 170, 109, 104, 128, 253, 110, 50, 4, 253, 43, 149, 145,
+            69, 239, 96, 25, 110, 224, 49, 37, 59, 23, 103, 131, 3, 14,
         ]
     );
 }

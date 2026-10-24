@@ -27,6 +27,7 @@ where
         let drawn = {
             let mut live = VerifierFoldDraw::new(grinding.state_mut(), level, group);
             draw_group_fold_challenges::<F, E, _>(&mut live, &group_lp, group_index, k_g)?
+                .ok_or(AkitaError::InvalidProof)?
         };
         let coordinate_count = group_lp
             .num_live_blocks()

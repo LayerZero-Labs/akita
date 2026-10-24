@@ -117,28 +117,11 @@ where
     )
     .map(RingVec::from_coeffs)?;
     grinding.read_fold_response(akita_params::GrindingSite::FoldResponse { level })?;
-    let operator_rejection = if scheduled.response_l2_sq_cap().is_some() {
-        Some(
-            akita_challenges::selective_l2_operator_norm_rejection(
-                scheduled.d_a(),
-                &scheduled.fold_challenge_config,
-            )
-            .ok_or(AkitaError::InvalidProof)?,
-        )
-    } else {
-        None
-    };
+    let family = scheduled.fold_challenge_family()?;
     let challenges = {
         let mut draw = akita_challenges::VerifierFoldDraw::new(grinding.state_mut(), level, 0);
-        draw.draw_folding_challenges_with_rejection(
-            akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
-            scheduled.d_a(),
-            0,
-            scheduled.blocks.live_blocks,
-            1,
-            &scheduled.fold_challenge_config,
-            operator_rejection,
-        )?
+        draw.draw_fold_challenges(&family, 0, scheduled.blocks.live_blocks, 1)?
+            .ok_or(AkitaError::InvalidProof)?
     };
     grinding.record_fold_challenges(level, 0, scheduled.blocks.live_blocks)?;
     let z_payload = akita_transcript::receive_bounded_bytes(

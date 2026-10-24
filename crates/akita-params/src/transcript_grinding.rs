@@ -22,9 +22,9 @@ pub const FOLD_RESPONSE_ATTEMPTS: u32 = 1 << FOLD_RESPONSE_NONCE_BITS;
 /// Transcript-grinding binding encoding revision.
 pub const GRINDING_ENCODING_VERSION: u16 = 4;
 /// Query catalog and loss-policy revision.
-pub const GRINDING_QUERY_POLICY_REVISION: u16 = 4;
-/// Indexed fold-coordinate oracle revision.
-pub const FOLD_COORDINATE_ORACLE_REVISION: u16 = 1;
+pub const GRINDING_QUERY_POLICY_REVISION: u16 = 5;
+/// Fold-challenge oracle revision: one decoded message per group.
+pub const FOLD_COORDINATE_ORACLE_REVISION: u16 = 2;
 /// Exclusive upper bound on expanded transcript queries in a complete plan.
 ///
 /// This preserves the existing accepted set: a plan must contain fewer than
@@ -56,8 +56,11 @@ pub enum GrindingQueryKind {
     ProofOfWork,
     /// Existing bounded response rejection search.
     FoldResponse,
-    /// One sparse fold group root and all independently indexed coordinates.
+    /// One sparse fold group message, decoded into all of its challenges.
     FoldChallengeGroup,
+    /// Proof of work before a fold's group messages, priced against the
+    /// fold's sparse challenge set rather than the plan's field.
+    FoldChallengeWork,
 }
 
 /// Sumcheck family used in a fixed-width site payload.
@@ -121,6 +124,10 @@ pub enum GrindingSite {
     FoldChallengeGroup {
         level: u32,
         group: u32,
+    },
+    /// Proof of work protecting every fold-challenge message of one fold.
+    FoldChallengeWork {
+        level: u32,
     },
     RingSwitchAlpha {
         level: u32,
@@ -229,6 +236,10 @@ impl GrindingSite {
                 site.family = 114;
                 site.level = level;
             }
+            Self::FoldChallengeWork { level } => {
+                site.family = 115;
+                site.level = level;
+            }
         }
         site
     }
@@ -239,6 +250,7 @@ impl GrindingSite {
         match self {
             Self::FoldResponse { .. } => GrindingQueryKind::FoldResponse,
             Self::FoldChallengeGroup { .. } => GrindingQueryKind::FoldChallengeGroup,
+            Self::FoldChallengeWork { .. } => GrindingQueryKind::FoldChallengeWork,
             _ => GrindingQueryKind::ProofOfWork,
         }
     }
@@ -261,7 +273,8 @@ impl GrindingSite {
             | Self::L2NormMerge { level }
             | Self::L2VirtualBatch { level }
             | Self::CompressionBinary { level }
-            | Self::Stage2Batch { level } => level,
+            | Self::Stage2Batch { level }
+            | Self::FoldChallengeWork { level } => level,
         }
     }
 
@@ -284,7 +297,8 @@ impl GrindingSite {
             | Self::L2NormMerge { level }
             | Self::L2VirtualBatch { level }
             | Self::CompressionBinary { level }
-            | Self::Stage2Batch { level } => level == u32::MAX,
+            | Self::Stage2Batch { level }
+            | Self::FoldChallengeWork { level } => level == u32::MAX,
             Self::FoldChallengeGroup { level, group } => level == u32::MAX || group == u32::MAX,
             Self::Stage1InterstageBatch { level, stage } => level == u32::MAX || stage == u32::MAX,
         };
@@ -368,6 +382,10 @@ impl GrindingSite {
                 out.push(14);
                 push_u32(out, level);
             }
+            Self::FoldChallengeWork { level } => {
+                out.push(15);
+                push_u32(out, level);
+            }
         }
     }
 }
@@ -380,6 +398,9 @@ pub struct GrindingRun {
     grind_bits: u8,
     nonce_bits: u8,
     multiplicity: u64,
+    /// `log2` size of a fold proof of work's sparse challenge set; zero for
+    /// every other run, which the plan's field order prices.
+    challenge_set_bits: u32,
 }
 
 impl GrindingRun {
@@ -419,6 +440,13 @@ impl GrindingRun {
         self.multiplicity
     }
 
+    /// `log2` size of the sparse challenge set a fold proof of work is priced
+    /// against, or zero for any other run.
+    #[must_use]
+    pub const fn challenge_set_bits(self) -> u32 {
+        self.challenge_set_bits
+    }
+
     /// Construct one proof-of-work site priced against an exact challenge order.
     pub fn proof_of_work(
         site: GrindingSite,
@@ -431,19 +459,33 @@ impl GrindingRun {
             ));
         }
         let grind_bits = challenge_order.grind_bits(loss_factor)?;
-        let nonce_bits = if grind_bits == 0 {
-            0
-        } else {
-            grind_bits
-                .checked_add(GRINDING_NONCE_SLACK_BITS)
-                .ok_or_else(|| AkitaError::InvalidSetup("grinding nonce width overflow".into()))?
-        };
         Ok(Self {
             site,
             loss_factor,
             grind_bits,
-            nonce_bits,
+            nonce_bits: pow_nonce_bits(grind_bits)?,
             multiplicity: 1,
+            challenge_set_bits: 0,
+        })
+    }
+
+    /// Construct the proof of work that protects every challenge message of
+    /// fold `level`: `challenges` sparse challenges in total, each uniform on
+    /// a set of at least `2^challenge_set_bits` elements.
+    pub fn fold_challenge_work(
+        level: u32,
+        challenges: u64,
+        challenge_set_bits: u32,
+    ) -> Result<Self, AkitaError> {
+        let grind_bits =
+            ChallengeFieldOrder::from_full_capacity(challenge_set_bits)?.grind_bits(challenges)?;
+        Ok(Self {
+            site: GrindingSite::FoldChallengeWork { level },
+            loss_factor: challenges,
+            grind_bits,
+            nonce_bits: pow_nonce_bits(grind_bits)?,
+            multiplicity: 1,
+            challenge_set_bits,
         })
     }
 
@@ -456,10 +498,11 @@ impl GrindingRun {
             grind_bits: 0,
             nonce_bits: FOLD_RESPONSE_NONCE_BITS,
             multiplicity: 1,
+            challenge_set_bits: 0,
         }
     }
 
-    /// Construct one zero-width group root and indexed-coordinate audit run.
+    /// Construct one zero-width group message run covering its challenges.
     pub fn fold_challenge_group(
         level: u32,
         group: u32,
@@ -473,10 +516,11 @@ impl GrindingRun {
             multiplicity: coordinate_count.checked_add(1).ok_or_else(|| {
                 AkitaError::InvalidSetup("fold challenge query count overflow".into())
             })?,
+            challenge_set_bits: 0,
         })
     }
 
-    /// Number of independently indexed coordinates in a fold challenge group.
+    /// Number of challenges decoded from a fold challenge group's message.
     #[must_use]
     pub const fn fold_coordinate_count(self) -> Option<u64> {
         match self.kind() {
@@ -487,25 +531,36 @@ impl GrindingRun {
 
     fn validate(self) -> Result<(), AkitaError> {
         self.site.validate()?;
+        let work_set_bits = match self.kind() {
+            GrindingQueryKind::FoldChallengeWork => self.challenge_set_bits != 0,
+            _ => self.challenge_set_bits == 0,
+        };
+        if !work_set_bits {
+            return Err(AkitaError::InvalidSetup(
+                "only a fold proof-of-work run carries a sparse challenge set".into(),
+            ));
+        }
         match self.kind() {
-            GrindingQueryKind::ProofOfWork => {
+            GrindingQueryKind::ProofOfWork | GrindingQueryKind::FoldChallengeWork => {
                 if self.loss_factor == 0 || self.multiplicity != 1 {
                     return Err(AkitaError::InvalidSetup(
                         "proof-of-work run has invalid loss or multiplicity".into(),
                     ));
                 }
-                let expected_nonce_bits = if self.grind_bits == 0 {
-                    0
-                } else {
-                    self.grind_bits
-                        .checked_add(GRINDING_NONCE_SLACK_BITS)
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup("grinding nonce width overflow".into())
-                        })?
-                };
-                if self.grind_bits > MAX_GRINDING_BITS || self.nonce_bits != expected_nonce_bits {
+                if self.grind_bits > MAX_GRINDING_BITS
+                    || self.nonce_bits != pow_nonce_bits(self.grind_bits)?
+                {
                     return Err(AkitaError::InvalidSetup(
                         "proof-of-work run has invalid target or nonce width".into(),
+                    ));
+                }
+                if self.kind() == GrindingQueryKind::FoldChallengeWork
+                    && self.grind_bits
+                        != ChallengeFieldOrder::from_full_capacity(self.challenge_set_bits)?
+                            .grind_bits(self.loss_factor)?
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "fold proof-of-work target does not match its challenge set".into(),
                     ));
                 }
             }
@@ -534,6 +589,19 @@ impl GrindingRun {
         out.push(self.grind_bits);
         out.push(self.nonce_bits);
         out.extend_from_slice(&self.multiplicity.to_le_bytes());
+        if self.kind() == GrindingQueryKind::FoldChallengeWork {
+            push_u32(out, self.challenge_set_bits);
+        }
+    }
+}
+
+/// Nonce width Jolt's proof of work reads for a `grind_bits` target.
+fn pow_nonce_bits(grind_bits: u8) -> Result<u8, AkitaError> {
+    match grind_bits {
+        0 => Ok(0),
+        bits => bits
+            .checked_add(GRINDING_NONCE_SLACK_BITS)
+            .ok_or_else(|| AkitaError::InvalidSetup("grinding nonce width overflow".into())),
     }
 }
 

@@ -9,7 +9,7 @@ use spongefish::{
 };
 use std::marker::PhantomData;
 
-use crate::{ProverChannel, VerifierChannel, FOLD_CHALLENGE_SEED_LEN};
+use crate::{ProverChannel, VerifierChannel};
 
 mod channel;
 mod nonce;
@@ -22,21 +22,21 @@ pub const PROTOCOL_VERSION: u32 = 8;
 
 /// Spongefish session tag.
 ///
-/// It names the proof-stream version, the sponge, the field-challenge codec
-/// and the proof-of-work layout, so a change to any of them changes every
-/// challenge.
+/// It names the proof-stream version, the sponge, the field-challenge codec,
+/// the proof-of-work layout and the sparse fold-challenge message codec, so a
+/// change to any of them changes every challenge.
 #[cfg(feature = "transcript-blake2b")]
 pub const SESSION_TAG: &[u8] =
-    b"akita-pcs/native-proof-stream/v8/blake2b512/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128";
+    b"akita-pcs/native-proof-stream/v8/blake2b512/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128/akita-sparse-colex-message";
 
 /// Spongefish session tag.
 ///
-/// It names the proof-stream version, the sponge, the field-challenge codec
-/// and the proof-of-work layout, so a change to any of them changes every
-/// challenge.
+/// It names the proof-stream version, the sponge, the field-challenge codec,
+/// the proof-of-work layout and the sparse fold-challenge message codec, so a
+/// change to any of them changes every challenge.
 #[cfg(feature = "transcript-keccak")]
 pub const SESSION_TAG: &[u8] =
-    b"akita-pcs/native-proof-stream/v8/keccak-f1600/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128";
+    b"akita-pcs/native-proof-stream/v8/keccak-f1600/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128/akita-sparse-colex-message";
 
 /// Domain tag stored in every diagnostic context record.
 pub const CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v8\0\0\0\0\0";
@@ -678,16 +678,75 @@ pub fn verifier_context(_state: &mut VerifierChannel<'_>, record: ProtocolContex
 }
 
 /// A prover-side copy of the public sponge for previewing a fold-response
-/// candidate: the nonce, then for each commitment group a public payload and
-/// its squeezed root.
+/// candidate: the nonce, the fold's proof of work, then for each commitment
+/// group a public payload and its challenge message.
 ///
 /// Jolt's `MessageSearch` probes only "absorb a candidate, then squeeze", so
-/// it cannot express the payload absorbed between the nonce and each root.
-/// The copy cannot mutate the live argument string or the prover's private
-/// randomness.
+/// it cannot express the work and payloads between the nonce and each
+/// message. The preview instead runs the same calls on a detached prover
+/// state built from a copy of the sponge, so it cannot mutate the live
+/// argument string or the prover's private randomness. The accepted
+/// candidate's proof of work is carried to the live channel as a
+/// [`FoldWork`], so the live prover does not search again. [`FoldWork::commit`]
+/// first checks that the live sponge matches the preview's sponge from before
+/// the work, so a preview that diverged from the channel fails loudly instead
+/// of producing an invalid proof.
 #[cfg(feature = "prover")]
 pub struct FoldPreview {
+    state: ProverChannel,
+    nonce: u32,
+    work: Option<FoldWork>,
+}
+
+/// The fold's proof of work as found on a [`FoldPreview`]: a fingerprint of
+/// the sponge right before the work, the sponge right after it, and the
+/// argument bytes the work sent.
+#[cfg(feature = "prover")]
+pub struct FoldWork {
+    nonce: u32,
+    start: [u8; 32],
     sponge: crate::TranscriptSponge,
+    argument: Vec<u8>,
+}
+
+/// 32 bytes squeezed from a copy of `sponge`: equal sponges give equal
+/// fingerprints, and different ones differ except with probability `2^-256`.
+#[cfg(feature = "prover")]
+fn sponge_fingerprint(sponge: &crate::TranscriptSponge) -> [u8; 32] {
+    use spongefish::DuplexSpongeInterface;
+    sponge.clone().squeeze_array()
+}
+
+#[cfg(feature = "prover")]
+impl FoldWork {
+    /// The fold-response nonce this work follows.
+    #[must_use]
+    pub const fn nonce(&self) -> u32 {
+        self.nonce
+    }
+
+    /// Carry the work to the live channel, which has just sent the same
+    /// fold-response nonce: check that the live sponge is the one the preview
+    /// ground from, send the work's argument bytes one prover message each, as
+    /// Jolt's `grind` does, then take the preview's sponge, which already
+    /// holds the work's check.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::Internal`], leaving the channel unchanged, when
+    /// the live sponge differs from the preview's.
+    pub fn commit(self, state: &mut ProverChannel) -> Result<(), AkitaError> {
+        if sponge_fingerprint(&state.duplex_sponge_state) != self.start {
+            return Err(AkitaError::Internal(
+                "live transcript diverged from the fold preview".into(),
+            ));
+        }
+        for byte in &self.argument {
+            state.prover_message(byte);
+        }
+        state.duplex_sponge_state = self.sponge;
+        Ok(())
+    }
 }
 
 #[cfg(feature = "prover")]
@@ -695,37 +754,89 @@ impl FoldPreview {
     /// Copy the public state and absorb one candidate nonce message.
     #[must_use]
     pub fn new(state: &ProverChannel, nonce: u32) -> Self {
-        use spongefish::DuplexSpongeInterface;
-        let mut sponge = state.duplex_sponge_state.clone();
-        let _ = sponge.absorb(NonceAtom::new(nonce).encode().as_ref());
-        Self { sponge }
+        let mut state = ProverChannel::from(state.duplex_sponge_state.clone());
+        state.public_message(&NonceAtom::new(nonce));
+        Self {
+            state,
+            nonce,
+            work: None,
+        }
     }
 
-    /// Absorb one public fold payload and squeeze its root.
-    #[must_use]
-    pub fn fold_root(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
-        use spongefish::DuplexSpongeInterface;
-        let _ = self.sponge.absorb(payload);
-        let mut root = [0u8; FOLD_CHALLENGE_SEED_LEN];
-        let _ = self.sponge.squeeze(&mut root);
-        root
+    /// Run Jolt's `grind(bits)` on the detached state, exactly as the live
+    /// prover will.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when `bits` exceeds
+    /// [`MAX_GRINDING_BITS`](crate::MAX_GRINDING_BITS) or the search finds no
+    /// nonce (probability at most `e^-128` for an ideal sponge).
+    pub fn grind(&mut self, bits: u32) -> Result<(), AkitaError> {
+        if self.work.is_some() {
+            return Err(AkitaError::Internal(
+                "fold preview ran its proof of work twice".into(),
+            ));
+        }
+        let start = sponge_fingerprint(&self.state.duplex_sponge_state);
+        jolt_transcript::ProverTranscript::grind(&mut self.state, bits)
+            .map_err(|_| AkitaError::InvalidSetup("fold preview proof of work failed".into()))?;
+        self.work = Some(FoldWork {
+            nonce: self.nonce,
+            start,
+            sponge: self.state.duplex_sponge_state.clone(),
+            argument: self.state.narg_string().to_vec(),
+        });
+        Ok(())
+    }
+
+    /// Take the proof of work found by [`grind`](Self::grind), for
+    /// [`FoldWork::commit`] on the live channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::Internal`] when `grind` has not run or the work
+    /// was already taken.
+    pub fn take_work(&mut self) -> Result<FoldWork, AkitaError> {
+        self.work
+            .take()
+            .ok_or_else(|| AkitaError::Internal("fold preview has no proof of work".into()))
+    }
+
+    /// Absorb one public fold payload, squeeze a challenge message of `len`
+    /// bytes and decode it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of `decode`.
+    pub fn challenge_message<T>(
+        &mut self,
+        payload: &[u8],
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<T, AkitaError>,
+    ) -> Result<T, AkitaError> {
+        self.state.public_message_as(payload, |bytes| bytes);
+        self.state.verifier_message_as(len, decode)
     }
 }
 
-/// Absorb one public fold payload and draw its root.
+/// Absorb one public fold payload, then draw and decode its challenge
+/// message of `len` bytes.
 ///
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidProof`] when the verifier transcript is
-/// already rejected.
-pub fn fold_root<S: ProofChannel>(
+/// already rejected or `decode` fails on the verifier, and the error of
+/// `decode` on the prover.
+pub fn fold_challenge_message<S: ProofChannel, T>(
     state: &mut S,
     record: ProtocolContextRecord,
     payload: &[u8],
-) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
+    len: usize,
+    decode: impl FnOnce(&[u8]) -> Result<T, AkitaError>,
+) -> Result<T, AkitaError> {
     state.context(record);
     state.public(payload);
-    state.seed()
+    state.challenge_message(len, decode)
 }
 
 #[cfg(test)]

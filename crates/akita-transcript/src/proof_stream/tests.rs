@@ -50,21 +50,40 @@ fn record_size_overflow_is_rejected_before_receipt() {
 }
 
 #[test]
-fn rejected_verifier_draws_no_fold_root() {
+fn rejected_verifier_draws_no_fold_challenge_message() {
     let record = ProtocolContextRecord::new(
         site(SITE_FAMILY_FOLD_CHALLENGE, 1).to_bytes(),
         ProtocolMessageKind::Challenge as u32,
         1,
         7,
-        FOLD_CHALLENGE_SEED_LEN as u64,
+        40,
     );
-    let mut verifier = new_verifier_channel(b"fold-root", b"fixture", &[]);
-    assert!(fold_root(&mut verifier, record, b"payload").is_ok());
+    let copy = |message: &[u8]| Ok(message.to_vec());
+    let mut verifier = new_verifier_channel(b"fold-message", b"fixture", &[]);
+    let message = fold_challenge_message(&mut verifier, record, b"payload", 40, copy).unwrap();
+    assert_eq!(message.len(), 40);
     let _ = reject(&mut verifier);
     assert!(matches!(
-        fold_root(&mut verifier, record, b"payload"),
+        fold_challenge_message(&mut verifier, record, b"payload", 40, copy),
         Err(AkitaError::InvalidProof)
     ));
+}
+
+#[test]
+fn failed_fold_message_decode_poisons_the_verifier() {
+    let record = ProtocolContextRecord::new(
+        site(SITE_FAMILY_FOLD_CHALLENGE, 1).to_bytes(),
+        ProtocolMessageKind::Challenge as u32,
+        1,
+        7,
+        40,
+    );
+    let mut verifier = new_verifier_channel(b"fold-message", b"fixture", &[]);
+    let result = fold_challenge_message(&mut verifier, record, b"payload", 40, |_| {
+        Err::<(), _>(AkitaError::InvalidInput("pool ran out".into()))
+    });
+    assert!(matches!(result, Err(AkitaError::InvalidProof)));
+    assert!(verifier.check_eof().is_err());
 }
 
 #[test]
@@ -97,6 +116,7 @@ fn session_tag_names_the_backend_and_codecs() {
     assert!(contains(backend));
     assert!(contains(b"jolt-pooled-rejection-tv161"));
     assert!(contains(b"jolt-sponge-pow-leb128"));
+    assert!(contains(b"akita-sparse-colex-message"));
 }
 
 #[test]
@@ -224,6 +244,8 @@ fn bounded_payload_round_trips() {
 #[cfg(feature = "prover")]
 #[test]
 fn fold_preview_matches_live_prover_and_verifier() {
+    use crate::{ProverTranscript, VerifierTranscript};
+    const WORK_BITS: u32 = 6;
     let nonce_record = ProtocolContextRecord::new(
         site(SITE_FAMILY_FOLD_CHALLENGE, 0).to_bytes(),
         ProtocolMessageKind::FoldResponseNonce as u32,
@@ -231,14 +253,18 @@ fn fold_preview_matches_live_prover_and_verifier() {
         nonce_max_bytes(12) as u64,
         0,
     );
-    let root_record = ProtocolContextRecord::new(
-        site(SITE_FAMILY_FOLD_CHALLENGE, 1).to_bytes(),
-        ProtocolMessageKind::Challenge as u32,
-        3,
-        3,
-        FOLD_CHALLENGE_SEED_LEN as u64,
-    );
+    let lens = [40usize, 300];
+    let message_record = |len: usize| {
+        ProtocolContextRecord::new(
+            site(SITE_FAMILY_FOLD_CHALLENGE, 1).to_bytes(),
+            ProtocolMessageKind::Challenge as u32,
+            3,
+            3,
+            len as u64,
+        )
+    };
     let payloads = [[5u8, 8, 13], [21, 34, 55]];
+    let copy = |message: &[u8]| Ok(message.to_vec());
     // An arbitrary 12-bit candidate of at least 128, so its LEB128 encoding
     // takes two bytes, drawn from an unrelated transcript.
     let draw =
@@ -246,13 +272,36 @@ fn fold_preview_matches_live_prover_and_verifier() {
     let nonce = (u32::from(u16::from_le_bytes([draw[0], draw[1]])) & 0x0fff) | 0x80;
     let mut prover = new_prover_channel(b"fold-preview", b"fixture");
     let mut preview = FoldPreview::new(&prover, nonce);
-    let previewed = payloads.map(|payload| preview.fold_root(&payload));
-    prover_context(&mut prover, nonce_record);
-    prover.prover_message(&NonceAtom::new(nonce));
-    let live = payloads.map(|payload| fold_root(&mut prover, root_record, &payload).unwrap());
+    preview.grind(WORK_BITS).unwrap();
+    let work = preview.take_work().unwrap();
+    assert_eq!(work.nonce(), nonce);
+    let previewed = [0, 1].map(|i| {
+        preview
+            .challenge_message(&payloads[i], lens[i], copy)
+            .unwrap()
+    });
+    // One live prover searches again; the other commits the preview's work.
+    // Both must produce the same argument and challenges.
+    let mut searched = new_prover_channel(b"fold-preview", b"fixture");
+    for (state, work) in [(&mut searched, None), (&mut prover, Some(work))] {
+        prover_context(state, nonce_record);
+        state.prover_message(&NonceAtom::new(nonce));
+        match work {
+            None => state.grind(WORK_BITS).unwrap(),
+            Some(work) => work.commit(state).unwrap(),
+        }
+    }
+    let [searched_live, live] = [&mut searched, &mut prover].map(|state| {
+        [0, 1].map(|i| {
+            fold_challenge_message(state, message_record(lens[i]), &payloads[i], lens[i], copy)
+                .unwrap()
+        })
+    });
     assert_eq!(previewed, live);
+    assert_eq!(searched_live, live);
     let proof = prover.narg_string().to_vec();
-    assert_eq!(proof.len(), 2);
+    assert_eq!(searched.narg_string(), proof.as_slice());
+    assert!(proof.len() > 2);
 
     let mut verifier = new_verifier_channel(b"fold-preview", b"fixture", &proof);
     verifier_context(&mut verifier, nonce_record);
@@ -260,9 +309,47 @@ fn fold_preview_matches_live_prover_and_verifier() {
         verifier.prover_message::<NonceAtom>().unwrap().into_inner(),
         nonce
     );
-    let replayed = payloads.map(|payload| fold_root(&mut verifier, root_record, &payload).unwrap());
+    verifier.check_grind(WORK_BITS).unwrap();
+    let replayed = [0, 1].map(|i| {
+        fold_challenge_message(
+            &mut verifier,
+            message_record(lens[i]),
+            &payloads[i],
+            lens[i],
+            copy,
+        )
+        .unwrap()
+    });
     assert_eq!(replayed, live);
     verifier.check_eof().unwrap();
+}
+
+#[cfg(feature = "prover")]
+#[test]
+fn fold_preview_zero_bit_work_is_a_no_op() {
+    let prover = new_prover_channel(b"fold-preview", b"fixture");
+    let mut preview = FoldPreview::new(&prover, 3);
+    preview.grind(0).unwrap();
+    let work = preview.take_work().unwrap();
+    assert!(work.argument.is_empty());
+    assert_eq!(sponge_fingerprint(&work.sponge), work.start);
+}
+
+#[cfg(feature = "prover")]
+#[test]
+fn fold_work_rejects_a_diverged_live_channel() {
+    let mut prover = new_prover_channel(b"fold-preview", b"fixture");
+    let mut preview = FoldPreview::new(&prover, 3);
+    preview.grind(6).unwrap();
+    let work = preview.take_work().unwrap();
+    // The live channel sends a different nonce than the preview absorbed.
+    prover.prover_message(&NonceAtom::new(4));
+    let before = prover.narg_string().to_vec();
+    assert!(matches!(
+        work.commit(&mut prover),
+        Err(AkitaError::Internal(_))
+    ));
+    assert_eq!(prover.narg_string(), before.as_slice());
 }
 
 #[test]
@@ -274,8 +361,8 @@ fn transcript_has_a_known_answer() {
     let root = prover.verifier_message::<[u8; 32]>();
     let rendered = format!("{challenges:?} {root:?}");
     #[cfg(feature = "transcript-blake2b")]
-    let expected = "[FpExt4 { coeffs: [Fp32(1255195923), Fp32(1010296275), Fp32(2155890886), Fp32(764980958)] }, FpExt4 { coeffs: [Fp32(74466261), Fp32(2225575612), Fp32(4254588225), Fp32(1133133637)] }] [210, 114, 206, 245, 161, 222, 249, 198, 179, 217, 125, 143, 219, 181, 30, 2, 17, 221, 37, 54, 20, 53, 188, 65, 199, 179, 115, 218, 236, 179, 216, 249]";
+    let expected = "[FpExt4 { coeffs: [Fp32(3256901899), Fp32(1789739589), Fp32(266986176), Fp32(1818830686)] }, FpExt4 { coeffs: [Fp32(1301177491), Fp32(2890609976), Fp32(7219412), Fp32(1705734705)] }] [56, 235, 61, 178, 13, 248, 21, 57, 91, 216, 254, 126, 109, 112, 96, 164, 195, 119, 49, 169, 4, 161, 206, 79, 152, 145, 65, 83, 151, 25, 46, 169]";
     #[cfg(feature = "transcript-keccak")]
-    let expected = "[FpExt4 { coeffs: [Fp32(3770045623), Fp32(4043972479), Fp32(1064707005), Fp32(1809737648)] }, FpExt4 { coeffs: [Fp32(144613157), Fp32(1405106022), Fp32(265045174), Fp32(89133769)] }] [212, 229, 74, 168, 108, 171, 107, 187, 52, 192, 240, 83, 74, 231, 216, 17, 51, 48, 203, 217, 38, 116, 156, 62, 10, 58, 11, 68, 176, 211, 187, 106]";
+    let expected = "[FpExt4 { coeffs: [Fp32(3840723212), Fp32(975509834), Fp32(2428599173), Fp32(1832430551)] }, FpExt4 { coeffs: [Fp32(3603611738), Fp32(1631292368), Fp32(606825530), Fp32(1194250222)] }] [17, 131, 71, 50, 160, 187, 213, 117, 140, 51, 195, 133, 128, 53, 93, 100, 223, 49, 14, 136, 194, 254, 8, 4, 205, 30, 243, 80, 181, 239, 88, 119]";
     assert_eq!(rendered, expected);
 }
