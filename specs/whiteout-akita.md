@@ -2057,9 +2057,11 @@ code does, and why.
 - **The Σ-protocol's seed.** Paper `04_protocol.tex` Protocol
   `wo:prot:sigma`: the attempt fork absorbs `t_D`. Code: `cm(t_D)`, which
   is also what the prover sends (§5.4).
-- **Compression per attempt (A36).** `t_D` is compressed in every attempt,
-  rejected ones included, by Akita's executor, which is not constant time
-  (A24). The executor must therefore be constant time in its image.
+- **Compression per attempt (A36, resolved).** `t_D` is compressed in
+  every attempt, rejected ones included, by Akita's executor, so the
+  executor is constant time in its image: masked packing and
+  `I8CommitPolicy::ConstantTime` for the maps' products (A45, recorded
+  under A36).
 
 **W5-P1 deltas.**
 
@@ -2298,14 +2300,86 @@ The numbering continues the W4 note's A1–A23.
 - **A35, "log_basis 4".** §5.2 asks for a dense family at log_basis 4. The
   preset bounds committed digits to `[−8, 7]`; the planner chooses the A
   basis within `(3, 4)` and pins the root opening basis to 3.
-- **A36, compressing rejected attempts.** Each Σ attempt compresses its
-  `t_D` with Akita's executor before the accept bit, so a rejected
-  attempt's timing may depend on its `t_D` unless the executor is
-  constant time in its image. That is a requirement on the executor
-  (`CpuBackend::compress_relation_image`: negative-binary packing and the
-  map products). It is not verified: jolt-zk's dudect harness
-  (`examples/sigma_dudect.rs`) cannot reach Akita's executor, and Akita has
-  no dudect harness; a case for it is open (§5.7).
+- **A36, compressing rejected attempts (resolved by A45 for the
+  reduced-evaluation path on Apple M4 under DIT).** Each Σ attempt
+  compresses its `t_D` with Akita's executor before the accept bit, so the
+  executor must be constant time in its image (§5.7). The path is
+  `AkitaResponseProver::compress` → `zk::compression::compress` →
+  `CpuBackend::compress_relation_image` → `execute_compression_chains` →
+  per map `PackedNegativeBinary::from_coefficients`, `expand_rows` and
+  `compression_negacyclic_rows` (`ReducedEvaluation`; Whiteout never runs
+  `QuotientLift`).
+
+  *Audit (line numbers at `1bba0df4a`).* Three leaks, all fixed with the
+  outputs unchanged (unit tests, the bar's proof-dump identity):
+  - `akita-params/src/compression.rs:422-437`, the packing: a branch on
+    `canonical == 0` and one per bit on `(magnitude >> bit) & 1`. Now
+    masks (`overflowing_sub`, a nonzero mask, an unconditional `|=` of the
+    bit); the noncanonical check is accumulated and tested after the loop.
+    `expand_rows` (`:491-495`) branched per digit; now writes `−bit`.
+  - `akita-cpu-backend/src/kernels/linear/digits.rs:40,264-279`, the map
+    products: `CHECK_ZERO = true` skips all-zero digit planes, a
+    data-dependent change of work and of accumulation strategy. Low bit
+    planes of small magnitudes are zero, and at `d = 16` a plane of a
+    uniform image is zero with probability `2^{−16}`.
+  - `chunked_matvec.rs:82,105`, the reconstruction `to_ring`: jolt-algebra's
+    `centered_mixed_radix` (bool-to-int products) and `digits_to_field`,
+    whose `Fp128::from_i128` branches on the sign.
+
+  The compression maps now run under `I8CommitPolicy::ConstantTime`
+  (`mat_vec_mul_ntt_digits_i8_ct`): no zero-plane skip and jolt-algebra's
+  `to_ring_ct` (masked Garner, sign-free lift), which jolt's W4 audited and
+  measured. Clear-mode commits share the executor and take the same path:
+  on `compression_execution_bench` (64 coefficients, release, loaded
+  machine, three alternating runs) digitization drops from 25.4–26.1 µs
+  to 12.6–12.8 µs and the products rise from 249–254 µs to 259–270 µs, so
+  the change is about neutral and is not gated to zero knowledge. Read
+  and found data-independent (public shapes, positions and loop bounds
+  only): `execute_chunk`/`execute_stage`/`execute_compression_chains`
+  (grouping keys are plan shapes), `compress_relation_image` and
+  `PortableCompressionState::validate` (shape checks), `validate_bytes`
+  (padding bits, never set), `validate_digit_rows_for_log_basis` (a
+  branch-free min/max fold; its error branch is never taken for `{−1, 0}`
+  digits), `DigitMontLut::get` (masked index into a two-entry table; the
+  NEON i32 path converts digits without it), and `zk::compression::compress`
+  and `digits` (bit to `i8` by a `bool` cast).
+
+  *dudect.* `examples/compression_dudect.rs` (feature `zk-diagnostics`)
+  times `ImageCompression::compress` on the DIT pool, fixed vs uniform
+  images at 320 coefficients (`t_D` at the W5-e geometry) and 512 (one
+  full chunk), with jolt's slot discipline and ten percentile crops:
+
+  ```text
+  cargo run --release -p akita-pcs --no-default-features \
+      --features parallel,zk-diagnostics --example compression_dudect -- 1000000 0
+  ```
+
+  Apple M4 Max, 2026-10-24, load average 10–100 during the runs (other
+  builds and this ticket's bar):
+
+  | Fixed class | before, 2·10⁴ | after, 10⁶ (320 / 512) | `to_ring` only, 2·10⁵ |
+  |---|---|---|---|
+  | 0 | 2690 raw, 12685 crop (93 vs 718 µs) | 1.11 / 2.50 | 4.70 / 2.62 |
+  | −1 | 3537 raw | 1.25 / 1.34 | 5.02 / 5.48 |
+  | +1 | 2259 raw | 2.21 / 0.93 | 10.02 / 5.73 |
+  | fixed uniform | 331 raw (632 vs 717 µs) | 2.52 / 1.14 | 6.05 / 3.88 |
+
+  Every after-fix test passes (`|t| < 4.5`, max 2.52). "Before" is
+  `whiteout/dev` with the harness added; its fixed-uniform failure is the
+  packing's branches trained by a repeated input. The last column keeps
+  the packing and zero-skip fixes but reconstructs with `to_ring`: crop
+  signals up to 10 at 2·10⁵, so the constant-time reconstruction is
+  needed too.
+
+  *Open.* x86_64 is not measured (the jolt `cargo asm` record covers
+  `Fp128` and the decomposition only). The NEON/AVX forward and inverse
+  NTTs and pointwise dots are not audited line by line (jolt §2.8's open
+  item); the dudect run covers the NEON path empirically. The guarantee
+  needs DIT on cores that time integer operations by operand (A11); the
+  attempt runs on that pool. `QuotientLift` mode is not constant time
+  (`single_cyclic.rs:144,207`: zero-plane skip and `to_ring_cyclic`); no
+  secret image uses it. The executor's intermediate buffers (packed bytes,
+  expanded rows, map images) are not wiped.
 
   The response prover's own code reads `e` only at public indices and
   lifts its digits with `jolt_zk::whiteout::lift_ct` (no branch on sign):
