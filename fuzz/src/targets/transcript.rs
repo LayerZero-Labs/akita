@@ -11,9 +11,9 @@ use crate::input::Reader;
 use crate::{gen, stats};
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_transcript::{
-    ext_challenge, new_prover_channel, new_verifier_channel, public_bytes, public_fields,
-    receive_byte_group, receive_extension, receive_field, send_byte_group, send_extension,
-    send_field, ProtocolSiteId, ProverChannel, VerifierChannel,
+    exchange_extension_group, ext_challenge, extension_slots, new_prover_channel,
+    new_verifier_channel, public_bytes, public_fields, receive_byte_group, receive_field_group,
+    send_byte_group, send_field_group, ProtocolSiteId, ProverChannel, VerifierChannel,
 };
 
 type F = akita_config::proof_optimized::fp128::Field;
@@ -89,8 +89,15 @@ fn prove(state: &mut ProverChannel, ops: &[Op]) -> Vec<Seen> {
             Op::PublicFields(site, values) => {
                 public_fields(state, *site, values).expect("public fields")
             }
-            Op::SendField(value) => send_field(state, *value),
-            Op::SendExt4(value) => send_extension::<fp32::Field, Ext4>(state, *value),
+            Op::SendField(value) => {
+                send_field_group(state, ProtocolSiteId::default(), &[*value]).expect("field group")
+            }
+            Op::SendExt4(value) => exchange_extension_group::<fp32::Field, Ext4, _>(
+                state,
+                ProtocolSiteId::default(),
+                &mut [*value],
+            )
+            .expect("extension group"),
             Op::SendBytes(bytes) => {
                 send_byte_group(state, ProtocolSiteId::default(), bytes).expect("byte group")
             }
@@ -113,10 +120,21 @@ fn replay(mut state: VerifierChannel<'_>, ops: &[Op]) -> Option<(Vec<Seen>, Vec<
         match op {
             Op::PublicBytes(site, bytes) => public_bytes(&mut state, *site, bytes).ok()?,
             Op::PublicFields(site, values) => public_fields(&mut state, *site, values).ok()?,
-            Op::SendField(_) => received.push(Seen::Field(receive_field::<F>(&mut state).ok()?)),
-            Op::SendExt4(_) => received.push(Seen::Ext4(
-                receive_extension::<fp32::Field, Ext4>(&mut state).ok()?,
+            Op::SendField(_) => received.push(Seen::Field(
+                receive_field_group::<F>(&mut state, ProtocolSiteId::default(), 1)
+                    .ok()?
+                    .pop()?,
             )),
+            Op::SendExt4(_) => {
+                let mut slot = extension_slots::<Ext4, _>(&mut state, 1).ok()?;
+                exchange_extension_group::<fp32::Field, Ext4, _>(
+                    &mut state,
+                    ProtocolSiteId::default(),
+                    &mut slot,
+                )
+                .ok()?;
+                received.push(Seen::Ext4(slot.pop()?));
+            }
             Op::SendBytes(bytes) => received.push(Seen::Bytes(
                 receive_byte_group(&mut state, ProtocolSiteId::default(), bytes.len()).ok()?,
             )),
