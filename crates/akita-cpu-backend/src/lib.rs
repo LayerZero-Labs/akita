@@ -27,6 +27,7 @@ pub use commitment::{
     GroupContext, PortableCompressionOutput, PortableCompressionState, SetupPrefixProverRegistry,
     SetupPrefixSlot,
 };
+pub use hiding::HidingRandomness;
 pub use opaque::standalone;
 pub use opaque::{
     evaluate_root_polynomial, CpuBackend, CpuExportPacket, CpuImportPacket, CpuPacketDescriptor,

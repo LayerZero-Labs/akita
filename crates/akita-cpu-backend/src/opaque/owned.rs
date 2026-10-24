@@ -68,6 +68,21 @@ pub struct CommitOutput<F: Field + CanonicalEncoding, E: Field> {
     pub committed_group: CommittedGroup<F>,
     pub private_handle: CommitmentHandle<F, E>,
 }
+impl<F, E> CommitmentHandle<F, E>
+where
+    F: Field + CanonicalEncoding,
+    E: Field,
+{
+    /// The B hiding randomness this commitment was made with, for
+    /// [`CpuBackend::recommit_hiding`] in another process.
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidInput`] for a clear commitment.
+    pub fn hiding_randomness(&self) -> Result<crate::HidingRandomness, AkitaError> {
+        crate::HidingRandomness::from_digits(self.committed.retained.outer_randomness())
+    }
+}
 impl<F, E> CommitmentHandleMetadata for CommitmentHandle<F, E>
 where
     F: Field + CanonicalEncoding,
