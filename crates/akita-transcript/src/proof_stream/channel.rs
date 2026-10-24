@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{ProverChannel, VerifierChannel};
 use akita_error::AkitaError;
-use jolt_transcript::{ChallengeCodec, ProverTranscript, VerifierTranscript};
+use jolt_transcript::{ChallengeCodec, FieldTranscript};
 use spongefish::{Encoding, FromNarg, Transcript};
 
 /// One party's end of the Akita proof channel.
@@ -89,7 +89,7 @@ impl ProofChannel for ProverChannel {
     }
 
     fn challenges<E: ChallengeCodec>(&mut self, len: usize) -> Result<Vec<E>, AkitaError> {
-        ProverTranscript::field_challenges(self, len).map_err(|_| {
+        FieldTranscript::<E>::challenge_vector(self, len).map_err(|_| {
             AkitaError::InvalidSetup(
                 "field challenge codec rejected the message length or exhausted its pool".into(),
             )
@@ -131,7 +131,7 @@ impl ProofChannel for VerifierChannel<'_> {
     }
 
     fn challenges<E: ChallengeCodec>(&mut self, len: usize) -> Result<Vec<E>, AkitaError> {
-        VerifierTranscript::field_challenges(self, len).map_err(invalid_proof)
+        FieldTranscript::<E>::challenge_vector(self, len).map_err(invalid_proof)
     }
 
     fn challenge_message<T>(
