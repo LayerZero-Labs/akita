@@ -775,7 +775,9 @@ fn decomposition_size(decomp: &DecompositionParams) -> usize {
     WORD_BYTES * (3 + usize::from(decomp.log_open_bound.is_some()))
 }
 
-fn decode_sis_modulus_profile<R: Read>(reader: R) -> Result<SisModulusProfileId, SerializationError> {
+fn decode_sis_modulus_profile<R: Read>(
+    reader: R,
+) -> Result<SisModulusProfileId, SerializationError> {
     match read_word_as::<u64, _>(reader, "SIS modulus profile tag")? {
         0 => Ok(SisModulusProfileId::Q32Offset99),
         1 => Ok(SisModulusProfileId::Q64Offset59),

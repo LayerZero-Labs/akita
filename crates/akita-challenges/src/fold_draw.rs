@@ -153,7 +153,11 @@ pub trait FoldDraw {
     }
 }
 
-fn fold_record(level: u32, group: u32, message_len: usize) -> akita_transcript::ProtocolContextRecord {
+fn fold_record(
+    level: u32,
+    group: u32,
+    message_len: usize,
+) -> akita_transcript::ProtocolContextRecord {
     akita_transcript::ProtocolContextRecord::new(
         akita_transcript::ProtocolSiteId {
             family: akita_transcript::SITE_FAMILY_FOLD_CHALLENGE,

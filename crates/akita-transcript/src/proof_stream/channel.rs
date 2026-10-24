@@ -2,8 +2,7 @@
 
 use super::{
     invalid_proof, prover_context, receive_atoms, reject, send_atoms, verifier_context,
-    word_padded,
-    ProtocolContextRecord,
+    word_padded, ProtocolContextRecord,
 };
 use crate::{ProverChannel, VerifierChannel};
 use akita_error::AkitaError;

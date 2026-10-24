@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::{FpExt4, Prime32Offset99 as F, Ring, Zero};
+use jolt_field::{CanonicalBytes, FpExt4, Prime32Offset99 as F, Ring, Zero};
 
 type E = FpExt4<F>;
 
@@ -135,7 +135,7 @@ fn field_group_sends_wire_atoms_and_absorbs_a_padded_word() {
 
 #[test]
 fn byte_group_sends_its_bytes_and_absorbs_them_padded_to_a_word() {
-    for len in [0, 1, 7, 8, 9, 63, 64, 65, 1025] {
+    for len in [0usize, 1, 7, 8, 9, 63, 64, 65, 1025] {
         let bytes = (0..len)
             .map(|index| (index as u8).wrapping_mul(29).wrapping_add(7))
             .collect::<Vec<_>>();

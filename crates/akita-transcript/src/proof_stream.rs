@@ -520,7 +520,9 @@ where
     );
     let record = state.guard(record)?;
     state.context(record);
-    state.public(&encode_atoms(values.iter().map(|&value| FieldAtom::new(value))));
+    state.public(&encode_atoms(
+        values.iter().map(|&value| FieldAtom::new(value)),
+    ));
     Ok(())
 }
 
@@ -544,7 +546,9 @@ where
     let record = state.guard(record)?;
     state.context(record);
     state.public(&encode_atoms(
-        values.iter().map(|&value| ExtensionAtom::<F, E>::new(value)),
+        values
+            .iter()
+            .map(|&value| ExtensionAtom::<F, E>::new(value)),
     ));
     Ok(())
 }

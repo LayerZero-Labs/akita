@@ -205,7 +205,11 @@ pub fn run(data: &[u8]) {
     );
     let (again, message_lens_again) = draw(2);
     assert!(
-        again.first().and_then(|r| r.as_ref().ok()).and_then(Option::as_ref) == Some(&challenges)
+        again
+            .first()
+            .and_then(|r| r.as_ref().ok())
+            .and_then(Option::as_ref)
+            == Some(&challenges)
             && message_lens_again.first() == message_lens.first(),
         "challenge draw is not deterministic"
     );
