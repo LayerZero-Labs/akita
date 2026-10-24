@@ -61,8 +61,9 @@ carried `main` seams (§8).
 - **Feature.** `zk` on `akita-params`, `akita-types`, `akita-prover`,
   `akita-verifier`, `akita-pcs`, `akita-planner` and `akita-config`, off by
   default. It compiles the new modules and the `jolt-zk` dependency (with
-  `whiteout`, and with `whiteout-prover` on prover crates only). It selects
-  nothing (branches.md rules 2–3).
+  `whiteout` only). It selects nothing (branches.md rules 2–3). `zk-prover`
+  on `akita-pcs` and `akita-cpu-backend` (implies `zk`) adds the samplers:
+  jolt-zk's `whiteout-prover` and the OS-drawn hiding randomness (A46).
 - **Config hooks** (carried seam S10). `CommitmentConfig` gains
   `fn zk_schedule_family_name() -> Option<&'static str>`, implemented per
   preset; the default is `None`. `ZkCommitmentConfig<Cfg>` accepts only a
@@ -2429,6 +2430,25 @@ The numbering continues the W4 note's A1–A23.
   `exported_hiding_randomness_rebuilds_exactly_its_commitment`; Jolt's
   `whiteout_e2e` `*_reopens_from_shipped_randomness` (jolt D31, *Trust
   root*).
+- **A46, the verifier compiles the prover's sampler (resolved).** akita-pcs's
+  `zk` enabled jolt-zk's `whiteout-prover` (jolt-dit, jolt-crypto's
+  `sample`), and akita-cpu-backend's `zk` enabled jolt-crypto's `sample`
+  and `rand_core/getrandom`, so every downstream verifier enabling `zk`
+  (jolt-akita's verifier half, jolt W6g) compiled the samplers, against
+  I6. As built, `zk` on both crates is the half without samplers (akita-pcs's
+  jolt-zk dependency carries `whiteout` only), and `zk-prover` (implies
+  `zk`) adds them: on akita-cpu-backend, `jolt-crypto/sample`,
+  `rand_core/getrandom` and `HidingRng::os`'s `OsRng` source (without it
+  the backend has no source, and a schedule declaring hiding randomness
+  fails with `UnsupportedSchedule`); on akita-pcs, `jolt-zk/whiteout-prover`
+  and `akita-cpu-backend/zk-prover`. akita-pcs's `zk` module compiles under
+  `zk` alone (the response prover, masked prefix and Σ compression use no
+  prover-only jolt-zk item), so no Rust item needed a new gate.
+  `test-support` implies `zk-prover`; akita-pcs's dev-dependency on
+  akita-cpu-backend and the `zk_response` example's `required-features`
+  name `zk-prover`. CI (`test-zk`) fails if `cargo tree -p akita-pcs
+  --features zk -e features,normal` reaches `whiteout-prover`, jolt-dit or
+  a `sample` feature, and checks `zk-prover`'s library alone.
 - A2, A3 and A12 from W4 are resolved by §4.3, §4.6 and §5.4.
 
 ## 11. Questions for the paper authors

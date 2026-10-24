@@ -263,6 +263,14 @@ jobs:
         # Downstream-shaped: the library without dev-dependencies, which
         # would otherwise turn on akita-cpu-backend/zk for it.
         run: cargo check -p akita-pcs --lib --no-default-features --features zk
+      - name: The zk feature compiles no prover sampler (I6, A46)
+        # A verifier enables `zk`; only `zk-prover` may reach jolt-zk's
+        # `whiteout-prover`, jolt-dit or jolt-crypto's samplers.
+        run: |
+          cargo tree -p akita-pcs --features zk -e features,normal > "$RUNNER_TEMP/zk-tree.txt"
+          ! grep -E 'whiteout-prover|jolt-dit|feature "sample' "$RUNNER_TEMP/zk-tree.txt"
+      - name: The zk-prover feature alone wires the hiding sampler
+        run: cargo check -p akita-pcs --lib --no-default-features --features zk-prover
       - name: Run the workspace tests with zero knowledge
         run: |
           cargo nextest run --workspace --lib --bins --tests --profile ci --cargo-profile ci-test \

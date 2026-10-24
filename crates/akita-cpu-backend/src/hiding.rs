@@ -118,8 +118,11 @@ impl core::fmt::Debug for HidingRandomness {
 enum Draw {
     /// No source: drawing any randomness is an error.
     None,
-    /// A CSPRNG; only the `zk` and `test-support` features install one.
-    #[cfg_attr(not(any(feature = "zk", feature = "test-support")), allow(dead_code))]
+    /// A CSPRNG; only the `zk-prover` and `test-support` features install one.
+    #[cfg_attr(
+        not(any(feature = "zk-prover", feature = "test-support")),
+        allow(dead_code)
+    )]
     Rng(Box<dyn CryptoRngCore + Send>),
     /// Exported randomness, replayed once and in full; `None` once drawn.
     Replay(Option<Zeroizing<Vec<i8>>>),
@@ -133,12 +136,12 @@ enum Draw {
 pub(crate) struct HidingRng(Mutex<Draw>);
 
 impl HidingRng {
-    /// The operating system CSPRNG, or no source in a build without the `zk`
-    /// feature.
+    /// The operating system CSPRNG, or no source in a build without the
+    /// `zk-prover` feature.
     pub(crate) fn os() -> Self {
-        #[cfg(feature = "zk")]
+        #[cfg(feature = "zk-prover")]
         let draw = Draw::Rng(Box::new(rand_core::OsRng));
-        #[cfg(not(feature = "zk"))]
+        #[cfg(not(feature = "zk-prover"))]
         let draw = Draw::None;
         Self(Mutex::new(draw))
     }
@@ -166,9 +169,9 @@ impl HidingRng {
     /// # Errors
     ///
     /// Returns [`AkitaError::UnsupportedSchedule`] when randomness is
-    /// requested in a build without the `zk` feature, and an input error for
-    /// an alphabet the sampler does not support, or for replayed randomness
-    /// of another length or outside the alphabet, or drawn twice.
+    /// requested in a build without the `zk-prover` feature, and an input
+    /// error for an alphabet the sampler does not support, or for replayed
+    /// randomness of another length or outside the alphabet, or drawn twice.
     pub(crate) fn sample(
         &self,
         len: usize,
@@ -183,7 +186,7 @@ impl HidingRng {
             .map_err(|_| AkitaError::Internal("hiding randomness source is poisoned".into()))?;
         match &mut *draw {
             Draw::None => Err(AkitaError::UnsupportedSchedule(
-                "schedule declares hiding randomness, which needs the zk feature".into(),
+                "schedule declares hiding randomness, which needs the zk-prover feature".into(),
             )),
             Draw::Rng(rng) => sample_hiding_digits(rng.as_mut(), len, log_basis),
             Draw::Replay(digits) => {
@@ -231,7 +234,7 @@ impl HidingRng {
     }
 }
 
-#[cfg(feature = "zk")]
+#[cfg(feature = "zk-prover")]
 fn sample_hiding_digits(
     mut rng: &mut dyn CryptoRngCore,
     len: usize,
@@ -242,18 +245,18 @@ fn sample_hiding_digits(
     )?)
 }
 
-#[cfg(not(feature = "zk"))]
+#[cfg(not(feature = "zk-prover"))]
 fn sample_hiding_digits(
     _rng: &mut dyn CryptoRngCore,
     _len: usize,
     _log_basis: u32,
 ) -> Result<Zeroizing<Vec<i8>>, AkitaError> {
     Err(AkitaError::UnsupportedSchedule(
-        "schedule declares hiding randomness, which needs the zk feature".into(),
+        "schedule declares hiding randomness, which needs the zk-prover feature".into(),
     ))
 }
 
-#[cfg(all(test, feature = "zk"))]
+#[cfg(all(test, feature = "zk-prover"))]
 mod tests {
     use super::*;
 

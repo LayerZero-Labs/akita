@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! cargo run --release -p akita-pcs --no-default-features \
-//!     --features parallel,zk --example zk_response -- <scale>
+//!     --features parallel,zk-prover --example zk_response -- <scale>
 //! ```
 //!
 //! The synthetic instance's witness grows with `scale`; its pad and
