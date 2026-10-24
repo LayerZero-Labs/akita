@@ -159,24 +159,26 @@ For candidate `c`:
    LEB128 encoding of `c`.
 2. Run the fold proof of work (`FoldChallengeWork`) on the clone. With `g = 0`
    this step does nothing.
-3. In canonical group order, absorb each group's public sparse-draw payload and
-   squeeze its challenge message. Diagnostic context metadata records the
+3. In canonical group order, squeeze each group's challenge message. Nothing
+   is absorbed between them; the descriptor and the group's position fix the
+   family
+   ([positional-word-aligned-transcript](positional-word-aligned-transcript.md)). Diagnostic context metadata records the
    expected sequence without changing the production sponge.
 4. Decode every group's challenges, compute the folded response, and accept
    only if all scheduled representation and norm bounds hold. A message whose
    operator-norm pool runs out rejects the candidate.
 
 Jolt's `MessageSearch` evaluates only "absorb a candidate, then squeeze". A
-fold-response candidate is followed by a proof of work, public payloads and
-several message squeezes, so `akita_transcript::FoldPreview` performs this
+fold-response candidate is followed by a proof of work and several message
+squeezes, so `akita_transcript::FoldPreview` performs this
 search on a detached copy of the public sponge state.
 
 The prover commits the accepted nonce once, carries the preview's proof of
 work to the live state without searching again, then repeats the group
 sequence on the live state. The verifier receives and range-checks
 the nonce, checks the proof of work, reproduces every message in the same
-order, and performs the same response checks. The nonce is not repeated inside
-individual group payloads because the shared state already binds it.
+order, and performs the same response checks. No group absorbs anything, so
+the nonce is bound once, before the proof of work.
 
 Fold-response search is honest-prover rejection sampling. It does not repair a
 small Fiat--Shamir challenge space and does not add 12 bits of soundness. Every

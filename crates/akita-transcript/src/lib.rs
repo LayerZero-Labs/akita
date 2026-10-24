@@ -17,8 +17,8 @@ compile_error!("enable exactly one transcript backend: transcript-blake2b or tra
 compile_error!("enable exactly one transcript backend: transcript-blake2b or transcript-keccak");
 
 pub use grinding::{
-    grinding_check_bytes, GRINDING_CHECK_MAX_BYTES, GRINDING_LITTLE_ENDIAN_BIT_ORDER,
-    GRINDING_NONCE_SLACK_BITS, MAX_GRINDING_BITS,
+    GRINDING_CHECK_BYTES, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
+    MAX_GRINDING_BITS,
 };
 pub use jolt_transcript::{ChallengeCodec, ProverTranscript, VerifierTranscript};
 #[cfg(feature = "logging-transcript")]
@@ -28,17 +28,17 @@ pub use logging::{
 #[cfg(feature = "logging-transcript")]
 pub use proof_stream::finish_proof_ranges;
 pub use proof_stream::{
-    exchange_extension_group, ext_challenge, ext_challenges, extension_slots,
-    fold_challenge_message, new_prover_channel, new_verifier_channel, nonce_encoded_len,
-    nonce_max_bytes, prover_context, public_bytes, public_extensions, public_fields,
-    receive_bounded_bytes, receive_byte_group, receive_extension, receive_field,
-    receive_field_group, reject, send_bounded_bytes, send_byte_group, send_extension, send_field,
-    send_field_group, verifier_context, ExtensionAtom, FieldAtom, NonceAtom, ProofChannel,
-    ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, CONTEXT_DOMAIN, PROTOCOL_VERSION,
-    SESSION_TAG, SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_FOLD_BINDING,
-    SITE_FAMILY_FOLD_CHALLENGE, SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD,
-    SITE_FAMILY_PHYSICAL_L2, SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2,
-    SITE_FAMILY_STAGE3, SITE_FAMILY_SUMCHECK, SITE_FAMILY_TERMINAL,
+    exchange_extension_group, ext_challenge, ext_challenges, extension_slots, new_prover_channel,
+    new_verifier_channel, nonce_encoded_len, nonce_max_bytes, prover_context, public_bytes,
+    public_extensions, public_fields, receive_bounded_bytes, receive_byte_group,
+    receive_field_group, receive_nonce, reject, send_bounded_bytes, send_byte_group,
+    send_field_group, send_nonce, verifier_context, ExtensionAtom, FieldAtom, NonceAtom,
+    ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, CONTEXT_DOMAIN,
+    PROTOCOL_VERSION, SESSION_TAG, SITE_FAMILY_EXTENSION_OPENING_REDUCTION,
+    SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_FOLD_CHALLENGE, SITE_FAMILY_NEXT_WITNESS,
+    SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_PHYSICAL_L2, SITE_FAMILY_ROOT_STATEMENT,
+    SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_STAGE3, SITE_FAMILY_SUMCHECK,
+    SITE_FAMILY_TERMINAL,
 };
 #[cfg(feature = "prover")]
 pub use proof_stream::{FoldPreview, FoldWork};

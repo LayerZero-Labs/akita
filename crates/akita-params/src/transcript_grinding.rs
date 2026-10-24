@@ -7,7 +7,7 @@ use akita_transcript::nonce_max_bytes;
 
 mod challenge_order;
 pub use akita_transcript::{
-    GRINDING_CHECK_MAX_BYTES, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
+    GRINDING_CHECK_BYTES, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
     MAX_GRINDING_BITS,
 };
 pub use challenge_order::ChallengeFieldOrder;
@@ -40,7 +40,7 @@ fn active_grinding_policy_bytes() -> [u8; GRINDING_POLICY_BYTES] {
     out[2..4].copy_from_slice(&TRANSCRIPT_SECURITY_BITS.to_le_bytes());
     out[4] = GRINDING_NONCE_SLACK_BITS;
     out[5] = MAX_GRINDING_BITS;
-    out[6] = GRINDING_CHECK_MAX_BYTES;
+    out[6] = GRINDING_CHECK_BYTES;
     out[7] = GRINDING_LITTLE_ENDIAN_BIT_ORDER;
     out[8] = FOLD_RESPONSE_NONCE_BITS;
     out[9..13].copy_from_slice(&FOLD_RESPONSE_ATTEMPTS.to_le_bytes());

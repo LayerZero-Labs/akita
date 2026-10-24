@@ -128,16 +128,17 @@ Each nonterminal and terminal fold runs, in order:
    `ceil(g/8)` check bytes squeezed). The verifier runs `check_grind(g)`. With
    `g = 0` nothing happens.
 3. For each commitment group, in canonical order: the diagnostic context
-   record, the public draw payload (as today, without the nonce, which the
-   state already binds), and one squeeze of exactly `message_len` bytes.
+   record and one squeeze of exactly `message_len` bytes. The public draw
+   payload this spec first kept is gone: the descriptor and the group's
+   position fix every field it held
+   ([positional-word-aligned-transcript](positional-word-aligned-transcript.md)).
 
 No prover message lies between the proof of work and the last group message,
 so the work protects every group message of the fold (Jolt's `grind`
 contract).
 
-The public draw payload keeps its fields and the operator-norm policy
-separator. It drops nothing that names the family, so one transcript state
-cannot reinterpret a message under another family or method.
+The bound schedule names the whole family, so one transcript state cannot
+reinterpret a message under another family or method.
 
 ### Decoding one challenge
 
@@ -172,7 +173,7 @@ This map is a bijection from `[0, |S|)` onto `S`.
 **Unfiltered families.** `K = floor(log2 |S|)`. Every `K`-bit integer is
 accepted, so the accepted family is the first `2^K` shell elements in this
 order and `|C| = 2^K` exactly. There is no rejection and no pool:
-`message_len = ceil(W * K / 8)`.
+`message_len = 8 * ceil(W * K / 64)`, a whole number of words.
 
 | `d` | ±1 | ±2 | `log2 |S|` | `K` |
 |---|---|---|---|---|
@@ -205,7 +206,7 @@ size the pool.
 
 ### Pool size for the operator-norm families
 
-The message holds `B` candidates, `message_len = ceil(B * K / 8)`. Each
+The message holds `B` candidates, `message_len = 8 * ceil(B * K / 64)`. Each
 candidate is accepted independently with probability `p` (the in-range part
 is exact; the predicate part is the measured rate, lowered for sizing). Running out means fewer than `W` acceptances
 among `B`. `B` is the least value passing either integer test:
@@ -224,11 +225,11 @@ Both are exact integer conditions in `u128`. The union bound wins for small
 | Family | `W` | `B` | message bytes | exact tail `log2 P[run out]` |
 |---|---|---|---|---|
 | D64 | 4 | 297 | 4864 | -172.4 |
-| D64 | 6 | 327 | 5355 | -180.7 |
-| D64 | 8 | 357 | 5846 | -189.5 |
-| D64 | 64 | 942 | 15426 | -331.3 |
-| D128 | 8 | 172 | 2795 | -183.7 |
-| D128 | 64 | 567 | 9214 | -431.4 |
+| D64 | 6 | 327 | 5360 | -180.7 |
+| D64 | 8 | 357 | 5848 | -189.5 |
+| D64 | 64 | 942 | 15432 | -331.3 |
+| D128 | 8 | 172 | 2800 | -183.7 |
+| D128 | 64 | 567 | 9216 | -431.4 |
 
 The pool size changes only completeness, and the soundness argument charges
 nothing for it. Whether a message runs out depends only on which candidates
@@ -465,9 +466,9 @@ different proof.
   exponent `K_l`. `FoldChallengeGroup` runs keep their pair count but stand
   for one message. `FOLD_COORDINATE_ORACLE_REVISION` moves to 2 and
   `GRINDING_QUERY_POLICY_REVISION` to 5, so plan digests change.
-- **Domains.** The fold payload domain moves to
-  `akita/fold-challenge-round/v2`, and the Spongefish session tag names the
-  message codec (`akita-sparse-colex-message`).
+- **Domains.** The fold payload and its domain are removed, and the session
+  tag is the padded protocol name; the version doc lists the message codec
+  ([positional-word-aligned-transcript](positional-word-aligned-transcript.md)).
 - **Protocol version.** Proof bytes change, so the protocol version moves to
   9. Riding on version 8 would be safe only if this lands together with #253,
   but #253 is complete and audited on its own and can merge first. A distinct
@@ -581,7 +582,7 @@ repeat the search for the accepted candidate.
 - Decoder round trip: every rank in a sampled set decodes to a shell element
   whose colexicographic rank is the input; distinct ranks give distinct
   elements; edge ranks `0` and `2^K - 1` decode.
-- Unfiltered messages: `message_len = ceil(W K / 8)`; all-zero and all-one
+- Unfiltered messages: `message_len = 8 * ceil(W K / 64)`; all-zero and all-one
   messages decode.
 - Operator-norm messages: pool size matches the table; a message built to
   have too few accepted candidates decodes to nothing and the verifier

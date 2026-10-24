@@ -5,7 +5,7 @@ use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 5;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 6;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];

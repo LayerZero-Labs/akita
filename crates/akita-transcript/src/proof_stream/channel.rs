@@ -1,6 +1,10 @@
 //! Role-generic access to one end of the proof channel.
 
-use super::{invalid_proof, prover_context, reject, verifier_context, ProtocolContextRecord};
+use super::{
+    invalid_proof, prover_context, receive_atoms, reject, send_atoms, verifier_context,
+    word_padded,
+    ProtocolContextRecord,
+};
 use crate::{ProverChannel, VerifierChannel};
 use akita_error::AkitaError;
 use jolt_transcript::{ChallengeCodec, ProverTranscript, VerifierTranscript};
@@ -10,22 +14,28 @@ use spongefish::{Encoding, FromNarg, Transcript};
 ///
 /// Protocol-site code written against this trait runs unchanged for the prover
 /// and the verifier. A proof message is exchanged in place: the prover emits
-/// the value it holds and leaves it unchanged, and the verifier overwrites the
-/// slot with the decoded atom.
+/// the values it holds and leaves them unchanged, and the verifier overwrites
+/// the slots with the decoded atoms.
 pub trait ProofChannel {
     /// Record diagnostic metadata for the next message or challenge group.
     fn context(&mut self, record: ProtocolContextRecord);
 
-    /// Absorb public bytes that both sides already hold.
+    /// Absorb public bytes that both sides already hold, zero-padded to a
+    /// word. Their length must come from bound data.
     fn public(&mut self, bytes: &[u8]);
 
-    /// Emit (prover) or read and absorb (verifier) one proof message.
+    /// Emit (prover) or read (verifier) one proof message of `messages.len()`
+    /// canonical atoms, absorbed as their wire bytes zero-padded to a word.
+    /// The count must come from bound data.
     ///
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidProof`] when the verifier cannot decode the
     /// next message. The prover never fails.
-    fn exchange<T: Encoding + FromNarg>(&mut self, message: &mut T) -> Result<(), AkitaError>;
+    fn exchange<T: Encoding + FromNarg + Copy>(
+        &mut self,
+        messages: &mut [T],
+    ) -> Result<(), AkitaError>;
 
     /// Draw one challenge message of `len` field elements.
     ///
@@ -68,11 +78,14 @@ impl ProofChannel for ProverChannel {
     }
 
     fn public(&mut self, bytes: &[u8]) {
-        self.public_message_as(bytes, |bytes| bytes);
+        self.public_message_as(bytes, word_padded);
     }
 
-    fn exchange<T: Encoding + FromNarg>(&mut self, message: &mut T) -> Result<(), AkitaError> {
-        self.prover_message(message);
+    fn exchange<T: Encoding + FromNarg + Copy>(
+        &mut self,
+        messages: &mut [T],
+    ) -> Result<(), AkitaError> {
+        send_atoms(self, messages.iter().copied());
         Ok(())
     }
 
@@ -104,11 +117,17 @@ impl ProofChannel for VerifierChannel<'_> {
     }
 
     fn public(&mut self, bytes: &[u8]) {
-        self.public_message_as(bytes, |bytes| bytes);
+        self.public_message_as(bytes, word_padded);
     }
 
-    fn exchange<T: Encoding + FromNarg>(&mut self, message: &mut T) -> Result<(), AkitaError> {
-        *message = self.prover_message::<T>().map_err(invalid_proof)?;
+    fn exchange<T: Encoding + FromNarg + Copy>(
+        &mut self,
+        messages: &mut [T],
+    ) -> Result<(), AkitaError> {
+        let received = receive_atoms::<T>(self, messages.len())?;
+        for (slot, value) in messages.iter_mut().zip(received) {
+            *slot = value;
+        }
         Ok(())
     }
 

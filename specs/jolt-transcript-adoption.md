@@ -33,12 +33,13 @@ Akita challenge and proof-of-work step goes through Jolt's audited code.
 ### Invariants
 
 - **Domain separation.** The Spongefish session identifier is
-  `derive_session_id::<TurboShake128>(SESSION_TAG)`. `SESSION_TAG` names the
-  protocol version, the sponge (`blake2b512` or `keccak-f1600`), the challenge
-  codec (`jolt-pooled-rejection-tv161`) and the proof-of-work encoding
-  (`jolt-sponge-pow-leb128`). The instance is the caller's session bytes and
-  the canonical descriptor bytes, each with a `u64` little-endian length
-  prefix. Tests: `session_tag_names_the_backend_and_codecs`,
+  `derive_session_id::<TurboShake128>(SESSION_TAG)`. `SESSION_TAG` is the
+  32-byte padded protocol name and version; the codecs it fixes are listed on
+  `PROTOCOL_VERSION`
+  ([positional-word-aligned-transcript](positional-word-aligned-transcript.md)).
+  The instance is the caller's session bytes and the canonical descriptor
+  bytes, each with a `u64` little-endian length word and padding to a word.
+  Tests: `session_tag_is_the_padded_protocol_name`,
   `session_and_statement_are_framed_separately`.
 - **Default sponge.** Every crate's `default` feature set selects
   `transcript-keccak`. `transcript-blake2b` stays available as an opt-in
@@ -51,11 +52,12 @@ Akita challenge and proof-of-work step goes through Jolt's audited code.
 - **Proof of work.** Each protected site grinds once with
   `ProverTranscript::grind` and checks with `VerifierTranscript::check_grind`.
   The nonce is the least passing value below `2^(g+7)`, sent as canonical
-  LEB128, one byte per prover message. The check squeezes `ceil(g/8)` bytes.
+  LEB128 and absorbed as one `u64` word. The check squeezes
+  `GRINDING_CHECK_BYTES = 8` bytes.
   The protected challenge is the next squeeze. `MAX_GRINDING_BITS` stays 25
   and a const assertion ties it to `jolt_transcript::MAX_POW_BITS`.
   `GRINDING_ENCODING_VERSION` moves to 4 and the plan policy byte records the
-  4-byte maximum check width.
+  check width.
 - **Proof-of-work pricing.** `ChallengeFieldOrder::grind_bits` calls
   `jolt_transcript::grind_bits_for_loss` with the exact challenge-set size and
   `TRANSCRIPT_SECURITY_BITS`. Akita keeps plan derivation, site binding and
@@ -63,10 +65,10 @@ Akita challenge and proof-of-work step goes through Jolt's audited code.
   plan bytes do not change from this move.
 - **Verifier rejection.** Every verifier failure poisons the Spongefish state
   (`reject`, malformed atoms, failed proof of work, and errors routed through
-  `ProofChannel::guard`). A rejected verifier cannot draw a fold challenge message.
+  `ProofChannel::guard`). A rejected verifier cannot draw a challenge message.
   Acceptance requires `check_eof`, which fails on a poisoned state or unread
   bytes. Tests: `record_size_overflow_is_rejected_before_receipt`,
-  `rejected_verifier_draws_no_fold_challenge_message`.
+  `rejected_verifier_draws_no_challenge_message`.
 - **Feature isolation.** Nonce search and fold-response preview copy the
   sponge state, which Spongefish exposes only under `yolocrypto`. The
   `prover` feature of `akita-transcript`, `akita-challenges` and `akita-types`
@@ -122,7 +124,7 @@ from one squeeze.
 |---|---|
 | Spongefish 0.8.0 | Sponge state, NARG bytes, poisoning, EOF |
 | `jolt-transcript` | `ChallengeCodec`, `grind_bits_for_loss`, `grind`/`check_grind`, `MessageSearch` |
-| `akita-transcript` | Session tag, `FieldAtom`/`ExtensionAtom`/`NonceAtom`, site and context records, `ProofChannel`, `fold_challenge_message`, `FoldPreview` |
+| `akita-transcript` | Session tag, `FieldAtom`/`ExtensionAtom`/`NonceAtom`, site and context records, `ProofChannel`, `FoldPreview` |
 | `akita-types` | Grinding plan replay over the above |
 
 `ProofChannel` is implemented directly on `ProverState` and `VerifierState`.
@@ -133,7 +135,7 @@ so an unsupported field fails to compile.
 
 - **Use Jolt's `MessageSearch` for fold-response search.** It evaluates only
   "absorb a candidate, then squeeze". A fold-response candidate is followed by
-  public payloads and one root squeeze per group, so `FoldPreview` stays in
+  a proof of work and one message squeeze per group, so `FoldPreview` stays in
   Akita. A Jolt API such as `MessageSearch::after(candidate)` returning a
   preview that supports `public_message` and `squeeze` would remove it.
 - **Keep per-element sampling.** Rejected: it spends one bias budget per

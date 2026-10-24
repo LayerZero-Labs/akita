@@ -16,14 +16,18 @@ Production uses Spongefish v0.8.0 prover and verifier states through Jolt's
 `jolt-transcript` crate. The selected sponge is BLAKE2b or Keccak. Each state
 starts from three inputs:
 
-1. A session identifier derived with TurboSHAKE128 from Akita's protocol tag.
-   The tag names the protocol version (currently 9), the sponge, the field
-   challenge codec, and the proof-of-work encoding. Changing any of them
-   changes every challenge.
-2. The caller's session bytes, with a `u64` little-endian length prefix.
-3. The canonical instance descriptor bytes, also length-prefixed.
+1. A session identifier derived with TurboSHAKE128 from Akita's protocol tag,
+   `akita-pcs/transcript/v8` zero-padded to 32 bytes. The tag names only the
+   protocol and its version. The version fixes the field challenge codec, the
+   proof-of-work layout, the absorb layout and the sparse message codec, so
+   changing any of them means a new version and changes every challenge. The
+   tag does not name the sponge: a different sponge is a different hash, so
+   it already changes every output.
+2. The caller's session bytes, as a `u64` little-endian length word, the
+   bytes, and zero padding to the next 8-byte word.
+3. The canonical instance descriptor bytes, framed the same way.
 
-The length prefixes keep the session and the descriptor apart: the session
+The length words keep the session and the descriptor apart: the session
 `ab` with descriptor `c` differs from session `a` with descriptor `bc`. Akita
 keeps a known-answer vector for each sponge.
 
@@ -33,11 +37,40 @@ or public values use public messages, and verifier challenges use
 verifier messages. Field atoms are canonical. The one variable-size terminal
 payload carries a checked length atom before its body.
 
+### Positional, word-aligned absorbs
+
+The sponge input carries no labels. The verifier knows the type and length of
+every message before it reads it, from the descriptor, the schedule, or the
+message's position, so a label would add bytes without binding anything.
+
+Every absorb and every squeeze is also a whole number of 8-byte words. A
+message of odd length would leave every later message off a word boundary,
+and a verifier that processes the sponge in 64-bit lanes, such as one running
+inside another proof system, would pay for that at every step. The rules:
+
+- A group of proof atoms is one prover message. The proof carries the atoms
+  with no padding, and the sponge absorbs them followed by zero bytes up to
+  the next word. A group of 4-byte atoms of the 32-bit prime field is the case
+  that pads.
+- A group of public values is one absorb, padded the same way.
+- A byte string whose length the verifier knows is absorbed as its bytes,
+  then padding. The one bounded variable-length payload carries its length on
+  the wire as a `u32`, and the sponge absorbs that length as one `u64` word.
+- A nonce is canonical LEB128 in the proof and one `u64` little-endian word in
+  the sponge.
+
+The padding never makes two different message sequences look the same:
+every pad count follows from a length the verifier already knows or has just
+read. The proof bytes are exactly those of an unpadded transcript; only the
+sponge input differs.
+
 ### Field challenges
 
 A field challenge message draws all of its elements from one squeeze. For a
 prime field with a $b$-bit modulus $p$, each candidate is $\lceil b/8\rceil$
-little-endian bytes masked to $b$ bits. A candidate below $p$ is accepted; any
+little-endian bytes masked to $b$ bits. The squeeze is a whole number of
+words: for the 32-bit prime, whose candidates are 4 bytes, the candidate count
+rounds up to an even number, and the extra candidates only add spares. A candidate below $p$ is accepted; any
 other is skipped. An extension element takes its coordinates from consecutive
 accepted candidates. Accepted values are exactly uniform.
 
@@ -85,30 +118,30 @@ directly into that group's challenges.
 
 Each fold runs these steps, in order:
 
-1. The prover sends the fold-response nonce, and both sides absorb it.
+1. The prover sends the fold-response nonce, and both sides absorb it as one
+   word.
 2. The fold proof of work. When its bit count `g` is positive, the prover runs
    the sponge's grinding search and the verifier checks it. When `g` is zero
    nothing happens.
-3. For each commitment group, in canonical order: the transcript absorbs the
-   public draw context, then squeezes exactly the message length for that
-   group.
+3. For each commitment group, in canonical order, the transcript squeezes
+   exactly the message length for that group.
 
 No prover message lies between the proof of work and the last group message,
-so the work covers every group message of the fold.
+so the work covers every group message of the fold. Nothing is absorbed
+between the groups either, so the group messages continue one squeeze run:
+each output byte is fresh and is read once.
 
-The public draw context names the whole challenge family:
-
-- group index, number of live blocks, and number of claims;
-- total number of challenges;
-- challenge ring dimension;
-- counts of coefficients at magnitude 1 and magnitude 2;
-- the coefficient-packing method domain and challenge-subring dimension, when
-  coefficient packing is selected; and
-- the operator-norm rejection policy, when the selected L2 route requires it.
-
-Coefficient packing adds a distinct method domain, so the same transcript
-state cannot reinterpret a message under the two opening methods. The nonce is
-not repeated in the context, because the transcript state already holds it.
+A draw absorbs nothing about its challenge family because the verifier
+already knows all of it. The descriptor binds the schedule, and the schedule
+fixes each fold's ring dimension, coefficient counts, opening method and
+challenge-subring dimension, and operator-norm policy. The group index and
+the challenge counts follow from the group's position. The same transcript
+state therefore cannot reinterpret a message under another family or
+method. A few code constants are bound only by the protocol tag: the
+operator-norm rejection constants, the pool rates that set a message's
+length, and what the coefficient-packing domain means. Changing any of them
+requires a new protocol version. The nonce is absorbed once, before the
+proof of work, so a new fold-response nonce changes every group message.
 
 ### Decoding one challenge
 
@@ -120,9 +153,11 @@ $$
 |S| = \binom{d}{a} \binom{d-a}{b} 2^w
 $$
 
-elements. Every challenge of a group occupies $K$ consecutive bits of the
-message, read as a little-endian bit stream. The decoder splits those bits
-into two fields:
+elements. The message is a whole number of 8-byte words, read as a
+little-endian bit stream over little-endian `u64` words. Every challenge of a
+group occupies $K$ consecutive bits of that stream, and the bits after the
+last candidate are ignored. The decoder splits a challenge's bits into two
+fields:
 
 - the low $w$ bits are the signs. The output lists the magnitude-1 positions
   in ascending order, then the magnitude-2 positions in ascending order. Bit
@@ -143,7 +178,7 @@ $K$-bit value is accepted, so the challenge set is the first $2^K$ elements of
 the shell in this order. A subset of the shell keeps everything the fold
 argument uses: the difference of two distinct challenges is still invertible,
 and every challenge has the same norms. The message holds exactly one $K$-bit
-slot per challenge.
+slot per challenge, padded to a word.
 
 **Families with operator-norm rejection.** An L2 fold may require a challenge
 whose negacyclic convolution operator norm is below a scheduled threshold. The
@@ -178,8 +213,7 @@ Operator-norm families price $K$ as 128, the size their certificate proves.
 
 Implementation:
 
-- `crates/akita-challenges/src/fold_draw.rs` binds the group context and owns
-  the one squeeze per group.
+- `crates/akita-challenges/src/fold_draw.rs` owns the one squeeze per group.
 - `crates/akita-challenges/src/sampler/stream.rs` defines message lengths,
   pool sizes and the decoder.
 - `crates/akita-challenges/src/sampler/op_norm.rs` checks the certified
@@ -203,6 +237,12 @@ The descriptor records the following identities:
 | Plan | Schedule selection and the effective schedule digest |
 | Grinding | The ordered grinding plan and its wire contract |
 | Call | Commitment-group counts, polynomial counts, variable counts, opening-layout digest, and basis |
+
+Version 6 of the descriptor is word aligned. Every scalar field, including
+flags and small tags, is one `u64` little-endian word; each 32-byte digest or
+modulus is its bare bytes; and each vector is a length word followed by one
+word per element. A word that its field cannot hold, or a flag word other
+than 0 or 1, is rejected.
 
 The effective schedule includes the level geometry, payload modes, and each
 nonterminal `RingRelationMode`. Switching between quotient lifting and
@@ -314,10 +354,10 @@ keeps the chance per query at most $2^{-128}$. The calculation uses integers
 and the actual prime power, including the deficit below a power of two.
 
 At a protected query with grinding target $g>0$, the prover searches for the
-least nonce below $2^{g+7}$ that passes. Each attempt absorbs the canonical
-nonce, one byte per prover message, then squeezes $\lceil g/8\rceil$ check
-bytes. The attempt passes when the low $g$ bits of those bytes, read little
-endian, are zero. Diagnostic metadata records the grinding site without
+least nonce below $2^{g+7}$ that passes. Each attempt absorbs the nonce value
+as one `u64` little-endian word, then squeezes 8 check bytes. The attempt
+passes when the low $g$ bits of those bytes, read little endian, are zero.
+The proof carries the nonce as canonical LEB128. Diagnostic metadata records the grinding site without
 changing the sponge. The search and check are Jolt's `grind` and
 `check_grind`; the largest target either accepts is 25 bits.
 
@@ -413,7 +453,7 @@ accounting.
 
 ## Integration and regression checks
 
-`AKITA_INSTANCE_DESCRIPTOR_VERSION` is currently `5`. Validation rejects
+`AKITA_INSTANCE_DESCRIPTOR_VERSION` is currently `6`. Validation rejects
 other versions. Pin an exact Akita revision and rerun prove and verify
 integration tests when upgrading; the repository does not promise
 compatibility across revisions.
