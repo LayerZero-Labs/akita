@@ -167,6 +167,7 @@ fn byte_group_sends_its_bytes_and_absorbs_them_padded_to_a_word() {
             receive_byte_group(&mut verifier, site(SITE_FAMILY_TERMINAL, 3), len).unwrap(),
             bytes
         );
+        public_bytes(&mut verifier, site(SITE_FAMILY_TERMINAL, 4), &next).unwrap();
         assert_eq!(verifier.verifier_message::<[u8; 32]>(), grouped_challenge);
         verifier.check_eof().unwrap();
     }
@@ -413,7 +414,7 @@ fn transcript_has_a_known_answer() {
     let root = prover.verifier_message::<[u8; 32]>();
     let rendered = format!("{challenges:?} {root:?}");
     #[cfg(feature = "transcript-blake2b")]
-    let expected = "[FpExt4 { coeffs: [Fp32(2296752781), Fp32(3059908793), Fp32(163358452), Fp32(2723312530)] }, FpExt4 { coeffs: [Fp32(2502126249), Fp32(3189731935), Fp32(3152105171), Fp32(824640072)] }] [98, 125, 201, 141, 153, 47, 101, 191, 117, 29, 12, 58, 241, 63, 212, 69, 33, 96, 155, 121, 58, 0, 53, 70, 233, 251, 121, 199, 80, 159, 172, 29]";
+    let expected = "[FpExt4 { coeffs: [Fp32(2614298249), Fp32(719776083), Fp32(913217586), Fp32(4036303154)] }, FpExt4 { coeffs: [Fp32(3500126942), Fp32(4250857817), Fp32(1682877355), Fp32(955445118)] }] [25, 109, 113, 199, 36, 237, 82, 189, 212, 68, 54, 20, 214, 185, 254, 241, 113, 128, 48, 55, 12, 96, 207, 42, 17, 244, 47, 144, 42, 40, 35, 58]";
     #[cfg(feature = "transcript-keccak")]
     let expected = "[FpExt4 { coeffs: [Fp32(2720649912), Fp32(1564638090), Fp32(265913417), Fp32(3965890575)] }, FpExt4 { coeffs: [Fp32(1375908699), Fp32(4239959122), Fp32(4049503832), Fp32(3332595443)] }] [224, 134, 9, 164, 23, 50, 96, 139, 70, 58, 213, 112, 253, 140, 67, 15, 213, 246, 41, 116, 136, 54, 216, 15, 227, 171, 80, 218, 183, 234, 141, 155]";
     assert_eq!(rendered, expected);
