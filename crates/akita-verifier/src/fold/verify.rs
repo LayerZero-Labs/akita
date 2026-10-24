@@ -99,7 +99,7 @@ where
             schedule,
             basis,
         )?;
-        let state = akita_transcript::new_verifier_channel(session, &descriptor_bytes, proof)?;
+        let state = akita_transcript::new_verifier_channel(session, &descriptor_bytes, proof);
         let mut grinding = akita_types::VerifierGrinding::new(state, &grinding_plan);
         let raw_groups = claims
             .groups()

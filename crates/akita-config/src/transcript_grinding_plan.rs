@@ -92,8 +92,8 @@ mod tests {
                 50,
                 400,
                 [
-                    201, 141, 145, 223, 13, 192, 44, 142, 174, 252, 217, 177, 224, 123, 135, 2,
-                    122, 211, 6, 174, 3, 127, 123, 102, 130, 17, 69, 136, 179, 80, 247, 229,
+                    124, 246, 231, 65, 32, 135, 174, 82, 77, 56, 202, 2, 4, 11, 49, 56, 103, 95,
+                    156, 223, 186, 16, 196, 127, 159, 53, 107, 252, 106, 122, 244, 236
                 ],
             )
         );
@@ -154,12 +154,9 @@ mod tests {
             )
             .unwrap();
             for exponent in 0..akita_params::MAX_GRINDING_BITS {
-                assert_eq!(
-                    akita_params::grind_bits_for_loss(1u64 << exponent, order).unwrap(),
-                    exponent + 1,
-                );
+                assert_eq!(order.grind_bits(1u64 << exponent).unwrap(), exponent + 1,);
             }
-            assert_eq!(akita_params::grind_bits_for_loss(3, order).unwrap(), 2);
+            assert_eq!(order.grind_bits(3).unwrap(), 2);
         }
         check::<fp128::OneHot>();
         check::<crate::proof_optimized::fp64::OneHot>();

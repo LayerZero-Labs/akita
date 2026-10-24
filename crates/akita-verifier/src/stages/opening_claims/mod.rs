@@ -3,6 +3,7 @@
 
 use akita_error::AkitaError;
 use akita_params::OpeningClaimsLayout;
+use akita_transcript::ChallengeCodec;
 use akita_types::{OpeningFamily, PreparedOpeningPoint};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
@@ -48,7 +49,7 @@ pub(crate) fn finalize_claims<F, E>(
 ) -> Result<FoldPrefix<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
 {
     if material.openings.len() != opening_shape.num_total_polynomials()
         || material.prepared_points.len() != opening_shape.num_groups()

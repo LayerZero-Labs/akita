@@ -49,13 +49,15 @@ L * 2^128 <= |E| * 2^g.
 ```
 
 Here `|E| = p^e` is the exact cardinality of the extension field. All
-comparisons use integer arithmetic. In the supported field towers whose
-cardinality is just below `2^128`, a power-of-two loss needs one more bit
-than its binary logarithm. The
-modulus bit width alone is not a challenge-set cardinality. A successful nonce requires a
-separate 32-byte predicate whose first `g` low-order bits are zero. The prover
-searches at most `2^(g+7)` candidates. Production policy rejects `g > 25`, so
-the nonce width `g+7` always fits `u32`. Honest exhaustion is at most
+comparisons use exact integer arithmetic in
+`jolt_transcript::grind_bits_for_loss`, called with 128 security bits. In the
+supported field towers whose cardinality is just below `2^128`, a power-of-two
+loss needs one more bit than its binary logarithm. The modulus bit width alone
+is not a challenge-set cardinality. A successful nonce
+makes the next `ceil(g/8)` squeezed check bytes have `g` zero low-order bits.
+The prover searches at most `2^(g+7)` candidates. Production policy rejects
+`g > 25`, the largest target `jolt_transcript::MAX_POW_BITS` accepts, so the
+nonce width `g+7` always fits `u32`. Honest exhaustion is at most
 `(1 - 2^-g)^(2^(g+7)) <= exp(-128)`.
 
 The classical random-oracle bad-event bound is
@@ -72,18 +74,24 @@ from fold-response trials. The target is a classical random-oracle
 bad-event rate. Accepting any satisfying in-range nonce is sound; the
 verifier MUST NOT require the prover's first solution.
 
-The predicate and protected challenge are distinct random-oracle queries. The
-predicate transition absorbs the candidate nonce and squeezes 32 bytes; after
-the accepted nonce is committed to the live state, the protected challenge is
-drawn separately. The predicate bytes MUST NOT be reused as the protocol
-challenge. The versioned protocol identifier and descriptor bind the positional
+The proof-of-work check and the protected challenge are distinct random-oracle
+queries. The check absorbs the candidate nonce and squeezes `ceil(g/8)` bytes;
+the protected challenge is the next squeeze after it. The check bytes MUST NOT
+be reused as the protocol challenge. The versioned protocol identifier and descriptor bind the positional
 grammar; context records are diagnostics and are not absorbed.
 
-Field challenges use exact canonical rejection sampling. Each attempt
-squeezes the field's canonical byte width, clears unused high bits, and accepts
-only a canonical representative. Consequently there is no modular-reduction
-bias or statistical-distance budget. The admitted codec supports fields
-up to 64 bytes; production fields use 4, 8, or 16 bytes.
+Field challenges use Jolt's pooled rejection codec (`jolt_transcript::ChallengeCodec`).
+One challenge message squeezes a fixed number of bytes that depends only on
+the field and the element count. The bytes form candidates of the base
+field's canonical byte width, masked to the modulus bit width; a candidate is
+accepted exactly when it is a canonical representative, and extension
+coordinates come from consecutive accepted candidates. The pool holds enough
+spare candidates that exhaustion has probability at most `2^-161` for the
+whole message; exhaustion is an error and the verifier rejects. Accepted
+values are exactly uniform, so each message has total variation at most
+`2^-161` from uniform, charged as `2^-160` per message in the soundness bound.
+A multi-element challenge at one site is one message and shares that budget.
+Production fields use 4-, 8-, or 16-byte base candidates.
 
 ## Public plan
 
@@ -120,14 +128,19 @@ For every proof-of-work entry with `g > 0`:
 
 1. Record diagnostic metadata for the canonical plan site, target, nonce width,
    and `GrindingNonce` kind when transcript logging is enabled.
-2. For each candidate in `[0, 2^(g+7))`, clone only the public duplex state,
-   absorb the canonical nonce, and squeeze 32 predicate bytes.
-3. Select a candidate exactly when the first `g` bits, read low bit first, are
-   zero. Exhaustion returns an error.
-4. Commit the winner once with `prover_message`. The verifier receives
-   the nonce, range-checks it against `g+7`, reproduces the predicate, and
-   rejects a failed predicate.
-5. Record the protected challenge's diagnostic site and draw the challenge.
+2. For each candidate in `[0, 2^(g+7))`, in increasing order, clone only the
+   public duplex state, absorb the canonical nonce one byte at a time, and
+   squeeze `ceil(g/8)` check bytes.
+3. Select the first candidate whose check bytes, read as a little-endian
+   integer, have `g` zero low-order bits. Exhaustion returns an error.
+4. Commit the winner as one single-byte prover message per nonce byte, then
+   squeeze the check bytes. Steps 2--4 are `jolt_transcript::ProverTranscript::grind`.
+   The verifier runs `VerifierTranscript::check_grind`: it reads the nonce
+   byte by byte, rejects a noncanonical encoding or a value of `2^(g+7)` or
+   more, squeezes the check bytes, and rejects a failed check. Any failure
+   poisons the verifier state.
+5. Record the protected challenge's diagnostic site and draw every challenge
+   of the site in one message.
 
 A zero-bit entry has nonce width zero, emits no proof bytes, and skips steps
 1--4. It remains present in the semantic plan so query coverage can be audited.
@@ -151,6 +164,11 @@ For candidate `c`:
    without changing the production sponge.
 3. Derive every indexed sparse coordinate, compute the folded response, and
    accept only if all scheduled representation and norm bounds hold.
+
+Jolt's `MessageSearch` evaluates only "absorb a candidate, then squeeze". A
+fold-response candidate is followed by public payloads and several root
+squeezes, so `akita_transcript::FoldPreview` performs this search on a copy of
+the public sponge state.
 
 The prover commits the accepted nonce once, then repeats the same group sequence
 on the live state. The verifier receives and range-checks the nonce, reproduces
@@ -452,7 +470,7 @@ $$
 
 Here Q is a deterministic upper bound on distinct logical
 random-oracle addresses touched by the original adversary. It includes
-predicate queries for rejected work candidates, root queries for
+proof-of-work check queries for rejected work candidates, root queries for
 response-nonce trials, and each indexed coordinate stream read by a
 vector candidate. R_field and R_coord bound previously untouched
 addresses completed by final verification. One XOF stream address
@@ -463,8 +481,8 @@ L_r 2^128 <= |E_r| 2^g_r for its stored *local* algebraic loss L_r.
 The complete-tree rate rho <= 2^-128 follows when each field site has
 a proof that d_r <= L_r, or when its target is raised to price d_r.
 For a site that draws several independently labelled field values
-under one predicate, this proof assigns one address to each value
-and establishes the predicate's independent 2^-g_r factor for the
+under one proof-of-work check, this proof assigns one address to each value
+and establishes the check's independent 2^-g_r factor for the
 selected address. It also records the stage's flat or nested tree
 factor separately from the address error weight.
 The sparse fold addresses already satisfy this rate through the
@@ -551,9 +569,10 @@ MUST be regenerated from this objective; generated files MUST NOT be copied or
 hand-edited to manufacture a desired result.
 
 Nonce decoding MUST reject unterminated, overflowing, and redundant
-unsigned LEB128 encodings without advancing the input cursor. The verifier
-checks the scheduled range after receipt. Truncation, trailing argument bytes,
-out-of-range nonces, wrong context/order, failed predicates, and incomplete
+unsigned LEB128 encodings and poison the verifier state, so every later read
+and the EOF check fail. The verifier checks the scheduled range after receipt.
+Truncation, trailing argument bytes, out-of-range nonces, wrong context/order,
+failed proof-of-work checks, and incomplete
 plans reject with `AkitaError`; verifier-reachable code MUST NOT panic or
 allocate from a proof-controlled length.
 
@@ -561,12 +580,13 @@ allocate from a proof-controlled length.
 
 | Component | Responsibility |
 |---|---|
-| Spongefish | State, argument bytes, nonce receipt/absorption, challenge squeeze, EOF |
-| `akita-transcript` | Positional codecs, diagnostic context records, public-state previews, predicate and bounded search primitive |
+| Spongefish | State, argument bytes, nonce receipt/absorption, poisoning, EOF |
+| `jolt-transcript` | Field challenge codecs, proof-of-work pricing, search and check |
+| `akita-transcript` | Session tag, positional codecs, diagnostic context records, fold-response preview |
 | `akita-types` | Grinding sites, policy, plan, cursor, plan-owning adapters |
 | `akita-config` | Derive and descriptor-bind the public plan |
 | `akita-prover` | Fold-response candidate computation and honest bounded search |
-| `akita-verifier` | Nonce ranges, predicates, response equations, plan completion |
+| `akita-verifier` | Nonce ranges, proof-of-work checks, response equations, plan completion |
 | `akita-challenges` | Indexed sparse expansion and distribution checks |
 | `akita-planner` | Query accounting and maximum schedule objective |
 

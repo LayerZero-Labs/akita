@@ -10,22 +10,26 @@ readme = "../../README.md"
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "efae45b3dd484770e8630f8bcec0b82b0196e303", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "ef9741346a150039427d9e0c02d6b2d73e93ec81", default-features = false, optional = true, features = [
-  "yolocrypto",
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "efae45b3dd484770e8630f8bcec0b82b0196e303", default-features = false, features = [
+  "solinas",
 ] }
+spongefish = { version = "=0.8.0", default-features = false }
 
 [features]
-default = ["transcript-blake2b"]
+default = ["transcript-keccak"]
 logging-transcript = []
-# spongefish 0.7 imports StdHash from its prover/verifier/domain modules
-# even when Akita selects Blake2b or Keccak explicitly, so sha3 is required
-# for the crate to compile with default-features disabled.
-transcript-blake2b = ["dep:spongefish", "spongefish/blake2", "spongefish/sha3"]
-transcript-keccak = ["dep:spongefish", "spongefish/keccak", "spongefish/sha3"]
+transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
+transcript-keccak = ["jolt-transcript/transcript-keccak"]
+# The prover's proof-of-work and fold-response searches copy the public sponge
+# state, which spongefish 0.8.0 exposes only under `yolocrypto`. Verifier
+# builds leave this feature off.
+prover = ["jolt-transcript/prover-grinding", "spongefish/yolocrypto"]
+# Searches proof-of-work nonces on all threads; the nonce found is the same.
+parallel = ["prover", "jolt-transcript/parallel"]
 
 [lints]
 workspace = true

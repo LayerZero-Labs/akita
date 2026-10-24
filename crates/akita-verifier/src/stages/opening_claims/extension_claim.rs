@@ -5,6 +5,7 @@ use akita_error::AkitaError;
 use akita_params::{dispatch_for_field, TerminalFoldParams};
 use akita_params::{BasisMode, CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use akita_types::{
     canonical_extension_opening_reduction_shape,
@@ -73,7 +74,7 @@ struct GrindingEorVerifierStream<'a, 'proof, 'plan> {
 impl<F, E> EorVerifierStream<F, E> for GrindingEorVerifierStream<'_, '_, '_>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
 {
     fn prefix(
         &mut self,
@@ -82,7 +83,8 @@ where
         partial_count: usize,
         split_bits: usize,
     ) -> Result<EorPrefix<E>, AkitaError> {
-        let partials = akita_transcript::extension_slots::<E>(partial_count)?;
+        let partials =
+            akita_transcript::extension_slots::<E, _>(self.grinding.state_mut(), partial_count)?;
         let prefix = akita_types::eor_prefix::<F, E, _>(
             self.grinding,
             opening_batch,
@@ -124,8 +126,10 @@ where
     }
 
     fn final_claims(&mut self, opening_batch: &OpeningClaimsLayout) -> Result<Vec<E>, AkitaError> {
-        let mut final_claims =
-            akita_transcript::extension_slots::<E>(opening_batch.num_total_polynomials())?;
+        let mut final_claims = akita_transcript::extension_slots::<E, _>(
+            self.grinding.state_mut(),
+            opening_batch.num_total_polynomials(),
+        )?;
         akita_types::eor_final_claims::<F, E, _>(
             self.grinding,
             opening_batch,
@@ -187,7 +191,7 @@ fn verify_eor_sumcheck<F, E>(
 ) -> Result<Option<EorSumcheckReplay<E>>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
 {
     if !requires_reduction {
         return Ok(None);
@@ -216,7 +220,7 @@ pub(crate) fn verify_extension_claim_suffix_prefix<F, E>(
 ) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + ChallengeCodec,
 {
     let replay = verify_eor_sumcheck::<F, E>(
         group_points,
@@ -293,7 +297,7 @@ pub(crate) fn verify_extension_claim_terminal_suffix<F, E>(
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + ChallengeCodec,
 {
     let replay = verify_eor_sumcheck::<F, E>(
         &[opening_point],
@@ -542,7 +546,7 @@ mod tests {
             akita_params::GrindingPlan::new(runs, challenge_order).unwrap()
         };
 
-        let state = new_prover_channel(b"native-eor-verifier", b"fixture").unwrap();
+        let state = new_prover_channel(b"native-eor-verifier", b"fixture");
         let mut prover = akita_types::ProverGrinding::new(state, &plan);
         akita_types::eor_prefix::<F, E, _>(
             &mut prover,
@@ -578,7 +582,7 @@ mod tests {
         .unwrap();
         let proof = prover.finish().unwrap();
 
-        let state = new_verifier_channel(b"native-eor-verifier", b"fixture", &proof).unwrap();
+        let state = new_verifier_channel(b"native-eor-verifier", b"fixture", &proof);
         let mut verifier = akita_types::VerifierGrinding::new(state, &plan);
         let replay = verify_eor_sumcheck::<F, E>(
             &group_points,

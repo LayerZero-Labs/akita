@@ -157,10 +157,12 @@ fn fold_record(
 }
 
 /// One group-local fold-root draw against a candidate public state.
+#[cfg(feature = "prover")]
 pub struct PreviewFoldDraw<'a> {
     preview: &'a mut akita_transcript::FoldPreview,
 }
 
+#[cfg(feature = "prover")]
 impl<'a> PreviewFoldDraw<'a> {
     /// Bind this short-lived draw adapter to one schedule-derived fold group.
     #[must_use]
@@ -169,6 +171,7 @@ impl<'a> PreviewFoldDraw<'a> {
     }
 }
 
+#[cfg(feature = "prover")]
 impl FoldDraw for PreviewFoldDraw<'_> {
     fn absorb_and_squeeze(
         &mut self,
@@ -206,11 +209,11 @@ impl FoldDraw for ProverFoldDraw<'_> {
         &mut self,
         payload: &[u8],
     ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
-        Ok(akita_transcript::prover_fold_root(
+        akita_transcript::fold_root(
             self.state,
             fold_record(self.level, self.group, payload.len()),
             payload,
-        ))
+        )
     }
 }
 
@@ -242,7 +245,7 @@ impl FoldDraw for VerifierFoldDraw<'_, '_> {
         &mut self,
         payload: &[u8],
     ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
-        akita_transcript::verifier_fold_root(
+        akita_transcript::fold_root(
             self.state,
             fold_record(self.level, self.group, payload.len()),
             payload,

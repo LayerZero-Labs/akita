@@ -62,11 +62,11 @@ jobs:
         with:
           components: clippy
       - name: Clippy (transparent default features)
-        run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-blake2b -- -D warnings
+        run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-keccak -- -D warnings
       - name: Clippy (no default features)
-        run: cargo clippy --all --all-targets --release --no-default-features --features transcript-blake2b -- -D warnings
+        run: cargo clippy --all --all-targets --release --no-default-features --features transcript-keccak -- -D warnings
       - name: Clippy (response model diagnostics)
-        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-blake2b -- -D warnings
+        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-keccak -- -D warnings
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier
@@ -108,7 +108,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Build documentation
-        run: cargo doc -q --release --no-deps --no-default-features --features parallel,disk-persistence,transcript-blake2b
+        run: cargo doc -q --release --no-deps --no-default-features --features parallel,disk-persistence,transcript-keccak
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -145,7 +145,7 @@ jobs:
           set +e
           # --lib --bins --tests matches the default test target set but skips
           # compiling examples (clippy's --all-targets already compile-checks them).
-          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,transcript-blake2b \
+          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,transcript-keccak \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
           end_epoch=$(date +%s)
@@ -205,17 +205,17 @@ jobs:
             --example catalog_security -- --check
       - name: Dense multi-chunk PCS e2e
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- --exact fp128_dense_mc
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact fp128_dense_mc
       - name: One-hot multi-chunk catalog wiring
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- --exact fp128_onehot_mc_catalog_resolves
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact fp128_onehot_mc_catalog_resolves
       - name: Bounded dense source PCS e2e
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- heterogeneous::bounded_
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- heterogeneous::bounded_
           cargo test --release -p akita-config --test bounded_dense_source
       - name: Combined-family setup at exact capacities
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- --exact heterogeneous::combined_family_setup_matches_per_family_proofs
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact heterogeneous::combined_family_setup_matches_per_family_proofs
 
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
@@ -242,7 +242,7 @@ jobs:
         run: |
           cargo test --release -p akita-transcript \
             --no-default-features \
-            --features logging-transcript,${{ matrix.backend }} \
+            --features prover,logging-transcript,${{ matrix.backend }} \
             proof_stream --lib
           cargo test --release -p akita-pcs \
             --no-default-features \
@@ -264,7 +264,7 @@ jobs:
       - name: Audit the grinding plan across akita-types shapes
         run: >-
           cargo test --release -p akita-types
-          --features logging-transcript
+          --features prover,logging-transcript
 
   # Exercise the proof stream through the opaque CPU backend under both
   # transcript hashes, including a small-field Stage 1 route.

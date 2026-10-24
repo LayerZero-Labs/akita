@@ -4,7 +4,7 @@ use crate::GrindingReplay;
 use akita_error::AkitaError;
 use akita_transcript::{
     exchange_extension_group, ProofChannel, ProtocolContextRecord, ProtocolMessageKind,
-    ProtocolSiteId, U128Atom, SITE_FAMILY_PHYSICAL_L2,
+    ProtocolSiteId, SITE_FAMILY_PHYSICAL_L2,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
@@ -44,10 +44,10 @@ where
         16,
         0,
     ));
-    let mut integer = U128Atom::new(response_l2_sq);
+    let mut integer = response_l2_sq;
     state.exchange(&mut integer)?;
     exchange_extension_group::<F, E, _>(state, site(level, ROLE_SUBCLAIMS), subclaims)?;
-    Ok(integer.into_inner())
+    Ok(integer)
 }
 
 /// Exchange schedule-fixed virtual evaluations after fused-sumcheck challenges.
@@ -68,7 +68,7 @@ where
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "prover"))]
 mod tests {
     use super::*;
     use crate::{ProverGrinding, VerifierGrinding};
@@ -88,13 +88,13 @@ mod tests {
         .unwrap();
         let mut subclaims = [E::from_u64(3), E::from_u64(5)];
         let mut virtuals = [E::from_u64(8), E::from_u64(13), E::from_u64(21)];
-        let state = new_prover_channel(b"native-l2", b"fixture").unwrap();
+        let state = new_prover_channel(b"native-l2", b"fixture");
         let mut prover = ProverGrinding::new(state, &plan);
         l2_prefix::<F, E, _>(&mut prover, 4, u128::MAX - 9, &mut subclaims).unwrap();
         l2_virtual_evaluations::<F, E, _>(&mut prover, 4, &mut virtuals).unwrap();
         let proof = prover.finish().unwrap();
 
-        let state = new_verifier_channel(b"native-l2", b"fixture", &proof).unwrap();
+        let state = new_verifier_channel(b"native-l2", b"fixture", &proof);
         let mut verifier = VerifierGrinding::new(state, &plan);
         let mut received_subclaims = [E::zero(); 2];
         assert_eq!(

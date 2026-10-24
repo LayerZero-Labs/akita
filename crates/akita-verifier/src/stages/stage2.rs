@@ -13,6 +13,7 @@ use akita_algebra::{
 };
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
 use akita_types::AkitaVerifierSetup;
 use akita_types::{
     AkitaExpandedSetup, CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
@@ -359,7 +360,7 @@ pub(crate) fn replay_stage2<F, E>(
 ) -> Result<Stage2RoundReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
 {
     let input_claim = stage1.batching_coeff * stage1.range_image_evaluation
         + relation_claim

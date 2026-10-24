@@ -12,6 +12,7 @@ use akita_params::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
 use akita_params::{OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey};
 use akita_schedules::PlannerPolicy;
 use akita_serialization::Valid;
+use akita_transcript::ChallengeCodec;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::marker::PhantomData;
 use std::ops::Deref;
@@ -382,10 +383,12 @@ pub fn unit_onehot_source_chunk_size<Cfg: CommitmentConfig>() -> Result<usize, A
 /// extension opening with base-field committed witnesses internally.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by ring commitments, setup matrices, and SIS bounds.
-    type Field: CanonicalEncoding + Field;
+    ///
+    /// Fiat-Shamir draws over it use Jolt's challenge codec for the field.
+    type Field: CanonicalEncoding + Field + ChallengeCodec;
 
     /// Field used by public openings and all proof scalars.
-    type ExtField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field> + Valid;
+    type ExtField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field> + Valid + ChallengeCodec;
 
     /// Extension degree `K = [ExtField : Field]`.
     ///
@@ -488,9 +491,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fp32, FpExt4};
+    use jolt_field::{FpExt4, Prime32Offset99};
 
-    type Base = Fp32<251>;
+    type Base = Prime32Offset99;
     type BaseExt = FpExt4<Base>;
 
     #[derive(Clone)]

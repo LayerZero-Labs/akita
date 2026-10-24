@@ -91,3 +91,20 @@ if [ "${pkg}" = "akita-prover" ]; then
     exit 1
   fi
 fi
+
+if [ "${pkg}" = "akita-verifier" ]; then
+  # Spongefish's `yolocrypto` feature exposes raw sponge state for prover-side
+  # nonce search. Only prover features may enable it, so the verifier's
+  # production graph must not, under default or all features. Dev edges are
+  # excluded because verifier tests use the prover-side transcript.
+  for feature_args in "" "--all-features"; do
+    # shellcheck disable=SC2086
+    spongefish_features="$(cargo tree -p "${pkg}" --edges normal,build,features --invert spongefish ${feature_args})"
+    if grep -q 'spongefish feature "yolocrypto"' <<<"${spongefish_features}"; then
+      echo "akita-verifier enables spongefish/yolocrypto (${feature_args:-default features})" >&2
+      grep -B2 -A8 'yolocrypto' <<<"${spongefish_features}" >&2
+      exit 1
+    fi
+  done
+  echo "akita-verifier spongefish feature check passed"
+fi

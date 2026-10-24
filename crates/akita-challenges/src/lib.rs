@@ -31,7 +31,9 @@ pub use config::{
     D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT, D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     MIN_FOLD_CHALLENGE_ENTROPY_BITS, PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
+#[cfg(feature = "prover")]
+pub use fold_draw::PreviewFoldDraw;
 pub use fold_draw::{
-    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, PreviewFoldDraw,
-    ProverFoldDraw, VerifierFoldDraw,
+    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, ProverFoldDraw,
+    VerifierFoldDraw,
 };

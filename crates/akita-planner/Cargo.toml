@@ -14,23 +14,25 @@ akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", optional = true, default-features = false }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
-akita-sis-estimator = { version = "0.1.0", path = "../akita-sis-estimator", optional = true }
+akita-sis-estimator = { version = "0.1.0", path = "../akita-sis-estimator", default-features = false, optional = true }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 libm = "0.2"
 
 [features]
-default = ["transcript-blake2b"]
+default = ["transcript-keccak"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-config?/transcript-blake2b",
   "akita-schedules/transcript-blake2b",
   "akita-params/transcript-blake2b",
+  "akita-sis-estimator?/transcript-blake2b",
 ]
 transcript-keccak = [
   "akita-challenges/transcript-keccak",
   "akita-config?/transcript-keccak",
   "akita-schedules/transcript-keccak",
   "akita-params/transcript-keccak",
+  "akita-sis-estimator?/transcript-keccak",
 ]
 catalog-gen = ["dep:akita-config"]
 catalog-check = ["catalog-gen"]

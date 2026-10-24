@@ -1,18 +1,12 @@
 //! Role-generic access to one end of the proof channel.
 
-use super::{
-    prover_context, prover_field_challenge, verifier_context, verifier_field_challenge,
-    ProtocolContextRecord, ProverChannel, VerifierChannel,
-};
+use super::{invalid_proof, prover_context, reject, verifier_context, ProtocolContextRecord};
+use crate::{ProverChannel, VerifierChannel, FOLD_CHALLENGE_SEED_LEN};
 use akita_error::AkitaError;
-use jolt_field::CanonicalEncoding;
-use spongefish::{Encoding, NargDeserialize};
+use jolt_transcript::{ChallengeCodec, ProverTranscript, VerifierTranscript};
+use spongefish::{Encoding, FromNarg, Transcript};
 
 /// One party's end of the Akita proof channel.
-///
-/// The prover writes proof bytes into the Fiat-Shamir state and the verifier
-/// reads them back, so the two ends are not interchangeable the way a
-/// symmetric absorb/squeeze transcript is.
 ///
 /// Protocol-site code written against this trait runs unchanged for the prover
 /// and the verifier. A proof message is exchanged in place: the prover emits
@@ -22,8 +16,8 @@ pub trait ProofChannel {
     /// Record diagnostic metadata for the next message or challenge group.
     fn context(&mut self, record: ProtocolContextRecord);
 
-    /// Absorb a public message that both sides already hold.
-    fn public<T: Encoding<[u8]> + ?Sized>(&mut self, message: &T);
+    /// Absorb public bytes that both sides already hold.
+    fn public(&mut self, bytes: &[u8]);
 
     /// Emit (prover) or read and absorb (verifier) one proof message.
     ///
@@ -31,19 +25,33 @@ pub trait ProofChannel {
     ///
     /// Returns [`AkitaError::InvalidProof`] when the verifier cannot decode the
     /// next message. The prover never fails.
-    fn exchange<T: Encoding<[u8]> + NargDeserialize>(
-        &mut self,
-        message: &mut T,
-    ) -> Result<(), AkitaError>;
+    fn exchange<T: Encoding + FromNarg>(&mut self, message: &mut T) -> Result<(), AkitaError>;
 
-    /// Draw one exactly uniform base-field challenge.
+    /// Draw one challenge message of `len` field elements.
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSetup`] when `F` is not certified for exact
-    /// sampling, or [`AkitaError::InvalidProof`] when the retry counter is
-    /// exhausted or the verifier state is already invalid.
-    fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, AkitaError>;
+    /// Returns [`AkitaError::InvalidSetup`] on the prover, or
+    /// [`AkitaError::InvalidProof`] on the verifier, when the codec does not
+    /// support `len` or its rejection pool is exhausted (probability at most
+    /// `2^-161`). A verifier failure poisons the transcript.
+    fn challenges<E: ChallengeCodec>(&mut self, len: usize) -> Result<Vec<E>, AkitaError>;
+
+    /// Squeeze one fold-root seed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when the verifier transcript is
+    /// already rejected. The prover never fails.
+    fn seed(&mut self) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError>;
+
+    /// Return `result` unchanged. On the verifier, an error first rejects the
+    /// transcript, so a caller that drops the error still cannot accept.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error in `result`.
+    fn guard<T>(&mut self, result: Result<T, AkitaError>) -> Result<T, AkitaError>;
 }
 
 impl ProofChannel for ProverChannel {
@@ -52,20 +60,29 @@ impl ProofChannel for ProverChannel {
         prover_context(self, record);
     }
 
-    fn public<T: Encoding<[u8]> + ?Sized>(&mut self, message: &T) {
-        self.public_message(message);
+    fn public(&mut self, bytes: &[u8]) {
+        self.public_message_as(bytes, |bytes| bytes);
     }
 
-    fn exchange<T: Encoding<[u8]> + NargDeserialize>(
-        &mut self,
-        message: &mut T,
-    ) -> Result<(), AkitaError> {
+    fn exchange<T: Encoding + FromNarg>(&mut self, message: &mut T) -> Result<(), AkitaError> {
         self.prover_message(message);
         Ok(())
     }
 
-    fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, AkitaError> {
-        prover_field_challenge(self)
+    fn challenges<E: ChallengeCodec>(&mut self, len: usize) -> Result<Vec<E>, AkitaError> {
+        ProverTranscript::field_challenges(self, len).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "field challenge codec rejected the message length or exhausted its pool".into(),
+            )
+        })
+    }
+
+    fn seed(&mut self) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
+        Ok(self.verifier_message())
+    }
+
+    fn guard<T>(&mut self, result: Result<T, AkitaError>) -> Result<T, AkitaError> {
+        result
     }
 }
 
@@ -75,19 +92,28 @@ impl ProofChannel for VerifierChannel<'_> {
         verifier_context(self, record);
     }
 
-    fn public<T: Encoding<[u8]> + ?Sized>(&mut self, message: &T) {
-        self.public_message(message);
+    fn public(&mut self, bytes: &[u8]) {
+        self.public_message_as(bytes, |bytes| bytes);
     }
 
-    fn exchange<T: Encoding<[u8]> + NargDeserialize>(
-        &mut self,
-        message: &mut T,
-    ) -> Result<(), AkitaError> {
-        *message = self.prover_message::<T>()?;
+    fn exchange<T: Encoding + FromNarg>(&mut self, message: &mut T) -> Result<(), AkitaError> {
+        *message = self.prover_message::<T>().map_err(invalid_proof)?;
         Ok(())
     }
 
-    fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, AkitaError> {
-        verifier_field_challenge(self)
+    fn challenges<E: ChallengeCodec>(&mut self, len: usize) -> Result<Vec<E>, AkitaError> {
+        VerifierTranscript::field_challenges(self, len).map_err(invalid_proof)
+    }
+
+    fn seed(&mut self) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
+        Transcript::check(self, || true).map_err(invalid_proof)?;
+        Ok(self.verifier_message())
+    }
+
+    fn guard<T>(&mut self, result: Result<T, AkitaError>) -> Result<T, AkitaError> {
+        if result.is_err() {
+            let _ = reject(self);
+        }
+        result
     }
 }

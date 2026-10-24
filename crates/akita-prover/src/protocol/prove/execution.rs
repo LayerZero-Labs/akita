@@ -307,7 +307,7 @@ where
             .ok_or_else(|| AkitaError::Internal("proof schedule has no successor fold".into()))?,
         adopted: None,
     };
-    let channel = akita_transcript::new_prover_channel(transcript_session, &descriptor_bytes)?;
+    let channel = akita_transcript::new_prover_channel(transcript_session, &descriptor_bytes);
     let mut grinding = ProverGrinding::new(channel, &grinding_plan);
     let (mut public, mut resident) = root_executor.root(
         &mut handoff,

@@ -358,11 +358,11 @@ macro_rules! run_selected_guest {
         );
 
         let now = Instant::now();
-        let is_valid = verify($blob, output, program_io.panic, proof);
+        let verdict = verify($blob, output, program_io.panic, proof);
         let verifier_secs = now.elapsed().as_secs_f64();
-        info!(verifier_secs, is_valid, "Jolt verifier finished");
-        if !is_valid {
-            return Err("Jolt verifier rejected the proof".to_string());
+        info!(verifier_secs, is_valid = verdict.is_ok(), "Jolt verifier finished");
+        if let Err(error) = verdict {
+            return Err(format!("Jolt verifier rejected the proof: {error:?}"));
         }
         if output != 0 {
             return Err(format!("guest reported Akita-verify failure: {output}"));

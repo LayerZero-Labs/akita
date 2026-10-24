@@ -5,9 +5,9 @@ fn full_capacity_prices_exact_loss_bits() {
     let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
     for (loss, expected) in [(1, 0), (2, 1), (3, 2), (4, 2), (5, 3), (u64::MAX, 64)] {
         let actual = if expected > u32::from(MAX_GRINDING_BITS) {
-            grind_bits_for_loss(loss, order).expect_err("oversized target")
+            order.grind_bits(loss).expect_err("oversized target")
         } else {
-            let actual = grind_bits_for_loss(loss, order).expect("supported target");
+            let actual = order.grind_bits(loss).expect("supported target");
             assert_eq!(u32::from(actual), expected);
             continue;
         };
@@ -30,7 +30,7 @@ fn full_capacity_security_inequality_holds_for_every_supported_target() {
     ];
     let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
     for loss in losses {
-        let grind = grind_bits_for_loss(loss, order).expect("supported loss");
+        let grind = order.grind_bits(loss).expect("supported loss");
         assert!(u128::from(loss) <= (1u128 << grind));
     }
 }
@@ -52,7 +52,9 @@ fn exact_pseudo_mersenne_orders_meet_the_security_bound_with_minimal_bits() {
                 field_modulus,
             )
             .expect("valid exact field order");
-            let bits = grind_bits_for_loss(loss, challenge_order).expect("supported exact price");
+            let bits = challenge_order
+                .grind_bits(loss)
+                .expect("supported exact price");
             assert_eq!(
                 bits, expected_bits,
                 "loss={loss}, degree={extension_degree}"
@@ -98,11 +100,11 @@ fn exact_pseudo_mersenne_orders_meet_the_security_bound_with_minimal_bits() {
 fn exact_orders_above_the_comparison_width_require_no_small_loss_grinding() {
     const FP128_MODULUS: u128 = 340_282_366_920_938_463_463_374_607_427_473_266_697;
     let quadratic = ChallengeFieldOrder::from_field(128, 2, FP128_MODULUS).unwrap();
-    assert_eq!(grind_bits_for_loss(2, quadratic).unwrap(), 0);
-    assert_eq!(grind_bits_for_loss(u64::MAX, quadratic).unwrap(), 0);
+    assert_eq!(quadratic.grind_bits(2).unwrap(), 0);
+    assert_eq!(quadratic.grind_bits(u64::MAX).unwrap(), 0);
 
     let quartic = ChallengeFieldOrder::from_field(128, 4, FP128_MODULUS).unwrap();
-    assert_eq!(grind_bits_for_loss(u64::MAX, quartic).unwrap(), 0);
+    assert_eq!(quartic.grind_bits(u64::MAX).unwrap(), 0);
 }
 
 #[test]
@@ -187,8 +189,8 @@ fn plan_encoding_covers_every_discriminator() {
     assert_eq!(
         plan.digest().unwrap(),
         [
-            23, 236, 97, 122, 19, 64, 167, 147, 169, 143, 37, 147, 216, 175, 71, 42, 8, 224, 38,
-            33, 26, 236, 47, 127, 109, 150, 186, 198, 151, 118, 193, 12,
+            117, 146, 91, 80, 213, 48, 170, 23, 3, 118, 17, 47, 178, 47, 50, 105, 17, 224, 204,
+            253, 31, 232, 254, 132, 100, 174, 58, 167, 85, 27, 67, 116,
         ]
     );
 }
@@ -207,7 +209,7 @@ fn ring_switch_loss_uses_the_native_inner_ring_dimension() {
         ] {
             let loss = ring_switch_alpha_loss_factor(method, inner_dimension).unwrap();
             assert_eq!(loss, expected_loss);
-            assert_eq!(grind_bits_for_loss(loss, order).unwrap(), expected_bits);
+            assert_eq!(order.grind_bits(loss).unwrap(), expected_bits);
             assert!(ring_switch_alpha_loss_factor(method, 0).is_err());
             assert!(ring_switch_alpha_loss_factor(method, usize::MAX).is_err());
         }

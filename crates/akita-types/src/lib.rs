@@ -102,9 +102,10 @@ pub use trace_weight::{
     EvaluationTraceGroupParameters, EvaluationTraceInputs,
 };
 pub use transcript_grinding::{
-    GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProofAcceptance,
-    ProverGrinding, VerifierGrinding,
+    GrindingReplay, GrindingSumcheckVerifier, ProofAcceptance, VerifierGrinding,
 };
+#[cfg(feature = "prover")]
+pub use transcript_grinding::{GrindingSumcheckProver, ProverGrinding};
 
 #[cfg(test)]
 mod schedule_tests;
