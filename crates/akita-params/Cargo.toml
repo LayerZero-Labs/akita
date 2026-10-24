@@ -12,14 +12,14 @@ readme = "../../README.md"
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "efae45b3dd484770e8630f8bcec0b82b0196e303", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "b08ca3cc367c8e683ab5e5d6fafa69f9a2caa15a", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "efae45b3dd484770e8630f8bcec0b82b0196e303", default-features = false }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "b08ca3cc367c8e683ab5e5d6fafa69f9a2caa15a", default-features = false }
 serde = { version = "1", features = ["derive"] }
 blake2 = "0.11.0"
 sha3 = "0.12.0"
