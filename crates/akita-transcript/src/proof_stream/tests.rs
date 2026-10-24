@@ -112,7 +112,7 @@ fn session_tag_names_the_backend_and_codecs() {
     #[cfg(feature = "transcript-keccak")]
     let backend: &[u8] = b"/keccak-f1600/";
     let contains = |needle: &[u8]| SESSION_TAG.windows(needle.len()).any(|w| w == needle);
-    assert!(contains(b"/v9/"));
+    assert!(contains(b"/v8/"));
     assert!(contains(backend));
     assert!(contains(b"jolt-pooled-rejection-tv161"));
     assert!(contains(b"jolt-sponge-pow-leb128"));
@@ -361,8 +361,8 @@ fn transcript_has_a_known_answer() {
     let root = prover.verifier_message::<[u8; 32]>();
     let rendered = format!("{challenges:?} {root:?}");
     #[cfg(feature = "transcript-blake2b")]
-    let expected = "[FpExt4 { coeffs: [Fp32(2296752781), Fp32(3059908793), Fp32(163358452), Fp32(2723312530)] }, FpExt4 { coeffs: [Fp32(2502126249), Fp32(3189731935), Fp32(3152105171), Fp32(824640072)] }] [98, 125, 201, 141, 153, 47, 101, 191, 117, 29, 12, 58, 241, 63, 212, 69, 33, 96, 155, 121, 58, 0, 53, 70, 233, 251, 121, 199, 80, 159, 172, 29]";
+    let expected = "[FpExt4 { coeffs: [Fp32(3256901899), Fp32(1789739589), Fp32(266986176), Fp32(1818830686)] }, FpExt4 { coeffs: [Fp32(1301177491), Fp32(2890609976), Fp32(7219412), Fp32(1705734705)] }] [56, 235, 61, 178, 13, 248, 21, 57, 91, 216, 254, 126, 109, 112, 96, 164, 195, 119, 49, 169, 4, 161, 206, 79, 152, 145, 65, 83, 151, 25, 46, 169]";
     #[cfg(feature = "transcript-keccak")]
-    let expected = "[FpExt4 { coeffs: [Fp32(2650355531), Fp32(1950568104), Fp32(649483776), Fp32(1708084815)] }, FpExt4 { coeffs: [Fp32(1259572985), Fp32(1159280445), Fp32(2772604853), Fp32(24547)] }] [85, 83, 10, 250, 166, 246, 86, 55, 11, 212, 159, 173, 193, 164, 90, 147, 131, 202, 9, 62, 149, 120, 59, 138, 169, 75, 42, 229, 153, 52, 139, 25]";
+    let expected = "[FpExt4 { coeffs: [Fp32(3840723212), Fp32(975509834), Fp32(2428599173), Fp32(1832430551)] }, FpExt4 { coeffs: [Fp32(3603611738), Fp32(1631292368), Fp32(606825530), Fp32(1194250222)] }] [17, 131, 71, 50, 160, 187, 213, 117, 140, 51, 195, 133, 128, 53, 93, 100, 223, 49, 14, 136, 194, 254, 8, 4, 205, 30, 243, 80, 181, 239, 88, 119]";
     assert_eq!(rendered, expected);
 }

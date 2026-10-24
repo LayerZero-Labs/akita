@@ -18,7 +18,7 @@ pub use channel::ProofChannel;
 pub use nonce::{nonce_encoded_len, nonce_max_bytes, NonceAtom};
 
 /// Proof channel and proof-stream format version.
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// Spongefish session tag.
 ///
@@ -27,7 +27,7 @@ pub const PROTOCOL_VERSION: u32 = 9;
 /// change to any of them changes every challenge.
 #[cfg(feature = "transcript-blake2b")]
 pub const SESSION_TAG: &[u8] =
-    b"akita-pcs/native-proof-stream/v9/blake2b512/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128/akita-sparse-colex-message";
+    b"akita-pcs/native-proof-stream/v8/blake2b512/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128/akita-sparse-colex-message";
 
 /// Spongefish session tag.
 ///
@@ -36,10 +36,10 @@ pub const SESSION_TAG: &[u8] =
 /// change to any of them changes every challenge.
 #[cfg(feature = "transcript-keccak")]
 pub const SESSION_TAG: &[u8] =
-    b"akita-pcs/native-proof-stream/v9/keccak-f1600/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128/akita-sparse-colex-message";
+    b"akita-pcs/native-proof-stream/v8/keccak-f1600/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128/akita-sparse-colex-message";
 
 /// Domain tag stored in every diagnostic context record.
-pub const CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v9\0\0\0\0\0";
+pub const CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v8\0\0\0\0\0";
 
 /// Stable family identifier for standard and batched sumcheck sites.
 pub const SITE_FAMILY_SUMCHECK: u32 = 1;

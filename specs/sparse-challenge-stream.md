@@ -468,12 +468,10 @@ different proof.
 - **Domains.** The fold payload domain moves to
   `akita/fold-challenge-round/v2`, and the Spongefish session tag names the
   message codec (`akita-sparse-colex-message`).
-- **Protocol version.** Proof bytes change, so the protocol version moves to
-  9. Riding on version 8 would be safe only if this lands together with #253,
-  but #253 is complete and audited on its own and can merge first. A distinct
-  tag costs nothing because the known answers are regenerated anyway. The
-  embedded-transcript work (A4) also plans version 9; whichever lands second
-  takes 10.
+- **Protocol version.** Versions move once per stack, counted from `main`.
+  `main` is at version 7 and #253 already moves it to 8, so this change stays
+  at version 8. The session tag still differs from #253's and from every tag
+  on `main` because it names the message codec.
 - **Transcript surface.** `ProofChannel` gains `challenge_message(len,
   decode)`, a squeeze of exactly `len` bytes through Spongefish's
   `verifier_message_as` that poisons the verifier when decoding fails, and
@@ -554,7 +552,8 @@ repeat the search for the accepted candidate.
   the indexed worker. Keep the operator-norm predicate.
 - `akita-transcript`: `ProofChannel::challenge_message`; `FoldPreview`
   squeezes messages and runs Jolt's `grind` on a detached prover state; delete
-  `seed`, `fold_root` and `FOLD_CHALLENGE_SEED_LEN`; protocol version 9.
+  `seed`, `fold_root` and `FOLD_CHALLENGE_SEED_LEN`; the session tag names
+  the codec.
 - `akita-params`: `FoldChallengeFamily` lookups on group and terminal
   parameters, shared by pricing and draws; the `FoldChallengeWork` site, run
   kind and pricing; revisions.
