@@ -923,20 +923,21 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=efae45b3dd484770e8630f8bcec0b82b0196e303#efae45b3dd484770e8630f8bcec0b82b0196e303"
+source = "git+https://github.com/a16z/jolt?rev=b08ca3cc367c8e683ab5e5d6fafa69f9a2caa15a#b08ca3cc367c8e683ab5e5d6fafa69f9a2caa15a"
 dependencies = [
  "cc",
  "num-traits",
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "spongefish",
  "thiserror",
 ]
 
 [[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=efae45b3dd484770e8630f8bcec0b82b0196e303#efae45b3dd484770e8630f8bcec0b82b0196e303"
+source = "git+https://github.com/a16z/jolt?rev=b08ca3cc367c8e683ab5e5d6fafa69f9a2caa15a#b08ca3cc367c8e683ab5e5d6fafa69f9a2caa15a"
 dependencies = [
  "jolt-field",
  "jolt-utils",
@@ -950,10 +951,9 @@ dependencies = [
 [[package]]
 name = "jolt-transcript"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=efae45b3dd484770e8630f8bcec0b82b0196e303#efae45b3dd484770e8630f8bcec0b82b0196e303"
+source = "git+https://github.com/a16z/jolt?rev=b08ca3cc367c8e683ab5e5d6fafa69f9a2caa15a#b08ca3cc367c8e683ab5e5d6fafa69f9a2caa15a"
 dependencies = [
  "blake2",
- "digest 0.11.3",
  "getrandom 0.4.3",
  "jolt-field",
  "rayon",
@@ -963,7 +963,7 @@ dependencies = [
 [[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=efae45b3dd484770e8630f8bcec0b82b0196e303#efae45b3dd484770e8630f8bcec0b82b0196e303"
+source = "git+https://github.com/a16z/jolt?rev=b08ca3cc367c8e683ab5e5d6fafa69f9a2caa15a#b08ca3cc367c8e683ab5e5d6fafa69f9a2caa15a"
 dependencies = [
  "num-traits",
 ]
@@ -1806,7 +1806,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys",
