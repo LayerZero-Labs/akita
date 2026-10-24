@@ -30,21 +30,20 @@ use akita_challenges::{
 use akita_error::AkitaError;
 use akita_transcript::new_prover_channel;
 
-/// Draws on the live prover channel and records what the draw absorbed.
+/// Draws on the live prover channel and records each message length.
 struct RecordingDraw<'a> {
     inner: ProverFoldDraw<'a>,
-    payloads: Vec<Vec<u8>>,
+    message_lens: Vec<usize>,
 }
 
 impl FoldDraw for RecordingDraw<'_> {
     fn draw_message(
         &mut self,
-        payload: &[u8],
         len: usize,
         decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
     ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
-        self.payloads.push(payload.to_vec());
-        self.inner.draw_message(payload, len, decode)
+        self.message_lens.push(len);
+        self.inner.draw_message(len, decode)
     }
 }
 
@@ -149,16 +148,19 @@ pub fn run(data: &[u8]) {
     let family = FoldChallengeFamily::new(domain, ring_d, cfg, rejection)
         .unwrap_or_else(|error| panic!("valid family (D={ring_d}, {cfg:?}) rejected: {error:?}"));
 
-    let draw = |group_index: usize| {
+    let draw = |groups: usize| {
         let mut channel = new_prover_channel(b"akita-fuzz/fold-challenges", &statement);
         let mut draw = RecordingDraw {
             inner: ProverFoldDraw::new(&mut channel, 0, 0),
-            payloads: Vec::new(),
+            message_lens: Vec::new(),
         };
-        let result = draw.draw_fold_challenges(&family, group_index, num_live_blocks, num_claims);
-        (result, draw.payloads)
+        let results: Vec<_> = (group_index..group_index + groups)
+            .map(|group| draw.draw_fold_challenges(&family, group, num_live_blocks, num_claims))
+            .collect();
+        (results, draw.message_lens)
     };
-    let (result, payloads) = draw(group_index);
+    let (mut results, message_lens) = draw(1);
+    let result = results.remove(0);
     let challenges = match result {
         Ok(Some(challenges)) => challenges,
         Ok(None) => panic!(
@@ -193,16 +195,28 @@ pub fn run(data: &[u8]) {
         // Closeness to the threshold as coverage for the engine.
         crate::liveness::guide_ratio(peak);
     }
-    let (again, payloads_again) = draw(group_index);
+    assert_eq!(
+        message_lens,
+        [family
+            .stream(num_live_blocks * num_claims)
+            .expect("valid stream")
+            .message_len()],
+        "draw squeezes one family-length message"
+    );
+    let (again, message_lens_again) = draw(2);
     assert!(
-        again.as_ref().ok().and_then(Option::as_ref) == Some(&challenges)
-            && payloads_again == payloads,
+        again
+            .first()
+            .and_then(|r| r.as_ref().ok())
+            .and_then(Option::as_ref)
+            == Some(&challenges)
+            && message_lens_again.first() == message_lens.first(),
         "challenge draw is not deterministic"
     );
-    let (_, other_payloads) = draw(group_index + 1);
-    assert_ne!(
-        other_payloads, payloads,
-        "group index does not enter the draw payload"
-    );
+    // Draws absorb nothing, so the next group's message continues the squeeze
+    // and must differ from this one.
+    if let Some(Ok(Some(next))) = again.get(1) {
+        assert_ne!(next, &challenges, "consecutive draws repeat their message");
+    }
     stats::count("challenges_drawn");
 }

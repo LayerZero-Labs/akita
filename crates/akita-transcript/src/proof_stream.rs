@@ -15,31 +15,49 @@ mod channel;
 mod nonce;
 mod site;
 pub use channel::ProofChannel;
-pub use nonce::{nonce_encoded_len, nonce_max_bytes, NonceAtom};
+pub use nonce::{nonce_encoded_len, nonce_max_bytes, receive_nonce, send_nonce, NonceAtom};
 
-/// Proof channel and proof-stream format version.
+/// Proof channel and proof-stream format version, named by [`SESSION_TAG`].
+///
+/// Version 8 fixes:
+///
+/// - **The challenge codec.** Jolt's pooled rejection codec, within total
+///   variation `2^-161` of uniform per message; pools of 4-byte fields round
+///   their candidate count up to even.
+/// - **The proof-of-work layout.** The least nonce below `2^(bits + 7)`, sent
+///   as canonical LEB128 and absorbed as one `u64` little-endian word, then
+///   [`GRINDING_CHECK_BYTES`](crate::GRINDING_CHECK_BYTES) check bytes. The
+///   fold-response nonce is sent and absorbed the same way.
+/// - **The absorb layout.** Positional and word aligned. No message carries
+///   a label; its place in the schedule identifies it. Every absorb and every
+///   squeeze covers whole 8-byte words. A message whose length bound data
+///   fixes is absorbed as its wire bytes, zero-padded to a word; a length
+///   only the prover knows is absorbed as one `u64` word before the bytes.
+/// - **The sparse-message codec.** One fold-challenge message per commitment
+///   group, squeezed directly after the fold's proof of work with nothing
+///   absorbed in between. Its length is the candidate bits rounded up to
+///   whole words, and candidate `c` occupies bits `[c·K, (c + 1)·K)` of the
+///   message read as little-endian `u64` words.
+///
+/// The fold draw absorbs no payload, so these values are bound only by this
+/// version and change it when they change: the `OperatorNormRejection`
+/// constants, the pool rates that set a sparse message's length, and the
+/// meaning of the coefficient-packing draw domain.
 pub const PROTOCOL_VERSION: u32 = 8;
 
-/// Spongefish session tag.
+/// Spongefish session tag: the protocol name and [`PROTOCOL_VERSION`],
+/// zero-padded to 32 bytes.
 ///
-/// It names the proof-stream version, the sponge, the field-challenge codec,
-/// the proof-of-work layout and the sparse fold-challenge message codec, so a
-/// change to any of them changes every challenge.
-#[cfg(feature = "transcript-blake2b")]
-pub const SESSION_TAG: &[u8] =
-    b"akita-pcs/native-proof-stream/v8/blake2b512/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128/akita-sparse-colex-message";
-
-/// Spongefish session tag.
-///
-/// It names the proof-stream version, the sponge, the field-challenge codec,
-/// the proof-of-work layout and the sparse fold-challenge message codec, so a
-/// change to any of them changes every challenge.
-#[cfg(feature = "transcript-keccak")]
-pub const SESSION_TAG: &[u8] =
-    b"akita-pcs/native-proof-stream/v8/keccak-f1600/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128/akita-sparse-colex-message";
+/// The tag does not name the sponge: a different sponge is a different hash
+/// function and already changes every output.
+pub const SESSION_TAG: [u8; 32] = *b"akita-pcs/transcript/v8\0\0\0\0\0\0\0\0\0";
 
 /// Domain tag stored in every diagnostic context record.
 pub const CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v8\0\0\0\0\0";
+
+/// Bytes in one transcript word. Every absorb and every squeeze covers whole
+/// words, so a sponge over `u64` lanes reproduces the byte sponge exactly.
+const WORD_BYTES: usize = 8;
 
 /// Stable family identifier for standard and batched sumcheck sites.
 pub const SITE_FAMILY_SUMCHECK: u32 = 1;
@@ -179,11 +197,12 @@ impl ProtocolContextRecord {
 }
 
 fn session_id() -> SessionId {
-    spongefish::derive_session_id::<TurboShake128>(SESSION_TAG)
+    spongefish::derive_session_id::<TurboShake128>(&SESSION_TAG)
 }
 
 /// Spongefish instance: the caller's session bytes, then the public statement
-/// bytes, each with a `u64` little-endian length prefix.
+/// bytes, each absorbed as a `u64` little-endian length word, the bytes, then
+/// zero padding to a word.
 fn instance(session: &[u8], statement: &[u8]) -> (BytesMsg, BytesMsg) {
     (BytesMsg(session.to_vec()), BytesMsg(statement.to_vec()))
 }
@@ -308,39 +327,59 @@ where
     }
 }
 
-/// Emit one canonical field atom and absorb the same bytes.
-pub fn send_field<F: CanonicalEncoding>(state: &mut ProverChannel, value: F) {
-    state.prover_message(&FieldAtom::new(value));
+/// Absorbed form of a message whose length bound data fixes: its wire bytes,
+/// then zero padding to the next word.
+fn word_padded(bytes: &[u8]) -> Vec<u8> {
+    let mut padded = bytes.to_vec();
+    padded.resize(bytes.len().next_multiple_of(WORD_BYTES), 0);
+    padded
 }
 
-/// Receive one canonical field atom, rejecting noncanonical representatives.
-pub fn receive_field<F: CanonicalEncoding>(
+/// Absorbed form of a length only the prover knows: one `u64` little-endian
+/// word.
+fn length_word(len: u32) -> [u8; WORD_BYTES] {
+    u64::from(len).to_le_bytes()
+}
+
+/// Concatenated wire encodings of `atoms`.
+fn encode_atoms<T: Encoding>(atoms: impl IntoIterator<Item = T>) -> Vec<u8> {
+    let mut wire = Vec::new();
+    for atom in atoms {
+        wire.extend_from_slice(atom.encode().as_ref());
+    }
+    wire
+}
+
+/// Emit `wire` as one proof message, absorbed zero-padded to a word.
+fn send_padded(state: &mut ProverChannel, wire: &[u8]) {
+    state.prover_message_with(wire, word_padded, |wire, out| out.extend_from_slice(wire));
+}
+
+/// Emit `atoms` as one proof message, absorbed zero-padded to a word.
+fn send_atoms<T: Encoding>(state: &mut ProverChannel, atoms: impl IntoIterator<Item = T>) {
+    send_padded(state, &encode_atoms(atoms));
+}
+
+/// Receive `count` canonical atoms sent by [`send_atoms`], rejecting a
+/// noncanonical one. The count must come from bound data.
+fn receive_atoms<T: Encoding + FromNarg + Copy>(
     state: &mut VerifierChannel<'_>,
-) -> Result<F, AkitaError> {
+    count: usize,
+) -> Result<Vec<T>, AkitaError> {
+    let mut atoms = Vec::new();
+    if atoms.try_reserve_exact(count).is_err() {
+        return Err(reject(state));
+    }
     state
-        .prover_message::<FieldAtom<F>>()
-        .map(FieldAtom::into_inner)
-        .map_err(invalid_proof)
-}
-
-/// Emit one extension-field proof atom as ordered canonical base coordinates.
-pub fn send_extension<F, E>(state: &mut ProverChannel, value: E)
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    state.prover_message(&ExtensionAtom::<F, E>::new(value));
-}
-
-/// Receive one extension-field proof atom from canonical base coordinates.
-pub fn receive_extension<F, E>(state: &mut VerifierChannel<'_>) -> Result<E, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    state
-        .prover_message::<ExtensionAtom<F, E>>()
-        .map(ExtensionAtom::into_inner)
+        .prover_message_with(
+            move |reader| {
+                for _ in 0..count {
+                    atoms.push(T::from_narg(reader)?);
+                }
+                Ok(atoms)
+            },
+            |atoms| word_padded(&encode_atoms(atoms.iter().copied())),
+        )
         .map_err(invalid_proof)
 }
 
@@ -372,7 +411,7 @@ pub fn send_byte_group(
         state,
         group_record(site, ProtocolMessageKind::ProofAtoms, Some(bytes.len()), 1)?,
     );
-    state.prover_message_as(bytes, |bytes| bytes);
+    send_padded(state, bytes);
     Ok(())
 }
 
@@ -386,7 +425,10 @@ pub fn receive_byte_group(
     let record = state.guard(record)?;
     verifier_context(state, record);
     state
-        .prover_message_as(|reader| reader.take(len).map(<[u8]>::to_vec))
+        .prover_message_with(
+            |reader| reader.take(len).map(<[u8]>::to_vec),
+            |bytes| word_padded(bytes),
+        )
         .map_err(invalid_proof)
 }
 
@@ -403,7 +445,8 @@ fn bounded_bytes_sites(site: ProtocolSiteId) -> (ProtocolContextRecord, Protocol
     (length_record, ProtocolSiteId { stage: 1, ..site })
 }
 
-/// Emit a bounded variable byte payload with a `u32` length atom.
+/// Emit a bounded variable byte payload: a `u32` length on the wire, absorbed
+/// as one `u64` word, then the payload as one byte group.
 pub fn send_bounded_bytes(
     state: &mut ProverChannel,
     site: ProtocolSiteId,
@@ -420,7 +463,11 @@ pub fn send_bounded_bytes(
     })?;
     let (length_record, payload_site) = bounded_bytes_sites(site);
     prover_context(state, length_record);
-    state.prover_message(&len);
+    state.prover_message_with(
+        &len,
+        |len| length_word(*len),
+        |len, out| out.extend_from_slice(&len.to_le_bytes()),
+    );
     send_byte_group(state, payload_site, bytes)
 }
 
@@ -433,7 +480,9 @@ pub fn receive_bounded_bytes(
 ) -> Result<Vec<u8>, AkitaError> {
     let (length_record, payload_site) = bounded_bytes_sites(site);
     verifier_context(state, length_record);
-    let len = state.prover_message::<u32>().map_err(invalid_proof)?;
+    let len = state
+        .prover_message_with(u32::from_narg, |len| length_word(*len))
+        .map_err(invalid_proof)?;
     match usize::try_from(len) {
         Ok(len) if len <= max_len => receive_byte_group(state, payload_site, len),
         _ => Err(reject(state)),
@@ -471,9 +520,9 @@ where
     );
     let record = state.guard(record)?;
     state.context(record);
-    for &value in values {
-        state.public(&value.to_bytes_le_vec());
-    }
+    state.public(&encode_atoms(
+        values.iter().map(|&value| FieldAtom::new(value)),
+    ));
     Ok(())
 }
 
@@ -496,9 +545,11 @@ where
     );
     let record = state.guard(record)?;
     state.context(record);
-    for value in values {
-        state.public(ExtensionAtom::<F, E>::new(*value).encode().as_ref());
-    }
+    state.public(&encode_atoms(
+        values
+            .iter()
+            .map(|&value| ExtensionAtom::<F, E>::new(value)),
+    ));
     Ok(())
 }
 
@@ -517,9 +568,7 @@ pub fn send_field_group<F: CanonicalEncoding>(
             F::NUM_BYTES,
         )?,
     );
-    for &value in values {
-        send_field(state, value);
-    }
+    send_atoms(state, values.iter().map(|&value| FieldAtom::new(value)));
     Ok(())
 }
 
@@ -537,14 +586,8 @@ pub fn receive_field_group<F: CanonicalEncoding>(
     );
     let record = state.guard(record)?;
     verifier_context(state, record);
-    let mut values = Vec::new();
-    if values.try_reserve_exact(value_count).is_err() {
-        return Err(reject(state));
-    }
-    for _ in 0..value_count {
-        values.push(receive_field(state)?);
-    }
-    Ok(values)
+    let atoms = receive_atoms::<FieldAtom<F>>(state, value_count)?;
+    Ok(atoms.into_iter().map(FieldAtom::into_inner).collect())
 }
 
 /// Allocate `count` zeroed extension slots for an in-place exchange.
@@ -593,9 +636,12 @@ where
     );
     let record = state.guard(record)?;
     state.context(record);
-    for value in values {
-        let mut atom = ExtensionAtom::<F, E>::new(*value);
-        state.exchange(&mut atom)?;
+    let mut atoms: Vec<ExtensionAtom<F, E>> = values
+        .iter()
+        .map(|&value| ExtensionAtom::new(value))
+        .collect();
+    state.exchange(&mut atoms)?;
+    for (value, atom) in values.iter_mut().zip(atoms) {
         *value = atom.into_inner();
     }
     Ok(())
@@ -678,12 +724,11 @@ pub fn verifier_context(_state: &mut VerifierChannel<'_>, record: ProtocolContex
 }
 
 /// A prover-side copy of the public sponge for previewing a fold-response
-/// candidate: the nonce, the fold's proof of work, then for each commitment
-/// group a public payload and its challenge message.
+/// candidate: the nonce, the fold's proof of work, then one challenge message
+/// per commitment group.
 ///
 /// Jolt's `MessageSearch` probes only "absorb a candidate, then squeeze", so
-/// it cannot express the work and payloads between the nonce and each
-/// message. The preview instead runs the same calls on a detached prover
+/// it cannot express the work between the nonce and the messages. The preview instead runs the same calls on a detached prover
 /// state built from a copy of the sponge, so it cannot mutate the live
 /// argument string or the prover's private randomness. The accepted
 /// candidate's proof of work is carried to the live channel as a
@@ -727,9 +772,9 @@ impl FoldWork {
 
     /// Carry the work to the live channel, which has just sent the same
     /// fold-response nonce: check that the live sponge is the one the preview
-    /// ground from, send the work's argument bytes one prover message each, as
-    /// Jolt's `grind` does, then take the preview's sponge, which already
-    /// holds the work's check.
+    /// ground from, write the work's argument bytes without absorbing them,
+    /// then take the preview's sponge, which already holds the work's nonce
+    /// word and check.
     ///
     /// # Errors
     ///
@@ -741,9 +786,11 @@ impl FoldWork {
                 "live transcript diverged from the fold preview".into(),
             ));
         }
-        for byte in &self.argument {
-            state.prover_message(byte);
-        }
+        state.prover_message_with(
+            &self.argument,
+            |_| [0u8; 0],
+            |argument, out| out.extend_from_slice(argument),
+        );
         state.duplex_sponge_state = self.sponge;
         Ok(())
     }
@@ -751,11 +798,12 @@ impl FoldWork {
 
 #[cfg(feature = "prover")]
 impl FoldPreview {
-    /// Copy the public state and absorb one candidate nonce message.
+    /// Copy the public state and absorb one candidate nonce's word, as the
+    /// live channel will when it sends the nonce.
     #[must_use]
     pub fn new(state: &ProverChannel, nonce: u32) -> Self {
         let mut state = ProverChannel::from(state.duplex_sponge_state.clone());
-        state.public_message(&NonceAtom::new(nonce));
+        state.public_message_as(&NonceAtom::new(nonce), |nonce| nonce.word());
         Self {
             state,
             nonce,
@@ -802,41 +850,19 @@ impl FoldPreview {
             .ok_or_else(|| AkitaError::Internal("fold preview has no proof of work".into()))
     }
 
-    /// Absorb one public fold payload, squeeze a challenge message of `len`
-    /// bytes and decode it.
+    /// Squeeze a challenge message of `len` bytes, continuing the squeeze run,
+    /// and decode it.
     ///
     /// # Errors
     ///
     /// Returns the error of `decode`.
     pub fn challenge_message<T>(
         &mut self,
-        payload: &[u8],
         len: usize,
         decode: impl FnOnce(&[u8]) -> Result<T, AkitaError>,
     ) -> Result<T, AkitaError> {
-        self.state.public_message_as(payload, |bytes| bytes);
         self.state.verifier_message_as(len, decode)
     }
-}
-
-/// Absorb one public fold payload, then draw and decode its challenge
-/// message of `len` bytes.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidProof`] when the verifier transcript is
-/// already rejected or `decode` fails on the verifier, and the error of
-/// `decode` on the prover.
-pub fn fold_challenge_message<S: ProofChannel, T>(
-    state: &mut S,
-    record: ProtocolContextRecord,
-    payload: &[u8],
-    len: usize,
-    decode: impl FnOnce(&[u8]) -> Result<T, AkitaError>,
-) -> Result<T, AkitaError> {
-    state.context(record);
-    state.public(payload);
-    state.challenge_message(len, decode)
 }
 
 #[cfg(test)]

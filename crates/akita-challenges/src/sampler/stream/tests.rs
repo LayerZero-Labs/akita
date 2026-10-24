@@ -112,7 +112,7 @@ fn unfiltered_widths_match_the_production_ladder() {
         assert_eq!(stream.set_bits(), bits, "d = {d}");
         assert_eq!(stream.candidate_bits(), bits as usize, "d = {d}");
         assert_eq!(stream.candidates(), 3);
-        assert_eq!(stream.message_len(), (3 * bits as usize).div_ceil(8));
+        assert_eq!(stream.message_len(), (3 * bits as usize).div_ceil(64) * 8);
     }
 }
 
@@ -121,9 +121,9 @@ fn operator_norm_pools_match_the_specification() {
     let [(d64, c64, r64), (d128, c128, r128)] = operator_norm_families();
     for (count, pool, bytes) in [
         (4, 297, 4864),
-        (6, 327, 5355),
-        (8, 357, 5846),
-        (64, 942, 15426),
+        (6, 327, 5360),
+        (8, 357, 5848),
+        (64, 942, 15432),
     ] {
         let stream = SparseChallengeStream::new(d64, &c64, Some(r64), count).unwrap();
         assert_eq!(stream.candidate_bits(), 131);
@@ -131,7 +131,7 @@ fn operator_norm_pools_match_the_specification() {
         assert_eq!(stream.candidates(), pool, "D64 count {count}");
         assert_eq!(stream.message_len(), bytes, "D64 count {count}");
     }
-    for (count, pool, bytes) in [(8, 172, 2795), (64, 567, 9214)] {
+    for (count, pool, bytes) in [(8, 172, 2800), (64, 567, 9216)] {
         let stream = SparseChallengeStream::new(d128, &c128, Some(r128), count).unwrap();
         assert_eq!(stream.candidate_bits(), 130);
         assert_eq!(stream.set_bits(), 128);
@@ -163,6 +163,37 @@ fn unfiltered_extreme_messages_decode() {
             let challenges = stream.decode(&message).unwrap().unwrap();
             assert_round_trip(&stream, &message, &challenges);
         }
+    }
+}
+
+#[test]
+fn word_reader_matches_the_little_endian_bit_stream() {
+    let message = SplitMix(5).message(40);
+    let bit = |i: usize| u128::from((message[i / 8] >> (i % 8)) & 1);
+    for offset in 0..=(320 - 128) {
+        for width in [0u32, 1, 7, 63, 64, 65, 127, 128] {
+            let expected: u128 = (0..width as usize).map(|t| bit(offset + t) << t).sum();
+            assert_eq!(
+                read_bits(&message, offset, width).unwrap(),
+                expected,
+                "offset {offset}, width {width}"
+            );
+        }
+    }
+    assert!(read_bits(&message, 320 - 64, 65).is_err());
+    assert!(read_bits(&message, 0, 129).is_err());
+}
+
+#[test]
+fn trailing_word_padding_is_ignored() {
+    for (d, config, bits) in production_families() {
+        let stream = SparseChallengeStream::new(d, &config, None, 3).unwrap();
+        let mut message = SplitMix(6).message(stream.message_len());
+        let before = stream.decode(&message).unwrap();
+        for i in 3 * bits as usize..8 * message.len() {
+            message[i / 8] ^= 1 << (i % 8);
+        }
+        assert_eq!(stream.decode(&message).unwrap(), before, "d = {d}");
     }
 }
 

@@ -6,13 +6,15 @@ use akita_params::{GrindingPlan, GrindingQueryKind, GrindingSite};
 use akita_sumcheck::SumcheckProverChannel;
 use akita_sumcheck::{SumcheckRole, SumcheckVerifierChannel};
 use akita_transcript::{
-    ext_challenges, grinding_check_bytes, nonce_encoded_len, nonce_max_bytes, reject,
-    verifier_context, ChallengeCodec, NonceAtom, ProofChannel, ProtocolContextRecord,
-    ProtocolMessageKind, ProtocolSiteId, VerifierChannel, VerifierTranscript,
-    GRINDING_NONCE_SLACK_BITS, SITE_FAMILY_SUMCHECK,
+    ext_challenges, nonce_encoded_len, nonce_max_bytes, receive_nonce, reject, verifier_context,
+    ChallengeCodec, ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
+    VerifierChannel, VerifierTranscript, GRINDING_CHECK_BYTES, GRINDING_NONCE_SLACK_BITS,
+    SITE_FAMILY_SUMCHECK,
 };
 #[cfg(feature = "prover")]
-use akita_transcript::{prover_context, FoldPreview, FoldWork, ProverChannel, ProverTranscript};
+use akita_transcript::{
+    prover_context, send_nonce, FoldPreview, FoldWork, ProverChannel, ProverTranscript,
+};
 use std::marker::PhantomData;
 
 #[derive(Clone, Copy)]
@@ -157,7 +159,7 @@ fn grinding_records(
             ProtocolMessageKind::GrindingCheck as u32,
             0,
             0,
-            u64::from(grinding_check_bytes(grind_bits)),
+            u64::from(GRINDING_CHECK_BYTES),
         ),
     )
 }
@@ -375,7 +377,7 @@ impl<'plan> ProverGrinding<'plan> {
             &mut self.state,
             fold_response_record(site, entry.nonce_bits),
         );
-        self.state.prover_message(&NonceAtom::new(counter));
+        send_nonce(&mut self.state, counter);
         self.serialized_nonce_bytes = self
             .serialized_nonce_bytes
             .checked_add(nonce_encoded_len(counter))
@@ -560,11 +562,7 @@ impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
             &mut self.state,
             fold_response_record(site, entry.nonce_bits),
         );
-        let counter = self
-            .state
-            .prover_message::<NonceAtom>()
-            .map(NonceAtom::into_inner)
-            .map_err(|_| AkitaError::InvalidProof)?;
+        let counter = receive_nonce(&mut self.state)?;
         if !value_fits(counter, entry.nonce_bits) {
             return Err(AkitaError::InvalidProof);
         }

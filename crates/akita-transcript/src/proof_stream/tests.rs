@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::{FpExt4, Prime32Offset99 as F, Ring, Zero};
+use jolt_field::{CanonicalBytes, FpExt4, Prime32Offset99 as F, Ring, Zero};
 
 type E = FpExt4<F>;
 
@@ -49,37 +49,31 @@ fn record_size_overflow_is_rejected_before_receipt() {
     assert!(verifier.check_eof().is_err());
 }
 
+/// A prover that absorbs `absorbed` as one public message, for comparing the
+/// sponge state a helper leaves against a hand-built absorbed layout.
+fn reference_prover(session: &[u8], absorbed: &[u8]) -> ProverChannel {
+    let mut reference = new_prover_channel(session, b"fixture");
+    reference.public_message_as(absorbed, |bytes| bytes);
+    reference
+}
+
 #[test]
-fn rejected_verifier_draws_no_fold_challenge_message() {
-    let record = ProtocolContextRecord::new(
-        site(SITE_FAMILY_FOLD_CHALLENGE, 1).to_bytes(),
-        ProtocolMessageKind::Challenge as u32,
-        1,
-        7,
-        40,
-    );
+fn rejected_verifier_draws_no_challenge_message() {
     let copy = |message: &[u8]| Ok(message.to_vec());
     let mut verifier = new_verifier_channel(b"fold-message", b"fixture", &[]);
-    let message = fold_challenge_message(&mut verifier, record, b"payload", 40, copy).unwrap();
+    let message = verifier.challenge_message(40, copy).unwrap();
     assert_eq!(message.len(), 40);
     let _ = reject(&mut verifier);
     assert!(matches!(
-        fold_challenge_message(&mut verifier, record, b"payload", 40, copy),
+        verifier.challenge_message(40, copy),
         Err(AkitaError::InvalidProof)
     ));
 }
 
 #[test]
-fn failed_fold_message_decode_poisons_the_verifier() {
-    let record = ProtocolContextRecord::new(
-        site(SITE_FAMILY_FOLD_CHALLENGE, 1).to_bytes(),
-        ProtocolMessageKind::Challenge as u32,
-        1,
-        7,
-        40,
-    );
+fn failed_challenge_message_decode_poisons_the_verifier() {
     let mut verifier = new_verifier_channel(b"fold-message", b"fixture", &[]);
-    let result = fold_challenge_message(&mut verifier, record, b"payload", 40, |_| {
+    let result = verifier.challenge_message(40, |_| {
         Err::<(), _>(AkitaError::InvalidInput("pool ran out".into()))
     });
     assert!(matches!(result, Err(AkitaError::InvalidProof)));
@@ -106,57 +100,121 @@ fn session_and_statement_are_framed_separately() {
 }
 
 #[test]
-fn session_tag_names_the_backend_and_codecs() {
-    #[cfg(feature = "transcript-blake2b")]
-    let backend: &[u8] = b"/blake2b512/";
-    #[cfg(feature = "transcript-keccak")]
-    let backend: &[u8] = b"/keccak-f1600/";
-    let contains = |needle: &[u8]| SESSION_TAG.windows(needle.len()).any(|w| w == needle);
-    assert!(contains(b"/v8/"));
-    assert!(contains(backend));
-    assert!(contains(b"jolt-pooled-rejection-tv161"));
-    assert!(contains(b"jolt-sponge-pow-leb128"));
-    assert!(contains(b"akita-sparse-colex-message"));
+fn session_tag_is_the_padded_protocol_name() {
+    let name = format!("akita-pcs/transcript/v{PROTOCOL_VERSION}");
+    assert_eq!(PROTOCOL_VERSION, 8);
+    assert_eq!(SESSION_TAG.len(), 32);
+    assert_eq!(&SESSION_TAG[..name.len()], name.as_bytes());
+    assert!(SESSION_TAG[name.len()..].iter().all(|&byte| byte == 0));
+    assert_eq!(&CONTEXT_DOMAIN[..27], b"akita-pcs/native-context/v8");
 }
 
 #[test]
-fn field_round_trip_and_eof() {
-    let mut prover = new_prover_channel(b"session", b"instance");
-    send_field(&mut prover, F::from_u64(42));
+fn field_group_sends_wire_atoms_and_absorbs_a_padded_word() {
+    let values = [F::from_u64(42), F::from_u64(43), F::from_u64(44)];
+    let mut prover = new_prover_channel(b"fields", b"fixture");
+    send_field_group(&mut prover, site(SITE_FAMILY_OPENING_PAYLOAD, 0), &values).unwrap();
     let proof = prover.narg_string().to_vec();
+    let mut absorbed = proof.clone();
+    assert_eq!(absorbed.len(), 12);
+    absorbed.extend_from_slice(&[0; 4]);
+    let challenge = prover.verifier_message::<[u8; 32]>();
+    assert_eq!(
+        challenge,
+        reference_prover(b"fields", &absorbed).verifier_message::<[u8; 32]>()
+    );
 
-    let mut verifier = new_verifier_channel(b"session", b"instance", &proof);
-    assert_eq!(receive_field::<F>(&mut verifier).unwrap(), F::from_u64(42));
+    let mut verifier = new_verifier_channel(b"fields", b"fixture", &proof);
+    assert_eq!(
+        receive_field_group::<F>(&mut verifier, site(SITE_FAMILY_OPENING_PAYLOAD, 0), 3).unwrap(),
+        values
+    );
+    assert_eq!(verifier.verifier_message::<[u8; 32]>(), challenge);
     verifier.check_eof().unwrap();
 }
 
 #[test]
-fn byte_group_is_one_message_equal_to_bytewise_messages() {
-    for len in [0, 1, 63, 64, 65, 1025] {
+fn byte_group_sends_its_bytes_and_absorbs_them_padded_to_a_word() {
+    for len in [0usize, 1, 7, 8, 9, 63, 64, 65, 1025] {
         let bytes = (0..len)
             .map(|index| (index as u8).wrapping_mul(29).wrapping_add(7))
             .collect::<Vec<_>>();
-        let mut grouped = new_prover_channel(b"bytes", b"instance");
+        let next = *b"next-msg";
+        let mut grouped = new_prover_channel(b"bytes", b"fixture");
         send_byte_group(&mut grouped, site(SITE_FAMILY_TERMINAL, 3), &bytes).unwrap();
+        public_bytes(&mut grouped, site(SITE_FAMILY_TERMINAL, 4), &next).unwrap();
         let grouped_challenge = grouped.verifier_message::<[u8; 32]>();
-
-        let mut bytewise = new_prover_channel(b"bytes", b"instance");
-        for &byte in &bytes {
-            bytewise.prover_message(&byte);
-        }
         assert_eq!(grouped.narg_string(), bytes);
-        assert_eq!(grouped.narg_string(), bytewise.narg_string());
-        assert_eq!(grouped_challenge, bytewise.verifier_message::<[u8; 32]>());
+
+        let mut padded = bytes.clone();
+        padded.resize(len.next_multiple_of(8), 0);
+        padded.extend_from_slice(&next);
+        assert_eq!(
+            grouped_challenge,
+            reference_prover(b"bytes", &padded).verifier_message::<[u8; 32]>()
+        );
+        // The padding is absorbed: it moves the next message to a word
+        // boundary, which unpadded bytes do not unless the length is already
+        // a whole number of words.
+        let mut unpadded = bytes.clone();
+        unpadded.extend_from_slice(&next);
+        let unpadded = reference_prover(b"bytes", &unpadded).verifier_message::<[u8; 32]>();
+        assert_eq!(grouped_challenge == unpadded, len % 8 == 0);
 
         let proof = grouped.narg_string().to_vec();
-        let mut verifier = new_verifier_channel(b"bytes", b"instance", &proof);
+        let mut verifier = new_verifier_channel(b"bytes", b"fixture", &proof);
         assert_eq!(
             receive_byte_group(&mut verifier, site(SITE_FAMILY_TERMINAL, 3), len).unwrap(),
             bytes
         );
+        public_bytes(&mut verifier, site(SITE_FAMILY_TERMINAL, 4), &next).unwrap();
         assert_eq!(verifier.verifier_message::<[u8; 32]>(), grouped_challenge);
         verifier.check_eof().unwrap();
     }
+}
+
+#[test]
+fn public_groups_absorb_one_padded_word_sequence() {
+    let values = [F::from_u64(1), F::from_u64(2), F::from_u64(3)];
+    let mut prover = new_prover_channel(b"public", b"fixture");
+    public_fields(&mut prover, site(1, 0), &values).unwrap();
+    public_bytes(&mut prover, site(1, 1), b"abc").unwrap();
+    assert!(prover.narg_string().is_empty());
+    let mut absorbed = Vec::new();
+    for value in values {
+        absorbed.extend_from_slice(&value.to_bytes_le_vec());
+    }
+    absorbed.extend_from_slice(&[0; 4]);
+    absorbed.extend_from_slice(b"abc\0\0\0\0\0");
+    assert_eq!(
+        prover.verifier_message::<[u8; 32]>(),
+        reference_prover(b"public", &absorbed).verifier_message::<[u8; 32]>()
+    );
+}
+
+#[test]
+fn nonce_is_sent_as_leb128_and_absorbed_as_a_word() {
+    let mut prover = new_prover_channel(b"nonce", b"fixture");
+    send_nonce(&mut prover, 300);
+    assert_eq!(prover.narg_string(), [0xac, 0x02]);
+    let challenge = prover.verifier_message::<[u8; 32]>();
+    assert_eq!(
+        challenge,
+        reference_prover(b"nonce", &300u64.to_le_bytes()).verifier_message::<[u8; 32]>()
+    );
+
+    let proof = prover.narg_string().to_vec();
+    let mut verifier = new_verifier_channel(b"nonce", b"fixture", &proof);
+    assert_eq!(receive_nonce(&mut verifier).unwrap(), 300);
+    assert_eq!(verifier.verifier_message::<[u8; 32]>(), challenge);
+    verifier.check_eof().unwrap();
+
+    let mut verifier = new_verifier_channel(b"nonce", b"fixture", &[0x80, 0x00]);
+    assert!(matches!(
+        receive_nonce(&mut verifier),
+        Err(AkitaError::InvalidProof)
+    ));
+    assert!(verifier.check_eof().is_err());
 }
 
 #[test]
@@ -192,7 +250,7 @@ fn extension_groups_and_challenges_replay() {
 #[test]
 fn noncanonical_atoms_poison_the_verifier() {
     let mut verifier = new_verifier_channel(b"poison", b"fixture", &[u8::MAX; 4]);
-    assert!(receive_field::<F>(&mut verifier).is_err());
+    assert!(receive_field_group::<F>(&mut verifier, site(1, 0), 1).is_err());
     assert!(ext_challenge::<F, _>(&mut verifier, site(1, 0)).is_err());
     assert!(verifier.check_eof().is_err());
 
@@ -204,7 +262,8 @@ fn noncanonical_atoms_poison_the_verifier() {
     noncanonical[4..8].fill(u8::MAX);
     for proof in [&encoded[..encoded.len() - 1], &noncanonical[..]] {
         let mut verifier = new_verifier_channel(b"poison", b"fixture", proof);
-        assert!(receive_extension::<F, E>(&mut verifier).is_err());
+        let mut slot = [E::zero()];
+        assert!(exchange_extension_group::<F, E, _>(&mut verifier, site(1, 0), &mut slot).is_err());
         assert!(verifier.check_eof().is_err());
     }
 }
@@ -233,11 +292,18 @@ fn bounded_payload_round_trips() {
     send_bounded_bytes(&mut prover, target, &[4, 5, 6], 8).unwrap();
     let proof = prover.narg_string().to_vec();
     assert_eq!(proof, [3, 0, 0, 0, 4, 5, 6]);
+    let challenge = prover.verifier_message::<[u8; 32]>();
+    let absorbed = [3, 0, 0, 0, 0, 0, 0, 0, 4, 5, 6, 0, 0, 0, 0, 0];
+    assert_eq!(
+        challenge,
+        reference_prover(b"bounded", &absorbed).verifier_message::<[u8; 32]>()
+    );
     let mut verifier = new_verifier_channel(b"bounded", b"fixture", &proof);
     assert_eq!(
         receive_bounded_bytes(&mut verifier, target, 8).unwrap(),
         [4, 5, 6]
     );
+    assert_eq!(verifier.verifier_message::<[u8; 32]>(), challenge);
     verifier.check_eof().unwrap();
 }
 
@@ -253,17 +319,16 @@ fn fold_preview_matches_live_prover_and_verifier() {
         nonce_max_bytes(12) as u64,
         0,
     );
-    let lens = [40usize, 300];
+    let lens = [40usize, 304];
     let message_record = |len: usize| {
         ProtocolContextRecord::new(
             site(SITE_FAMILY_FOLD_CHALLENGE, 1).to_bytes(),
             ProtocolMessageKind::Challenge as u32,
-            3,
-            3,
+            0,
+            0,
             len as u64,
         )
     };
-    let payloads = [[5u8, 8, 13], [21, 34, 55]];
     let copy = |message: &[u8]| Ok(message.to_vec());
     // An arbitrary 12-bit candidate of at least 128, so its LEB128 encoding
     // takes two bytes, drawn from an unrelated transcript.
@@ -275,17 +340,13 @@ fn fold_preview_matches_live_prover_and_verifier() {
     preview.grind(WORK_BITS).unwrap();
     let work = preview.take_work().unwrap();
     assert_eq!(work.nonce(), nonce);
-    let previewed = [0, 1].map(|i| {
-        preview
-            .challenge_message(&payloads[i], lens[i], copy)
-            .unwrap()
-    });
+    let previewed = [0, 1].map(|i| preview.challenge_message(lens[i], copy).unwrap());
     // One live prover searches again; the other commits the preview's work.
     // Both must produce the same argument and challenges.
     let mut searched = new_prover_channel(b"fold-preview", b"fixture");
     for (state, work) in [(&mut searched, None), (&mut prover, Some(work))] {
         prover_context(state, nonce_record);
-        state.prover_message(&NonceAtom::new(nonce));
+        send_nonce(state, nonce);
         match work {
             None => state.grind(WORK_BITS).unwrap(),
             Some(work) => work.commit(state).unwrap(),
@@ -293,32 +354,24 @@ fn fold_preview_matches_live_prover_and_verifier() {
     }
     let [searched_live, live] = [&mut searched, &mut prover].map(|state| {
         [0, 1].map(|i| {
-            fold_challenge_message(state, message_record(lens[i]), &payloads[i], lens[i], copy)
-                .unwrap()
+            state.context(message_record(lens[i]));
+            state.challenge_message(lens[i], copy).unwrap()
         })
     });
     assert_eq!(previewed, live);
     assert_eq!(searched_live, live);
     let proof = prover.narg_string().to_vec();
     assert_eq!(searched.narg_string(), proof.as_slice());
+    assert_eq!(&proof[..2], NonceAtom::new(nonce).wire().as_ref());
     assert!(proof.len() > 2);
 
     let mut verifier = new_verifier_channel(b"fold-preview", b"fixture", &proof);
     verifier_context(&mut verifier, nonce_record);
-    assert_eq!(
-        verifier.prover_message::<NonceAtom>().unwrap().into_inner(),
-        nonce
-    );
+    assert_eq!(receive_nonce(&mut verifier).unwrap(), nonce);
     verifier.check_grind(WORK_BITS).unwrap();
     let replayed = [0, 1].map(|i| {
-        fold_challenge_message(
-            &mut verifier,
-            message_record(lens[i]),
-            &payloads[i],
-            lens[i],
-            copy,
-        )
-        .unwrap()
+        verifier.context(message_record(lens[i]));
+        verifier.challenge_message(lens[i], copy).unwrap()
     });
     assert_eq!(replayed, live);
     verifier.check_eof().unwrap();
@@ -343,7 +396,7 @@ fn fold_work_rejects_a_diverged_live_channel() {
     preview.grind(6).unwrap();
     let work = preview.take_work().unwrap();
     // The live channel sends a different nonce than the preview absorbed.
-    prover.prover_message(&NonceAtom::new(4));
+    send_nonce(&mut prover, 4);
     let before = prover.narg_string().to_vec();
     assert!(matches!(
         work.commit(&mut prover),
@@ -356,13 +409,13 @@ fn fold_work_rejects_a_diverged_live_channel() {
 fn transcript_has_a_known_answer() {
     let mut prover = new_prover_channel(b"kat/session", b"kat/instance");
     public_bytes(&mut prover, site(1, 0), b"public-message").unwrap();
-    send_field(&mut prover, F::from_u64(7));
+    send_field_group(&mut prover, site(1, 1), &[F::from_u64(7)]).unwrap();
     let challenges = ext_challenges::<E, _>(&mut prover, site(1, 1), 2).unwrap();
     let root = prover.verifier_message::<[u8; 32]>();
     let rendered = format!("{challenges:?} {root:?}");
     #[cfg(feature = "transcript-blake2b")]
-    let expected = "[FpExt4 { coeffs: [Fp32(3256901899), Fp32(1789739589), Fp32(266986176), Fp32(1818830686)] }, FpExt4 { coeffs: [Fp32(1301177491), Fp32(2890609976), Fp32(7219412), Fp32(1705734705)] }] [56, 235, 61, 178, 13, 248, 21, 57, 91, 216, 254, 126, 109, 112, 96, 164, 195, 119, 49, 169, 4, 161, 206, 79, 152, 145, 65, 83, 151, 25, 46, 169]";
+    let expected = "[FpExt4 { coeffs: [Fp32(2614298249), Fp32(719776083), Fp32(913217586), Fp32(4036303154)] }, FpExt4 { coeffs: [Fp32(3500126942), Fp32(4250857817), Fp32(1682877355), Fp32(955445118)] }] [25, 109, 113, 199, 36, 237, 82, 189, 212, 68, 54, 20, 214, 185, 254, 241, 113, 128, 48, 55, 12, 96, 207, 42, 17, 244, 47, 144, 42, 40, 35, 58]";
     #[cfg(feature = "transcript-keccak")]
-    let expected = "[FpExt4 { coeffs: [Fp32(3840723212), Fp32(975509834), Fp32(2428599173), Fp32(1832430551)] }, FpExt4 { coeffs: [Fp32(3603611738), Fp32(1631292368), Fp32(606825530), Fp32(1194250222)] }] [17, 131, 71, 50, 160, 187, 213, 117, 140, 51, 195, 133, 128, 53, 93, 100, 223, 49, 14, 136, 194, 254, 8, 4, 205, 30, 243, 80, 181, 239, 88, 119]";
+    let expected = "[FpExt4 { coeffs: [Fp32(2720649912), Fp32(1564638090), Fp32(265913417), Fp32(3965890575)] }, FpExt4 { coeffs: [Fp32(1375908699), Fp32(4239959122), Fp32(4049503832), Fp32(3332595443)] }] [224, 134, 9, 164, 23, 50, 96, 139, 70, 58, 213, 112, 253, 140, 67, 15, 213, 246, 41, 116, 136, 54, 216, 15, 227, 171, 80, 218, 183, 234, 141, 155]";
     assert_eq!(rendered, expected);
 }

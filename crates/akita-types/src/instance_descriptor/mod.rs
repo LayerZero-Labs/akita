@@ -1,7 +1,7 @@
 //! Fiat-Shamir instance descriptor bound into the transcript preamble.
 //!
 //! The descriptor is intentionally smaller than the proof or verifier setup:
-//! large structured inputs are represented by Blake2b digests of canonical
+//! large structured inputs are represented by Keccak-256 digests of canonical
 //! Akita encodings. The top-level descriptor remains self-describing and
 //! round-trippable so both prover and verifier can compare preamble bytes.
 //!
@@ -10,6 +10,13 @@
 //! Each incompatible change increments the version while the protocol is under
 //! active development. Integrators must pin an exact revision because the
 //! project does not guarantee backward compatibility.
+//!
+//! ## Word-aligned layout
+//!
+//! Version 6 encodes every scalar field, including flags and small tags, as
+//! one `u64` little-endian word, and every 32-byte digest or modulus as its
+//! bare bytes. A variable-length vector is a length word followed by one word
+//! per element. The descriptor is therefore a whole number of words.
 
 #[cfg(test)]
 mod tests;
@@ -260,7 +267,7 @@ impl CallSection {
     }
 }
 
-/// Return the Blake2b-256 digest of an Akita-serializable value.
+/// Return the Keccak-256 digest of an Akita-serializable value.
 ///
 /// # Errors
 ///
@@ -303,7 +310,7 @@ impl AkitaSerialize for AkitaInstanceDescriptor {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.version.serialize_with_mode(&mut writer, compress)?;
+        write_word(&mut writer, u64::from(self.version))?;
         self.algebra.serialize_with_mode(&mut writer, compress)?;
         self.setup.serialize_with_mode(&mut writer, compress)?;
         self.plan.serialize_with_mode(&mut writer, compress)?;
@@ -313,7 +320,7 @@ impl AkitaSerialize for AkitaInstanceDescriptor {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.version.serialized_size(compress)
+        WORD_BYTES
             + self.algebra.serialized_size(compress)
             + self.setup.serialized_size(compress)
             + self.plan.serialized_size(compress)
@@ -332,7 +339,7 @@ impl AkitaDeserialize for AkitaInstanceDescriptor {
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
         let out = Self {
-            version: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            version: read_word_as(&mut reader, "descriptor version")?,
             algebra: AlgebraSection::deserialize_with_mode(&mut reader, compress, validate, &())?,
             setup: SetupSection::deserialize_with_mode(&mut reader, compress, validate, &())?,
             plan: PlanSection::deserialize_with_mode(&mut reader, compress, validate, &())?,
@@ -366,19 +373,16 @@ impl AkitaSerialize for AlgebraSection {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
-        compress: Compress,
+        _compress: Compress,
     ) -> Result<(), SerializationError> {
         writer.write_all(&self.prime_modulus_be)?;
-        self.field_extension_degree
-            .serialize_with_mode(&mut writer, compress)?;
-        self.extension_degree
-            .serialize_with_mode(&mut writer, compress)?;
+        write_word(&mut writer, u64::from(self.field_extension_degree))?;
+        write_word(&mut writer, u64::from(self.extension_degree))?;
         Ok(())
     }
 
-    fn serialized_size(&self, compress: Compress) -> usize {
-        32 + self.field_extension_degree.serialized_size(compress)
-            + self.extension_degree.serialized_size(compress)
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        32 + 2 * WORD_BYTES
     }
 }
 
@@ -387,7 +391,7 @@ impl AkitaDeserialize for AlgebraSection {
 
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
-        compress: Compress,
+        _compress: Compress,
         validate: Validate,
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
@@ -395,13 +399,8 @@ impl AkitaDeserialize for AlgebraSection {
         reader.read_exact(&mut prime_modulus_be)?;
         let out = Self {
             prime_modulus_be,
-            field_extension_degree: u8::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?,
-            extension_degree: u8::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            field_extension_degree: read_word_as(&mut reader, "field extension degree")?,
+            extension_degree: read_word_as(&mut reader, "extension degree")?,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -425,13 +424,13 @@ impl AkitaSerialize for ProtocolFeatureSet {
     fn serialize_with_mode<W: Write>(
         &self,
         writer: W,
-        compress: Compress,
+        _compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.zk.serialize_with_mode(writer, compress)
+        write_word(writer, u64::from(self.zk))
     }
 
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.zk.serialized_size(compress)
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        WORD_BYTES
     }
 }
 
@@ -440,12 +439,12 @@ impl AkitaDeserialize for ProtocolFeatureSet {
 
     fn deserialize_with_mode<R: Read>(
         reader: R,
-        compress: Compress,
+        _compress: Compress,
         validate: Validate,
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
         let out = Self {
-            zk: bool::deserialize_with_mode(reader, compress, validate, &())?,
+            zk: read_bool_word(reader, "zk feature flag")?,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -478,11 +477,12 @@ impl AkitaSerialize for SetupSection {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        encode_decomposition(&self.decomposition, &mut writer, compress)?;
-        encode_sis_modulus_profile(self.sis_modulus_profile, &mut writer, compress)?;
-        self.compression_policy
-            .tag()
-            .serialize_with_mode(&mut writer, compress)?;
+        encode_decomposition(&self.decomposition, &mut writer)?;
+        write_word(
+            &mut writer,
+            u64::from(sis_modulus_profile_tag(self.sis_modulus_profile)),
+        )?;
+        write_word(&mut writer, u64::from(self.compression_policy.tag()))?;
         writer.write_all(&self.setup_seed_digest)?;
         self.protocol_features
             .serialize_with_mode(&mut writer, compress)?;
@@ -490,9 +490,8 @@ impl AkitaSerialize for SetupSection {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        decomposition_size(&self.decomposition, compress)
-            + sis_modulus_profile_size(compress)
-            + 1
+        decomposition_size(&self.decomposition)
+            + 2 * WORD_BYTES
             + 32
             + self.protocol_features.serialized_size(compress)
     }
@@ -507,10 +506,9 @@ impl AkitaDeserialize for SetupSection {
         validate: Validate,
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
-        let decomposition = decode_decomposition(&mut reader, compress, validate)?;
-        let sis_modulus_profile = decode_sis_modulus_profile(&mut reader, compress, validate)?;
-        let compression_policy_tag =
-            u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let decomposition = decode_decomposition(&mut reader)?;
+        let sis_modulus_profile = decode_sis_modulus_profile(&mut reader)?;
+        let compression_policy_tag: u8 = read_word_as(&mut reader, "compression policy tag")?;
         let compression_policy =
             CompressionPolicyId::from_tag(compression_policy_tag).ok_or_else(|| {
                 SerializationError::InvalidData(format!(
@@ -612,50 +610,21 @@ impl AkitaSerialize for CallSection {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
-        compress: Compress,
+        _compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.num_commitment_groups
-            .serialize_with_mode(&mut writer, compress)?;
-        let arity_count =
-            u32::try_from(self.num_vars_per_commitment_group.len()).map_err(|_| {
-                SerializationError::InvalidData(
-                    "descriptor group arity vector length does not fit u32".to_string(),
-                )
-            })?;
-        arity_count.serialize_with_mode(&mut writer, compress)?;
-        for &num_vars in &self.num_vars_per_commitment_group {
-            num_vars.serialize_with_mode(&mut writer, compress)?;
-        }
-        let group_count =
-            u32::try_from(self.num_polys_per_commitment_group.len()).map_err(|_| {
-                SerializationError::InvalidData(
-                    "descriptor commitment-group vector length does not fit u32".to_string(),
-                )
-            })?;
-        group_count.serialize_with_mode(&mut writer, compress)?;
-        for &group_size in &self.num_polys_per_commitment_group {
-            group_size.serialize_with_mode(&mut writer, compress)?;
-        }
-        encode_basis_mode(self.basis_mode, &mut writer, compress)?;
+        write_word(&mut writer, u64::from(self.num_commitment_groups))?;
+        write_word_vector(&mut writer, &self.num_vars_per_commitment_group)?;
+        write_word_vector(&mut writer, &self.num_polys_per_commitment_group)?;
+        write_word(&mut writer, u64::from(basis_mode_tag(self.basis_mode)))?;
         writer.write_all(&self.opening_batch_digest)?;
         Ok(())
     }
 
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.num_commitment_groups.serialized_size(compress)
-            + 0u32.serialized_size(compress)
-            + self
-                .num_vars_per_commitment_group
-                .iter()
-                .map(|num_vars| num_vars.serialized_size(compress))
-                .sum::<usize>()
-            + 0u32.serialized_size(compress)
-            + self
-                .num_polys_per_commitment_group
-                .iter()
-                .map(|group_size| group_size.serialized_size(compress))
-                .sum::<usize>()
-            + basis_mode_size(compress)
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        WORD_BYTES
+            + WORD_BYTES * (1 + self.num_vars_per_commitment_group.len())
+            + WORD_BYTES * (1 + self.num_polys_per_commitment_group.len())
+            + WORD_BYTES
             + 32
     }
 }
@@ -665,12 +634,11 @@ impl AkitaDeserialize for CallSection {
 
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
-        compress: Compress,
+        _compress: Compress,
         validate: Validate,
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
-        let num_commitment_groups =
-            u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let num_commitment_groups: u32 = read_word_as(&mut reader, "commitment-group count")?;
         let expected_count = usize::try_from(num_commitment_groups).map_err(|_| {
             SerializationError::InvalidData(
                 "descriptor commitment-group count does not fit usize".to_string(),
@@ -681,55 +649,15 @@ impl AkitaDeserialize for CallSection {
                 "descriptor commitment-group count {expected_count} is outside 1..={DEFAULT_MAX_SEQUENCE_LEN}"
             )));
         }
-        let arity_count = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        if arity_count != num_commitment_groups {
-            return Err(SerializationError::InvalidData(
-                "descriptor group arity count mismatch".to_string(),
-            ));
-        }
-        let mut num_vars_per_commitment_group = Vec::new();
-        num_vars_per_commitment_group
-            .try_reserve_exact(expected_count)
-            .map_err(|_| {
-                SerializationError::InvalidData(
-                    "descriptor group arity allocation failed".to_string(),
-                )
-            })?;
-        for _ in 0..expected_count {
-            num_vars_per_commitment_group.push(u32::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?);
-        }
-        let group_count = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        if group_count != num_commitment_groups {
-            return Err(SerializationError::InvalidData(
-                "descriptor commitment-group count mismatch".to_string(),
-            ));
-        }
-        let mut num_polys_per_commitment_group = Vec::new();
-        num_polys_per_commitment_group
-            .try_reserve_exact(expected_count)
-            .map_err(|_| {
-                SerializationError::InvalidData(
-                    "descriptor commitment-group allocation failed".to_string(),
-                )
-            })?;
-        for _ in 0..expected_count {
-            num_polys_per_commitment_group.push(u32::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?);
-        }
+        let num_vars_per_commitment_group =
+            read_word_vector(&mut reader, expected_count, "group arity")?;
+        let num_polys_per_commitment_group =
+            read_word_vector(&mut reader, expected_count, "commitment-group size")?;
         let out = Self {
             num_commitment_groups,
             num_vars_per_commitment_group,
             num_polys_per_commitment_group,
-            basis_mode: decode_basis_mode(&mut reader, compress, validate)?,
+            basis_mode: decode_basis_mode(&mut reader)?,
             opening_batch_digest: read_digest(&mut reader)?,
         };
         if matches!(validate, Validate::Yes) {
@@ -749,42 +677,90 @@ fn read_digest<R: Read>(mut reader: R) -> Result<DescriptorDigest, Serialization
     Ok(digest)
 }
 
-fn encode_decomposition<W: Write>(
-    decomp: &DecompositionParams,
-    mut writer: W,
-    compress: Compress,
-) -> Result<(), SerializationError> {
-    decomp
-        .log_basis
-        .serialize_with_mode(&mut writer, compress)?;
-    decomp
-        .log_commit_bound
-        .serialize_with_mode(&mut writer, compress)?;
-    decomp
-        .log_open_bound
-        .is_some()
-        .serialize_with_mode(&mut writer, compress)?;
-    if let Some(log_open_bound) = decomp.log_open_bound {
-        log_open_bound.serialize_with_mode(&mut writer, compress)?;
+/// Bytes in one descriptor word.
+const WORD_BYTES: usize = 8;
+
+/// Write one descriptor word: `value` as a `u64` little-endian.
+fn write_word<W: Write>(mut writer: W, value: u64) -> Result<(), SerializationError> {
+    writer.write_all(&value.to_le_bytes())?;
+    Ok(())
+}
+
+/// Read one descriptor word and narrow it to `T`, rejecting a value `T`
+/// cannot hold.
+fn read_word_as<T: TryFrom<u64>, R: Read>(
+    mut reader: R,
+    field: &str,
+) -> Result<T, SerializationError> {
+    let mut word = [0u8; WORD_BYTES];
+    reader.read_exact(&mut word)?;
+    let value = u64::from_le_bytes(word);
+    T::try_from(value).map_err(|_| {
+        SerializationError::InvalidData(format!("descriptor {field} word {value} is out of range"))
+    })
+}
+
+/// Read one descriptor flag word, accepting only 0 or 1.
+fn read_bool_word<R: Read>(reader: R, field: &str) -> Result<bool, SerializationError> {
+    match read_word_as::<u64, _>(reader, field)? {
+        0 => Ok(false),
+        1 => Ok(true),
+        other => Err(SerializationError::InvalidData(format!(
+            "descriptor {field} word {other} is not a flag"
+        ))),
+    }
+}
+
+/// Write a vector as its length word, then one word per element.
+fn write_word_vector<W: Write>(mut writer: W, values: &[u32]) -> Result<(), SerializationError> {
+    write_word(&mut writer, values.len() as u64)?;
+    for &value in values {
+        write_word(&mut writer, u64::from(value))?;
     }
     Ok(())
 }
 
-fn decode_decomposition<R: Read>(
+/// Read a vector written by [`write_word_vector`] whose length must equal
+/// `expected_len`, checked before allocating.
+fn read_word_vector<R: Read>(
     mut reader: R,
-    compress: Compress,
-    validate: Validate,
-) -> Result<DecompositionParams, SerializationError> {
-    let log_basis = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let log_commit_bound = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let has_log_open_bound = bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let log_open_bound = if has_log_open_bound {
-        Some(u32::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &(),
-        )?)
+    expected_len: usize,
+    field: &str,
+) -> Result<Vec<u32>, SerializationError> {
+    let len: u64 = read_word_as(&mut reader, field)?;
+    if usize::try_from(len).ok() != Some(expected_len) {
+        return Err(SerializationError::InvalidData(format!(
+            "descriptor {field} count mismatch"
+        )));
+    }
+    let mut values = Vec::new();
+    values.try_reserve_exact(expected_len).map_err(|_| {
+        SerializationError::InvalidData(format!("descriptor {field} allocation failed"))
+    })?;
+    for _ in 0..expected_len {
+        values.push(read_word_as(&mut reader, field)?);
+    }
+    Ok(values)
+}
+
+fn encode_decomposition<W: Write>(
+    decomp: &DecompositionParams,
+    mut writer: W,
+) -> Result<(), SerializationError> {
+    write_word(&mut writer, u64::from(decomp.log_basis))?;
+    write_word(&mut writer, u64::from(decomp.log_commit_bound))?;
+    write_word(&mut writer, u64::from(decomp.log_open_bound.is_some()))?;
+    if let Some(log_open_bound) = decomp.log_open_bound {
+        write_word(&mut writer, u64::from(log_open_bound))?;
+    }
+    Ok(())
+}
+
+fn decode_decomposition<R: Read>(mut reader: R) -> Result<DecompositionParams, SerializationError> {
+    let log_basis = read_word_as(&mut reader, "log basis")?;
+    let log_commit_bound = read_word_as(&mut reader, "log commit bound")?;
+    let log_open_bound = if read_bool_word(&mut reader, "log open bound presence")? {
+        Some(read_word_as(&mut reader, "log open bound")?)
     } else {
         None
     };
@@ -795,30 +771,14 @@ fn decode_decomposition<R: Read>(
     })
 }
 
-fn decomposition_size(decomp: &DecompositionParams, compress: Compress) -> usize {
-    let mut size = 0u32.serialized_size(compress)
-        + 0u32.serialized_size(compress)
-        + false.serialized_size(compress);
-    if decomp.log_open_bound.is_some() {
-        size += 0u32.serialized_size(compress);
-    }
-    size
-}
-
-fn encode_sis_modulus_profile<W: Write>(
-    family: SisModulusProfileId,
-    writer: W,
-    compress: Compress,
-) -> Result<(), SerializationError> {
-    sis_modulus_profile_tag(family).serialize_with_mode(writer, compress)
+fn decomposition_size(decomp: &DecompositionParams) -> usize {
+    WORD_BYTES * (3 + usize::from(decomp.log_open_bound.is_some()))
 }
 
 fn decode_sis_modulus_profile<R: Read>(
     reader: R,
-    compress: Compress,
-    validate: Validate,
 ) -> Result<SisModulusProfileId, SerializationError> {
-    match u8::deserialize_with_mode(reader, compress, validate, &())? {
+    match read_word_as::<u64, _>(reader, "SIS modulus profile tag")? {
         0 => Ok(SisModulusProfileId::Q32Offset99),
         1 => Ok(SisModulusProfileId::Q64Offset59),
         2 => Ok(SisModulusProfileId::Q128OffsetA7F7),
@@ -828,24 +788,8 @@ fn decode_sis_modulus_profile<R: Read>(
     }
 }
 
-fn sis_modulus_profile_size(compress: Compress) -> usize {
-    0u8.serialized_size(compress)
-}
-
-fn encode_basis_mode<W: Write>(
-    basis: BasisMode,
-    writer: W,
-    compress: Compress,
-) -> Result<(), SerializationError> {
-    basis_mode_tag(basis).serialize_with_mode(writer, compress)
-}
-
-fn decode_basis_mode<R: Read>(
-    reader: R,
-    compress: Compress,
-    validate: Validate,
-) -> Result<BasisMode, SerializationError> {
-    match u8::deserialize_with_mode(reader, compress, validate, &())? {
+fn decode_basis_mode<R: Read>(reader: R) -> Result<BasisMode, SerializationError> {
+    match read_word_as::<u64, _>(reader, "basis mode tag")? {
         0 => Ok(BasisMode::Lagrange),
         1 => Ok(BasisMode::Monomial),
         other => Err(SerializationError::InvalidData(format!(
@@ -859,8 +803,4 @@ fn basis_mode_tag(basis: BasisMode) -> u8 {
         BasisMode::Lagrange => 0,
         BasisMode::Monomial => 1,
     }
-}
-
-fn basis_mode_size(compress: Compress) -> usize {
-    0u8.serialized_size(compress)
 }
