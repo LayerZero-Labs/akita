@@ -34,11 +34,11 @@ trusted-benchmark-artifact = ["akita-recursion-glue/trusted-benchmark-artifact"]
 akita-error = { path = "../../../crates/akita-error" }
 # Aliased as `jolt` so `#[jolt::provable]` and `jolt::start_cycle_tracking`
 # resolve the same way as in the upstream Jolt examples.
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "b08ca3cc367c8e683ab5e5d6fafa69f9a2caa15a", default-features = false }
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "86e5ed7ce0f1c8c8650c2a2837f47513358782f1", default-features = false }
 akita-recursion-glue = { path = "../glue" }
 akita-config = { path = "../../../crates/akita-config", default-features = false, features = [
 ] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "b08ca3cc367c8e683ab5e5d6fafa69f9a2caa15a", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "86e5ed7ce0f1c8c8650c2a2837f47513358782f1", default-features = false, features = [
   "asm",
   "solinas",
 ] }
