@@ -15,6 +15,7 @@ use akita_transcript::{
     public_bytes, public_fields, receive_byte_group, receive_field_group, send_byte_group,
     send_field_group, ProtocolSiteId, ProverChannel, VerifierChannel,
 };
+use jolt_field::Zero;
 
 type F = akita_config::proof_optimized::fp128::Field;
 type Ext4 = fp32::ExtensionField;
