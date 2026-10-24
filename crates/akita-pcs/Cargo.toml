@@ -77,7 +77,8 @@ dev-protocol = ["akita-params/dev-protocol"]
 # Zero knowledge (`specs/whiteout-akita.md`): `ZkCommitmentConfig`, the
 # masked prefix's prover and verifier, and Whiteout's response prover
 # (`zk::AkitaResponseProver`). It selects nothing: a zero-knowledge
-# configuration does.
+# configuration does. It compiles no hiding sampler (jolt-zk's `whiteout`
+# only, I6), so a hiding commitment fails without `zk-prover` (A46).
 zk = [
   "dep:jolt-sumcheck",
   "dep:jolt-zk",
@@ -91,11 +92,15 @@ zk = [
   "akita-params/zk",
   "akita-cpu-backend/zk",
 ]
+# The zero-knowledge prover's samplers: the OS-drawn hiding randomness and
+# jolt-zk's `whiteout-prover` (A46).
+zk-prover = ["zk", "jolt-zk/whiteout-prover", "akita-cpu-backend/zk-prover"]
 # Test hooks of the zero-knowledge mode (the response prover's unchecked
 # path, for the consistent-cheat tests).
-test-support = ["zk"]
+test-support = ["zk-prover"]
 # Timing harness for examples/compression_dudect.rs (A36): jolt-zk's DIT
-# pool and synthetic Σ instance. Diagnostics only.
+# pool and synthetic Σ instance. Diagnostics only; implies `zk-prover`
+# through `test-support`.
 zk-diagnostics = ["test-support", "jolt-zk/whiteout-diagnostics"]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
@@ -123,7 +128,7 @@ rayon = { version = "1.10", optional = true }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", optional = true }
 jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, optional = true }
 jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", features = [
-  "whiteout-prover",
+  "whiteout",
 ], optional = true }
 jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, optional = true }
 zeroize = { version = "1.8", default-features = false, features = [
@@ -171,7 +176,7 @@ akita-types = { version = "0.1.0", path = "../akita-types", default-features = f
 # Test-only: sample the hiding randomness of test schedules that declare it.
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false, features = [
   "test-support",
-  "zk",
+  "zk-prover",
 ] }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false, features = [
   "zk",
@@ -210,7 +215,7 @@ required-features = ["test-support", "logging"]
 
 [[example]]
 name = "zk_response"
-required-features = ["zk"]
+required-features = ["zk-prover"]
 
 [[example]]
 name = "compression_dudect"

@@ -75,8 +75,8 @@ use rows::{
 type F = Prime128OffsetA7F7;
 
 /// The `zk` feature makes the CPU backend a masked-prefix backend: it exports
-/// the residual opening at the cut (`ResidualExportKernel`) and samples hiding
-/// randomness from the OS. Fails to compile if `zk` stops enabling
+/// the residual opening at the cut (`ResidualExportKernel`); `zk-prover` adds
+/// the OS-drawn hiding randomness. Fails to compile if `zk` stops enabling
 /// `akita-cpu-backend/zk`, which workspace dev-dependencies would hide.
 const _: fn() = || {
     fn exports_the_residual<B: ResidualExportKernel<F, F>>() {}
