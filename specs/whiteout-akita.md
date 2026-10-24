@@ -2396,6 +2396,17 @@ The numbering continues the W4 note's A1–A23.
   calls the same two functions; it lives in akita-schedules, not beside
   `sigma_binding_min_rank` in akita-params, because the planner policy and
   the price's owner do), and jolt calls it.
+- **A44, exporting and re-importing hiding randomness (open).** A hiding
+  commitment's randomness lives only in the committing process's
+  `CommitmentHandle`. Jolt's W6f commits trusted advice and committed
+  programs hiding at preprocessing and reuses them across proofs, so only the
+  committing process can prove against them: a trusted party cannot hand the
+  prover a usable opening, and an auditor holding the advice or program
+  cannot open `C` (clear commitments are recomputable; hiding ones are not).
+  Add an API that exports a hiding commitment's randomness and builds a
+  hiding source from given randomness, so a trusted party can ship
+  (advice or program, `r`) and anyone holding both can open `C`. Until then
+  jolt's D31 states the trust root is the committing prover's process.
 - A2, A3 and A12 from W4 are resolved by §4.3, §4.6 and §5.4.
 
 ## 11. Questions for the paper authors
