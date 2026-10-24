@@ -714,20 +714,21 @@ dependencies = [
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=efae45b3dd484770e8630f8bcec0b82b0196e303#efae45b3dd484770e8630f8bcec0b82b0196e303"
+source = "git+https://github.com/a16z/jolt?rev=13e1491953982c0c35b76717e21ca4f9d43f6ded#13e1491953982c0c35b76717e21ca4f9d43f6ded"
 dependencies = [
  "cc",
  "num-traits",
  "rand_core",
  "rayon",
  "serde",
+ "spongefish",
  "thiserror",
 ]
 
 [[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=efae45b3dd484770e8630f8bcec0b82b0196e303#efae45b3dd484770e8630f8bcec0b82b0196e303"
+source = "git+https://github.com/a16z/jolt?rev=13e1491953982c0c35b76717e21ca4f9d43f6ded#13e1491953982c0c35b76717e21ca4f9d43f6ded"
 dependencies = [
  "jolt-field",
  "jolt-utils",
@@ -741,7 +742,7 @@ dependencies = [
 [[package]]
 name = "jolt-transcript"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=efae45b3dd484770e8630f8bcec0b82b0196e303#efae45b3dd484770e8630f8bcec0b82b0196e303"
+source = "git+https://github.com/a16z/jolt?rev=13e1491953982c0c35b76717e21ca4f9d43f6ded#13e1491953982c0c35b76717e21ca4f9d43f6ded"
 dependencies = [
  "getrandom 0.4.3",
  "jolt-field",
@@ -752,7 +753,7 @@ dependencies = [
 [[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=efae45b3dd484770e8630f8bcec0b82b0196e303#efae45b3dd484770e8630f8bcec0b82b0196e303"
+source = "git+https://github.com/a16z/jolt?rev=13e1491953982c0c35b76717e21ca4f9d43f6ded#13e1491953982c0c35b76717e21ca4f9d43f6ded"
 dependencies = [
  "num-traits",
 ]
