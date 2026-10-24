@@ -2396,17 +2396,39 @@ The numbering continues the W4 note's A1–A23.
   calls the same two functions; it lives in akita-schedules, not beside
   `sigma_binding_min_rank` in akita-params, because the planner policy and
   the price's owner do), and jolt calls it.
-- **A44, exporting and re-importing hiding randomness (open).** A hiding
-  commitment's randomness lives only in the committing process's
-  `CommitmentHandle`. Jolt's W6f commits trusted advice and committed
-  programs hiding at preprocessing and reuses them across proofs, so only the
-  committing process can prove against them: a trusted party cannot hand the
-  prover a usable opening, and an auditor holding the advice or program
-  cannot open `C` (clear commitments are recomputable; hiding ones are not).
-  Add an API that exports a hiding commitment's randomness and builds a
-  hiding source from given randomness, so a trusted party can ship
-  (advice or program, `r`) and anyone holding both can open `C`. Until then
-  jolt's D31 states the trust root is the committing prover's process.
+- **A44, exporting and re-importing hiding randomness (resolved).** A
+  hiding commitment's randomness lived only in the committing process's
+  `CommitmentHandle`, so only that process could prove against a
+  commitment reused across proofs (Jolt's trusted advice and committed
+  programs, W6f), and nobody holding the data could open `C`. As built, in
+  `akita-cpu-backend/src/hiding.rs` beside the sampler, re-exported by
+  `akita-pcs`:
+  - `CommitmentHandle::hiding_randomness() -> Result<HidingRandomness>`
+    exports the B randomness; a clear commitment is an `InvalidInput`.
+  - `HidingRandomness` is the secret: `Zeroizing` digits, a `Debug` that
+    prints only the length, and an explicit wire form `to_bytes()` /
+    `from_bytes()` (`b"AKHR"`, version 1, a little-endian `u64` count, one
+    byte per digit), which rejects another magic or version, a count that
+    disagrees with the payload, and an empty payload.
+  - `CpuBackend::recommit_hiding(family, source, context, randomness,
+    expected) -> Result<CommitOutput>` runs `commit`'s path with a
+    one-shot replaying `HidingRng` in place of the backend's CSPRNG. The
+    replay fails closed on a length other than the profile's
+    `randomness_coefficient_len`, a digit outside its alphabet, a second
+    draw, or a clear profile that draws nothing. The result is returned
+    only when its coefficients equal `expected`'s (the wire identity: a
+    decoded `Commitment` carries no ring dimension), so the call both
+    checks `C` against (source, `r`) and rebuilds a handle that opens it.
+  - Reuse: committing other data under an exported `r` would leave the
+    hiding lemma (one commitment per draw; the B·r terms cancel in a
+    difference). The API never yields a second commitment under `r`:
+    `recommit_hiding`, its only consumer, accepts only the expected
+    commitment. The wire form carries no copy of `C`.
+  - `import_commitment` still refuses hiding handles.
+  Tests: `akita-pcs/tests/zero_knowledge.rs`
+  `exported_hiding_randomness_rebuilds_exactly_its_commitment`; Jolt's
+  `whiteout_e2e` `*_reopens_from_shipped_randomness` (jolt D31, *Trust
+  root*).
 - A2, A3 and A12 from W4 are resolved by §4.3, §4.6 and §5.4.
 
 ## 11. Questions for the paper authors
