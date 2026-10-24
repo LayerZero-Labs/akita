@@ -64,4 +64,5 @@ pub(crate) use fused_quotients::{
 };
 pub(crate) use ntt_matvec::mat_vec_mul_ntt_blocks_i8;
 pub use ntt_matvec::mat_vec_mul_ntt_digits_i8;
+pub(crate) use ntt_matvec::mat_vec_mul_ntt_digits_i8_ct;
 pub(crate) use single_cyclic::{mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic};
