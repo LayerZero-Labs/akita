@@ -244,6 +244,12 @@ modulus is its bare bytes; and each vector is a length word followed by one
 word per element. A word that its field cannot hold, or a flag word other
 than 0 or 1, is rejected.
 
+Every digest inside the descriptor, such as the schedule, setup seed,
+grinding plan and opening-layout digests, is Keccak-256 with the `0x01` pad
+byte. That is the hash Jolt's `jolt-inlines-keccak256` guest inline computes,
+so a recursion guest that checks the descriptor needs one hash family. The
+digests stay Keccak-256 when the transcript sponge is Blake2b.
+
 The effective schedule includes the level geometry, payload modes, and each
 nonterminal `RingRelationMode`. Switching between quotient lifting and
 reduced evaluation changes the preamble before the ring-switch challenge

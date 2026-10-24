@@ -85,6 +85,11 @@ the message's position.
   word then one word per element. A word its field cannot hold, or a flag
   word other than 0 or 1, is rejected. Test:
   `descriptor_is_word_aligned_and_rejects_noncanonical_words`.
+- **Keccak digests.** Every digest bound into the descriptor goes through
+  `digest_descriptor_bytes`, which is Keccak-256 with the `0x01` pad byte,
+  the hash of Jolt's `jolt-inlines-keccak256` guest inline. Each digest keeps
+  its domain prefix and input bytes. The Blake2b sponge feature does not
+  change it. Test: `descriptor_digest_is_keccak256`.
 - **Injectivity.** Fix the schedule, setup and statement. The absorbed
   sequence is then an injective function of the prover's messages: every pad
   count follows from a bound length or a length word.

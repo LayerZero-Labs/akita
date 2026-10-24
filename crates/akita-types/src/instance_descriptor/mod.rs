@@ -1,7 +1,7 @@
 //! Fiat-Shamir instance descriptor bound into the transcript preamble.
 //!
 //! The descriptor is intentionally smaller than the proof or verifier setup:
-//! large structured inputs are represented by Blake2b digests of canonical
+//! large structured inputs are represented by Keccak-256 digests of canonical
 //! Akita encodings. The top-level descriptor remains self-describing and
 //! round-trippable so both prover and verifier can compare preamble bytes.
 //!
@@ -267,7 +267,7 @@ impl CallSection {
     }
 }
 
-/// Return the Blake2b-256 digest of an Akita-serializable value.
+/// Return the Keccak-256 digest of an Akita-serializable value.
 ///
 /// # Errors
 ///

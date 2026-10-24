@@ -778,7 +778,7 @@ impl GrindingPlan {
         Ok(out)
     }
 
-    /// Blake2b-256 digest bound into the instance descriptor.
+    /// Keccak-256 digest bound into the instance descriptor.
     pub fn digest(&self) -> Result<[u8; 32], AkitaError> {
         Ok(digest_descriptor_bytes(&self.canonical_bytes()?))
     }
