@@ -104,7 +104,6 @@ dependencies = [
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
- "blake2",
  "jolt-field",
  "jolt-transcript",
  "rand 0.8.8",

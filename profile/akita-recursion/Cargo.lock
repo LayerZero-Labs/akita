@@ -191,7 +191,6 @@ dependencies = [
  "akita-serialization 0.1.0",
  "akita-sumcheck 0.1.0",
  "akita-transcript 0.1.0",
- "blake2 0.11.0",
  "jolt-field 0.1.0 (git+https://github.com/a16z/jolt?rev=b08ca3cc367c8e683ab5e5d6fafa69f9a2caa15a)",
  "jolt-transcript",
  "serde",
