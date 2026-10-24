@@ -18,7 +18,7 @@ pub use channel::ProofChannel;
 pub use nonce::{nonce_encoded_len, nonce_max_bytes, NonceAtom};
 
 /// Proof channel and proof-stream format version.
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// Akita protocol tag, absorbed first in every Akita sub-transcript.
 ///
@@ -27,7 +27,7 @@ pub const PROTOCOL_VERSION: u32 = 9;
 /// challenge, whether Akita runs in its own session or inside a caller's.
 #[cfg(feature = "transcript-blake2b")]
 pub const PROTOCOL_TAG: &[u8] =
-    b"akita-pcs/native-proof-stream/v9/blake2b512/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128";
+    b"akita-pcs/native-proof-stream/v8/blake2b512/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128";
 
 /// Akita protocol tag, absorbed first in every Akita sub-transcript.
 ///
@@ -36,24 +36,24 @@ pub const PROTOCOL_TAG: &[u8] =
 /// challenge, whether Akita runs in its own session or inside a caller's.
 #[cfg(feature = "transcript-keccak")]
 pub const PROTOCOL_TAG: &[u8] =
-    b"akita-pcs/native-proof-stream/v9/keccak-f1600/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128";
+    b"akita-pcs/native-proof-stream/v8/keccak-f1600/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128";
 
 /// Spongefish session tag of a standalone Akita proof.
-pub const STANDALONE_SESSION_TAG: &[u8] = b"akita-pcs/standalone-session/v9";
+pub const STANDALONE_SESSION_TAG: &[u8] = b"akita-pcs/standalone-session/v8";
 
 /// Spongefish session tag of the root-commitment digest.
 #[cfg(feature = "transcript-blake2b")]
-pub const COMMITMENT_DIGEST_TAG: &[u8] = b"akita-pcs/commitment-digest/v9/blake2b512";
+pub const COMMITMENT_DIGEST_TAG: &[u8] = b"akita-pcs/commitment-digest/v8/blake2b512";
 
 /// Spongefish session tag of the root-commitment digest.
 #[cfg(feature = "transcript-keccak")]
-pub const COMMITMENT_DIGEST_TAG: &[u8] = b"akita-pcs/commitment-digest/v9/keccak-f1600";
+pub const COMMITMENT_DIGEST_TAG: &[u8] = b"akita-pcs/commitment-digest/v8/keccak-f1600";
 
 /// Byte length of a root-commitment digest.
 pub const COMMITMENT_DIGEST_LEN: usize = 32;
 
 /// Domain tag stored in every diagnostic context record.
-pub const CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v9\0\0\0\0\0";
+pub const CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v8\0\0\0\0\0";
 
 /// Stable family identifier for standard and batched sumcheck sites.
 pub const SITE_FAMILY_SUMCHECK: u32 = 1;

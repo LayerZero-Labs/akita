@@ -1,4 +1,4 @@
-# Spec: Akita inside a caller's transcript (protocol v9)
+# Spec: Akita inside a caller's transcript (protocol v8)
 
 | Field         | Value                          |
 |---------------|--------------------------------|
@@ -25,8 +25,9 @@ Akita's messages then go into the caller's argument string, and its challenges
 come from the caller's sponge. Each commitment is bound by a 32-byte digest of
 its canonical bytes, so the large commitment rows are hashed once. The
 standalone entry stays and runs the same code. Two absorbs of values the
-prover already sent are removed. Challenges change, so the protocol version
-moves from 8 to 9.
+prover already sent are removed. Challenges change. Akita `main` is at protocol version 7, and #253 already
+moves it to 8 for this stack, so this change stays at 8 (one bump per stack,
+counted from `main`).
 
 ## Intent
 
@@ -69,7 +70,7 @@ New and changed surfaces:
 absorbed but not sent. "Sent" means a prover message, which goes into the
 argument string and is absorbed once.
 
-Before (v8, standalone, the only mode):
+Before (#253, standalone, the only mode):
 
 | Order | What | How |
 |---|---|---|
@@ -82,7 +83,7 @@ Before (v8, standalone, the only mode):
 | next level | outer payload sent at `NextWitnessPayload` | public again at `WitnessCommitment` |
 | terminal | `t` sent at `NextWitnessInnerState` | public again at `TerminalTFields` |
 
-After (v9):
+After (this change):
 
 | Order | What | How |
 |---|---|---|
@@ -165,7 +166,7 @@ In embedded mode the "session" row is the caller's own session.
     LP(descriptor).
   - `PROTOCOL_TAG` names the Akita proof-stream version, the sponge, the
     challenge codec and the proof-of-work encoding. This is today's
-    `SESSION_TAG` content, with `v9`. The length prefix keeps a future tag of
+    `SESSION_TAG` content, still `v8`. The length prefix keeps a future tag of
     another length from colliding with it.
   - A standalone session uses a separate `STANDALONE_SESSION_TAG`.
   - Inside a caller, Akita's position in the caller's message schedule is
@@ -228,14 +229,14 @@ In embedded mode the "session" row is the caller's own session.
     prover message therefore leaves the argument string and every challenge
     unchanged.
   - An empty group makes no absorb call. On Blake2b an empty absorb right
-    after a squeeze changes the state, and v8 makes no call for an empty
+    after a squeeze changes the state, and #253 makes no call for an empty
     group.
   - Merged verifier reads use `prover_message_as` with a decoder that
     accepts only canonical atoms, so the absorbed bytes equal the
     re-encoding. They size allocation from the schedule before reading.
   - Grinding nonces stay one byte per message.
 
-  Tests: known answers computed on the v8 head, grouping done first so that
+  Tests: known answers computed on the #253 head, grouping done first so that
   they still hold after it, on both sponges. They include an empty `RootPoint`
   (zero variables) and an empty group directly after a squeeze.
 - **Dropping the re-absorbs of sent values loses nothing.**
@@ -246,7 +247,7 @@ In embedded mode the "session" row is the caller's own session.
     received value.
   - **Outer payload.** The outer payload re-absorbed at `WitnessCommitment`
     is the value received at `NextWitnessPayload` one level earlier.
-  - Both absorbs add no binding, so v9 drops both on both sides. On the
+  - Both absorbs add no binding, so this change drops both on both sides. On the
     prover side this removes a recomputed value, which was only a
     completeness check.
 
@@ -320,8 +321,8 @@ Akita's setup, selection, points or evaluations for Akita's sake.
 - Dropping public absorbs of values derived from challenges, such as
   `TerminalPoint` and `TerminalOpening`. They add no binding either, but each
   needs its own check. They are listed as follow-ups.
-- Changing the message schedule or proof size. v9 sends the same messages as
-  v8.
+- Changing the message schedule or proof size. This change sends the same messages
+  as #253.
 - Widening the descriptor sub-digests.
 - Jolt's own transcript layout. That belongs to J7 and J8 in a16z/jolt.
 
@@ -340,8 +341,8 @@ Akita's setup, selection, points or evaluations for Akita's sake.
   from `FoldSite`.
 - [ ] Every multi-atom group and every round polynomial is one prover message
   or one public absorb, and empty groups make no absorb call.
-- [ ] `PROTOCOL_VERSION` is 9, and the tags and known answers are
-  regenerated.
+- [ ] `PROTOCOL_VERSION` stays 8, and the known answers that depend on the
+  tags are regenerated.
 - [ ] `scripts/check-crate-deps.sh akita-verifier` passes, so `yolocrypto`
   stays out of the verifier graph.
 - [ ] The tests named under Invariants exist and pass.
@@ -432,12 +433,12 @@ pending.check_eof(state)               Jolt's remaining messages, then pending.c
   commitment digest, the embedded entry and the caller contract.
 - `book/src/how/verification.md`: the embedded verifier's rejection and
   end-of-argument rules.
-- `specs/jolt-transcript-adoption.md`: a note that v9 replaces the instance
+- `specs/jolt-transcript-adoption.md`: a note that this change replaces the instance
   layout described there.
 
 ## Execution
 
-1. Grouped absorbs, while the bytes are still v8, so that the v8 known
+1. Grouped absorbs, while the bytes are still #253's, so that #253's known
    answers check that grouping changes nothing. This includes the
    empty-group cases.
 2. The grinding wrappers borrow the state, and `PendingEof` is added. The
@@ -447,7 +448,7 @@ pending.check_eof(state)               Jolt's remaining messages, then pending.c
    absorbs the digest.
 5. Embedded entries on the prover, the verifier and `AkitaCommitmentScheme`.
 6. Drop `TerminalTFields` and `WitnessCommitment`.
-7. Version 9, tags, known answers, fixtures and the book.
+7. The new tags (still version 8), known answers, fixtures and the book.
 
 Follow-ups, not in this change:
 

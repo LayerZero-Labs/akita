@@ -95,16 +95,16 @@ fn protocol_tag_names_the_backend_and_codecs() {
     #[cfg(feature = "transcript-keccak")]
     let backend: &[u8] = b"/keccak-f1600/";
     let contains = |tag: &[u8], needle: &[u8]| tag.windows(needle.len()).any(|w| w == needle);
-    assert!(contains(PROTOCOL_TAG, b"/v9/"));
+    assert!(contains(PROTOCOL_TAG, b"/v8/"));
     assert!(contains(PROTOCOL_TAG, backend));
     assert!(contains(PROTOCOL_TAG, b"jolt-pooled-rejection-tv161"));
     assert!(contains(PROTOCOL_TAG, b"jolt-sponge-pow-leb128"));
-    assert!(contains(COMMITMENT_DIGEST_TAG, b"/v9/"));
+    assert!(contains(COMMITMENT_DIGEST_TAG, b"/v8/"));
     assert!(contains(
         COMMITMENT_DIGEST_TAG,
         &backend[..backend.len() - 1]
     ));
-    assert!(contains(STANDALONE_SESSION_TAG, b"/v9"));
+    assert!(contains(STANDALONE_SESSION_TAG, b"/v8"));
     assert_ne!(PROTOCOL_TAG, STANDALONE_SESSION_TAG);
     assert_ne!(PROTOCOL_TAG, COMMITMENT_DIGEST_TAG);
 }
@@ -305,9 +305,9 @@ fn transcript_has_a_known_answer() {
     let root = prover.verifier_message::<[u8; 32]>();
     let rendered = format!("{challenges:?} {root:?}");
     #[cfg(feature = "transcript-blake2b")]
-    let expected = "[FpExt4 { coeffs: [Fp32(4197481570), Fp32(962985197), Fp32(3314814196), Fp32(1427802791)] }, FpExt4 { coeffs: [Fp32(2585635026), Fp32(301603618), Fp32(29543614), Fp32(2950720170)] }] [161, 111, 247, 176, 76, 100, 210, 52, 70, 41, 28, 96, 7, 167, 28, 164, 114, 104, 242, 85, 149, 195, 163, 42, 194, 146, 117, 193, 23, 72, 184, 105]";
+    let expected = "[FpExt4 { coeffs: [Fp32(2444502442), Fp32(1020706786), Fp32(3029891290), Fp32(3025947715)] }, FpExt4 { coeffs: [Fp32(1070114574), Fp32(1970817519), Fp32(224082722), Fp32(770304463)] }] [3, 143, 220, 150, 220, 142, 193, 180, 65, 74, 106, 189, 19, 197, 132, 39, 132, 219, 173, 190, 4, 3, 55, 236, 158, 251, 206, 38, 153, 35, 203, 29]";
     #[cfg(feature = "transcript-keccak")]
-    let expected = "[FpExt4 { coeffs: [Fp32(3828088637), Fp32(1526685178), Fp32(2627667685), Fp32(4107954653)] }, FpExt4 { coeffs: [Fp32(2599267343), Fp32(2752522750), Fp32(4227417409), Fp32(1351415631)] }] [221, 167, 140, 85, 130, 207, 135, 119, 76, 240, 64, 230, 209, 112, 135, 185, 252, 26, 158, 31, 108, 186, 11, 144, 227, 18, 167, 236, 139, 127, 50, 70]";
+    let expected = "[FpExt4 { coeffs: [Fp32(3285395900), Fp32(819767650), Fp32(2583361512), Fp32(4091088760)] }, FpExt4 { coeffs: [Fp32(4054547815), Fp32(580125663), Fp32(3922885649), Fp32(2086965421)] }] [52, 78, 141, 126, 202, 209, 105, 188, 79, 222, 230, 162, 1, 182, 186, 227, 6, 167, 249, 234, 197, 205, 90, 187, 224, 12, 11, 32, 141, 24, 22, 102]";
     assert_eq!(rendered, expected);
 }
 
@@ -316,9 +316,9 @@ fn commitment_digest_has_a_known_answer() {
     let digest = CommitmentDigest::of_canonical_bytes(b"kat/commitment");
     let rendered = format!("{:?}", digest.as_bytes());
     #[cfg(feature = "transcript-blake2b")]
-    let expected = "[179, 188, 182, 166, 46, 82, 230, 80, 247, 200, 213, 76, 33, 90, 229, 232, 188, 174, 133, 48, 193, 49, 104, 209, 86, 237, 13, 72, 168, 11, 139, 62]";
+    let expected = "[114, 13, 95, 252, 128, 239, 233, 115, 147, 217, 160, 119, 135, 8, 129, 235, 24, 255, 67, 192, 219, 32, 197, 51, 70, 117, 103, 99, 89, 95, 250, 228]";
     #[cfg(feature = "transcript-keccak")]
-    let expected = "[183, 176, 129, 195, 253, 240, 186, 59, 59, 152, 11, 249, 207, 253, 100, 163, 172, 83, 55, 198, 235, 182, 30, 240, 35, 31, 47, 221, 121, 99, 163, 22]";
+    let expected = "[165, 210, 69, 154, 136, 128, 20, 10, 186, 18, 41, 186, 227, 72, 194, 41, 129, 150, 70, 0, 27, 114, 114, 251, 183, 140, 215, 116, 24, 172, 81, 160]";
     assert_eq!(rendered, expected);
     assert_ne!(
         digest,
