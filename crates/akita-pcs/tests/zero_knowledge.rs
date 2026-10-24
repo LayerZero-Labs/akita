@@ -14,7 +14,7 @@ use akita_config::{
     derive_transcript_grinding_plan, policy_of, proof_optimized::fp128, CommitmentConfig,
     TrustedScheduleCatalog, ValidatedScheduleCatalog, ZkCommitmentConfig,
 };
-use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
+use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext, HidingRandomness};
 use akita_error::AkitaError;
 use akita_params::zk::{ZkOpeningSchedule, ZK_CUT_LEVEL};
 use akita_params::{
@@ -27,7 +27,7 @@ use akita_params::{
 use akita_pcs::{AkitaCommitmentScheme, BackendRegistry, FixedFoldRoute};
 use akita_prover::SelectedProverOpeningData;
 use akita_types::{
-    AkitaSponge, FoldDrawRecord, GrindingReplay, GroupBatchStatement, OpeningClaims,
+    AkitaSponge, Commitment, FoldDrawRecord, GrindingReplay, GroupBatchStatement, OpeningClaims,
     PolynomialGroupClaims, ProverGrinding, VerifierGrinding, PROOF_STREAM_PROTOCOL,
 };
 use jolt_algebra::{Ring, Zero};
@@ -626,6 +626,143 @@ fn hiding_precommitted_commitments_to_one_polynomial_differ() {
         assert_eq!(*first.profile(), profile);
         assert_eq!(first.profile(), second.profile());
         assert_ne!(first.commitment(), second.commitment());
+    });
+}
+
+/// A precommitted group's hiding randomness leaves the committing process
+/// as bytes: another backend rebuilds the same commitment and a handle
+/// carrying the same randomness from (source, bytes), and refuses other
+/// data, altered randomness, a malformed encoding and a clear profile.
+#[test]
+fn exported_hiding_randomness_rebuilds_exactly_its_commitment() {
+    on_large_stack(|| {
+        use akita_serialization::{AkitaDeserialize, AkitaSerialize};
+
+        let (profiles, _) = zk_row();
+        let profile = profiles.final_group;
+        let scheme = AkitaCommitmentScheme::<Cfg>::new(zk_catalog());
+        let setup = scheme.setup_prover(NV, 1).unwrap();
+        let (committed, bytes) = {
+            let committer = backend(&setup, 5);
+            let output = committer
+                .commit(
+                    scheme.schedules(),
+                    &committer.import_source(vec![polynomial().1]).unwrap(),
+                    GroupContext::explicit(&profile),
+                )
+                .unwrap();
+            let randomness = output.private_handle.hiding_randomness().unwrap();
+            assert!(
+                !format!("{randomness:?}").contains('['),
+                "Debug prints no digits"
+            );
+            (output.committed_group, randomness.to_bytes())
+        };
+        // The commitment ships on the wire, like the randomness.
+        let mut wire = Vec::new();
+        committed
+            .commitment()
+            .serialize_compressed(&mut wire)
+            .unwrap();
+        let shipped = Commitment::<F>::deserialize_compressed(
+            wire.as_slice(),
+            &committed.commitment().rows().coeff_len(),
+        )
+        .unwrap();
+        let randomness = HidingRandomness::from_bytes(&bytes).unwrap();
+        // The rebuilding backend has no hiding source of its own.
+        let rebuilder = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
+        let recommit = |poly: DensePoly<F>, randomness: &HidingRandomness| {
+            rebuilder.recommit_hiding(
+                scheme.schedules(),
+                &rebuilder.import_source(vec![poly]).unwrap(),
+                GroupContext::explicit(&profile),
+                randomness,
+                &shipped,
+            )
+        };
+        let rebuilt = recommit(polynomial().1, &randomness).unwrap();
+        assert_eq!(rebuilt.committed_group, committed);
+        assert_eq!(
+            *rebuilt
+                .private_handle
+                .hiding_randomness()
+                .unwrap()
+                .to_bytes(),
+            *bytes
+        );
+
+        let rejects = |result: Result<(), AkitaError>, what: &str| match result {
+            Err(AkitaError::InvalidInput(_)) => {}
+            Err(error) => panic!("{what} rejected for another reason: {error}"),
+            Ok(()) => panic!("{what} accepted"),
+        };
+        let rebuilds = |poly: DensePoly<F>, bytes: &[u8]| {
+            recommit(poly, &HidingRandomness::from_bytes(bytes)?).map(|_| ())
+        };
+        let mut evals = polynomial().0;
+        evals[3] += F::from_u64(1);
+        rejects(
+            rebuilds(
+                DensePoly::<F>::from_field_evals(NV, &evals).unwrap(),
+                &bytes,
+            ),
+            "other data",
+        );
+        // The wire form: 4 magic bytes, a version byte, a u64 count, digits.
+        const DIGITS: usize = 13;
+        let mut altered = bytes.to_vec();
+        altered[DIGITS] = if altered[DIGITS] == 0 { 1 } else { 0 };
+        rejects(rebuilds(polynomial().1, &altered), "an altered digit");
+        let mut outside = bytes.to_vec();
+        outside[DIGITS] = 100;
+        rejects(
+            rebuilds(polynomial().1, &outside),
+            "a digit outside the alphabet",
+        );
+        let mut shorter = bytes[..bytes.len() - 1].to_vec();
+        shorter[5..DIGITS].copy_from_slice(&((bytes.len() - DIGITS - 1) as u64).to_le_bytes());
+        rejects(
+            rebuilds(polynomial().1, &shorter),
+            "randomness of another length",
+        );
+        rejects(
+            rebuilds(polynomial().1, &bytes[..bytes.len() - 1]),
+            "a truncated encoding",
+        );
+        let mut version = bytes.to_vec();
+        version[4] = 2;
+        rejects(rebuilds(polynomial().1, &version), "another version");
+
+        let clear_scheme =
+            common::load_workspace_scheme::<Clear>(ChunkedWitnessCfg::default_non_chunked())
+                .unwrap();
+        let clear_setup = clear_scheme.setup_prover(NV, 1).unwrap();
+        let clear_backend = CpuBackend::<F, F>::new(clear_setup.expanded.clone()).unwrap();
+        let clear_source = clear_backend.import_source(vec![polynomial().1]).unwrap();
+        let clear = clear_backend
+            .commit(
+                clear_scheme.schedules(),
+                &clear_source,
+                GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .unwrap();
+        rejects(
+            clear.private_handle.hiding_randomness().map(|_| ()),
+            "exporting a clear commitment",
+        );
+        rejects(
+            clear_backend
+                .recommit_hiding(
+                    clear_scheme.schedules(),
+                    &clear_source,
+                    GroupContext::scheduler_without_precommitted_groups(),
+                    &randomness,
+                    clear.committed_group.commitment(),
+                )
+                .map(|_| ()),
+            "a clear profile",
+        );
     });
 }
 

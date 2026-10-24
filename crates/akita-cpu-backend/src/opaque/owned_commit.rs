@@ -1,11 +1,12 @@
 //! Commitment execution and persistence admission at the owning backend boundary.
 use super::owned::{CommitOutput, CommitmentHandle, CommittedSource, SourceHandle};
 use crate::commitment::{AcceptedReach, CommitmentExecutor, GroupContext, PortableStatePolicy};
+use crate::hiding::{HidingRandomness, HidingRng};
 use crate::opaque::CpuBackend;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_types::FpExtEncoding;
+use akita_types::{Commitment, FpExtEncoding};
 use jolt_algebra::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::sync::Arc;
 
@@ -108,6 +109,59 @@ where
     where
         Cfg: CommitmentConfig<Field = F, ExtField = E>,
     {
+        self.commit_drawing(family, source, context, self.hiding_rng.clone())
+    }
+
+    /// Rebuild a hiding commitment from its source and the
+    /// [`HidingRandomness`] it was made with, under the same `family` and
+    /// `context` as [`commit`](Self::commit).
+    ///
+    /// Succeeds only when the rebuilt commitment equals `expected`, so this
+    /// both checks a commitment against (source, randomness) and returns a
+    /// handle that opens it. It never yields a commitment other than
+    /// `expected` under `randomness` (see [`HidingRandomness`]).
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidInput`] when the randomness does not fit the
+    /// profile (another length, a digit outside its alphabet, or a clear
+    /// profile), or when the rebuilt commitment differs from `expected`;
+    /// and [`commit`](Self::commit)'s errors.
+    pub fn recommit_hiding<Cfg>(
+        &self,
+        family: &TrustedScheduleCatalog<Cfg>,
+        source: &SourceHandle<F, E>,
+        context: GroupContext<'_>,
+        randomness: &HidingRandomness,
+        expected: &Commitment<F>,
+    ) -> Result<CommitOutput<F, E>, AkitaError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    {
+        let replay = Arc::new(HidingRng::replay(randomness));
+        let output = self.commit_drawing(family, source, context, Arc::clone(&replay))?;
+        replay.ensure_replayed()?;
+        // The commitment's identity is its wire form, the coefficients: a
+        // decoded commitment carries no ring dimension.
+        if output.committed_group.commitment().rows().coeffs() != expected.rows().coeffs() {
+            return Err(AkitaError::InvalidInput(
+                "the source and hiding randomness do not open the expected commitment".into(),
+            ));
+        }
+        Ok(output)
+    }
+
+    /// [`commit`](Self::commit), drawing B hiding randomness from `hiding_rng`.
+    fn commit_drawing<Cfg>(
+        &self,
+        family: &TrustedScheduleCatalog<Cfg>,
+        source: &SourceHandle<F, E>,
+        context: GroupContext<'_>,
+        hiding_rng: Arc<HidingRng>,
+    ) -> Result<CommitOutput<F, E>, AkitaError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    {
         if source.owner != self.owner_id() {
             return Err(AkitaError::InvalidInput(
                 "source belongs to another backend".into(),
@@ -120,7 +174,8 @@ where
             &prepared.expanded,
             Vec::new(),
             PortableStatePolicy,
-        )?;
+        )?
+        .with_hiding_rng(hiding_rng);
         let sources = source.storage.commitment_sources();
         executor.validate_setup(&prepared.expanded)?;
         let (profile, randomness_log_basis, producer_contract) =

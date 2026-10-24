@@ -170,6 +170,13 @@ where
         executor.hiding_rng = backend.hiding_rng.clone();
         Ok(executor)
     }
+
+    /// Draw B hiding randomness from `hiding_rng` instead of the backend's
+    /// source.
+    pub(crate) fn with_hiding_rng(mut self, hiding_rng: Arc<crate::hiding::HidingRng>) -> Self {
+        self.hiding_rng = hiding_rng;
+        self
+    }
 }
 
 impl<'a, F, SP> CommitmentExecutor<'a, F, SP>
