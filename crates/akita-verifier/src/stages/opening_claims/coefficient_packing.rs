@@ -8,7 +8,7 @@ use akita_params::{
 use akita_serialization::AkitaSerialize;
 use akita_types::GrindingReplay;
 use akita_types::{
-    Commitment, FpExtEncoding, OpeningClaims, PreparedSubringCoefficientPackingPoint,
+    CommittedGroup, FpExtEncoding, OpeningClaims, PreparedSubringCoefficientPackingPoint,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
@@ -72,7 +72,7 @@ fn prepare_prefix_points<F: Field, E: ExtField<F>, C>(
 
 /// Prepare a root packing prefix directly from the authenticated public claims.
 pub(crate) fn verify_coefficient_packing_root_prefix<F, E>(
-    claims: &OpeningClaims<'_, E, &Commitment<F>>,
+    claims: &OpeningClaims<'_, E, &CommittedGroup<F>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,

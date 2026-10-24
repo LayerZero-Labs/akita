@@ -20,23 +20,37 @@ pub use nonce::{nonce_encoded_len, nonce_max_bytes, NonceAtom};
 /// Proof channel and proof-stream format version.
 pub const PROTOCOL_VERSION: u32 = 8;
 
-/// Spongefish session tag.
+/// Akita protocol tag, absorbed first in every Akita sub-transcript.
 ///
 /// It names the proof-stream version, the sponge, the field-challenge codec
 /// and the proof-of-work layout, so a change to any of them changes every
-/// challenge.
+/// challenge, whether Akita runs in its own session or inside a caller's.
 #[cfg(feature = "transcript-blake2b")]
-pub const SESSION_TAG: &[u8] =
+pub const PROTOCOL_TAG: &[u8] =
     b"akita-pcs/native-proof-stream/v8/blake2b512/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128";
 
-/// Spongefish session tag.
+/// Akita protocol tag, absorbed first in every Akita sub-transcript.
 ///
 /// It names the proof-stream version, the sponge, the field-challenge codec
 /// and the proof-of-work layout, so a change to any of them changes every
-/// challenge.
+/// challenge, whether Akita runs in its own session or inside a caller's.
 #[cfg(feature = "transcript-keccak")]
-pub const SESSION_TAG: &[u8] =
+pub const PROTOCOL_TAG: &[u8] =
     b"akita-pcs/native-proof-stream/v8/keccak-f1600/jolt-pooled-rejection-tv161/jolt-sponge-pow-leb128";
+
+/// Spongefish session tag of a standalone Akita proof.
+pub const STANDALONE_SESSION_TAG: &[u8] = b"akita-pcs/standalone-session/v8";
+
+/// Spongefish session tag of the root-commitment digest.
+#[cfg(feature = "transcript-blake2b")]
+pub const COMMITMENT_DIGEST_TAG: &[u8] = b"akita-pcs/commitment-digest/v8/blake2b512";
+
+/// Spongefish session tag of the root-commitment digest.
+#[cfg(feature = "transcript-keccak")]
+pub const COMMITMENT_DIGEST_TAG: &[u8] = b"akita-pcs/commitment-digest/v8/keccak-f1600";
+
+/// Byte length of a root-commitment digest.
+pub const COMMITMENT_DIGEST_LEN: usize = 32;
 
 /// Domain tag stored in every diagnostic context record.
 pub const CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v8\0\0\0\0\0";
@@ -65,6 +79,8 @@ pub const SITE_FAMILY_NEXT_WITNESS: u32 = 10;
 pub const SITE_FAMILY_ROOT_STATEMENT: u32 = 11;
 /// Stable family identifier for terminal response messages.
 pub const SITE_FAMILY_TERMINAL: u32 = 12;
+/// Stable family identifier for the protocol tag and descriptor.
+pub const SITE_FAMILY_INSTANCE: u32 = 13;
 
 /// Proof-stream operation kind recorded by diagnostic context metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,30 +194,77 @@ impl ProtocolContextRecord {
     }
 }
 
-fn session_id() -> SessionId {
-    spongefish::derive_session_id::<TurboShake128>(SESSION_TAG)
+fn standalone_session_id() -> SessionId {
+    spongefish::derive_session_id::<TurboShake128>(STANDALONE_SESSION_TAG)
 }
 
-/// Spongefish instance: the caller's session bytes, then the public statement
-/// bytes, each with a `u64` little-endian length prefix.
-fn instance(session: &[u8], statement: &[u8]) -> (BytesMsg, BytesMsg) {
-    (BytesMsg(session.to_vec()), BytesMsg(statement.to_vec()))
-}
-
-/// Construct a prover channel bound to [`SESSION_TAG`], `session` and `instance`.
+/// Construct a standalone prover channel bound to [`STANDALONE_SESSION_TAG`]
+/// and the caller's length-prefixed `session` bytes.
+///
+/// The channel carries no Akita statement yet; the proof entry absorbs it with
+/// [`bind_instance`], as it does on a caller's channel.
 #[must_use]
-pub fn new_prover_channel(session: &[u8], statement: &[u8]) -> ProverChannel {
-    ProverState::new(&session_id(), &instance(session, statement))
+pub fn new_prover_channel(session: &[u8]) -> ProverChannel {
+    #[cfg(feature = "logging-transcript")]
+    crate::clear_thread_events();
+    ProverState::new(&standalone_session_id(), &BytesMsg(session.to_vec()))
 }
 
-/// Construct a verifier channel over one proof byte string.
+/// Construct a standalone verifier channel over one proof byte string.
 #[must_use]
 pub fn new_verifier_channel<'proof>(
     session: &[u8],
-    statement: &[u8],
     proof: &'proof [u8],
 ) -> VerifierChannel<'proof> {
-    VerifierState::new(&session_id(), &instance(session, statement), proof)
+    VerifierState::new(&standalone_session_id(), &BytesMsg(session.to_vec()), proof)
+}
+
+/// Absorb the Akita protocol tag and the canonical descriptor, each as a
+/// [`BytesMsg`] with its `u64` little-endian length prefix.
+///
+/// Every Akita proof entry calls this first, on its own channel or on a
+/// caller's, so both modes bind the same statement before any challenge.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidInput`] when the record size overflows; a
+/// verifier transcript is then rejected.
+pub fn bind_instance<S: ProofChannel>(state: &mut S, descriptor: &[u8]) -> Result<(), AkitaError> {
+    let mut bytes = Vec::new();
+    for part in [PROTOCOL_TAG, descriptor] {
+        bytes.extend_from_slice(BytesMsg(part.to_vec()).encode().as_ref());
+    }
+    let site = ProtocolSiteId {
+        family: SITE_FAMILY_INSTANCE,
+        ..ProtocolSiteId::default()
+    };
+    public_bytes(state, site, &bytes)
+}
+
+/// 32-byte digest of one root commitment's canonical bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CommitmentDigest([u8; COMMITMENT_DIGEST_LEN]);
+
+impl CommitmentDigest {
+    /// Hash canonical commitment bytes.
+    ///
+    /// The digest is a separate Spongefish session under
+    /// [`COMMITMENT_DIGEST_TAG`] whose instance is the length-prefixed
+    /// `bytes`; it squeezes [`COMMITMENT_DIGEST_LEN`] bytes. Callers pass the
+    /// one canonical encoding of the commitment they then use.
+    #[must_use]
+    pub fn of_canonical_bytes(bytes: &[u8]) -> Self {
+        let session = spongefish::derive_session_id::<TurboShake128>(COMMITMENT_DIGEST_TAG);
+        let mut state: VerifierChannel<'_> =
+            VerifierState::new(&session, &BytesMsg(bytes.to_vec()), &[]);
+        Self(state.verifier_message())
+    }
+
+    /// Borrow the digest bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; COMMITMENT_DIGEST_LEN] {
+        &self.0
+    }
 }
 
 /// Permanently reject a verifier transcript after a semantic protocol failure.
@@ -308,40 +371,50 @@ where
     }
 }
 
-/// Emit one canonical field atom and absorb the same bytes.
-pub fn send_field<F: CanonicalEncoding>(state: &mut ProverChannel, value: F) {
-    state.prover_message(&FieldAtom::new(value));
+/// Concatenate the canonical encodings of `atoms`.
+fn encode_atoms<T: Encoding>(atoms: &[T]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for atom in atoms {
+        bytes.extend_from_slice(atom.encode().as_ref());
+    }
+    bytes
 }
 
-/// Receive one canonical field atom, rejecting noncanonical representatives.
-pub fn receive_field<F: CanonicalEncoding>(
+/// Emit `atoms` as one proof message. An empty group makes no absorb call.
+pub fn send_atoms<T: Encoding>(state: &mut ProverChannel, atoms: &[T]) {
+    if atoms.is_empty() {
+        return;
+    }
+    state.prover_message_as(atoms, encode_atoms);
+}
+
+/// Receive `count` canonical atoms as one proof message, absorbing exactly the
+/// bytes read. An empty group makes no absorb call.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidProof`] and rejects the transcript when the
+/// allocation cannot be reserved or an atom is missing or noncanonical.
+pub fn receive_atoms<T: FromNarg>(
     state: &mut VerifierChannel<'_>,
-) -> Result<F, AkitaError> {
+    count: usize,
+) -> Result<Vec<T>, AkitaError> {
+    let mut atoms = Vec::new();
+    if atoms.try_reserve_exact(count).is_err() {
+        return Err(reject(state));
+    }
+    if count == 0 {
+        return Ok(atoms);
+    }
     state
-        .prover_message::<FieldAtom<F>>()
-        .map(FieldAtom::into_inner)
-        .map_err(invalid_proof)
-}
-
-/// Emit one extension-field proof atom as ordered canonical base coordinates.
-pub fn send_extension<F, E>(state: &mut ProverChannel, value: E)
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    state.prover_message(&ExtensionAtom::<F, E>::new(value));
-}
-
-/// Receive one extension-field proof atom from canonical base coordinates.
-pub fn receive_extension<F, E>(state: &mut VerifierChannel<'_>) -> Result<E, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    state
-        .prover_message::<ExtensionAtom<F, E>>()
-        .map(ExtensionAtom::into_inner)
-        .map_err(invalid_proof)
+        .prover_message_as(|reader| {
+            for _ in 0..count {
+                atoms.push(T::from_narg(reader)?);
+            }
+            Ok(())
+        })
+        .map_err(invalid_proof)?;
+    Ok(atoms)
 }
 
 fn group_record(
@@ -471,9 +544,8 @@ where
     );
     let record = state.guard(record)?;
     state.context(record);
-    for &value in values {
-        state.public(&value.to_bytes_le_vec());
-    }
+    let atoms: Vec<FieldAtom<F>> = values.iter().copied().map(FieldAtom::new).collect();
+    public_atoms(state, &atoms);
     Ok(())
 }
 
@@ -496,10 +568,16 @@ where
     );
     let record = state.guard(record)?;
     state.context(record);
-    for value in values {
-        state.public(ExtensionAtom::<F, E>::new(*value).encode().as_ref());
-    }
+    let atoms: Vec<ExtensionAtom<F, E>> = values.iter().copied().map(ExtensionAtom::new).collect();
+    public_atoms(state, &atoms);
     Ok(())
+}
+
+/// Absorb `atoms` as one public message. An empty group makes no absorb call.
+pub fn public_atoms<T: Encoding, S: ProofChannel>(state: &mut S, atoms: &[T]) {
+    if !atoms.is_empty() {
+        state.public(&encode_atoms(atoms));
+    }
 }
 
 /// Emit a fixed-count group of canonical base-field proof atoms.
@@ -517,9 +595,8 @@ pub fn send_field_group<F: CanonicalEncoding>(
             F::NUM_BYTES,
         )?,
     );
-    for &value in values {
-        send_field(state, value);
-    }
+    let atoms: Vec<FieldAtom<F>> = values.iter().copied().map(FieldAtom::new).collect();
+    send_atoms(state, &atoms);
     Ok(())
 }
 
@@ -537,14 +614,10 @@ pub fn receive_field_group<F: CanonicalEncoding>(
     );
     let record = state.guard(record)?;
     verifier_context(state, record);
-    let mut values = Vec::new();
-    if values.try_reserve_exact(value_count).is_err() {
-        return Err(reject(state));
-    }
-    for _ in 0..value_count {
-        values.push(receive_field(state)?);
-    }
-    Ok(values)
+    Ok(receive_atoms::<FieldAtom<F>>(state, value_count)?
+        .into_iter()
+        .map(FieldAtom::into_inner)
+        .collect())
 }
 
 /// Allocate `count` zeroed extension slots for an in-place exchange.
@@ -593,9 +666,10 @@ where
     );
     let record = state.guard(record)?;
     state.context(record);
-    for value in values {
-        let mut atom = ExtensionAtom::<F, E>::new(*value);
-        state.exchange(&mut atom)?;
+    let mut atoms: Vec<ExtensionAtom<F, E>> =
+        values.iter().copied().map(ExtensionAtom::new).collect();
+    state.exchange_group(&mut atoms)?;
+    for (value, atom) in values.iter_mut().zip(atoms) {
         *value = atom.into_inner();
     }
     Ok(())

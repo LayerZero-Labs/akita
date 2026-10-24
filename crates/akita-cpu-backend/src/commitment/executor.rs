@@ -679,7 +679,13 @@ where
 
 impl<'a, F> CommitmentExecutor<'a, F, PortableStatePolicy>
 where
-    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + 'static,
+    F: Field
+        + CanonicalEncoding
+        + Unreduced
+        + WithCommitAccumulator
+        + akita_serialization::Valid
+        + akita_serialization::AkitaSerialize
+        + 'static,
 {
     /// Complete a CPU root through the public outer-image compression route,
     /// retaining the A-stage rows required by later proving stages.

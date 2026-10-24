@@ -1014,10 +1014,16 @@ fn precommitted_descriptor(num_vars: usize) -> GroupCommitPhaseParams {
 }
 
 fn committed_group_for_extractor(num_vars: usize) -> CommittedGroup<F> {
+    let profile = precommitted_descriptor(num_vars);
+    let coefficients = profile
+        .outer_compression_plan()
+        .expect("precommitted compression plan")
+        .terminal_coefficients();
     CommittedGroup::new(
-        precommitted_descriptor(num_vars),
-        Commitment::new(RingVec::from_coeffs(vec![F::zero(); 64])),
+        profile,
+        Commitment::new(RingVec::from_coeffs(vec![F::zero(); coefficients])),
     )
+    .expect("valid precommitted group")
 }
 
 #[test]

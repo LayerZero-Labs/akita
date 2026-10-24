@@ -7,7 +7,7 @@ use akita_params::{
 };
 use akita_serialization::AkitaSerialize;
 use akita_transcript::ChallengeCodec;
-use akita_types::Commitment;
+use akita_types::CommittedGroup;
 use akita_types::GrindingReplay;
 use akita_types::{AkitaVerifierSetup, FpExtEncoding, OpeningClaims, RingVec};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
@@ -16,7 +16,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 pub(super) fn verify_root<F, E>(
     setup: &AkitaVerifierSetup<F>,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
-    claims: &OpeningClaims<'_, E, &Commitment<F>>,
+    claims: &OpeningClaims<'_, E, &CommittedGroup<F>>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
@@ -56,14 +56,15 @@ where
             .last()
             .ok_or(AkitaError::InvalidProof)?
             .ring_dimension();
-        akita_transcript::public_fields(
+        // The digest and the rows used below come from this same group.
+        akita_transcript::public_bytes(
             grinding.state_mut(),
             akita_types::FoldSite::RootCommitment {
                 group: group_index,
                 ring_dimension: ring_dim,
             }
             .id()?,
-            commitment.rows().coeffs(),
+            commitment.digest().as_bytes(),
         )?;
     }
     for (group_index, group) in claims.groups().iter().enumerate() {

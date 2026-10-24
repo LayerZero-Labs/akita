@@ -46,11 +46,7 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    akita_transcript::public_fields(
-        grinding.state_mut(),
-        akita_types::FoldSite::TerminalTFields { level }.id()?,
-        current_state.witness.coeffs(),
-    )?;
+    // `t` was absorbed when it was received as the next-witness inner state.
     let recursive_num_vars = scheduled.recursive_opening_num_vars()?;
     if current_state.opening_point.len() > recursive_num_vars {
         return Err(AkitaError::InvalidProof);

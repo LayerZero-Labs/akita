@@ -12,6 +12,7 @@ pub(super) fn resolve_root<'a, 's, Cfg, H>(
 ) -> Result<
     (
         &'s akita_config::ResolvedScheduleRow,
+        Vec<akita_transcript::CommitmentDigest>,
         ProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
         akita_params::GrindingPlan,
         Vec<u8>,
@@ -32,7 +33,7 @@ where
         + 'static,
     H: crate::CommitmentHandleMetadata,
 {
-    let (selection, claims) = opening.into_low_level_parts();
+    let (selection, digests, claims) = opening.into_low_level_parts();
     let resolved = schedules.resolve_selection(selection)?;
     resolved.validate_opening_layout(claims.opening_layout())?;
     let (grinding_plan, descriptor_bytes) =
@@ -43,7 +44,7 @@ where
             resolved.schedule(),
             basis,
         )?;
-    Ok((resolved, claims, grinding_plan, descriptor_bytes))
+    Ok((resolved, digests, claims, grinding_plan, descriptor_bytes))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -53,6 +54,7 @@ pub(super) fn prove_root<Cfg, B>(
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
     backend: &B,
     claims: &akita_types::OpeningClaims<'_, Cfg::ExtField, akita_types::Commitment<Cfg::Field>>,
+    digests: &[akita_transcript::CommitmentDigest],
     layout: &OpeningClaimsLayout,
     handles: &[B::CommitmentHandle],
     schedule: &FoldSchedule,
@@ -95,7 +97,7 @@ where
             claims.group_commitment(index)?,
         )?);
     }
-    root_claims.append_to(&schedule.root.params, grinding)?;
+    root_claims.append_to(&schedule.root.params, digests, grinding)?;
     let (next_params, next_binding) = schedule.recursive_folds.first().map_or(
         (
             fold::FoldSuccessorParams::Terminal(&schedule.terminal),

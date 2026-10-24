@@ -29,7 +29,7 @@ pub fn transcript_labels(data: &[u8]) {
     let split = data.len().min(255);
     let (label, bytes) = data.split_at(split);
 
-    let mut transcript = new_prover_channel(b"akita-fuzz", label);
+    let mut transcript = new_prover_channel(label);
     let _ = public_bytes(&mut transcript, ProtocolSiteId::default(), bytes);
     let _: F = ext_challenge(&mut transcript, ProtocolSiteId::default()).unwrap();
 }
@@ -71,7 +71,7 @@ pub fn sumcheck_rounds(data: &[u8]) {
     let Ok(shape) = SumcheckShape::new(num_rounds, degree_bound) else {
         return;
     };
-    let state = new_verifier_channel(b"fuzz/sumcheck-rounds", b"fixture", data);
+    let state = new_verifier_channel(b"fuzz/sumcheck-rounds", data);
     let mut channel = FuzzVerifierChannel {
         state,
         challenges: 0,

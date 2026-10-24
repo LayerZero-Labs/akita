@@ -104,15 +104,7 @@ where
     if current_state.witness.coeff_len() != payload_geometry.transmitted_coefficients() {
         return Err(AkitaError::InvalidProof);
     }
-    akita_transcript::public_fields(
-        grinding.state_mut(),
-        akita_types::FoldSite::WitnessCommitment {
-            level,
-            ring_dimension: payload_geometry.transcript_ring_dimension(),
-        }
-        .id()?,
-        current_state.witness.coeffs(),
-    )?;
+    // The outer payload was absorbed when it was received as the next witness.
     let recursive_num_vars = lp.recursive_opening_num_vars()?;
     if current_state.opening_point.len() > recursive_num_vars {
         return Err(AkitaError::InvalidProof);

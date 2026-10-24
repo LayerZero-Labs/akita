@@ -4,16 +4,16 @@
 //! executed by a prover and replayed by a verifier over the emitted argument
 //! string. Oracles: every received value and challenge matches, EOF holds,
 //! and any single-byte change to the argument string makes replay fail or
-//! diverge. A different session, instance, or public message changes the
+//! diverge. A different session or public message changes the
 //! first challenge that follows it.
 
 use crate::input::Reader;
 use crate::{gen, stats};
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_transcript::{
-    ext_challenge, new_prover_channel, new_verifier_channel, public_bytes, public_fields,
-    receive_byte_group, receive_extension, receive_field, send_byte_group, send_extension,
-    send_field, ProtocolSiteId, ProverChannel, VerifierChannel,
+    exchange_extension_group, ext_challenge, extension_slots, new_prover_channel,
+    new_verifier_channel, public_bytes, public_fields, receive_byte_group, receive_field_group,
+    send_byte_group, send_field_group, ProtocolSiteId, ProverChannel, VerifierChannel,
 };
 
 type F = akita_config::proof_optimized::fp128::Field;
@@ -89,8 +89,15 @@ fn prove(state: &mut ProverChannel, ops: &[Op]) -> Vec<Seen> {
             Op::PublicFields(site, values) => {
                 public_fields(state, *site, values).expect("public fields")
             }
-            Op::SendField(value) => send_field(state, *value),
-            Op::SendExt4(value) => send_extension::<fp32::Field, Ext4>(state, *value),
+            Op::SendField(value) => {
+                send_field_group(state, ProtocolSiteId::default(), &[*value]).expect("field group")
+            }
+            Op::SendExt4(value) => exchange_extension_group::<fp32::Field, Ext4, _>(
+                state,
+                ProtocolSiteId::default(),
+                &mut [*value],
+            )
+            .expect("extension group"),
             Op::SendBytes(bytes) => {
                 send_byte_group(state, ProtocolSiteId::default(), bytes).expect("byte group")
             }
@@ -113,10 +120,21 @@ fn replay(mut state: VerifierChannel<'_>, ops: &[Op]) -> Option<(Vec<Seen>, Vec<
         match op {
             Op::PublicBytes(site, bytes) => public_bytes(&mut state, *site, bytes).ok()?,
             Op::PublicFields(site, values) => public_fields(&mut state, *site, values).ok()?,
-            Op::SendField(_) => received.push(Seen::Field(receive_field::<F>(&mut state).ok()?)),
-            Op::SendExt4(_) => received.push(Seen::Ext4(
-                receive_extension::<fp32::Field, Ext4>(&mut state).ok()?,
+            Op::SendField(_) => received.push(Seen::Field(
+                receive_field_group::<F>(&mut state, ProtocolSiteId::default(), 1)
+                    .ok()?
+                    .pop()?,
             )),
+            Op::SendExt4(_) => {
+                let mut slot = extension_slots::<Ext4, _>(&mut state, 1).ok()?;
+                exchange_extension_group::<fp32::Field, Ext4, _>(
+                    &mut state,
+                    ProtocolSiteId::default(),
+                    &mut slot,
+                )
+                .ok()?;
+                received.push(Seen::Ext4(slot.pop()?));
+            }
             Op::SendBytes(bytes) => received.push(Seen::Bytes(
                 receive_byte_group(&mut state, ProtocolSiteId::default(), bytes.len()).ok()?,
             )),
@@ -147,14 +165,12 @@ pub fn run(data: &[u8]) {
     let mut reader = Reader::new(data);
     let session_len = usize::from(reader.u8() % 40);
     let session = reader.take(session_len).to_vec();
-    let instance_len = usize::from(reader.u8() % 40);
-    let instance = reader.take(instance_len).to_vec();
     let ops = ops(&mut reader);
 
-    let mut prover = new_prover_channel(&session, &instance);
+    let mut prover = new_prover_channel(&session);
     let challenges = prove(&mut prover, &ops);
     let proof = prover.narg_string().to_vec();
-    let verifier = new_verifier_channel(&session, &instance, &proof);
+    let verifier = new_verifier_channel(&session, &proof);
     let (received, replayed) = replay(verifier, &ops).expect("honest transcript must replay");
     assert_eq!(received, sent(&ops), "received prover messages");
     assert_eq!(replayed, challenges, "replayed challenges");
@@ -164,7 +180,7 @@ pub fn run(data: &[u8]) {
         let mut tampered = proof.clone();
         let offset = reader.u32() as usize % tampered.len();
         tampered[offset] ^= reader.u8().max(1);
-        let verifier = new_verifier_channel(&session, &instance, &tampered);
+        let verifier = new_verifier_channel(&session, &tampered);
         if let Some((received_t, replayed_t)) = replay(verifier, &ops) {
             assert!(
                 received_t != received || replayed_t != replayed,
@@ -180,7 +196,7 @@ pub fn run(data: &[u8]) {
     if first_challenge.is_some() && !challenges.is_empty() {
         let mut other_session = session.clone();
         other_session.push(reader.u8());
-        let mut other = new_prover_channel(&other_session, &instance);
+        let mut other = new_prover_channel(&other_session);
         let other_challenges = prove(&mut other, &ops);
         assert_ne!(
             other_challenges[0], challenges[0],

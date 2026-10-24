@@ -5,8 +5,9 @@ use crate::{advance_eq_factored_claim, SumcheckInstanceVerifier, SumcheckKernel}
 use crate::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use akita_error::{checked, narrowing::usize_to_u64, AkitaError};
 use akita_transcript::{
-    prover_context, receive_extension, send_extension, verifier_context, FieldAtom,
-    ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, ProverChannel, VerifierChannel,
+    prover_context, public_atoms, receive_atoms, send_atoms, verifier_context, ExtensionAtom,
+    FieldAtom, ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
+    ProverChannel, VerifierChannel,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::{CompressedPoly, OmittedConstantPoly};
@@ -148,55 +149,26 @@ where
     })
 }
 
-fn public_claim_prover<F, E>(
-    state: &mut ProverChannel,
-    site: ProtocolSiteId,
-    claim: E,
-) -> Result<(), AkitaError>
+/// Absorb a sumcheck input claim as one public message of base coordinates.
+fn public_claim<F, E, S>(state: &mut S, site: ProtocolSiteId, claim: E) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
+    S: ProofChannel,
 {
-    let coefficients = claim.to_base_vec();
-    prover_context(
-        state,
-        context(
-            site,
-            SumcheckRole::Claim,
-            coefficients.len(),
-            field_bytes::<F>(coefficients.len())?,
-            0,
-        )?,
-    );
-    for coefficient in coefficients {
-        state.public_message(&FieldAtom::new(coefficient));
-    }
-    Ok(())
-}
-
-fn public_claim_verifier<F, E>(
-    state: &mut VerifierChannel<'_>,
-    site: ProtocolSiteId,
-    claim: E,
-) -> Result<(), AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    let coefficients = claim.to_base_vec();
-    verifier_context(
-        state,
-        context(
-            site,
-            SumcheckRole::Claim,
-            coefficients.len(),
-            field_bytes::<F>(coefficients.len())?,
-            0,
-        )?,
-    );
-    for coefficient in coefficients {
-        state.public_message(&FieldAtom::new(coefficient));
-    }
+    let coefficients: Vec<FieldAtom<F>> = claim
+        .to_base_vec()
+        .into_iter()
+        .map(FieldAtom::new)
+        .collect();
+    state.context(context(
+        site,
+        SumcheckRole::Claim,
+        coefficients.len(),
+        field_bytes::<F>(coefficients.len())?,
+        0,
+    )?);
+    public_atoms(state, &coefficients);
     Ok(())
 }
 
@@ -221,7 +193,7 @@ where
     let degree_bound = shape.degree_bound();
     let mut claim = prover.input_claim();
     let claim_site = channel.sumcheck_site(invocation, 0, SumcheckRole::Claim);
-    public_claim_prover::<F, E>(channel.state_mut(), claim_site, claim)?;
+    public_claim::<F, E, _>(channel.state_mut(), claim_site, claim)?;
 
     let mut challenges = Vec::with_capacity(num_rounds);
     for round in 0..num_rounds {
@@ -259,9 +231,13 @@ where
                 0,
             )?,
         );
-        for coefficient in compressed.coeffs_except_linear_term() {
-            send_extension::<F, E>(channel.state_mut(), *coefficient);
-        }
+        let atoms: Vec<ExtensionAtom<F, E>> = compressed
+            .coeffs_except_linear_term()
+            .iter()
+            .copied()
+            .map(ExtensionAtom::new)
+            .collect();
+        send_atoms(channel.state_mut(), &atoms);
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = compressed.eval_from_hint(&claim, &challenge);
         prover.bind_challenge(round, challenge)?;
@@ -311,7 +287,7 @@ where
     let num_rounds = shape.num_rounds();
     let degree_bound = shape.degree_bound();
     let claim_site = channel.sumcheck_site(invocation, 0, SumcheckRole::Claim);
-    public_claim_verifier::<F, E>(channel.state_mut(), claim_site, claim)?;
+    public_claim::<F, E, _>(channel.state_mut(), claim_site, claim)?;
 
     let mut challenges = Vec::with_capacity(num_rounds);
     for round in 0..num_rounds {
@@ -328,13 +304,11 @@ where
                 0,
             )?,
         );
-        let mut coefficients = Vec::new();
-        coefficients
-            .try_reserve_exact(degree_bound)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        for _ in 0..degree_bound {
-            coefficients.push(receive_extension::<F, E>(channel.state_mut())?);
-        }
+        let coefficients: Vec<E> =
+            receive_atoms::<ExtensionAtom<F, E>>(channel.state_mut(), degree_bound)?
+                .into_iter()
+                .map(ExtensionAtom::into_inner)
+                .collect();
         let compressed = CompressedPoly::new(coefficients);
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = compressed.eval_from_hint(&claim, &challenge);
@@ -365,7 +339,7 @@ where
     let degree_bound = shape.degree_bound();
     let mut claim = prover.input_claim();
     let claim_site = channel.sumcheck_site(invocation, 0, SumcheckRole::Claim);
-    public_claim_prover::<F, E>(channel.state_mut(), claim_site, claim)?;
+    public_claim::<F, E, _>(channel.state_mut(), claim_site, claim)?;
     let mut challenges = Vec::with_capacity(num_rounds);
 
     for round in 0..num_rounds {
@@ -393,9 +367,13 @@ where
                 0,
             )?,
         );
-        for coefficient in poly.coefficients() {
-            send_extension::<F, E>(channel.state_mut(), *coefficient);
-        }
+        let atoms: Vec<ExtensionAtom<F, E>> = poly
+            .coefficients()
+            .iter()
+            .copied()
+            .map(ExtensionAtom::new)
+            .collect();
+        send_atoms(channel.state_mut(), &atoms);
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = advance_eq_factored_claim(claim, prover.current_tau(), &poly, challenge);
         challenges.push(challenge);
@@ -456,7 +434,7 @@ where
     let degree_bound = shape.degree_bound();
     let mut claim = input_claim;
     let claim_site = channel.sumcheck_site(invocation, 0, SumcheckRole::Claim);
-    public_claim_verifier::<F, E>(channel.state_mut(), claim_site, claim)?;
+    public_claim::<F, E, _>(channel.state_mut(), claim_site, claim)?;
     let mut challenges = Vec::with_capacity(equality_point.len());
 
     // The normalized claim already carries the bound equality factors. Replay
@@ -475,13 +453,11 @@ where
                 0,
             )?,
         );
-        let mut coefficients = Vec::new();
-        coefficients
-            .try_reserve_exact(degree_bound)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        for _ in 0..degree_bound {
-            coefficients.push(receive_extension::<F, E>(channel.state_mut())?);
-        }
+        let coefficients: Vec<E> =
+            receive_atoms::<ExtensionAtom<F, E>>(channel.state_mut(), degree_bound)?
+                .into_iter()
+                .map(ExtensionAtom::into_inner)
+                .collect();
         let poly = OmittedConstantPoly::new(coefficients);
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = advance_eq_factored_claim(claim, tau, &poly, challenge);
@@ -812,7 +788,7 @@ mod tests {
             claim: claim + F::one(),
         };
         let mut channel = TestProverChannel {
-            state: new_prover_channel(b"native-sumcheck", b"fixture"),
+            state: new_prover_channel(b"native-sumcheck"),
             invocation: 7,
         };
         assert!(matches!(
@@ -835,7 +811,7 @@ mod tests {
             claim,
         };
         let mut prover = TestProverChannel {
-            state: new_prover_channel(b"native-sumcheck", b"fixture"),
+            state: new_prover_channel(b"native-sumcheck"),
             invocation: 7,
         };
         let shape = SumcheckShape::new(4, 1).unwrap();
@@ -854,7 +830,7 @@ mod tests {
             claim,
         };
         let mut verifier = TestVerifierChannel {
-            state: new_verifier_channel(b"native-sumcheck", b"fixture", &proof),
+            state: new_verifier_channel(b"native-sumcheck", &proof),
             invocation: 7,
         };
         let verifier_point = verify_sumcheck(&verifier_instance, &mut verifier, shape, 7).unwrap();
@@ -871,7 +847,7 @@ mod tests {
             claim,
         };
         let mut prover = TestProverChannel {
-            state: new_prover_channel(b"native-sumcheck", b"fixture"),
+            state: new_prover_channel(b"native-sumcheck"),
             invocation: 7,
         };
         let shape = SumcheckShape::new(4, 1).unwrap();
@@ -890,7 +866,7 @@ mod tests {
         };
 
         let mut truncated = TestVerifierChannel {
-            state: new_verifier_channel(b"native-sumcheck", b"fixture", &proof[..proof.len() - 1]),
+            state: new_verifier_channel(b"native-sumcheck", &proof[..proof.len() - 1]),
             invocation: 7,
         };
         assert_eq!(
@@ -908,7 +884,7 @@ mod tests {
         let degree = instance.degree_bound();
         let shape = SumcheckShape::new(1, degree).unwrap();
         let mut prover = TestProverChannel {
-            state: new_prover_channel(b"native-eq-sumcheck", b"fixture"),
+            state: new_prover_channel(b"native-eq-sumcheck"),
             invocation: 12,
         };
         let (prover_point, _) = prove_eq_factored_sumcheck::<F, F, _, _>(
@@ -922,7 +898,7 @@ mod tests {
 
         let expected = OneRoundEq::new(tau, coefficients);
         let mut verifier = TestVerifierChannel {
-            state: new_verifier_channel(b"native-eq-sumcheck", b"fixture", &proof),
+            state: new_verifier_channel(b"native-eq-sumcheck", &proof),
             invocation: 12,
         };
         let verifier_point = verify_eq_factored_sumcheck::<F, F, _, _>(
@@ -941,7 +917,7 @@ mod tests {
     #[test]
     fn eq_factored_rejects_empty_equality_point() {
         let mut verifier = TestVerifierChannel {
-            state: new_verifier_channel(b"native-eq-empty", b"fixture", &[]),
+            state: new_verifier_channel(b"native-eq-empty", &[]),
             invocation: 12,
         };
         assert!(matches!(
@@ -964,12 +940,17 @@ mod tests {
         let coefficients = vec![F::from_u64(3), F::from_u64(5), F::from_u64(7)];
         let instance = OneRoundEq::new(F::zero(), coefficients);
         let challenge = F::from_u64(11);
-        let mut proof_state = new_prover_channel(b"native-eq-forgery", b"fixture");
-        send_extension::<F, F>(&mut proof_state, instance.claim());
-        send_extension::<F, F>(&mut proof_state, F::from_u64(101));
+        let mut proof_state = new_prover_channel(b"native-eq-forgery");
+        send_atoms(
+            &mut proof_state,
+            &[
+                ExtensionAtom::<F, F>::new(instance.claim()),
+                ExtensionAtom::new(F::from_u64(101)),
+            ],
+        );
         let proof = proof_state.narg_string().to_vec();
         let mut verifier = FixedVerifierChannel {
-            state: new_verifier_channel(b"native-eq-forgery", b"fixture", &proof),
+            state: new_verifier_channel(b"native-eq-forgery", &proof),
             challenges: vec![challenge],
         };
 
@@ -999,7 +980,7 @@ mod tests {
         let mut instance = TwoRoundEq::new(equality, coefficients);
         let input_claim = instance.input_claim();
         let mut prover = FixedProverChannel {
-            state: new_prover_channel(b"native-eq-late", b"fixture"),
+            state: new_prover_channel(b"native-eq-late"),
             challenges: point.to_vec(),
         };
         let shape = SumcheckShape::new(2, 1).unwrap();
@@ -1014,7 +995,7 @@ mod tests {
         let expected = TwoRoundEq::new(equality, coefficients).evaluate(point[0], point[1]);
         let verify = |proof: &[u8]| {
             let mut verifier = FixedVerifierChannel {
-                state: new_verifier_channel(b"native-eq-late", b"fixture", proof),
+                state: new_verifier_channel(b"native-eq-late", proof),
                 challenges: point.to_vec(),
             };
             verify_eq_factored_sumcheck::<F, F, _, _>(
@@ -1054,7 +1035,7 @@ mod tests {
             claim,
         };
         let mut prover = TestProverChannel {
-            state: new_prover_channel(b"native-cutover", b"standard"),
+            state: new_prover_channel(b"native-cutover/standard"),
             invocation: 3,
         };
         let (standard_point, _) = prove_sumcheck(
@@ -1078,7 +1059,7 @@ mod tests {
         );
         let degree = normalized.degree_bound();
         let mut prover = TestProverChannel {
-            state: new_prover_channel(b"native-cutover", b"normalized"),
+            state: new_prover_channel(b"native-cutover/normalized"),
             invocation: 5,
         };
         let (normalized_point, _) = prove_eq_factored_sumcheck::<F, F, _, _>(
@@ -1089,11 +1070,7 @@ mod tests {
         )
         .unwrap();
         let mut verifier = TestVerifierChannel {
-            state: new_verifier_channel(
-                b"native-cutover",
-                b"normalized",
-                prover.state.narg_string(),
-            ),
+            state: new_verifier_channel(b"native-cutover/normalized", prover.state.narg_string()),
             invocation: 5,
         };
         let replayed = verify_eq_factored_sumcheck::<F, F, _, _>(
@@ -1118,17 +1095,17 @@ mod tests {
         ];
         #[cfg(feature = "transcript-blake2b")]
         let expected = [
-            "40000000000000000000000000000000c70bab57dd5bfcae5938eea47fb2afea8b4db9fe1bd5640d6bb82724060dfe2d05b631f53c864bb462247cc2ec4599b2",
-            "a6c2ea55f716bf6b168e3be99fecab7a3ff1b854cba9798d0f276c94f18c298e254375bdeb46664b0b121a6cda8fe6c64fffb9143ccd877ffacecdaca3807b47",
-            "48000000000000000000000000000000446b3121a52bc98420a6158ff8d75375",
-            "081bf0296f3e5e8002be3cbcebfca3e14e799d23be344921f4b68647eec42f19",
+            "40000000000000000000000000000000e86d84c0867741f734a9807eac4849e1e180bc2b2f47ab676706385d2d93409b9401501e9f623fc54cac63a890115ec5",
+            "731b21b0e15dd03d4d2aa01f2b525238ae91def2daa2023b73ec7dc7b5fba6ca9e6f1ce2c16f5a4446ea717efe71efbde641ff4f5733ac509b91b139653cf641",
+            "480000000000000000000000000000009569e4700697dec8622a25f58be3185a",
+            "556a9bcdecf79a85cca051751eea0142080cba2a2f287c456c29c8e6e5550ed8",
         ];
         #[cfg(feature = "transcript-keccak")]
         let expected = [
-            "4000000000000000000000000000000025da43e372955a9e574303f512c94ad83ac0e8a13a8311ba19f9bd99179f091194ba3db0b9a1653c19a40363460d210e",
-            "b4f5d0b85ca596e7d5d040bd44b212f61fb4114c200eb97adb15cf87a30e39895a56d2170738d717e32989a56e0f67417d955e36bee47f3541b417f135c33f47",
-            "48000000000000000000000000000000940704b939c0748b5540590a27f8b345",
-            "143bc5abb5d3929406402e28793a358fa52ae7a6ca6231040785e7e4fdeef344",
+            "40000000000000000000000000000000be9e85a5a3c7df761d26ddb02ce75b00aade534677ede688bb409a1a6bf919e602b23ce41cccc8a415ae3a3f8d808cc9",
+            "1f6761e9e8f1b75d8749372ccbf916808f43e45c69c25d336beb8a3075017b79deaf4450585515f86d637becf5e09fd56c31950654a4bccc0a87a910bd5b1d1a",
+            "480000000000000000000000000000005b2bd6b83acd02876c3ce889d9614637",
+            "1c519a3518fc4ecf6a5374949a428ff09564f6a5483fc67a6f6cfd560c007e48",
         ];
         assert_eq!(actual, expected);
     }

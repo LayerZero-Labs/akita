@@ -19,6 +19,7 @@ type MatrixFields = (
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use akita_transcript::CommitmentDigest;
 use jolt_field::{CanonicalEncoding, Field};
 use std::io::{Read, Write};
 
@@ -48,23 +49,41 @@ impl<F: Field> Commitment<F> {
 /// The profile is the exact commitment identity selected when the group was
 /// committed. Callers pass this object through claims so proving and
 /// verification never reconstruct group metadata from a bare layout.
+///
+/// The group carries the [`CommitmentDigest`] of its canonical serialization.
+/// Every constructor, the deserializer included, computes the digest from the
+/// profile and rows it holds; no path accepts a digest from outside.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommittedGroup<F: Field> {
-    /// Exact public algebraic profile and commitment geometry.
-    pub profile: GroupCommitPhaseParams,
-    /// Terminal compressed `p_F` payload.
-    pub commitment: Commitment<F>,
+    profile: GroupCommitPhaseParams,
+    commitment: Commitment<F>,
+    digest: CommitmentDigest,
+}
+
+impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> CommittedGroup<F> {
+    /// Build a self-describing group commitment and compute its digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the profile is not a valid frozen profile, a
+    /// coefficient is not canonical, or the rows do not have the length the
+    /// profile fixes.
+    pub fn new(
+        profile: GroupCommitPhaseParams,
+        commitment: Commitment<F>,
+    ) -> Result<Self, SerializationError> {
+        check_group(&profile, &commitment)?;
+        let mut bytes = Vec::new();
+        write_group(&profile, &commitment, &mut bytes, Compress::No)?;
+        Ok(Self {
+            profile,
+            commitment,
+            digest: CommitmentDigest::of_canonical_bytes(&bytes),
+        })
+    }
 }
 
 impl<F: Field> CommittedGroup<F> {
-    /// Build a self-describing group commitment.
-    pub fn new(profile: GroupCommitPhaseParams, commitment: Commitment<F>) -> Self {
-        Self {
-            profile,
-            commitment,
-        }
-    }
-
     /// Borrow the exact frozen commitment profile.
     pub fn profile(&self) -> &GroupCommitPhaseParams {
         &self.profile
@@ -79,114 +98,131 @@ impl<F: Field> CommittedGroup<F> {
     pub fn rows(&self) -> &RingVec<F> {
         self.commitment.rows()
     }
+
+    /// The digest that binds this group into a transcript.
+    pub fn digest(&self) -> &CommitmentDigest {
+        &self.digest
+    }
+}
+
+fn check_group<F: Field + CanonicalEncoding + Valid>(
+    profile: &GroupCommitPhaseParams,
+    commitment: &Commitment<F>,
+) -> Result<(), SerializationError> {
+    profile
+        .validate_frozen_precommit(F::MODULUS_BITS)
+        .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
+    commitment.check()?;
+    let expected_coeffs = profile
+        .outer_compression_plan()
+        .map_err(|error| SerializationError::InvalidData(error.to_string()))?
+        .terminal_coefficients();
+    if commitment.rows().coeff_len() != expected_coeffs {
+        return Err(SerializationError::InvalidData(
+            "committed-group rows do not match the frozen descriptor".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 impl<F: Field + CanonicalEncoding + Valid> Valid for CommittedGroup<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        let field_bits = F::MODULUS_BITS;
-        self.profile
-            .validate_frozen_precommit(field_bits)
-            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
-        self.commitment.check()?;
-        let expected_coeffs = self
-            .profile
-            .outer_compression_plan()
-            .map_err(|error| SerializationError::InvalidData(error.to_string()))?
-            .terminal_coefficients();
-        if self.commitment.rows().coeff_len() != expected_coeffs {
-            return Err(SerializationError::InvalidData(
-                "committed-group rows do not match the frozen descriptor".to_string(),
-            ));
-        }
-        Ok(())
+        check_group(&self.profile, &self.commitment)
     }
+}
+
+/// Write the profile header and then the rows: the canonical group encoding.
+fn write_group<F: Field + AkitaSerialize, W: Write>(
+    profile: &GroupCommitPhaseParams,
+    commitment: &Commitment<F>,
+    mut writer: W,
+    compress: Compress,
+) -> Result<(), SerializationError> {
+    fn write_usize<W: Write>(writer: &mut W, value: usize) -> Result<(), SerializationError> {
+        u64::try_from(value)
+            .map_err(|_| {
+                SerializationError::InvalidData("committed-group integer exceeds u64".to_string())
+            })?
+            .serialize_with_mode(writer, Compress::No)
+    }
+
+    profile
+        .version
+        .serialize_with_mode(&mut writer, Compress::No)?;
+    write_usize(&mut writer, profile.group.num_vars())?;
+    write_usize(&mut writer, profile.group.num_polynomials())?;
+    for value in [
+        profile.blocks.live_ring_elements_per_claim,
+        profile.blocks.positions_per_block,
+        profile.blocks.live_blocks,
+    ] {
+        write_usize(&mut writer, value)?;
+    }
+    write_usize(&mut writer, profile.outer_slice_count.get())?;
+    profile
+        .inner
+        .digits
+        .log_basis
+        .serialize_with_mode(&mut writer, Compress::No)?;
+    write_usize(&mut writer, profile.inner.digits.num_digits)?;
+    let inner_table_key = profile.inner.matrix.sis_table_key().ok_or_else(|| {
+        SerializationError::InvalidData(
+            "precommitted group cannot use an L2 A security route".into(),
+        )
+    })?;
+    for matrix in [inner_table_key, profile.outer.matrix.sis_table_key()] {
+        matrix
+            .modulus_profile
+            .tag()
+            .serialize_with_mode(&mut writer, Compress::No)?;
+        matrix
+            .policy
+            .tag()
+            .serialize_with_mode(&mut writer, Compress::No)?;
+        matrix
+            .role
+            .tag()
+            .serialize_with_mode(&mut writer, Compress::No)?;
+        writer.write_all(&matrix.table_digest.0)?;
+        matrix
+            .ring_dimension
+            .serialize_with_mode(&mut writer, Compress::No)?;
+        let params = if matrix.role == SisMatrixRole::Inner {
+            (
+                profile.inner.matrix.output_rank(),
+                profile.inner.matrix.input_width(),
+            )
+        } else {
+            (
+                profile.outer.matrix.output_rank(),
+                profile.outer.matrix.input_width(),
+            )
+        };
+        write_usize(&mut writer, params.0)?;
+        write_usize(&mut writer, params.1)?;
+        matrix
+            .coeff_linf_bound
+            .serialize_with_mode(&mut writer, Compress::No)?;
+        if matrix.role == SisMatrixRole::Inner {
+            profile
+                .outer
+                .digits
+                .log_basis
+                .serialize_with_mode(&mut writer, Compress::No)?;
+            write_usize(&mut writer, profile.outer.digits.num_digits)?;
+        }
+    }
+    commitment.serialize_with_mode(&mut writer, compress)
 }
 
 impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> AkitaSerialize for CommittedGroup<F> {
     fn serialize_with_mode<W: Write>(
         &self,
-        mut writer: W,
+        writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        fn write_usize<W: Write>(writer: &mut W, value: usize) -> Result<(), SerializationError> {
-            u64::try_from(value)
-                .map_err(|_| {
-                    SerializationError::InvalidData(
-                        "committed-group integer exceeds u64".to_string(),
-                    )
-                })?
-                .serialize_with_mode(writer, Compress::No)
-        }
-
         self.check()?;
-        let profile = &self.profile;
-        profile
-            .version
-            .serialize_with_mode(&mut writer, Compress::No)?;
-        write_usize(&mut writer, profile.group.num_vars())?;
-        write_usize(&mut writer, profile.group.num_polynomials())?;
-        for value in [
-            profile.blocks.live_ring_elements_per_claim,
-            profile.blocks.positions_per_block,
-            profile.blocks.live_blocks,
-        ] {
-            write_usize(&mut writer, value)?;
-        }
-        write_usize(&mut writer, profile.outer_slice_count.get())?;
-        profile
-            .inner
-            .digits
-            .log_basis
-            .serialize_with_mode(&mut writer, Compress::No)?;
-        write_usize(&mut writer, profile.inner.digits.num_digits)?;
-        let inner_table_key = profile.inner.matrix.sis_table_key().ok_or_else(|| {
-            SerializationError::InvalidData(
-                "precommitted group cannot use an L2 A security route".into(),
-            )
-        })?;
-        for matrix in [inner_table_key, profile.outer.matrix.sis_table_key()] {
-            matrix
-                .modulus_profile
-                .tag()
-                .serialize_with_mode(&mut writer, Compress::No)?;
-            matrix
-                .policy
-                .tag()
-                .serialize_with_mode(&mut writer, Compress::No)?;
-            matrix
-                .role
-                .tag()
-                .serialize_with_mode(&mut writer, Compress::No)?;
-            writer.write_all(&matrix.table_digest.0)?;
-            matrix
-                .ring_dimension
-                .serialize_with_mode(&mut writer, Compress::No)?;
-            let params = if matrix.role == SisMatrixRole::Inner {
-                (
-                    profile.inner.matrix.output_rank(),
-                    profile.inner.matrix.input_width(),
-                )
-            } else {
-                (
-                    profile.outer.matrix.output_rank(),
-                    profile.outer.matrix.input_width(),
-                )
-            };
-            write_usize(&mut writer, params.0)?;
-            write_usize(&mut writer, params.1)?;
-            matrix
-                .coeff_linf_bound
-                .serialize_with_mode(&mut writer, Compress::No)?;
-            if matrix.role == SisMatrixRole::Inner {
-                profile
-                    .outer
-                    .digits
-                    .log_basis
-                    .serialize_with_mode(&mut writer, Compress::No)?;
-                write_usize(&mut writer, profile.outer.digits.num_digits)?;
-            }
-        }
-        self.commitment.serialize_with_mode(&mut writer, compress)
+        write_group(&self.profile, &self.commitment, writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
@@ -361,11 +397,9 @@ where
         }
         let commitment =
             Commitment::deserialize_with_mode(&mut reader, compress, validate, &num_coeffs)?;
-        let group = Self::new(descriptor, commitment);
-        if matches!(validate, Validate::Yes) {
-            group.check()?;
-        }
-        Ok(group)
+        // The group is checked and its digest computed from the decoded
+        // value, whatever `validate` asks for.
+        Self::new(descriptor, commitment)
     }
 }
 
@@ -407,16 +441,17 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for Com
 #[cfg(test)]
 mod committed_group_tests {
     use super::*;
-    use jolt_field::{Fp32, Zero};
+    use jolt_field::{Fp32, Ring};
 
     type F = Fp32<4294967197>;
 
     fn group() -> CommittedGroup<F> {
-        group_with_ring_dimension(128)
+        let (profile, commitment) = group_parts(128);
+        CommittedGroup::new(profile, commitment).expect("valid committed group")
     }
 
     /// One nv11 group whose A and B matrices share `ring_dimension`.
-    fn group_with_ring_dimension(ring_dimension: usize) -> CommittedGroup<F> {
+    fn group_parts(ring_dimension: usize) -> (GroupCommitPhaseParams, Commitment<F>) {
         let ring_dimension_u32 = u32::try_from(ring_dimension).unwrap();
         let positions = (1 << 11) / ring_dimension;
         let a_bound = *akita_params::sis::inner_coeff_linf_bounds(
@@ -471,10 +506,82 @@ mod committed_group_tests {
         )
         .expect("compression plan")
         .terminal_coefficients();
-        CommittedGroup::new(
-            profile,
-            Commitment::new(RingVec::from_coeffs(vec![F::zero(); payload_coefficients])),
+        let coefficients = (0..payload_coefficients)
+            .map(|index| F::from_u64(index as u64 * 7 + 1))
+            .collect();
+        (profile, Commitment::new(RingVec::from_coeffs(coefficients)))
+    }
+
+    fn canonical_bytes(group: &CommittedGroup<F>) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        group
+            .serialize_with_mode(&mut bytes, Compress::No)
+            .expect("serialize committed group");
+        bytes
+    }
+
+    fn decode(bytes: &[u8]) -> Result<CommittedGroup<F>, SerializationError> {
+        CommittedGroup::<F>::deserialize_with_mode(bytes, Compress::No, Validate::Yes, &())
+    }
+
+    #[test]
+    fn deserialized_and_constructed_digests_agree() {
+        let group = group();
+        let bytes = canonical_bytes(&group);
+        assert_eq!(
+            *group.digest(),
+            CommitmentDigest::of_canonical_bytes(&bytes)
+        );
+        assert_eq!(decode(&bytes).unwrap().digest(), group.digest());
+    }
+
+    /// The decoder hashes the group it decoded, so a changed row gives the
+    /// digest of the changed group, never the digest of the original.
+    #[test]
+    fn digest_is_recomputed_on_deserialization() {
+        let group = group();
+        let mut bytes = canonical_bytes(&group);
+        let last = bytes.len() - 4;
+        bytes[last..].copy_from_slice(&5u32.to_le_bytes());
+        let decoded = decode(&bytes).unwrap();
+        assert_ne!(decoded.digest(), group.digest());
+        let mut coefficients = group.rows().coeffs().to_vec();
+        *coefficients.last_mut().unwrap() = F::from_u64(5);
+        let rebuilt = CommittedGroup::new(
+            *group.profile(),
+            Commitment::new(RingVec::from_coeffs(coefficients)),
         )
+        .unwrap();
+        assert_eq!(decoded.digest(), rebuilt.digest());
+        assert_eq!(
+            *decoded.digest(),
+            CommitmentDigest::of_canonical_bytes(&bytes)
+        );
+    }
+
+    /// Each commitment has one encoding, so it has one digest: the decoder
+    /// rejects a noncanonical coefficient and a short row.
+    #[test]
+    fn noncanonical_commitment_bytes_are_rejected() {
+        let group = group();
+        let mut bytes = canonical_bytes(&group);
+        let last = bytes.len() - 4;
+        bytes[last..].copy_from_slice(&4_294_967_197u32.to_le_bytes());
+        assert!(decode(&bytes).is_err());
+
+        let mut short = canonical_bytes(&group);
+        short.truncate(short.len() - 4);
+        assert!(decode(&short).is_err());
+    }
+
+    #[test]
+    fn commitment_digest_has_a_known_answer() {
+        let rendered = format!("{:?}", group().digest().as_bytes());
+        #[cfg(feature = "transcript-blake2b")]
+        let expected = "[212, 16, 192, 226, 248, 59, 14, 111, 246, 78, 110, 93, 180, 110, 10, 206, 125, 199, 50, 78, 211, 56, 132, 24, 105, 108, 18, 219, 228, 100, 57, 17]";
+        #[cfg(feature = "transcript-keccak")]
+        let expected = "[114, 212, 182, 223, 91, 176, 13, 1, 90, 199, 228, 142, 136, 96, 40, 136, 165, 119, 91, 182, 89, 58, 10, 142, 79, 9, 118, 170, 200, 14, 39, 251]";
+        assert_eq!(rendered, expected);
     }
 
     #[test]
@@ -541,11 +648,9 @@ mod committed_group_tests {
     #[test]
     fn committed_group_validation_rejects_an_outer_image_the_ladder_cannot_recompose() {
         // The q32 ladder starts at D=128, so a D=64 outer image cannot be compressed.
-        let group = group_with_ring_dimension(64);
-        assert!(group.check().is_err());
-        assert!(group
-            .serialize_with_mode(&mut Vec::new(), Compress::Yes)
-            .is_err());
+        let (profile, commitment) = group_parts(64);
+        assert!(check_group(&profile, &commitment).is_err());
+        assert!(CommittedGroup::new(profile, commitment).is_err());
     }
 
     #[test]

@@ -546,8 +546,8 @@ mod tests {
             akita_params::GrindingPlan::new(runs, challenge_order).unwrap()
         };
 
-        let state = new_prover_channel(b"native-eor-verifier", b"fixture");
-        let mut prover = akita_types::ProverGrinding::new(state, &plan);
+        let mut state = new_prover_channel(b"native-eor-verifier");
+        let mut prover = akita_types::ProverGrinding::new(&mut state, &plan);
         akita_types::eor_prefix::<F, E, _>(
             &mut prover,
             &opening_batch,
@@ -580,10 +580,11 @@ mod tests {
             level,
         )
         .unwrap();
-        let proof = prover.finish().unwrap();
+        prover.finish().unwrap();
+        let proof = state.narg_string().to_vec();
 
-        let state = new_verifier_channel(b"native-eor-verifier", b"fixture", &proof);
-        let mut verifier = akita_types::VerifierGrinding::new(state, &plan);
+        let mut state = new_verifier_channel(b"native-eor-verifier", &proof);
+        let mut verifier = akita_types::VerifierGrinding::new(&mut state, &plan);
         let replay = verify_eor_sumcheck::<F, E>(
             &group_points,
             &openings,
@@ -596,6 +597,6 @@ mod tests {
         .unwrap();
         assert_eq!(replay.rho.len(), rounds);
         assert_eq!(replay.final_claims, vec![E::zero()]);
-        verifier.finish().unwrap();
+        verifier.finish().unwrap().check_eof(state).unwrap();
     }
 }

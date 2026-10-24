@@ -459,7 +459,8 @@ where
         .into_parts();
 
     Ok(CommitOutput {
-        committed_group: CommittedGroup::new(commit_params, Commitment::new(payload)),
+        committed_group: CommittedGroup::new(commit_params, Commitment::new(payload))
+            .map_err(|error| AkitaError::Internal(format!("committed group: {error}")))?,
         prover_state,
     })
 }

@@ -1,9 +1,12 @@
 //! Role-generic access to one end of the proof channel.
 
-use super::{invalid_proof, prover_context, reject, verifier_context, ProtocolContextRecord};
+use super::{
+    invalid_proof, prover_context, receive_atoms, reject, send_atoms, verifier_context,
+    ProtocolContextRecord,
+};
 use crate::{ProverChannel, VerifierChannel, FOLD_CHALLENGE_SEED_LEN};
 use akita_error::AkitaError;
-use jolt_transcript::{ChallengeCodec, ProverTranscript, VerifierTranscript};
+use jolt_transcript::{ChallengeCodec, FieldTranscript};
 use spongefish::{Encoding, FromNarg, Transcript};
 
 /// One party's end of the Akita proof channel.
@@ -26,6 +29,16 @@ pub trait ProofChannel {
     /// Returns [`AkitaError::InvalidProof`] when the verifier cannot decode the
     /// next message. The prover never fails.
     fn exchange<T: Encoding + FromNarg>(&mut self, message: &mut T) -> Result<(), AkitaError>;
+
+    /// Emit (prover) or read and absorb (verifier) a schedule-fixed group of
+    /// atoms as one proof message. An empty group makes no absorb call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when the verifier cannot decode the
+    /// group. The prover never fails.
+    fn exchange_group<T: Encoding + FromNarg>(&mut self, atoms: &mut [T])
+        -> Result<(), AkitaError>;
 
     /// Draw one challenge message of `len` field elements.
     ///
@@ -69,8 +82,16 @@ impl ProofChannel for ProverChannel {
         Ok(())
     }
 
+    fn exchange_group<T: Encoding + FromNarg>(
+        &mut self,
+        atoms: &mut [T],
+    ) -> Result<(), AkitaError> {
+        send_atoms(self, atoms);
+        Ok(())
+    }
+
     fn challenges<E: ChallengeCodec>(&mut self, len: usize) -> Result<Vec<E>, AkitaError> {
-        ProverTranscript::field_challenges(self, len).map_err(|_| {
+        FieldTranscript::<E>::challenge_vector(self, len).map_err(|_| {
             AkitaError::InvalidSetup(
                 "field challenge codec rejected the message length or exhausted its pool".into(),
             )
@@ -101,8 +122,19 @@ impl ProofChannel for VerifierChannel<'_> {
         Ok(())
     }
 
+    fn exchange_group<T: Encoding + FromNarg>(
+        &mut self,
+        atoms: &mut [T],
+    ) -> Result<(), AkitaError> {
+        let received = receive_atoms::<T>(self, atoms.len())?;
+        for (slot, atom) in atoms.iter_mut().zip(received) {
+            *slot = atom;
+        }
+        Ok(())
+    }
+
     fn challenges<E: ChallengeCodec>(&mut self, len: usize) -> Result<Vec<E>, AkitaError> {
-        VerifierTranscript::field_challenges(self, len).map_err(invalid_proof)
+        FieldTranscript::<E>::challenge_vector(self, len).map_err(invalid_proof)
     }
 
     fn seed(&mut self) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
