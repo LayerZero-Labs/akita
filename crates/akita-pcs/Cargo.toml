@@ -98,6 +98,10 @@ zk-prover = ["zk", "jolt-zk/whiteout-prover", "akita-cpu-backend/zk-prover"]
 # Test hooks of the zero-knowledge mode (the response prover's unchecked
 # path, for the consistent-cheat tests).
 test-support = ["zk-prover"]
+# Timing harness for examples/compression_dudect.rs (A36): jolt-zk's DIT
+# pool and synthetic Σ instance. Diagnostics only; implies `zk-prover`
+# through `test-support`.
+zk-diagnostics = ["test-support", "jolt-zk/whiteout-diagnostics"]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
@@ -212,6 +216,10 @@ required-features = ["test-support", "logging"]
 [[example]]
 name = "zk_response"
 required-features = ["zk-prover"]
+
+[[example]]
+name = "compression_dudect"
+required-features = ["zk-diagnostics"]
 
 [[bench]]
 name = "ring_ntt"

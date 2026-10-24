@@ -153,6 +153,10 @@ where
     ) -> Result<Vec<CompressionRowsProducts<F, D>>, AkitaError>;
 
     /// Exact-shape negacyclic-only compression products for reduced evaluation.
+    ///
+    /// Must run in time and with memory addresses independent of the digits:
+    /// a Σ attempt compresses its secret `t_D` this way before its accept bit
+    /// (`specs/whiteout-akita.md` A36).
     fn compression_negacyclic_rows<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup,

@@ -11,6 +11,12 @@ pub(crate) enum I8CommitPolicy {
         raw: bool,
         block_index: usize,
     },
+    /// [`Self::Dense`] in time and with memory addresses independent of the
+    /// digits: no zero-plane skip and a constant-time CRT reconstruction
+    /// ([`CyclotomicCrtNtt::to_ring_ct`]). For digits of secret images, the
+    /// compression maps of a Σ attempt's `t_D` (`specs/whiteout-akita.md`
+    /// A36).
+    ConstantTime,
 }
 
 pub(super) fn mat_vec_mul_digits_i8_with_params<
@@ -22,6 +28,43 @@ pub(super) fn mat_vec_mul_digits_i8_with_params<
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
     log_basis: u32,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    digit_rows_matvec::<F, W, K, D, true>(ntt_mat, blocks, log_basis, I8CommitPolicy::Dense, params)
+}
+
+/// [`mat_vec_mul_digits_i8_with_params`] under [`I8CommitPolicy::ConstantTime`].
+pub(super) fn mat_vec_mul_digits_i8_ct_with_params<
+    F: Field + CanonicalEncoding,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    blocks: &[&[[i8; D]]],
+    log_basis: u32,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    digit_rows_matvec::<F, W, K, D, false>(
+        ntt_mat,
+        blocks,
+        log_basis,
+        I8CommitPolicy::ConstantTime,
+        params,
+    )
+}
+
+fn digit_rows_matvec<
+    F: Field + CanonicalEncoding,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+    const CHECK_ZERO: bool,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    blocks: &[&[[i8; D]]],
+    log_basis: u32,
+    policy: I8CommitPolicy,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     let source = DigitRows {
@@ -37,7 +80,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params<
             range
         })
         .collect::<Vec<_>>();
-    mat_vec_mul_blocks_i8_with_params_impl::<F, _, W, K, D, true>(
+    mat_vec_mul_blocks_i8_with_params_impl::<F, _, W, K, D, CHECK_ZERO>(
         ntt_mat,
         &source,
         &ranges,
@@ -45,7 +88,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params<
             num_digits: 1,
             log_basis,
         },
-        I8CommitPolicy::Dense,
+        policy,
         "digit matvec CRT capacity cannot fit a single term",
         params,
     )
@@ -216,6 +259,7 @@ pub(super) fn mat_vec_mul_blocks_i8_with_params_impl<
         shape.num_digits,
     );
     let max_rings = batch.max(shape.num_digits).div_ceil(shape.num_digits) + 1;
+    let constant_time = matches!(policy, I8CommitPolicy::ConstantTime);
     drive_block_chunked_matvec(
         num_live_blocks,
         n_a,
@@ -261,7 +305,7 @@ pub(super) fn mat_vec_mul_blocks_i8_with_params_impl<
                     )?;
                     let n = (batch_end - batch_start).min(rows.len() - offset);
                     let digits = &rows[offset..offset + n];
-                    if CHECK_ZERO && digits.iter().any(is_zero_plane) {
+                    if CHECK_ZERO && !constant_time && digits.iter().any(is_zero_plane) {
                         for (i, digit) in digits.iter().enumerate() {
                             if is_zero_plane(digit) {
                                 continue;
@@ -300,6 +344,13 @@ pub(super) fn mat_vec_mul_blocks_i8_with_params_impl<
                 }
             }
             Ok(())
+        },
+        |acc, params| {
+            if constant_time {
+                acc.to_ring_ct(params)
+            } else {
+                acc.to_ring(params)
+            }
         },
     )
 }
