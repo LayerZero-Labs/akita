@@ -1445,7 +1445,7 @@ mod tests {
         let hint = output.prover_state();
 
         assert_eq!(output.terminal_payload(), &expected_payload);
-        assert_eq!(hint.inner_rows(), expected_rows);
+        assert_eq!(hint.inner_rows().unwrap().as_ref(), expected_rows);
         assert_eq!(
             hint.outer_compression_witness(plan.compression().unwrap())
                 .unwrap()

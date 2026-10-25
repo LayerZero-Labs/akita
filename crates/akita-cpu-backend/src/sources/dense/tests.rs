@@ -7,6 +7,54 @@ use jolt_field::Prime128OffsetA7F7 as F;
 use jolt_field::{CanonicalEncoding, Ring, Zero};
 
 #[test]
+fn setup_prefix_sources_share_the_setup_and_survive_owner_drop() {
+    use akita_params::{FlatMatrix, SetupMatrixCapacity};
+    use std::sync::Arc;
+    let setup = crate::AkitaProverSetup::<F>::generate_with_capacity(
+        12,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 4096,
+        },
+    )
+    .unwrap()
+    .expanded;
+    let address = setup.shared_matrix().as_field_slice().as_ptr();
+    let small = DensePoly::from_setup_prefix(setup.clone(), 10).unwrap();
+    let large = DensePoly::from_setup_prefix(setup.clone(), 12).unwrap();
+    let clone = small.clone();
+    assert_eq!(small.field_coeffs().as_ptr(), address);
+    assert_eq!(large.field_coeffs().as_ptr(), address);
+    assert_eq!(clone.field_coeffs().as_ptr(), address);
+    assert_eq!(small.field_coeffs().len(), 1024);
+    assert_eq!(large.field_coeffs().len(), 4096);
+    assert!(DensePoly::from_setup_prefix(setup.clone(), 13).is_err());
+    let expected = setup.shared_matrix().as_field_slice()[..1024].to_vec();
+    drop(setup);
+    assert_eq!(clone.field_coeffs(), expected);
+    drop(small);
+    drop(large);
+    assert_eq!(clone.field_coeffs(), expected);
+    // A short polynomial must have zeros beyond its own domain, not more setup data.
+    let setup = Arc::new(
+        akita_types::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            akita_types::AkitaSetupDescriptor {
+                max_num_vars: 12,
+                max_num_batched_polys: 1,
+                num_field_elements: 4096,
+                setup_seed: akita_types::sample_akita_setup_seed(),
+            },
+            FlatMatrix::from_flat_data(vec![F::from_u64(7); 4096]),
+        ),
+    );
+    let short = DensePoly::from_setup_prefix(setup, 8).unwrap();
+    assert!(short.field_coeffs()[..256]
+        .iter()
+        .all(|v| *v == F::from_u64(7)));
+    assert!(short.field_coeffs()[256..].iter().all(|v| *v == F::zero()));
+}
+
+#[test]
 fn chunked_fold_matches_windowed_reference_and_global() {
     use akita_challenges::SparseChallenge;
 

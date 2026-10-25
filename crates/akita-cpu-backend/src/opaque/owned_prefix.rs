@@ -30,17 +30,10 @@ impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
         id: &SetupPrefixSlotId,
     ) -> Result<Arc<OwnedPolynomials<DensePoly<F>>>, AkitaError> {
         let prepared = self.prepared()?;
-        let coefficients = prepared
-            .expanded
-            .shared_matrix()
-            .as_field_slice()
-            .get(..id.n_prefix()?)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("setup prefix exceeds backend capacity".into())
-            })?
-            .to_vec();
-        let polynomial =
-            DensePoly::from_field_evals(id.commitment_profile.group.num_vars(), coefficients)?;
+        let polynomial = DensePoly::from_setup_prefix(
+            Arc::clone(&prepared.expanded),
+            id.commitment_profile.group.num_vars(),
+        )?;
         Ok(Arc::new(OwnedPolynomials {
             polynomials: vec![polynomial],
         }))
@@ -70,11 +63,14 @@ impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
                 vec![PolynomialType::Dense(DenseType::Coefficients)],
                 PortableStatePolicy,
             )?;
-            let artifact = crate::setup::setup_prefix::commit_validated_setup_prefix(
+            let mut artifact = crate::setup::setup_prefix::commit_validated_setup_prefix(
                 &prepared.expanded,
                 &executor,
                 validated,
             )?;
+            artifact
+                .hint
+                .share_inner_rows(&self.setup_prefix_inner_rows)?;
             Ok(CachedSetupPrefix {
                 artifact,
                 source: self.setup_prefix_source(id)?,
@@ -93,10 +89,12 @@ impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
             &artifact.id,
         )?;
         self.setup_prefix_cache.get_or_build(&artifact.id, || {
-            Ok(CachedSetupPrefix {
-                artifact: artifact.clone(),
-                source: self.setup_prefix_source(&artifact.id)?,
-            })
+            let mut artifact = artifact.clone();
+            artifact
+                .hint
+                .share_inner_rows(&self.setup_prefix_inner_rows)?;
+            let source = self.setup_prefix_source(&artifact.id)?;
+            Ok(CachedSetupPrefix { artifact, source })
         })
     }
 
@@ -318,6 +316,13 @@ mod tests {
                     .get_or_build(&id, || panic!("export must seed the setup-prefix cache"))
                     .unwrap();
                 let exported = artifacts.get(&id).unwrap();
+                assert_eq!(
+                    cached_after_export.source.polynomials[0]
+                        .field_coeffs()
+                        .as_ptr(),
+                    setup.expanded.shared_matrix().as_field_slice().as_ptr(),
+                    "exported prefixes must borrow the backend's setup allocation",
+                );
                 assert_eq!(cached_after_export.artifact.id, exported.id);
                 assert_eq!(
                     cached_after_export.artifact.commitment.rows[0].coeffs(),

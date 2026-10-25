@@ -12,10 +12,10 @@ use akita_error::{checked, AkitaError};
 use akita_params::SetupPrefixSlotId;
 use akita_types::{AkitaExpandedSetup, RingVec, SetupPrefixPublicCommitment};
 use jolt_field::{CanonicalEncoding, Field};
+use std::sync::Arc;
 
 pub(crate) struct ValidatedSetupPrefixCommitment<'a> {
     id: &'a SetupPrefixSlotId,
-    n_prefix: usize,
     plan: CommitmentExecutionPlan,
 }
 
@@ -61,7 +61,6 @@ pub(crate) fn validate_setup_prefix_commitment<'a, F: Field>(
     }
     Ok(ValidatedSetupPrefixCommitment {
         id,
-        n_prefix,
         plan: CommitmentExecutionPlan::for_setup_prefix(id)?,
     })
 }
@@ -77,7 +76,7 @@ pub(crate) fn validate_setup_prefix_commitment<'a, F: Field>(
 /// or backend commitment fails.
 #[cfg(test)]
 fn commit_setup_prefix<F, SP>(
-    expanded: &AkitaExpandedSetup<F>,
+    expanded: &Arc<AkitaExpandedSetup<F>>,
     executor: &CommitmentExecutor<'_, F, SP>,
     id: &SetupPrefixSlotId,
 ) -> Result<SetupPrefixSlot<F>, AkitaError>
@@ -91,7 +90,7 @@ where
 }
 
 pub(crate) fn commit_validated_setup_prefix<F, SP>(
-    expanded: &AkitaExpandedSetup<F>,
+    expanded: &Arc<AkitaExpandedSetup<F>>,
     executor: &CommitmentExecutor<'_, F, SP>,
     validated: ValidatedSetupPrefixCommitment<'_>,
 ) -> Result<SetupPrefixSlot<F>, AkitaError>
@@ -103,16 +102,8 @@ where
     executor.validate_setup(expanded)?;
     let id = validated.id;
     let commitment_profile = &id.commitment_profile;
-    let source_coefficients = expanded
-        .shared_matrix()
-        .as_field_slice()
-        .get(..validated.n_prefix)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("setup prefix length exceeds shared matrix capacity".into())
-        })?
-        .to_vec();
     let source =
-        DensePoly::from_field_evals(commitment_profile.group.num_vars(), source_coefficients)?;
+        DensePoly::from_setup_prefix(Arc::clone(expanded), commitment_profile.group.num_vars())?;
     let plan = validated.plan;
     let sources: [&dyn CommitmentSource<F>; 1] = [&source];
     executor.preflight_portable_export(&plan, &sources)?;
@@ -143,7 +134,7 @@ where
 
 #[cfg(test)]
 fn extract_setup_prefix_ring_elems<F, const D: usize>(
-    expanded: &AkitaExpandedSetup<F>,
+    expanded: &Arc<AkitaExpandedSetup<F>>,
     full_prefix_ring_slots: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where

@@ -77,6 +77,7 @@ pub(crate) use state_policy::{
 
 mod portable;
 mod setup_prefix;
+pub(crate) mod shared_inner;
 pub(crate) use portable::PortableCommitmentHandle;
 pub use setup_prefix::{SetupPrefixProverRegistry, SetupPrefixSlot};
 
