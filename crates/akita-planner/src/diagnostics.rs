@@ -65,6 +65,18 @@ pub(crate) struct SetupBudgetPass {
     pub(crate) descriptor_builds: usize,
 }
 
+/// Deterministic search-work counters for one planned schedule row.
+///
+/// The counts depend only on the planner code and its inputs, never on timing
+/// or worker scheduling, so a checked-in baseline can guard planner cost.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlannerCost {
+    pub suffix_calls: usize,
+    pub completed_states: usize,
+    pub generated_candidates: usize,
+    pub descriptor_builds: usize,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PlannerDiagnosticsSnapshot {
     pub(crate) suffix_dp_time: Duration,
@@ -92,6 +104,17 @@ pub(crate) struct PlannerDiagnosticsSnapshot {
     pub(crate) guided_direct_edge_prunes: usize,
     pub(crate) setup_budget_passes: Vec<SetupBudgetPass>,
     selected: Option<SelectedScheduleDiagnostics>,
+}
+
+impl PlannerDiagnosticsSnapshot {
+    pub(crate) const fn planner_cost(&self) -> PlannerCost {
+        PlannerCost {
+            suffix_calls: self.suffix_calls,
+            completed_states: self.completed_states,
+            generated_candidates: self.generated_candidates,
+            descriptor_builds: self.descriptor_builds,
+        }
+    }
 }
 
 impl fmt::Display for PlannerDiagnosticsSnapshot {

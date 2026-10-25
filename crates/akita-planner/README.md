@@ -321,6 +321,21 @@ repository permits catalog-breaking revisions, so baseline/current policy is
 reviewed from the checked evidence. Same-head drift remains an automatic
 failure under `--check-catalog`.
 
+Planner cost is guarded the same way. `--planner-cost-snapshot <path>` writes
+one row per regenerated row with four deterministic search-work counters:
+suffix calls, completed states, generated fold candidates, and descriptor
+builds. A reused preplanned row reports the work of the search that produced
+it. The counts do not depend on timing or worker count. The tracked baseline is
+`artifacts/schedule-planner-cost.tsv`; CI passes it through
+`--planner-cost-baseline <snapshot>`, which fails when a row is added or
+removed or when any counter grows by more than a quarter. When a planner change
+intentionally moves rows or costs, regenerate the baseline with the complete
+family set:
+
+```bash
+scripts/generate-schedule-artifacts.sh --planner-cost-snapshot artifacts/schedule-planner-cost.tsv
+```
+
 Targeted generation leaves the shared `mod.rs` wiring complete. Before a
 planner change is committed, run the unfiltered command above so every tracked
 family is regenerated.
