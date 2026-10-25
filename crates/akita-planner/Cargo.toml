@@ -20,6 +20,7 @@ akita-sis-estimator = { version = "0.1.0", path = "../akita-sis-estimator", opti
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
 libm = "0.2"
+rayon = { version = "1.10", optional = true }
 
 [features]
 # Generates every family, the zero-knowledge ones included.
@@ -28,6 +29,9 @@ catalog-check = ["catalog-gen"]
 catalog-security = ["catalog-check", "dep:akita-sis-estimator"]
 test-support = []
 dev-protocol = ["akita-params/dev-protocol"]
+# Completes each search state's successors on rayon's pool; the selected
+# schedule is the same with or without it.
+parallel = ["dep:rayon"]
 # Plans zero-knowledge schedules (`find_zk_schedule`) and emits their
 # catalogs.
 zk = ["akita-params/zk", "akita-schedules/zk"]

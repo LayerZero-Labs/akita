@@ -234,6 +234,7 @@ dependencies = [
  "jolt-algebra",
  "jolt-crypto",
  "libm",
+ "rayon",
 ]
 
 [[package]]
@@ -1353,6 +1354,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "thiserror",
+ "tracing",
  "zeroize",
 ]
 

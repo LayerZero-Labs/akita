@@ -118,10 +118,8 @@ fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     source_contract: akita_params::sis::CommittedSourceContract,
-    ring_challenge_config: impl Fn(
-        usize,
-    )
-        -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>,
+    ring_challenge_config: impl Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>
+        + Sync,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     akita_schedules::planner_support::validate_policy(policy)?;
     crate::planner::find_schedule(

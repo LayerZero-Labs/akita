@@ -587,7 +587,7 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
 
 /// Stage-1 sparse-challenge closure shared by the planner entry points.
 pub(crate) type RingChallengeConfigFn<'a> =
-    &'a dyn Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>;
+    &'a (dyn Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError> + Sync);
 
 pub(crate) type LayoutCandidateScore = (usize, usize, usize, usize);
 

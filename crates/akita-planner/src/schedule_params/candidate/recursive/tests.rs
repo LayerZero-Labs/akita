@@ -394,7 +394,7 @@ fn late_consumer_keeps_setup_prefix_slices_eligible() {
     type Recursive = RecursiveCommitmentConfig<OneHot>;
     let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let challenge = Recursive::ring_challenge_config(64).expect("challenge config");
-    let mut cache = SetupPrefixSearchCache::default();
+    let cache = SetupPrefixSearchCache::default();
     let request = RecursiveCandidateRequest {
         input_chunks: None,
         policy: &policy,
@@ -414,7 +414,7 @@ fn late_consumer_keeps_setup_prefix_slices_eligible() {
     let search = prepare_recursive_level_search(
         &request,
         RecursiveSetupPrefix::Search {
-            cache: &mut cache,
+            cache: &cache,
             natural_len: 1 << 12,
         },
     )
