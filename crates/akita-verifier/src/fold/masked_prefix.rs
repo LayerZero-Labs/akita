@@ -45,6 +45,7 @@ where
     /// [`AkitaError::InvalidSetup`] or [`AkitaError::UnsupportedSchedule`] if
     /// the selected schedule is not an admitted zero-knowledge schedule
     /// (`ZkOpeningSchedule::admit`), and the fold verifier's errors otherwise.
+    #[tracing::instrument(skip_all, name = "AkitaVerifier::verify_masked_prefix")]
     pub fn verify_masked_prefix<H: Sponge, C>(
         &self,
         transcript: &mut VerifierTranscript<'_, H>,
@@ -87,6 +88,7 @@ where
     ///
     /// As [`verify_masked_prefix`](Self::verify_masked_prefix), except that
     /// no proof-of-work nonce is read or checked.
+    #[tracing::instrument(skip_all, name = "AkitaVerifier::count_masked_prefix")]
     pub fn count_masked_prefix<H: Sponge>(
         &self,
         transcript: &mut VerifierTranscript<'_, H>,
@@ -151,6 +153,7 @@ where
         let schedule = opening.schedule;
         let raw_claims = opening.raw_claims(claims)?;
         let mut replay = MaskedReplay::new(grinding);
+        let root_span = tracing::info_span!("masked_prefix_level", level = 0).entered();
         let root = verify_root::<Cfg::Field, Cfg::ExtField, _>(
             setup,
             &mut replay,
@@ -162,9 +165,11 @@ where
             schedule.recursive_folds.first(),
             &schedule.terminal,
         )?;
+        drop(root_span);
         let mut state =
             SuffixVerifierState::from_root(root, schedule.root_fold().output_witness_len);
         for offset in 0..cut_level as usize {
+            let _span = tracing::info_span!("masked_prefix_level", level = offset + 1).entered();
             state = verify_suffix_level(setup, &mut replay, schedule, offset, state)?;
         }
         let claim = ResidualClaim::new(

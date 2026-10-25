@@ -382,6 +382,7 @@ where
             .map_err(zk_error)
     }
 
+    #[tracing::instrument(skip_all, name = "AkitaResponseProver::verify")]
     fn verify<H: Sponge, const D: usize>(
         &self,
         statement: &ResponseStatement<'_, F, D>,
@@ -421,6 +422,7 @@ where
         );
 
         // 2. The product reduction at α.
+        let product_span = tracing::info_span!("response_product_sumcheck").entered();
         let alpha: F = transcript.challenge();
         let product_vars = ceil_log2(statement.row_shape().products.max(1));
         let target: F = transcript.receive()?;
@@ -437,8 +439,10 @@ where
         if claims.x * claims.y != product.output_claim {
             return Err(WhiteoutError::ResponseRejected("product sumcheck").into());
         }
+        drop(product_span);
 
         // 3. The row batch at η, and the padding term at τ_pad.
+        let rows_span = tracing::info_span!("response_row_batch").entered();
         let chains = self.chains(statement)?;
         let eta: Vec<F> = challenges(
             transcript,
@@ -447,8 +451,10 @@ where
         let weights = RowWeights::new(statement, &eta, &product.challenges, &chains)?;
         let padding = padding_term(transcript, shape);
         let b = batch_target(statement, alpha, &weights, claims, &chains)?;
+        drop(rows_span);
 
         // 4. The digit range of e.
+        let range_span = tracing::info_span!("response_digit_range").entered();
         let tau: Vec<F> = challenges(transcript, shape.num_vars);
         let plan = range_plan::<Cfg, D>(statement).map_err(zk_error)?;
         let grinding_plan =
@@ -463,9 +469,11 @@ where
         .verify_clear::<F, _>(&mut grinding, None, RANGE_LEVEL)
         .map_err(zk_error)?;
         grinding.finish().map_err(zk_error)?;
+        drop(range_span);
 
         // 5. The fused range-and-relation sumcheck, with the binary
         // constraint on the compression digits.
+        let fused_span = tracing::info_span!("response_fused_sumcheck").entered();
         let gamma: F = transcript.challenge();
         let zeta: F = transcript.challenge();
         let fused = verify_single::<F, F, AkitaError, _>(
@@ -474,6 +482,8 @@ where
         )
         .map_err(zk_error)?;
         let v: F = transcript.receive()?;
+        drop(fused_span);
+        let weight_span = tracing::info_span!("response_weight_at").entered();
         let a = batch_weight_at(
             statement,
             shape,
@@ -494,6 +504,7 @@ where
         if a * v + b * v * (v + F::one()) != fused.output_claim {
             return Err(WhiteoutError::ResponseRejected("fused sumcheck").into());
         }
+        drop(weight_span);
 
         // 6. Open E(r) = v.
         let group =
