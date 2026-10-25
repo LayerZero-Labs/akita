@@ -1078,7 +1078,9 @@ plus `recursive_folds[..cut_level]`, with no terminal. `ResidualCutParams` is:
 - one slice;
 - `r_a` columns from the §3.2 helper (97 R_256);
 - payload mode `Raw` (u_a is 768 coefficients, above the 512-coefficient
-  chain cap; compression is W5c's contract, §5.4).
+  chain cap; compression is W5c's contract, §5.4). Since O4 the cut level
+  sends Whiteout's compression of u_a, not u_a; Akita's mode stays `Raw`
+  (A47).
 
 Akita's SIS tables price the matrices at the Gaussian radius (rule 3).
 
@@ -1090,7 +1092,7 @@ Akita's SIS tables price the matrices at the Gaussian radius (rule 3).
 | `Openings` (level 0 statement claims) | `public_all` | `bind_derived_base` per claim. The verifier holds them as Jolt affine forms (§4.6) |
 | `OpeningPayload` (D image or its compressed form) | `exchange_private_base` | `exchange_public_all`, public, hidden by r′ (M3b fixup, A42) |
 | fold seed, challenges | nonce + fork | fork(seed, 0) (W2) |
-| `NextWitnessPayload` (at `cut_level`: u_a) | public | public, hidden by r |
+| `NextWitnessPayload` (at `cut_level`: `cm(u_a)`, A47) | public | public, hidden by r |
 | ring switch α, τ₀, τ₁ | public | public |
 | stage-1 rounds, `stage1_range_image` | `exchange_private` | masked |
 | stage-2 rounds, `stage2_w_eval` | `exchange_private` | masked |
@@ -1248,7 +1250,7 @@ That is W4's `Witness` (W4 §4):
 - `blocks`: `ResidualBlock`s for A_a with gadget t̂, and [B_a|B′_a] on
   (t̂, r_a), cut from Akita's setup stream.
 
-The verifier receives raw u_a.
+The verifier receives raw u_a (since O4, `cm(u_a)`; A47).
 
 ### 4.7 Acceptance
 
@@ -1344,7 +1346,7 @@ Each departure below states its argument.
 - **`ResidualOpening`.** It carries:
   - the cut level and the point;
   - the decoded w̃_k(point);
-  - raw u_a;
+  - raw u_a, and since O4 `cm(u_a)` as sent (A47);
   - w_k's digits with their alphabet (the cut level's open basis);
   - t̂_a with its gadget basis;
   - r_a with its alphabet.
@@ -1693,7 +1695,8 @@ fields of `ResidualOpening` (a deviation from §4.6 and §4.8.1's field list):
   where the residual must take w_k in one inner digit plane of an alphabet
   holding w_k's, so `G⁻¹(w_k)` is w_k (every admitted row does; otherwise
   `UnsupportedSchedule`), and `[B | B′](t̂_a, r_a) = u_a`
-  with u_a a public target, as the masked prefix sends it raw. It also
+  with u_a a public target, as the masked prefix sends it raw (since O4 a
+  compressed target, A47). It also
   forms the evaluation claim and checks that w_k's padded span keeps
   ⌈log₂|w_k|⌉ variables.
 
@@ -2523,6 +2526,90 @@ The numbering continues the W4 note's A1–A23.
   name `zk-prover`. CI (`test-zk`) fails if `cargo tree -p akita-pcs
   --features zk -e features,normal` reaches `whiteout-prover`, jolt-dit or
   a `sample` feature, and checks `zk-prover`'s library alone.
+- **A47, the cut successor sends u_a compressed (O4; paper Item 3).**
+  Until O4 the cut level sent u_a raw (19 × `R_64` = 1,216 coefficients,
+  19,456 B after W5e) and N held it as a public target (jolt D29). The
+  paper sends `cm(u_a)` and checks u_a through its compression witness
+  `ξ_a` in `e` (`04_protocol.tex:81-84,305-313`).
+
+  *Design.*
+  - **What is sent.** At the cut level's `NextWitnessPayload` site the
+    masked prefix sends `cm(u_a)`: Whiteout's chain (§5.4, W5c), u_a cut
+    into ⌈1,216/512⌉ = 3 chunks (512, 512, 192 coefficients), each with
+    its own two-map chain, so `cm(u_a)` is 3 × 8 coefficients, 384 B. The
+    site, its position (after the commitment to w_k, before the ring
+    switch) and its class (public, `exchange_public_all`) are unchanged;
+    only the length changes. Every other fold, clear or masked, still
+    sends its successor payload raw.
+  - **Whose maps.** The chain is the response proof's: `K₁`, `K₂` are
+    the offset-0 prefix of the response setup's shared matrix, which is
+    the matrix the response verifier's chain rows read. The masked
+    prefix takes the compression as jolt-zk's `ImageCompression` (the
+    `AkitaResponseProver` on the prover side, `CompressionShape` for the
+    verifier's payload length), so the image the prefix compresses and
+    the rows the response proof checks have one owner.
+  - **Akita's payload mode stays `Raw`.** Akita's own `Compressed` mode
+    puts the chain witness into the successor fold's witness and proves
+    it there; the after-cut level is never folded, so that mode has no
+    checker. The schedule's mode at `cut_level + 1` describes what Akita
+    proves, and admission keeps requiring `Raw` (§4.8.1); what the cut
+    level sends is Whiteout's compression, checked by the response
+    proof. No catalog row, plan or descriptor changes, clear or
+    zero-knowledge.
+  - **Σ statement.** `ResidualShape::blocks` takes u_a as a compressed
+    target, `BlockTarget::Compressed { payload: cm(u_a), image }`, with
+    the image on the prover's side only. jolt-zk already handles a
+    compressed target of N (the pad image, W5c): `e` gains u_a's chain
+    witness after the response, `V` and `θ` (the layout order of
+    `SigmaSetup::response_layout`: compressed targets of N in block
+    order, residual blocks before the pad block, then `t_D`); Item 3
+    reads u_a as `G₁ξ₁` (`ImageCompression::reconstruct`) in place of the public
+    target; Item 2 gains u_a's six chain rows; `I_bin` covers `ξ_a`. The
+    Σ-protocol absorbs every compressed target's payload first, so
+    `cm(u_a)` is absorbed a second time there; that adds no byte.
+
+  *Knowledge soundness.* This is the paper's protocol at this point, so
+  the paper's argument applies; the steps that depend on the change are:
+  1. In the tree of `Π^rnd_{≤k}` (Lemma `wo:lem:randomized-base`), the
+     commitment to w_k is fixed before fold k's challenges. The transcript
+     now fixes `cm(u_a)`, not u_a. Each response-proof leaf extracts an
+     `e` whose `ξ_a` is binary (the `ζ·1_{I_bin}` constraint) and satisfies
+     the chain rows; by Lemma `wo:lem:compressed-binding`, applied per
+     chunk (jolt D9), all leaves below one `cm(u_a)` reconstruct the same
+     u_a, or a chunk's `K₁` or `K₂` has a norm-one kernel vector. From
+     there Thm `wo:thm:knowledge` proceeds unchanged: Lemma
+     `wo:lem:weak-unique` gives one `s̄` across the ρ-leaves, and the
+     cutoff certificate opens that u_a.
+  2. Item 3's equation is `N z = f + c·G₁ξ₁` on u_a's rows. The
+     verifier's weight on `ξ_a` is `−c^T`'s transpose applied through
+     `G₁^T`, the same map the pad image uses; no new weight family.
+  3. The chain maps are Akita-priced (`CompressionChainPlan::
+     for_complete_source`, compression SIS at ℓ∞ = 1); the 192-coefficient
+     tail chunk is planned the same way as `t_p`'s 256-coefficient tail.
+     The Σ binding radius `R_Σ`, the ranks of `A_a` and `[B_a | B′_a]`,
+     and the Σ box are unchanged: `ξ_a` is in `e`, not in `s`, and is
+     certified at `{−1, 0}` by the binary constraint, not by the box.
+  4. Error terms. Chain rows join the α round, whose error stays the
+     lift's `126/q` (a chain row's residual has degree ≤ 15; no union,
+     §5.7). The binary constraint and the fused sumcheck pay `ν/q` and
+     `3ν/q`, and the padding term `ν/q`: if `|e|` crosses a power of two,
+     ν grows by one and the ledger (jolt D27) by `5/q`. Measured below.
+
+  *Statistical hiding.* Unchanged from the paper: `cm(u_a)` and `ξ_a` are
+  deterministic functions of u_a (`02_preliminaries.tex:212-215`), and
+  hybrid H8 replaces u_a, which r_a hides by Lemma `wo:lem:stat-hiding`
+  at the existing width rule (§4.8.1), with a uniform image; the
+  simulator compresses the uniform image. Before O4 u_a itself was
+  public, so the view only shrinks.
+
+  *Constant time.* u_a is compressed twice: by the masked prefix and by
+  `ResponseWitness::new` (the witness of an accepted response). Both run
+  `AkitaResponseProver::compress`, the A36/A45 path
+  (`compression::compress` → `compress_relation_image` →
+  `I8CommitPolicy::ConstantTime`, masked packing). u_a is hidden by r_a
+  and was public until O4, so a timing leak of it would not break the
+  hiding argument; the constant-time path is kept because the executor is
+  shared with secret images (t_D per attempt) and is not gated.
 - A2, A3 and A12 from W4 are resolved by §4.3, §4.6 and §5.4.
 
 ## 11. Questions for the paper authors
