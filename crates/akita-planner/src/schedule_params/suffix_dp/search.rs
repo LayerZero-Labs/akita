@@ -293,7 +293,20 @@ pub(super) fn process_candidate_batch(
         let natural_len = active_setup_field_len(&candidate, opening_layout)?;
         price_terminal_candidate(ctx, state, query_search, &candidate, natural_len, frontiers)?;
     }
-    let candidates_with_source = attach_source_moments(ctx, state, is_root_level, generated.folds)?;
+    let folds = match ctx.setup_field_budget {
+        // A fold whose own level setup exceeds the budget fits no schedule.
+        Some(budget) => {
+            let mut admitted = Vec::with_capacity(generated.folds.len());
+            for candidate in generated.folds {
+                if budget.admits(level_setup_field_elements(&candidate.params)?) {
+                    admitted.push(candidate);
+                }
+            }
+            admitted
+        }
+        None => generated.folds,
+    };
+    let candidates_with_source = attach_source_moments(ctx, state, is_root_level, folds)?;
     // Complete-root candidates are traversed in exact lower-bound order.
     // Recursive states do not have that global admission rule and retain
     // local Pareto pruning.

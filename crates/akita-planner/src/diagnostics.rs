@@ -56,6 +56,15 @@ pub(crate) struct SelectedScheduleDiagnostics {
     folds: Vec<SelectedFoldDiagnostics>,
 }
 
+/// Search work of one root search pass under one padded setup budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SetupBudgetPass {
+    /// `None` for a pass without a setup budget.
+    pub(crate) budget: Option<usize>,
+    pub(crate) generated_candidates: usize,
+    pub(crate) descriptor_builds: usize,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PlannerDiagnosticsSnapshot {
     pub(crate) suffix_dp_time: Duration,
@@ -81,6 +90,7 @@ pub(crate) struct PlannerDiagnosticsSnapshot {
     pub(crate) setup_prefix_cache_hits: usize,
     pub(crate) setup_prefix_cache_misses: usize,
     pub(crate) guided_direct_edge_prunes: usize,
+    pub(crate) setup_budget_passes: Vec<SetupBudgetPass>,
     selected: Option<SelectedScheduleDiagnostics>,
 }
 
@@ -129,6 +139,26 @@ impl fmt::Display for PlannerDiagnosticsSnapshot {
             self.setup_prefix_cache_hits
                 .saturating_add(self.setup_prefix_cache_misses),
         )?;
+        write!(
+            formatter,
+            " setup_budget_passes={}[",
+            self.setup_budget_passes.len()
+        )?;
+        for (index, pass) in self.setup_budget_passes.iter().enumerate() {
+            if index != 0 {
+                formatter.write_str(",")?;
+            }
+            match pass.budget {
+                Some(budget) => write!(formatter, "{budget}")?,
+                None => formatter.write_str("unbounded")?,
+            }
+            write!(
+                formatter,
+                ":candidates={}/descriptors={}",
+                pass.generated_candidates, pass.descriptor_builds
+            )?;
+        }
+        formatter.write_str("]")?;
         if let Some(selected) = &self.selected {
             write!(
                 formatter,
@@ -198,6 +228,7 @@ pub(crate) struct PlannerDiagnostics {
     setup_prefix_cache_hits: Cell<usize>,
     setup_prefix_cache_misses: Cell<usize>,
     guided_direct_edge_prunes: Cell<usize>,
+    setup_budget_passes: RefCell<Vec<SetupBudgetPass>>,
     selected: RefCell<Option<SelectedScheduleDiagnostics>>,
 }
 
@@ -297,6 +328,24 @@ impl PlannerDiagnostics {
             .set(self.guided_direct_edge_prunes.get().saturating_add(1));
     }
 
+    /// Candidates generated and descriptors built so far.
+    pub(crate) fn search_work(&self) -> [usize; 2] {
+        [
+            self.generated_candidates.get(),
+            self.descriptor_builds.get(),
+        ]
+    }
+
+    /// Record one root search pass that started at `search_work` `start`.
+    pub(crate) fn record_setup_budget_pass(&self, budget: Option<usize>, start: [usize; 2]) {
+        let [candidates, descriptors] = self.search_work();
+        self.setup_budget_passes.borrow_mut().push(SetupBudgetPass {
+            budget,
+            generated_candidates: candidates.saturating_sub(start[0]),
+            descriptor_builds: descriptors.saturating_sub(start[1]),
+        });
+    }
+
     pub(crate) fn record_selected(
         &self,
         objective: SelectionPolicyId,
@@ -349,6 +398,7 @@ impl PlannerDiagnostics {
             setup_prefix_cache_hits: self.setup_prefix_cache_hits.get(),
             setup_prefix_cache_misses: self.setup_prefix_cache_misses.get(),
             guided_direct_edge_prunes: self.guided_direct_edge_prunes.get(),
+            setup_budget_passes: self.setup_budget_passes.borrow().clone(),
             selected: self.selected.borrow().clone(),
         }
     }
@@ -427,5 +477,40 @@ mod tests {
         assert_eq!(snapshot.peak_state_frontier_candidates, 3);
         assert_eq!(snapshot.guided_direct_edge_prunes, 1);
         assert!(active().is_none());
+    }
+
+    #[test]
+    fn setup_budget_passes_record_work_since_their_start() {
+        let (_, snapshot) = capture(true, || {
+            let diagnostics = active().expect("diagnostics must be active inside capture");
+            diagnostics.record_candidates(12, 4);
+            let start = diagnostics.search_work();
+            diagnostics.record_candidates(5, 2);
+            diagnostics.record_descriptor(Duration::ZERO);
+            diagnostics.record_setup_budget_pass(Some(64), start);
+            let start = diagnostics.search_work();
+            diagnostics.record_candidates(3, 1);
+            diagnostics.record_setup_budget_pass(None, start);
+        });
+        let snapshot = snapshot.expect("enabled capture must return diagnostics");
+        assert_eq!(
+            snapshot.setup_budget_passes,
+            [
+                SetupBudgetPass {
+                    budget: Some(64),
+                    generated_candidates: 5,
+                    descriptor_builds: 1,
+                },
+                SetupBudgetPass {
+                    budget: None,
+                    generated_candidates: 3,
+                    descriptor_builds: 0,
+                },
+            ]
+        );
+        let line = snapshot.to_string();
+        assert!(line.contains(
+            " setup_budget_passes=2[64:candidates=5/descriptors=1,unbounded:candidates=3/descriptors=0]"
+        ));
     }
 }

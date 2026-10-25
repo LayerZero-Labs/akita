@@ -22,7 +22,7 @@ use crate::schedule_params::{
     derive_ab_commitment_candidate, derive_selected_suffix_schedule,
     materialize_candidate_schedule, recursive_split_search_domain, select_complete_candidate,
     AbCommitmentCandidateRequest, CandidateMaterializationCost, PlannerOpeningCandidate,
-    RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
+    RingChallengeConfigFn, ScheduleMemo, SetupFieldBudget, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -829,26 +829,9 @@ pub(crate) fn find_schedule_in_relation_order(
         ));
     }
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
-    let setup_field_budget = policy.setup_field_budget;
     let root_input_witness_len = checked::pow2(key.final_group.num_vars()).ok_or_else(|| {
         AkitaError::InvalidSetup("multi-group root-fold witness length overflow".to_string())
     })?;
-    let suffix_ctx = SuffixCtx {
-        policy,
-        challenge_order: policy.transcript_grinding_order()?,
-        diagnostics,
-        ring_challenge_config,
-        key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
-        setup_field_budget,
-        root_lookup_key: Some(key),
-        root_main_constraint: options.root_main_constraint,
-        adaptation_guide: options.adaptation_guide,
-        root_source_contract: Some(final_source_contract),
-        precommitted_source_contracts,
-        level_zero_is_root: true,
-        relation_traversal_order: options.relation_traversal_order,
-        relation_mode_filter: options.relation_mode_filter,
-    };
     let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(policy)?;
     let initial_state = SuffixState {
         input_chunks: None,
@@ -862,28 +845,82 @@ pub(crate) fn find_schedule_in_relation_order(
             relation_phase: super::schedule_params::RingRelationPhase::QuotientPrefix,
         },
     };
-    let mut memo = ScheduleMemo::new();
-    let suffix_started = diagnostics.map(|_| Instant::now());
     #[cfg(test)]
     let query_prefix_count = options.query_prefix_count;
     #[cfg(not(test))]
     let query_prefix_count = 0;
-    let suffix = derive_selected_suffix_schedule(
-        &suffix_ctx,
-        &mut memo,
-        initial_state,
-        0,
-        super::schedule_params::QuerySearch::Root(query_prefix_count),
-    );
-    if let (Some(diagnostics), Some(started)) = (diagnostics, suffix_started) {
-        diagnostics.add_suffix_dp_time(started.elapsed());
-        let (hits, misses) = memo.setup_prefix_cache_diagnostics();
-        diagnostics.record_setup_prefix_cache(hits, misses);
-    }
-    let suffix = suffix?;
-    let best = select_complete_candidate(policy, suffix.setup_candidates(), diagnostics)?;
-
-    let Some(best) = best.cloned() else {
+    // V6 searches under widening power-of-two setup budgets. Exactness:
+    // - Admission under a power-of-two budget `B` is padded setup `<= B`, and
+    //   every V6 dominance, bound and level prune keeps a side whose padded
+    //   setup is no larger. A rejected candidate can therefore displace only
+    //   candidates that are also over `B`. Frontiers are unbounded dominance
+    //   sets, split domains are fixed by geometry, and each pass gets a fresh
+    //   memo, so the in-budget part of every frontier is the unbudgeted one.
+    // - Setup is a maximum over levels, terminal and offloaded children, so
+    //   rejecting a partial schedule never rejects a completion within `B`.
+    // - A pass that selects `W` returns the unbudgeted winner, which fits
+    //   because its padded setup is at most `W`'s. A pass that rejects
+    //   nothing is the unbudgeted search. Otherwise the next budget is the
+    //   smallest rejected setup, padded; if that overflows, the last pass runs
+    //   without a budget. The starting budget changes only the pass count.
+    let mut padded_setup_limit = (policy.setup_field_budget.is_none()
+        && policy.selection_policy
+            == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6)
+        .then_some(1);
+    let best = loop {
+        let pass_budget = padded_setup_limit.or(policy.setup_field_budget);
+        let setup_field_budget = pass_budget.map(SetupFieldBudget::new);
+        let suffix_ctx = SuffixCtx {
+            policy,
+            challenge_order: policy.transcript_grinding_order()?,
+            diagnostics,
+            ring_challenge_config,
+            key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
+            setup_field_budget: setup_field_budget.as_ref(),
+            root_lookup_key: Some(key),
+            root_main_constraint: options.root_main_constraint,
+            adaptation_guide: options.adaptation_guide,
+            root_source_contract: Some(final_source_contract),
+            precommitted_source_contracts,
+            level_zero_is_root: true,
+            relation_traversal_order: options.relation_traversal_order,
+            relation_mode_filter: options.relation_mode_filter,
+        };
+        let mut memo = ScheduleMemo::new();
+        let suffix_started = diagnostics.map(|_| Instant::now());
+        let pass_start = diagnostics.map(|diagnostics| diagnostics.search_work());
+        let suffix = derive_selected_suffix_schedule(
+            &suffix_ctx,
+            &mut memo,
+            initial_state,
+            0,
+            super::schedule_params::QuerySearch::Root(query_prefix_count),
+        );
+        if let (Some(diagnostics), Some(started)) = (diagnostics, suffix_started) {
+            diagnostics.add_suffix_dp_time(started.elapsed());
+            let (hits, misses) = memo.setup_prefix_cache_diagnostics();
+            diagnostics.record_setup_prefix_cache(hits, misses);
+        }
+        let suffix = suffix?;
+        let best = select_complete_candidate(policy, suffix.setup_candidates(), diagnostics)?;
+        if let (Some(diagnostics), Some(start)) = (diagnostics, pass_start) {
+            diagnostics.record_setup_budget_pass(pass_budget, start);
+        }
+        // `Some(None)` asks for a final pass without a budget.
+        let widened = match (best, padded_setup_limit, setup_field_budget.as_ref()) {
+            (None, Some(limit), Some(budget)) => budget.min_rejected().map(|rejected| {
+                rejected
+                    .checked_next_power_of_two()
+                    .filter(|&next| next > limit)
+            }),
+            _ => None,
+        };
+        match widened {
+            Some(next) => padded_setup_limit = next,
+            None => break best.cloned(),
+        }
+    };
+    let Some(best) = best else {
         if key.precommitteds.is_empty() {
             return Err(AkitaError::UnsupportedSchedule(format!(
                 "no mixed-D schedule in the audited fold domain for num_vars={}, num_polynomials={}",
