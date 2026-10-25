@@ -2580,9 +2580,12 @@ The numbering continues the W4 note's A1–A23.
      there Thm `wo:thm:knowledge` proceeds unchanged: Lemma
      `wo:lem:weak-unique` gives one `s̄` across the ρ-leaves, and the
      cutoff certificate opens that u_a.
-  2. Item 3's equation is `N z = f + c·G₁ξ₁` on u_a's rows. The
-     verifier's weight on `ξ_a` is `−c^T`'s transpose applied through
-     `G₁^T`, the same map the pad image uses; no new weight family.
+  2. Item 3's equation is `N z = f + c·G₁ξ₁` on u_a's rows: still
+     linear in `e`, since `c` is public. Its weight on `ξ_a` is the
+     transposed `−c` weight on u_a's rows pulled back through
+     `ImageCompression::reconstruct_transpose` (`G₁^T`), the path the pad
+     image already takes (`ResponseStatement::weigh`); no new weight
+     family.
   3. The chain maps are Akita-priced (`CompressionChainPlan::
      for_complete_source`, compression SIS at ℓ∞ = 1); the 192-coefficient
      tail chunk is planned the same way as `t_p`'s 256-coefficient tail.
@@ -2610,6 +2613,41 @@ The numbering continues the W4 note's A1–A23.
   and was public until O4, so a timing leak of it would not break the
   hiding argument; the constant-time path is kept because the executor is
   shared with secret images (t_D per attempt) and is not gated.
+
+  *As built (O4).*
+  - Prover: `prove_masked_prefix` takes `compression: &dyn
+    ImageCompression<F>`; the fold sends its successor payload through
+    `SuccessorPayload` (`RawPayload` for every clear fold and the root;
+    the prefix's `CutPayload` compresses at `cut_level` and keeps the
+    payload for `ResidualOpening::residual_payload`).
+  - Verifier: `verify_masked_prefix` and `count_masked_prefix` take the
+    compression (only its `payload_len` is read); the masked replay's
+    `ClaimReplay::successor_payload_len` returns it at the cut, after
+    checking the image length against `ResidualGeometry::commitment_len`.
+    `ResidualClaim::commitment` is `cm(u_a)`.
+  - `ResidualShape::blocks(stream, payload, image)`;
+    `BackendCompression` is the response prover's compression on any CPU
+    backend (the response prover delegates to it).
+  - jolt passes `WhiteoutTail::compression` (the response prover) on the
+    prover side and `CompressionShape` on the verifier's.
+  - Size: `ξ_a` is 161,792 digits (two 512-coefficient chunks of 67,584,
+    one 192-coefficient chunk of 26,624). Measured on jolt (O4): the
+    masked prefix falls by 19,072 B on muldiv, fib 2^16 and fib 2^20, and
+    ν stays 24 / 25 / 26 (jolt D29).
+  - Tests: `a_compressed_residual_commitment_to_another_image_is_rejected`
+    (zk_end_to_end: a prefix sending `cm(u_a + e₀)` with that image as the
+    Σ target is refused by the Σ prover with `ResidualOpeningMismatch`, by
+    the response prover with `ResponseRejected`, and a forged response
+    proof is rejected by the verifier; the same unchecked path over the
+    honest payload verifies); `honest_masked_prefix_satisfies_its_residual_rows`
+    checks the claim's payload is the compression of the opened u_a, 8
+    coefficients per 512-coefficient chunk; jolt's
+    `whiteout_compressed_residual_commitment_chunks_reject_tampers`.
+  - `tests/masked_prefix.rs` now needs akita-pcs's `zk` (it compresses
+    through `BackendCompression`), so it compiles empty without it; CI
+    runs it in `test-zk`.
+  - No catalog row, plan, descriptor or clear byte changes; the modeled
+    `proof_bytes` of the zero-knowledge rows still count u_a raw.
 - A2, A3 and A12 from W4 are resolved by §4.3, §4.6 and §5.4.
 
 ## 11. Questions for the paper authors
