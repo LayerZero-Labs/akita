@@ -8,28 +8,30 @@ use jolt_field::{CanonicalEncoding, Ring, Zero};
 
 #[test]
 fn setup_prefix_sources_share_the_setup_and_survive_owner_drop() {
-    use akita_params::{FlatMatrix, SetupMatrixCapacity};
+    use akita_params::{FlatMatrix, SetupMatrixCapacity, SUPPORTED_COMMITMENT_RING_DIMS};
     use std::sync::Arc;
+    let minimum = *SUPPORTED_COMMITMENT_RING_DIMS.last().unwrap();
+    let small_vars = minimum.ilog2() as usize;
     let setup = crate::AkitaProverSetup::<F>::generate_with_capacity(
-        12,
+        small_vars + 1,
         1,
         SetupMatrixCapacity {
-            num_field_elements: 4096,
+            num_field_elements: minimum * 2,
         },
     )
     .unwrap()
     .expanded;
     let address = setup.shared_matrix().as_field_slice().as_ptr();
-    let small = DensePoly::from_setup_prefix(setup.clone(), 10).unwrap();
-    let large = DensePoly::from_setup_prefix(setup.clone(), 12).unwrap();
+    let small = DensePoly::from_setup_prefix(setup.clone(), small_vars).unwrap();
+    let large = DensePoly::from_setup_prefix(setup.clone(), small_vars + 1).unwrap();
     let clone = small.clone();
     assert_eq!(small.field_coeffs().as_ptr(), address);
     assert_eq!(large.field_coeffs().as_ptr(), address);
     assert_eq!(clone.field_coeffs().as_ptr(), address);
-    assert_eq!(small.field_coeffs().len(), 1024);
-    assert_eq!(large.field_coeffs().len(), 4096);
-    assert!(DensePoly::from_setup_prefix(setup.clone(), 13).is_err());
-    let expected = setup.shared_matrix().as_field_slice()[..1024].to_vec();
+    assert_eq!(small.field_coeffs().len(), minimum);
+    assert_eq!(large.field_coeffs().len(), minimum * 2);
+    assert!(DensePoly::from_setup_prefix(setup.clone(), small_vars + 2).is_err());
+    let expected = setup.shared_matrix().as_field_slice()[..minimum].to_vec();
     drop(setup);
     assert_eq!(clone.field_coeffs(), expected);
     drop(small);
