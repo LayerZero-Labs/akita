@@ -47,6 +47,7 @@ response-model-diagnostics = []
 # §4.5–4.6). It selects nothing: a zero-knowledge configuration does.
 zk = [
   "dep:jolt-zk",
+  "jolt-zk/whiteout",
   "dep:zeroize",
   "akita-types/zk",
   "akita-params/zk",

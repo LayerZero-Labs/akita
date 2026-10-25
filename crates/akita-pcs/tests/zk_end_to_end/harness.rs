@@ -10,7 +10,8 @@ use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveC
 use akita_error::AkitaError;
 use akita_params::{ChunkedWitnessCfg, ProtocolSiteId};
 use akita_pcs::zk::{
-    AkitaResponseProver, MaskedPrefix, ResidualOpening, ResidualShape, UncheckedResponseProver,
+    AkitaResponseProver, CompressionShape, MaskedPrefix, ResidualOpening, ResidualShape,
+    UncheckedResponseProver,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_types::{AkitaSponge, PROOF_STREAM_PROTOCOL};
@@ -22,7 +23,8 @@ use jolt_zk::masking::{
 };
 use jolt_zk::whiteout::{
     prove_sigma, prove_sigma_unchecked, sample_zero_constant_term, verify_sigma, BlockTarget,
-    ImageCompression, LatticePadCommitment, PadPlacement, SigmaSetup, WhiteoutError,
+    CompressedImage, ImageCompression, LatticePadCommitment, PadPlacement, SigmaSetup,
+    WhiteoutError,
 };
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
@@ -99,6 +101,10 @@ pub(crate) struct Cheat {
     /// its message: the decoded message is one more than the true one, and
     /// the auxiliary pads are recomputed so the products follow it.
     pub(crate) shifted_slot: Option<usize>,
+    /// Send `cm(u_a + 1)` (u_a with its first coefficient raised by one)
+    /// at the cut, and state that image as the Σ target: everything agrees
+    /// except the residual's opening of it (A47).
+    pub(crate) shifted_residual: bool,
     /// Skip the Σ prover's per-row checks.
     pub(crate) unchecked_sigma: bool,
     /// Skip the response prover's statement check too.
@@ -206,16 +212,18 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
         .unwrap()
     }
 
-    /// The Σ setup over `blocks` of the residual and the pad image.
+    /// The Σ setup over `blocks` of the residual, with u_a's compressed
+    /// payload (and image, on the prover's side), and the pad image.
     pub(crate) fn sigma<const D: usize>(
         &self,
-        u_a: &[F],
+        u_a_payload: &[F],
+        u_a: Option<&[F]>,
         stream: &[F],
         pad_image: BlockTarget<F, D>,
     ) -> Result<SigmaSetup<F, D>, Failure> {
         Ok(SigmaSetup::new(
             self.shape.segments(),
-            self.shape.blocks::<D>(stream, u_a)?,
+            self.shape.blocks::<D>(stream, u_a_payload, u_a)?,
             &self.pad_commitment::<D>(),
             pad_image,
             V_RANK,
@@ -225,12 +233,11 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
 
     /// e's variable count, from the public Σ setup alone.
     pub(crate) fn response_num_vars<const D: usize>(&self) -> usize {
-        let profile = self.shape.geometry().profile;
-        let u_a = vec![F::zero(); profile.outer.matrix.output_rank() * D];
         let stream = self.instance.setup.expanded.shared_matrix.as_field_slice();
         let sigma = self
             .sigma::<D>(
-                &u_a,
+                &[],
+                None,
                 stream,
                 BlockTarget::Compressed {
                     payload: Vec::new(),
@@ -239,7 +246,7 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
             )
             .unwrap();
         let layout = sigma
-            .response_layout(&akita_pcs::zk::CompressionShape::<ResponseCfg>::default())
+            .response_layout(&CompressionShape::<ResponseCfg>::default())
             .unwrap();
         AkitaResponseProver::<ResponseCfg>::num_vars(&layout).unwrap()
     }
@@ -330,9 +337,20 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
         transcript.site(PAD_SITE);
         transcript.send_all(&compressed.payload);
         let mut masking = CommittedPads::uncommitted(self.layout.clone(), pads)?;
+        let shifted = ShiftedImage(self.response());
+        let compression: &dyn ImageCompression<F> = if cheat.shifted_residual {
+            &shifted
+        } else {
+            self.response()
+        };
         let (residual, auxiliary) =
             self.instance
-                .prove_prefix_on(&mut masking, own_pads, &mut transcript)?;
+                .prove_prefix_on(&mut masking, own_pads, &mut transcript, compression)?;
+        let u_a = if cheat.shifted_residual {
+            shifted.shift(&residual.residual_commitment)
+        } else {
+            residual.residual_commitment.clone()
+        };
         // A consistent cheat sends the products of its shifted messages.
         let auxiliary = match cheat.shifted_slot {
             None => auxiliary,
@@ -362,7 +380,8 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
             VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, &bytes);
         let Replayed { relation, .. } = self.replay(&mut replay, pad_image.len())?;
         let sigma = self.sigma::<D>(
-            &residual.residual_commitment,
+            &residual.residual_payload,
+            Some(&u_a),
             self.instance.setup.expanded.shared_matrix.as_field_slice(),
             BlockTarget::Compressed {
                 payload: compressed.payload.clone(),
@@ -432,6 +451,7 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
         let claim = prefix.residual_claim();
         let sigma = self.sigma::<D>(
             claim.commitment(),
+            None,
             self.instance
                 .verifier
                 .setup()
@@ -471,9 +491,52 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
             &mut CommittedPadsView::counting(),
             self.instance.statement(),
             own_pads(claims),
+            &CompressionShape::<C>::default(),
             BASIS,
         );
         transcript.events().to_vec()
+    }
+}
+
+/// A compression that raises an image's first coefficient by one before
+/// compressing it: a prover whose `cm(u_a)` commits to another image.
+pub(crate) struct ShiftedImage<'a>(pub(crate) &'a dyn ImageCompression<F>);
+
+impl ShiftedImage<'_> {
+    pub(crate) fn shift(&self, image: &[F]) -> Vec<F> {
+        let mut shifted = image.to_vec();
+        shifted[0] += F::one();
+        shifted
+    }
+}
+
+impl ImageCompression<F> for ShiftedImage<'_> {
+    fn payload_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        self.0.payload_len(image_len)
+    }
+
+    fn witness_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        self.0.witness_len(image_len)
+    }
+
+    fn compress(&self, image: &[F]) -> Result<CompressedImage<F>, WhiteoutError> {
+        self.0.compress(&self.shift(image))
+    }
+
+    fn reconstruct(&self, image_len: usize, witness: &[i8]) -> Result<Vec<F>, WhiteoutError> {
+        self.0.reconstruct(image_len, witness)
+    }
+
+    fn reconstruct_transpose(
+        &self,
+        image_len: usize,
+        weights: &[F],
+    ) -> Result<Vec<F>, WhiteoutError> {
+        self.0.reconstruct_transpose(image_len, weights)
+    }
+
+    fn check(&self, image_len: usize, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError> {
+        self.0.check(image_len, payload, witness)
     }
 }
 

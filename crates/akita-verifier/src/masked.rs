@@ -53,15 +53,27 @@ enum MaskedCheck<F> {
 pub(crate) struct MaskedReplay<'g, G, F> {
     grinding: &'g mut G,
     checks: Vec<MaskedCheck<F>>,
+    cut: CompressedCut,
 }
 
 impl<'g, G, F> MaskedReplay<'g, G, F> {
-    pub(crate) fn new(grinding: &'g mut G) -> Self {
+    pub(crate) fn new(grinding: &'g mut G, cut: CompressedCut) -> Self {
         Self {
             grinding,
             checks: Vec::new(),
+            cut,
         }
     }
+}
+
+/// The cut level's successor message: u_a, an image of `image_len`
+/// coefficients, sent as its `payload_len`-coefficient compression
+/// (`specs/whiteout-akita.md` A47).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CompressedCut {
+    pub(crate) level: u32,
+    pub(crate) image_len: usize,
+    pub(crate) payload_len: usize,
 }
 
 /// The masked value received in `slots`: one value of the pad field, one pad.
@@ -151,6 +163,18 @@ where
 
     fn clear_values(_: &[AffineRow<E>]) -> Result<Vec<E>, AkitaError> {
         clear_only()
+    }
+
+    fn successor_payload_len(&self, level: u32, image_len: usize) -> Result<usize, AkitaError> {
+        if level != self.cut.level {
+            return Ok(image_len);
+        }
+        if image_len != self.cut.image_len {
+            return Err(AkitaError::InvalidSetup(
+                "the cut's successor image differs from the residual commitment".into(),
+            ));
+        }
+        Ok(self.cut.payload_len)
     }
 
     fn receive_field_digest(&mut self, _: SiteId) -> Result<[u8; FIELD_DIGEST_BYTES], AkitaError> {
@@ -265,7 +289,7 @@ where
 }
 
 /// The hand-off at the cut, as one value: the residual relation's
-/// `Witness(0)` is the evaluation of the w_k that `commitment` (u_a, as this
+/// `Witness(0)` is the evaluation of the w_k that `commitment` (`cm(u_a)`, as this
 /// verifier received it) commits to, at `point`, and the cut row equates it
 /// with the cut level's masked Stage-2 witness evaluation. The residual back
 /// end opens `commitment` at `point` and nothing else, so neither can drift
@@ -311,7 +335,8 @@ impl<F: Field, B> ResidualClaim<F, B> {
         &self.point
     }
 
-    /// u_a, the raw outer commitment to w_k this verifier received.
+    /// `cm(u_a)`, the compressed outer commitment to w_k this verifier
+    /// received (A47); the Σ-protocol's response proof opens it to u_a.
     pub fn commitment(&self) -> &[B] {
         &self.commitment
     }

@@ -15,6 +15,7 @@ use akita_params::{
     lagrange_weights, BasisMode, ChunkedWitnessCfg, CommittedGroupBatchProfile,
     OpeningScheduleSelection, PolynomialGroupLayout, ScheduleLookupKey,
 };
+use akita_pcs::zk::{BackendCompression, CompressionShape};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     prove_masked_prefix, ResidualOpening, SelectedProverOpeningData, SetupPrefixProverRegistry,
@@ -31,6 +32,7 @@ use jolt_transcript::{
 use jolt_zk::masking::{
     AffineRow, CommittedPads, CommittedPadsView, OperandShapeDomain, PadIndex, PadLayout, ZkError,
 };
+use jolt_zk::whiteout::ImageCompression;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -302,6 +304,7 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
                 (claims.start..claims.start + claims.len)
                     .map(|slot| AffineRow::masked(F::zero(), PadIndex(slot)))
                     .collect(),
+                &CompressionShape::<C>::default(),
                 BASIS,
             )
             .unwrap();
@@ -330,18 +333,25 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
         claims: impl FnOnce(Vec<F>) -> Vec<AffineRow<F>>,
         transcript: &mut ProverTranscript<AkitaSponge>,
     ) -> Result<(ResidualOpening<F, F>, Vec<F>), AkitaError> {
-        let (residual, auxiliary) = self.prove_prefix_on(pads, claims, transcript)?;
+        let (residual, auxiliary) = self.prove_prefix_on(
+            pads,
+            claims,
+            transcript,
+            &BackendCompression::<C>::new(&self.backend),
+        )?;
         self.send_auxiliary(pads, &auxiliary, transcript)?;
         Ok((residual, auxiliary))
     }
 
     /// The masked claims and the masked prefix, without the auxiliary
-    /// block: the residual opening and Akita's auxiliary values.
+    /// block, sending u_a under `compression`: the residual opening and
+    /// Akita's auxiliary values.
     pub(crate) fn prove_prefix_on(
         &self,
         pads: &mut CommittedPads<F, ()>,
         claims: impl FnOnce(Vec<F>) -> Vec<AffineRow<F>>,
         transcript: &mut ProverTranscript<AkitaSponge>,
+        compression: &dyn ImageCompression<F>,
     ) -> Result<(ResidualOpening<F, F>, Vec<F>), AkitaError> {
         transcript.site(CLAIMS_SITE);
         let masked_claims = pads.send(&self.openings(), transcript)?;
@@ -354,6 +364,7 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
             &claims(masked_claims),
             pads,
             transcript,
+            compression,
             BASIS,
         )
     }
@@ -437,6 +448,7 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
                 .zip(slots.start..)
                 .map(|(&claim, slot)| AffineRow::masked(claim, PadIndex(slot)))
                 .collect(),
+            &CompressionShape::<C>::default(),
             BASIS,
         )
     }

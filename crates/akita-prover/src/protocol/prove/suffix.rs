@@ -39,6 +39,7 @@ pub(super) fn prove_recursive_step<
     session: &B::ProofSessionHandle,
     index: usize,
     handoff: &mut impl super::registry::SuccessorHandoff<Cfg, B>,
+    payload: &mut impl fold::SuccessorPayload<Cfg::Field>,
 ) -> Result<
     ProveLevelOutput<Cfg::Field, Cfg::ExtField, B::CommitmentMaterialHandle, B::WitnessHandle>,
     AkitaError,
@@ -107,6 +108,7 @@ where
         step.output_witness_len,
         next_binding,
         prepared,
+        payload,
         |relation, commitment, binding, witness, material| {
             handoff.handoff_successor(
                 backend,

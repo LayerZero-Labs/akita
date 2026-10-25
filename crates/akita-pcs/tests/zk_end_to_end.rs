@@ -527,6 +527,7 @@ fn a_fold_overflow_rerun_reuses_nothing() {
                 &own_pads(claims),
                 &mut masking,
                 &mut transcript,
+                harness.response(),
                 BASIS,
             );
             private.reject_fold_probe.set(None);
@@ -670,5 +671,64 @@ fn a_consistent_cheat_fails_at_every_layer() {
                 "{kind:?}: {error:?}"
             );
         }
+    });
+}
+
+/// A47: a prover whose `cm(u_a)` commits to an image the residual does not
+/// open, stated consistently as the Σ target. The Σ prover refuses, the
+/// response prover refuses, and the verifier rejects a forged response
+/// proof. The same unchecked path over the honest `cm(u_a)` verifies, so
+/// the rejection is u_a's compressed target, not the unchecked provers.
+#[test]
+fn a_compressed_residual_commitment_to_another_image_is_rejected() {
+    on_large_stack(|| {
+        let harness = single();
+        let unchecked = Cheat {
+            unchecked_sigma: true,
+            unchecked_response: true,
+            ..Cheat::default()
+        };
+        let control = harness.prove(16, unchecked).unwrap();
+        harness.verify(&control.proof).unwrap();
+        let cheat = Cheat {
+            shifted_residual: true,
+            ..Cheat::default()
+        };
+        let error = harness.prove(16, cheat).err().unwrap();
+        assert!(
+            matches!(
+                whiteout(&error),
+                Some(WhiteoutError::ResidualOpeningMismatch)
+            ),
+            "{error:?}"
+        );
+        let error = harness
+            .prove(
+                16,
+                Cheat {
+                    unchecked_sigma: true,
+                    ..cheat
+                },
+            )
+            .err()
+            .unwrap();
+        assert!(
+            matches!(whiteout(&error), Some(WhiteoutError::ResponseRejected(_))),
+            "{error:?}"
+        );
+        let forged = harness
+            .prove(
+                16,
+                Cheat {
+                    shifted_residual: true,
+                    ..unchecked
+                },
+            )
+            .unwrap();
+        let error = harness.verify(&forged.proof).err().unwrap();
+        assert!(
+            matches!(whiteout(&error), Some(WhiteoutError::ResponseRejected(_))),
+            "{error:?}"
+        );
     });
 }

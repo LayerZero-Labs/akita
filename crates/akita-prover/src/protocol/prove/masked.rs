@@ -8,6 +8,7 @@
 //! (`SuffixEnd::Cut`) and hands back the [`ResidualOpening`] and Akita's
 //! auxiliary values.
 
+use super::fold::SuccessorPayload;
 use super::registry::SuccessorHandoff;
 use super::*;
 use crate::backend::{
@@ -18,10 +19,11 @@ use crate::SelectedProverOpeningData;
 use akita_config::TrustedScheduleCatalog;
 use akita_params::zk::{AdmittedZkSchedule, ResidualGeometry};
 use akita_types::{check_range_leaf, AkitaSetupDescriptor, MaskedOpeningClaims, ProverGrinding};
-use jolt_algebra::AdditiveGroup;
+use jolt_algebra::{AdditiveGroup, JoltField};
 use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_transcript::{Channel, ProverTranscript};
-use jolt_zk::masking::{CommittedPads, ValuesDomain};
+use jolt_zk::masking::{CommittedPads, ValuesDomain, ZkError};
+use jolt_zk::whiteout::ImageCompression;
 use zeroize::Zeroizing;
 
 /// What the masked prefix hands the residual back end at the cut: the
@@ -43,6 +45,8 @@ pub struct ResidualOpening<F, E> {
     pub witness_eval: E,
     /// u_a, the raw outer commitment.
     pub residual_commitment: Vec<F>,
+    /// `cm(u_a)`, the cut level's message for u_a (A47).
+    pub residual_payload: Vec<F>,
     /// w_k's digits.
     pub w_k: Zeroizing<Vec<i8>>,
     /// Base-two logarithm of w_k's balanced digit alphabet: the cut level's
@@ -57,6 +61,26 @@ pub struct ResidualOpening<F, E> {
     /// Base-two logarithm of r_a's alphabet
     /// (`akita_params::zk::RESIDUAL_RANDOMNESS_LOG_BASIS`).
     pub r_a_log_basis: u32,
+}
+
+/// The masked levels' successor payloads: u itself before the cut, and
+/// `cm(u_a)` under `compression` at it (A47).
+struct CutPayload<'a, F: JoltField> {
+    cut_level: u32,
+    compression: &'a dyn ImageCompression<F>,
+    /// `cm(u_a)`, once sent.
+    sent: Option<Vec<F>>,
+}
+
+impl<F: JoltField> SuccessorPayload<F> for CutPayload<'_, F> {
+    fn payload(&mut self, level: u32, u: &[F]) -> Result<Vec<F>, AkitaError> {
+        if level != self.cut_level {
+            return Ok(u.to_vec());
+        }
+        let payload = self.compression.compress(u).map_err(ZkError::from)?.payload;
+        self.sent = Some(payload.clone());
+        Ok(payload)
+    }
 }
 
 /// One backend proves every masked level, so a committed successor stays
@@ -93,6 +117,10 @@ where
 /// result is the cut's [`ResidualOpening`] and Akita's auxiliary values, in
 /// slot order: the Stage-1 leaf check's one auxiliary slot per masked level.
 ///
+/// The cut level sends u_a as its compression under `compression`, the
+/// response proof's chain, which runs in constant time in the image
+/// (`specs/whiteout-akita.md` A47, A36).
+///
 /// # Errors
 ///
 /// [`AkitaError::InvalidSetup`] or [`AkitaError::UnsupportedSchedule`] if the
@@ -111,6 +139,7 @@ pub fn prove_masked_prefix<Cfg, B, S, O>(
     openings: &MaskedOpeningClaims<Cfg::ExtField>,
     pads: &mut CommittedPads<Cfg::ExtField, O>,
     transcript: &mut ProverTranscript<S>,
+    compression: &dyn ImageCompression<Cfg::Field>,
     basis: BasisMode,
 ) -> Result<
     (
@@ -121,7 +150,13 @@ pub fn prove_masked_prefix<Cfg, B, S, O>(
 >
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: CanonicalEncoding + AkitaSerialize + Unreduced + PseudoMersenne + Ring + 'static,
+    Cfg::Field: CanonicalEncoding
+        + JoltField
+        + AkitaSerialize
+        + Unreduced
+        + PseudoMersenne
+        + Ring
+        + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
         + ExtField<Cfg::Field>
@@ -190,6 +225,11 @@ where
             &mut OwnBackend,
         )?;
         let mut auxiliary = ValuesDomain::default();
+        let mut payload = CutPayload {
+            cut_level,
+            compression,
+            sent: None,
+        };
         for index in 0..cut_level as usize {
             level.lower_range_leaf(&mut auxiliary)?;
             level = suffix::prove_recursive_step::<Cfg, B, S, _>(
@@ -202,6 +242,7 @@ where
                 scope.session(),
                 index,
                 &mut OwnBackend,
+                &mut payload,
             )?;
         }
         level.lower_range_leaf(&mut auxiliary)?;
@@ -228,12 +269,16 @@ where
                 "the cut level's successor is not a recursive commitment".into(),
             ));
         };
+        let residual_payload = payload
+            .sent
+            .ok_or_else(|| AkitaError::Internal("the cut level sent no payload".into()))?;
         Ok((
             ResidualOpening {
                 cut_level,
                 point: akita_types::residual_point(public.sumcheck_challenges, w_k.len()),
                 witness_eval: public.opening,
                 residual_commitment: residual_commitment.coeffs().to_vec(),
+                residual_payload,
                 w_k,
                 w_k_log_basis: geometry.witness_log_basis,
                 t_hat_a: t_hat,

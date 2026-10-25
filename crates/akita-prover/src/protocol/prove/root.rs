@@ -139,6 +139,7 @@ where
         schedule.root.output_witness_len,
         next_binding,
         prepared,
+        &mut fold::RawPayload,
         |relation, commitment, binding, witness, material| {
             handoff.handoff_successor(
                 backend,

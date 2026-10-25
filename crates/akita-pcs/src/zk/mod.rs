@@ -684,10 +684,27 @@ impl<Cfg: CommitmentConfig> ImageCompression<F> for CompressionShape<Cfg> {
     }
 }
 
-impl<Cfg> ImageCompression<F> for AkitaResponseProver<Cfg>
-where
-    Cfg: CommitmentConfig<Field = F, ExtField = F> + 'static,
-{
+/// Akita's image compression on a prover backend whose setup holds the
+/// chains' maps: the response prover's, and the masked prefix's message for
+/// u_a (`specs/whiteout-akita.md` A47). It runs in constant time in the
+/// image (A36).
+pub struct BackendCompression<'a, Cfg> {
+    backend: &'a CpuBackend<F, F>,
+    config: std::marker::PhantomData<Cfg>,
+}
+
+impl<'a, Cfg> BackendCompression<'a, Cfg> {
+    /// Compression on `backend`; compressing fails if its setup does not
+    /// hold the chains' maps.
+    pub fn new(backend: &'a CpuBackend<F, F>) -> Self {
+        Self {
+            backend,
+            config: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<Cfg: CommitmentConfig> ImageCompression<F> for BackendCompression<'_, Cfg> {
     fn payload_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
         CompressionShape::<Cfg>::default().payload_len(image_len)
     }
@@ -697,10 +714,7 @@ where
     }
 
     fn compress(&self, image: &[F]) -> Result<CompressedImage<F>, WhiteoutError> {
-        let side = self.prover.as_ref().ok_or(WhiteoutError::InvalidRelation(
-            "a verifier-only response prover cannot compress",
-        ))?;
-        compression::compress(&side.backend, Cfg::sis_modulus_profile(), image)
+        compression::compress(self.backend, Cfg::sis_modulus_profile(), image)
             .map_err(compression::whiteout_error)
     }
 
@@ -727,5 +741,52 @@ where
         } else {
             Err(WhiteoutError::ResponseRejected("compressed image"))
         }
+    }
+}
+
+impl<Cfg> AkitaResponseProver<Cfg>
+where
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + 'static,
+{
+    /// The compression on this prover's backend.
+    fn backend_compression(&self) -> Result<BackendCompression<'_, Cfg>, WhiteoutError> {
+        let side = self.prover.as_ref().ok_or(WhiteoutError::InvalidRelation(
+            "a verifier-only response prover cannot compress",
+        ))?;
+        Ok(BackendCompression::new(&side.backend))
+    }
+}
+
+impl<Cfg> ImageCompression<F> for AkitaResponseProver<Cfg>
+where
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + 'static,
+{
+    fn payload_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        CompressionShape::<Cfg>::default().payload_len(image_len)
+    }
+
+    fn witness_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        CompressionShape::<Cfg>::default().witness_len(image_len)
+    }
+
+    fn compress(&self, image: &[F]) -> Result<CompressedImage<F>, WhiteoutError> {
+        self.backend_compression()?.compress(image)
+    }
+
+    fn reconstruct(&self, image_len: usize, witness: &[i8]) -> Result<Vec<F>, WhiteoutError> {
+        CompressionShape::<Cfg>::default().reconstruct(image_len, witness)
+    }
+
+    fn reconstruct_transpose(
+        &self,
+        image_len: usize,
+        weights: &[F],
+    ) -> Result<Vec<F>, WhiteoutError> {
+        CompressionShape::<Cfg>::default().reconstruct_transpose(image_len, weights)
+    }
+
+    fn check(&self, image_len: usize, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError> {
+        self.backend_compression()?
+            .check(image_len, payload, witness)
     }
 }

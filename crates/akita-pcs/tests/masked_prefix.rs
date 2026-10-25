@@ -8,6 +8,9 @@
 //! same masked channel and lowers the stage checks into residual rows, which
 //! jolt-zk's row checker evaluates on the pads and the residual witness.
 
+// The prefix sends u_a under akita-pcs's compression (A47), which the `zk`
+// feature compiles.
+#![cfg(feature = "zk")]
 #![allow(missing_docs)]
 
 mod common;
@@ -22,6 +25,7 @@ use akita_cpu_backend::{CpuBackend, GroupContext};
 use akita_error::AkitaError;
 use akita_params::zk::ZK_CUT_LEVEL;
 use akita_params::ChunkedWitnessCfg;
+use akita_pcs::zk::{BackendCompression, CompressionShape};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{prove_masked_prefix, ResidualOpening, SelectedProverOpeningData};
 use akita_types::{
@@ -35,6 +39,7 @@ use jolt_zk::masking::{
     AffineRow, CommittedPads, CommittedPadsView, PadIndex, PadLayout, ResidualRelation,
     ResidualRows,
 };
+use jolt_zk::whiteout::ImageCompression;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -135,7 +140,17 @@ fn honest_masked_prefix_satisfies_its_residual_rows() {
         );
         let claim = honest.prefix.residual_claim();
         assert_eq!(claim.cut_level(), ZK_CUT_LEVEL);
-        assert_eq!(claim.commitment(), honest.residual.residual_commitment);
+        // The cut sends cm(u_a) (A47): the compression of the u_a the
+        // residual opens, one 8-coefficient payload per 512-coefficient chunk.
+        assert_eq!(claim.commitment(), honest.residual.residual_payload);
+        let compressed = BackendCompression::<Cfg>::new(&honest.instance.backend)
+            .compress(&honest.residual.residual_commitment)
+            .unwrap();
+        assert_eq!(claim.commitment(), compressed.payload);
+        assert_eq!(
+            claim.commitment().len(),
+            8 * honest.residual.residual_commitment.len().div_ceil(512)
+        );
         assert_eq!(
             claim.witness_eval().evaluate(&honest.pads, &[]).unwrap(),
             honest.residual.witness_eval
@@ -311,6 +326,7 @@ fn masked_entries_reject_wrong_claims_and_clear_schedules() {
                 &mut CommittedPadsView::counting(),
                 clear.statement(),
                 vec![AffineRow::masked(F::zero(), PadIndex(0))],
+                &CompressionShape::<Clear>::default(),
                 BASIS,
             )
             .unwrap_err();
@@ -705,6 +721,7 @@ fn a_stage3_output_miss_is_rejected_at_a_masked_level() {
                 &own_pads(masked),
                 &mut pads,
                 &mut transcript,
+                &BackendCompression::<RecCfg>::new(&instance.backend),
                 BASIS,
             )
             .unwrap();
