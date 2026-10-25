@@ -6,27 +6,32 @@
 use super::root::verify_root;
 use super::suffix::{verify_suffix_level, SuffixVerifierState};
 use super::verify::OpeningPlan;
-use crate::masked::{MaskedPrefix, MaskedReplay, ResidualClaim};
+use crate::masked::{CompressedCut, MaskedPrefix, MaskedReplay, ResidualClaim};
 use crate::AkitaVerifier;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_params::zk::ZkOpeningSchedule;
+use akita_params::zk::{AdmittedZkSchedule, ResidualGeometry};
 use akita_params::BasisMode;
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
     CommittedGroup, CountingGrinding, FoldResponseReplay, FpExtEncoding, GroupBatchStatement,
     MaskedOpeningClaims, OpeningClaims, VerifierGrinding,
 };
-use jolt_algebra::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, JoltField, PseudoMersenne, Ring};
 use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{PrivateChannel, Sponge, VerifierTranscript};
-use jolt_zk::masking::CommittedPadsView;
+use jolt_zk::masking::{CommittedPadsView, ZkError};
+use jolt_zk::whiteout::ImageCompression;
 
 impl<Cfg> AkitaVerifier<Cfg>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field:
-        Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne + Valid,
+    Cfg::Field: Field
+        + CanonicalEncoding
+        + JoltField
+        + akita_serialization::AkitaSerialize
+        + PseudoMersenne
+        + Valid,
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
 {
     /// Replays levels `0..=cut_level` of a zero-knowledge opening over the
@@ -40,6 +45,10 @@ where
     /// the masked statement claims those forms are built from into
     /// `transcript`, before this call: the replay binds none of them.
     ///
+    /// The cut level sends u_a as its compression under `compression`, the
+    /// response proof's chain (`specs/whiteout-akita.md` A47); the
+    /// [`ResidualClaim`] holds that payload.
+    ///
     /// # Errors
     ///
     /// [`AkitaError::InvalidSetup`] or [`AkitaError::UnsupportedSchedule`] if
@@ -51,24 +60,19 @@ where
         pads: &mut CommittedPadsView<C>,
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         openings: MaskedOpeningClaims<Cfg::ExtField>,
+        compression: &dyn ImageCompression<Cfg::Field>,
         basis: BasisMode,
     ) -> Result<MaskedPrefix<Cfg::ExtField, Cfg::Field>, AkitaError> {
         let selection = statement.selection();
         let claims = statement.into_claims();
-        let (opening, cut_level) =
-            self.plan_masked_opening(selection, &claims, &openings, basis)?;
+        let (opening, cut) =
+            self.plan_masked_opening(selection, &claims, &openings, compression, basis)?;
         let mut channel = pads.channel(transcript);
         opening.absorb_descriptor(&mut channel);
         let mut grinding = VerifierGrinding::new(&mut channel, &opening.grinding_plan);
-        let prefix = self.replay_masked_levels(
-            &mut grinding,
-            &opening,
-            &claims,
-            openings,
-            basis,
-            cut_level,
-        )?;
-        grinding.finish_through(cut_level)?;
+        let prefix =
+            self.replay_masked_levels(&mut grinding, &opening, &claims, openings, basis, cut)?;
+        grinding.finish_through(cut.level)?;
         Ok(prefix)
     }
 
@@ -93,24 +97,19 @@ where
         view: &mut CommittedPadsView<()>,
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         openings: MaskedOpeningClaims<Cfg::ExtField>,
+        compression: &dyn ImageCompression<Cfg::Field>,
         basis: BasisMode,
     ) -> Result<MaskedPrefix<Cfg::ExtField, Cfg::Field>, AkitaError> {
         let selection = statement.selection();
         let claims = statement.into_claims();
-        let (opening, cut_level) =
-            self.plan_masked_opening(selection, &claims, &openings, basis)?;
+        let (opening, cut) =
+            self.plan_masked_opening(selection, &claims, &openings, compression, basis)?;
         let mut channel = view.channel(transcript);
         opening.absorb_descriptor(&mut channel);
         let mut grinding = CountingGrinding::new(&mut channel, &opening.grinding_plan);
-        let prefix = self.replay_masked_levels(
-            &mut grinding,
-            &opening,
-            &claims,
-            openings,
-            basis,
-            cut_level,
-        )?;
-        grinding.finish_through(cut_level)?;
+        let prefix =
+            self.replay_masked_levels(&mut grinding, &opening, &claims, openings, basis, cut)?;
+        grinding.finish_through(cut.level)?;
         Ok(prefix)
     }
 
@@ -119,10 +118,11 @@ where
         selection: akita_params::OpeningScheduleSelection,
         claims: &OpeningClaims<'_, Cfg::ExtField, &CommittedGroup<Cfg::Field>>,
         openings: &MaskedOpeningClaims<Cfg::ExtField>,
+        compression: &dyn ImageCompression<Cfg::Field>,
         basis: BasisMode,
-    ) -> Result<(OpeningPlan<'_>, u32), AkitaError> {
+    ) -> Result<(OpeningPlan<'_>, CompressedCut), AkitaError> {
         let opening = self.plan_opening(selection, claims, basis)?;
-        let zk = ZkOpeningSchedule::admit(
+        let admitted = AdmittedZkSchedule::new(
             opening.schedule,
             Cfg::committed_source_contract()?,
             Cfg::EXT_DEGREE,
@@ -132,7 +132,14 @@ where
                 "masked statement claims differ from the opening layout".into(),
             ));
         }
-        Ok((opening, zk.cut_level()))
+        let image_len =
+            ResidualGeometry::new(admitted, Cfg::Field::MODULUS_BITS)?.commitment_len()?;
+        let cut = CompressedCut {
+            level: admitted.zk().cut_level(),
+            image_len,
+            payload_len: compression.payload_len(image_len).map_err(ZkError::from)?,
+        };
+        Ok((opening, cut))
     }
 
     fn replay_masked_levels<G>(
@@ -142,7 +149,7 @@ where
         claims: &OpeningClaims<'_, Cfg::ExtField, &CommittedGroup<Cfg::Field>>,
         openings: MaskedOpeningClaims<Cfg::ExtField>,
         basis: BasisMode,
-        cut_level: u32,
+        cut: CompressedCut,
     ) -> Result<MaskedPrefix<Cfg::ExtField, Cfg::Field>, AkitaError>
     where
         G: FoldResponseReplay<State: PrivateChannel<Error: Into<SumcheckError<Cfg::ExtField>>>>,
@@ -150,7 +157,7 @@ where
         let setup = &self.setup;
         let schedule = opening.schedule;
         let raw_claims = opening.raw_claims(claims)?;
-        let mut replay = MaskedReplay::new(grinding);
+        let mut replay = MaskedReplay::new(grinding, cut);
         let root = verify_root::<Cfg::Field, Cfg::ExtField, _>(
             setup,
             &mut replay,
@@ -164,11 +171,11 @@ where
         )?;
         let mut state =
             SuffixVerifierState::from_root(root, schedule.root_fold().output_witness_len);
-        for offset in 0..cut_level as usize {
+        for offset in 0..cut.level as usize {
             state = verify_suffix_level(setup, &mut replay, schedule, offset, state)?;
         }
         let claim = ResidualClaim::new(
-            cut_level,
+            cut.level,
             state.opening_point,
             state.witness_len,
             state.opening,

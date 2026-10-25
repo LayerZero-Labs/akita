@@ -10,6 +10,25 @@ use akita_types::{
     OpeningFamily, PhysicalResponsePlan, RelationRangeImagePlan,
 };
 
+/// What a fold sends for its successor's outer commitment u.
+pub(in crate::protocol::prove) trait SuccessorPayload<F> {
+    /// The coefficients fold `level` sends for `u`.
+    ///
+    /// # Errors
+    ///
+    /// The payload's own errors (a compression's).
+    fn payload(&mut self, level: u32, u: &[F]) -> Result<Vec<F>, AkitaError>;
+}
+
+/// u itself: every clear fold, and every masked level before the cut.
+pub(in crate::protocol::prove) struct RawPayload;
+
+impl<F: Clone> SuccessorPayload<F> for RawPayload {
+    fn payload(&mut self, _: u32, u: &[F]) -> Result<Vec<F>, AkitaError> {
+        Ok(u.to_vec())
+    }
+}
+
 pub(in crate::protocol::prove) struct PhysicalL2ProverReplay<E: Field> {
     plan: PhysicalResponsePlan,
     point: Vec<E>,
@@ -531,6 +550,7 @@ fn commit_next_witness<F, E, B, H: Sponge, C: crate::protocol::ProverFoldChannel
     expected_output_witness_len: usize,
     next_witness_binding: akita_params::NextWitnessBindingPolicy,
     witness_handle: B::WitnessHandle,
+    payload: &mut impl SuccessorPayload<F>,
 ) -> Result<CommittedNextWitness<F, B::WitnessHandle, B::CommitmentMaterialHandle>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
@@ -581,11 +601,11 @@ where
                     .id()?
                     .into(),
             );
-            // Public in both modes: at the cut level this is u_a, hidden by
-            // its own randomness r_a.
+            // Public in both modes: at the cut level this is cm(u_a), u_a
+            // being hidden by its own randomness r_a (A47).
             grinding
                 .state_mut()
-                .exchange_public_all(&mut public_commitment.coeffs().to_vec())?;
+                .exchange_public_all(&mut payload.payload(level, public_commitment.coeffs())?)?;
             NextWitnessState::OuterPayload(public_commitment)
         }
         (
@@ -675,6 +695,7 @@ pub(in crate::protocol::prove) fn prove_fold<
     expected_output_witness_len: usize,
     next_witness_binding: akita_params::NextWitnessBindingPolicy,
     prepared_fold: PreparedFold<F, E, B::WitnessHandle>,
+    payload: &mut impl SuccessorPayload<F>,
     handoff: impl FnOnce(
         &RingRelationInstance<F>,
         &crate::backend::ValidatedRecursiveWitnessCommitPlan,
@@ -742,6 +763,7 @@ where
         expected_output_witness_len,
         next_witness_binding,
         witness_handle,
+        payload,
     )?;
     handoff(
         &instance,

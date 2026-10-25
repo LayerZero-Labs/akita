@@ -771,6 +771,19 @@ impl ResidualGeometry {
             public_spans,
         })
     }
+
+    /// Coefficients of u_a, the residual commitment's outer image.
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidSetup`] if the image size overflows.
+    pub fn commitment_len(&self) -> Result<usize, AkitaError> {
+        self.profile
+            .outer
+            .matrix
+            .raw_output_dimension()
+            .ok_or_else(|| AkitaError::InvalidSetup("the residual commitment overflows".into()))
+    }
 }
 
 /// The witness ranges of `fold`'s output that its setup prefix fills: the

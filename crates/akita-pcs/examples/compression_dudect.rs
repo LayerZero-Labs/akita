@@ -11,7 +11,8 @@
 //! It times `ImageCompression::compress` of `AkitaResponseProver`, the call
 //! the attempt makes (Akita's packing, the two maps' products and the
 //! witness extraction), on images of `t_D`'s length at the W5-e geometry
-//! (320 coefficients, five rings of 64) and of one full chunk (512). Each
+//! (320 coefficients, five rings of 64), of one full chunk (512) and of
+//! u_a (1,216, A47), and the reconstruction `G₁ξ₁` of their witnesses. Each
 //! test is a Welch t-test on raw timings, a fixed class against uniform
 //! images, interleaved at random, every input written into slots allocated
 //! once before its chunk is timed; the statistic is also computed on
@@ -180,6 +181,41 @@ fn fixed_vs_random(
     test
 }
 
+/// Times `run` on a `fixed` digit vector vs one drawn from `pool`, with the
+/// slot discipline of [`fixed_vs_random`]: a pool index is drawn for either
+/// class.
+fn fixed_vs_pool(
+    measurements: usize,
+    rng: &mut StdRng,
+    fixed: &[i8],
+    pool: &[Vec<i8>],
+    run: impl Fn(&[i8]),
+) -> Cropped {
+    let mut test = Cropped::default();
+    let mut first = Vec::new();
+    let mut slots: Vec<(usize, Vec<i8>)> = (0..CHUNK).map(|_| (0, vec![0; fixed.len()])).collect();
+    for chunk in 0..measurements.div_ceil(CHUNK) {
+        for (class, digits) in &mut slots {
+            *class = (rng.next_u32() & 1) as usize;
+            let drawn = &pool[rng.next_u32() as usize % pool.len()];
+            digits.copy_from_slice(if *class == 0 { fixed } else { drawn });
+        }
+        for (class, digits) in &slots {
+            let start = Instant::now();
+            run(black_box(digits));
+            let elapsed = start.elapsed().as_nanos() as f64;
+            if chunk == 0 {
+                first.push(elapsed);
+            }
+            test.push(*class, elapsed);
+        }
+        if chunk == 0 {
+            test.set_thresholds(&mut first);
+        }
+    }
+    test
+}
+
 /// A response prover whose catalog holds the planner's response schedule
 /// for `e` of the D = 64 synthetic Σ instance, as `examples/zk_response.rs`
 /// builds it. Only its compression backend is used.
@@ -231,7 +267,9 @@ fn main() -> ExitCode {
     let mut failures = 0;
     with_dit(|| {
         println!("seed {seed}, {measurements} measurements per test:");
-        for len in [320, 512] {
+        // t_D at the W5-e geometry, one full chunk, and u_a at the Σ-bound
+        // residual (19 × R_64, A47).
+        for len in [320, 512, 1216] {
             println!(" image of {len} coefficients:");
             let uniform: Vec<F> = (0..len).map(|_| F::random(&mut rng)).collect();
             for (label, fixed) in [
@@ -244,6 +282,23 @@ fn main() -> ExitCode {
                     let _ = black_box(prover.compress(image).unwrap());
                 });
                 report(&format!("compress, fixed {label}"), &test, &mut failures);
+            }
+            // The reconstruction `t = G₁ξ₁` the response prover's statement
+            // check runs on the secret witness (A47's `recompose`).
+            let pool: Vec<Vec<i8>> = (0..64)
+                .map(|_| {
+                    let image: Vec<F> = (0..len).map(|_| F::random(&mut rng)).collect();
+                    prover.compress(&image).unwrap().witness
+                })
+                .collect();
+            for (label, fixed) in [
+                ("0", prover.compress(&vec![F::zero(); len]).unwrap().witness),
+                ("pool[0] (A/A)", pool[0].clone()),
+            ] {
+                let test = fixed_vs_pool(measurements, &mut rng, &fixed, &pool, |witness| {
+                    let _ = black_box(prover.reconstruct(len, witness).unwrap());
+                });
+                report(&format!("reconstruct, fixed {label}"), &test, &mut failures);
             }
         }
     })

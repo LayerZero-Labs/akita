@@ -230,10 +230,11 @@ impl ResidualShape {
         Ok(s)
     }
 
-    /// The opening rows `N` over Akita's setup `stream`, with u_a as the
-    /// verifier received it. `A` is the residual inner matrix, which takes
-    /// w_k itself ([`Self::new`] checks one inner digit plane); `[B | B′]` is
-    /// the outer matrix over `(t̂_a, r_a)`.
+    /// The opening rows `N` over Akita's setup `stream`. `A` is the residual
+    /// inner matrix, which takes w_k itself ([`Self::new`] checks one inner
+    /// digit plane); `[B | B′]` is the outer matrix over `(t̂_a, r_a)`, and its
+    /// target is u_a compressed: `payload` is `cm(u_a)` as the masked prefix
+    /// sent it, and `image` is u_a, which only the prover holds (A47).
     ///
     /// # Errors
     ///
@@ -243,11 +244,13 @@ impl ResidualShape {
     pub fn blocks<const D: usize>(
         &self,
         stream: &[F],
-        residual_commitment: &[F],
+        payload: &[F],
+        image: Option<&[F]>,
     ) -> Result<Vec<ResidualBlock<F, D>>, AkitaError> {
         let profile = self.geometry.profile;
         let outer_rank = profile.outer.matrix.output_rank();
-        if D != self.ring_dim() || residual_commitment.len() != outer_rank * D {
+        let image_len = self.geometry.commitment_len()?;
+        if D != self.ring_dim() || image.is_some_and(|u_a| u_a.len() != image_len) {
             return Err(AkitaError::InvalidInput(
                 "the residual commitment differs from the schedule's residual shape".into(),
             ));
@@ -299,18 +302,26 @@ impl ResidualShape {
             })
             .collect::<Vec<_>>();
         let first_inner = self.block_segments.first().map_or(0, |(_, inner)| *inner);
-        let mut u_a = Vec::with_capacity(outer_rank);
-        for ring in residual_commitment.chunks_exact(D) {
-            let coefficients: [F; D] = ring
-                .try_into()
-                .map_err(|_| AkitaError::Internal("u_a ring has D coefficients".into()))?;
-            u_a.push(CyclotomicRing::from_coefficients(coefficients));
-        }
+        let image = image
+            .map(|u_a| {
+                u_a.chunks_exact(D)
+                    .map(|ring| {
+                        let coefficients: [F; D] = ring.try_into().map_err(|_| {
+                            AkitaError::Internal("u_a ring has D coefficients".into())
+                        })?;
+                        Ok(CyclotomicRing::from_coefficients(coefficients))
+                    })
+                    .collect::<Result<Vec<_>, AkitaError>>()
+            })
+            .transpose()?;
         blocks.push(ResidualBlock {
             matrix: b,
             input: first_inner..self.segments.len(),
             gadget: None,
-            target: BlockTarget::Public(u_a),
+            target: BlockTarget::Compressed {
+                payload: payload.to_vec(),
+                image,
+            },
         });
         Ok(blocks)
     }

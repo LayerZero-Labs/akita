@@ -56,6 +56,17 @@ where
     /// As [`clear_path`](Self::clear_path).
     fn clear_values(claims: &[Self::Claim]) -> Result<Vec<E>, AkitaError>;
 
+    /// The coefficients fold `level` sends for its successor commitment,
+    /// an image of `image_len` coefficients: the image itself, except at a
+    /// zero-knowledge opening's cut, which sends u_a compressed
+    /// (`specs/whiteout-akita.md` A47).
+    ///
+    /// # Errors
+    ///
+    /// A masked replay's [`AkitaError::InvalidSetup`] if the cut's image
+    /// differs from the residual commitment's.
+    fn successor_payload_len(&self, level: u32, image_len: usize) -> Result<usize, AkitaError>;
+
     /// Receives the digest of a terminal `t` state's last block
     /// (`akita_types::receive_field_digest`), sent under `dev-protocol`.
     ///
@@ -171,6 +182,10 @@ where
 
     fn clear_values(claims: &[E]) -> Result<Vec<E>, AkitaError> {
         Ok(claims.to_vec())
+    }
+
+    fn successor_payload_len(&self, _: u32, image_len: usize) -> Result<usize, AkitaError> {
+        Ok(image_len)
     }
 
     fn receive_field_digest(

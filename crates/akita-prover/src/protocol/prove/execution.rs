@@ -1,4 +1,5 @@
 //! Per-fold instance selection; typed executors retain all kernel state.
+use super::fold::RawPayload;
 use super::registry::*;
 pub use super::registry::{BackendId, BackendRegistry, FixedFoldRoute, FoldExecutionPolicy};
 use super::{root, suffix, FoldPublicState, SuffixProverState};
@@ -182,6 +183,7 @@ where
                 .session(),
             index,
             handoff,
+            &mut RawPayload,
         )?
         .next_state;
         handoff.complete(self.backend, state)

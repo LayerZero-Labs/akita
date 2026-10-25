@@ -212,7 +212,7 @@ where
                 akita_types::FoldSite::NextWitnessPayload {
                     level: prepared.level,
                 },
-                coefficient_count,
+                grinding.successor_payload_len(prepared.level, coefficient_count)?,
             )
         }
         NextWitnessPlan::TerminalT { coefficient_count } => (

@@ -403,6 +403,13 @@ jobs:
         run: |
           cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,dev-protocol \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
+      - name: Run the masked prefix under the dev protocol
+        # The masked prefix's test compresses u_a with akita-pcs's
+        # test-support compression (A47); the lane above builds without it.
+        if: matrix.shard == 1
+        run: |
+          cargo nextest run -p akita-pcs --profile ci --cargo-profile ci-test --no-default-features \
+            --features parallel,disk-persistence,dev-protocol,test-support --test masked_prefix
 
   test-transcript-semantics:
     name: Transcript semantics (${{ matrix.sponge.name }})

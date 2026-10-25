@@ -11,6 +11,7 @@
 //! them with jolt-zk's rows. The prover's chain is Akita's compression
 //! executor.
 
+use akita_config::CommitmentConfig;
 use akita_cpu_backend::CpuBackend;
 use akita_error::AkitaError;
 use akita_params::{
@@ -20,11 +21,15 @@ use akita_params::{
 use akita_types::{
     AkitaExpandedSetup, NegativeBinarySupport, ReducedCompressionRelationWeights, RingVec,
 };
-use jolt_algebra::{CanonicalBytes, One, Ring, Zero};
+#[cfg(test)]
+use jolt_algebra::Ring;
+use jolt_algebra::{CanonicalBytes, One, Zero};
 use jolt_zk::masking::ZkError;
-use jolt_zk::whiteout::{CompressedImage, CompressedTarget, ResponseStatement, WhiteoutError};
+use jolt_zk::whiteout::{
+    lift_ct, CompressedImage, CompressedTarget, ImageCompression, ResponseStatement, WhiteoutError,
+};
 
-use super::F;
+use super::{CompressionShape, F};
 
 /// One chunk of an image and its chain.
 pub(crate) struct Chunk {
@@ -127,13 +132,15 @@ pub(crate) fn digits(stage: &PackedNegativeBinary) -> impl Iterator<Item = i8> +
         .map(|index| -i8::from(stage.bytes()[index / 8] >> (index % 8) & 1 == 1))
 }
 
-/// `Σ_b 2^b ξ[b·n + k]` for every `k < n`: Akita's bit-major gadget.
+/// `Σ_b 2^b ξ[b·n + k]` for every `k < n`: Akita's bit-major gadget. The
+/// digits are secret (a masked image's bits), so each is lifted without a
+/// branch on its sign.
 fn recompose(digits: &[i8], n: usize) -> Vec<F> {
     let mut out = vec![F::zero(); n];
     let mut power = F::one();
     for plane in digits.chunks_exact(n.max(1)) {
         for (dst, &digit) in out.iter_mut().zip(plane) {
-            *dst += power * F::from_i64(i64::from(digit));
+            *dst += power * lift_ct::<F>(i64::from(digit));
         }
         power += power;
     }
@@ -432,5 +439,72 @@ impl<'a> Chains<'a> {
                 .collect(),
             padded_len,
         )
+    }
+}
+
+/// Akita's image compression on a prover backend whose setup holds the
+/// chains' maps: the response prover's (`specs/whiteout-akita.md` A47). It
+/// runs in constant time in the image (A36). Public under `test-support`
+/// only, for tests that compress without a response prover.
+#[cfg_attr(
+    not(feature = "test-support"),
+    expect(unreachable_pub, reason = "public under test-support only")
+)]
+pub struct BackendCompression<'a, Cfg> {
+    backend: &'a CpuBackend<F, F>,
+    config: std::marker::PhantomData<Cfg>,
+}
+
+impl<'a, Cfg> BackendCompression<'a, Cfg> {
+    /// Compression on `backend`; compressing fails if its setup does not
+    /// hold the chains' maps.
+    #[cfg_attr(
+        not(feature = "test-support"),
+        expect(unreachable_pub, reason = "public under test-support only")
+    )]
+    pub fn new(backend: &'a CpuBackend<F, F>) -> Self {
+        Self {
+            backend,
+            config: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<Cfg: CommitmentConfig> ImageCompression<F> for BackendCompression<'_, Cfg> {
+    fn payload_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        CompressionShape::<Cfg>::default().payload_len(image_len)
+    }
+
+    fn witness_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        CompressionShape::<Cfg>::default().witness_len(image_len)
+    }
+
+    fn compress(&self, image: &[F]) -> Result<CompressedImage<F>, WhiteoutError> {
+        compress(self.backend, Cfg::sis_modulus_profile(), image).map_err(whiteout_error)
+    }
+
+    fn reconstruct(&self, image_len: usize, witness: &[i8]) -> Result<Vec<F>, WhiteoutError> {
+        CompressionShape::<Cfg>::default().reconstruct(image_len, witness)
+    }
+
+    fn reconstruct_transpose(
+        &self,
+        image_len: usize,
+        weights: &[F],
+    ) -> Result<Vec<F>, WhiteoutError> {
+        CompressionShape::<Cfg>::default().reconstruct_transpose(image_len, weights)
+    }
+
+    /// The canonical witness only: Akita's chain is deterministic in the
+    /// image, so `witness` opens `payload` exactly when compressing the
+    /// image it reconstructs gives both back. The verifier enforces the
+    /// chain equations and the binary digits instead (§5.7).
+    fn check(&self, image_len: usize, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError> {
+        let compressed = self.compress(&self.reconstruct(image_len, witness)?)?;
+        if compressed.payload == payload && compressed.witness == witness {
+            Ok(())
+        } else {
+            Err(WhiteoutError::ResponseRejected("compressed image"))
+        }
     }
 }

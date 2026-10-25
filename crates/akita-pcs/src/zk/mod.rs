@@ -61,6 +61,10 @@ use crate::AkitaCommitmentScheme;
 pub use akita_config::ZkCommitmentConfig;
 pub use akita_prover::{prove_masked_prefix, ResidualOpening};
 pub use akita_verifier::{MaskedPrefix, MaskedPrefixRows, ResidualClaim};
+#[cfg(feature = "test-support")]
+pub use compression::BackendCompression;
+#[cfg(not(feature = "test-support"))]
+use compression::BackendCompression;
 use compression::Chains;
 pub use residual::ResidualShape;
 use rounds::{
@@ -547,10 +551,15 @@ pub const RESPONSE_SITE: SiteId = SiteId::label("whiteout/response");
 /// `specs/whiteout-akita.md` §5.5 HT4): the unit tests' `Cheating` prover
 /// with `CheatDigits::everywhere`. Under `test-support` the sumcheck rounds
 /// of a false statement are shifted to stay consistent, so the proof it
-/// sends is a forgery only the verifier's checks can reject. Test support
-/// only.
+/// sends is a forgery only the verifier's checks can reject. The second
+/// field is the compression the Σ prover builds `e`'s compression witnesses
+/// with, so a test can forge a chain (the prover's own for an honest one).
+/// Test support only.
 #[cfg(feature = "test-support")]
-pub struct UncheckedResponseProver<'a, Cfg: CommitmentConfig>(pub &'a AkitaResponseProver<Cfg>);
+pub struct UncheckedResponseProver<'a, Cfg: CommitmentConfig>(
+    pub &'a AkitaResponseProver<Cfg>,
+    pub &'a dyn ImageCompression<F>,
+);
 
 #[cfg(feature = "test-support")]
 impl<Cfg, const D: usize> ResponseProver<F, D> for UncheckedResponseProver<'_, Cfg>
@@ -558,7 +567,7 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = F> + 'static,
 {
     fn compression(&self) -> &dyn ImageCompression<F> {
-        self.0
+        self.1
     }
 
     fn prove_response<H: Sponge>(
@@ -684,6 +693,19 @@ impl<Cfg: CommitmentConfig> ImageCompression<F> for CompressionShape<Cfg> {
     }
 }
 
+impl<Cfg> AkitaResponseProver<Cfg>
+where
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + 'static,
+{
+    /// The compression on this prover's backend.
+    fn backend_compression(&self) -> Result<BackendCompression<'_, Cfg>, WhiteoutError> {
+        let side = self.prover.as_ref().ok_or(WhiteoutError::InvalidRelation(
+            "a verifier-only response prover cannot compress",
+        ))?;
+        Ok(BackendCompression::new(&side.backend))
+    }
+}
+
 impl<Cfg> ImageCompression<F> for AkitaResponseProver<Cfg>
 where
     Cfg: CommitmentConfig<Field = F, ExtField = F> + 'static,
@@ -697,11 +719,7 @@ where
     }
 
     fn compress(&self, image: &[F]) -> Result<CompressedImage<F>, WhiteoutError> {
-        let side = self.prover.as_ref().ok_or(WhiteoutError::InvalidRelation(
-            "a verifier-only response prover cannot compress",
-        ))?;
-        compression::compress(&side.backend, Cfg::sis_modulus_profile(), image)
-            .map_err(compression::whiteout_error)
+        self.backend_compression()?.compress(image)
     }
 
     fn reconstruct(&self, image_len: usize, witness: &[i8]) -> Result<Vec<F>, WhiteoutError> {
@@ -716,16 +734,8 @@ where
         CompressionShape::<Cfg>::default().reconstruct_transpose(image_len, weights)
     }
 
-    /// The canonical witness only: Akita's chain is deterministic in the
-    /// image, so `witness` opens `payload` exactly when compressing the
-    /// image it reconstructs gives both back. The verifier enforces the
-    /// chain equations and the binary digits instead (§5.7).
     fn check(&self, image_len: usize, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError> {
-        let compressed = self.compress(&self.reconstruct(image_len, witness)?)?;
-        if compressed.payload == payload && compressed.witness == witness {
-            Ok(())
-        } else {
-            Err(WhiteoutError::ResponseRejected("compressed image"))
-        }
+        self.backend_compression()?
+            .check(image_len, payload, witness)
     }
 }
