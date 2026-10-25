@@ -226,13 +226,17 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
         stream: &[F],
         pad_image: BlockTarget<F, D>,
     ) -> Result<SigmaSetup<F, D>, Failure> {
+        let blocks =
+            self.shape
+                .blocks::<D>(&self.shape.matrices::<D>(stream)?, u_a_payload, u_a)?;
+        let pads = self.pad_commitment::<D>();
+        let v_matrix = SigmaSetup::v_matrix_of(&blocks, &pads, V_RANK, &self.v_stream)?;
         Ok(SigmaSetup::new(
             self.shape.segments(),
-            self.shape.blocks::<D>(stream, u_a_payload, u_a)?,
-            &self.pad_commitment::<D>(),
+            blocks,
+            &pads,
             pad_image,
-            V_RANK,
-            &self.v_stream,
+            v_matrix,
         )?)
     }
 
