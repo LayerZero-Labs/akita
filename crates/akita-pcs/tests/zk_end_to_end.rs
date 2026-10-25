@@ -674,13 +674,15 @@ fn a_consistent_cheat_fails_at_every_layer() {
     });
 }
 
-/// A47: a prover whose `cm(u_a)` commits to an image the residual does not
-/// open, stated consistently as the Σ target. The Σ prover refuses, the
-/// response prover refuses, and the verifier rejects a forged response
-/// proof. The same unchecked path over the honest `cm(u_a)` verifies, so
-/// the rejection is u_a's compressed target, not the unchecked provers.
+/// A47, Item 3 reads u_a's target from `ξ_a`: a prover whose `cm(u_a)`
+/// honestly compresses an image the residual does not open, stated
+/// consistently as the Σ target. Its chain rows hold; Item 3 fails. The Σ
+/// prover refuses, the response prover refuses, and the verifier rejects a
+/// forged response proof. The same unchecked path over the honest
+/// `cm(u_a)` verifies, so the rejection is u_a's compressed target, not the
+/// unchecked provers.
 #[test]
-fn a_compressed_residual_commitment_to_another_image_is_rejected() {
+fn item_3_reads_u_a_from_its_compression_witness() {
     on_large_stack(|| {
         let harness = single();
         let unchecked = Cheat {
@@ -728,6 +730,35 @@ fn a_compressed_residual_commitment_to_another_image_is_rejected() {
         let error = harness.verify(&forged.proof).err().unwrap();
         assert!(
             matches!(whiteout(&error), Some(WhiteoutError::ResponseRejected(_))),
+            "{error:?}"
+        );
+    });
+}
+
+/// A47, u_a's chain rows: the cut sends `cm(u_a)` with its last
+/// (192-coefficient) chunk's payload moved, and `e`'s `ξ_a` is built from
+/// that compression, so u_a, `ξ_a` and Item 3 are honest and only that
+/// chunk's `K₂` row fails. Through the unchecked provers the verifier
+/// rejects at the fused sumcheck, where the chain rows are batched.
+#[test]
+fn a_forged_chain_on_u_a_is_rejected_at_the_fused_sumcheck() {
+    on_large_stack(|| {
+        let harness = single();
+        let forged = harness
+            .prove(
+                17,
+                Cheat {
+                    forged_residual_chain: true,
+                    unchecked_sigma: true,
+                    unchecked_response: true,
+                    ..Cheat::default()
+                },
+            )
+            .unwrap();
+        let error = harness.verify(&forged.proof).err().unwrap();
+        assert_eq!(
+            whiteout(&error),
+            Some(&WhiteoutError::ResponseRejected("fused sumcheck")),
             "{error:?}"
         );
     });

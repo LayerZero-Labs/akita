@@ -139,6 +139,8 @@ where
         schedule.root.output_witness_len,
         next_binding,
         prepared,
+        // The root is never a zero-knowledge cut: admission pins the cut at
+        // `ZK_CUT_LEVEL = 1`, and `prove_masked_prefix` refuses level 0.
         &mut fold::RawPayload,
         |relation, commitment, binding, witness, material| {
             handoff.handoff_successor(

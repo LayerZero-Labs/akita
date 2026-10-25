@@ -181,6 +181,13 @@ where
         let admitted =
             AdmittedZkSchedule::new(schedule, Cfg::committed_source_contract()?, Cfg::EXT_DEGREE)?;
         let cut_level = admitted.zk().cut_level();
+        // The root sends its successor raw (`prove_root`), so u_a must come
+        // from a recursive level.
+        if cut_level == 0 {
+            return Err(AkitaError::UnsupportedSchedule(
+                "a zero-knowledge cut at the root".into(),
+            ));
+        }
         let decoded = openings
             .iter()
             .map(|form| form.evaluate(pads.pads(), &[]))

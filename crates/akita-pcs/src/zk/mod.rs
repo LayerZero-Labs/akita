@@ -61,6 +61,10 @@ use crate::AkitaCommitmentScheme;
 pub use akita_config::ZkCommitmentConfig;
 pub use akita_prover::{prove_masked_prefix, ResidualOpening};
 pub use akita_verifier::{MaskedPrefix, MaskedPrefixRows, ResidualClaim};
+#[cfg(feature = "test-support")]
+pub use compression::BackendCompression;
+#[cfg(not(feature = "test-support"))]
+use compression::BackendCompression;
 use compression::Chains;
 pub use residual::ResidualShape;
 use rounds::{
@@ -547,10 +551,15 @@ pub const RESPONSE_SITE: SiteId = SiteId::label("whiteout/response");
 /// `specs/whiteout-akita.md` §5.5 HT4): the unit tests' `Cheating` prover
 /// with `CheatDigits::everywhere`. Under `test-support` the sumcheck rounds
 /// of a false statement are shifted to stay consistent, so the proof it
-/// sends is a forgery only the verifier's checks can reject. Test support
-/// only.
+/// sends is a forgery only the verifier's checks can reject. The second
+/// field is the compression the Σ prover builds `e`'s compression witnesses
+/// with, so a test can forge a chain (the prover's own for an honest one).
+/// Test support only.
 #[cfg(feature = "test-support")]
-pub struct UncheckedResponseProver<'a, Cfg: CommitmentConfig>(pub &'a AkitaResponseProver<Cfg>);
+pub struct UncheckedResponseProver<'a, Cfg: CommitmentConfig>(
+    pub &'a AkitaResponseProver<Cfg>,
+    pub &'a dyn ImageCompression<F>,
+);
 
 #[cfg(feature = "test-support")]
 impl<Cfg, const D: usize> ResponseProver<F, D> for UncheckedResponseProver<'_, Cfg>
@@ -558,7 +567,7 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = F> + 'static,
 {
     fn compression(&self) -> &dyn ImageCompression<F> {
-        self.0
+        self.1
     }
 
     fn prove_response<H: Sponge>(
@@ -681,66 +690,6 @@ impl<Cfg: CommitmentConfig> ImageCompression<F> for CompressionShape<Cfg> {
         Err(WhiteoutError::InvalidRelation(
             "checking a compression needs a prover backend",
         ))
-    }
-}
-
-/// Akita's image compression on a prover backend whose setup holds the
-/// chains' maps: the response prover's, and the masked prefix's message for
-/// u_a (`specs/whiteout-akita.md` A47). It runs in constant time in the
-/// image (A36).
-pub struct BackendCompression<'a, Cfg> {
-    backend: &'a CpuBackend<F, F>,
-    config: std::marker::PhantomData<Cfg>,
-}
-
-impl<'a, Cfg> BackendCompression<'a, Cfg> {
-    /// Compression on `backend`; compressing fails if its setup does not
-    /// hold the chains' maps.
-    pub fn new(backend: &'a CpuBackend<F, F>) -> Self {
-        Self {
-            backend,
-            config: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<Cfg: CommitmentConfig> ImageCompression<F> for BackendCompression<'_, Cfg> {
-    fn payload_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
-        CompressionShape::<Cfg>::default().payload_len(image_len)
-    }
-
-    fn witness_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
-        CompressionShape::<Cfg>::default().witness_len(image_len)
-    }
-
-    fn compress(&self, image: &[F]) -> Result<CompressedImage<F>, WhiteoutError> {
-        compression::compress(self.backend, Cfg::sis_modulus_profile(), image)
-            .map_err(compression::whiteout_error)
-    }
-
-    fn reconstruct(&self, image_len: usize, witness: &[i8]) -> Result<Vec<F>, WhiteoutError> {
-        CompressionShape::<Cfg>::default().reconstruct(image_len, witness)
-    }
-
-    fn reconstruct_transpose(
-        &self,
-        image_len: usize,
-        weights: &[F],
-    ) -> Result<Vec<F>, WhiteoutError> {
-        CompressionShape::<Cfg>::default().reconstruct_transpose(image_len, weights)
-    }
-
-    /// The canonical witness only: Akita's chain is deterministic in the
-    /// image, so `witness` opens `payload` exactly when compressing the
-    /// image it reconstructs gives both back. The verifier enforces the
-    /// chain equations and the binary digits instead (§5.7).
-    fn check(&self, image_len: usize, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError> {
-        let compressed = self.compress(&self.reconstruct(image_len, witness)?)?;
-        if compressed.payload == payload && compressed.witness == witness {
-            Ok(())
-        } else {
-            Err(WhiteoutError::ResponseRejected("compressed image"))
-        }
     }
 }
 

@@ -105,6 +105,11 @@ pub(crate) struct Cheat {
     /// at the cut, and state that image as the Σ target: everything agrees
     /// except the residual's opening of it (A47).
     pub(crate) shifted_residual: bool,
+    /// Send u_a's compression with its last chunk's payload moved past the
+    /// constant term (the unit tests' `BumpPayload`), and build `e`'s
+    /// `ξ_a` from that compression: u_a, `ξ_a` and Item 3 are honest, and
+    /// only that chunk's `K₂` row fails.
+    pub(crate) forged_residual_chain: bool,
     /// Skip the Σ prover's per-row checks.
     pub(crate) unchecked_sigma: bool,
     /// Skip the response prover's statement check too.
@@ -338,8 +343,14 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
         transcript.send_all(&compressed.payload);
         let mut masking = CommittedPads::uncommitted(self.layout.clone(), pads)?;
         let shifted = ShiftedImage(self.response());
+        let bumped = BumpedTail {
+            inner: self.response(),
+            image_len: self.shape.geometry().commitment_len()?,
+        };
         let compression: &dyn ImageCompression<F> = if cheat.shifted_residual {
             &shifted
+        } else if cheat.forged_residual_chain {
+            &bumped
         } else {
             self.response()
         };
@@ -419,7 +430,14 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
                 &pad_opening,
                 &mut transcript,
                 &mut rng,
-                &UncheckedResponseProver(self.response()),
+                &UncheckedResponseProver(
+                    self.response(),
+                    if cheat.forged_residual_chain {
+                        &bumped
+                    } else {
+                        self.response()
+                    },
+                ),
             )?;
         }
         Ok(ZkProof {
@@ -495,6 +513,51 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
             BASIS,
         );
         transcript.events().to_vec()
+    }
+}
+
+/// The response proof's compression with the last chunk's payload of every
+/// image of `image_len` coefficients moved past its constant term: that
+/// chunk's `K₂` row fails, the image and `ξ` are honest.
+pub(crate) struct BumpedTail<'a> {
+    pub(crate) inner: &'a dyn ImageCompression<F>,
+    pub(crate) image_len: usize,
+}
+
+impl ImageCompression<F> for BumpedTail<'_> {
+    fn payload_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        self.inner.payload_len(image_len)
+    }
+
+    fn witness_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        self.inner.witness_len(image_len)
+    }
+
+    fn compress(&self, image: &[F]) -> Result<CompressedImage<F>, WhiteoutError> {
+        let mut compressed = self.inner.compress(image)?;
+        if image.len() == self.image_len {
+            // Each chunk's payload is 8 coefficients; the last chunk's
+            // coefficient 3 (Forgery::BumpPayload's).
+            let at = compressed.payload.len() - 8 + 3;
+            compressed.payload[at] += F::one();
+        }
+        Ok(compressed)
+    }
+
+    fn reconstruct(&self, image_len: usize, witness: &[i8]) -> Result<Vec<F>, WhiteoutError> {
+        self.inner.reconstruct(image_len, witness)
+    }
+
+    fn reconstruct_transpose(
+        &self,
+        image_len: usize,
+        weights: &[F],
+    ) -> Result<Vec<F>, WhiteoutError> {
+        self.inner.reconstruct_transpose(image_len, weights)
+    }
+
+    fn check(&self, image_len: usize, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError> {
+        self.inner.check(image_len, payload, witness)
     }
 }
 

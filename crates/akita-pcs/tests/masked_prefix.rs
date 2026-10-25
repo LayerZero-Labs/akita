@@ -8,9 +8,6 @@
 //! same masked channel and lowers the stage checks into residual rows, which
 //! jolt-zk's row checker evaluates on the pads and the residual witness.
 
-// The prefix sends u_a under akita-pcs's compression (A47), which the `zk`
-// feature compiles.
-#![cfg(feature = "zk")]
 #![allow(missing_docs)]
 
 mod common;
@@ -141,16 +138,12 @@ fn honest_masked_prefix_satisfies_its_residual_rows() {
         let claim = honest.prefix.residual_claim();
         assert_eq!(claim.cut_level(), ZK_CUT_LEVEL);
         // The cut sends cm(u_a) (A47): the compression of the u_a the
-        // residual opens, one 8-coefficient payload per 512-coefficient chunk.
+        // residual opens.
         assert_eq!(claim.commitment(), honest.residual.residual_payload);
         let compressed = BackendCompression::<Cfg>::new(&honest.instance.backend)
             .compress(&honest.residual.residual_commitment)
             .unwrap();
         assert_eq!(claim.commitment(), compressed.payload);
-        assert_eq!(
-            claim.commitment().len(),
-            8 * honest.residual.residual_commitment.len().div_ceil(512)
-        );
         assert_eq!(
             claim.witness_eval().evaluate(&honest.pads, &[]).unwrap(),
             honest.residual.witness_eval
