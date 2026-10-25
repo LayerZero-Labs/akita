@@ -28,6 +28,13 @@ impl<T> Default for SetupPrefixCache<T> {
 }
 
 impl<T> SetupPrefixCache<T> {
+    pub(super) fn snapshot(&self) -> Result<Vec<Arc<T>>, AkitaError> {
+        self.entries
+            .lock()
+            .map(|entries| entries.values().cloned().collect())
+            .map_err(|_| AkitaError::Internal("setup prefix cache lock poisoned".into()))
+    }
+
     pub(super) fn get_or_build(
         &self,
         id: &SetupPrefixSlotId,

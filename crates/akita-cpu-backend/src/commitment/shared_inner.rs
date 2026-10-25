@@ -60,6 +60,18 @@ pub(crate) enum InnerRows<F: Field> {
 }
 
 impl<F: Field> InnerRows<F> {
+    pub(crate) fn ring(&self, polynomial: usize, index: usize, ring_dim: usize) -> Option<&[F]> {
+        match self {
+            Self::Owned(rows) => {
+                let begin = index.checked_mul(ring_dim)?;
+                rows.get(polynomial)?
+                    .coeffs()
+                    .get(begin..begin.checked_add(ring_dim)?)
+            }
+            Self::Shared { rows, .. } => rows.get(polynomial)?.get(index).map(AsRef::as_ref),
+        }
+    }
+
     pub(crate) fn materialize(&self) -> Result<Cow<'_, [RingVec<F>]>, AkitaError> {
         match self {
             Self::Owned(rows) => Ok(Cow::Borrowed(rows)),

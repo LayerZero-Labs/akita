@@ -381,6 +381,7 @@ where
     }
 
     /// Validate a complete portable-export route before commitment arithmetic.
+    #[cfg(test)]
     pub(crate) fn preflight_portable_export(
         &self,
         plan: &CommitmentExecutionPlan,

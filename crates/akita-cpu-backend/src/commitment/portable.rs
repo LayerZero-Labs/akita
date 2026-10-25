@@ -170,6 +170,10 @@ impl<F: Field> PortableCommitmentHandle<F> {
         self.inner_rows.materialize()
     }
 
+    pub(crate) fn inner_ring(&self, polynomial: usize, index: usize) -> Option<&[F]> {
+        self.inner_rows.ring(polynomial, index, self.ring_dim)
+    }
+
     pub(crate) fn share_inner_rows(&mut self, pool: &InnerRowPool<F>) -> Result<(), AkitaError>
     where
         F: CanonicalEncoding,

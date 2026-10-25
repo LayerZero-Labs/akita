@@ -1,28 +1,29 @@
 //! Preprocessing helpers for setup-prefix commitment artifacts (slice 02B).
 
+use crate::commitment::CommitmentExecutionPlan;
+#[cfg(test)]
 use crate::commitment::SetupPrefixSlot;
+#[cfg(test)]
 use crate::commitment::{
-    CommitmentExecutionPlan, CommitmentExecutor, CommitmentSource, CommitmentStatePolicy,
-    IntoPortableCommitmentState,
+    CommitmentExecutor, CommitmentSource, CommitmentStatePolicy, IntoPortableCommitmentState,
 };
+#[cfg(test)]
 use crate::opaque::DensePoly;
 #[cfg(test)]
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
 use akita_params::SetupPrefixSlotId;
+#[cfg(test)]
 use akita_types::{AkitaExpandedSetup, RingVec, SetupPrefixPublicCommitment};
+#[cfg(test)]
 use jolt_field::{CanonicalEncoding, Field};
+#[cfg(test)]
 use std::sync::Arc;
 
-pub(crate) struct ValidatedSetupPrefixCommitment<'a> {
-    id: &'a SetupPrefixSlotId,
-    plan: CommitmentExecutionPlan,
-}
-
-pub(crate) fn validate_setup_prefix_commitment<'a, F: Field>(
-    expanded: &AkitaExpandedSetup<F>,
-    id: &'a SetupPrefixSlotId,
-) -> Result<ValidatedSetupPrefixCommitment<'a>, AkitaError> {
+pub(crate) fn validate_setup_prefix_commitment(
+    available_fields: usize,
+    id: &SetupPrefixSlotId,
+) -> Result<(), AkitaError> {
     let commitment_profile = &id.commitment_profile;
     commitment_profile.validate(
         commitment_profile
@@ -54,15 +55,13 @@ pub(crate) fn validate_setup_prefix_commitment<'a, F: Field>(
             "level params witness shape {witness_ring_slots} ring slots does not match full setup prefix {full_prefix_ring_slots}"
         )));
     }
-    if n_prefix > expanded.shared_matrix().num_field_elements() {
+    if akita_params::setup_prefix_slot_field_elements(id)? > available_fields {
         return Err(AkitaError::InvalidSetup(
             "setup prefix length exceeds shared matrix capacity".to_string(),
         ));
     }
-    Ok(ValidatedSetupPrefixCommitment {
-        id,
-        plan: CommitmentExecutionPlan::for_setup_prefix(id)?,
-    })
+    CommitmentExecutionPlan::for_setup_prefix(id)?;
+    Ok(())
 }
 
 /// Commit one actual power-of-two flat prefix of the shared setup matrix.
@@ -85,26 +84,12 @@ where
     SP: CommitmentStatePolicy<F>,
     SP::State: IntoPortableCommitmentState<F>,
 {
-    let validated = validate_setup_prefix_commitment(expanded, id)?;
-    commit_validated_setup_prefix(expanded, executor, validated)
-}
-
-pub(crate) fn commit_validated_setup_prefix<F, SP>(
-    expanded: &Arc<AkitaExpandedSetup<F>>,
-    executor: &CommitmentExecutor<'_, F, SP>,
-    validated: ValidatedSetupPrefixCommitment<'_>,
-) -> Result<SetupPrefixSlot<F>, AkitaError>
-where
-    F: Field + CanonicalEncoding + 'static,
-    SP: CommitmentStatePolicy<F>,
-    SP::State: IntoPortableCommitmentState<F>,
-{
+    validate_setup_prefix_commitment(expanded.shared_matrix().num_field_elements(), id)?;
     executor.validate_setup(expanded)?;
-    let id = validated.id;
     let commitment_profile = &id.commitment_profile;
     let source =
         DensePoly::from_setup_prefix(Arc::clone(expanded), commitment_profile.group.num_vars())?;
-    let plan = validated.plan;
+    let plan = CommitmentExecutionPlan::for_setup_prefix(id)?;
     let sources: [&dyn CommitmentSource<F>; 1] = [&source];
     executor.preflight_portable_export(&plan, &sources)?;
     let output = executor.execute_full(&plan, &sources)?;
@@ -490,6 +475,24 @@ mod tests {
         assert_eq!(slot.id.natural_len, natural_len);
         assert_eq!(slot.id.n_prefix().expect("full prefix len"), n_prefix);
         drop(executor);
+        let streaming = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
+        let exported = streaming
+            .export_setup_prefixes(std::slice::from_ref(&id))
+            .unwrap();
+        let mut expected = slot.clone();
+        expected.commitment.rows = expected
+            .commitment
+            .rows
+            .into_iter()
+            .map(RingVec::into_compact)
+            .collect();
+        assert_eq!(exported.get(&id).unwrap(), &expected);
+        let seeded = CpuBackend::<F, F>::export_setup_prefixes_from_seed(
+            setup.expanded.descriptor(),
+            std::slice::from_ref(&id),
+        )
+        .unwrap();
+        assert_eq!(seeded, exported);
         setup.prefix_slots.insert(slot).expect("insert");
         assert_eq!(setup.prefix_slots.len(), 1);
     }
