@@ -552,27 +552,46 @@ impl<F: MetalField> OneHotWorkspace<'_, F> {
         };
         let mut batch = Batch::new(device)?;
         for (params, grid_threads) in &dispatches {
-            batch.dispatch(
-                pipeline,
-                &[
-                    Binding::buffer(&matrix.coefficients),
-                    Binding::buffer(&sources.hot),
-                    Binding::buffer(partials.unwrap_or(&*out)),
-                    Binding::value(params),
-                ],
-                Grid::linear(*grid_threads, threads),
-            )?;
+            // SAFETY: each dispatch is `segments * rows * block_groups` full
+            // threadgroups of `lanes * D / COEFFS_PER_THREAD` threads, with
+            // `lanes <= MAX_LANES`. A threadgroup reads A words of row `row < rows` at
+            // position `p < positions` (column `p * digits < columns`), below the
+            // checked `matrix_len`; `hot` words `hot_offset + chunk` only for
+            // `chunk < chunks`, inside this source's range of `hot`; and staged entries
+            // below `TILE_POSITIONS * D` in `a_tile`. It writes the output coefficients
+            // `out_offset + segment * len + (block * rows + row) * D + k` for its own
+            // blocks `block < blocks` and `k < D`, below `(segment + 1) * len`: the
+            // `segments * len` partials when segments > 1, else `out` of length `len`.
+            // No two threads write the same word, and the threadgroup barriers order
+            // the tile and staging writes before every read.
+            unsafe {
+                batch.dispatch_unchecked(
+                    pipeline,
+                    &[
+                        Binding::buffer(&matrix.coefficients),
+                        Binding::buffer(&sources.hot),
+                        Binding::buffer(partials.unwrap_or(&*out)),
+                        Binding::value(params),
+                    ],
+                    Grid::linear(*grid_threads, threads),
+                )
+            }?;
         }
         if let (Some(partials), Some(combine_pipeline)) = (partials, combine_pipeline) {
-            batch.dispatch(
-                combine_pipeline,
-                &[
-                    Binding::buffer(partials),
-                    Binding::buffer(&*out),
-                    Binding::value(&combine_params),
-                ],
-                Grid::linear(combine_threads, COMBINE_THREADS),
-            )?;
+            // SAFETY: thread `i < len` reads `partials[s * len + i]` for
+            // `s < segments`, below `partials.len() = segments * len`, and writes only
+            // `out[i]`, with `out.len() = len`. Threads past `len` return at once.
+            unsafe {
+                batch.dispatch_unchecked(
+                    combine_pipeline,
+                    &[
+                        Binding::buffer(partials),
+                        Binding::buffer(&*out),
+                        Binding::value(&combine_params),
+                    ],
+                    Grid::linear(combine_threads, COMBINE_THREADS),
+                )
+            }?;
         }
         let time = batch.commit_and_wait()?;
         Ok((out, time))

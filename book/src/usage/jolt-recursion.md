@@ -140,7 +140,7 @@ ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
 
 The full command performs Jolt preprocessing, proves the guest execution, and
 verifies the resulting Jolt proof. Success ends with
-`Akita-in-Jolt proof OK`, `is_valid=true`, and `guest_panic=false`.
+`Akita-in-Jolt proof OK`, `accepted=true`, and `guest_panic=false`.
 
 The 32 variable target is intended for a server with enough memory for its
 large input and trace. Measure it with `--trace-only` first. The current

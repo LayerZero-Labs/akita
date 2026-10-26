@@ -479,42 +479,74 @@ where
         // and residue buffers.
         let mut batch = Batch::new(metal.device())?;
         for (shape, crt_shape) in shapes.iter().zip(&crt_shapes) {
-            batch.dispatch(
-                partials_pipeline,
-                &[
-                    Binding::buffer(planes.buffer()),
-                    Binding::buffer(&self.entries),
-                    Binding::buffer(&partials),
-                    Binding::buffer(&self.ntt.primes),
-                    Binding::buffer(&self.ntt.tables),
-                    Binding::value(shape),
-                ],
-                Grid::linear(partial_threads, lanes),
-            )?;
-            batch.dispatch(
-                finish_pipeline,
-                &[
-                    Binding::buffer(&partials),
-                    Binding::buffer(&residues),
-                    Binding::buffer(&self.ntt.primes),
-                    Binding::buffer(&self.ntt.tables),
-                    Binding::value(shape),
-                ],
-                Grid::linear(finish_threads, lanes),
-            )?;
-            batch.dispatch(
-                crt_pipeline,
-                &[
-                    Binding::buffer(&residues),
-                    Binding::buffer(out),
-                    Binding::buffer(&self.ntt.primes),
-                    Binding::buffer(&self.ntt.gamma),
-                    Binding::buffer(&radix),
-                    Binding::buffer(&scales),
-                    Binding::value(crt_shape),
-                ],
-                Grid::linear(coefficients, COEFFICIENT_GROUP),
-            )?;
+            // SAFETY: the grid is `chunks * K * block_tiles * row_tiles` full
+            // threadgroups of D/2 lanes. A threadgroup reads the digit planes
+            // `(block * cols + col) * D + lane` and `+ D/2` with `block < blocks` and
+            // `col < col_end <= cols`, below `planes.len() = blocks * cols * D`; the
+            // matrix entry `(row, col, limb, prime)` with `row < rows`, `limb < limbs`
+            // and `prime < K`, below `entries.len() = rows * cols * limbs * K * D`; and
+            // words below D of each table in prime `prime`'s block. It writes only its
+            // own `(chunk, limb, block, row, prime)` row of `partials`, which holds
+            // `chunks * limbs * blocks * rows * K * D` words. In the threadgroup array
+            // `x` of `BLOCK_TILE * D` words, each lane writes and reads back only its own
+            // two words per array, and `PlainForward::apply` orders the cross-lane
+            // accesses with its barriers.
+            unsafe {
+                batch.dispatch_unchecked(
+                    partials_pipeline,
+                    &[
+                        Binding::buffer(planes.buffer()),
+                        Binding::buffer(&self.entries),
+                        Binding::buffer(&partials),
+                        Binding::buffer(&self.ntt.primes),
+                        Binding::buffer(&self.ntt.tables),
+                        Binding::value(shape),
+                    ],
+                    Grid::linear(partial_threads, lanes),
+                )
+            }?;
+            // SAFETY: the grid is `residue_rows` full threadgroups of D/2 lanes, one
+            // per (limb, block, row, prime) row. Row `group` reads `partials` words
+            // `chunk * stride + group * D + lane` and `+ D/2` for `chunk < chunks`,
+            // with `stride = residue_rows * D`, below `partials.len()`; and words below D
+            // of prime `group % K`'s tables. It writes only its own row of `residues`,
+            // which holds `residue_rows * D` words. Lanes share only the threadgroup
+            // array, whose accesses the barriers in `ntt.h` order.
+            unsafe {
+                batch.dispatch_unchecked(
+                    finish_pipeline,
+                    &[
+                        Binding::buffer(&partials),
+                        Binding::buffer(&residues),
+                        Binding::buffer(&self.ntt.primes),
+                        Binding::buffer(&self.ntt.tables),
+                        Binding::value(shape),
+                    ],
+                    Grid::linear(finish_threads, lanes),
+                )
+            }?;
+            // SAFETY: `out` holds `coefficients = blocks * rows * D` elements and
+            // `residues` holds `limbs` groups of `blocks * rows` rings of K x D words.
+            // Thread `index < coefficients` reads the residue words
+            // `limb * coefficients * K + element * K * D + i * D + coefficient` for
+            // `limb < limbs` and `i < K`, below `residues.len()`; `primes[i]`,
+            // `gamma[i * K + j]`, `radix[i]` and `scales[limb]` (`limb_scales` returns
+            // `limbs` entries). It reads and writes only `out[index]`.
+            unsafe {
+                batch.dispatch_unchecked(
+                    crt_pipeline,
+                    &[
+                        Binding::buffer(&residues),
+                        Binding::buffer(out),
+                        Binding::buffer(&self.ntt.primes),
+                        Binding::buffer(&self.ntt.gamma),
+                        Binding::buffer(&radix),
+                        Binding::buffer(&scales),
+                        Binding::value(crt_shape),
+                    ],
+                    Grid::linear(coefficients, COEFFICIENT_GROUP),
+                )
+            }?;
         }
         Ok(batch.commit_and_wait()?)
     }
