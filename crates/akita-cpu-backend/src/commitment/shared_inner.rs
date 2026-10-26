@@ -1,6 +1,6 @@
 //! Immutable sharing of equal setup-prefix inner ring commitments.
-use akita_error::AkitaError;
-use akita_serialization::{AkitaSerialize, Compress};
+use akita_error::{checked, AkitaError};
+use akita_serialization::{AkitaSerialize, Compress, SerializationError};
 use akita_types::RingVec;
 use jolt_field::{CanonicalEncoding, Field};
 use std::{
@@ -59,7 +59,68 @@ pub(crate) enum InnerRows<F: Field> {
     },
 }
 
+/// One polynomial's inner image, borrowed in its existing storage layout.
+pub(crate) enum InnerRow<'a, F> {
+    Owned(&'a RingVec<F>),
+    Shared {
+        ring_dim: usize,
+        blocks: &'a [Arc<[F]>],
+    },
+}
+
+impl<F: Field> InnerRow<'_, F> {
+    pub(crate) fn shape(&self) -> Result<(usize, usize), SerializationError> {
+        match self {
+            Self::Owned(row) => Ok((row.ring_dim(), row.coeff_len())),
+            Self::Shared { ring_dim, blocks } => {
+                if *ring_dim == 0 || blocks.iter().any(|block| block.len() != *ring_dim) {
+                    return Err(SerializationError::InvalidData(
+                        "shared commitment hint block disagrees with its A ring dimension".into(),
+                    ));
+                }
+                let len = checked::product([blocks.len(), *ring_dim]).ok_or_else(|| {
+                    SerializationError::InvalidData(
+                        "commitment hint coefficient count overflow".into(),
+                    )
+                })?;
+                Ok((*ring_dim, len))
+            }
+        }
+    }
+
+    pub(crate) fn coefficients(&self) -> impl Iterator<Item = &F> {
+        let (coefficients, blocks) = match self {
+            Self::Owned(row) => (row.coeffs(), &[][..]),
+            Self::Shared { blocks, .. } => (&[][..], *blocks),
+        };
+        coefficients
+            .iter()
+            .chain(blocks.iter().flat_map(|block| block.iter()))
+    }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    pub(crate) static SHARED_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl<F: Field> InnerRows<F> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = InnerRow<'_, F>> {
+        let owned = match self {
+            Self::Owned(rows) => rows.as_slice(),
+            Self::Shared { .. } => &[],
+        };
+        let (ring_dim, shared) = match self {
+            Self::Owned(_) => (0, &[][..]),
+            Self::Shared { ring_dim, rows } => (*ring_dim, rows.as_slice()),
+        };
+        owned.iter().map(InnerRow::Owned).chain(
+            shared
+                .iter()
+                .map(move |blocks| InnerRow::Shared { ring_dim, blocks }),
+        )
+    }
+
     pub(crate) fn ring(&self, polynomial: usize, index: usize, ring_dim: usize) -> Option<&[F]> {
         match self {
             Self::Owned(rows) => {
@@ -75,17 +136,20 @@ impl<F: Field> InnerRows<F> {
     pub(crate) fn materialize(&self) -> Result<Cow<'_, [RingVec<F>]>, AkitaError> {
         match self {
             Self::Owned(rows) => Ok(Cow::Borrowed(rows)),
-            Self::Shared { ring_dim, rows } => rows
-                .iter()
-                .map(|blocks| {
-                    let coefficients = blocks
-                        .iter()
-                        .flat_map(|block| block.iter().copied())
-                        .collect();
-                    RingVec::from_coeffs_with_ring_dim(coefficients, *ring_dim)
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map(Cow::Owned),
+            Self::Shared { ring_dim, rows } => {
+                #[cfg(test)]
+                SHARED_MATERIALIZATIONS.with(|count| count.set(count.get() + 1));
+                rows.iter()
+                    .map(|blocks| {
+                        let coefficients = blocks
+                            .iter()
+                            .flat_map(|block| block.iter().copied())
+                            .collect();
+                        RingVec::from_coeffs_with_ring_dim(coefficients, *ring_dim)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(Cow::Owned)
+            }
         }
     }
 

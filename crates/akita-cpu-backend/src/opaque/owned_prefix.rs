@@ -276,6 +276,8 @@ mod tests {
                         .is_err());
                 }
                 assert_eq!(first.setup_prefix_cache_len().unwrap(), 0);
+                let materializations =
+                    crate::commitment::shared_inner::SHARED_MATERIALIZATIONS.get();
                 let artifacts = first
                     .export_setup_prefixes(std::slice::from_ref(&id))
                     .unwrap();
@@ -306,6 +308,14 @@ mod tests {
                 assert_eq!(decoded, artifacts);
                 assert!(!decoded.is_backend_validated());
                 let second = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
+                first
+                    .import_setup_prefixes(&artifacts, std::slice::from_ref(&id))
+                    .unwrap();
+                assert_eq!(
+                    crate::commitment::shared_inner::SHARED_MATERIALIZATIONS.get(),
+                    materializations,
+                    "registry export, serialization, and warm import must use shared blocks directly"
+                );
                 let imported_first = first
                     .import_setup_prefixes(&decoded, std::slice::from_ref(&id))
                     .unwrap();
