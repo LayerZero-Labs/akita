@@ -243,12 +243,13 @@ fn source_components(criterion: &mut Criterion, matrix: &[u32], source: &[u128])
     group.bench_function("multiply_accumulate_rank3", |b| {
         b.iter(|| {
             for (element, source) in black_box(&transformed).iter().enumerate() {
-                for (accumulator, row) in accumulators
-                    .iter_mut()
-                    .zip(black_box(rank_three.matrix_ntt()).chunks_exact(WIDTH))
-                {
+                for (row, accumulator) in accumulators.iter_mut().enumerate() {
                     accumulator
-                        .add_product(&row[element], source)
+                        .add_product(
+                            black_box(rank_three.matrix_ntt_element(row, element))
+                                .expect("matrix element exists"),
+                            source,
+                        )
                         .expect("benchmark transforms have the same prime");
                 }
             }

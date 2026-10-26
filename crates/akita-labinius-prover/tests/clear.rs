@@ -83,7 +83,7 @@ fn tampered_openings_and_statements_reject() {
     noncanonical_image.images[0] += Q;
     let mut short_image = commitment.clone();
     short_image.images.pop();
-    let mut other_matrix = setup.matrix().to_vec();
+    let mut other_matrix = setup.matrix_coefficients().copied().collect::<Vec<_>>();
     other_matrix[0] ^= 1;
     let other_setup = clear_setup_with::<648, MinusTrinomial>(other_matrix, 2, 2, 8).unwrap();
     for (name, setup, commitment, point, claim) in [
@@ -114,7 +114,7 @@ fn tampered_openings_and_statements_reject() {
     assert!(
         prove_binary_clear_bytes(&setup, &source, &commitment, &point, claim + H::ONE).is_err()
     );
-    let mut unreduced = setup.matrix().to_vec();
+    let mut unreduced = setup.matrix_coefficients().copied().collect::<Vec<_>>();
     unreduced[0] = Q;
     assert!(clear_setup_with::<648, MinusTrinomial>(unreduced, 2, 2, 8).is_err());
 }
@@ -130,7 +130,7 @@ fn fold_response_nonce_is_searched_replayed_and_bounded() {
         bound: i64,
     ) -> BinaryClearSetup<D, M> {
         BinaryClearSetup::new(
-            setup.matrix().to_vec(),
+            setup.matrix_coefficients().copied().collect::<Vec<_>>(),
             setup.n_a(),
             setup.m(),
             setup.columns(),

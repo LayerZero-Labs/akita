@@ -1,5 +1,8 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
+mod streaming;
+pub use streaming::derive_public_matrix_page;
+
 use super::setup_prefix::SetupPrefixVerifierRegistry;
 use akita_error::AkitaError;
 use akita_params::FlatMatrix;

@@ -126,17 +126,28 @@ impl ClearChannel for akita_transcript::VerifierChannel<'_> {
 /// Bind a versioned geometry header and little-endian `u32` residues.
 /// The header fixes the residue count, so fixed-size absorption is injective.
 pub fn matrix_digest(tagged_bytes: &[u8], residues: &[u32]) -> Result<[u8; 32], AkitaError> {
+    matrix_digest_iter(tagged_bytes, residues.iter().copied())
+}
+
+/// Streaming equivalent with the same fixed 4096-residue absorption boundaries.
+pub(crate) fn matrix_digest_iter(
+    tagged_bytes: &[u8],
+    residues: impl IntoIterator<Item = u32>,
+) -> Result<[u8; 32], AkitaError> {
     const CHUNK: usize = 1 << 12;
     let mut channel = akita_transcript::new_prover_channel(tagged_bytes, b"")?;
     let mut bytes = Vec::new();
     bytes
         .try_reserve_exact(CHUNK * size_of::<u32>())
         .map_err(|_| AkitaError::InvalidSetup("matrix digest allocation failed".into()))?;
-    for chunk in residues.chunks(CHUNK) {
-        bytes.clear();
-        for residue in chunk {
-            bytes.extend_from_slice(&residue.to_le_bytes());
+    for residue in residues {
+        bytes.extend_from_slice(&residue.to_le_bytes());
+        if bytes.len() == CHUNK * size_of::<u32>() {
+            ClearChannel::public(&mut channel, &bytes)?;
+            bytes.clear();
         }
+    }
+    if !bytes.is_empty() {
         ClearChannel::public(&mut channel, &bytes)?;
     }
     ClearChannel::challenge_block(&mut channel)
@@ -484,5 +495,27 @@ impl<F: Field + CanonicalEncoding, E: ExtField<F>> RootChallengeChannel<E>
     }
     fn finish_schedule(&mut self) -> Result<(), AkitaError> {
         self.cursor.finish()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod matrix_digest_tests {
+    use super::*;
+
+    #[test]
+    fn streamed_digest_preserves_frozen_absorption_boundaries() {
+        let residues: Vec<u32> = (0..8195).collect();
+        let header = b"matrix digest paging regression";
+        // Retain the old dense absorption algorithm as the independent oracle.
+        let mut reference = akita_transcript::new_prover_channel(header, b"").unwrap();
+        for chunk in residues.chunks(4096) {
+            let bytes: Vec<u8> = chunk.iter().flat_map(|x| x.to_le_bytes()).collect();
+            ClearChannel::public(&mut reference, &bytes).unwrap();
+        }
+        let expected = ClearChannel::challenge_block(&mut reference).unwrap();
+        // Deliberately use storage chunks unrelated to transcript chunks.
+        let actual = matrix_digest_iter(header, residues.chunks(17).flatten().copied()).unwrap();
+        assert_eq!(actual, expected);
     }
 }

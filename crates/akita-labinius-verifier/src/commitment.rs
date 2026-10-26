@@ -85,18 +85,15 @@ pub fn matrix_row_remainder<const D: usize, M: TrinomialModulus>(
             "matrix row product exceeds the integer accumulator".into(),
         ));
     }
-    let row_len = checked::product([setup.m(), D]).ok_or(AkitaError::InvalidProof)?;
-    let start = checked::product([row, row_len]).ok_or(AkitaError::InvalidProof)?;
-    let matrix_row = setup
-        .matrix()
-        .get(checked::range(start, row_len).ok_or(AkitaError::InvalidProof)?)
-        .ok_or(AkitaError::InvalidProof)?;
     let unreduced = checked::product([2, D])
         .and_then(|len| len.checked_sub(1))
         .ok_or(AkitaError::InvalidProof)?;
     let add_element = |mut total: Vec<i128>,
-                       (element, value): (&[u32], &[i64; D])|
+                       (column, value): (usize, &[i64; D])|
      -> Result<Vec<i128>, AkitaError> {
+        let element = setup
+            .matrix_element(row, column)
+            .ok_or(AkitaError::InvalidProof)?;
         if total.is_empty() {
             total = zero_vec(unreduced)?;
         }
@@ -119,9 +116,9 @@ pub fn matrix_row_remainder<const D: usize, M: TrinomialModulus>(
         Ok(total)
     };
     #[cfg(feature = "parallel")]
-    let mut total = matrix_row
-        .par_chunks_exact(D)
-        .zip(vector.par_iter())
+    let mut total = vector
+        .par_iter()
+        .enumerate()
         .try_fold(Vec::new, add_element)
         .try_reduce(Vec::new, |mut left, right| {
             if left.is_empty() {
@@ -133,9 +130,9 @@ pub fn matrix_row_remainder<const D: usize, M: TrinomialModulus>(
             Ok(left)
         })?;
     #[cfg(not(feature = "parallel"))]
-    let mut total = matrix_row
-        .chunks_exact(D)
-        .zip(vector)
+    let mut total = vector
+        .iter()
+        .enumerate()
         .try_fold(Vec::new(), add_element)?;
     if total.is_empty() {
         total = zero_vec(unreduced)?;
@@ -255,7 +252,6 @@ fn apply_matrix_limb<const D: usize, M: TrinomialModulus>(
     let mut centered = zero_vec::<i32>(D)?;
     let mut matrix_slots = domain.zero_slots();
     let mut vector_slots = domain.zero_slots();
-    let row_len = checked::product([setup.m(), D]).ok_or(AkitaError::InvalidProof)?;
     for (j, element) in vector.iter().enumerate() {
         for (destination, &value) in centered.iter_mut().zip(element) {
             *destination = center(value)?;
@@ -263,13 +259,9 @@ fn apply_matrix_limb<const D: usize, M: TrinomialModulus>(
         domain
             .forward_centered(&centered, &mut vector_slots)
             .map_err(limb)?;
-        for (accumulator, row) in accumulators
-            .iter_mut()
-            .zip(setup.matrix().chunks_exact(row_len))
-        {
-            let start = checked::product([j, D]).ok_or(AkitaError::InvalidProof)?;
-            let entry = row
-                .get(checked::range(start, D).ok_or(AkitaError::InvalidProof)?)
+        for (row, accumulator) in accumulators.iter_mut().enumerate() {
+            let entry = setup
+                .matrix_element(row, j)
                 .ok_or(AkitaError::InvalidProof)?;
             for (destination, &value) in centered.iter_mut().zip(entry) {
                 *destination = center(i64::from(value))?;

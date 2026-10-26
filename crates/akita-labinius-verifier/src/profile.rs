@@ -8,6 +8,7 @@
 //! The setup is arithmetic modulo the commitment prime `q` only: it carries no
 //! proof-field type. The proof field enters at `crate::lowered`.
 
+use crate::matrix::RootMatrix;
 use core::marker::PhantomData;
 
 use akita_algebra::binary::field_switch::SwitchField;
@@ -23,7 +24,7 @@ use akita_params::sis::labinius::{
 #[derive(Clone, Debug)]
 pub struct BinaryClearSetup<const D: usize, M: TrinomialModulus> {
     /// Canonical residues below `q`, ordered by row, element, then coefficient.
-    matrix: Vec<u32>,
+    matrix: RootMatrix,
     /// Exact integer `H_i`, ordered by row, then coefficient.
     a_offset_remainders: Vec<i128>,
     n_a: usize,
@@ -52,6 +53,33 @@ impl<const D: usize, M: TrinomialModulus> BinaryClearSetup<D, M> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         matrix: Vec<u32>,
+        n_a: usize,
+        m: usize,
+        columns: usize,
+        lower: i64,
+        upper: i64,
+        lambda_fold: u32,
+        profile: BinaryChallengeProfile,
+        ring_degree: LabiniusRingDegree,
+        commitment_modulus: LabiniusCommitmentModulus,
+    ) -> Result<Self, AkitaError> {
+        Self::from_matrix(
+            RootMatrix::dense(matrix),
+            n_a,
+            m,
+            columns,
+            lower,
+            upper,
+            lambda_fold,
+            profile,
+            ring_degree,
+            commitment_modulus,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_matrix(
+        matrix: RootMatrix,
         n_a: usize,
         m: usize,
         columns: usize,
@@ -171,8 +199,28 @@ impl<const D: usize, M: TrinomialModulus> BinaryClearSetup<D, M> {
     }
     /// Row-major Ajtai matrix: canonical residues of element `(i, j)` are at
     /// `(i * m + j) * D .. + D`.
-    pub fn matrix(&self) -> &[u32] {
-        &self.matrix
+    pub fn matrix_element(&self, row: usize, column: usize) -> Option<&[u32]> {
+        if row >= self.n_a || column >= self.m {
+            return None;
+        }
+        self.matrix
+            .element(checked::mul_add(row, self.m, column)?, D)
+    }
+    /// Canonical row-major coefficients, without materializing a flat copy.
+    pub fn matrix_coefficients(&self) -> impl Iterator<Item = &u32> {
+        self.matrix.iter()
+    }
+    /// Canonical coefficient payload, excluding spare capacity and Vec metadata.
+    pub fn matrix_bytes(&self) -> usize {
+        self.matrix.len() * size_of::<u32>()
+    }
+    /// Number of separately allocated coefficient pages.
+    pub fn matrix_page_count(&self) -> usize {
+        self.matrix.page_count()
+    }
+    /// Largest retained coefficient allocation.
+    pub fn matrix_maximum_page_bytes(&self) -> usize {
+        self.matrix.maximum_page_bytes()
     }
     /// Matrix-bound exact integers `H_i = rem_Phi((sum_j A_ij) * O)`, ordered by
     /// row then coefficient. `O[t]` is the signed-packing response offset:
@@ -265,7 +313,7 @@ impl<const D: usize, M: TrinomialModulus> BinaryClearSetup<D, M> {
 
 /// Exact `H_i = rem_Phi((sum_j A_ij) * O)` over the integers, one row at a time.
 fn a_offset_remainders<const D: usize, M: TrinomialModulus>(
-    matrix: &[u32],
+    matrix: &RootMatrix,
     n_a: usize,
     k: usize,
     lower: i64,
@@ -295,10 +343,12 @@ fn a_offset_remainders<const D: usize, M: TrinomialModulus>(
     product
         .try_reserve_exact(unreduced)
         .map_err(|_| AkitaError::InvalidSetup("offset remainder allocation failed".into()))?;
-    for row in matrix.chunks_exact(row_len) {
+    for row in 0..n_a {
         column_sum.clear();
         column_sum.resize(D, 0i128);
-        for element in row.chunks_exact(D) {
+        for column in 0..(row_len / D) {
+            let index = checked::mul_add(row, row_len / D, column).ok_or_else(overflow)?;
+            let element = matrix.element(index, D).ok_or_else(overflow)?;
             for (sum, &coefficient) in column_sum.iter_mut().zip(element) {
                 *sum = sum
                     .checked_add(i128::from(coefficient))
@@ -341,7 +391,7 @@ fn append_size(bytes: &mut Vec<u8>, value: usize) -> Result<(), AkitaError> {
 }
 
 fn matrix_view_digest<const D: usize, M: TrinomialModulus>(
-    matrix: &[u32],
+    matrix: &RootMatrix,
     n_a: usize,
     m: usize,
     modulus: LabiniusCommitmentModulus,
@@ -353,5 +403,5 @@ fn matrix_view_digest<const D: usize, M: TrinomialModulus>(
         append_size(&mut header, dimension)?;
     }
     header.extend_from_slice(&M::MIDDLE_COEFFICIENT.to_le_bytes());
-    crate::channel::matrix_digest(&header, matrix)
+    crate::channel::matrix_digest_iter(&header, matrix.iter().copied())
 }

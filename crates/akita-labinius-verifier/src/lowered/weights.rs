@@ -102,13 +102,7 @@ pub fn coefficient_weights<F: Field, const D: usize, M: TrinomialModulus>(
     let fill = |(j, column): (usize, &mut [F])| -> Result<(), AkitaError> {
         let mut batched = zero_vec(D)?;
         for (i, &gamma) in public.gamma_powers.iter().enumerate() {
-            let start = checked::mul_add(i, layout.m(), j)
-                .and_then(|entry| checked::product([entry, D]))
-                .ok_or(AkitaError::InvalidProof)?;
-            let a = setup
-                .matrix()
-                .get(checked::range(start, D).ok_or(AkitaError::InvalidProof)?)
-                .ok_or(AkitaError::InvalidProof)?;
+            let a = setup.matrix_element(i, j).ok_or(AkitaError::InvalidProof)?;
             for (destination, &coefficient) in batched.iter_mut().zip(a) {
                 *destination += gamma * F::from_u64(u64::from(coefficient));
             }
@@ -221,16 +215,14 @@ pub fn witness_weight_mle<F: Field, const D: usize, M: TrinomialModulus>(
     if checked::pow2(rho_j.len()) != Some(layout.m()) {
         return Err(AkitaError::InvalidProof);
     }
-    let row_len = checked::product([layout.m(), D]).ok_or(AkitaError::InvalidProof)?;
     let mut contracted = zero_vec::<F>(D)?;
     let mut a_part = F::zero();
-    for (row, &gamma) in setup
-        .matrix()
-        .chunks_exact(row_len)
-        .zip(&public.gamma_powers)
-    {
+    for (row, &gamma) in public.gamma_powers.iter().enumerate() {
         contracted.fill(F::zero());
-        for (j, element) in row.chunks_exact(D).enumerate() {
+        for j in 0..layout.m() {
+            let element = setup
+                .matrix_element(row, j)
+                .ok_or(AkitaError::InvalidProof)?;
             let weight = eq_eval_at_index(rho_j, j);
             for (destination, &coefficient) in contracted.iter_mut().zip(element) {
                 *destination += weight * F::from_u64(u64::from(coefficient));
