@@ -68,7 +68,9 @@ pub(crate) struct SetupBudgetPass {
 /// Deterministic search-work counters for one planned schedule row.
 ///
 /// The counts depend only on the planner code and its inputs, never on timing
-/// or worker scheduling, so a checked-in baseline can guard planner cost.
+/// or worker scheduling, so a checked-in baseline can guard search size. They
+/// do not count per-candidate pricing work, so a slower edge, terminal, or
+/// grinding pricing step leaves them unchanged.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PlannerCost {
     pub suffix_calls: usize,
@@ -342,8 +344,10 @@ impl PlannerDiagnostics {
     }
 
     pub(crate) fn record_setup_prefix_cache(&self, hits: usize, misses: usize) {
-        self.setup_prefix_cache_hits.set(hits);
-        self.setup_prefix_cache_misses.set(misses);
+        self.setup_prefix_cache_hits
+            .set(self.setup_prefix_cache_hits.get().saturating_add(hits));
+        self.setup_prefix_cache_misses
+            .set(self.setup_prefix_cache_misses.get().saturating_add(misses));
     }
 
     pub(crate) fn record_guided_direct_edge_prune(&self) {

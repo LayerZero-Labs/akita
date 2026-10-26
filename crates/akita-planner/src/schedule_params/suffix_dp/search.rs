@@ -367,8 +367,11 @@ pub(crate) fn derive_selected_suffix_schedule(
         diagnostics.record_suffix_call(relation_phase);
     }
     let memo_key = state.memo_key(policy);
-    // Memo entries remain budget-independent objective optima. A restricted
-    // caller reuses that result when it fits its exact root prefix; otherwise
+    // Memo entries are objective optima under the context's setup budget,
+    // independent of any root query-prefix restriction. The setup budget is
+    // not part of the memo key, so a memo must not outlive its budget; the V6
+    // planner builds a fresh memo for every budget pass. A restricted caller
+    // reuses the cached result when it fits its exact root prefix; otherwise
     // it recomputes this state locally and never replaces the primary entry.
     if let QuerySearch::Restricted(prefix) = &query_search {
         let cached = memo.get(&memo_key).cloned().map_or_else(

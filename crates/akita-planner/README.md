@@ -321,12 +321,16 @@ repository permits catalog-breaking revisions, so baseline/current policy is
 reviewed from the checked evidence. Same-head drift remains an automatic
 failure under `--check-catalog`.
 
-Planner cost is guarded the same way. `--planner-cost-snapshot <path>` writes
-one row per regenerated row with four deterministic search-work counters:
-suffix calls, completed states, generated fold candidates, and descriptor
-builds. A reused preplanned row reports the work of the search that produced
-it. The counts do not depend on timing or worker count. The tracked baseline is
-`artifacts/schedule-planner-cost.tsv`; CI passes it through
+Planner search size is guarded the same way. `--planner-cost-snapshot <path>`
+writes one row per regenerated row with four deterministic search-work
+counters: suffix calls, completed states, generated fold candidates, and
+descriptor builds. A reused preplanned row reports the work of the search that
+produced it. The counts do not depend on timing or worker count. They measure
+how large the search is, not how expensive each candidate is to price. A change
+that makes edge, terminal, or grinding pricing slower without visiting more
+states or building more candidates passes this check; the regeneration step's
+CI timeout is the only backstop for that kind of slowdown. The tracked
+baseline is `artifacts/schedule-planner-cost.tsv`; CI passes it through
 `--planner-cost-baseline <snapshot>`, which fails when a row is added or
 removed or when any counter grows by more than a quarter. When a planner change
 intentionally moves rows or costs, regenerate the baseline with the complete
