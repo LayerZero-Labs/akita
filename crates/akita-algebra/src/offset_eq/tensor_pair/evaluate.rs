@@ -1,6 +1,8 @@
 //! Boolean paired-equality contractions over tensor-native address families.
 
-use super::{charge_work, checked_axis_offset, EqPairTensorFamily, EqPairTensorWeights};
+use super::{
+    charge_work, checked_axis_offset, EqPairTensorAxis, EqPairTensorFamily, EqPairTensorWeights,
+};
 use crate::offset_eq::eq_eval_at_index;
 use crate::Field;
 use akita_error::{checked, AkitaError};
@@ -36,6 +38,10 @@ pub fn eval_boolean_pair_tensor_families<
             actual: left_challenges.len().max(right_challenges.len()),
         });
     }
+    families
+        .iter()
+        .flat_map(|family| &family.axes)
+        .try_for_each(EqPairTensorAxis::validate_weights)?;
     let mut batches = BTreeMap::<(usize, usize, usize), Vec<EqPairSeed<F>>>::new();
     let mut multi_axis_batches =
         BTreeMap::<Vec<(usize, usize, usize, usize)>, Vec<&EqPairTensorFamily<F>>>::new();

@@ -1,4 +1,5 @@
 use super::*;
+use crate::offset_eq::tensor_pair::{DenseLeftOverlap, ResidualTerms, MAX_RESIDUAL_TABLE_BYTES};
 
 #[test]
 fn matches_dense_affine_chunk_axis() {
@@ -299,4 +300,139 @@ fn materialization_of_zero_weight_residuals_is_zero() {
     .unwrap()];
     let got = materialize_eq_tensor_left(&equality, &families, 2).unwrap();
     assert_eq!(got, vec![F::zero(); 2]);
+}
+
+#[test]
+fn materialization_rejects_weights_beyond_axis_len() {
+    // Sixty-four unit factor pairs describe 2^64 coordinates on a two-coordinate
+    // axis; counting live residuals from the factors would overflow.
+    let oversized_bit_product = EqPairTensorAxis {
+        len: 2,
+        left_stride: 0,
+        right_stride: 1,
+        weights: EqPairTensorWeights::BitProduct(vec![[F::one(); 2]; 64].into()),
+    };
+    let oversized_dense = EqPairTensorAxis {
+        len: 2,
+        left_stride: 0,
+        right_stride: 1,
+        weights: EqPairTensorWeights::Dense(vec![F::one(); 4].into()),
+    };
+    let equality = OffsetEqWindow::new(&[F::from_u64(3); 4]).unwrap();
+    for residual in [oversized_bit_product, oversized_dense] {
+        let family = EqPairTensorFamily {
+            left_offset: 0,
+            right_offset: 0,
+            scalar: F::one(),
+            axes: vec![EqPairTensorAxis::unit(2, 1, 3), residual],
+        };
+        assert!(matches!(
+            materialize_eq_tensor_left(&equality, std::slice::from_ref(&family), 2),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            eval_boolean_pair_tensor_families::<_, false, false>(
+                &[F::one(); 4],
+                &[F::one(); 4],
+                &[family],
+            ),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+}
+
+#[test]
+fn dense_left_residuals_above_table_budget_are_streamed() {
+    // Two outputs against a 2^27-term residual: within the work bound, but a
+    // residual table would take gigabytes. Planning must not build it.
+    let large = [EqPairTensorFamily::new(
+        0,
+        0,
+        F::one(),
+        vec![
+            EqPairTensorAxis::unit(2, 1, 3),
+            EqPairTensorAxis::unit(1 << 27, 0, 1),
+        ],
+    )
+    .unwrap()];
+    let plan = DenseLeftOverlap::plan(&large, 2, MAX_RESIDUAL_TABLE_BYTES)
+        .unwrap()
+        .unwrap();
+    assert!(plan
+        .views
+        .iter()
+        .all(|view| matches!(view.residual, ResidualTerms::Streamed)));
+
+    let mut rng = StdRng::seed_from_u64(0x5717_EA3D);
+    let challenges = random_vec(&mut rng, 10);
+    let equality = OffsetEqWindow::new(&challenges).unwrap();
+    let folds = random_vec(&mut rng, 3);
+    let bits = [
+        [F::from_u64(2), F::from_u64(3)],
+        [F::from_u64(5), F::zero()],
+    ];
+    let families = [
+        EqPairTensorFamily::new(
+            1,
+            9,
+            F::from_u64(7),
+            vec![
+                EqPairTensorAxis::unit(6, 1, 5),
+                EqPairTensorAxis::dense(0, 2, folds.clone()),
+                EqPairTensorAxis::bit_product(0, 37, bits.to_vec()).unwrap(),
+            ],
+        )
+        .unwrap(),
+        EqPairTensorFamily::new(
+            1,
+            200,
+            F::from_u64(11),
+            vec![
+                EqPairTensorAxis::unit(6, 1, 1),
+                EqPairTensorAxis::unit(3, 0, 64),
+            ],
+        )
+        .unwrap(),
+    ];
+    let expected = (0..8)
+        .map(|left| {
+            if !(1..7).contains(&left) {
+                return F::zero();
+            }
+            let coordinate = left - 1;
+            let mut value = F::zero();
+            for (fold, &fold_weight) in folds.iter().enumerate() {
+                for bit_coordinate in 0..4 {
+                    let bit_weight =
+                        bits[0][bit_coordinate & 1] * bits[1][(bit_coordinate >> 1) & 1];
+                    value += F::from_u64(7)
+                        * fold_weight
+                        * bit_weight
+                        * eq_eval_at_index(
+                            &challenges,
+                            9 + 5 * coordinate + 2 * fold + 37 * bit_coordinate,
+                        );
+                }
+            }
+            for row in 0..3 {
+                value +=
+                    F::from_u64(11) * eq_eval_at_index(&challenges, 200 + coordinate + 64 * row);
+            }
+            value
+        })
+        .collect::<Vec<_>>();
+    for (budget, tabulated) in [(0, false), (MAX_RESIDUAL_TABLE_BYTES, true)] {
+        let plan = DenseLeftOverlap::plan(&families, 8, budget)
+            .unwrap()
+            .unwrap();
+        assert!(plan
+            .views
+            .iter()
+            .all(|view| matches!(view.residual, ResidualTerms::Table(_)) == tabulated));
+        assert_eq!(plan.materialize(&equality, 8).unwrap(), expected);
+    }
+    assert_eq!(
+        materialize_eq_tensor_left(&equality, &families, 8).unwrap(),
+        expected
+    );
 }
