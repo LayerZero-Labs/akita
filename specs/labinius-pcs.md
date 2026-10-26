@@ -299,8 +299,8 @@ All other reduction message sizes are fixed by the statement and mode
 
 All committed tables use `DensePoly::<F>::from_field_evals`. Y and W cost one
 F element per digit, in addition to the reduction's digit bytes and dense
-source mirrors. At `(22,8,128)`, those field tables cost 64 MiB and 256 MiB
-on `Family128`, or 32 MiB and 128 MiB on `Family64`. The flattened prime table
+source mirrors. At `(22,8,128)`, those field tables cost 128 MiB and 256 MiB
+on `Family128`, or 64 MiB and 128 MiB on `Family64`. The flattened prime table
 costs 4 MiB on either family. Y is retained with `Committed`, while uP and W
 are retained for one opening. Reduction and Akita workspaces add to this.
 Succinctness refers to proof size, not prover memory or a sublinear scan of
