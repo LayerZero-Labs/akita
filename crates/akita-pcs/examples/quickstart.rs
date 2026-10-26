@@ -28,7 +28,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     let evaluation = evaluate_multilinear(&evaluations, &point);
 
-    let scheme = load_workspace_scheme::<Config>()?;
+    let scheme =
+        load_workspace_scheme::<Config>(akita_params::ChunkedWitnessCfg::default_non_chunked())?;
     let setup = scheme.setup_prover(NUM_VARS, 1)?;
     let backend = Arc::new(CpuBackend::new(setup.expanded.clone())?);
     let source = backend.import_source(vec![polynomial])?;

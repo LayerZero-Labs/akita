@@ -103,7 +103,16 @@ fn visit_fold_opening(
 ) -> Result<(), AkitaError> {
     let policy = ctx.policy;
     for &payload_mode in state.payload_phase.candidate_modes(state.level, false) {
-        for relation_transition in relation::transitions(state.relation_state, state.level) {
+        for relation_transition in relation::transitions(
+            state.relation_state,
+            state.level,
+            policy.witness_chunk_at_level(state.level),
+        ) {
+            if fold_opening.opening.is_coefficient_packing()
+                && relation_transition.mode.is_reduced_evaluation()
+            {
+                continue;
+            }
             let request = RecursiveCandidateRequest {
                 input_chunks: Some(state.input_chunks),
                 policy,
@@ -215,18 +224,23 @@ pub(super) fn visit_suffixes(
                 work,
                 &mut frontier,
             )?;
-            let fold_work = if state.level <= 1 {
-                crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
-                    state.level,
-                    ctx.policy.claim_ext_degree,
-                    dimensions,
-                )?
-                .into_iter()
-                .map(|opening| (opening, 0))
-                .collect::<Vec<_>>()
-            } else {
-                trace_work.into_iter().collect()
-            };
+            let mut fold_work = Vec::new();
+            if !akita_params::fold_requires_coefficient_packing(
+                ctx.policy.chunks_at_level(state.level),
+                state.level,
+            ) {
+                fold_work.extend(trace_work);
+            }
+            if state.relation_state == OracleRelationState::QuotientPrefix {
+                fold_work.extend(
+                    crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
+                        ctx.policy.claim_ext_degree,
+                        dimensions,
+                    )?
+                    .into_iter()
+                    .map(|opening| (opening, 0)),
+                );
+            }
             for (opening, _) in fold_work {
                 visit_fold_opening(
                     ctx,

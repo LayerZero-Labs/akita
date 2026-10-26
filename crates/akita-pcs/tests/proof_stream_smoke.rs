@@ -9,6 +9,72 @@ use akita_prover::SelectedProverOpeningData;
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::{Ring, Zero};
 
+macro_rules! onehot_roundtrip {
+    ($config:ty, $basis:expr) => {{
+        type Cfg = $config;
+        let basis = $basis;
+        type F = <Cfg as CommitmentConfig>::Field;
+        type E = <Cfg as CommitmentConfig>::ExtField;
+        const NV: usize = 14;
+        let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .unwrap();
+        let scheme = AkitaCommitmentScheme::<Cfg>::new(schedules);
+        let setup = scheme.setup_prover(NV, 1).unwrap();
+        let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
+        let chunk_size = akita_config::unit_onehot_source_chunk_size::<Cfg>().unwrap();
+        let indices = (0..((1 << NV) / chunk_size))
+            .map(|chunk| Some(((chunk * 29 + 7) % chunk_size) as u8))
+            .collect();
+        let poly = OneHotPoly::<F, u8>::new(chunk_size, indices).unwrap();
+        let point: Vec<E> = (0..NV)
+            .map(|index| E::from_u64((index + 2) as u64))
+            .collect();
+        let weights = akita_params::basis_weights(&point, basis).unwrap();
+        let opening = poly
+            .indices()
+            .iter()
+            .enumerate()
+            .fold(E::zero(), |sum, (chunk, hot)| {
+                sum + hot.map_or(E::zero(), |index| {
+                    weights[chunk * chunk_size + usize::from(index)]
+                })
+            });
+        let output = backend
+            .commit(
+                scheme.schedules(),
+                &backend.import_source(vec![poly]).unwrap(),
+                GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .unwrap();
+        let commitment = output.committed_group;
+        let group =
+            PolynomialGroupClaims::new(point.clone(), vec![opening], commitment.clone()).unwrap();
+        let claims = OpeningClaims::from_groups(vec![group]).unwrap();
+        let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
+            claims,
+            vec![output.private_handle],
+            scheme.schedules(),
+        )
+        .unwrap();
+        let selection = prover_data.selection();
+        let proof = scheme
+            .batched_prove(&setup, prover_data, &backend, b"native-port-onehot", basis)
+            .unwrap();
+        let verify_group = PolynomialGroupClaims::new(point, vec![opening], &commitment).unwrap();
+        let verify_claims = OpeningClaims::from_groups(vec![verify_group]).unwrap();
+        let statement = GroupBatchStatement::new(selection, verify_claims).unwrap();
+        let verifier_setup = scheme.setup_verifier(&setup).unwrap();
+        scheme
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(&proof, b"native-port-onehot", statement, basis)
+            })
+            .unwrap();
+    }};
+}
+
 #[test]
 fn dense_fp128_roundtrip() {
     std::thread::Builder::new()
@@ -23,80 +89,23 @@ fn dense_fp128_roundtrip() {
 fn onehot_fp32_roundtrip() {
     std::thread::Builder::new()
         .stack_size(512 * 1024 * 1024)
-        .spawn(onehot_fp32_roundtrip_inner)
+        .spawn(|| onehot_roundtrip!(fp32::OneHot, BasisMode::Lagrange))
         .unwrap()
         .join()
         .unwrap();
 }
 
-fn onehot_fp32_roundtrip_inner() {
-    type Cfg = fp32::OneHot;
-    type F = <Cfg as CommitmentConfig>::Field;
-    type E = <Cfg as CommitmentConfig>::ExtField;
-    const NV: usize = 14;
-    let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
-    let scheme = AkitaCommitmentScheme::<Cfg>::new(schedules);
-    let setup = scheme.setup_prover(NV, 1).unwrap();
-    let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
-    let chunk_size = akita_config::unit_onehot_source_chunk_size::<Cfg>().unwrap();
-    let indices = (0..((1 << NV) / chunk_size))
-        .map(|chunk| Some(((chunk * 29 + 7) % chunk_size) as u8))
-        .collect();
-    let poly = OneHotPoly::<F, u8>::new(chunk_size, indices).unwrap();
-    let point: Vec<E> = (0..NV)
-        .map(|index| E::from_u64((index + 2) as u64))
-        .collect();
-    let weights = lagrange_weights(&point).unwrap();
-    let opening = poly
-        .indices()
-        .iter()
-        .enumerate()
-        .fold(E::zero(), |sum, (chunk, hot)| {
-            sum + hot.map_or(E::zero(), |index| {
-                weights[chunk * chunk_size + usize::from(index)]
-            })
-        });
-    let output = backend
-        .commit(
-            scheme.schedules(),
-            &backend.import_source(vec![poly]).unwrap(),
-            GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .unwrap();
-    let commitment = output.committed_group;
-    let group =
-        PolynomialGroupClaims::new(point.clone(), vec![opening], commitment.clone()).unwrap();
-    let claims = OpeningClaims::from_groups(vec![group]).unwrap();
-    let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
-        claims,
-        vec![output.private_handle],
-        scheme.schedules(),
-    )
-    .unwrap();
-    let selection = prover_data.selection();
-    let proof = scheme
-        .batched_prove(
-            &setup,
-            prover_data,
-            &backend,
-            b"native-port-onehot-fp32",
-            BasisMode::Lagrange,
-        )
-        .unwrap();
-    let verify_group = PolynomialGroupClaims::new(point, vec![opening], &commitment).unwrap();
-    let verify_claims = OpeningClaims::from_groups(vec![verify_group]).unwrap();
-    let statement = GroupBatchStatement::new(selection, verify_claims).unwrap();
-    let verifier_setup = scheme.setup_verifier(&setup).unwrap();
-    scheme
-        .verifier(verifier_setup.clone())
-        .and_then(|verifier| {
-            verifier.batched_verify(
-                &proof,
-                b"native-port-onehot-fp32",
-                statement,
-                BasisMode::Lagrange,
-            )
+#[test]
+fn onehot_fp128_roundtrip() {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024 * 1024)
+        .spawn(|| {
+            for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
+                onehot_roundtrip!(fp128::OneHot, basis);
+            }
         })
+        .unwrap()
+        .join()
         .unwrap();
 }
 
@@ -104,7 +113,10 @@ fn dense_fp128_roundtrip_inner() {
     type Cfg = fp128::Dense;
     type F = <Cfg as CommitmentConfig>::Field;
     const NV: usize = 14;
-    let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
+    let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .unwrap();
     let scheme = AkitaCommitmentScheme::<Cfg>::new(schedules);
     let setup = scheme.setup_prover(NV, 1).unwrap();
     let backend = CpuBackend::new(setup.expanded.clone()).unwrap();

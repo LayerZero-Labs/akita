@@ -1,6 +1,8 @@
 use super::*;
 
-fn workspace_scheme<C>() -> Result<AkitaCommitmentScheme<C>, AkitaError>
+fn workspace_scheme<C>(
+    chunking: akita_params::ChunkedWitnessCfg,
+) -> Result<AkitaCommitmentScheme<C>, AkitaError>
 where
     C: CommitmentConfig,
     C::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
@@ -8,7 +10,7 @@ where
     C::ExtField: ExtField<C::Field> + Ring + Unreduced + Fold + AkitaSerialize,
 {
     Ok(AkitaCommitmentScheme::new(
-        akita_config::test_support::workspace_schedule_catalog::<C>()?,
+        akita_config::test_support::workspace_schedule_catalog::<C>(chunking)?,
     ))
 }
 use akita_config::proof_optimized::fp128;
@@ -43,12 +45,18 @@ fn onehot_source_chunk_size<C: CommitmentConfig>() -> usize {
 
 #[test]
 fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
-    let workspace_catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
-        .expect("workspace schedule catalog");
+    let workspace_catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("workspace schedule catalog");
     let artifact = workspace_catalog
         .to_artifact_bytes()
         .expect("schedule artifact");
-    let scheme = Scheme::from_schedule_artifact(&artifact).expect("artifact-backed scheme");
+    let scheme = Scheme::from_schedule_artifact(
+        &artifact,
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("artifact-backed scheme");
 
     assert_eq!(
         scheme.schedules().catalog_digest(),
@@ -81,10 +89,15 @@ fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
 
 #[test]
 fn scheme_rejects_a_catalog_bound_to_another_config() {
-    let dense = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
-        .expect("dense schedule catalog");
-    let error = akita_config::TrustedScheduleCatalog::<OneHotCfg>::new(dense.catalog().clone())
-        .expect_err("one-hot config must reject a dense catalog");
+    let dense = akita_config::test_support::workspace_schedule_catalog::<Cfg>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("dense schedule catalog");
+    let error = akita_config::TrustedScheduleCatalog::<OneHotCfg>::new(
+        dense.catalog().clone(),
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect_err("one-hot config must reject a dense catalog");
     assert!(error.to_string().contains("family"));
 }
 
@@ -238,7 +251,8 @@ type VerifyFixture = (
 );
 
 fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
-    let scheme = workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let scheme = workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+        .expect("workspace schedule artifact");
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout(&scheme, num_vars);
     let full_num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;

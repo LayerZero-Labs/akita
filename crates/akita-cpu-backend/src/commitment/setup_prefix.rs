@@ -1,7 +1,7 @@
 //! Backend-owned setup-prefix material and persistence.
 use super::PortableCommitmentHandle;
 use akita_error::AkitaError;
-use akita_params::{setup_prefix_compression_plan, SetupPrefixSlotId};
+use akita_params::SetupPrefixSlotId;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -44,7 +44,11 @@ impl<F: Field + Valid> Valid for SetupPrefixSlot<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.id.check()?;
         self.commitment.check()?;
-        let compression_plan = setup_prefix_compression_plan(&self.id.commitment_profile)?;
+        let compression_plan = self
+            .id
+            .commitment_profile
+            .outer_compression_plan()
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
         let expected_payload_coefficients = compression_plan.terminal_coefficients();
         if self.commitment.rows.len() != 1 {
             return Err(SerializationError::InvalidData(
@@ -120,8 +124,7 @@ where
 
 impl<F: Field> SetupPrefixSlot<F> {
     fn validate_compression_hint(&self) -> Result<(), AkitaError> {
-        let plan = setup_prefix_compression_plan(&self.id.commitment_profile)
-            .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+        let plan = self.id.commitment_profile.outer_compression_plan()?;
         self.hint.validate_outer_compression(&plan)
     }
 

@@ -400,7 +400,7 @@ pub(crate) fn derive_selected_suffix_schedule(
     let mut frontiers = StateFrontiers::new();
     for open_log_basis in candidate_domain.opening_basis_range.clone() {
         if root_level_key.is_some() {
-            candidate_domain.visit_root_batches(ctx, state, open_log_basis, |generated| {
+            candidate_domain.visit_root_batches(ctx, open_log_basis, |generated| {
                 process_candidate_batch(
                     ctx,
                     memo,

@@ -13,9 +13,12 @@ use akita_params::{basis_weights, basis_weights_prefix, BasisMode};
 
 /// Canonical opening-point split for subring coefficient packing.
 ///
-/// The source point order is `[r_pack | r_tail | r_M | r_B]`. Full domains
-/// are retained for the first three axes; only the exact live block prefix is
-/// retained from the padded block domain.
+/// The source point order is `[r_pack | r_tail | r_M | r_B]`. Each axis keeps
+/// the coordinates of its power-of-two domain, zero-padded past the source
+/// arity; `num_live_blocks` marks the live prefix of the block domain.
+///
+/// Verifiers evaluate these axes directly. Provers build the tensor-product
+/// tables with [`SubringCoefficientPackingTables::new`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedSubringCoefficientPackingPoint<E: Field> {
     geometry: SubringCoefficientPackingGeometry,
@@ -28,6 +31,15 @@ pub struct PreparedSubringCoefficientPackingPoint<E: Field> {
     tail_point: Vec<E>,
     position_point: Vec<E>,
     block_point: Vec<E>,
+}
+
+/// Prover-side tensor-product tables for one checked coefficient-packing point.
+///
+/// The tables own the point they were built from, so a kernel cannot pair them
+/// with a different point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubringCoefficientPackingTables<E: Field> {
+    point: PreparedSubringCoefficientPackingPoint<E>,
     packing_weights: Vec<E>,
     tail_weights: Vec<E>,
     position_weights: Vec<E>,
@@ -110,10 +122,6 @@ impl<E: Field> PreparedSubringCoefficientPackingPoint<E> {
         let tail_point = take_axis(axis_bits[1])?.to_vec();
         let position_point = take_axis(axis_bits[2])?.to_vec();
         let block_point = take_axis(axis_bits[3])?.to_vec();
-        let packing_weights = basis_weights(&packing_point, basis)?;
-        let tail_weights = basis_weights(&tail_point, basis)?;
-        let position_weights = basis_weights(&position_point, basis)?;
-        let live_block_weights = basis_weights_prefix(&block_point, basis, num_live_blocks)?;
         Ok(Self {
             geometry,
             basis,
@@ -125,10 +133,6 @@ impl<E: Field> PreparedSubringCoefficientPackingPoint<E> {
             tail_point,
             position_point,
             block_point,
-            packing_weights,
-            tail_weights,
-            position_weights,
-            live_block_weights,
         })
     }
 
@@ -181,6 +185,30 @@ impl<E: Field> PreparedSubringCoefficientPackingPoint<E> {
     pub fn block_point(&self) -> &[E] {
         &self.block_point
     }
+}
+
+impl<E: Field> SubringCoefficientPackingTables<E> {
+    /// Build the four opening tables for a checked point.
+    ///
+    /// Propagates the canonical basis builders' size and allocation errors.
+    pub fn new(point: PreparedSubringCoefficientPackingPoint<E>) -> Result<Self, AkitaError> {
+        Ok(Self {
+            packing_weights: basis_weights(&point.packing_point, point.basis)?,
+            tail_weights: basis_weights(&point.tail_point, point.basis)?,
+            position_weights: basis_weights(&point.position_point, point.basis)?,
+            live_block_weights: basis_weights_prefix(
+                &point.block_point,
+                point.basis,
+                point.num_live_blocks,
+            )?,
+            point,
+        })
+    }
+
+    /// The checked point these tables were built from.
+    pub const fn point(&self) -> &PreparedSubringCoefficientPackingPoint<E> {
+        &self.point
+    }
 
     /// Weights for the low A-ring coefficient axis.
     pub fn packing_weights(&self) -> &[E] {
@@ -219,23 +247,25 @@ mod tests {
                 PreparedSubringCoefficientPackingPoint::new(geometry, basis, 6, 4, 10, &point)
                     .unwrap();
             assert_eq!(prepared.basis(), basis);
+            assert_eq!(prepared.num_live_blocks(), 2);
+            let tables = SubringCoefficientPackingTables::new(prepared.clone()).unwrap();
+            assert_eq!(tables.point(), &prepared);
             assert_eq!(
-                prepared.packing_weights(),
+                tables.packing_weights(),
                 basis_weights(&point[..1], basis).unwrap()
             );
             assert_eq!(
-                prepared.tail_weights(),
+                tables.tail_weights(),
                 basis_weights(&point[1..7], basis).unwrap()
             );
             assert_eq!(
-                prepared.position_weights(),
+                tables.position_weights(),
                 basis_weights(&point[7..9], basis).unwrap()
             );
             assert_eq!(
-                prepared.live_block_weights(),
+                tables.live_block_weights(),
                 basis_weights_prefix(&point[9..], basis, 2).unwrap()
             );
-            assert_eq!(prepared.num_live_blocks(), 2);
         }
         assert!(matches!(
             PreparedSubringCoefficientPackingPoint::new(

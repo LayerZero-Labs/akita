@@ -850,7 +850,7 @@ pub(crate) use witness_build::CpuCommitmentMaterialHandle;
 pub(crate) use witness_build::{
     balanced_decompose_centered_i32_i8_into, CpuCommitmentMaterial,
     CpuRecursiveWitnessAssemblyState, OpaqueCompressionState, OpaqueInnerRelationState,
-    PreparedOpeningWitness, PublicPreparedRelationOpening,
+    PreparedOpeningWitness,
 };
 #[cfg(test)]
 pub(crate) use witness_build::{cpu_recursive_witness_build, RingRelationWitness};

@@ -29,7 +29,7 @@ where
 pub(in crate::opaque) fn coefficient_packing<F, E>(
     binding: OperationBinding,
     source: PreparedOpeningSource<F, E>,
-    point: akita_types::PreparedSubringCoefficientPackingPoint<E>,
+    tables: akita_types::SubringCoefficientPackingTables<E>,
     partials_by_claim: Vec<crate::opaque::SubringCoefficientPackingPartials<F>>,
     scalar_openings: Vec<E>,
 ) -> PreparedGroupOpening<E, CpuPreparedOpeningHandle<F, E>>
@@ -40,7 +40,7 @@ where
     let handle = CpuPreparedOpeningHandle::coefficient_packing(
         binding,
         source,
-        point,
+        tables,
         partials_by_claim,
         scalar_openings.clone(),
     );

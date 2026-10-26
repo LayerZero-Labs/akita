@@ -44,8 +44,8 @@ pub struct SisSecurityConstraint {
 /// SIS security policy understood by the offline estimator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SisSecurityPolicy {
-    /// Corrected ADPS16 quantum LGSA gate at 128 bits.
-    Quantum128BitADPS16,
+    /// Corrected ADPS16 quantum LGSA gate at 169 bits (ML-DSA-65 forgery cost).
+    Quantum169BitADPS16,
 }
 
 impl SisSecurityPolicy {
@@ -53,7 +53,7 @@ impl SisSecurityPolicy {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Quantum128BitADPS16 => "Quantum128BitADPS16",
+            Self::Quantum169BitADPS16 => "Quantum169BitADPS16",
         }
     }
 
@@ -61,11 +61,11 @@ impl SisSecurityPolicy {
     #[must_use]
     pub const fn adps16_quantum_constraint(self) -> SisSecurityConstraint {
         match self {
-            Self::Quantum128BitADPS16 => SisSecurityConstraint {
+            Self::Quantum169BitADPS16 => SisSecurityConstraint {
                 reduction_model: ReductionCostModel::Adps16 {
                     mode: Adps16Mode::Quantum,
                 },
-                minimum_log2_rop: 128.0,
+                minimum_log2_rop: 169.0,
             },
         }
     }
@@ -74,8 +74,8 @@ impl SisSecurityPolicy {
 impl From<akita_params::sis::SisSecurityPolicyId> for SisSecurityPolicy {
     fn from(policy: akita_params::sis::SisSecurityPolicyId) -> Self {
         match policy {
-            akita_params::sis::SisSecurityPolicyId::Quantum128BitADPS16 => {
-                Self::Quantum128BitADPS16
+            akita_params::sis::SisSecurityPolicyId::Quantum169BitADPS16 => {
+                Self::Quantum169BitADPS16
             }
         }
     }
@@ -217,7 +217,7 @@ impl EstimateConfig {
     /// proven-pruned beta and zeta search.
     #[must_use]
     pub fn akita_infinity_table() -> Self {
-        let constraint = SisSecurityPolicy::Quantum128BitADPS16.adps16_quantum_constraint();
+        let constraint = SisSecurityPolicy::Quantum169BitADPS16.adps16_quantum_constraint();
         Self {
             red_cost_model: constraint.reduction_model,
             optimizer: OptimizerConfig::OptimizeZeta {
@@ -229,7 +229,7 @@ impl EstimateConfig {
         }
     }
 
-    /// Akita Euclidean table generation profile: ADPS16 quantum at 128 bits.
+    /// Akita Euclidean table generation profile: ADPS16 quantum at the policy target.
     ///
     /// The Euclidean SIS geometry determines the required BKZ block size. The
     /// reduction is priced with the same ADPS16 quantum model as the production
@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn proven_pruned_search_requires_a_finite_positive_target() {
         let config = EstimateConfig::akita_infinity_table();
-        assert_eq!(config.proven_pruned_target_log2_rop, Some(128.0));
+        assert_eq!(config.proven_pruned_target_log2_rop, Some(169.0));
         assert!(config.validate().is_ok());
 
         assert!(EstimateConfig {
@@ -429,14 +429,14 @@ mod tests {
 
     #[test]
     fn quantum_policy_pins_the_single_adps16_gate() {
-        let policy = SisSecurityPolicy::Quantum128BitADPS16;
+        let policy = SisSecurityPolicy::Quantum169BitADPS16;
         assert_eq!(
             policy.adps16_quantum_constraint(),
             SisSecurityConstraint {
                 reduction_model: ReductionCostModel::Adps16 {
                     mode: Adps16Mode::Quantum,
                 },
-                minimum_log2_rop: 128.0,
+                minimum_log2_rop: 169.0,
             }
         );
     }

@@ -2,8 +2,10 @@
 
 use crate::AkitaJoltCase;
 use akita_error::AkitaError;
-use akita_types::{AkitaVerifierSetup, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-use akita_params::{OpeningScheduleSelection};
+use akita_params::OpeningScheduleSelection;
+use akita_types::{
+    AkitaVerifierSetup, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
+};
 use jolt_field::Field;
 
 /// One ordered commitment group carried in a multi-group verifier statement.

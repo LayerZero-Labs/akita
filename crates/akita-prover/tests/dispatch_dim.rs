@@ -8,8 +8,10 @@ use akita_params::ScheduleLookupKey;
 use akita_params::{validate_schedule_ring_dims, FoldSchedule, PolynomialGroupLayout};
 
 fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
-    let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
-        .expect("workspace schedule catalog");
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("workspace schedule catalog");
     let group = match akita_config::honest_fold_policy_of::<Cfg>() {
         akita_params::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
             PolynomialGroupLayout::singleton(num_vars)

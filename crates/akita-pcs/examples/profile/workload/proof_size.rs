@@ -1,14 +1,15 @@
-use akita_config::CommitmentConfig;
 use akita_params::{FoldSchedule, PolynomialGroupLayout, SetupContributionMode};
+use akita_schedules::PlannerPolicy;
 
 pub(super) struct ProofSizeBudgets {
     planner_estimate: usize,
     bound: usize,
 }
 
-pub(super) fn proof_size_budgets<Cfg: CommitmentConfig>(
+pub(super) fn proof_size_budgets(
     schedule: &FoldSchedule,
     final_group: PolynomialGroupLayout,
+    policy: &PlannerPolicy,
 ) -> ProofSizeBudgets {
     let key = akita_params::ScheduleLookupKey {
         final_group,
@@ -20,11 +21,10 @@ pub(super) fn proof_size_budgets<Cfg: CommitmentConfig>(
             .map(|group| group.profile)
             .collect(),
     };
-    let policy = akita_config::policy_of::<Cfg>();
     let planner_estimate =
-        akita_schedules::expanded_schedule_proof_estimate_bytes(&key, schedule, &policy)
+        akita_schedules::expanded_schedule_proof_estimate_bytes(&key, schedule, policy)
             .expect("expanded schedule estimate");
-    let bound = akita_schedules::expanded_schedule_proof_bound(&key, schedule, &policy)
+    let bound = akita_schedules::expanded_schedule_proof_bound(&key, schedule, policy)
         .expect("native proof bound");
     ProofSizeBudgets {
         planner_estimate,

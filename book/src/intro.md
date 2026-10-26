@@ -4,11 +4,12 @@ Akita is a lattice-based polynomial commitment scheme, or PCS, implemented in
 Rust. Akita lets a prover commit to a large table and later prove an evaluation
 of the multilinear polynomial represented by that table. The verifier checks
 the proof without receiving the whole table. Akita uses transparent setup, so
-it needs no trusted ceremony. Its production parameters provide 128-bit
-post-quantum security under Module-SIS.
+it needs no trusted ceremony. Its production parameters price every Module-SIS
+instance at NIST security category 3, the level of ML-DSA-65: 169 bits of
+quantum Core-SVP cost. Its Fiat-Shamir soundness target is 128 bits.
 
 Akita's small proofs are one of its strongest advantages. Current production
-benchmarks produce opening proofs of roughly 65 to 80 KB. This contrasts with
+benchmarks produce opening proofs of roughly 75 to 90 KB. This contrasts with
 hash-based post-quantum polynomial commitment schemes, which produce proofs of
 hundreds of kilobytes at the same polynomial sizes Akita supports.
 
@@ -198,7 +199,7 @@ PCS provers, which usually materialize an encoded word and a hash tree during
 commitment, then retain both to answer later openings. The memory for those
 objects grows linearly with the polynomial size.
 
-The 65 to 80 KB figures cover the Akita commitment proof. The host proof system
+The 75 to 90 KB figures cover the Akita commitment proof. The host proof system
 contributes its own proof data.
 
 Jolt is the first demanding host for these boundaries. It exercises Akita

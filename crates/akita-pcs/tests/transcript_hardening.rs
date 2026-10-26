@@ -20,7 +20,10 @@ const LABEL: &[u8] = b"hardening/onehot/native";
 fn stream_binds_session_statement_basis_and_eof() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
+        let scheme = load_workspace_scheme::<OneHotCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace schedule catalog");
         let layout = scheme
             .schedules()
             .resolve_key(&akita_params::ScheduleLookupKey::single(
@@ -194,7 +197,10 @@ fn stream_binds_session_statement_basis_and_eof() {
 fn stream_mutations_reject_without_panicking() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let scheme = load_workspace_scheme::<DenseCfg>().expect("workspace schedule catalog");
+        let scheme = load_workspace_scheme::<DenseCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace schedule catalog");
         let poly = make_dense_poly(NUM_VARS, 0x7171);
         let point = random_point(NUM_VARS, 0x8181);
         let row = scheme

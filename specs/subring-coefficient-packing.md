@@ -56,17 +56,19 @@ subring and embed sparsely into the A ring. The challenge subring dimension and
 the A ring dimension are independent schedule choices, subject to the
 divisibility condition below.
 
-Generated schedules use `SubringCoefficientPacking` at absolute fold levels 0
-and 1 when those nonterminal folds exist. This rule applies to every field
-profile. Every group at such a fold MUST have a complete, statically feasible
+Generated schedules require `SubringCoefficientPacking` at levels 0 and 1
+and at every multi-chunk fold. A three-level multi-chunk profile therefore
+requires packing at levels 0, 1, and 2. Single-chunk folds at level 2 or later
+admit both packing and `EvaluationTrace` wherever their source encoding supports
+it. All roots, including single-chunk base-field roots, retain packing.
+Every group at a required packing fold MUST have a complete, statically feasible
 packing assignment. Otherwise the schedule is unsupported. The planner MUST
-NOT fall back to `EvaluationTrace` at an early packing fold and MUST NOT mix the
+NOT fall back to `EvaluationTrace` at a required packing fold and MUST NOT mix the
 two method families within one fold. For extension fields, EOR is not available
 at packing levels. For degree one fields, the same method may reduce the partial
 opening and D or H source even though there is no EOR payload to remove.
 
-Subring coefficient packing folds at levels 0 and 1 MUST use the Linf A
-security route. This keeps PR 369's rule that physical L2 admission starts at
+Every subring coefficient packing fold MUST use the Linf A security route. This keeps PR 369's rule that physical L2 admission starts at
 fold level 3. The planner
 MUST derive the Linf response bound through the same policy as PR 369. At the
 root, this includes the unconditional adversarial bound for caller controlled
@@ -74,12 +76,13 @@ dense inputs. At level 1, it uses the propagated typed response model when the
 selected profile provides one. This feature does not add another response
 model.
 
-Later recursive folds and the terminal use `EvaluationTrace`. The feature does
-not add a subring packing terminal and does not extend subring packing search
-past the existing two level adaptive prefix. A short schedule uses
-`SubringCoefficientPacking` at each existing nonterminal fold with absolute
-index 0 or 1. The planner MUST NOT add a fold only to obtain two subring packing
-levels.
+Single-chunk recursive folds may choose either opening method. The terminal
+uses `EvaluationTrace`.
+The feature does not add a subring packing terminal. Multi-chunk packing beyond
+the two-level adaptive prefix uses the configured suffix ring dimensions.
+A short schedule uses `SubringCoefficientPacking` at each existing
+nonterminal fold in the multi-chunk prefix. The planner MUST NOT add a fold only to obtain a
+minimum packing depth.
 
 The planner searches the challenge subring dimension `s` independently of the
 A ring dimension `d_A` at levels 0 and 1. Both values are candidate
@@ -178,7 +181,8 @@ coefficient permutations or alternative subring embeddings.
 ### Protocol boundary
 
 There is one subring coefficient packing opening method. This implementation
-uses it only at nonterminal fold levels 0 and 1. Its partial digits become part
+requires it at folds 0 and 1 and every multi-chunk nonterminal fold and permits it at later single-chunk
+folds. Its partial digits become part
 of the ordinary flat witness committed for the next fold. The descriptor MUST
 bind `k`, `s`, and the extension coordinate order.
 
@@ -321,11 +325,11 @@ connect the ring partials to the original scalar opening. The ring-switch
 verifier evaluates every sparse challenge once at `X = alpha` and reuses that
 value in the consistency and A contractions.
 
-At levels 0 and 1, this specification changes four facts. A partial opening is
-not a full `R` element. The consistency row uses the subring modulus. The
-scalar row uses coefficient packing weights. The packing consistency and A
-relations use different evaluations of the same challenge. Later folds and the
-terminal use the evaluation trace method without these changes.
+At each coefficient-packing fold, this specification changes four facts. A
+partial opening is not a full `R` element. The consistency row uses the subring
+modulus. The scalar row uses coefficient packing weights. The packing
+consistency and A relations use different evaluations of the same challenge.
+Evaluation-trace folds and the terminal do not use these changes.
 
 ## Subring coefficient packing
 
@@ -569,7 +573,7 @@ MUST match multiplication by the embedded challenge in `R` exactly.
 B slicing from PR #388 is unchanged. B continues to bind `t_hat` using one
 physical matrix reused across its selected dyadic slices.
 
-D binds the gadget digits of the partial openings at levels 0 and 1.
+D binds the gadget digits of the partial openings at packing folds.
 The first implementation requires
 
 ```text
@@ -829,7 +833,7 @@ It follows that
 Tests MUST compare this block reduction with direct A ring multiplication and
 MUST cover the sign on negacyclic wraparound. The operator norm equality is
 retained as an algebraic fact for later work. It does not admit an L2 subring
-packing candidate at levels 0 or 1 in this feature.
+packing candidate in this feature.
 
 ### Forking extraction
 
@@ -1054,10 +1058,10 @@ subring.
 The methods coincide algebraically when `k = 1`, `h = 1`, and `s = d_A`. In
 that case `S = C = R`, up to the indeterminate name, the subring embedding is
 the identity, and the degree one trace is the identity. The schedule and
-transcript still bind one method tag. Generated levels 0 and 1 use
-`SubringCoefficientPacking` when a complete compatible assignment exists;
-later folds use `EvaluationTrace`. The planner MUST NOT enumerate both methods
-as separate candidates at one level merely because this overlap exists.
+transcript still bind one method tag. Multi-chunk folds require
+`SubringCoefficientPacking` with a complete compatible assignment. Single-chunk
+folds enumerate both opening methods as separate candidates, including in this
+overlap case.
 
 The implementation expresses this ownership split with the following shape.
 
@@ -1138,7 +1142,7 @@ is not admissible even though its bytes do not depend on the challenge draw.
 `h` and the subring embedding stride are derived from `(k, d_A, s)`. They MUST
 NOT be serialized as independent choices.
 
-### Transition after level 1
+### Transition to the single-chunk suffix
 
 A subring packing fold outputs one canonical flat base field witness. Its
 partial opening digits and packing consistency quotient coordinates are
@@ -1147,7 +1151,8 @@ verifying the producing fold.
 The next fold commits to and opens the flat witness selected by its own
 schedule. It does not reuse the previous fold's challenge subring.
 
-For example, suppose level 0 and level 1 both offload setup contributions.
+For example, suppose levels 0 and 1 are multi-chunk and both offload setup
+contributions, while level 2 is single-chunk.
 Level 1 consumes the first setup prefix with its scheduled
 `SubringCoefficientPacking` opening. It then produces a flat witness and a
 second setup prefix for level 2. Level 2 opens both its witness and that second
@@ -1194,15 +1199,14 @@ kernels must be generic over checked `s`. The planner MUST NOT scan arbitrary
 integers or create a challenge family during schedule search.
 
 For `k = 1`, EOR is not valid and contributes no bytes. When a complete
-packing assignment exists, the planner still uses `SubringCoefficientPacking`
-at levels 0 and 1. It may choose `s < d_A` to reduce partial and quotient
+packing assignment exists, the planner uses `SubringCoefficientPacking`
+at every multi-chunk fold. It may choose `s < d_A` to reduce partial and quotient
 coordinates. The overlap with `EvaluationTrace` is `s = d_A` and `h = 1` when
 that `s` exists in the audited registry.
 
 ### Linf security route and the preserved L2 identity
 
-Every subring packing candidate at levels 0 and 1 uses the Linf A security
-route. The planner applies PR 369's current Linf derivation to the exact
+Every subring packing candidate uses the Linf A security route. The planner applies PR 369's current Linf derivation to the exact
 subring coefficient packing geometry. The root uses the current root policy. A
 recursive subring packing fold uses the typed response model when its profile
 provides one. Otherwise it uses the current universal Linf bound. The resulting
@@ -1218,23 +1222,23 @@ and A geometry still depend on `d_A` and the complete response shape.
 The implementation MUST encode this reduction and compare it with a direct
 A ring multiplication reference for every admitted geometry. The identity is
 useful for later work, but this feature MUST NOT use it to select an L2 route
-at level 0 or 1.
+for a coefficient-packing fold.
 
 ### Level policy
 
-The policy applies to every field profile.
+The policy applies to every field profile. Folds 0 and 1 require packing and
+quotient lift regardless of chunking. Every later multi-chunk fold also requires
+packing and quotient lift.
 
-1. Absolute nonterminal levels 0 and 1 first enumerate complete subring packing
-   assignments across every group and admissible A dimension.
-2. Absolute nonterminal levels 2 and later use `EvaluationTrace`.
+1. The first two folds and every multi-chunk nonterminal fold enumerate complete
+   subring packing assignments across every group and admissible dimension.
+2. Single-chunk nonterminal folds at level 2 or later may choose either opening
+   method where the source encoding supports it. The planner may select reduced
+   evaluation at a direct single-chunk fold in that suffix with `EvaluationTrace`;
+   packing requires quotient lift.
 3. The terminal uses `EvaluationTrace` and Hachi, with EOR where it applies.
-4. A schedule with only root and terminal uses `SubringCoefficientPacking`
-   only at root.
-5. A schedule with root, one recursive fold, and terminal uses
-   `SubringCoefficientPacking` at both nonterminal folds.
-6. The planner does not add a fold to reach the two level subring packing
-   scope.
-7. If the complete level has no statically feasible packing assignment, the
+4. The planner does not add a fold to reach a minimum packing depth.
+5. If a multi-chunk level has no statically feasible packing assignment, the
    schedule is unsupported. Frozen tensor-encoded root profiles are not
    reinterpreted as canonical coefficient commitments.
 
@@ -1245,9 +1249,9 @@ one new `(d_A, s)` for that witness. It does not preserve one subring
 coefficient packing geometry per original root group.
 
 A setup prefix is another precommitted group at the fold that consumes it. It
-uses that consuming fold's opening method. A prefix consumed at level 1 uses
-`SubringCoefficientPacking`. A prefix consumed at level 2 or later uses
-`EvaluationTrace`.
+uses that consuming fold's selected opening method. A multi-chunk consumer
+requires `SubringCoefficientPacking`, as do consumers at folds 0 and 1; a later
+single-chunk consumer may use either method.
 
 ### Independent challenge subring and A ring dimensions
 
@@ -1350,7 +1354,8 @@ The current catalog is regenerated under the proof-only policy above.
 
 ### B slicing interaction
 
-Subring packing search and B slicing both apply at levels 0 and 1. Subring
+Subring packing search applies at every nonterminal fold; B slicing remains
+within the two-level adaptive dimension prefix. Subring
 coefficient packing shortens `e`, the D or H source, and the consistency
 quotient. B slicing shortens the
 physical B matrix and may add logical rows.
@@ -1379,7 +1384,8 @@ The planner MUST keep the search bounded in the following ways.
 3. Use the fixed audited list of `s` values.
 4. Apply geometry, challenge entropy, dispatcher support, and divisibility
    admission before rank lookup.
-5. Search subring packing candidates only at levels 0 and 1.
+5. Require subring packing at folds 0 and 1 and every multi-chunk fold. Search
+   both opening methods at single-chunk folds at level 2 or later.
 6. Apply B slicing only after A and `t_hat` geometry is known.
 7. Keep the existing deterministic frontier and memo state objective.
 8. Keep the current equal-role suffix after the adaptive prefix.
@@ -1428,7 +1434,8 @@ The planner MUST keep the search bounded in the following ways.
 - Split subring and embedded challenge evaluations in ring switch preparation.
 - Replace the trace specific Stage 2 term with the coefficient packing opening
   term at levels 0 and 1.
-- Use the `EvaluationTrace` prover path at later folds and at the terminal.
+- Use the selected opening path at single-chunk folds at level 2 or later and
+  `EvaluationTrace` at the terminal.
 - Preserve current cyclic/negacyclic A setup caches.
 
 ### `akita-verifier`
@@ -1509,14 +1516,16 @@ The planner MUST keep the search bounded in the following ways.
 
 ### Planner and sizing
 
-- [x] Generated schedules for every field tier use `SubringCoefficientPacking`
-      at existing nonterminal levels 0 and 1. Rows without a complete compatible
-      packing assignment are unsupported.
-- [x] Extension field packing schedules contain no EOR at levels 0 and 1.
-- [x] Later folds and the terminal retain `EvaluationTrace`.
+- [x] Generated schedules for every field tier require `SubringCoefficientPacking`
+      at levels 0 and 1 and every multi-chunk nonterminal fold. Rows without a
+      complete compatible packing assignment at those folds are unsupported.
+- [x] Extension field packing folds contain no EOR.
+- [x] Single-chunk folds at level 2 or later admit both opening methods where
+      executable. All roots and level-1 folds retain packing, and the terminal
+      uses `EvaluationTrace`.
 - [x] Short schedule tests cover root to terminal and root to one recursive
       fold to terminal without inserting another fold.
-- [x] The planner searches every admitted `(d_A, s)` pair only inside the two
+- [x] The planner searches every admitted `(d_A, s)` pair inside the two
       level adaptive prefix and keeps the current equal-role suffix.
 - [x] Adaptive direct catalogs minimize first-direct setup capacity, the exact
       proof-and-work score, proof bytes, exact total setup, root output-witness length, and the canonical
@@ -1553,8 +1562,8 @@ The planner MUST keep the search bounded in the following ways.
       `SubringCoefficientPacking` or `EvaluationTrace` when its matrices meet
       the selected method's security
       checks.
-- [x] A setup prefix consumed at level 1 uses `SubringCoefficientPacking`. A
-      setup prefix consumed at level 2 uses `EvaluationTrace`.
+- [x] A setup prefix uses the consuming fold's selected opening method;
+      multi-chunk consumers require `SubringCoefficientPacking`.
 - [x] A two level recursive offloading test verifies the transition from a
       subring packing consumer at level 1 to an evaluation trace consumer at level 2.
 - [x] Changing the opening plan does not duplicate identical setup prefix
@@ -1584,7 +1593,7 @@ The planner MUST keep the search bounded in the following ways.
 
 ## Non-goals
 
-- No packing consistency relation after absolute fold level 1.
+- No packing consistency relation on evaluation-trace folds.
 - No subring packing terminal or change to the evaluation trace and Hachi
   terminal protocol.
 - No A dimension search beyond the current two level adaptive prefix.

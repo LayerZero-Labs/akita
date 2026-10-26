@@ -16,7 +16,8 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
     const TRANSCRIPT_LABEL: &[u8] = b"test/selective-l2-mutations";
     type L2Cfg = OneHotCfg;
 
-    let scheme = workspace_scheme::<L2Cfg>().expect("workspace schedule artifact");
+    let scheme = workspace_scheme::<L2Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+        .expect("workspace schedule artifact");
     let layout = catalog_root_layout(&scheme, NV, BATCH_SIZE);
     let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..BATCH_SIZE)
         .map(|index| debug_make_onehot_poly(NV, layout.d_a(), 0x0bee_fcaf_1200_0000 + index as u64))

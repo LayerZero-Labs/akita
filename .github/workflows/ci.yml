@@ -335,9 +335,9 @@ jobs:
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
     runs-on: ubuntu-latest
-    # Release builds of several logging-transcript test binaries dominate this
-    # job; it stays well under the schedule-drift job on the critical path.
-    timeout-minutes: 40
+    # Cold release builds span several logging-transcript test binaries and
+    # can exceed 40 minutes before the final protocol suites finish compiling.
+    timeout-minutes: 60
     strategy:
       matrix:
         backend: [transcript-blake2b, transcript-keccak]

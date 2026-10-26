@@ -10,11 +10,14 @@
 use crate::{AkitaJoltCase, AkitaJoltInputs, AkitaJoltOpeningGroup};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES};
 use akita_error::checked;
+use akita_params::{ChunkedWitnessCfg, FlatMatrix, OpeningScheduleSelection};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use akita_types::{AkitaExpandedSetup, AkitaSetupDescriptor, AkitaVerifierSetup, CommittedGroup, SetupPrefixVerifierRegistry, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS};
-use akita_params::{FlatMatrix, OpeningScheduleSelection};
+use akita_types::{
+    AkitaExpandedSetup, AkitaSetupDescriptor, AkitaVerifierSetup, CommittedGroup,
+    SetupPrefixVerifierRegistry, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::sync::Arc;
 
@@ -157,9 +160,12 @@ pub fn frame_with_schedule_catalog<Cfg: CommitmentConfig>(
     Ok(framed)
 }
 
-/// Decode the full benchmark catalog and return the inner verifier-input blob.
+/// Decode the full benchmark catalog against caller-selected geometry.
+///
+/// `expected_chunking` must come from trusted configuration, not the input frame.
 pub fn split_schedule_catalog<Cfg: CommitmentConfig>(
     bytes: &[u8],
+    expected_chunking: ChunkedWitnessCfg,
 ) -> Result<(TrustedScheduleCatalog<Cfg>, &[u8]), SerializationError> {
     if !bytes.starts_with(&CATALOG_FRAME_MAGIC) {
         return Err(SerializationError::InvalidData(
@@ -169,7 +175,7 @@ pub fn split_schedule_catalog<Cfg: CommitmentConfig>(
     let inner = inner_blob_bytes(bytes)?;
     let artifact_end = bytes.len() - inner.len();
     let artifact = &bytes[CATALOG_FRAME_HEADER_BYTES..artifact_end];
-    let schedules = TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(artifact)
+    let schedules = TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(artifact, expected_chunking)
         .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
     Ok((schedules, inner))
 }
@@ -708,7 +714,7 @@ where
         akita_schedules::expanded_schedule_proof_bound(
             &key,
             resolved.schedule(),
-            &akita_config::policy_of::<Cfg>(),
+            schedules.policy(),
         )
         .map_err(|error| SerializationError::InvalidData(error.to_string()))
     }

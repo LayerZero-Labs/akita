@@ -14,8 +14,9 @@ fn root_contracts(schedule: &PlannedFoldSchedule, field_bits: u32) -> bool {
 
 fn root_candidate_classes<Cfg: CommitmentConfig>(
     num_vars: usize,
+    chunking: akita_params::ChunkedWitnessCfg,
 ) -> Result<(bool, bool), AkitaError> {
-    let policy = policy_of::<Cfg>();
+    let policy = policy_of::<Cfg>(chunking);
     let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
     let input_bits = (1usize << num_vars) * policy.decomposition.field_bits() as usize;
     let mut has_contractive = false;
@@ -26,7 +27,6 @@ fn root_candidate_classes<Cfg: CommitmentConfig>(
         crate::schedule_params::initial_dimension_ceiling(&policy)?,
     )? {
         for opening in PlannerOpeningCandidate::coefficient_packing_domain(
-            0,
             policy.claim_ext_degree,
             dimensions,
         )? {
@@ -64,8 +64,10 @@ fn root_candidate_classes<Cfg: CommitmentConfig>(
 
 #[test]
 fn contractive_winner_remains_selected() {
-    let policy = policy_of::<Dense>();
-    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(14));
+    let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    // nv14 selects a noncontractive root; nv16 is a small size whose complete
+    // winner contracts.
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
     let schedule = find_schedule(
         &key,
         Dense::committed_source_contract().unwrap(),
@@ -86,7 +88,7 @@ fn contractive_winner_remains_selected() {
 
 #[test]
 fn noncontractive_root_is_selected_by_the_complete_policy() {
-    let policy = policy_of::<Dense>();
+    let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(9));
     let schedule = find_schedule(
         &key,
@@ -105,7 +107,7 @@ fn noncontractive_root_is_selected_by_the_complete_policy() {
 
 #[test]
 fn noncontractive_multi_chunk_root_can_beat_contractive_candidates() {
-    let policy = policy_of::<DenseMultiChunk>();
+    let policy = policy_of::<DenseMultiChunk>(akita_params::MultiChunkProfileId::W8R2.cfg());
     let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
     let schedule = find_schedule(
         &key,
@@ -116,7 +118,11 @@ fn noncontractive_multi_chunk_root_can_beat_contractive_candidates() {
     )
     .expect("valid multi-chunk root");
     assert_eq!(
-        root_candidate_classes::<DenseMultiChunk>(16).unwrap(),
+        root_candidate_classes::<DenseMultiChunk>(
+            16,
+            akita_params::MultiChunkProfileId::W8R2.cfg()
+        )
+        .unwrap(),
         (true, true)
     );
     assert!(
@@ -127,7 +133,7 @@ fn noncontractive_multi_chunk_root_can_beat_contractive_candidates() {
 
 #[test]
 fn valid_small_scalar_root_has_a_schedule() {
-    let policy = policy_of::<Dense>();
+    let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     for num_vars in 8..=9 {
         let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
         let schedule = find_schedule(
@@ -140,7 +146,14 @@ fn valid_small_scalar_root_has_a_schedule() {
         .unwrap_or_else(|error| panic!("valid nv={num_vars} D64-root request: {error}"));
 
         if num_vars == 8 {
-            assert_eq!(root_candidate_classes::<Dense>(8).unwrap(), (false, true));
+            assert_eq!(
+                root_candidate_classes::<Dense>(
+                    8,
+                    akita_params::ChunkedWitnessCfg::default_non_chunked()
+                )
+                .unwrap(),
+                (false, true)
+            );
             let root = &schedule.schedule.root;
             assert!(
                 root.output_witness_len * root.params.open().digits.log_basis as usize
@@ -168,7 +181,7 @@ fn valid_small_scalar_root_has_a_schedule() {
 #[test]
 fn valid_small_grouped_root_has_a_schedule() {
     let precommitted_group = PolynomialGroupLayout::singleton(16);
-    let policy = policy_of::<Dense>();
+    let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let producer_key = ScheduleLookupKey::single(precommitted_group);
     let producer_dimensions = CommitmentRingDims {
         inner: 128,
@@ -176,7 +189,6 @@ fn valid_small_grouped_root_has_a_schedule() {
         opening: 64,
     };
     let producer_opening = PlannerOpeningCandidate::coefficient_packing(
-        0,
         policy.claim_ext_degree,
         producer_dimensions,
         64,

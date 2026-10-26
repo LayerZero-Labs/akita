@@ -77,7 +77,9 @@ where
     Cfg::ExtField: jolt_field::MulBaseUnreduced<Cfg::Field>,
     <Cfg::Field as Unreduced>::Wide: jolt_field::AdditiveGroup,
 {
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
+    let scheme =
+        load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule catalog");
     let setup = scheme.setup_prover(nv, 1).expect("setup");
     let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");

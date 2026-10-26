@@ -303,7 +303,9 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     if std::env::var_os("AKITA_RELATION_MODE_BENCH_ONLY").is_some() {
         return;
     }
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let scheme =
+        load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     let opening_layout =
         akita_params::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
     let layout = scheme
@@ -492,7 +494,10 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
 }
 
 fn bench_dense_nv14(c: &mut Criterion) {
-    let scheme = load_workspace_scheme::<fp128::Dense>().expect("workspace schedule artifact");
+    let scheme = load_workspace_scheme::<fp128::Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("workspace schedule artifact");
     bench_dense_phases::<256, fp128::Dense>(c, "dense-adaptive", 14, false, scheme);
 }
 fn bench_dense_nv14_quotient(c: &mut Criterion) {
@@ -526,11 +531,17 @@ fn bench_dense_nv14_reduced(c: &mut Criterion) {
     bench_dense_phases::<256, fp128::Dense>(c, "dense-reduced", 14, true, scheme);
 }
 fn bench_dense_nv16(c: &mut Criterion) {
-    let scheme = load_workspace_scheme::<fp128::Dense>().expect("workspace schedule artifact");
+    let scheme = load_workspace_scheme::<fp128::Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("workspace schedule artifact");
     bench_dense_phases::<256, fp128::Dense>(c, "dense-adaptive", 16, false, scheme);
 }
 fn bench_dense_nv24(c: &mut Criterion) {
-    let scheme = load_workspace_scheme::<fp128::Dense>().expect("workspace schedule artifact");
+    let scheme = load_workspace_scheme::<fp128::Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("workspace schedule artifact");
     bench_dense_phases::<256, fp128::Dense>(c, "dense-adaptive", 24, false, scheme);
 }
 

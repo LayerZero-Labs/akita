@@ -4,7 +4,7 @@ use akita_params::{RelationCandidateTopology, RingRelationMode, RingRelationPhas
 /// Canonical reason an otherwise-considered reduced transition is ineligible.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ReducedTransitionRejection {
-    BeforeLevelTwo,
+    MultiChunkFold,
     IncomingSetupPrefix,
     CoefficientPacking,
     OutgoingSetupOffload,
@@ -117,15 +117,6 @@ impl RelationSearchDomain {
         }
     }
 
-    pub(crate) fn only_transition(self) -> Result<RingRelationMode, AkitaError> {
-        let [transition] = self.transitions() else {
-            return Err(AkitaError::InvalidSetup(
-                "relation domain does not contain exactly one transition".into(),
-            ));
-        };
-        Ok(*transition)
-    }
-
     pub(crate) const fn for_mode(mode: RingRelationMode) -> Self {
         match mode {
             RingRelationMode::QuotientLift => Self::QuotientOnly,
@@ -138,15 +129,16 @@ impl RelationSearchDomain {
     /// Enumerate the complete legal transition domain for one fold topology.
     pub(crate) fn for_topology(
         phase: RingRelationPhase,
-        absolute_fold_level: usize,
+        absolute_level: usize,
+        witness_chunk: akita_params::ChunkedWitnessCfg,
         topology: RelationCandidateTopology,
         diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
     ) -> Result<RelationSearchDomain, AkitaError> {
         if matches!(phase, RingRelationPhase::QuotientPrefix) {
-            if absolute_fold_level < 2 {
+            if witness_chunk.num_chunks > 1 {
                 if let Some(diagnostics) = diagnostics {
                     diagnostics
-                        .record_reduced_rejection(ReducedTransitionRejection::BeforeLevelTwo);
+                        .record_reduced_rejection(ReducedTransitionRejection::MultiChunkFold);
                 }
             }
             if topology.consumes_setup_prefix() {
@@ -162,11 +154,11 @@ impl RelationSearchDomain {
                 }
             }
         }
-        let domain = match phase.candidate_modes(absolute_fold_level, topology) {
+        let domain = match phase.candidate_modes(absolute_level, witness_chunk, topology) {
             [RingRelationMode::QuotientLift, RingRelationMode::ReducedEvaluation] => Self::QuotientAndReduced,
             [RingRelationMode::QuotientLift] => Self::QuotientOnly,
             [RingRelationMode::ReducedEvaluation] => Self::ReducedOnly,
-            _ => return Err(AkitaError::InvalidSetup("reduced-evaluation suffix requires a direct EvaluationTrace fold at level 2 or later".into())),
+            _ => return Err(AkitaError::InvalidSetup("reduced-evaluation suffix requires a single-chunk direct EvaluationTrace fold after the required packing prefix".into())),
         };
         if let Some(diagnostics) = diagnostics {
             diagnostics.record_relation_domain(domain);

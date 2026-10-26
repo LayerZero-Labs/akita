@@ -16,7 +16,7 @@ extension field. Share it explicitly through `Arc` when several callers need
 it:
 
 ```rust
-let scheme = AkitaCommitmentScheme::<Cfg>::from_schedule_artifact(&artifact_bytes)?;
+let scheme = AkitaCommitmentScheme::<Cfg>::from_schedule_artifact(&artifact_bytes, akita_params::ChunkedWitnessCfg::default_non_chunked())?;
 let setup = scheme.setup_prover(nv, num_polys)?;
 let backend = std::sync::Arc::new(CpuBackend::new(setup.expanded.clone())?);
 let source = backend.import_source(polys)?;

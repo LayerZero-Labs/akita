@@ -32,7 +32,7 @@ const fn relation_mode_index(mode: RingRelationMode) -> usize {
 
 const fn reduced_rejection_index(reason: ReducedTransitionRejection) -> usize {
     match reason {
-        ReducedTransitionRejection::BeforeLevelTwo => 0,
+        ReducedTransitionRejection::MultiChunkFold => 0,
         ReducedTransitionRejection::IncomingSetupPrefix => 1,
         ReducedTransitionRejection::CoefficientPacking => 2,
         ReducedTransitionRejection::OutgoingSetupOffload => 3,
@@ -94,7 +94,7 @@ impl fmt::Display for PlannerDiagnosticsSnapshot {
         };
         write!(
             formatter,
-            "dp={:.2?} final_materialize={:.2?} suffix_calls={} suffix_calls_by_relation_phase={{quotient_prefix:{},reduced_suffix:{}}} completed_states={} memo_hits={}/{} ({memo_hit_percent:.1}%) memo_by_relation_phase={{quotient_prefix:{}/{},reduced_suffix:{}/{}}} relation_transitions={{quotient:{},reduced:{}}} reduced_rejections={{before_level_2:{},incoming_setup_prefix:{},coefficient_packing:{},outgoing_setup_offload:{}}} peak_memo={{total:{},direct:{},prefixed:{}}} candidates_generated={} candidates_after_local_prune={} guided_direct_edge_prunes={} frontier_candidates_retained={} peak_state_frontier={} descriptors_built={} descriptor_time={:.2?} setup_prefix_cache_hits={}/{}",
+            "dp={:.2?} final_materialize={:.2?} suffix_calls={} suffix_calls_by_relation_phase={{quotient_prefix:{},reduced_suffix:{}}} completed_states={} memo_hits={}/{} ({memo_hit_percent:.1}%) memo_by_relation_phase={{quotient_prefix:{}/{},reduced_suffix:{}/{}}} relation_transitions={{quotient:{},reduced:{}}} reduced_rejections={{multi_chunk_fold:{},incoming_setup_prefix:{},coefficient_packing:{},outgoing_setup_offload:{}}} peak_memo={{total:{},direct:{},prefixed:{}}} candidates_generated={} candidates_after_local_prune={} guided_direct_edge_prunes={} frontier_candidates_retained={} peak_state_frontier={} descriptors_built={} descriptor_time={:.2?} setup_prefix_cache_hits={}/{}",
             self.suffix_dp_time,
             self.final_materialization_time,
             self.suffix_calls,
