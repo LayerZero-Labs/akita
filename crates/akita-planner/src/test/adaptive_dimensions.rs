@@ -4,7 +4,7 @@ use super::*;
 fn candidates_enumerate_exact_role_cartesian_product() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot};
 
-    let policy = policy_of::<OneHot>();
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let candidates = dimension_candidates(
         &policy,
         0,
@@ -43,7 +43,7 @@ fn candidates_enumerate_exact_role_cartesian_product() {
 fn fp32_suffix_candidates_use_equal_roles_and_monotone_dimensions() {
     use akita_config::{policy_of, proof_optimized::fp32::OneHot};
 
-    let policy = policy_of::<OneHot>();
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let candidates = dimension_candidates(
         &policy,
         akita_schedules::ADAPTIVE_SEARCH_LEVELS,

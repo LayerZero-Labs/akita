@@ -25,9 +25,11 @@ fn l2_table_has_the_expected_q128_d64_rank_boundary() {
         1u128 << 50,
     )
     .expect("generated L2 key");
-    assert_eq!(min_secure_l2_rank(key, 21), Some(3));
-    assert_eq!(min_secure_l2_rank(key, 22), Some(4));
-    assert_eq!(min_secure_l2_rank(key, 512), Some(4));
+    assert_eq!(min_secure_l2_rank(key, 19), Some(3));
+    assert_eq!(min_secure_l2_rank(key, 20), Some(4));
+    assert_eq!(min_secure_l2_rank(key, 29), Some(4));
+    assert_eq!(min_secure_l2_rank(key, 30), Some(5));
+    assert_eq!(min_secure_l2_rank(key, 512), Some(5));
 }
 
 #[test]
@@ -53,10 +55,10 @@ fn inner_l2_route_owns_its_cap_shape_and_table_identity() {
     )
     .expect("generated L2 key");
     let shape = PhysicalL2NormProofShape::Direct {
-        physical_response_len: 21 * 64,
+        physical_response_len: 19 * 64,
     };
     let matrix =
-        InnerCommitMatrixParams::try_new_l2_with_min_rank(table_key, 21, 1u128 << 30, shape)
+        InnerCommitMatrixParams::try_new_l2_with_min_rank(table_key, 19, 1u128 << 30, shape)
             .expect("audited L2 matrix");
 
     assert_eq!(matrix.output_rank(), 3);
@@ -75,7 +77,7 @@ fn inner_l2_route_owns_its_cap_shape_and_table_identity() {
     let mut descriptor = Vec::new();
     matrix.append_descriptor_bytes(&mut descriptor);
     let different_cap =
-        InnerCommitMatrixParams::try_new_l2_with_min_rank(table_key, 21, (1u128 << 30) - 1, shape)
+        InnerCommitMatrixParams::try_new_l2_with_min_rank(table_key, 19, (1u128 << 30) - 1, shape)
             .expect("second audited L2 matrix");
     let mut different_descriptor = Vec::new();
     different_cap.append_descriptor_bytes(&mut different_descriptor);

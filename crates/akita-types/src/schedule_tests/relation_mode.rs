@@ -11,30 +11,42 @@ fn set_valid_setup_prefix(params: &mut CommittedGroupParams, natural_len: usize)
 }
 
 #[test]
-fn rejects_reduced_evaluation_at_root_and_level_one() {
-    let mut root_reduced = recursive_schedule(64, 64, false);
-    root_reduced.root.params.ring_relation_mode = RingRelationMode::ReducedEvaluation;
-    let validation = root_reduced.validate_structure();
-    assert!(
-        matches!(
-            validation,
-            Err(AkitaError::InvalidSetup(ref message)) if message.contains("level 0")
-        ),
-        "unexpected root validation result: {validation:?}"
-    );
+fn single_chunk_root_and_level_one_reject_reduced_evaluation() {
+    for level in [0, 1] {
+        let mut schedule = recursive_schedule(64, 64, false);
+        let params = if level == 0 {
+            &mut schedule.root.params
+        } else {
+            &mut schedule.recursive_folds[0].params
+        };
+        params.ring_relation_mode = RingRelationMode::ReducedEvaluation;
+        let error = schedule
+            .validate_structure()
+            .expect_err("the first two folds require quotient lift even without chunking");
+        assert!(error
+            .to_string()
+            .contains(&format!("level {level} ring relation mode")));
+    }
+}
 
-    let mut level_one_reduced = recursive_schedule(64, 64, false);
-    level_one_reduced.recursive_folds[0]
-        .params
-        .ring_relation_mode = RingRelationMode::ReducedEvaluation;
-    let validation = level_one_reduced.validate_structure();
-    assert!(
-        matches!(
-            validation,
-            Err(AkitaError::InvalidSetup(ref message)) if message.contains("level 1")
-        ),
-        "unexpected level-one validation result: {validation:?}"
-    );
+#[test]
+fn multi_chunk_root_and_level_one_reject_reduced_evaluation() {
+    for level in [0, 1] {
+        let mut schedule = recursive_schedule(64, 64, false);
+        let params = if level == 0 {
+            &mut schedule.root.params
+        } else {
+            &mut schedule.recursive_folds[0].params
+        };
+        params.witness_chunk = akita_params::MultiChunkProfileId::W2R2.cfg();
+        params.ring_relation_mode = RingRelationMode::ReducedEvaluation;
+        let error = schedule
+            .validate_structure()
+            .expect_err("multi-chunk folds cannot use reduced evaluation");
+        assert!(error
+            .to_string()
+            .contains(&format!("level {level} ring relation mode")));
+    }
 }
 
 #[test]

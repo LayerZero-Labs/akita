@@ -290,8 +290,10 @@ mod tests {
 
     #[test]
     fn schedule_requirement_prepares_one_terminal_entry() {
-        let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
-            .expect("workspace schedule catalog");
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace schedule catalog");
         let group = PolynomialGroupLayout::new(15, 1);
         let schedule = catalog
             .resolve_key(&ScheduleLookupKey::single(group))

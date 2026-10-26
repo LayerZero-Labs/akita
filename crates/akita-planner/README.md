@@ -238,11 +238,11 @@ Production SIS lookups use explicit role cells and the scalar `SisTableKey`:
  ring_dimension, coeff_linf_bound)
 ```
 
-The shipped policy is `Quantum128BitADPS16`: a single ADPS16 quantum LGSA rule
-at a 128-bit target. The policy, table digest, exact profile, and role are part
-of planner inputs, artifact policy binding, expanded schedules, and descriptor
-bytes, so a schedule generated for one table cannot be silently reused under
-another table or role.
+The shipped policy is `Quantum169BitADPS16`: a single ADPS16 quantum LGSA rule
+at a 169-bit (NIST category 3) target. The policy, table digest, exact profile,
+and role are part of planner inputs, artifact policy binding, expanded
+schedules, and descriptor bytes, so a schedule generated for one table cannot
+be silently reused under another table or role.
 
 The searched parameters are therefore small: mostly `log_basis` and the fold split. The matrix dimensions are consequences of those choices and of the fixed policy inputs.
 
@@ -267,7 +267,11 @@ boundaries use line breaks while nested row payloads remain compact. There is no
 intermediate Rust table representation or runtime expansion path.
 
 The reusable artifact emitter lives in this crate and accepts explicit
-`EmitSpec` values. The `gen_schedule_artifacts` binary is enabled by the
+`EmitSpec` values. Scalar and grouped searches use the spec's stored policy,
+source contract, and challenge hook. Callers select runtime chunking in that
+policy and supply an explicit output path; no regeneration callbacks are needed.
+Caller-supplied preplanned rows are audited against the same policy before publication.
+The `gen_schedule_artifacts` binary is enabled by the
 `catalog-gen` feature, which is allowed to name concrete `akita-config` preset
 `Cfg` types. It writes canonical `.aks` family artifacts into
 `artifacts/schedules/`; runtime crates do not compile those rows.
@@ -428,9 +432,10 @@ akita-planner -> akita-schedules
 akita-planner --features catalog-gen -> akita-config
 ```
 
-`akita-config` derives `PlannerPolicy` from concrete presets with
-`policy_of::<Cfg>()`. Applications validate external artifacts against that
-policy and pass the resulting catalog explicitly. Runtime resolution never
+`akita-config` derives `PlannerPolicy` from a concrete config and caller-selected
+runtime chunking with `policy_of::<Cfg>(chunking)`. Applications validate external
+artifacts against that policy and pass the resulting catalog explicitly.
+Consumers reuse `catalog.policy()` after admission. Runtime resolution never
 invokes planner search.
 
 This boundary avoids a circular dependency while keeping a single source of truth for preset policy. The DP remains offline-only in `akita-planner`; verifier-reachable runtime code must return `AkitaError` rather than panic on malformed input.

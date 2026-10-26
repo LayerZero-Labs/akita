@@ -99,7 +99,9 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let scheme =
+        load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     assert_eq!(256, D);
     assert!(poly_nv >= D.trailing_zeros() as usize);
 
@@ -227,7 +229,9 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let scheme =
+        load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     assert_eq!(256, D);
 
     let opening_layout =
@@ -395,7 +399,9 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let scheme =
+        load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     assert_eq!(256, D);
     assert!(commit_batch >= 1);
 
@@ -498,7 +504,9 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let scheme =
+        load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     assert_eq!(256, D);
     assert!(commit_batch >= 1);
 

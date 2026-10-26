@@ -115,12 +115,11 @@ pub(super) fn derive_outer_commitment_candidate(
     ) else {
         return Ok(None);
     };
-    let complete_source_coefficients = outer_slice_count
-        .complete_source_coefficients(outer_commit_matrix.output_rank(), dimensions.d_b())?;
     if payload_mode.is_compressed()
-        && akita_params::CompressionChainPlan::try_for_complete_source(
+        && akita_params::CompressionChainPlan::try_for_image(
             outer_commit_matrix.sis_modulus_profile(),
-            complete_source_coefficients,
+            outer_slice_count.logical_output_rows(outer_commit_matrix.output_rank())?,
+            dimensions.d_b(),
         )?
         .is_none()
     {

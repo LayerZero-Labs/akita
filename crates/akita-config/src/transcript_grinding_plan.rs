@@ -42,8 +42,10 @@ mod tests {
 
     #[test]
     fn production_onehot_plan_is_canonical_and_fully_priced() {
-        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
-            .expect("one-hot schedule catalog");
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("one-hot schedule catalog");
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
         let row = catalog
             .resolve_key(&akita_params::ScheduleLookupKey::single(
@@ -99,8 +101,10 @@ mod tests {
 
     #[test]
     fn stage1_prices_the_full_eq_factored_round_degree() {
-        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
-            .expect("one-hot schedule catalog");
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("one-hot schedule catalog");
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
         let row = catalog
             .resolve_key(&akita_params::ScheduleLookupKey::single(
@@ -166,12 +170,12 @@ mod tests {
     fn every_generated_production_row_derives_a_complete_plan() {
         use crate::proof_optimized::{fp32, fp64};
 
-        fn audit<Cfg: CommitmentConfig>()
+        fn audit<Cfg: CommitmentConfig>(chunking: akita_params::ChunkedWitnessCfg)
         where
             Cfg::Field: CanonicalEncoding,
             Cfg::ExtField: ExtField<Cfg::Field>,
         {
-            let catalog = crate::test_support::workspace_schedule_catalog::<Cfg>()
+            let catalog = crate::test_support::workspace_schedule_catalog::<Cfg>(chunking)
                 .expect("workspace schedule catalog");
             for row in catalog.rows() {
                 let layout = row.profiles().opening_layout().expect("opening layout");
@@ -270,25 +274,35 @@ mod tests {
             }
         }
 
-        audit::<fp128::Dense>();
-        audit::<fp128::DenseBounded>();
-        audit::<fp128::DenseMultiChunk>();
-        audit::<fp128::OneHot>();
-        audit::<fp128::OneHotMultiChunk>();
-        audit::<fp128::OneHotMultiChunkW2R2>();
-        audit::<fp128::OneHotMultiChunkW4R2>();
-        audit::<fp128::OneHotMultiChunkW2R3>();
-        audit::<fp128::OneHotMultiChunkW4R3>();
-        audit::<fp128::OneHotMultiChunkW8R3>();
-        audit::<fp128::DenseMultiChunkW8R3>();
-        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW2R3>>();
-        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW4R3>>();
-        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R3>>();
-        audit::<fp64::Dense>();
-        audit::<fp64::OneHot>();
-        audit::<fp32::Dense>();
-        audit::<fp32::OneHot>();
-        audit::<crate::RecursiveCommitmentConfig<fp128::OneHot>>();
-        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>();
+        audit::<fp128::Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+        audit::<fp128::DenseBounded>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+        audit::<fp128::DenseMultiChunk>(akita_params::MultiChunkProfileId::W8R2.cfg());
+        audit::<fp128::OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+        audit::<fp128::OneHotMultiChunk>(akita_params::MultiChunkProfileId::W8R2.cfg());
+        audit::<fp128::OneHotMultiChunkW2R2>(akita_params::MultiChunkProfileId::W2R2.cfg());
+        audit::<fp128::OneHotMultiChunkW4R2>(akita_params::MultiChunkProfileId::W4R2.cfg());
+        audit::<fp128::OneHotMultiChunkW2R3>(akita_params::MultiChunkProfileId::W2R3.cfg());
+        audit::<fp128::OneHotMultiChunkW4R3>(akita_params::MultiChunkProfileId::W4R3.cfg());
+        audit::<fp128::OneHotMultiChunkW8R3>(akita_params::MultiChunkProfileId::W8R3.cfg());
+        audit::<fp128::DenseMultiChunkW8R3>(akita_params::MultiChunkProfileId::W8R3.cfg());
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW2R3>>(
+            akita_params::MultiChunkProfileId::W2R3.cfg(),
+        );
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW4R3>>(
+            akita_params::MultiChunkProfileId::W4R3.cfg(),
+        );
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R3>>(
+            akita_params::MultiChunkProfileId::W8R3.cfg(),
+        );
+        audit::<fp64::Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+        audit::<fp64::OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+        audit::<fp32::Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+        audit::<fp32::OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHot>>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        );
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>(
+            akita_params::MultiChunkProfileId::W8R2.cfg(),
+        );
     }
 }

@@ -9,7 +9,7 @@ enum OpaquePreparedGroupOpeningKind<F: Field, E: Field> {
         folded_by_claim: Vec<akita_types::RingVec<F>>,
     },
     CoefficientPacking {
-        point: akita_types::PreparedSubringCoefficientPackingPoint<E>,
+        tables: akita_types::SubringCoefficientPackingTables<E>,
         partials_by_claim: Vec<crate::opaque::SubringCoefficientPackingPartials<F>>,
     },
 }
@@ -79,14 +79,14 @@ where
     pub(in crate::opaque) fn coefficient_packing(
         binding: crate::opaque::OperationBinding,
         source: crate::opaque::openings::PreparedOpeningSource<F, E>,
-        point: akita_types::PreparedSubringCoefficientPackingPoint<E>,
+        tables: akita_types::SubringCoefficientPackingTables<E>,
         partials_by_claim: Vec<crate::opaque::SubringCoefficientPackingPartials<F>>,
         scalar_openings: Vec<E>,
     ) -> Self {
         Self {
             binding,
             kind: OpaquePreparedGroupOpeningKind::CoefficientPacking {
-                point,
+                tables,
                 partials_by_claim,
             },
             scalar_openings,
@@ -127,7 +127,7 @@ where
     ) -> Result<
         (
             crate::opaque::PreparedOpeningWitness<F>,
-            crate::opaque::PublicPreparedRelationOpening<F, E>,
+            akita_prover::backend::PreparedRelationOpening<F, E>,
         ),
         AkitaError,
     >
@@ -162,9 +162,10 @@ where
                 ))
             }
             OpaquePreparedGroupOpeningKind::CoefficientPacking {
-                point,
+                tables,
                 partials_by_claim,
             } => {
+                let point = tables.point();
                 if point.num_positions_per_block() != group.num_positions_per_block()
                     || point.num_live_blocks() != group.num_live_blocks()
                     || geometry.group_opening_method(group_index)? != group.opening_method()
@@ -182,7 +183,7 @@ where
                 )?;
                 Ok((
                     opening,
-                    akita_types::OpeningFamily::SubringCoefficientPacking(point.clone()),
+                    akita_types::OpeningFamily::SubringCoefficientPacking(tables.clone()),
                 ))
             }
         }

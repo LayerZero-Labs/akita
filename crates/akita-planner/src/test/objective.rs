@@ -252,7 +252,9 @@ fn complete_candidate(
 
 #[test]
 fn actual_policy_can_select_a_noncontractive_complete_candidate() {
-    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
+    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    );
     let contractive = complete_candidate(101, 64, 1_000);
     let noncontractive = complete_candidate(100, 64, 12_000);
     let input_bits = 256 * policy.decomposition.field_bits() as usize;
@@ -272,7 +274,9 @@ fn actual_policy_can_select_a_noncontractive_complete_candidate() {
 
 #[test]
 fn exact_work_score_can_outweigh_one_modeled_proof_byte() {
-    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
+    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    );
     let smaller_proof = complete_candidate(100, 64, 1_000_000);
     let smaller_witness = complete_candidate(101, 64, 1_000);
 
@@ -289,7 +293,9 @@ fn exact_work_score_can_outweigh_one_modeled_proof_byte() {
 
 #[test]
 fn exact_proof_tie_selects_the_smaller_setup_envelope() {
-    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
+    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    );
     let larger_setup = complete_candidate(100, 65, 1_000);
     let smaller_setup = complete_candidate(100, 64, 1_000);
 
@@ -306,7 +312,9 @@ fn exact_proof_tie_selects_the_smaller_setup_envelope() {
 
 #[test]
 fn exact_numeric_tie_selects_the_smaller_root_output_witness() {
-    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
+    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    );
     let larger_output = complete_candidate(100, 64, 1_001);
     let smaller_output = complete_candidate(100, 64, 1_000);
 

@@ -37,8 +37,10 @@ fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
 }
 
 fn bench_dense_root_matvec(c: &mut Criterion) {
-    let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
-        .expect("workspace schedule artifact");
+    let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("workspace schedule artifact");
     let evals = make_dense_evals::<Cfg>(NV);
     let poly = DensePoly::<F>::from_field_evals(NV, &evals).expect("dense poly");
     let layout = schedules

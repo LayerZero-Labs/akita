@@ -103,7 +103,10 @@ fn nonzero_alignment_gaps_preserve_the_proven_statement() {
             type F = <Cfg as CommitmentConfig>::Field;
             const NUM_VARS: usize = 16;
             const SESSION: &[u8] = b"alignment-gap-filler";
-            let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
+            let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>(
+                akita_params::MultiChunkProfileId::W8R2.cfg(),
+            )
+            .unwrap();
             let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(NUM_VARS));
             let schedule = catalog.resolve_key(&key).unwrap().schedule();
             assert!(schedule.root.params.witness_chunk.num_chunks > 1);

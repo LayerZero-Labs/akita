@@ -6,7 +6,7 @@ use akita_params::BasisMode;
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, SerializationError, Valid};
 use akita_types::FpExtEncoding;
-use akita_verifier::AkitaVerifier;
+use akita_verifier::{AkitaVerifier, TrustedTerminalCache};
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne};
 
@@ -62,7 +62,11 @@ where
         + Valid,
 {
     start_cycle_tracking("deserialize_input");
-    let (schedules, input) = match akita_recursion_glue::split_schedule_catalog::<Cfg>(input) {
+    // Every supported AkitaJoltCase currently expects a single-chunk catalog.
+    let (schedules, input) = match akita_recursion_glue::split_schedule_catalog::<Cfg>(
+        input,
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    ) {
         Ok(decoded) => decoded,
         Err(_) => {
             end_cycle_tracking("deserialize_input");
@@ -83,7 +87,7 @@ where
         decoded.verifier_setup.clone(),
         schedules,
         decoded.schedule_selection,
-        PROGRAM_BOUND_VERIFIER_CACHE,
+        PROGRAM_BOUND_VERIFIER_CACHE.map(TrustedTerminalCache::Decode),
     );
     end_cycle_tracking("prepare_verifier");
     let Ok(verifier) = verifier else {

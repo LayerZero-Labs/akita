@@ -91,14 +91,15 @@ where
                 == &point.ring_multiplier_point => {}
             (
                 akita_params::OpeningMethod::SubringCoefficientPacking { .. },
-                OpeningFamily::SubringCoefficientPacking(point),
+                OpeningFamily::SubringCoefficientPacking(tables),
                 Some(relation_geometry),
-            ) if relation_geometry == point.geometry()
-                && point.source_num_vars() == layout.num_vars()
-                && point.num_live_positions()
+            ) if relation_geometry == tables.point().geometry()
+                && tables.point().source_num_vars() == layout.num_vars()
+                && tables.point().num_live_positions()
                     == group_params.num_live_ring_elements_per_claim()
-                && point.num_positions_per_block() == group_params.num_positions_per_block()
-                && point.num_live_blocks() == group_params.num_live_blocks() => {}
+                && tables.point().num_positions_per_block()
+                    == group_params.num_positions_per_block()
+                && tables.point().num_live_blocks() == group_params.num_live_blocks() => {}
             _ => {
                 return Err(AkitaError::InvalidSetup(
                     "prepared Stage 2 group method or point disagrees with its relation".into(),
@@ -381,8 +382,8 @@ impl RingRelationProver {
                 )),
                 (
                     OpeningFamily::SubringCoefficientPacking(challenges),
-                    OpeningFamily::SubringCoefficientPacking(point),
-                ) if challenges.geometry() == point.geometry() => Ok(
+                    OpeningFamily::SubringCoefficientPacking(tables),
+                ) if challenges.geometry() == tables.point().geometry() => Ok(
                     akita_types::RingRelationGroupOpening::coefficient_packing(challenges.clone()),
                 ),
                 _ => Err(AkitaError::Internal(

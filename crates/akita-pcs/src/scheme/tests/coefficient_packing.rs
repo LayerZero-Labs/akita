@@ -9,19 +9,22 @@ type PackingCfg = crate::test_support::RootCoefficientPackingConfig<fp32::Dense>
 type PackingField = <PackingCfg as CommitmentConfig>::Field;
 type PackingExt = <PackingCfg as CommitmentConfig>::ExtField;
 type PackingScheme = AkitaCommitmentScheme<PackingCfg>;
-type RootEvaluationTraceCfg = crate::test_support::EarlyEvaluationTraceConfig<fp32::Dense, 0>;
-type RecursiveEvaluationTraceCfg = crate::test_support::EarlyEvaluationTraceConfig<fp32::Dense, 1>;
+type RootEvaluationTraceCfg = crate::test_support::UnsupportedEvaluationTraceConfig<fp32::Dense, 0>;
+type RecursiveEvaluationTraceCfg =
+    crate::test_support::UnsupportedEvaluationTraceConfig<fp32::Dense, 1>;
 
 #[test]
 fn synthetic_packing_row_is_derived_from_one_checked_authority() {
-    let catalog = akita_config::test_support::workspace_schedule_catalog::<PackingCfg>()
-        .expect("workspace schedule catalog");
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<PackingCfg>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("workspace schedule catalog");
     let key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(20),
         precommitteds: Vec::new(),
     };
-    let first = PackingCfg::derive_catalog_row(&catalog, &key, 64).unwrap();
-    let second = PackingCfg::derive_catalog_row(&catalog, &key, 64).unwrap();
+    let first = PackingCfg::derive_catalog_row(&catalog, &key, 64, 1).unwrap();
+    let second = PackingCfg::derive_catalog_row(&catalog, &key, 64, 1).unwrap();
     assert_eq!(first.selection(), second.selection());
     assert_eq!(first.schedule(), second.schedule());
 
@@ -91,17 +94,19 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
     );
     schedule.validate_structure().unwrap();
 
-    PackingCfg::derive_catalog_row(&catalog, &key, 96)
+    PackingCfg::derive_catalog_row(&catalog, &key, 96, 1)
         .expect_err("a non-production challenge subring must reject");
 }
 
 #[test]
 fn fixed_root_packing_rejects_a_stale_successor_length() {
-    let catalog = akita_config::test_support::workspace_schedule_catalog::<PackingCfg>()
-        .expect("workspace schedule catalog");
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<PackingCfg>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("workspace schedule catalog");
     let opening_batch = OpeningClaimsLayout::new(20, 1).unwrap();
     let key = ScheduleLookupKey::single(opening_batch.root_final_group_layout().unwrap());
-    let row = PackingCfg::derive_catalog_row(&catalog, &key, 64).unwrap();
+    let row = PackingCfg::derive_catalog_row(&catalog, &key, 64, 1).unwrap();
     let mut schedule = row.schedule().clone();
     schedule.terminal.input_witness_len += 1;
     schedule
@@ -122,22 +127,41 @@ fn packing_setup_prefix_dispatch_rejects_an_unsupported_dimension() {
 
 #[test]
 fn fixed_root_packing_round_trips_in_both_bases() {
+    packing_round_trip(1);
+}
+
+#[test]
+fn level_two_packing_with_setup_prefix_round_trips_in_both_bases() {
+    packing_round_trip(2);
+}
+
+fn packing_round_trip(prefixed_fold_count: usize) {
     std::thread::Builder::new()
         .stack_size(512 * 1024 * 1024)
-        .spawn(|| {
-            let catalog = akita_config::test_support::workspace_schedule_catalog::<PackingCfg>()
-                .expect("workspace schedule catalog");
+        .spawn(move || {
+            let catalog = akita_config::test_support::workspace_schedule_catalog::<PackingCfg>(
+                akita_params::ChunkedWitnessCfg::default_non_chunked(),
+            )
+            .expect("workspace schedule catalog");
             let num_vars = 20;
             let opening_batch = OpeningClaimsLayout::new(num_vars, 1).unwrap();
             let key = ScheduleLookupKey::single(opening_batch.root_final_group_layout().unwrap());
-            let row = PackingCfg::derive_catalog_row(&catalog, &key, 64).unwrap();
+            let row =
+                PackingCfg::derive_catalog_row(&catalog, &key, 64, prefixed_fold_count).unwrap();
             let schedules = akita_config::ValidatedScheduleCatalog::try_new(
                 PackingCfg::schedule_family_name(),
                 [(row.profiles().clone(), row.schedule().clone())],
-                &akita_config::policy_of::<PackingCfg>(),
+                &akita_config::policy_of::<PackingCfg>(
+                    akita_params::ChunkedWitnessCfg::default_non_chunked(),
+                ),
                 PackingCfg::ring_challenge_config,
             )
-            .and_then(akita_config::TrustedScheduleCatalog::<PackingCfg>::new)
+            .and_then(|catalog| {
+                akita_config::TrustedScheduleCatalog::<PackingCfg>::new(
+                    catalog,
+                    akita_params::ChunkedWitnessCfg::default_non_chunked(),
+                )
+            })
             .expect("packing schedule catalog");
             let scheme = PackingScheme::new(schedules);
             let root = &row.schedule().root.params;
@@ -156,11 +180,27 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 2,
                 "the authenticated fixture must exercise two physical D subcolumns"
             );
-            assert_eq!(row.schedule().recursive_folds.len(), 1);
-            assert!(row.schedule().recursive_folds[0]
-                .params
-                .setup_prefix()
-                .is_some());
+            assert_eq!(row.schedule().recursive_folds.len(), prefixed_fold_count);
+            for (index, consumer) in row.schedule().recursive_folds.iter().enumerate() {
+                assert!(
+                    consumer.params.setup_prefix().is_some(),
+                    "L{} consumes a prefix",
+                    index + 1
+                );
+                assert!(matches!(
+                    consumer.params.opening_method(),
+                    OpeningMethod::SubringCoefficientPacking { .. }
+                ));
+                assert_eq!(consumer.params.witness_chunk.num_chunks, 1);
+                assert_eq!(
+                    consumer.params.ring_relation_mode,
+                    akita_params::RingRelationMode::QuotientLift
+                );
+                assert_eq!(
+                    consumer.predecessor_setup_contribution_mode(),
+                    akita_params::SetupContributionMode::Recursive
+                );
+            }
             assert!(
                 root.open().matrix.input_width()
                     < root.open().digits.num_digits
@@ -177,22 +217,29 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 akita_cpu_backend::DensePoly::from_field_evals(num_vars, &evaluations).unwrap();
 
             let mut setup = scheme.setup_prover(num_vars, 1).unwrap();
-            let setup_prefix = row.schedule().recursive_folds[0]
-                .params
-                .setup_prefix()
-                .as_ref()
-                .unwrap()
-                .slot_id()
-                .expect("setup prefix group");
+            let setup_prefixes = row
+                .schedule()
+                .recursive_folds
+                .iter()
+                .map(|fold| {
+                    fold.params
+                        .setup_prefix()
+                        .unwrap()
+                        .slot_id()
+                        .expect("setup prefix group")
+                })
+                .collect::<Vec<_>>();
             let prefix_backend =
                 CpuBackend::<PackingField, PackingExt>::new(setup.expanded.clone()).unwrap();
             let artifacts = prefix_backend
-                .export_setup_prefixes(std::slice::from_ref(&setup_prefix))
+                .export_setup_prefixes(&setup_prefixes)
                 .unwrap();
-            setup
-                .prefix_slots
-                .insert(artifacts.get(&setup_prefix).unwrap().clone())
-                .unwrap();
+            for prefix in &setup_prefixes {
+                setup
+                    .prefix_slots
+                    .insert(artifacts.get(prefix).unwrap().clone())
+                    .unwrap();
+            }
             let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
             let verifier_setup = scheme.setup_verifier(&setup).unwrap();
             let akita_cpu_backend::CommitOutput {
@@ -280,22 +327,21 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         ))
                         .is_err());
 
-                    macro_rules! early_evaluation_trace_admission_error {
+                    macro_rules! unsupported_evaluation_trace_admission_error {
                         ($config:ty, $context:literal, $expected:literal) => {{
                             let row = <$config>::derive_row(&catalog, &key)
                                 .expect(concat!($context, " test row must derive"));
                             row.1
                                 .validate_structure()
                                 .expect(concat!($context, " test row must be structurally valid"));
-                            let error = akita_config::ValidatedScheduleCatalog::try_new(
-                                <$config>::schedule_family_name(),
-                                [row],
-                                &akita_config::policy_of::<$config>(),
-                                <$config>::ring_challenge_config,
+                            let error = akita_config::ResolvedScheduleRow::try_new(
+                                row.0,
+                                row.1,
+                                catalog.policy(),
                             )
                             .expect_err(concat!(
                                 $context,
-                                " must reject at the trusted catalog boundary"
+                                " must reject at the executable row boundary"
                             ));
                             assert!(
                                 matches!(
@@ -308,14 +354,14 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         }};
                     }
 
-                    early_evaluation_trace_admission_error!(
+                    unsupported_evaluation_trace_admission_error!(
                         RootEvaluationTraceCfg,
                         "root EvaluationTrace",
                         "nonterminal level 0 requires subring coefficient packing"
                     );
-                    early_evaluation_trace_admission_error!(
+                    unsupported_evaluation_trace_admission_error!(
                         RecursiveEvaluationTraceCfg,
-                        "level-1 EvaluationTrace",
+                        "multi-chunk level-1 EvaluationTrace",
                         "nonterminal level 1 requires subring coefficient packing"
                     );
                 }

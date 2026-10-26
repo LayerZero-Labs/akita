@@ -52,7 +52,9 @@ impl std::hash::Hash for UnprunedState {
 
 pub(super) const MAX_ORACLE_SUFFIX_STATES: usize = 2_000_000;
 pub(super) const MAX_ORACLE_COMPLETE_SCHEDULES: usize = 1_000_000;
-pub(super) const MAX_ORACLE_RECURSION_DEPTH: usize = 4;
+// Small chunked schedules reach five recursive folds, so the reference
+// oracle must too.
+pub(super) const MAX_ORACLE_RECURSION_DEPTH: usize = 5;
 
 #[derive(Default)]
 struct OracleWork {
@@ -182,7 +184,6 @@ pub(super) fn find_schedule(
     };
     let inner_source = root_inner_basis_source(source_contract);
     let (min_inner_basis, max_inner_basis) = inner_source.search_range(policy)?;
-    let relation_state = OracleRelationState::QuotientPrefix;
     for log_basis in min_log_basis..=max_log_basis {
         for inner_basis in min_inner_basis..=max_inner_basis {
             for root_dimensions in
@@ -195,7 +196,6 @@ pub(super) fn find_schedule(
                 }
                 let root_openings =
                     crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
-                        0,
                         policy.claim_ext_degree,
                         root_dimensions,
                     )?;
@@ -254,7 +254,7 @@ pub(super) fn find_schedule(
                                 dimension_ceiling: root_dimensions,
                                 payload_phase:
                                     akita_params::CommitmentPayloadPhase::CompressedPrefix,
-                                relation_state,
+                                relation_state: OracleRelationState::QuotientPrefix,
                             },
                             &mut memo,
                             &mut work,

@@ -276,8 +276,10 @@ mod tests {
                 type Cfg = fp128::Dense;
                 type F = fp128::Field;
                 const NV: usize = 14;
-                let catalog =
-                    akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
+                let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>(
+                    akita_params::ChunkedWitnessCfg::default_non_chunked(),
+                )
+                .unwrap();
                 let capacity =
                     akita_config::SetupRequirements::from_catalog::<Cfg>(&catalog, NV, 1)
                         .unwrap()

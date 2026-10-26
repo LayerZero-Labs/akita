@@ -162,7 +162,7 @@ where
                 .iter()
                 .enumerate()
                 .map(|(index, group)| match group.kind() {
-                    OpeningFamily::SubringCoefficientPacking(point) => Ok((index, point)),
+                    OpeningFamily::SubringCoefficientPacking(tables) => Ok((index, tables.point())),
                     OpeningFamily::EvaluationTrace(_) => Err(AkitaError::Internal(
                         "ring-switch coefficient-packing group has an evaluation-trace opening"
                             .into(),

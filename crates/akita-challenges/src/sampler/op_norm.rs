@@ -296,11 +296,10 @@ fn decide_transposed_fused(
             let im = i128::from(acc_im[lane]);
             let abs_re = re.abs();
             let abs_im = im.abs();
-            if decide_frequency(abs_re, abs_im, re, im, r, two_r, two_r_sq, threshold)? {
-                return Ok(Decision::Reject);
-            }
-            if !frequency_accepts_upper(abs_re, abs_im, re, im, r, two_r, two_r_sq, threshold) {
-                indeterminate = true;
+            match decide_frequency(abs_re, abs_im, r, two_r, two_r_sq, threshold) {
+                Decision::Reject => return Ok(Decision::Reject),
+                Decision::Indeterminate => indeterminate = true,
+                Decision::Accept => {}
             }
         }
         start_k += len;
@@ -312,42 +311,28 @@ fn decide_transposed_fused(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-#[inline]
-fn frequency_accepts_upper(
-    abs_re: i128,
-    abs_im: i128,
-    re: i128,
-    im: i128,
-    _r: i128,
-    two_r: i128,
-    two_r_sq: i128,
-    threshold: i128,
-) -> bool {
-    let center = re * re + im * im;
-    let upper = center + two_r * (abs_re + abs_im) + two_r_sq;
-    upper <= threshold
-}
-
-#[allow(clippy::too_many_arguments)]
 #[inline]
 fn decide_frequency(
     abs_re: i128,
     abs_im: i128,
-    re: i128,
-    im: i128,
     r: i128,
     two_r: i128,
     two_r_sq: i128,
     threshold: i128,
-) -> Result<bool, AkitaError> {
-    if frequency_accepts_upper(abs_re, abs_im, re, im, r, two_r, two_r_sq, threshold) {
-        return Ok(false);
+) -> Decision {
+    let center = abs_re * abs_re + abs_im * abs_im;
+    let upper = center + two_r * (abs_re + abs_im) + two_r_sq;
+    if upper <= threshold {
+        return Decision::Accept;
     }
     let low_re = (abs_re - r).max(0);
     let low_im = (abs_im - r).max(0);
     let lower = low_re * low_re + low_im * low_im;
-    Ok(lower > threshold)
+    if lower > threshold {
+        Decision::Reject
+    } else {
+        Decision::Indeterminate
+    }
 }
 
 /// Validate worst-case `i64` accumulator magnitudes for the transposed path.
@@ -670,16 +655,15 @@ mod tests {
                 acc_im += coeff * table.base_sin[idx];
             }
             let (abs_re, abs_im) = (acc_re.abs(), acc_im.abs());
-            if decide_frequency(
-                abs_re, abs_im, acc_re, acc_im, r, two_r, two_r_sq, threshold,
-            )
-            .unwrap()
-            {
-                return Decision::Reject;
-            }
-            if !frequency_accepts_upper(
-                abs_re, abs_im, acc_re, acc_im, r, two_r, two_r_sq, threshold,
-            ) {
+            // Keep the reference predicate independent of the production decision.
+            let center = acc_re * acc_re + acc_im * acc_im;
+            let upper = center + two_r * (abs_re + abs_im) + two_r_sq;
+            if upper > threshold {
+                let low_re = (abs_re - r).max(0);
+                let low_im = (abs_im - r).max(0);
+                if low_re * low_re + low_im * low_im > threshold {
+                    return Decision::Reject;
+                }
                 indeterminate = true;
             }
         }

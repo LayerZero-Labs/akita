@@ -193,7 +193,7 @@ later execution during preprocessing restoration or in a guest.
 - [x] `TrustedScheduleCatalog<Cfg>` binds that index to one exact config, and is
   the sole production capability accepted by setup, prover, and verifier APIs.
 - [x] `AkitaCommitmentScheme::new(TrustedScheduleCatalog<Cfg>)` and
-  `AkitaCommitmentScheme::from_schedule_artifact(&[u8])` are the production
+  `AkitaCommitmentScheme::from_schedule_artifact(&[u8], ChunkedWitnessCfg)` are the production
   construction paths. Scheme clones share the config-bound catalog through
   owned `Arc` state.
 - [x] `AkitaCommitmentScheme::schedules()` exposes a borrow of the exact catalog
@@ -381,28 +381,42 @@ impl ValidatedScheduleCatalog {
     fn resolve_key(...) -> Result<&ResolvedScheduleRow, AkitaError>;
     fn resolve_profiles(...) -> Result<&ResolvedScheduleRow, AkitaError>;
     fn catalog_digest(&self) -> [u8; 32];
+    fn policy(&self) -> &PlannerPolicy;
 }
 
 impl<Cfg: CommitmentConfig> TrustedScheduleCatalog<Cfg> {
-    fn new(catalog: ValidatedScheduleCatalog) -> Result<Self, AkitaError>;
-    fn from_artifact_bytes(bytes: &[u8]) -> Result<Self, AkitaError>;
+    fn new(
+        catalog: ValidatedScheduleCatalog,
+        chunking: ChunkedWitnessCfg,
+    ) -> Result<Self, AkitaError>;
+    fn from_artifact_bytes(
+        bytes: &[u8],
+        chunking: ChunkedWitnessCfg,
+    ) -> Result<Self, AkitaError>;
     fn catalog(&self) -> &ValidatedScheduleCatalog;
 }
 
 impl<Cfg: CommitmentConfig> AkitaCommitmentScheme<Cfg> {
     fn new(catalog: TrustedScheduleCatalog<Cfg>) -> Self;
-    fn from_schedule_artifact(bytes: &[u8]) -> Result<Self, AkitaError>;
+    fn from_schedule_artifact(
+        bytes: &[u8],
+        chunking: ChunkedWitnessCfg,
+    ) -> Result<Self, AkitaError>;
     fn schedules(&self) -> &TrustedScheduleCatalog<Cfg>;
 }
 ```
 
 The config-bound construction path validates `schedule_family_name()` and
-`policy_of::<Cfg>()` once. `AkitaCommitmentScheme::new` takes an already-bound
-capability, so construction is infallible. The capability stores the catalog in
+`policy_of::<Cfg>(chunking)` once. The application MUST supply expected chunking
+from trusted configuration or preprocessing; proof input MUST NOT select it.
+The catalog retains the admitted policy, which consumers borrow through
+`catalog.policy()` instead of reconstructing preset geometry.
+`AkitaCommitmentScheme::new` takes an already-bound capability, so construction
+is infallible. The capability stores the catalog in
 `Arc`; cloning a scheme does not clone or revalidate row bodies.
-Applications that persist preprocessing serialize canonical artifact bytes or an
-explicit storage reference, then reconstruct the working catalog once during
-restoration.
+Applications that persist preprocessing retain the expected chunking alongside
+canonical artifact bytes or an explicit storage reference, then reconstruct the
+working catalog once during restoration.
 
 Low-level setup, commitment, prover, and verifier functions accept
 `&TrustedScheduleCatalog<Cfg>` directly when they need row resolution. They do not
@@ -448,6 +462,25 @@ An integration may serialize this tuple in any outer format:
 Serde, bincode, postcard, or a Jolt-specific blob may frame that tuple. Such
 framing is not Akita proof serialization and MUST NOT be pulled into the core
 proof type merely to simplify one integration.
+
+### Selected-row verifier views
+
+A verifier that checks proofs against a few rows can load a view instead of the
+JSON catalog. `ValidatedScheduleCatalog::to_verifier_view` emits a canonical
+postcard encoding of the magic, protocol epoch, policy digest, family name, the
+complete ordered row-digest list, and the schedules of the selected rows.
+`from_verifier_view` bounds the bytes (the identity list plus one row's budget)
+before decoding, requires a strictly increasing identity list, audits each
+carried row exactly as the JSON loader does, requires each carried row's
+recomputed digest to be in the list, recomputes the catalog digest from the
+list, and rejects any encoding that does not re-encode to the same bytes.
+
+A view is as trusted as its bytes. It reproduces the full catalog's digest, but
+it does not authenticate the omitted identities: an application that needs the
+full catalog's identity must pin the view bytes or bind the catalog digest into
+its own statement, as Jolt's transcript does. A view never sizes a setup and
+never re-exports as a JSON catalog; `validate_complete` rejects it where a
+complete catalog is required.
 
 ### Deferred authenticated recursion layer
 

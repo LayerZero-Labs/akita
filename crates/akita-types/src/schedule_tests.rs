@@ -1340,7 +1340,14 @@ fn schedule_row_identity_binds_setup_prefix_opening_method() {
 
 #[test]
 fn schedule_row_identity_binds_main_opening_method() {
-    let schedule = recursive_schedule(64, 64, false);
+    let mut schedule = recursive_schedule(64, 64, false);
+    let successor = &mut schedule.recursive_folds[0].params;
+    successor.own_group_mut().opening.opening_method =
+        akita_params::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+    successor.own_group_mut().opening.fold_challenge_config =
+        akita_challenges::SparseChallengeConfig::production_for_ring_dim(64).unwrap();
     let profiles = CommittedGroupBatchProfile {
         final_group: GroupCommitPhaseParams::from_params_unchecked_for_test(
             PolynomialGroupLayout::singleton(8),
@@ -1367,5 +1374,7 @@ fn schedule_row_identity_binds_main_opening_method() {
             .expect("changed main opening-method digest")
     );
     assert!(changed.validate_structure().is_ok());
-    assert!(changed.validate_nonterminal_opening_execution(1).is_err());
+    changed
+        .validate_nonterminal_opening_execution(1)
+        .expect("single-chunk root packing is executable");
 }

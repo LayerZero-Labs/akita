@@ -8,18 +8,20 @@ use akita_cpu_backend::standalone::{
 };
 use akita_cpu_backend::{DensePoly, OneHotPoly};
 use akita_params::{BasisMode, SubringCoefficientPackingGeometry};
-use akita_types::{FpExtEncoding, PreparedSubringCoefficientPackingPoint};
+use akita_types::{
+    FpExtEncoding, PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingTables,
+};
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 use std::time::Duration;
 
-fn prepared_point<F, E, const D: usize>(
+fn prepared_tables<F, E, const D: usize>(
     num_positions: usize,
     positions_per_block: usize,
     source_num_vars: usize,
-) -> PreparedSubringCoefficientPackingPoint<E>
+) -> SubringCoefficientPackingTables<E>
 where
     F: Field,
     E: ExtField<F>,
@@ -37,6 +39,7 @@ where
         source_num_vars,
         &public_point,
     )
+    .and_then(SubringCoefficientPackingTables::new)
     .unwrap()
 }
 
@@ -52,7 +55,7 @@ fn bench_dense_shape<F, E, const D: usize>(
     let source_len = num_positions * D;
     let source_num_vars = source_len.trailing_zeros() as usize;
     assert_eq!(source_len, 1usize << source_num_vars);
-    let point = prepared_point::<F, E, D>(num_positions, positions_per_block, source_num_vars);
+    let tables = prepared_tables::<F, E, D>(num_positions, positions_per_block, source_num_vars);
     let rings = (0..num_positions)
         .map(|position| {
             CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|coefficient| {
@@ -68,7 +71,7 @@ fn bench_dense_shape<F, E, const D: usize>(
     group.throughput(Throughput::Elements(source_len as u64));
     group.bench_function(name, |b| {
         b.iter(|| {
-            dense_coefficient_packing::<F, E, D>(black_box(&poly), black_box(&point)).unwrap()
+            dense_coefficient_packing::<F, E, D>(black_box(&poly), black_box(&tables)).unwrap()
         })
     });
     group.finish();
@@ -84,7 +87,7 @@ fn bench_recursive_shape<const D: usize>(
     type E = fp32::ExtensionField;
     let live_len = num_positions * D;
     let source_num_vars = live_len.trailing_zeros() as usize;
-    let point = prepared_point::<F, E, D>(num_positions, positions_per_block, source_num_vars);
+    let tables = prepared_tables::<F, E, D>(num_positions, positions_per_block, source_num_vars);
     let digits = (0..live_len).map(|index| (index % 15) as i8 - 7).collect();
     let poly = recursive_witness_from_i8_digits(digits);
     let mut group = c.benchmark_group("coefficient_packing");
@@ -95,7 +98,7 @@ fn bench_recursive_shape<const D: usize>(
         b.iter(|| {
             recursive_witness_coefficient_packing_partials::<F, E, D>(
                 black_box(&poly),
-                black_box(&point),
+                black_box(&tables),
             )
             .unwrap()
         })
@@ -118,7 +121,7 @@ fn bench_onehot_shape<F, E, const D: usize>(
     let source_num_vars = source_len.trailing_zeros() as usize;
     assert_eq!(source_len, 1usize << source_num_vars);
     assert_eq!(source_len % ONEHOT_K, 0);
-    let point = prepared_point::<F, E, D>(num_positions, positions_per_block, source_num_vars);
+    let tables = prepared_tables::<F, E, D>(num_positions, positions_per_block, source_num_vars);
     let indices = (0..source_len / ONEHOT_K)
         .map(|chunk| (chunk % 100 < density_percent).then_some((chunk % ONEHOT_K) as u8))
         .collect();
@@ -130,7 +133,7 @@ fn bench_onehot_shape<F, E, const D: usize>(
     group.throughput(Throughput::Elements(source_len as u64));
     group.bench_function(name, |b| {
         b.iter(|| {
-            onehot_coefficient_packing::<F, E, D>(black_box(&poly), black_box(&point)).unwrap()
+            onehot_coefficient_packing::<F, E, D>(black_box(&poly), black_box(&tables)).unwrap()
         })
     });
     group.finish();

@@ -602,7 +602,7 @@ host reconstruction, left expansion, range checks, integer no-wrap
 implication or canonical encoding.
 
 At `(log_num_cells,log_fold_width,lambda_fold)=(22,8,128)`, the profile gives
-`m=4096`, `C=256`, `n_A=2`, `D=648`, `n=22`, `nu=24`, `mu=22`, `pi=18`. The
+`m=4096`, `C=256`, `n_A=3`, `D=648`, `n=22`, `nu=24`, `mu=23`, `pi=18`. The
 bounded-weight-46 family has
 
 ```text
@@ -626,29 +626,30 @@ agree at the displayed precision.
 | `FrontendRound` | binary | B | 22 | 2 | 0 | 0 | 161.000 |
 | `Alpha` | all | E | 1 | 647 | 10 | 17 | 128.662 |
 | `Xi` | binary | E | 1 | 322 | 9 | 16 | 128.669 |
-| `Gamma`, with a binary claim | binary | E | 1 | 2 | 2 | 9 | 129.000 |
-| `Gamma`, without | `Prime` | E | 1 | 1 | 1 | 8 | 129.000 |
+| `Gamma`, with a binary claim | binary | E | 1 | 3 | 2 | 9 | 128.415 |
+| `Gamma`, without | `Prime` | E | 1 | 2 | 2 | 9 | 129.000 |
 | `PrimeRow` | prime | E | 1 | 1 | 1 | 8 | 129.000 |
 | `EqualityPoint` 0 | all | E | 1 | 24 | 5 | 12 | 128.415 |
 | `Batch` 0 | all | E | 1 | 1 | 1 | 8 | 129.000 |
 | `Round` 0 | all | E | 24 | 17 | 5 | 12 | 128.913 |
-| `EqualityPoint` 1 | all | E | 1 | 22 | 5 | 12 | 128.541 |
+| `EqualityPoint` 1 | all | E | 1 | 23 | 5 | 12 | 128.476 |
 | `Batch` 1 | all | E | 1 | 1 | 1 | 8 | 129.000 |
-| `Round` 1 | all | E | 22 | 17 | 5 | 12 | 128.913 |
+| `Round` 1 | all | E | 23 | 17 | 5 | 12 | 128.913 |
 | `Batch` 2 | prime | E | 1 | 1 | 1 | 8 | 129.000 |
 | `Round` 2 | prime | E | 18 | 2 | 2 | 9 | 129.000 |
 
-There are 53 visits with work in mode `Binary`, 72 in `Prime` and 73 in
+There are 54 visits with work in mode `Binary`, 73 in `Prime` and 74 in
 `Both`. Every site in E needs at least one bit
 because `|E| < 2^128`: even `L = 1` fails `2^128 <= |E|`. The largest weight
-is `2^-128.415`, at the response equality point, in every mode.
+is `2^-128.415`, at the response equality point in every mode and at
+gamma with a binary claim.
 
 The per-address rate is the quantity Akita prices and the one this ledger
 states. It is not the failure probability of one interactive run, which
 proof of work does not change: with fresh verifier challenges one run fails
 with probability at most the sum of the bad fractions over its visits. In
 mode `Binary` that is
-`[D-1 + 322 + n_A + (nu + 1 + 17*nu) + (mu + 1 + 17*mu)]/|E| = 1801/|E|`
+`[D-1 + 322 + n_A + (nu + 1 + 17*nu) + (mu + 1 + 17*mu)]/|E| = 1820/|E|`
 for the sites in E, plus `(a+2n)/2^162` for the frontend and `C/|S|` for
 the fold. A prime claim adds `1 + 1 + 2*pi = 38` to the numerator, for eta,
 theta and the product rounds; without a binary claim xi leaves it and gamma
@@ -657,9 +658,9 @@ per visit and weights each by `2^-g`:
 
 | Mode | Sum of bad fractions over E | One run | Weighted sum, one address per visit |
 | --- | ---: | ---: | ---: |
-| `Binary` | `1801/|E|` | `2^-117.185` | `28.64 * 2^-128 = 2^-123.160` |
-| `Prime` | `1516/|E|` | `2^-117.434` | `38.01 * 2^-128 = 2^-122.752` |
-| `Both` | `1839/|E|` | `2^-117.155` | `38.64 * 2^-128 = 2^-122.728` |
+| `Binary` | `1820/|E|` | `2^-117.170` | `29.45 * 2^-128 = 2^-123.120` |
+| `Prime` | `1535/|E|` | `2^-117.416` | `38.57 * 2^-128 = 2^-122.731` |
+| `Both` | `1858/|E|` | `2^-117.140` | `39.45 * 2^-128 = 2^-122.698` |
 
 The 64-bit field as its own challenge field would need 65 to
 74 bits per site; the layout rejects it.
@@ -762,9 +763,9 @@ A proof-of-work search can also fail. A visit with target g tries at most
 probability `2^-g`, the search is exhausted with probability
 `(1-2^-g)^(2^(g+7)) < exp(-128)`, and the prover then returns `InvalidInput`.
 A proof in mode `Binary` has `7+nu+mu` visits in E, one fewer without a
-binary claim and `2+pi` more with a prime claim: 53, 72 and 73 at the sample
+binary claim and `2+pi` more with a prime claim: 54, 73 and 74 at the sample
 geometry for `Binary`, `Prime` and `Both`. Its searches try
-`sum 2^g = 3080`, 2642 and 3156 candidates in expectation there.
+`sum 2^g = 3112`, 2676 and 3188 candidates in expectation there.
 
 Let `h=H::ROWS`, `dc=4` the response digit slots and `P_c=next_power_of_two(D)`.
 Excluding the oracle, the verifier performs these operations; counts describe
@@ -838,35 +839,35 @@ alpha and xi and two bytes for every other visit:
 | Frontend round bodies and source terminal | binary | 945 |
 | U | binary | 5376 |
 | Fold-response nonce | all | 1 or 2 |
-| KA | all | 6480 |
+| KA | all | 9720 |
 | Q | binary | 805 |
 | K | binary | 810 |
-| Proof-of-work nonces, `Binary` | | 53 to 108 |
-| Proof-of-work nonces, `Prime` | | 72 to 145 |
-| Proof-of-work nonces, `Both` | | 73 to 148 |
+| Proof-of-work nonces, `Binary` | | 54 to 110 |
+| Proof-of-work nonces, `Prime` | | 73 to 147 |
+| Proof-of-work nonces, `Both` | | 74 to 150 |
 | y_Y | all | 16 |
 | y_P | prime | 16 |
 | Response round bodies | all | 6528 |
 | w_eval | all | 16 |
-| Image round bodies | all | 5984 |
+| Image round bodies | all | 6256 |
 | y_eval | all | 16 |
 | Prime round bodies | prime | 576 |
 | p_eval | prime | 16 |
 
 | Mode | Largest, F128 | Largest, F192 | Smallest, F128 |
 | --- | ---: | ---: | ---: |
-| `Binary` | 29134 | 28622 | 29078 |
-| `Prime` | 19795 | 19795 | 19721 |
-| `Both` | 29782 | 29270 | 29706 |
+| `Binary` | 32648 | 32136 | 32591 |
+| `Prime` | 23309 | 23309 | 23234 |
+| `Both` | 33296 | 32784 | 33219 |
 
 A prime claim costs 648 bytes at most on top of a binary one: 608 bytes of
 field elements and at most 40 bytes for 20 nonces. Mode `Prime` has no
 message that depends on H, so its size is the same for both host fields. In
-sixteen measured F128 proofs per mode, eight per field pair, the proofs took
-29079 to 29083 bytes in mode `Binary`, 19722 to 19726 in `Prime` and 29707
-to 29710 in `Both`: a nonce below 128 is one byte, which a target of at most
+eight measured F128 proofs per mode, four per field pair, the proofs took
+32592 to 32594 bytes in mode `Binary`, 23235 to 23237 in `Prime` and 33221
+to 33223 in `Both`: a nonce below 128 is one byte, which a target of at most
 5 bits almost always finds.
 The transparent oracle adds 16777216 response bytes at this geometry and,
 with a prime claim, 4194304 bytes for uP. The
-4194304 image digits are absorbed public data, not proof bytes. The byte
+8388608 image digits are absorbed public data, not proof bytes. The byte
 wrappers add no framing or final marker. EOF is the proof boundary.
