@@ -66,7 +66,7 @@ pub use compression::BackendCompression;
 #[cfg(not(feature = "test-support"))]
 use compression::BackendCompression;
 use compression::Chains;
-pub use residual::ResidualShape;
+pub use residual::{ResidualMatrices, ResidualShape};
 use rounds::{
     ClearProverRounds, ClearVerifierRounds, FusedE, FusedKernel, ProductKernel, SecretTable, SplitB,
 };

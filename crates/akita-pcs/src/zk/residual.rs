@@ -49,6 +49,13 @@ pub struct ResidualShape {
     block_segments: Vec<(Range<usize>, usize)>,
 }
 
+/// The residual's opening matrices `A` and `[B | B′]` over `R_D`
+/// ([`ResidualShape::matrices`]).
+pub struct ResidualMatrices<const D: usize> {
+    a: Arc<PreparedMatrix<F, D>>,
+    b: Arc<PreparedMatrix<F, D>>,
+}
+
 impl ResidualShape {
     /// The shape of an admitted schedule's cut.
     ///
@@ -230,68 +237,94 @@ impl ResidualShape {
         Ok(s)
     }
 
-    /// The opening rows `N` over Akita's setup `stream`. `A` is the residual
-    /// inner matrix, which takes w_k itself ([`Self::new`] checks one inner
-    /// digit plane); `[B | B′]` is the outer matrix over `(t̂_a, r_a)`, and its
-    /// target is u_a compressed: `payload` is `cm(u_a)` as the masked prefix
-    /// sent it, and `image` is u_a, which only the prover holds (A47).
+    /// The shapes of `A` and `[B | B′]` over `R_D`.
+    fn matrix_shapes<const D: usize>(&self) -> (MatrixShape, MatrixShape) {
+        let profile = self.geometry.profile;
+        let rows = profile.inner.matrix.output_rank();
+        let inner_rings = profile.blocks.live_blocks * rows * profile.outer.digits.num_digits;
+        (
+            MatrixShape {
+                rows,
+                width: profile.blocks.positions_per_block,
+                ring_dim: D,
+            },
+            MatrixShape {
+                rows: profile.outer.matrix.output_rank(),
+                width: inner_rings + profile.randomness_columns,
+                ring_dim: D,
+            },
+        )
+    }
+
+    /// The opening matrices `A` and `[B | B′]`, cut from Akita's setup
+    /// `stream`. Public: a function of the schedule and the setup alone, so
+    /// a verifier builds them once and passes them to every
+    /// [`Self::blocks`].
     ///
     /// # Errors
     ///
     /// [`AkitaError::InvalidInput`] if `D` is not the residual ring
-    /// dimension or u_a has the wrong length, and the matrix errors of
-    /// jolt-crypto.
-    pub fn blocks<const D: usize>(
+    /// dimension, and the matrix errors of jolt-crypto.
+    pub fn matrices<const D: usize>(
         &self,
         stream: &[F],
+    ) -> Result<ResidualMatrices<D>, AkitaError> {
+        if D != self.ring_dim() {
+            return Err(AkitaError::InvalidInput(
+                "the residual matrices' ring dimension differs from the schedule's".into(),
+            ));
+        }
+        let crypto = |error: CryptoError| AkitaError::InvalidSetup(error.to_string());
+        let prepare = |shape| -> Result<Arc<PreparedMatrix<F, D>>, AkitaError> {
+            Ok(Arc::new(
+                PreparedMatrix::new(&MatrixView::new(shape, stream).map_err(crypto)?)
+                    .map_err(crypto)?,
+            ))
+        };
+        let (a, b) = self.matrix_shapes::<D>();
+        Ok(ResidualMatrices {
+            a: prepare(a)?,
+            b: prepare(b)?,
+        })
+    }
+
+    /// The opening rows `N` over `matrices` ([`Self::matrices`]). `A` is the
+    /// residual inner matrix, which takes w_k itself ([`Self::new`] checks
+    /// one inner digit plane); `[B | B′]` is the outer matrix over
+    /// `(t̂_a, r_a)`, and its target is u_a compressed: `payload` is `cm(u_a)`
+    /// as the masked prefix sent it, and `image` is u_a, which only the
+    /// prover holds (A47).
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidInput`] if `D` is not the residual ring
+    /// dimension, the matrices are not this shape's, or u_a has the wrong
+    /// length.
+    pub fn blocks<const D: usize>(
+        &self,
+        matrices: &ResidualMatrices<D>,
         payload: &[F],
         image: Option<&[F]>,
     ) -> Result<Vec<ResidualBlock<F, D>>, AkitaError> {
         let profile = self.geometry.profile;
-        let outer_rank = profile.outer.matrix.output_rank();
+        let rows = profile.inner.matrix.output_rank();
         let image_len = self.geometry.commitment_len()?;
         if D != self.ring_dim() || image.is_some_and(|u_a| u_a.len() != image_len) {
             return Err(AkitaError::InvalidInput(
                 "the residual commitment differs from the schedule's residual shape".into(),
             ));
         }
-        let crypto = |error: CryptoError| AkitaError::InvalidSetup(error.to_string());
-        let rows = profile.inner.matrix.output_rank();
-        let positions = profile.blocks.positions_per_block;
-        let a = Arc::new(
-            PreparedMatrix::<F, D>::new(
-                &MatrixView::new(
-                    MatrixShape {
-                        rows,
-                        width: positions,
-                        ring_dim: D,
-                    },
-                    stream,
-                )
-                .map_err(crypto)?,
-            )
-            .map_err(crypto)?,
-        );
-        let inner_rings = profile.blocks.live_blocks * rows * profile.outer.digits.num_digits;
-        let b = Arc::new(
-            PreparedMatrix::<F, D>::new(
-                &MatrixView::new(
-                    MatrixShape {
-                        rows: outer_rank,
-                        width: inner_rings + profile.randomness_columns,
-                        ring_dim: D,
-                    },
-                    stream,
-                )
-                .map_err(crypto)?,
-            )
-            .map_err(crypto)?,
-        );
+        if (matrices.a.shape(), matrices.b.shape()) != self.matrix_shapes::<D>() {
+            return Err(AkitaError::InvalidInput(
+                "the residual matrices are another residual shape's".into(),
+            ));
+        }
+        let (a, b) = (&matrices.a, &matrices.b);
         let mut blocks = self
             .block_segments
             .iter()
             .map(|(witness, inner)| ResidualBlock {
-                matrix: Arc::clone(&a),
+                matrix: Arc::clone(a),
                 input: witness.clone(),
                 gadget: Some(ResidualGadget {
                     segment: *inner,
@@ -315,7 +348,7 @@ impl ResidualShape {
             })
             .transpose()?;
         blocks.push(ResidualBlock {
-            matrix: b,
+            matrix: Arc::clone(b),
             input: first_inner..self.segments.len(),
             gadget: None,
             target: BlockTarget::Compressed {
