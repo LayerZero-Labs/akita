@@ -32,6 +32,7 @@ pub mod endpoint;
 pub mod frontend;
 pub mod grinding;
 pub mod lowered;
+mod matrix;
 pub mod profile;
 pub mod root;
 pub mod root_sumcheck;

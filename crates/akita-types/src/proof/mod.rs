@@ -88,9 +88,9 @@ pub use ring_relation::{
 };
 pub use scheme::OpeningPoints;
 pub use setup::{
-    derive_public_matrix_prefix, sample_akita_setup_seed, validate_public_matrix_matches_seed,
-    AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, AkitaVerifierSetup,
-    PublicMatrixDerivation, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+    derive_public_matrix_page, derive_public_matrix_prefix, sample_akita_setup_seed,
+    validate_public_matrix_matches_seed, AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed,
+    AkitaVerifierSetup, PublicMatrixDerivation, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
 pub use setup_prefix::{
     setup_prefix_coverage_eval_len, SetupPrefixPublicCommitment, SetupPrefixVerifierRegistry,

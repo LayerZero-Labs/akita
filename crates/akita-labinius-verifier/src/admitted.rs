@@ -13,8 +13,8 @@ use crate::BinaryClearSetup;
 
 // Resource limits for this materialized coefficient-form API, not stream limits.
 // The transient stream prefix is held in its field representation.
-const MAX_MATRIX_BYTES: usize = 1 << 26;
-const MAX_PREFIX_BYTES: usize = 1 << 27;
+pub(crate) const MAX_MATRIX_BYTES: usize = 1 << 26;
+pub(crate) const MAX_PREFIX_BYTES: usize = 1 << 27;
 
 /// Derive the tight row-major matrix of residues from the seed's public field
 /// prefix over the stream field `P`.
@@ -135,7 +135,7 @@ impl<const D: usize, M: TrinomialModulus> AdmittedRootSetup<D, M> {
             .map_err(|_| AkitaError::InvalidSetup("root lower endpoint exceeds i64".into()))?;
         let upper = i64::try_from(upper)
             .map_err(|_| AkitaError::InvalidSetup("root upper endpoint exceeds i64".into()))?;
-        let matrix = derive_trinomial_matrix::<P>(
+        let matrix = crate::matrix::RootMatrix::derive::<P>(
             &seed,
             n_a,
             shape.ring_elements_per_column(),
@@ -143,7 +143,7 @@ impl<const D: usize, M: TrinomialModulus> AdmittedRootSetup<D, M> {
             profile.commitment_modulus().modulus(),
         )?;
         // This canonical constructor already checks D, M's sign and reduction.
-        let setup = BinaryClearSetup::new(
+        let setup = BinaryClearSetup::from_matrix(
             matrix,
             n_a,
             shape.ring_elements_per_column(),
@@ -251,8 +251,11 @@ mod tests {
         .unwrap();
         let setup = admitted.setup();
         let q = setup.modulus();
-        let prefix = derive_public_matrix_prefix::<Prime128Offset275>(setup.matrix().len(), &seed);
-        for (&residue, original) in setup.matrix().iter().zip(prefix.as_field_slice()) {
+        let prefix = derive_public_matrix_prefix::<Prime128Offset275>(
+            setup.matrix_bytes() / size_of::<u32>(),
+            &seed,
+        );
+        for (&residue, original) in setup.matrix_coefficients().zip(prefix.as_field_slice()) {
             let mut bytes = [0u8; 16];
             original.to_bytes_le(&mut bytes);
             assert_eq!(
@@ -261,7 +264,7 @@ mod tests {
             );
         }
         // A caller-supplied matrix must already be reduced.
-        let mut unreduced = setup.matrix().to_vec();
+        let mut unreduced = setup.matrix_coefficients().copied().collect::<Vec<_>>();
         unreduced[0] = q;
         assert!(matches!(
             BinaryClearSetup::<648, MinusTrinomial>::new(
@@ -278,5 +281,56 @@ mod tests {
             ),
             Err(AkitaError::InvalidSetup(_))
         ));
+    }
+    #[test]
+    fn paged_setup_has_dense_identity_and_offsets() {
+        use akita_algebra::binary::BinaryField128;
+        let profile = LabiniusRootProfile::D648Q25BoundedW46;
+        let seed = AkitaSetupSeed::shake256_paged_v1([0x28; 32]);
+        let admitted = AdmittedRootSetup::<648, MinusTrinomial>::derive::<Prime128Offset275>(
+            profile,
+            13,
+            1,
+            128,
+            seed.clone(),
+        )
+        .unwrap();
+        let paged = admitted.setup();
+        let coefficients = derive_trinomial_matrix::<Prime128Offset275>(
+            &seed,
+            paged.n_a(),
+            paged.m(),
+            648,
+            paged.modulus(),
+        )
+        .unwrap();
+        let dense = BinaryClearSetup::<648, MinusTrinomial>::new(
+            coefficients,
+            paged.n_a(),
+            paged.m(),
+            paged.columns(),
+            paged.lower(),
+            paged.upper(),
+            paged.lambda_fold(),
+            paged.profile().clone(),
+            profile.ring_degree(),
+            profile.commitment_modulus(),
+        )
+        .unwrap();
+        assert!(paged.matrix_page_count() > 1);
+        assert_eq!(paged.matrix_view_digest(), dense.matrix_view_digest());
+        assert_eq!(paged.a_offset_remainders(), dense.a_offset_remainders());
+        assert_eq!(
+            paged.identity_bytes::<BinaryField128>().unwrap(),
+            dense.identity_bytes::<BinaryField128>().unwrap()
+        );
+        for row in 0..paged.n_a() {
+            for column in [0, 511, 512, paged.m() - 1] {
+                assert_eq!(
+                    paged.matrix_element(row, column),
+                    dense.matrix_element(row, column)
+                );
+            }
+        }
     }
 }

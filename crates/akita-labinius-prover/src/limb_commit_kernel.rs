@@ -32,8 +32,15 @@ pub use setup::commit_binary_clear_prepared;
 
 const DEGREE: usize = 648;
 const K: usize = 4;
+/// Transformed entries per matrix page. Pages never span two rows, and element
+/// batches never span two pages, so a batch of one row is one contiguous slice.
+const MATRIX_PAGE_ELEMENTS: usize = 512;
+const _: () = assert!(MATRIX_PAGE_ELEMENTS.is_multiple_of(ELEMENT_BATCH));
 
 /// Row-major transforms of a reduced integer matrix over a limb prime.
+///
+/// Each row is stored as pages of at most 512 entries, so no allocation grows
+/// with the rank or with more than 512 columns.
 ///
 /// Each entry holds 648 signed 32-bit slots and a `u32` prime tag. No original
 /// coefficients or source transforms are retained. The reusable domain owns
@@ -42,7 +49,7 @@ const K: usize = 4;
 #[derive(Debug)]
 pub struct PreparedLimbCommitMatrix {
     domain: TrinomialLimbDomain,
-    matrix: Vec<TrinomialLimbSlots>,
+    matrix: Vec<Vec<TrinomialLimbSlots>>,
     n_a: usize,
     m: usize,
     matrix_bytes: usize,
@@ -126,12 +133,23 @@ impl PreparedLimbCommitMatrix {
         }
         let matrix_bytes = checked::product([entries, size_of::<TrinomialLimbSlots>()])
             .ok_or_else(|| AkitaError::InvalidSetup("limb matrix size overflow".into()))?;
-        let mut matrix = Vec::new();
-        matrix
-            .try_reserve_exact(entries)
-            .map_err(|_| AkitaError::InvalidSetup("limb matrix allocation failed".into()))?;
+        let pages = checked::product([n_a, m.div_ceil(MATRIX_PAGE_ELEMENTS)])
+            .ok_or_else(|| AkitaError::InvalidSetup("limb matrix size overflow".into()))?;
+        let mut matrix: Vec<Vec<TrinomialLimbSlots>> = Vec::new();
+        matrix.try_reserve_exact(pages).map_err(|_| {
+            AkitaError::InvalidSetup("limb matrix page directory allocation failed".into())
+        })?;
         let mut centered = [0i32; DEGREE];
-        for element in elements {
+        for (index, element) in elements.enumerate() {
+            let column = index % m;
+            if column.is_multiple_of(MATRIX_PAGE_ELEMENTS) {
+                let mut page = Vec::new();
+                page.try_reserve_exact((m - column).min(MATRIX_PAGE_ELEMENTS))
+                    .map_err(|_| {
+                        AkitaError::InvalidSetup("limb matrix page allocation failed".into())
+                    })?;
+                matrix.push(page);
+            }
             for (out, value) in centered.iter_mut().zip(element?) {
                 *out = if value > q0 / 2 {
                     (i64::from(value) - i64::from(q0)) as i32
@@ -143,7 +161,10 @@ impl PreparedLimbCommitMatrix {
             domain
                 .forward_centered(&centered, &mut slots)
                 .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
-            matrix.push(slots);
+            matrix
+                .last_mut()
+                .ok_or(AkitaError::InvalidProof)?
+                .push(slots);
         }
         domain
             .forward_interleaved_bits(&[0; 11], &mut domain.zero_slots())
@@ -179,15 +200,15 @@ impl PreparedLimbCommitMatrix {
         })
     }
 
-    /// Matrix allocation bytes, including the four-byte prime tag per entry.
+    /// Matrix slot payload bytes, including the four-byte prime tag per entry.
     ///
     /// At rank 3, width 4096: 31,850,496 slot bytes plus 49,152 tag bytes.
     pub fn matrix_bytes(&self) -> usize {
         self.matrix_bytes
     }
 
-    /// Matrix and lookup-table payload bytes, excluding inline metadata and the
-    /// domain's small radix-three split plan allocation.
+    /// Matrix and lookup-table payload bytes, excluding page directories, inline
+    /// metadata and the domain's small radix-three split plan allocation.
     pub fn prepared_bytes(&self) -> usize {
         self.prepared_bytes
     }
@@ -211,9 +232,44 @@ impl PreparedLimbCommitMatrix {
         &self.domain
     }
 
-    /// Transformed matrix entries in row-major order, with per-entry prime tags.
-    pub fn matrix_ntt(&self) -> &[TrinomialLimbSlots] {
-        &self.matrix
+    /// Transformed matrix entry `(row, element)`, with its prime tag.
+    pub fn matrix_ntt_element(&self, row: usize, element: usize) -> Option<&TrinomialLimbSlots> {
+        self.matrix_ntt_tile(row, element, element.checked_add(1)?)?
+            .first()
+    }
+    /// Transformed entries `start..end` of one row, if they share a page.
+    fn matrix_ntt_tile(
+        &self,
+        row: usize,
+        start: usize,
+        end: usize,
+    ) -> Option<&[TrinomialLimbSlots]> {
+        if row >= self.n_a
+            || start >= end
+            || end > self.m
+            || start / MATRIX_PAGE_ELEMENTS != (end - 1) / MATRIX_PAGE_ELEMENTS
+        {
+            return None;
+        }
+        let page = checked::mul_add(
+            row,
+            self.m.div_ceil(MATRIX_PAGE_ELEMENTS),
+            start / MATRIX_PAGE_ELEMENTS,
+        )?;
+        let offset = start % MATRIX_PAGE_ELEMENTS;
+        self.matrix.get(page)?.get(offset..offset + (end - start))
+    }
+    /// Largest transformed-matrix allocation, including prime tags.
+    pub fn matrix_maximum_page_bytes(&self) -> usize {
+        self.matrix
+            .iter()
+            .map(|page| page.len() * size_of::<TrinomialLimbSlots>())
+            .max()
+            .unwrap_or(0)
+    }
+    /// Number of separately allocated transformed pages.
+    pub fn matrix_page_count(&self) -> usize {
+        self.matrix.len()
     }
 }
 

@@ -87,6 +87,9 @@ mod tests {
             nested,
         )
         .unwrap();
-        assert_ne!(admitted.setup().matrix(), direct.setup().matrix());
+        assert!(!admitted
+            .setup()
+            .matrix_coefficients()
+            .eq(direct.setup().matrix_coefficients()));
     }
 }

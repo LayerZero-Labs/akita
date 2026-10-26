@@ -130,6 +130,13 @@ fn every_limb_prime_matches_the_integer_definition() {
 }
 
 #[test]
+fn rows_wider_than_one_matrix_page_match_the_integer_definition() {
+    // Rank 3 pairs two rows and runs the third alone; width 520 puts the last
+    // element batch of every row on its second page.
+    check::<BinaryField128>(Q, 3, 520, 1, false);
+}
+
+#[test]
 fn binary_field192_ragged_columns_match_the_integer_definition() {
     let run = || check::<BinaryField192>(Q, 1, 3, 9, false);
     #[cfg(feature = "parallel")]
@@ -189,7 +196,14 @@ fn ragged_column_blocks_match_unblocked_and_integer_definitions() {
 fn setup_bound_and_reference_commitments_match_the_integer_definition() {
     let setup = clear_setup::<D, MinusTrinomial>(2, 2, 4);
     let (source, _, _) = common::data::<BinaryField128>(setup.source_len(), setup.num_vars());
-    let expected = integer_definition::<BinaryField128>(Q, setup.matrix(), 2, 2, 4, &source);
+    let expected = integer_definition::<BinaryField128>(
+        Q,
+        &setup.matrix_coefficients().copied().collect::<Vec<_>>(),
+        2,
+        2,
+        4,
+        &source,
+    );
     let prepared = PreparedLimbCommitMatrix::prepare_for_setup(&setup).unwrap();
     let commit = |prepared, setup, source: &[u128]| {
         commit_binary_clear_prepared::<BinaryField128>(prepared, setup, source)
@@ -202,8 +216,15 @@ fn setup_bound_and_reference_commitments_match_the_integer_definition() {
         expected
     );
     // A raw cache, and the cache of another matrix, cannot serve this setup.
-    let raw = PreparedLimbCommitMatrix::prepare(Q, D, 2, 2, setup.matrix()).unwrap();
-    let mut other_matrix = setup.matrix().to_vec();
+    let raw = PreparedLimbCommitMatrix::prepare(
+        Q,
+        D,
+        2,
+        2,
+        &setup.matrix_coefficients().copied().collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let mut other_matrix = setup.matrix_coefficients().copied().collect::<Vec<_>>();
     other_matrix[0] ^= 1;
     let other = clear_setup_with::<D, MinusTrinomial>(other_matrix, 2, 2, 4).unwrap();
     for foreign in [&raw, &prepared] {
@@ -284,4 +305,38 @@ fn malformed_matrices_and_sources_are_rejected() {
     assert!(
         commit_binary_clear_limb_prepared::<BinaryField128>(&prepared, usize::MAX, &[]).is_err()
     );
+}
+
+#[test]
+fn prepared_pages_preserve_first_last_and_boundary_elements() {
+    let width = 513;
+    let rank = 2;
+    let matrix: Vec<u32> = (0..rank * width * D)
+        .map(|index| index as u32 % Q)
+        .collect();
+    let prepared = PreparedLimbCommitMatrix::prepare(Q, D, rank, width, &matrix).unwrap();
+    assert_eq!(prepared.matrix_page_count(), 4);
+    assert_eq!(prepared.matrix_maximum_page_bytes(), 512 * (D * 4 + 4));
+    assert_eq!(prepared.matrix_bytes(), rank * width * (D * 4 + 4));
+    for row in 0..rank {
+        for element in [0, 511, 512] {
+            let mut coefficients = [0i32; D];
+            prepared
+                .domain()
+                .inverse_centered(
+                    prepared.matrix_ntt_element(row, element).unwrap(),
+                    &mut coefficients,
+                )
+                .unwrap();
+            let start = (row * width + element) * D;
+            for (&actual, &expected) in coefficients.iter().zip(&matrix[start..start + D]) {
+                assert_eq!(
+                    i64::from(actual).rem_euclid(i64::from(Q)),
+                    i64::from(expected)
+                );
+            }
+        }
+    }
+    assert!(prepared.matrix_ntt_element(0, width).is_none());
+    assert!(prepared.matrix_ntt_element(rank, 0).is_none());
 }

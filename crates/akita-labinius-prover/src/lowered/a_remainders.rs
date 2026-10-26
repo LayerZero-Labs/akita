@@ -71,7 +71,6 @@ pub fn matrix_remainders_limb<const D: usize, M: TrinomialModulus>(
     if product <= twice_bound {
         return Ok(None);
     }
-    let row_len = checked::product([setup.m(), D]).ok_or(AkitaError::InvalidProof)?;
     let len = checked::product([setup.n_a(), D]).ok_or(AkitaError::InvalidProof)?;
     let mut remainders = Vec::new();
     remainders
@@ -87,7 +86,7 @@ pub fn matrix_remainders_limb<const D: usize, M: TrinomialModulus>(
             .enumerate()
             .map(|(chunk, elements)| {
                 let start = checked::product([chunk, 128]).ok_or(AkitaError::InvalidProof)?;
-                remainders_mod_prime(setup, &domain, row_len, start, elements)
+                remainders_mod_prime(setup, &domain, start, elements)
             })
             .try_reduce(Vec::new, |mut left, right| {
                 if left.is_empty() {
@@ -99,7 +98,7 @@ pub fn matrix_remainders_limb<const D: usize, M: TrinomialModulus>(
                 Ok(left)
             })?;
         #[cfg(not(feature = "parallel"))]
-        let residues = remainders_mod_prime(setup, &domain, row_len, 0, packed)?;
+        let residues = remainders_mod_prime(setup, &domain, 0, packed)?;
         let prime = i128::from(prime);
         let inverse = inverse_mod_prime(modulus, prime);
         for (out, residue) in remainders.iter_mut().zip(residues) {
@@ -156,7 +155,6 @@ fn inverse_mod_prime(value: i128, prime: i128) -> i128 {
 fn remainders_mod_prime<const D: usize, M: TrinomialModulus>(
     setup: &BinaryClearSetup<D, M>,
     domain: &TrinomialLimbDomain,
-    row_len: usize,
     start: usize,
     packed: &[[i64; D]],
 ) -> Result<Vec<i32>, AkitaError> {
@@ -175,15 +173,11 @@ fn remainders_mod_prime<const D: usize, M: TrinomialModulus>(
         domain
             .forward_centered(&coefficients, &mut response)
             .map_err(|_| AkitaError::InvalidProof)?;
-        let offset = checked::sum([start, element])
-            .and_then(|element| checked::product([element, D]))
-            .ok_or(AkitaError::InvalidProof)?;
-        let range = checked::range(offset, D).ok_or(AkitaError::InvalidProof)?;
-        for (accumulator, row) in accumulators
-            .iter_mut()
-            .zip(setup.matrix().chunks_exact(row_len))
-        {
-            let element = row.get(range.clone()).ok_or(AkitaError::InvalidProof)?;
+        let column = checked::sum([start, element]).ok_or(AkitaError::InvalidProof)?;
+        for (row, accumulator) in accumulators.iter_mut().enumerate() {
+            let element = setup
+                .matrix_element(row, column)
+                .ok_or(AkitaError::InvalidProof)?;
             for (out, &value) in coefficients.iter_mut().zip(element) {
                 // Preserve the integer in [0,q), reducing only modulo this prime.
                 *out = centered_mod(i64::from(value), domain.prime());

@@ -1,7 +1,8 @@
 //! Setup binding for limb-transform commitments.
 
+use akita_algebra::TrinomialLimbDomain;
 use akita_algebra::{binary::field_switch::SwitchField, MinusTrinomial};
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_labinius_verifier::{BinaryClearCommitment, BinaryClearSetup};
 
 use super::{commit_binary_clear_limb_prepared, PreparedLimbCommitMatrix, DEGREE};
@@ -15,12 +16,19 @@ impl PreparedLimbCommitMatrix {
     pub fn prepare_for_setup(
         setup: &BinaryClearSetup<DEGREE, MinusTrinomial>,
     ) -> Result<Self, AkitaError> {
-        let mut prepared = Self::prepare(
-            setup.modulus(),
-            DEGREE,
+        let domain = TrinomialLimbDomain::new(setup.modulus())
+            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
+        let entries = checked::product([setup.n_a(), setup.m()]).ok_or(AkitaError::InvalidProof)?;
+        let mut prepared = Self::prepare_elements(
+            domain,
             setup.n_a(),
             setup.m(),
-            setup.matrix(),
+            (0..entries).map(|index| {
+                let coefficients = setup
+                    .matrix_element(index / setup.m(), index % setup.m())
+                    .ok_or(AkitaError::InvalidProof)?;
+                <[u32; DEGREE]>::try_from(coefficients).map_err(|_| AkitaError::InvalidProof)
+            }),
         )?;
         prepared.setup_digest = Some(*setup.matrix_view_digest());
         Ok(prepared)

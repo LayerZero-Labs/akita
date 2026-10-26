@@ -89,18 +89,18 @@ impl<const B: usize> Workspace<B> {
                 .get(..columns)
                 .ok_or(AkitaError::InvalidProof)?;
             let mut accumulator_rows = self.accumulators.chunks_exact_mut(B);
-            let mut matrix_rows = prepared.matrix.chunks_exact(prepared.m);
+            let mut matrix_rows = (0..prepared.n_a).map(|row| {
+                prepared
+                    .matrix_ntt_tile(row, start, end)
+                    .ok_or(AkitaError::InvalidProof)
+            });
             while let (Some(first), Some(first_matrix)) =
                 (accumulator_rows.next(), matrix_rows.next())
             {
-                let first_matrix = first_matrix
-                    .get(start..end)
-                    .ok_or(AkitaError::InvalidProof)?;
+                let first_matrix = first_matrix?;
                 match (accumulator_rows.next(), matrix_rows.next()) {
                     (Some(second), Some(second_matrix)) => {
-                        let second_matrix = second_matrix
-                            .get(start..end)
-                            .ok_or(AkitaError::InvalidProof)?;
+                        let second_matrix = second_matrix?;
                         TrinomialLimbAccumulator::add_product_tile(
                             [
                                 first.get_mut(..columns).ok_or(AkitaError::InvalidProof)?,
