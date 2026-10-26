@@ -69,7 +69,9 @@ fn signed_packet(packet: CpuExportPacket<F>) -> CpuImportPacket<F> {
 
 fn run(signed: bool) {
     let nv = 14;
-    let catalog = workspace_schedule_catalog::<Cfg>().unwrap();
+    let catalog =
+        workspace_schedule_catalog::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .unwrap();
     let row = catalog
         .resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(nv),

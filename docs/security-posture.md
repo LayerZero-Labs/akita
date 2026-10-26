@@ -42,6 +42,24 @@ Unsafe code is allowed only where it buys concrete performance or layout control
 Every unsafe block should have a local safety argument that names the invariant being relied on.
 Verifier-facing crates should avoid unsafe code unless a spec explicitly justifies it.
 
+### Trusted in-place setup views
+
+A RISC-V guest verifier reads its setup from its own program image. Copying and
+range-checking that matrix would dominate the guest's cost, so three paths view
+trusted, `'static`, little-endian setup bytes in place:
+
+- `AkitaDeserialize::borrow_many_trusted`, and the `borrow_trusted` methods built
+  on it, reinterpret field words as elements. They check length and alignment.
+  They take a `TrustedBytes` token: canonical words are the caller's
+  obligation, and constructing the token is the one `unsafe` step.
+- `view_riscv64_scalar_q128_cache` reinterprets the residue rows of a prepared
+  NTT cache. Residue ranges are a trusted-input assumption stated on
+  `TrustedTerminalCache::View`.
+- The bulk prime-field decoder reads into initialized element storage through
+  one byte view. It then applies the single-element rule to every word.
+
+Proof bytes never reach these paths.
+
 ## Resource Limits
 
 Verifier-facing decoding must not allocate solely from attacker-provided lengths without an explicit bound.

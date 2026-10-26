@@ -38,10 +38,10 @@ fn lookup_admits_exactly_the_dominated_requests() {
             None
         );
     }
-    // No rank-one cell is certified, and no other degree has a cell.
+    // No rank-one or rank-two cell is certified, and no other degree has a cell.
     assert_eq!(
         labinius_min_secure_rank(q, LabiniusRingDegree::D648, 1_506_960, 4_096),
-        Some(2)
+        Some(3)
     );
     assert_eq!(
         labinius_min_secure_rank(q, LabiniusRingDegree::D324, 1_506_960, 4_096),

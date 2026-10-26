@@ -106,7 +106,6 @@ fn materialize_precommitted_group_for_open_basis(
         .honest_fold_policy(source_contract.decomposition().field_bits());
     let ring_dimension = layout.inner.matrix.ring_dimension();
     opening.validate_for(
-        0,
         policy.claim_ext_degree,
         CommitmentRingDims {
             inner: ring_dimension,
@@ -292,7 +291,7 @@ impl PreparedRootProducers {
         candidate_log_basis_open: u32,
     ) -> Result<Option<Self>, AkitaError> {
         dimensions.validate_role_projection()?;
-        opening.validate_for(0, policy.claim_ext_degree, dimensions)?;
+        opening.validate_for(policy.claim_ext_degree, dimensions)?;
         let alpha = dimensions.d_a().trailing_zeros() as usize;
         if key.final_group.num_vars().saturating_sub(alpha) == 0 {
             return Ok(None);
@@ -348,7 +347,7 @@ pub(crate) fn root_level_candidates_for_prepared_producers(
     guide: Option<crate::schedule_params::CandidateLayoutGuide>,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     dimensions.validate_role_projection()?;
-    opening.validate_for(0, policy.claim_ext_degree, dimensions)?;
+    opening.validate_for(policy.claim_ext_degree, dimensions)?;
     let field_bits = policy.decomposition.field_bits();
     let alpha = dimensions.d_a().trailing_zeros() as usize;
     let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
@@ -400,7 +399,8 @@ pub(crate) fn root_level_candidates_for_prepared_producers(
     split_domain.dedup();
 
     let mut candidates = Vec::new();
-    for block_index_bits in split_domain {
+
+    for &block_index_bits in &split_domain {
         let position_index_bits = reduced_vars - block_index_bits;
         let num_live_blocks = 1usize << block_index_bits;
         let mut slice_candidates = Vec::new();
@@ -433,13 +433,13 @@ pub(crate) fn root_level_candidates_for_prepared_producers(
             else {
                 continue;
             };
-            candidate_params.witness_chunk = crate::policy::witness_chunk_at_level(policy, 0);
+            candidate_params.witness_chunk = policy.witness_chunk_at_level(0);
             if !candidate_params.compression_sources_supported()? {
                 continue;
             }
             slice_candidates.push(candidate_params);
         }
-        for candidate_params in crate::schedule_params::prune_locally_unprofitable_slices(
+        for candidate_params in crate::schedule_params::prune_root_slices_by_first_direct_setup(
             policy,
             &opening_batch,
             slice_candidates,
@@ -971,6 +971,12 @@ pub(crate) fn find_schedule_in_relation_order(
     planned
 }
 
+#[cfg(all(test, feature = "catalog-gen"))]
+#[path = "test/host_scale_coverage.rs"]
+mod host_scale_coverage_tests;
+#[cfg(test)]
+#[path = "test/setup_prefix_challenge_hook.rs"]
+mod setup_prefix_challenge_hook_tests;
 #[cfg(all(test, feature = "catalog-gen"))]
 #[path = "test/planner_totality.rs"]
 mod totality_tests;

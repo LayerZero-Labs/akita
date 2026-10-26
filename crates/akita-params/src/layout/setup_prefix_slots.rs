@@ -24,7 +24,6 @@ pub const SETUP_PREFIX_CONTENT_TAG: &[u8; 4] = b"SPF4";
 
 #[path = "setup_prefix_helpers.rs"]
 mod helpers;
-pub use helpers::setup_prefix_compression_plan;
 pub use helpers::suffix_opening_layout;
 
 /// Identity for one committed setup-prefix slot.
@@ -612,15 +611,15 @@ mod tests {
 
     #[test]
     fn setup_prefix_policy_wire_tag_tracks_policy_identity() {
-        let policy = SisSecurityPolicyId::Quantum128BitADPS16;
+        let policy = SisSecurityPolicyId::Quantum169BitADPS16;
         let mut wire = Vec::new();
         serialize_sis_security_policy(policy, &mut wire).expect("serialize SIS security policy");
-        assert_eq!(wire, vec![1]);
+        assert_eq!(wire, vec![2]);
         assert_eq!(
             deserialize_sis_security_policy(wire.as_slice()).expect("deserialize current policy"),
             policy
         );
-        assert!(deserialize_sis_security_policy(&[2u8][..]).is_err());
+        assert!(deserialize_sis_security_policy(&[1u8][..]).is_err());
     }
 
     #[test]

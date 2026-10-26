@@ -12,8 +12,10 @@ use akita_params::{
 #[test]
 fn batched_selection_preserves_typed_schedule_topology() {
     type Cfg = fp64::Dense;
-    let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
-        .expect("workspace schedule catalog");
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("workspace schedule catalog");
     let nv = 14;
     let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(nv));
     let expected = catalog.resolve_key(&key).expect("runtime schedule");
@@ -48,10 +50,14 @@ fn batched_selection_preserves_typed_schedule_topology() {
 
 #[test]
 fn real_presets_validate_against_setup_ring_dimension() {
-    let fp64_catalog = akita_config::test_support::workspace_schedule_catalog::<fp64::Dense>()
-        .expect("fp64 workspace schedule catalog");
-    let fp128_catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>()
-        .expect("fp128 workspace schedule catalog");
+    let fp64_catalog = akita_config::test_support::workspace_schedule_catalog::<fp64::Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("fp64 workspace schedule catalog");
+    let fp128_catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("fp128 workspace schedule catalog");
     let fp64_schedule = fp64_catalog
         .resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(14),

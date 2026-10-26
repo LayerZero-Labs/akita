@@ -3,7 +3,7 @@
 use crate::CommitmentConfig;
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_params::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
+use akita_params::{DecompositionParams, SisModulusProfileId};
 use std::marker::PhantomData;
 
 /// Config adapter that enables recursion-aware setup offloading schedules.
@@ -48,10 +48,6 @@ impl<Cfg: RecursiveScheduleConfig> CommitmentConfig for RecursiveCommitmentConfi
 
     fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
         Cfg::committed_source_class()
-    }
-
-    fn chunked_witness_cfg() -> ChunkedWitnessCfg {
-        Cfg::chunked_witness_cfg()
     }
 
     fn recursive_setup_planning() -> bool {

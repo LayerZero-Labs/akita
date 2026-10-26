@@ -286,7 +286,7 @@ fn portable_fragment_validates_relation_order_for_grouped_q128_layout() {
     type F = Prime128OffsetA7F7;
     let catalog = akita_config::test_support::workspace_schedule_catalog::<
         akita_config::proof_optimized::fp128::OneHot,
-    >()
+    >(akita_params::ChunkedWitnessCfg::default_non_chunked())
     .unwrap();
     let precommitted = catalog
         .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(

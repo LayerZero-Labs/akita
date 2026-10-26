@@ -5,9 +5,7 @@ use akita_params::sis::{
     InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisModulusProfileId,
     SisSecurityPolicyId, SisTableDigest,
 };
-use akita_params::{
-    CommitmentSliceCount, CompressionChainPlan, GroupCommitPhaseParams, PolynomialGroupLayout,
-};
+use akita_params::{CommitmentSliceCount, GroupCommitPhaseParams, PolynomialGroupLayout};
 
 type MatrixFields = (
     SisSecurityPolicyId,
@@ -114,20 +112,11 @@ impl<F: Field + CanonicalEncoding + Valid> Valid for CommittedGroup<F> {
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         check_exact_field_modulus::<F>(&self.profile)?;
         self.commitment.check()?;
-        let source_coefficients = self
+        let expected_coeffs = self
             .profile
-            .outer_slice_count
-            .complete_source_coefficients(
-                self.profile.outer.matrix.output_rank(),
-                self.profile.outer.matrix.ring_dimension(),
-            )
-            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
-        let expected_coeffs = CompressionChainPlan::for_complete_source(
-            self.profile.outer.matrix.sis_table_key().modulus_profile,
-            source_coefficients,
-        )
-        .map_err(|error| SerializationError::InvalidData(error.to_string()))?
-        .terminal_coefficients();
+            .outer_compression_plan()
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?
+            .terminal_coefficients();
         if self.commitment.rows().coeff_len() != expected_coeffs {
             return Err(SerializationError::InvalidData(
                 "committed-group rows do not match the frozen descriptor".to_string(),
@@ -385,19 +374,10 @@ where
             .validate_frozen_precommit(field_bits)
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         check_exact_field_modulus::<F>(&descriptor)?;
-        let source_coefficients = descriptor
-            .outer_slice_count
-            .complete_source_coefficients(
-                descriptor.outer.matrix.output_rank(),
-                descriptor.outer.matrix.ring_dimension(),
-            )
-            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
-        let num_coeffs = CompressionChainPlan::for_complete_source(
-            descriptor.outer.matrix.sis_table_key().modulus_profile,
-            source_coefficients,
-        )
-        .map_err(|error| SerializationError::InvalidData(error.to_string()))?
-        .terminal_coefficients();
+        let num_coeffs = descriptor
+            .outer_compression_plan()
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?
+            .terminal_coefficients();
         if num_coeffs > MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS {
             return Err(SerializationError::InvalidData(format!(
                 "committed-group coefficient count {num_coeffs} exceeds allocation cap \
@@ -457,20 +437,29 @@ mod committed_group_tests {
     type F = Fp32<4294967197>;
 
     fn group() -> CommittedGroup<F> {
-        let a_bound =
-            *akita_params::sis::inner_coeff_linf_bounds(SisModulusProfileId::Q32Offset99, 64)
-                .first()
-                .expect("D64 exact A bounds");
+        group_with_ring_dimension(128)
+    }
+
+    /// One nv11 group whose A and B matrices share `ring_dimension`.
+    fn group_with_ring_dimension(ring_dimension: usize) -> CommittedGroup<F> {
+        let ring_dimension_u32 = u32::try_from(ring_dimension).unwrap();
+        let positions = (1 << 11) / ring_dimension;
+        let a_bound = *akita_params::sis::inner_coeff_linf_bounds(
+            SisModulusProfileId::Q32Offset99,
+            ring_dimension_u32,
+        )
+        .first()
+        .expect("exact A bounds");
         let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
             akita_params::SisTableKey {
                 policy: akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
                 table_digest: SisTableDigest::CURRENT,
                 modulus_profile: SisModulusProfileId::Q32Offset99,
                 role: SisMatrixRole::Inner,
-                ring_dimension: 64,
+                ring_dimension: ring_dimension_u32,
                 coeff_linf_bound: a_bound,
             },
-            32,
+            positions,
         )
         .expect("audited A profile");
         let outer_width = inner_commit_matrix.output_rank();
@@ -480,7 +469,7 @@ mod committed_group_tests {
                 table_digest: SisTableDigest::CURRENT,
                 modulus_profile: SisModulusProfileId::Q32Offset99,
                 role: SisMatrixRole::Outer,
-                ring_dimension: 64,
+                ring_dimension: ring_dimension_u32,
                 coeff_linf_bound: 3,
             },
             outer_width,
@@ -489,7 +478,7 @@ mod committed_group_tests {
         let profile = GroupCommitPhaseParams {
             version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::new(11, 1),
-            blocks: akita_params::BlockGeometry::new(32, 32, 1),
+            blocks: akita_params::BlockGeometry::new(positions, positions, 1),
             outer_slice_count: CommitmentSliceCount::ONE,
             inner: akita_params::RoleParams::new(
                 akita_params::GadgetDigits::new(1, 1),
@@ -500,7 +489,7 @@ mod committed_group_tests {
                 outer_commit_matrix,
             ),
         };
-        let source_coefficients = outer_commit_matrix.output_rank() * 64;
+        let source_coefficients = outer_commit_matrix.output_rank() * ring_dimension;
         let payload_coefficients = akita_params::CompressionChainPlan::for_complete_source(
             outer_commit_matrix.sis_modulus_profile(),
             source_coefficients,
@@ -572,6 +561,16 @@ mod committed_group_tests {
             &(),
         )
         .is_err());
+    }
+
+    #[test]
+    fn committed_group_validation_rejects_an_outer_image_the_ladder_cannot_recompose() {
+        // The q32 ladder starts at D=128, so a D=64 outer image cannot be compressed.
+        let group = group_with_ring_dimension(64);
+        assert!(group.check().is_err());
+        assert!(group
+            .serialize_with_mode(&mut Vec::new(), Compress::Yes)
+            .is_err());
     }
 
     #[test]

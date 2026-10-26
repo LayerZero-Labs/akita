@@ -133,10 +133,10 @@ fn append_nonterminal_occurrences(
     }
     append_compression_chain_occurrences(
         &format!("{location} shared D"),
-        params.open_matrix.sis_modulus_profile(),
-        params.opening_payload_geometry()?.source_coefficients(),
+        &params.opening_compression_plan()?,
         occurrences,
-    )
+    );
+    Ok(())
 }
 
 fn append_group_occurrences(
@@ -159,30 +159,22 @@ fn append_group_compression_occurrences(
     group: &GroupOpenPhaseParams,
     occurrences: &mut Vec<ScheduleSisOccurrence>,
 ) -> Result<(), AkitaError> {
-    let matrix = &group.profile.outer.matrix;
-    let source_coefficients = group
-        .profile
-        .outer_slice_count
-        .complete_source_coefficients(matrix.output_rank(), matrix.ring_dimension())?;
     append_compression_chain_occurrences(
         location,
-        matrix.sis_modulus_profile(),
-        source_coefficients,
+        &group.profile.outer_compression_plan()?,
         occurrences,
-    )
+    );
+    Ok(())
 }
 
 fn append_compression_chain_occurrences(
     location: &str,
-    modulus_profile: SisModulusProfileId,
-    source_coefficients: usize,
+    plan: &CompressionChainPlan,
     occurrences: &mut Vec<ScheduleSisOccurrence>,
-) -> Result<(), AkitaError> {
-    let plan = CompressionChainPlan::for_complete_source(modulus_profile, source_coefficients)?;
+) {
     occurrences.extend(plan.maps().iter().enumerate().map(|(index, map)| {
         compression_occurrence(format!("{location} compression map {index}"), *map)
     }));
-    Ok(())
 }
 
 fn inner_occurrence(location: String, matrix: &InnerCommitMatrixParams) -> ScheduleSisOccurrence {

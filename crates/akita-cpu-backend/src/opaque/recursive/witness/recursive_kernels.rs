@@ -154,21 +154,22 @@ where
                 "coefficient-packing source shape disagrees with its group".into(),
             ));
         }
-        let point = akita_types::PreparedSubringCoefficientPackingPoint::new(
+        let tables = akita_types::PreparedSubringCoefficientPackingPoint::new(
             geometry,
             basis,
             num_live_positions,
             num_positions_per_block,
             source_num_vars,
             protocol_point,
-        )?;
+        )
+        .and_then(akita_types::SubringCoefficientPackingTables::new)?;
         let sources = [source];
         let batch = <RecursiveWitnessFlat as RootOpeningSource<F, D>>::opening_batch(&sources)?;
         let partials_by_claim = crate::opaque::SubringCoefficientPackingBatchKernel::coefficient_packing_partials_batch(
                 backend,
                 Some(prepared),
                 batch,
-                crate::opaque::SubringCoefficientPackingPlan { point: &point },
+                crate::opaque::SubringCoefficientPackingPlan { tables: &tables },
             )?;
         let [partials] = partials_by_claim.as_slice() else {
             return Err(AkitaError::Internal(
@@ -179,16 +180,16 @@ where
         let scalar =
             crate::arithmetic::coefficient_packing_fold::coefficient_packing_scalar_opening::<F, E>(
                 geometry,
-                point.num_live_blocks(),
+                tables.point().num_live_blocks(),
                 core::slice::from_ref(partials),
                 &[E::one()],
-                point.live_block_weights(),
-                point.tail_weights(),
+                tables.live_block_weights(),
+                tables.tail_weights(),
             )?;
         return Ok(crate::opaque::prepared_opening::coefficient_packing(
             binding,
             opening_source,
-            point,
+            tables,
             partials_by_claim,
             vec![scalar],
         ));

@@ -26,7 +26,7 @@ fn sample_geometry_derives_the_design_numbers() {
     assert_eq!(shape.response().interval(), (-2_184, 1_911));
     assert_eq!(shape.response().diameter(), 4_095);
     assert_eq!(shape.response().eta_a(), 1_506_960);
-    assert_eq!(shape.rank_a(), 2);
+    assert_eq!(shape.rank_a(), 3);
     assert_eq!(shape.honest_a_carry_bound(), 17_390_406_144);
     // H = d * M * B_z + C * w, B_Q = 2 * H, B_K = floor(3 * H / 2).
     let residual = 162 * 16_384 * 2_184 + 256 * 46;

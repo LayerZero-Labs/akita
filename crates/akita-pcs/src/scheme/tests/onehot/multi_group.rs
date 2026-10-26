@@ -119,21 +119,21 @@ where
         pre_layouts,
         "precommitted groups must retain their native descriptors"
     );
-    if ProtocolCfg::chunked_witness_cfg().uses_multi_chunk() {
+    if scheme.schedules().policy().witness_chunk.uses_multi_chunk() {
         let root = &multi_group_schedule.root;
         let root_commitment = &root.params;
         assert!(!root.params.precommitted_groups().is_empty());
         assert_eq!(
             root_commitment.witness_chunk.num_chunks,
-            ProtocolCfg::chunked_witness_cfg().num_chunks,
+            scheme.schedules().policy().witness_chunk.num_chunks,
             "root fold must retain the configured chunk count"
         );
-        let relation_geometry =
-            akita_params::RelationWitnessGeometry::for_evaluation_trace_execution(
-                root_commitment,
-                &opening_layout,
-            )
-            .expect("evaluation-trace relation geometry");
+        let relation_geometry = akita_params::RelationWitnessGeometry::for_level(
+            root_commitment,
+            &opening_layout,
+            ProtocolCfg::EXT_DEGREE,
+        )
+        .expect("scheduled relation geometry");
         let witness_layout = akita_params::WitnessLayout::new(
             root_commitment,
             &opening_layout,
@@ -348,7 +348,9 @@ where
 
 #[test]
 fn multi_group_root_folded_group_binding_round_trips() {
-    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
+    let scheme =
+        workspace_scheme::<OneHotCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     let key = multi_group_key(scheme.schedules(), 14, 20, &[1], 2);
     multi_group_root_round_trip_onehot(&scheme, &key, true, usize::MAX);
 }
@@ -357,8 +359,10 @@ fn multi_group_root_folded_group_binding_round_trips() {
 fn multi_group_root_allows_precommitted_arity_above_final_group() {
     type PlannerCfg = crate::test_support::EnvelopeFinalGroupConfig<OneHotCfg, OneHotCfg>;
 
-    let workspace_catalog = akita_config::test_support::workspace_schedule_catalog::<PlannerCfg>()
-        .expect("workspace schedule artifact");
+    let workspace_catalog = akita_config::test_support::workspace_schedule_catalog::<PlannerCfg>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("workspace schedule artifact");
     let key = multi_group_key(&workspace_catalog, 20, 14, &[1], 1);
     workspace_catalog
         .resolve_key(&key)
@@ -373,10 +377,17 @@ fn multi_group_root_allows_precommitted_arity_above_final_group() {
                 synthetic.profiles().clone(),
                 synthetic.schedule().clone(),
             ))),
-        &akita_config::policy_of::<PlannerCfg>(),
+        &akita_config::policy_of::<PlannerCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        ),
         PlannerCfg::ring_challenge_config,
     )
-    .and_then(akita_config::TrustedScheduleCatalog::<PlannerCfg>::new)
+    .and_then(|catalog| {
+        akita_config::TrustedScheduleCatalog::<PlannerCfg>::new(
+            catalog,
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+    })
     .expect("synthetic planner catalog");
     let scheme = AkitaCommitmentScheme::<PlannerCfg>::new(schedules);
     multi_group_root_round_trip_onehot(&scheme, &key, false, usize::MAX);
@@ -384,14 +395,18 @@ fn multi_group_root_allows_precommitted_arity_above_final_group() {
 
 #[test]
 fn multi_group_root_opens_multi_polynomial_precommitted_group() {
-    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
+    let scheme =
+        workspace_scheme::<OneHotCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     let key = multi_group_key(scheme.schedules(), 14, 20, &[2], 1);
     multi_group_root_round_trip_onehot(&scheme, &key, false, usize::MAX);
 }
 
 #[test]
 fn three_group_cached_and_streamed_proofs_are_identical() {
-    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
+    let scheme =
+        workspace_scheme::<OneHotCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     let key = multi_group_key(scheme.schedules(), 14, 20, &[1, 1], 4);
     let cached = multi_group_root_round_trip_onehot(&scheme, &key, false, usize::MAX);
     let streamed = multi_group_root_round_trip_onehot(&scheme, &key, false, 0);
@@ -402,7 +417,8 @@ fn three_group_cached_and_streamed_proofs_are_identical() {
 #[cfg(feature = "profile-ci")]
 fn multi_group_multi_chunk_fold_round_trips() {
     type MultiChunkCfg = fp128::OneHotMultiChunkW2R2;
-    let scheme = workspace_scheme::<MultiChunkCfg>().expect("workspace schedule artifact");
+    let scheme = workspace_scheme::<MultiChunkCfg>(akita_params::MultiChunkProfileId::W2R2.cfg())
+        .expect("workspace schedule artifact");
     let key = multi_group_key(scheme.schedules(), 14, 14, &[1], 1);
     multi_group_root_round_trip_onehot(&scheme, &key, false, usize::MAX);
 }

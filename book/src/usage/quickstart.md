@@ -56,6 +56,7 @@ data from the exact rows in that catalog.
 let artifact_bytes = std::fs::read("parameters/fp128_dense.aks")?;
 let scheme = AkitaCommitmentScheme::<Config>::from_schedule_artifact(
     &artifact_bytes,
+    akita_params::ChunkedWitnessCfg::default_non_chunked(),
 )?;
 let setup = scheme.setup_prover(NUM_VARS, 1)?;
 let backend = std::sync::Arc::new(CpuBackend::new(setup.expanded.clone())?);

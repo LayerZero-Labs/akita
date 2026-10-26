@@ -23,7 +23,9 @@ struct FoldLinfGrindFixture {
 }
 
 fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfGrindFixture {
-    let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
+    let scheme =
+        load_workspace_scheme::<OneHotCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule catalog");
     let opening_layout =
         akita_params::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
     let row = scheme

@@ -22,7 +22,7 @@ orchestration lives in `akita-pcs`.
 | `akita-types` | Proof, setup, and claim wire values, shared protocol math, and native transcript replay |
 | `akita-planner` | `Cfg`-free offline schedule search and artifact emission |
 | `akita-schedules` | Versioned schedule artifacts, semantic row audit, and validated owned catalogs |
-| `akita-config` | Runtime presets, the `CommitmentConfig` trait, trusted artifact loading, `policy_of::<Cfg>()`, and transcript binding |
+| `akita-config` | Runtime presets, the `CommitmentConfig` trait, trusted artifact loading, `policy_of::<Cfg>(chunking)`, and transcript binding |
 | `akita-setup` | Config-backed setup construction and optional setup cache |
 | `akita-verifier` | Verifier replay without prover-only polynomial backends; directly `<Cfg>`-generic |
 | `akita-prover` | Protocol sequencing, public geometry checks, proof assembly, opaque operation contracts |
@@ -116,10 +116,10 @@ scheduled dimension directly against the field's dispatch and NTT support.
 The public setup is one flat field stream with no ring dimension.
 
 A, B, and D matrix dimensions form a separate admission domain and are all at
-least 64. Compressed commitments derive their two smaller dimensions directly
-from the modulus profile (`q128: 16/8`, `q64: 32/16`, `q32: 64/32`). Those
-compression-only dimensions never become `CommitmentRingDims` and never reduce
-the ordinary relation's common coefficient block.
+least 64. Compressed commitments derive their two map dimensions directly
+from the modulus profile (`q128: 32/16`, `q64: 64/32`, `q32: 128/64`). Those
+map dimensions never become `CommitmentRingDims` and never reduce the ordinary
+relation's common coefficient block.
 
 Every function on the prove/verify path has one of two roles:
 
@@ -156,7 +156,7 @@ Mixed-dimension malformed proof rejection is covered by
 | `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, exact SIS profile, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
 | `CommittedGroupParams` | One fold's ordered groups, shared D matrix, payload mode, source encoding, and witness chunk layout |
 | `FoldParams`, `TerminalFoldParams`, `FoldSchedule` | Verifier-visible nonterminal, terminal, and complete schedule structure |
-| `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
+| `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_schedule`; derive via `akita_config::policy_of::<Cfg>(chunking)` |
 | `DensePoly`, `OneHotPoly`, `CommitmentSource`, `CommitmentExecutor` | D-free polynomial storage, commitment representations, and the checked split-or-fused commitment boundary |
 | `ProverBackend`, focused opaque kernel traits | Public protocol operations with backend-owned opening, EOR, fold, and sumcheck state |
 | `WitnessLayout`, `WitnessUnitLayout` | Canonical digit-innermost group-and-chunk ranges ([opening layout](./proving/opening-points-layout.md)) |

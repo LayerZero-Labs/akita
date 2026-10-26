@@ -26,7 +26,7 @@ fn signed_block_opening_and_packing_match_field_dense() {
     const VARS: usize = 7;
     let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let geometry = akita_params::SubringCoefficientPackingGeometry::try_new(1, D, D).unwrap();
-    let point = akita_types::PreparedSubringCoefficientPackingPoint::new(
+    let tables = akita_types::PreparedSubringCoefficientPackingPoint::new(
         geometry,
         akita_params::BasisMode::Lagrange,
         2,
@@ -36,6 +36,7 @@ fn signed_block_opening_and_packing_match_field_dense() {
             .map(|i| F::from_u64(i as u64 + 2))
             .collect::<Vec<_>>(),
     )
+    .and_then(akita_types::SubringCoefficientPackingTables::new)
     .unwrap();
     for len in [128, 71] {
         let i8_values = (0..len).map(|i| (i % 13) as i8 - 6).collect::<Vec<_>>();
@@ -111,7 +112,7 @@ fn signed_block_opening_and_packing_match_field_dense() {
                     &backend,
                     None,
                     dense_batch,
-                    SubringCoefficientPackingPlan { point: &point },
+                    SubringCoefficientPackingPlan { tables: &tables },
                 )
                 .unwrap();
             let actual = <CpuBackend<F, F> as SubringCoefficientPackingBatchKernel<
@@ -123,7 +124,7 @@ fn signed_block_opening_and_packing_match_field_dense() {
                     &backend,
                     None,
                     vec![block],
-                    SubringCoefficientPackingPlan { point: &point },
+                    SubringCoefficientPackingPlan { tables: &tables },
                 )
                 .unwrap();
             assert_eq!(actual[0].coordinates(), expected[0].coordinates());

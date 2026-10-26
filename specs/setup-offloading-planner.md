@@ -457,7 +457,7 @@ fn recursive_setup_planning() -> bool {
 }
 ```
 
-The adapter overrides it to `true`. `policy_of::<Self>()` copies the value into
+The adapter overrides it to `true`. `policy_of::<Self>(chunking)` copies the value into
 `PlannerPolicy` for `find_schedule`, including scalar keys selected for the
 recursive companion catalog. Shipped recursive catalogs bind
 `RecursiveSetupSearchPolicy::RootAndFirstChildV1`; audit callers may select

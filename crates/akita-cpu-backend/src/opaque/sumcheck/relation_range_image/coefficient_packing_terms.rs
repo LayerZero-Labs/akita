@@ -72,9 +72,17 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
             .map_err(|_| AkitaError::InvalidInput(format!("{what} allocation failed")))
     }
 
-    fn new(semantics: &CoefficientPackingGroupSemantics<'_, E>) -> Result<Self, AkitaError> {
+    fn new(
+        semantics: &CoefficientPackingGroupSemantics<'_, E>,
+        tables: &akita_types::SubringCoefficientPackingTables<E>,
+    ) -> Result<Self, AkitaError> {
         let geometry = semantics.geometry();
         let prepared_point = semantics.prepared_point();
+        if tables.point() != prepared_point {
+            return Err(AkitaError::Internal(
+                "packing Stage 2 tables were built for a different opening point".into(),
+            ));
+        }
         let witness_units = semantics.witness_units();
         let group_claim_coefficients = semantics.group_claim_coefficients();
         let basis = semantics.basis();
@@ -92,7 +100,7 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
         )?;
         for &basis_element in basis {
             direct_opening_source.extend(
-                prepared_point
+                tables
                     .tail_weights()
                     .iter()
                     .map(|&tail_weight| basis_element * tail_weight),
@@ -102,7 +110,7 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
         let mut packing_z_source = Vec::new();
         Self::reserve(&mut packing_z_source, d_a, "packing-Z source")?;
         packing_z_source.resize(d_a, E::zero());
-        for (low_index, &packing_weight) in prepared_point.packing_weights().iter().enumerate() {
+        for (low_index, &packing_weight) in tables.packing_weights().iter().enumerate() {
             for (subring_index, &alpha_power) in semantics.alpha_powers().iter().enumerate() {
                 let physical = geometry.a_ring_coefficient_index(low_index, subring_index)?;
                 *packing_z_source.get_mut(physical).ok_or_else(|| {
@@ -133,7 +141,7 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
             })?;
         let z_term_capacity = checked::product([
             witness_units.len(),
-            prepared_point.position_weights().len(),
+            tables.position_weights().len(),
             terms_per_z_position,
         ])
         .ok_or_else(|| {
@@ -155,7 +163,7 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
                 let first_segment = segments.len();
                 let block_terms = cfg_into_iter!(unit.global_block_range())
                     .map(|global_block| {
-                        let block_weight = *(prepared_point
+                        let block_weight = *(tables
                             .live_block_weights()
                             .get(global_block)
                             .ok_or_else(|| {
@@ -262,7 +270,7 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
             }
         }
 
-        let position_weights = prepared_point.position_weights();
+        let position_weights = tables.position_weights();
         for unit in witness_units {
             let first_segment = segments.len();
             let task_terms = cfg_into_iter!(
@@ -379,9 +387,10 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
 /// Materialize CPU-owned Stage 2 tasks from the validated shared semantics.
 pub(crate) fn prepare_coefficient_packing_linear_terms<E: Field>(
     semantics: CoefficientPackingGroupSemantics<'_, E>,
+    tables: &akita_types::SubringCoefficientPackingTables<E>,
 ) -> Result<PreparedProverLinearTerms<E>, AkitaError> {
     PreparedProverLinearTerms::from_coefficient_packing(CpuCoefficientPackingTerms::new(
-        &semantics,
+        &semantics, tables,
     )?)
 }
 

@@ -2,7 +2,7 @@
 
 use akita_error::AkitaError;
 use akita_params::MAX_I16_LOG_BASIS;
-use akita_schedules::{ChunkedWitnessCfg, DecompositionParams, PlannerPolicy};
+use akita_schedules::{DecompositionParams, PlannerPolicy};
 
 /// Coefficient source whose A-matrix decomposition basis is being selected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,21 +53,6 @@ impl InnerBasisSource {
                 "balanced source basis {log_basis} cannot be re-decomposed at basis {selected_log_basis}"
             ))),
         }
-    }
-}
-
-pub(crate) fn witness_chunk_at_level(
-    policy: &PlannerPolicy,
-    fold_level: usize,
-) -> ChunkedWitnessCfg {
-    let num_chunks = policy.chunks_at_level(fold_level);
-    if num_chunks > 1 {
-        ChunkedWitnessCfg {
-            num_chunks,
-            num_activated_levels: policy.witness_chunk.num_activated_levels,
-        }
-    } else {
-        ChunkedWitnessCfg::default()
     }
 }
 

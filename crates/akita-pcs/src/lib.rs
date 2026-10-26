@@ -60,10 +60,10 @@ pub use akita_params::{BasisMode, OpeningClaimsLayout, PrecommittedGroupProfiles
 pub use akita_prover::{
     CommitmentHandleMetadata, ProverBackend, ProverOpeningData, SelectedProverOpeningData,
 };
-pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
+pub use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, TrustedBytes, Validate};
 pub use akita_setup::new_prover_setup;
 pub use akita_types::{OpeningClaims, PolynomialGroupClaims};
-pub use akita_verifier::AkitaVerifier;
+pub use akita_verifier::{build_riscv64_terminal_ntt_cache, AkitaVerifier, TrustedTerminalCache};
 pub use jolt_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };

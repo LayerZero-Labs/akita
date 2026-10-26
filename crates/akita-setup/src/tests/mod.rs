@@ -10,8 +10,10 @@ type Cfg = fp128::Dense;
 type TestF = fp128::Field;
 
 fn schedules() -> TrustedScheduleCatalog<Cfg> {
-    akita_config::test_support::workspace_schedule_catalog::<Cfg>()
-        .expect("workspace schedule catalog")
+    akita_config::test_support::workspace_schedule_catalog::<Cfg>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("workspace schedule catalog")
 }
 
 fn requirements_at(max_num_vars: usize, max_num_batched_polys: usize) -> SetupRequirements<TestF> {
@@ -106,9 +108,11 @@ fn setup_accepts_field_coupled_presets() {
 
 #[test]
 fn setup_rejects_a_mismatched_field_profile_before_materialization() {
-    let error =
-        TrustedScheduleCatalog::<WrongModulusProfileConfig>::new(schedules().catalog().clone())
-            .expect_err("field modulus and SIS profile must agree before setup materialization");
+    let error = TrustedScheduleCatalog::<WrongModulusProfileConfig>::new(
+        schedules().catalog().clone(),
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect_err("field modulus and SIS profile must agree before setup materialization");
     assert!(error.to_string().contains("does not match field modulus"));
 }
 

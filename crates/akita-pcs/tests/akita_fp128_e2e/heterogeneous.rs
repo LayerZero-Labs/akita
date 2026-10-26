@@ -21,10 +21,14 @@ fn heterogeneous_group_types() {
         const ONEHOT_PRE_NV: usize = 14;
         const DENSE_PRE_NV: usize = 15;
         const FINAL_NV: usize = 16;
-        let onehot_scheme =
-            load_workspace_scheme::<OneHotCfg>().expect("workspace one-hot schedule catalog");
-        let dense_scheme =
-            load_workspace_scheme::<DenseCfg>().expect("workspace dense schedule catalog");
+        let onehot_scheme = load_workspace_scheme::<OneHotCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace one-hot schedule catalog");
+        let dense_scheme = load_workspace_scheme::<DenseCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace dense schedule catalog");
 
         let setup = onehot_scheme.setup_prover(FINAL_NV, 4).expect("setup");
         let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
@@ -215,10 +219,14 @@ fn bounded_dense_precommit_with_onehot_final_group() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let bounded_scheme = load_workspace_scheme::<BoundedDenseCfg>()
-            .expect("workspace bounded-dense schedule catalog");
-        let onehot_scheme =
-            load_workspace_scheme::<OneHotCfg>().expect("workspace one-hot schedule catalog");
+        let bounded_scheme = load_workspace_scheme::<BoundedDenseCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace bounded-dense schedule catalog");
+        let onehot_scheme = load_workspace_scheme::<OneHotCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace one-hot schedule catalog");
         // Full-width `u64` coefficients on both signs — the workload the bounded
         // preset exists for — including the `±u64::MAX` endpoints. `commit` must
         // accept all of them under `log_commit_bound = 65`, the signed bit width
@@ -407,6 +415,7 @@ fn bounded_dense_roundtrip_over_u64_coefficients_at_every_catalog_size() {
     init_rayon_pool();
     run_on_large_stack(|| {
         prove_verify_dense_roundtrip_with_evals::<fp128::DenseBounded>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
             &[14, 24, 26],
             b"completeness/fp128_dense_bounded",
             u64_dense_field_evals,
@@ -434,7 +443,10 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
+        let scheme = load_workspace_scheme::<OneHotCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace schedule catalog");
         let setup = scheme.setup_prover(NV, 1).expect("setup");
         let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
 
@@ -568,10 +580,14 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let bounded_scheme = load_workspace_scheme::<BoundedDenseCfg>()
-            .expect("workspace bounded-dense schedule catalog");
-        let dense_scheme =
-            load_workspace_scheme::<DenseCfg>().expect("workspace dense schedule catalog");
+        let bounded_scheme = load_workspace_scheme::<BoundedDenseCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace bounded-dense schedule catalog");
+        let dense_scheme = load_workspace_scheme::<DenseCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace dense schedule catalog");
         let setup = bounded_scheme.setup_prover(NV, 1).expect("bounded setup");
         let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
 
@@ -673,10 +689,14 @@ fn final_group_admitted_under_another_producer_contract_is_refused() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let dense_scheme =
-            load_workspace_scheme::<DenseCfg>().expect("workspace dense schedule catalog");
-        let bounded_scheme = load_workspace_scheme::<BoundedDenseCfg>()
-            .expect("workspace bounded-dense schedule catalog");
+        let dense_scheme = load_workspace_scheme::<DenseCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace dense schedule catalog");
+        let bounded_scheme = load_workspace_scheme::<BoundedDenseCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace bounded-dense schedule catalog");
         let setup = dense_scheme.setup_prover(NV, 1).expect("setup");
         let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let profile = dense_scheme
@@ -763,7 +783,9 @@ fn explicit_commitment_transfer_between_backends() {
     run_on_large_stack(|| {
         const NV: usize = 16;
         type Cfg = fp128::Dense;
-        let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
+        let scheme =
+            load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+                .expect("workspace schedule catalog");
 
         let evals: Vec<F> = (0..(1usize << NV)).map(|i| F::from_u64(i as u64)).collect();
         let poly = akita_cpu_backend::DensePoly::<F>::from_field_evals(NV, &evals).unwrap();
@@ -911,16 +933,20 @@ where
 // smaller setup, because only the setup seed enters the transcript.
 #[test]
 fn combined_family_setup_matches_per_family_proofs() {
-    const MAX_NV: usize = 16;
-    const DENSE_NV: usize = 16;
+    const MAX_NV: usize = 15;
+    const DENSE_NV: usize = 14;
     const ONEHOT_NV: usize = 15;
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let dense_scheme =
-            load_workspace_scheme::<DenseCfg>().expect("workspace dense schedule catalog");
-        let onehot_scheme =
-            load_workspace_scheme::<OneHotCfg>().expect("workspace one-hot schedule catalog");
+        let dense_scheme = load_workspace_scheme::<DenseCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace dense schedule catalog");
+        let onehot_scheme = load_workspace_scheme::<OneHotCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace one-hot schedule catalog");
 
         let dense_requirements = akita_config::SetupRequirements::from_catalog::<DenseCfg>(
             dense_scheme.schedules(),

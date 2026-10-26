@@ -231,6 +231,15 @@ impl PlannerPolicy {
         }
     }
 
+    /// Canonical geometry stored in the row at this fold level.
+    pub const fn witness_chunk_at_level(&self, fold_level: usize) -> ChunkedWitnessCfg {
+        if self.chunks_at_level(fold_level) > 1 {
+            self.witness_chunk
+        } else {
+            ChunkedWitnessCfg::default_non_chunked()
+        }
+    }
+
     /// Whether this family opts into the typed suffix response model.
     pub fn selective_l2_response_model_enabled(&self) -> bool {
         self.selective_l2_response_model == SelectiveL2ResponseModelId::TypedProtocolMomentsV1

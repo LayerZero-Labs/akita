@@ -59,7 +59,7 @@ and the multiplication bound `Gamma = 2w = 92`. Its exact support cardinality
 must satisfy `|S| >= C * 2^lambda_fold`, through
 `BinaryChallengeProfile::meets_budget`, which `LabiniusFoldResponse::derive`
 checks before any norm arithmetic. This budget is caller allocated and is
-separate from the 128-bit quantum ADPS16 policy of the width table. At budget
+separate from the 169-bit quantum ADPS16 policy of the width table. At budget
 128 the family supports at most 315 columns, so the widest admitted
 power-of-two fold is 256 (log 8).
 
@@ -414,7 +414,7 @@ For `(log_num_cells, log_fold_width, lambda_fold) = (22, 8, 128)`:
 | N / C / M / m / k | 4194304 / 256 / 16384 / 4096 / 4 |
 | Response interval, digits, digit slots | `[-2184, 1911]`, 3, 4 |
 | `eta_A` | 1506960 |
-| Rank `n_A` | 2 |
+| Rank `n_A` | 3 |
 | H | 5796802048 |
 | `B_Q`, `B_K` | 11593604096, 8695203072 |
 | `B_KA` | 17390406144 |
@@ -423,7 +423,7 @@ For `(log_num_cells, log_fold_width, lambda_fold) = (22, 8, 128)`:
 | Commitment no-wrap total | 1737202407392206848 |
 | Response table length, log | 16777216, 24 |
 | Image digits, digit slots, offset `B_T` | 7, 8, 143165576 |
-| Live image coefficients; image table length, log | 331776; 4194304, 22 |
+| Live image coefficients; image table length, log | 497664; 8388608, 23 |
 | Prime left-opening table length, log | 262144, 18 |
 | Achieved derivation-bias bits, `2^128 - 275` | 82 |
 
@@ -441,7 +441,7 @@ The certified artifact is
 The estimator names the modulus `q25-labinius` and the source
 `phi243-bounded-w46-delta12`: the fold response above, at d = 648 and bound
 1506960, with candidate ranks 1 through 4 under the quantum ADPS16 target of
-128 bits, the existing local-minimum discovery plus proven-pruned
+169 bits, the existing local-minimum discovery plus proven-pruned
 certification policy, and search cap 6400000000000.
 
 A runtime row is admitted only in these cases:
@@ -465,13 +465,13 @@ monotonicity.
 | Rank | Bound | max_width | Kind | Cost at max_width | Successor cost |
 | --- | ---: | ---: | --- | --- | ---: |
 | 1 | 1506960 | 0 | Exact | absent | 51.145 |
-| 2 | 1506960 | 6400000000000 | AtLeast | above-target:128.26000000000002 | absent |
-| 3 | 1506960 | 6400000000000 | AtLeast | above-target:128.26000000000002 | absent |
-| 4 | 1506960 | 6400000000000 | AtLeast | above-target:128.26000000000002 | absent |
+| 2 | 1506960 | 0 | Exact | absent | 160.59 |
+| 3 | 1506960 | 6400000000000 | AtLeast | above-target:169.07000000000002 | absent |
+| 4 | 1506960 | 6400000000000 | AtLeast | above-target:169.07000000000002 | absent |
 
-Rank 1 is a diagnostic candidate only; the artifact contains ranks 2 to 4.
-The search does not measure the rank-2 margin: it stops at the first block
-size clearing the target, `0.265 * 484 = 128.26`, a figure shared by every
+Ranks 1 and 2 are diagnostic candidates only; the artifact contains ranks 3
+and 4. The search does not measure the rank-3 margin: it stops at the first
+block size clearing the target, `0.265 * 638 = 169.07`, a figure shared by every
 instance that clears it. The estimate is made under a generic q-ary lattice
 model with inputs dimension, modulus, width, bound and norm. It does not see
 `Phi_D` or the factorisation of the ring, and it is not a proof. A prime q

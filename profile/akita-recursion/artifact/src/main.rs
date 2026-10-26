@@ -17,13 +17,18 @@
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_cpu_backend::{AkitaProverSetup, CommitOutput, CpuBackend, GroupContext, OneHotPoly};
+use akita_params::ScheduleLookupKey;
+use akita_params::{
+    lagrange_weights, BasisMode, OpeningClaimsLayout, PolynomialGroupLayout,
+    PrecommittedGroupProfiles,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::{CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-use akita_params::ScheduleLookupKey;
-use akita_params::{lagrange_weights, BasisMode, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupProfiles};
+use akita_types::{
+    CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
+};
 use akita_verifier::AkitaVerifier;
 use clap::Parser;
 use jolt_field::{
@@ -38,7 +43,9 @@ use std::path::PathBuf;
 use std::time::Instant;
 use tracing_subscriber::EnvFilter;
 
-fn load_workspace_scheme<Cfg>() -> Result<AkitaCommitmentScheme<Cfg>, akita_error::AkitaError>
+fn load_workspace_scheme<Cfg>(
+    chunking: akita_params::ChunkedWitnessCfg,
+) -> Result<AkitaCommitmentScheme<Cfg>, akita_error::AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
@@ -56,7 +63,7 @@ where
             path.display()
         ))
     })?;
-    AkitaCommitmentScheme::from_schedule_artifact(&bytes)
+    AkitaCommitmentScheme::from_schedule_artifact(&bytes, chunking)
 }
 
 #[derive(Debug, Parser)]
@@ -333,7 +340,7 @@ macro_rules! generate_scalar_case {
 
         let case = $case;
         let num_vars = $nv;
-        let scheme = load_workspace_scheme::<ScalarCfg>()
+        let scheme = load_workspace_scheme::<ScalarCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
             .map_err(|err| format!("{} trusted schedule catalog: {err}", case))?;
         let opening_layout = OpeningClaimsLayout::new(num_vars, 1)
             .map_err(|err| format!("{} opening layout: {err}", case))?;
@@ -575,10 +582,12 @@ fn run() -> Result<(), String> {
         ));
     }
     let onehot_k = onehot_k_for_num_vars(nv);
-    let scheme = load_workspace_scheme::<Cfg>()
-        .map_err(|err| format!("failed to load trusted recursive schedule catalog: {err}"))?;
-    let base_scheme = load_workspace_scheme::<BaseCfg>()
-        .map_err(|err| format!("failed to load trusted base schedule catalog: {err}"))?;
+    let scheme =
+        load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .map_err(|err| format!("failed to load trusted recursive schedule catalog: {err}"))?;
+    let base_scheme =
+        load_workspace_scheme::<BaseCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .map_err(|err| format!("failed to load trusted base schedule catalog: {err}"))?;
 
     let prime = fp128_prime_label();
     tracing::info!(

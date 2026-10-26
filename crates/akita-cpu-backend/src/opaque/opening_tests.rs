@@ -587,8 +587,10 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
 }
 #[test]
 fn proof_schedule_from_layout_includes_entire_batch() {
-    let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
-        .expect("workspace schedule catalog");
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("workspace schedule catalog");
     let batch = OpeningClaimsLayout::from_groups(vec![
         PolynomialGroupLayout::new(16, 1),
         PolynomialGroupLayout::new(16, 1),

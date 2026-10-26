@@ -89,10 +89,12 @@ type F = Prime128Offset275;
 
 const NV: usize = 14;
 const SESSION: &[u8] = b"q128-offset275-e2e";
+const CHUNKING: akita_params::ChunkedWitnessCfg =
+    akita_params::ChunkedWitnessCfg::default_non_chunked();
 
 fn planned_catalog() -> TrustedScheduleCatalog<Cfg> {
     let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(NV));
-    let policy = policy_of::<Cfg>();
+    let policy = policy_of::<Cfg>(CHUNKING);
     let planned = akita_planner::find_schedule(
         &key,
         Cfg::committed_source_contract().unwrap(),
@@ -116,19 +118,19 @@ fn planned_catalog() -> TrustedScheduleCatalog<Cfg> {
         Cfg::ring_challenge_config,
     )
     .unwrap();
-    TrustedScheduleCatalog::new(validated).unwrap()
+    TrustedScheduleCatalog::new(validated, CHUNKING).unwrap()
 }
 
 #[test]
 fn profiles_stay_bound_to_their_exact_modulus() {
-    validate_config_policy::<Offset275Dense>().unwrap();
-    validate_config_policy::<fp128::Dense>().unwrap();
+    validate_config_policy::<Offset275Dense>(CHUNKING).unwrap();
+    validate_config_policy::<fp128::Dense>(CHUNKING).unwrap();
 
     // Sharing table rows does not make the two 128-bit profiles
     // interchangeable: each one admits only its own field.
     for error in [
-        validate_config_policy::<Offset275FieldWithA7f7Profile>().unwrap_err(),
-        validate_config_policy::<A7f7FieldWithOffset275Profile>().unwrap_err(),
+        validate_config_policy::<Offset275FieldWithA7f7Profile>(CHUNKING).unwrap_err(),
+        validate_config_policy::<A7f7FieldWithOffset275Profile>(CHUNKING).unwrap_err(),
     ] {
         assert!(
             error.to_string().contains("does not match field modulus"),
@@ -237,7 +239,8 @@ fn commitment_binds_the_profile_to_the_exact_field_modulus() {
         // Tag 5 on the A7F7 field.
         let a7f7 = committed_group!(
             fp128::Dense,
-            akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>().unwrap()
+            akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>(CHUNKING)
+                .unwrap()
         );
         assert_decode_rejects_profile(
             &a7f7,

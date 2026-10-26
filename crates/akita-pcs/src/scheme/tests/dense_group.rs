@@ -6,7 +6,9 @@ type DenseGroupCfg = Cfg;
 fn dense_group_commit_freezes_scalar_s_profile() {
     const NUM_VARS: usize = 16;
 
-    let scheme = workspace_scheme::<DenseGroupCfg>().expect("workspace schedule artifact");
+    let scheme =
+        workspace_scheme::<DenseGroupCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     let setup = scheme.setup_prover(NUM_VARS, 1).expect("dense group setup");
     let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
 

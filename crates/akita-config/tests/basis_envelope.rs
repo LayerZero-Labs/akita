@@ -14,8 +14,11 @@ fn catalog<Cfg: CommitmentConfig>() -> akita_config::TrustedScheduleCatalog<Cfg>
         .join(akita_params::SCHEDULE_ARTIFACT_SET)
         .join(format!("{}.aks", Cfg::schedule_family_name()));
     let bytes = std::fs::read(path).expect("checked-in schedule artifact");
-    akita_config::TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(&bytes)
-        .expect("trusted catalog")
+    akita_config::TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(
+        &bytes,
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("trusted catalog")
 }
 
 /// Sparse singleton keys covering small, production, stress, and table-max nv.
