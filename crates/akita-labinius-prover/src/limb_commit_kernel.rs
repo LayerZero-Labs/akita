@@ -21,7 +21,12 @@ use akita_error::{checked, AkitaError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
+mod packing;
 mod setup;
+mod workspace;
+
+use workspace::{commit_blocks, Workspace, BLOCK_COLUMNS, ELEMENT_BATCH};
 
 pub use setup::commit_binary_clear_prepared;
 
@@ -145,9 +150,23 @@ impl PreparedLimbCommitMatrix {
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
         let prepared_bytes = checked::sum([matrix_bytes, domain.table_storage_bytes()])
             .ok_or_else(|| AkitaError::InvalidSetup("limb prepared size overflow".into()))?;
-        let workspace_bytes = checked::product([n_a, size_of::<TrinomialLimbAccumulator>()])
-            .and_then(|accumulators| checked::sum([accumulators, size_of::<Workspace>()]))
-            .ok_or_else(|| AkitaError::InvalidSetup("limb workspace size overflow".into()))?;
+        let workspace_bytes =
+            checked::product([n_a, BLOCK_COLUMNS, size_of::<TrinomialLimbAccumulator>()])
+                .and_then(|accumulators| {
+                    checked::product([
+                        BLOCK_COLUMNS,
+                        ELEMENT_BATCH,
+                        size_of::<TrinomialLimbSlots>(),
+                    ])
+                    .and_then(|transformed| {
+                        checked::sum([
+                            accumulators,
+                            transformed,
+                            size_of::<Workspace<BLOCK_COLUMNS>>(),
+                        ])
+                    })
+                })
+                .ok_or_else(|| AkitaError::InvalidSetup("limb workspace size overflow".into()))?;
         Ok(Self {
             domain,
             matrix,
@@ -173,10 +192,14 @@ impl PreparedLimbCommitMatrix {
         self.prepared_bytes
     }
 
-    /// Retained workspace bytes per worker, including accumulator heap storage.
+    /// Maximum retained workspace bytes per worker, including four columns of eight-element batches.
     ///
-    /// Peak arithmetic scratch additionally includes an inverse copy (2592
-    /// bytes), packed bits (88 bytes), and gather indices (81 bytes). These are
+    /// Smaller commitments allocate fewer column slots. Peak arithmetic scratch
+    /// additionally includes an inverse copy (2592 bytes), eight four-word sources
+    /// (512 bytes), eight chunk slices (128 bytes on 64-bit targets), source packing
+    /// scratch (152 bytes), and gather indices (81 bytes). These payloads total
+    /// 3465 bytes per worker on 64-bit targets, excluding stack metadata and padding,
+    /// and need not all be live simultaneously. They are
     /// bounded by degree, independent of width and column count. The result's
     /// `columns * rank * 648 * 4` bytes are allocated once, shared across workers.
     pub fn workspace_bytes(&self) -> usize {
@@ -208,6 +231,19 @@ pub fn pack_binary_element_bits<H: SwitchField>(
         return Err(AkitaError::InvalidInput(
             "source element geometry mismatch".into(),
         ));
+    }
+    #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
+    if std::is_x86_feature_detected!("bmi2") {
+        // The standard detector caches CPUID. On Zen 4, native AVX2 builds
+        // measured faster with the vectorized portable spread below, while
+        // generic x86_64 builds benefited from PDEP. Keep the target-feature
+        // function behind this check.
+        let mut sources = [0u128; K];
+        for (source, &word) in sources.iter_mut().zip(words) {
+            *source = word.into();
+        }
+        // SAFETY: BMI2 was detected above; the kernel only uses scalar PDEP.
+        return Ok(unsafe { packing::pack_bmi2(sources) });
     }
     let mut packed = [0u64; 11];
     for (component, &word) in words.iter().enumerate() {
@@ -255,102 +291,43 @@ where
         .ok_or_else(|| AkitaError::InvalidInput("limb commitment size overflow".into()))?;
     let output_len = checked::product([columns, column_coefficients])
         .ok_or_else(|| AkitaError::InvalidInput("limb commitment size overflow".into()))?;
+    if columns == 0 {
+        return Ok(Vec::new());
+    }
     let mut output = Vec::new();
     output
         .try_reserve_exact(output_len)
         .map_err(|_| AkitaError::InvalidInput("limb image allocation failed".into()))?;
     output.resize(output_len, 0);
+
+    // Keep at least one block per worker when enough columns are available.
+    // Round down to a measured specialization, so the hot loop knows its stride.
+    let block_columns = columns.min(BLOCK_COLUMNS);
     #[cfg(feature = "parallel")]
-    output
-        .par_chunks_mut(column_coefficients)
-        .zip(source.par_chunks(column_words))
-        .try_for_each_init(
-            || Workspace::new(prepared),
-            |workspace, (image, words)| {
-                let workspace = workspace.as_mut().map_err(|error| error.clone())?;
-                workspace.commit_column::<H>(prepared, words, image)
-            },
-        )?;
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut workspace = Workspace::new(prepared)?;
-        for (image, words) in output
-            .chunks_mut(column_coefficients)
-            .zip(source.chunks(column_words))
-        {
-            workspace.commit_column::<H>(prepared, words, image)?;
-        }
+    let block_columns = block_columns.min((columns / rayon::current_num_threads()).max(1));
+    match block_columns {
+        1 => commit_blocks::<H, 1>(
+            prepared,
+            source,
+            &mut output,
+            column_words,
+            column_coefficients,
+        )?,
+        2..=3 => commit_blocks::<H, 2>(
+            prepared,
+            source,
+            &mut output,
+            column_words,
+            column_coefficients,
+        )?,
+        4 => commit_blocks::<H, BLOCK_COLUMNS>(
+            prepared,
+            source,
+            &mut output,
+            column_words,
+            column_coefficients,
+        )?,
+        _ => return Err(AkitaError::InvalidInput("invalid limb block size".into())),
     }
     Ok(output)
-}
-
-struct Workspace {
-    transformed: TrinomialLimbSlots,
-    accumulators: Vec<TrinomialLimbAccumulator>,
-    coefficients: [i32; DEGREE],
-}
-
-impl Workspace {
-    fn new(prepared: &PreparedLimbCommitMatrix) -> Result<Self, AkitaError> {
-        let mut accumulators = Vec::new();
-        accumulators
-            .try_reserve_exact(prepared.n_a)
-            .map_err(|_| AkitaError::InvalidInput("limb accumulator allocation failed".into()))?;
-        accumulators.resize(
-            prepared.n_a,
-            TrinomialLimbAccumulator::new(&prepared.domain),
-        );
-        Ok(Self {
-            transformed: prepared.domain.zero_slots(),
-            accumulators,
-            coefficients: [0; DEGREE],
-        })
-    }
-
-    fn commit_column<H: SwitchField>(
-        &mut self,
-        prepared: &PreparedLimbCommitMatrix,
-        words: &[H::Source],
-        output: &mut [u32],
-    ) -> Result<(), AkitaError> {
-        for (element, chunk) in words.chunks_exact(K).enumerate() {
-            let bits = pack_binary_element_bits::<H>(chunk)?;
-            prepared
-                .domain
-                .forward_interleaved_bits(&bits, &mut self.transformed)
-                .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
-            for (accumulator, row) in self
-                .accumulators
-                .iter_mut()
-                .zip(prepared.matrix.chunks_exact(prepared.m))
-            {
-                let matrix_element = row.get(element).ok_or(AkitaError::InvalidProof)?;
-                accumulator
-                    .add_product(matrix_element, &self.transformed)
-                    .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
-            }
-        }
-        for (accumulator, image) in self
-            .accumulators
-            .iter_mut()
-            .zip(output.chunks_exact_mut(DEGREE))
-        {
-            // finish clears the accumulator for its next column.
-            accumulator
-                .finish(&mut self.transformed)
-                .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
-            prepared
-                .domain
-                .inverse_centered(&self.transformed, &mut self.coefficients)
-                .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
-            for (out, &value) in image.iter_mut().zip(&self.coefficients) {
-                *out = if value < 0 {
-                    (i64::from(value) + i64::from(prepared.domain.prime())) as u32
-                } else {
-                    value as u32
-                };
-            }
-        }
-        Ok(())
-    }
 }

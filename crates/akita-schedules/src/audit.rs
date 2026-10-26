@@ -238,6 +238,16 @@ fn audit_committed_params(
     }
     params.validate_block_geometry()?;
     params.witness_chunk.validate()?;
+    let expected = policy.witness_chunk_at_level(fold_level);
+    if params.witness_chunk != expected {
+        return Err(invalid(
+            label,
+            &format!(
+                "witness chunks {:?} disagree with policy geometry {expected:?} at fold level {fold_level}",
+                params.witness_chunk,
+            ),
+        ));
+    }
     validate_role_dims(params.role_dims())?;
     params
         .fold_challenge_config()
@@ -390,6 +400,16 @@ fn audit_terminal(
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     let label = "terminal fold";
+    let expected_chunks = policy.chunks_at_level(model_state.fold_level);
+    if expected_chunks != 1 {
+        return Err(invalid(
+            label,
+            &format!(
+                "terminal witness chunks must be 1, but policy requires {expected_chunks} at fold level {}",
+                model_state.fold_level,
+            ),
+        ));
+    }
     let sparse = &params.fold_challenge_config;
     let response_shape = &params.response_shape;
     audit_inner_matrix(label, &params.inner.matrix, policy)?;
@@ -622,7 +642,7 @@ mod tests {
                 log_open_bound: Some(128),
             },
             sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
-            sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
+            sis_security_policy: SisSecurityPolicyId::Quantum169BitADPS16,
             sis_table_digest: SisTableDigest::CURRENT,
             sis_l2_table_digest: SisL2TableDigest::CURRENT,
             claim_ext_degree: 1,
@@ -634,13 +654,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn terminal_audit_rejects_a_stale_l2_bucket() {
-        let policy = policy();
+    fn l2_terminal(policy: &PlannerPolicy) -> TerminalFoldParams {
         let sparse = akita_challenges::selective_l2_challenge_config(64)
             .expect("certified D64 L2 challenge");
         let expected = selective_l2_inner_matrix(
-            &policy,
+            policy,
             SelectiveL2CandidateGeometry {
                 fold_level: 3,
                 num_claims: 1,
@@ -674,6 +692,29 @@ mod tests {
         };
         terminal.response_shape =
             TerminalResponseShape::derive(&terminal, 10).expect("valid terminal response shape");
+        terminal
+    }
+
+    #[test]
+    fn terminal_audit_rejects_an_active_chunked_level() {
+        let mut policy = policy();
+        let terminal = l2_terminal(&policy);
+        policy.witness_chunk = akita_params::MultiChunkProfileId::W2R3.cfg();
+        audit_terminal(&terminal, TerminalL2ModelState { fold_level: 3 }, &policy)
+            .expect("terminal after the chunked prefix");
+        let error = audit_terminal(&terminal, TerminalL2ModelState { fold_level: 2 }, &policy)
+            .expect_err("terminal inside the chunked prefix");
+        assert!(
+            matches!(error, AkitaError::InvalidSetup(ref message)
+            if message.contains("terminal fold") && message.contains("witness chunks")),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn terminal_audit_rejects_a_stale_l2_bucket() {
+        let policy = policy();
+        let mut terminal = l2_terminal(&policy);
         audit_terminal(&terminal, TerminalL2ModelState { fold_level: 3 }, &policy)
             .expect("canonical terminal matrix");
 

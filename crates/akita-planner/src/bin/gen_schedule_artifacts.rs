@@ -304,7 +304,7 @@ fn validate_materialized_catalog(
     .map_err(|error| format!("build regenerated catalog: {error}"))?
     .to_artifact_bytes()
     .map_err(|error| format!("encode regenerated catalog: {error}"))?;
-    let path = spec.output_dir.join(format!("{}.aks", spec.family_name));
+    let path = spec.output_path.clone();
     let existing = fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
     let changed_rows = usize::from(existing != regenerated);
     Ok(CatalogComparison {
@@ -539,8 +539,12 @@ fn expand_precommitted_choices(
                 .layouts()
                 .into_iter()
                 .map(|layout| {
-                    (precommitted_family.explicit_precommitted_group)(preplans, layout)
-                        .map_err(|e| format!("{}: explicit precommitted group: {e}", group.family))
+                    (precommitted_family.explicit_precommitted_group)(
+                        preplans,
+                        layout,
+                        (precommitted_family.policy)().witness_chunk,
+                    )
+                    .map_err(|e| format!("{}: explicit precommitted group: {e}", group.family))
                 })
                 .collect::<Result<Vec<_>, _>>()
         })
@@ -571,14 +575,14 @@ fn emit_spec_with_overrides(
     explicit_rows: &ExplicitRows,
 ) -> Result<EmitSpec, String> {
     if !explicit_rows.has_family(family) {
-        return emit_spec_for_family(family, preplans, base_dir)
+        return emit_spec_for_family(family, preplans, (family.policy)().witness_chunk, base_dir)
             .map_err(|e| format!("{}: emit spec: {e}", family.family_name()));
     }
 
     // Explicit sweeps replace the catalog key set. Start from an empty request
     // shape so a one-key diagnostic does not first plan every default grouped
     // root merely to discard those rows below.
-    let mut spec = empty_emit_spec(family, base_dir)
+    let mut spec = empty_emit_spec(family, (family.policy)().witness_chunk, base_dir)
         .map_err(|e| format!("{}: producer contract: {e}", family.family_name()))?;
 
     let final_group = explicit_rows

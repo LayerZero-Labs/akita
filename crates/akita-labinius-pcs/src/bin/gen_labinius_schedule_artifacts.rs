@@ -7,7 +7,7 @@ use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_labinius_pcs::{
     family::{tables::DigitTables, Family128, Family64, FieldFamily},
-    shipped::SUPPORTED_GEOMETRIES,
+    shipped::{SUPPORTED_GEOMETRIES, WITNESS_CHUNKING},
 };
 use akita_params::{
     CommittedGroupBatchProfile, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
@@ -22,40 +22,30 @@ use akita_planner::{
     MaterializationDiagnostics,
 };
 use akita_schedules::ValidatedScheduleCatalog;
-use std::{collections::BTreeMap, fs, path::Path, sync::Mutex, time::Instant};
-
-// The grouped planner hook is a plain function pointer, so the scalar rows it
-// adapts are registered here under their family name before rendering starts.
-static SCALAR_ROWS: Mutex<BTreeMap<&'static str, ValidatedScheduleCatalog>> =
-    Mutex::new(BTreeMap::new());
+use std::{fs, path::Path, time::Instant};
 
 fn scalar<C: CommitmentConfig>(group: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
     Ok(akita_planner::find_schedule(
         &ScheduleLookupKey::single(group),
         C::committed_source_contract()?,
         &[],
-        &policy_of::<C>(),
+        &policy_of::<C>(WITNESS_CHUNKING),
         C::ring_challenge_config,
     )?
     .schedule)
 }
 
+/// Adapt a grouped request from the scalar row of its final group.
 fn grouped<C: CommitmentConfig>(
-    request: GroupedGenerationRequest,
+    scalar_rows: &ValidatedScheduleCatalog,
+    request: &GroupedGenerationRequest,
 ) -> Result<FoldSchedule, AkitaError> {
-    let missing = || AkitaError::InvalidSetup("scalar rows of the family are missing".into());
-    let catalog = SCALAR_ROWS
-        .lock()
-        .map_err(|_| missing())?
-        .get(C::schedule_family_name())
-        .cloned()
-        .ok_or_else(missing)?;
     let scalar_key = ScheduleLookupKey::single(request.key().final_group);
     Ok(akita_planner::find_adapted_schedule(
-        catalog.resolve_key(&scalar_key)?,
-        &request,
+        scalar_rows.resolve_key(&scalar_key)?,
+        request,
         C::committed_source_contract()?,
-        &policy_of::<C>(),
+        &policy_of::<C>(WITNESS_CHUNKING),
         C::ring_challenge_config,
     )?
     .schedule)
@@ -65,7 +55,7 @@ fn grouped<C: CommitmentConfig>(
 fn preplan<C: CommitmentConfig>(spec: &mut EmitSpec) -> Result<ValidatedScheduleCatalog, String> {
     spec.keys.sort_by_key(|key| key.num_vars());
     spec.keys.dedup();
-    spec.preplanned_scalar = bounded_parallel_filter_map(
+    let planned = bounded_parallel_filter_map(
         &spec.keys,
         offline_planning_worker_count(spec.keys.len()),
         |key| {
@@ -80,8 +70,7 @@ fn preplan<C: CommitmentConfig>(spec: &mut EmitSpec) -> Result<ValidatedSchedule
             Ok(Some((*key, schedule)))
         },
     )?;
-    let rows = spec
-        .preplanned_scalar
+    let rows = planned
         .iter()
         .map(|(key, schedule)| {
             Ok((
@@ -97,6 +86,10 @@ fn preplan<C: CommitmentConfig>(spec: &mut EmitSpec) -> Result<ValidatedSchedule
         })
         .collect::<Result<Vec<_>, AkitaError>>()
         .map_err(|error| error.to_string())?;
+    spec.preplanned = planned
+        .into_iter()
+        .map(|(key, schedule)| (ScheduleLookupKey::single(key), schedule))
+        .collect();
     let catalog = ValidatedScheduleCatalog::try_new(
         spec.family_name,
         rows,
@@ -104,7 +97,8 @@ fn preplan<C: CommitmentConfig>(spec: &mut EmitSpec) -> Result<ValidatedSchedule
         spec.ring_challenge_config,
     )
     .map_err(|error| error.to_string())?;
-    TrustedScheduleCatalog::<C>::new(catalog.clone()).map_err(|error| error.to_string())?;
+    TrustedScheduleCatalog::<C>::new(catalog.clone(), WITNESS_CHUNKING)
+        .map_err(|error| error.to_string())?;
     Ok(catalog)
 }
 
@@ -115,14 +109,12 @@ fn scalar_spec<C: CommitmentConfig>(
 ) -> Result<(EmitSpec, ValidatedScheduleCatalog), String> {
     let mut spec = EmitSpec {
         family_name: C::schedule_family_name(),
-        policy: policy_of::<C>(),
+        policy: policy_of::<C>(WITNESS_CHUNKING),
         source_contract: C::committed_source_contract().map_err(|error| error.to_string())?,
         keys,
         grouped_requests: Vec::new(),
-        preplanned_scalar: Vec::new(),
-        output_dir: output_dir.to_path_buf(),
-        regen: scalar::<C>,
-        regen_group_batch: grouped::<C>,
+        preplanned: Vec::new(),
+        output_path: output_dir.join(format!("{}.aks", C::schedule_family_name())),
         ring_challenge_config: C::ring_challenge_config,
     };
     let rows = preplan::<C>(&mut spec)?;
@@ -149,9 +141,10 @@ fn family_specs<P: FieldFamily>(output_dir: &Path) -> Result<[EmitSpec; 2], Stri
     let (mut digits, scalar_rows) = scalar_spec::<P::Digits>(output_dir, digit_keys)?;
     let (elements, element_rows) = scalar_spec::<P::Elements>(output_dir, element_keys)?;
     let trusted_digits =
-        TrustedScheduleCatalog::<P::Digits>::new(scalar_rows.clone()).map_err(text)?;
+        TrustedScheduleCatalog::<P::Digits>::new(scalar_rows.clone(), WITNESS_CHUNKING)
+            .map_err(text)?;
     let trusted_elements =
-        TrustedScheduleCatalog::<P::Elements>::new(element_rows).map_err(text)?;
+        TrustedScheduleCatalog::<P::Elements>::new(element_rows, WITNESS_CHUNKING).map_err(text)?;
     let digit_contract = P::Digits::committed_source_contract().map_err(text)?;
     let element_contract = P::Elements::committed_source_contract().map_err(text)?;
     for tables in &geometries {
@@ -184,10 +177,16 @@ fn family_specs<P: FieldFamily>(output_dir: &Path) -> Result<[EmitSpec; 2], Stri
         .grouped_requests
         .sort_by_cached_key(|request| request.key().canonical_order_key());
     digits.grouped_requests.dedup();
-    SCALAR_ROWS
-        .lock()
-        .map_err(|_| "scalar row registry is poisoned".to_string())?
-        .insert(digits.family_name, scalar_rows);
+    let adapted = bounded_parallel_filter_map(
+        &digits.grouped_requests,
+        offline_planning_worker_count(digits.grouped_requests.len()),
+        |request| {
+            let schedule =
+                grouped::<P::Digits>(&scalar_rows, request).map_err(|error| error.to_string())?;
+            Ok(Some((request.key(), schedule)))
+        },
+    )?;
+    digits.preplanned.extend(adapted);
     Ok([digits, elements])
 }
 

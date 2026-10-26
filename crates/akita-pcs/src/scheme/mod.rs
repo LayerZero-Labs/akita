@@ -40,9 +40,12 @@ where
     /// # Errors
     ///
     /// Returns an error when decoding, row audit, or config binding fails.
-    pub fn from_schedule_artifact(bytes: &[u8]) -> Result<Self, AkitaError> {
+    pub fn from_schedule_artifact(
+        bytes: &[u8],
+        chunking: akita_params::ChunkedWitnessCfg,
+    ) -> Result<Self, AkitaError> {
         Ok(Self::new(
-            TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(bytes)?,
+            TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(bytes, chunking)?,
         ))
     }
 

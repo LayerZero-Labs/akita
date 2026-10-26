@@ -2,8 +2,15 @@ use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_config::proof_optimized::{fp128, fp32};
 use akita_params::sis::sis_table_key_for_linf_bound;
-use akita_types::{derive_public_matrix_prefix, sample_akita_setup_seed, RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierSlot};
-use akita_params::{scheduled_setup_prefix, CompressionChainPlan, GroupCommitPhaseParams, GroupOpenPhaseParams, GroupOpeningPlan, InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout, SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY};
+use akita_params::{
+    scheduled_setup_prefix, CompressionChainPlan, GroupCommitPhaseParams, GroupOpenPhaseParams,
+    GroupOpeningPlan, InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+    SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+};
+use akita_types::{
+    derive_public_matrix_prefix, sample_akita_setup_seed, RingVec, SetupPrefixPublicCommitment,
+    SetupPrefixVerifierSlot,
+};
 use jolt_field::Zero;
 
 type TestCfg = fp128::OneHot;
@@ -11,8 +18,8 @@ type TestF = fp128::Field;
 const TEST_D: usize = 256;
 const PREFIX_D: usize = 64;
 
-fn schedules<Cfg: CommitmentConfig>() -> TrustedScheduleCatalog<Cfg> {
-    akita_config::test_support::workspace_schedule_catalog::<Cfg>()
+fn schedules<Cfg: CommitmentConfig>(chunking: ChunkedWitnessCfg) -> TrustedScheduleCatalog<Cfg> {
+    akita_config::test_support::workspace_schedule_catalog::<Cfg>(chunking)
         .expect("workspace trusted schedule catalog")
 }
 
@@ -28,7 +35,7 @@ fn blob_prefix() -> Vec<u8> {
 
 #[test]
 fn full_catalog_frame_round_trips_without_compiled_rows() {
-    let catalog = schedules::<TestCfg>();
+    let catalog = schedules::<TestCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let inner = blob_prefix();
     let framed = frame_with_schedule_catalog::<TestCfg>(&inner, &catalog).expect("catalog frame");
 
@@ -36,26 +43,95 @@ fn full_catalog_frame_round_trips_without_compiled_rows() {
         read_blob_case(&framed).expect("framed case"),
         AkitaJoltCase::OneHotFp128Direct
     );
-    let (decoded, decoded_inner) =
-        split_schedule_catalog::<TestCfg>(&framed).expect("split catalog frame");
+    let (decoded, decoded_inner) = split_schedule_catalog::<TestCfg>(
+        &framed,
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("split catalog frame");
     assert_eq!(decoded.catalog_digest(), catalog.catalog_digest());
     assert_eq!(decoded_inner, inner);
 }
 
 #[test]
+fn catalog_frame_preserves_nondefault_runtime_geometry() {
+    let source = schedules::<fp128::OneHotMultiChunkW2R3>(ChunkedWitnessCfg {
+        num_chunks: 2,
+        num_activated_levels: 3,
+    });
+    let chunking = source.policy().witness_chunk;
+    assert_ne!(
+        chunking,
+        akita_params::ChunkedWitnessCfg::default_non_chunked()
+    );
+    let policy = akita_config::policy_of::<TestCfg>(chunking);
+    let catalog = akita_config::ValidatedScheduleCatalog::try_new(
+        TestCfg::schedule_family_name(),
+        source
+            .rows()
+            .map(|row| (row.profiles().clone(), row.schedule().clone())),
+        &policy,
+        TestCfg::ring_challenge_config,
+    )
+    .expect("runtime catalog under the same config");
+    let catalog =
+        TrustedScheduleCatalog::<TestCfg>::new(catalog, chunking).expect("runtime catalog binding");
+    let inner = blob_prefix();
+    let framed = frame_with_schedule_catalog(&inner, &catalog).expect("runtime frame");
+    let (decoded, decoded_inner) =
+        split_schedule_catalog::<TestCfg>(&framed, chunking).expect("runtime frame round trip");
+    assert_eq!(decoded_inner, inner);
+    assert_eq!(decoded.catalog_digest(), catalog.catalog_digest());
+    assert_eq!(decoded.policy().witness_chunk, chunking);
+    assert!(split_schedule_catalog::<TestCfg>(
+        &framed,
+        akita_params::ChunkedWitnessCfg::default_non_chunked()
+    )
+    .is_err());
+    for wrong in [
+        ChunkedWitnessCfg {
+            num_chunks: 4,
+            ..chunking
+        },
+        ChunkedWitnessCfg {
+            num_activated_levels: 2,
+            ..chunking
+        },
+    ] {
+        assert!(split_schedule_catalog::<TestCfg>(&framed, wrong).is_err());
+    }
+    let row = decoded.rows().next().expect("runtime row");
+    let key = akita_params::ScheduleLookupKey {
+        final_group: row.profiles().final_group.group,
+        precommitteds: row.profiles().precommitteds.clone(),
+    };
+    assert_eq!(
+        AkitaJoltInputs::<TestF, TEST_D>::proof_byte_bound(row.selection(), &decoded)
+            .expect("runtime proof bound"),
+        akita_schedules::expanded_schedule_proof_bound(&key, row.schedule(), decoded.policy())
+            .expect("admitted policy proof bound"),
+    );
+}
+
+#[test]
 fn catalog_frame_rejects_missing_truncated_and_tampered_artifacts() {
     let inner = blob_prefix();
-    let missing = split_schedule_catalog::<TestCfg>(&inner)
-        .expect_err("guest entry requires the benchmark catalog frame");
+    let missing = split_schedule_catalog::<TestCfg>(
+        &inner,
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect_err("guest entry requires the benchmark catalog frame");
     assert!(missing.to_string().contains("missing"));
 
     let mut truncated = CATALOG_FRAME_MAGIC.to_vec();
     truncated.extend_from_slice(&1u64.to_le_bytes());
-    let truncated = split_schedule_catalog::<TestCfg>(&truncated)
-        .expect_err("catalog frame must contain an inner blob");
+    let truncated = split_schedule_catalog::<TestCfg>(
+        &truncated,
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect_err("catalog frame must contain an inner blob");
     assert!(truncated.to_string().contains("complete inner blob"));
 
-    let catalog = schedules::<TestCfg>();
+    let catalog = schedules::<TestCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let mut tampered =
         frame_with_schedule_catalog::<TestCfg>(&inner, &catalog).expect("catalog frame");
     let artifact_start = CATALOG_FRAME_HEADER_BYTES;
@@ -75,8 +151,11 @@ fn catalog_frame_rejects_missing_truncated_and_tampered_artifacts() {
     }
     let digit = tampered[digest_start];
     tampered[digest_start] = if digit == b'9' { b'8' } else { digit + 1 };
-    let tampered = split_schedule_catalog::<TestCfg>(&tampered)
-        .expect_err("tampered catalog identity must reject");
+    let tampered = split_schedule_catalog::<TestCfg>(
+        &tampered,
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect_err("tampered catalog identity must reject");
     assert!(tampered.to_string().contains("policy"));
 }
 
@@ -137,7 +216,7 @@ fn previous_blob_version_is_rejected_at_the_magic_boundary() {
     bytes[..BLOB_MAGIC.len()].copy_from_slice(b"AKJOLTv4");
     let error = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(
         &bytes,
-        &schedules::<TestCfg>(),
+        &schedules::<TestCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked()),
     )
     .expect_err("v4 blob must not reach payload decoding");
     assert!(error.to_string().contains("magic mismatch"));
@@ -187,7 +266,7 @@ fn transcript_domain_len_is_capped_before_allocation() {
 
     let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(
         &bytes,
-        &schedules::<TestCfg>(),
+        &schedules::<TestCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked()),
     )
     .unwrap_err();
     assert!(err.to_string().contains("length"));
@@ -205,7 +284,7 @@ fn num_vars_is_capped_before_opening_point_allocation() {
 
     let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(
         &bytes,
-        &schedules::<TestCfg>(),
+        &schedules::<TestCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked()),
     )
     .unwrap_err();
     assert!(err.to_string().contains("length"));
@@ -222,7 +301,7 @@ fn opening_point_len_must_match_num_vars_before_allocation() {
 
     let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(
         &bytes,
-        &schedules::<TestCfg>(),
+        &schedules::<TestCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked()),
     )
     .unwrap_err();
     assert!(err.to_string().contains("opening-point arity 3"));
@@ -302,7 +381,7 @@ fn setup_matrix_payload_must_fit_remaining_blob_before_allocation() {
 
 #[test]
 fn proof_budget_is_derived_from_the_selected_schedule() {
-    let schedules = schedules::<TestCfg>();
+    let schedules = schedules::<TestCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let opening_claims = akita_params::OpeningClaimsLayout::new(14, 1).expect("opening layout");
     let row = schedules
         .resolve_key(&akita_params::ScheduleLookupKey::single(
@@ -322,7 +401,7 @@ fn proof_budget_is_derived_from_the_selected_schedule() {
     let planner_estimate = akita_schedules::expanded_schedule_proof_estimate_bytes(
         &key,
         row.schedule(),
-        &akita_config::policy_of::<TestCfg>(),
+        schedules.policy(),
     )
     .expect("native planner estimate");
     assert!(
@@ -353,7 +432,7 @@ fn unknown_schedule_identity_is_rejected_before_proof_allocation() {
     type ExtE = <ExtCfg as CommitmentConfig>::ExtField;
 
     let layout = akita_params::OpeningClaimsLayout::new(30, 1).expect("opening layout");
-    let schedules = schedules::<ExtCfg>();
+    let schedules = schedules::<ExtCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let row = schedules
         .resolve_key(&akita_params::ScheduleLookupKey::single(
             layout

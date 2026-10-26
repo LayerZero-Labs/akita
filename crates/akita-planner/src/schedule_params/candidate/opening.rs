@@ -17,20 +17,15 @@ impl PlannerOpeningCandidate {
         Self::EvaluationTrace { challenge_config }
     }
 
-    /// Enumerate the fixed production packing domain for one level/role tuple.
+    /// Enumerate the fixed production packing domain for one role tuple.
     pub(crate) fn coefficient_packing_domain(
-        absolute_level: usize,
         extension_degree: usize,
         dimensions: CommitmentRingDims,
     ) -> Result<Vec<Self>, AkitaError> {
         dimensions.validate_role_projection()?;
-        if absolute_level > 1 {
-            return Ok(Vec::new());
-        }
         let mut candidates = Vec::new();
         for &challenge_subring_dimension in akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS {
             if let Some(candidate) = Self::coefficient_packing(
-                absolute_level,
                 extension_degree,
                 dimensions,
                 challenge_subring_dimension,
@@ -43,14 +38,10 @@ impl PlannerOpeningCandidate {
 
     /// Admit one coefficient-packing candidate before SIS lookup or sizing.
     pub(crate) fn coefficient_packing(
-        absolute_level: usize,
         extension_degree: usize,
         dimensions: CommitmentRingDims,
         challenge_subring_dimension: usize,
     ) -> Result<Option<Self>, AkitaError> {
-        if absolute_level > 1 {
-            return Ok(None);
-        }
         dimensions.validate_role_projection()?;
         if SparseChallengeConfig::production_for_ring_dim(challenge_subring_dimension).is_none() {
             return Err(AkitaError::InvalidSetup(format!(
@@ -104,7 +95,6 @@ impl PlannerOpeningCandidate {
 
     pub(crate) fn validate_for(
         self,
-        absolute_level: usize,
         extension_degree: usize,
         dimensions: CommitmentRingDims,
     ) -> Result<(), AkitaError> {
@@ -115,14 +105,14 @@ impl PlannerOpeningCandidate {
             return Ok(());
         };
         let expected = Self::coefficient_packing(
-            absolute_level,
             extension_degree,
             dimensions,
             geometry.challenge_subring_dimension(),
         )?
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
-                "planner coefficient-packing geometry is not admitted at this level".into(),
+                "planner coefficient-packing geometry is incompatible with the role dimensions"
+                    .into(),
             )
         })?;
         if self != expected {
@@ -141,7 +131,6 @@ mod tests {
     #[test]
     fn packing_candidate_admission_uses_registered_geometry() {
         let admitted = PlannerOpeningCandidate::coefficient_packing(
-            1,
             2,
             CommitmentRingDims {
                 inner: 256,
@@ -166,21 +155,11 @@ mod tests {
 
         assert!(PlannerOpeningCandidate::coefficient_packing(
             2,
-            2,
-            CommitmentRingDims::uniform(128),
-            64
-        )
-        .unwrap()
-        .is_none());
-        assert!(PlannerOpeningCandidate::coefficient_packing(
-            1,
-            2,
             CommitmentRingDims::uniform(256),
             32
         )
         .is_err());
         assert!(PlannerOpeningCandidate::coefficient_packing(
-            1,
             4,
             CommitmentRingDims::uniform(128),
             64
@@ -188,7 +167,6 @@ mod tests {
         .unwrap()
         .is_none());
         assert!(PlannerOpeningCandidate::coefficient_packing(
-            1,
             2,
             CommitmentRingDims {
                 inner: 256,
@@ -211,27 +189,19 @@ mod tests {
         for (extension_degree, expected) in
             [(1, vec![64, 128, 256]), (2, vec![64, 128]), (4, vec![64])]
         {
-            let actual = PlannerOpeningCandidate::coefficient_packing_domain(
-                0,
-                extension_degree,
-                dimensions,
-            )
-            .unwrap()
-            .into_iter()
-            .map(|candidate| match candidate.method() {
-                akita_params::OpeningMethod::SubringCoefficientPacking {
-                    challenge_subring_dimension,
-                } => challenge_subring_dimension,
-                akita_params::OpeningMethod::EvaluationTrace => unreachable!(),
-            })
-            .collect::<Vec<_>>();
+            let actual =
+                PlannerOpeningCandidate::coefficient_packing_domain(extension_degree, dimensions)
+                    .unwrap()
+                    .into_iter()
+                    .map(|candidate| match candidate.method() {
+                        akita_params::OpeningMethod::SubringCoefficientPacking {
+                            challenge_subring_dimension,
+                        } => challenge_subring_dimension,
+                        akita_params::OpeningMethod::EvaluationTrace => unreachable!(),
+                    })
+                    .collect::<Vec<_>>();
             assert_eq!(actual, expected);
         }
-        assert!(
-            PlannerOpeningCandidate::coefficient_packing_domain(2, 2, dimensions)
-                .unwrap()
-                .is_empty()
-        );
     }
 
     #[test]
@@ -239,7 +209,7 @@ mod tests {
         let candidate =
             PlannerOpeningCandidate::evaluation_trace(SparseChallengeConfig::pm1_only(0));
         assert!(candidate
-            .validate_for(0, 1, CommitmentRingDims::uniform(256))
+            .validate_for(1, CommitmentRingDims::uniform(256))
             .is_err());
     }
 }

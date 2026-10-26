@@ -11,6 +11,20 @@ pub struct ArtifactOutput {
     pub(super) body: String,
 }
 
+impl ArtifactOutput {
+    /// Render an already audited catalog for transactional batch publication.
+    pub fn from_catalog(
+        destination: PathBuf,
+        catalog: &akita_schedules::ValidatedScheduleCatalog,
+    ) -> Result<Self, String> {
+        let bytes = catalog
+            .to_artifact_bytes()
+            .map_err(|error| error.to_string())?;
+        let body = String::from_utf8(bytes).map_err(|error| error.to_string())?;
+        Ok(Self { destination, body })
+    }
+}
+
 fn render_family_artifact(
     spec: &EmitSpec,
     materialized: Vec<MaterializedEntry>,
@@ -44,15 +58,7 @@ fn render_family_artifact(
         spec.ring_challenge_config,
     )
     .map_err(|error| format!("{}: build artifact: {error}", spec.family_name))?;
-    let bytes = catalog
-        .to_artifact_bytes()
-        .map_err(|error| format!("{}: encode artifact: {error}", spec.family_name))?;
-    let body = String::from_utf8(bytes)
-        .map_err(|error| format!("{}: artifact is not UTF-8: {error}", spec.family_name))?;
-    Ok(ArtifactOutput {
-        destination: spec.output_dir.join(format!("{}.aks", spec.family_name)),
-        body,
-    })
+    ArtifactOutput::from_catalog(spec.output_path.clone(), &catalog)
 }
 
 /// Materialize, validate, and render canonical external schedule artifacts.

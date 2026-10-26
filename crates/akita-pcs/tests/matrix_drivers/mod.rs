@@ -28,8 +28,10 @@ use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 // Only called from the expensive recursive matrix cells, which are normally
 // filtered out of focused test runs.
 #[allow(dead_code)]
-pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(transcript_domain: &'static [u8])
-where
+pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(
+    chunking: akita_params::ChunkedWitnessCfg,
+    transcript_domain: &'static [u8],
+) where
     BaseCfg: CommitmentConfig<Field = F, ExtField = F> + RecursiveScheduleConfig,
 {
     type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
@@ -39,7 +41,7 @@ where
 
     init_rayon_pool();
     run_on_large_stack(move || {
-        let scheme = load_workspace_scheme::<RecursiveCommitmentConfig<BaseCfg>>()
+        let scheme = load_workspace_scheme::<RecursiveCommitmentConfig<BaseCfg>>(chunking)
             .expect("workspace schedule artifact");
         let schedule_key =
             ScheduleLookupKey::single(PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE));
@@ -132,22 +134,26 @@ where
     });
 }
 
-pub(super) fn prove_verify_dense_roundtrip<Cfg>(nv_values: &[usize], label: &[u8])
-where
+pub(super) fn prove_verify_dense_roundtrip<Cfg>(
+    chunking: akita_params::ChunkedWitnessCfg,
+    nv_values: &[usize],
+    label: &[u8],
+) where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
-    prove_verify_dense_roundtrip_with_evals::<Cfg>(nv_values, label, dense_field_evals);
+    prove_verify_dense_roundtrip_with_evals::<Cfg>(chunking, nv_values, label, dense_field_evals);
 }
 
 /// Dense prove/verify round trip over a caller-supplied evaluation source.
 pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
+    chunking: akita_params::ChunkedWitnessCfg,
     nv_values: &[usize],
     label: &[u8],
     evals_for: impl Fn(usize, u64) -> Vec<F>,
 ) where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let scheme = load_workspace_scheme::<Cfg>(chunking).expect("workspace schedule artifact");
     for &nv in nv_values {
         let seed = 0x7e57_0000_u64 ^ nv as u64;
         let evals = evals_for(nv, seed);
@@ -197,13 +203,16 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
     }
 }
 
-pub(super) fn prove_verify_onehot_roundtrip<Cfg>(nv_values: &[usize], label: &[u8])
-where
+pub(super) fn prove_verify_onehot_roundtrip<Cfg>(
+    chunking: akita_params::ChunkedWitnessCfg,
+    nv_values: &[usize],
+    label: &[u8],
+) where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     let k = akita_config::unit_onehot_source_chunk_size::<Cfg>()
         .expect("one-hot roundtrip requires a unit-one-hot config");
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let scheme = load_workspace_scheme::<Cfg>(chunking).expect("workspace schedule artifact");
     for &nv in nv_values {
         let seed = 0x0bee_0000_u64 ^ nv as u64;
         let poly = make_onehot_poly_with_k(nv, k, seed);
@@ -255,11 +264,14 @@ where
 // Pre-commit nv used by both precommitted drivers. Must exist in the precommit catalog.
 const PRE_NV: usize = 14;
 
-pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(final_nvs: &[usize], label: &[u8])
-where
+pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(
+    chunking: akita_params::ChunkedWitnessCfg,
+    final_nvs: &[usize],
+    label: &[u8],
+) where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let scheme = load_workspace_scheme::<Cfg>(chunking).expect("workspace schedule artifact");
     for &final_nv in final_nvs {
         let setup = scheme.setup_prover(final_nv.max(PRE_NV), 2).unwrap();
         let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
@@ -380,13 +392,16 @@ where
     }
 }
 
-pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(final_nvs: &[usize], label: &[u8])
-where
+pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
+    chunking: akita_params::ChunkedWitnessCfg,
+    final_nvs: &[usize],
+    label: &[u8],
+) where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     let k = akita_config::unit_onehot_source_chunk_size::<Cfg>()
         .expect("one-hot roundtrip requires a unit-one-hot config");
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let scheme = load_workspace_scheme::<Cfg>(chunking).expect("workspace schedule artifact");
     for &final_nv in final_nvs {
         let setup = scheme.setup_prover(final_nv.max(PRE_NV), 2).unwrap();
         let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");

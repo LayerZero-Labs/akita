@@ -163,15 +163,19 @@ fn combined_recursive_prefix_registry_persists_and_serves_each_family() {
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
                 let onehot = SetupRequirements::from_catalog::<OneHotRec>(
-                    &akita_config::test_support::workspace_schedule_catalog::<OneHotRec>()
-                        .expect("recursive one-hot catalog"),
+                    &akita_config::test_support::workspace_schedule_catalog::<OneHotRec>(
+                        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+                    )
+                    .expect("recursive one-hot catalog"),
                     MAX_VARS,
                     MAX_POLYS,
                 )
                 .expect("recursive one-hot requirements");
                 let multichunk = SetupRequirements::from_catalog::<MultiChunkRec>(
-                    &akita_config::test_support::workspace_schedule_catalog::<MultiChunkRec>()
-                        .expect("recursive multi-chunk catalog"),
+                    &akita_config::test_support::workspace_schedule_catalog::<MultiChunkRec>(
+                        akita_params::MultiChunkProfileId::W8R2.cfg(),
+                    )
+                    .expect("recursive multi-chunk catalog"),
                     MAX_VARS,
                     MAX_POLYS,
                 )

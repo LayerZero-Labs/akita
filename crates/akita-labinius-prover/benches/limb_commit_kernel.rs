@@ -1,5 +1,7 @@
-//! Prepared limb commitments with real source packing. Every row measures one
-//! column containing 4096 degree-648 ring elements on one local worker thread.
+//! Prepared limb commitments with real source packing and degree-648 ring elements.
+//! Base rows use width 4096, one column, and one local worker thread; thread rows
+//! report eight-column totals at width 4096 for each thread count. The width-1024,
+//! 256-column row uses one thread for the end-to-end W=20, log C=8 geometry.
 
 #![cfg(feature = "labinius")]
 
@@ -78,6 +80,7 @@ fn benchmark_geometry(criterion: &mut Criterion) {
         );
         // The profile's certified rank at this width.
         if rank == 2 {
+            multiple_columns(&mut group, &prepared);
             let admitted = AdmittedRootSetup::<D, MinusTrinomial>::derive::<Prime128Offset275>(
                 LabiniusRootProfile::D648Q25BoundedW46,
                 14,
@@ -108,9 +111,84 @@ fn benchmark_geometry(criterion: &mut Criterion) {
             });
         }
     }
+    {
+        // W=20 with log C=8: 1024 source elements in each of 256 columns.
+        const GOAL_WIDTH: usize = 1024;
+        const GOAL_COLUMNS: usize = 256;
+        const GOAL_RANK: usize = 2;
+        let mut rng = StdRng::seed_from_u64(0x0020_0008_0648);
+        let matrix: Vec<_> = (0..GOAL_RANK * GOAL_WIDTH * D)
+            .map(|_| (rng.next_u64() % u64::from(Q)) as u32)
+            .collect();
+        let source: Vec<_> = (0..GOAL_COLUMNS * GOAL_WIDTH * K)
+            .map(|_| u128::from(rng.next_u64()) | (u128::from(rng.next_u64()) << 64))
+            .collect();
+        let prepared = PreparedLimbCommitMatrix::prepare(Q, D, GOAL_RANK, GOAL_WIDTH, &matrix)
+            .expect("exact-goal benchmark matrix has admitted geometry and reduced coefficients");
+        group.throughput(Throughput::Elements(
+            (GOAL_COLUMNS * GOAL_WIDTH * K * 128) as u64,
+        ));
+        group.bench_function("limb_rank/2_width1024_columns256_threads1", |b| {
+            b.iter(|| {
+                let run = || {
+                    commit_binary_clear_limb_prepared::<BinaryField128>(
+                        black_box(&prepared),
+                        GOAL_COLUMNS,
+                        black_box(&source),
+                    )
+                    .expect("exact-goal benchmark source has the prepared matrix geometry")
+                };
+                #[cfg(feature = "parallel")]
+                black_box(pool.install(run));
+                #[cfg(not(feature = "parallel"))]
+                black_box(run());
+            });
+        });
+        group.throughput(Throughput::Elements(BITS));
+    }
     group.finish();
 
     source_components(criterion, &matrix, &source);
+}
+
+fn multiple_columns(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    prepared: &PreparedLimbCommitMatrix,
+) {
+    const COLUMNS: usize = 8;
+    let mut rng = StdRng::seed_from_u64(0x08c0_4096_0648);
+    let source: Vec<_> = (0..COLUMNS * WIDTH * K)
+        .map(|_| u128::from(rng.next_u64()) | (u128::from(rng.next_u64()) << 64))
+        .collect();
+    group.throughput(Throughput::Elements(BITS * COLUMNS as u64));
+    #[cfg(feature = "parallel")]
+    let thread_counts = [1, 2, 4].as_slice();
+    #[cfg(not(feature = "parallel"))]
+    let thread_counts = [1].as_slice();
+    for &threads in thread_counts {
+        #[cfg(feature = "parallel")]
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .expect("multi-column benchmark pool can be created");
+        group.bench_function(format!("limb_rank/2_columns8_threads{threads}"), |b| {
+            b.iter(|| {
+                let run = || {
+                    commit_binary_clear_limb_prepared::<BinaryField128>(
+                        black_box(prepared),
+                        COLUMNS,
+                        black_box(&source),
+                    )
+                    .expect("multi-column benchmark source has the prepared matrix geometry")
+                };
+                #[cfg(feature = "parallel")]
+                black_box(pool.install(run));
+                #[cfg(not(feature = "parallel"))]
+                black_box(run());
+            });
+        });
+    }
+    group.throughput(Throughput::Elements(BITS));
 }
 
 fn source_components(criterion: &mut Criterion, matrix: &[u32], source: &[u128]) {

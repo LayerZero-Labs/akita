@@ -75,7 +75,8 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
 
 #[test]
 fn verify_rejects_wrong_opening() {
-    let scheme = workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let scheme = workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+        .expect("workspace schedule artifact");
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout(&scheme, 16);
     let num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
@@ -157,7 +158,8 @@ fn spongefish_roundtrip_and_statement_binding() {
 }
 
 fn spongefish_roundtrip_and_statement_binding_inner() {
-    let scheme = workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let scheme = workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+        .expect("workspace schedule artifact");
     let layout = singleton_layout(&scheme, 16);
     let num_vars =
         layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;

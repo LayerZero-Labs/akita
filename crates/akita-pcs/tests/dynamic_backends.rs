@@ -24,7 +24,8 @@ type E = F;
 
 use private_cpu::{Fault, PrivateCpu};
 
-const NUM_VARS: usize = 15;
+// The smallest shipped four-polynomial one-hot row with at least three folds.
+const NUM_VARS: usize = 20;
 const NUM_POLYS: usize = 4;
 const DOMAIN: &[u8] = b"akita/test/dynamic-onehot/v1";
 
@@ -62,7 +63,9 @@ fn dynamic_backend_failures_cleanup_and_retry() {
 }
 
 fn run(check_failures: bool) -> Result<(), AkitaError> {
-    let scheme = common::load_workspace_scheme::<Cfg>()?;
+    let scheme = common::load_workspace_scheme::<Cfg>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )?;
     let chunk_size = unit_onehot_source_chunk_size::<Cfg>()?;
     let chunks_per_poly = (1usize << NUM_VARS) / chunk_size;
     let point: Vec<F> = (0..NUM_VARS)

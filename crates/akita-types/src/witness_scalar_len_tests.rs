@@ -14,7 +14,9 @@ mod tests {
         } else {
             SisModulusProfileId::Q32Offset99
         };
-        let ring_dimension = if mixed_dimensions { 64 } else { 32 };
+        // q32 compression starts at D=128 and q128 at D=32; the mixed variant
+        // keeps three distinct dimensions (A=128, B=64, D=32) above that floor.
+        let ring_dimension = 128;
         let mut params = CommittedGroupParams::params_only(
             profile,
             ring_dimension,
@@ -36,7 +38,7 @@ mod tests {
                     outer.output_rank(),
                     outer.input_width() * 2,
                     outer.coeff_linf_bound(),
-                    32,
+                    64,
                 );
             let open = params.open().matrix;
             params.open_matrix = akita_params::OpenCommitMatrixParams::new_unchecked(
@@ -46,7 +48,7 @@ mod tests {
                 open.output_rank(),
                 open.input_width() * 4,
                 open.coeff_linf_bound(),
-                16,
+                32,
             );
         }
         params

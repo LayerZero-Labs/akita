@@ -34,7 +34,7 @@ polynomial count across the final and all precommitted groups in one opening
 batch that the host plans to support.
 
 ```rust
-let catalog = TrustedScheduleCatalog::<Config>::from_artifact_bytes(&artifact_bytes)?;
+let catalog = TrustedScheduleCatalog::<Config>::from_artifact_bytes(&artifact_bytes, akita_params::ChunkedWitnessCfg::default_non_chunked())?;
 let scheme = AkitaCommitmentScheme::<Config>::new(catalog);
 let setup = scheme.setup_prover(
     max_num_vars,

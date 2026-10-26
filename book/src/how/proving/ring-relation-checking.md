@@ -489,8 +489,10 @@ with Stage 3 and a setup-prefix opening carried to the next fold. Quotient
 lifting supplies the factored weights used by the current offloading path.
 The [offloading chapter](../setup-offloading.md) explains that handoff.
 
-The current schedule permits `ReducedEvaluation` only at absolute level 2 or
-later. That fold and every later nonterminal fold must use `EvaluationTrace`,
+The current schedule permits `ReducedEvaluation` only at single-chunk folds
+at level 2 or later. The first two folds and every multi-chunk fold require
+coefficient packing and quotient lift.
+The selected fold and every later nonterminal fold must use `EvaluationTrace`,
 consume no incoming setup prefix, and perform setup evaluation directly.
 Once the schedule switches, it cannot return to quotient lifting. The suffix
 can use raw or compressed payloads, subject to the separate payload rules.

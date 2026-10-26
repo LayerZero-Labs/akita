@@ -134,11 +134,9 @@ pub struct EmitSpec {
     pub source_contract: CommittedSourceContract,
     pub keys: Vec<PolynomialGroupLayout>,
     pub grouped_requests: Vec<GroupedGenerationRequest>,
-    /// Exact successful scalar results already needed to construct grouped keys.
-    pub preplanned_scalar: Vec<(PolynomialGroupLayout, FoldSchedule)>,
-    pub output_dir: PathBuf,
-    pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
-    pub regen_group_batch: fn(GroupedGenerationRequest) -> Result<FoldSchedule, AkitaError>,
+    /// Exact schedules already planned by the caller, audited against `policy` on emission.
+    pub preplanned: Vec<(ScheduleLookupKey, FoldSchedule)>,
+    pub output_path: PathBuf,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
 }
 

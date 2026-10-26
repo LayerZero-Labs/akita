@@ -16,7 +16,7 @@ use jolt_field::{Fp32, One, Zero};
 use support::{flatten_markers, marker};
 
 type F = Fp32<251>;
-const D: usize = 32;
+const D: usize = 128;
 const MULTI_GROUP_D: usize = 64;
 
 fn relation_layout(
@@ -668,7 +668,7 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
 #[test]
 fn packing_instance_emits_all_physical_e_coordinate_planes() {
     const PACK_D_A: usize = 256;
-    const PACK_D_D: usize = 64;
+    const PACK_D_D: usize = 128;
     let mut lp = CommittedGroupParams::params_only(
         akita_params::SisModulusProfileId::Q32Offset99,
         PACK_D_A,

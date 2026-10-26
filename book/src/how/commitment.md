@@ -158,19 +158,23 @@ $\mathbf u$. Two rank-one maps form the compression chain. Each map
 decomposes its input coefficients into digits in $\{-1,0\}$, packs those
 digits into its native ring, and applies its public matrix. The digit weights
 are positive powers of two, interpreted in the base field. The first map
-produces 256 bytes and the second produces the 128-byte payload $p_F$.
+produces 512 bytes and the second produces the 256-byte payload $p_F$.
 The complete source image must fit within 8 KiB.
 
 The ring dimensions are profile-owned:
 
 | Modulus profile | First map | Second map |
 | --- | ---: | ---: |
-| q128 | 16 | 8 |
-| q64 | 32 | 16 |
-| q32 | 64 | 32 |
+| q128 | 32 | 16 |
+| q64 | 64 | 32 |
+| q32 | 128 | 64 |
 
-These smaller rings belong to compression. A, B, and D retain their own
-dimensions, each at least 64. Repacking coefficients between these rings is
+These rings belong to compression. A, B, and D retain their own
+dimensions, each at least 64; the q32 ladder reuses two of those dimensions
+with its own rank-one matrices. Recomposition rebuilds every B or D ring
+element from whole first-map digit blocks, so a compressed image's ring
+dimension must be a multiple of the first map's. The planner therefore
+compresses q32 B and D images only at dimension 128 or above. Repacking coefficients between these rings is
 a specified coefficient map, so it must not be treated as an arbitrary ring
 homomorphism. The [physical fold relations](./proving/akita-fold-realizations.md)
 explain how the proof checks recomposition and every compression map.
@@ -262,11 +266,18 @@ This separates physical and logical cost:
   slice weights before scanning the physical B matrix, so each physical entry
   is evaluated once.
 
-The planner checks every admitted slice count. Proof-focused selection keeps
-the counts through complete schedule scoring. Setup-focused selection keeps
-the smallest count at the exact local setup floor. The selected count belongs
-to the commitment group and is frozen in standalone profiles, setup-prefix
-metadata, descriptors, and trusted external catalog identity.
+The planner checks every admitted slice count and keeps every count through
+complete schedule scoring, with one exception at the root. When the objective
+minimizes the padded first-direct setup first, the root is the first direct
+edge. A root count with a larger padded setup can never win there, so the
+planner keeps only the root counts with the smallest padded setup, and all
+counts tied at that size. Recursive levels keep every count. Under that
+objective their setup only breaks ties after proof bytes and work. Under the
+recursive-setup objective the padded setup envelope is a maximum over all
+levels, so another level can tie it while a larger-setup count wins on proof
+bytes. The selected count belongs to the commitment group and is frozen in
+standalone profiles, setup-prefix metadata, descriptors, and trusted external
+catalog identity.
 
 Relevant implementation sources:
 

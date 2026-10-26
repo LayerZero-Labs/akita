@@ -1,3 +1,4 @@
+use super::super::available_backends;
 use super::*;
 
 fn next(seed: &mut u64) -> u64 {
@@ -29,15 +30,12 @@ fn assert_centered_agreement(domain: &TrinomialLimbDomain, bits: &[u64; 11]) {
         .inverse_centered(&expected, &mut expected_coefficients)
         .unwrap();
     assert_eq!(expected_coefficients, coefficients);
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    let backends = [false, true];
-    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
-    let backends = [false];
-    let mut previous = None;
-    for neon in backends {
+    let backends = available_backends();
+    let mut previous: Option<TrinomialLimbSlots> = None;
+    for backend in backends.iter().copied() {
         let mut actual = domain.zero_slots();
         domain
-            .forward_interleaved_bits_backend(bits, &mut actual, neon)
+            .forward_interleaved_bits_backend(bits, &mut actual, backend)
             .unwrap();
         let mut actual_coefficients = [0; DEGREE];
         domain
@@ -45,6 +43,7 @@ fn assert_centered_agreement(domain: &TrinomialLimbDomain, bits: &[u64; 11]) {
             .unwrap();
         assert_eq!(actual_coefficients, expected_coefficients);
         if let Some(previous) = previous {
+            assert_eq!(actual.values, previous.values);
             assert_eq!(
                 super::super::canonical_slots(&actual),
                 super::super::canonical_slots(&previous)
@@ -160,6 +159,74 @@ fn limb_interleaved_tables_are_lazy_and_reported() {
         domain.interleaved_first_level.get().unwrap().as_ptr(),
         original
     );
+}
+
+#[test]
+fn limb_interleaved_source_zero_has_identical_centered_branch_entries() {
+    for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
+        let domain = TrinomialLimbDomain::new(prime).unwrap();
+        domain
+            .forward_interleaved_bits(&[0; 11], &mut domain.zero_slots())
+            .unwrap();
+        let tables = domain.interleaved_first_level.get().unwrap();
+        for (phase, bank) in tables.iter().step_by(3).enumerate() {
+            for (byte, entry) in bank.iter().enumerate() {
+                for branch in 1..3 {
+                    assert_eq!(
+                        &entry[..LANES],
+                        &entry[branch * LANES..(branch + 1) * LANES],
+                        "prime={prime}, phase={phase}, byte={byte}, branch={branch}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn limb_interleaved_compact_source_zero_reproduces_every_stored_entry() {
+    for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
+        let domain = TrinomialLimbDomain::new(prime).unwrap();
+        domain
+            .forward_interleaved_bits(&[0; 11], &mut domain.zero_slots())
+            .unwrap();
+        // Independently evaluate source zero: with b=c=0, all three branch
+        // entries of a table row equal the centered signed evaluation.
+        // This is the invariant table_avx2 relies on to reuse one load.
+        let mut compact = vec![[[0; LANES]; 256]; 4].into_boxed_slice();
+        for (phase, bank) in compact.iter_mut().enumerate() {
+            for (byte, entry) in bank.iter_mut().enumerate() {
+                for (lane, value) in entry.iter_mut().enumerate() {
+                    let sum: i64 = domain.evaluation[lane]
+                        .iter()
+                        .enumerate()
+                        .filter(|&(j, _)| byte & (1 << j) != 0)
+                        .map(|(j, &weight)| {
+                            let weight = i64::from(weight);
+                            if (phase + j) & 4 == 0 {
+                                weight
+                            } else {
+                                -weight
+                            }
+                        })
+                        .sum();
+                    *value = domain.arithmetic.center(sum);
+                }
+            }
+        }
+        let stored = domain.interleaved_first_level.get().unwrap();
+        for (phase, bank) in compact.iter().enumerate() {
+            for (byte, entry) in bank.iter().enumerate() {
+                for branch in 0..3 {
+                    assert_eq!(
+                        entry,
+                        &stored[phase * 3][byte][branch * LANES..(branch + 1) * LANES],
+                        "prime={prime}, phase={phase}, byte={byte}, branch={branch}"
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn bits_from_indices(indices: &[u8; PIECE]) -> [u64; 11] {
@@ -283,14 +350,11 @@ fn assert_signed_shadow(domain: &TrinomialLimbDomain, indices: &[u8; PIECE]) {
         i32::try_from(reduced).unwrap()
     });
     let bits = bits_from_indices(indices);
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    let backends = [false, true];
-    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
-    let backends = [false];
-    for neon in backends {
+    let backends = available_backends();
+    for backend in backends.iter().copied() {
         let mut slots = domain.zero_slots();
         domain
-            .forward_interleaved_bits_backend(&bits, &mut slots, neon)
+            .forward_interleaved_bits_backend(&bits, &mut slots, backend)
             .unwrap();
         assert_eq!(slots.values, normalized);
         let mut coefficients = [0; DEGREE];

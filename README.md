@@ -59,12 +59,24 @@ for setup, commitment, proving, and verification. Direct verifier and prover
 orchestration accept `&TrustedScheduleCatalog<Cfg>`, so an integration can load
 an external trusted artifact without compiling its rows into Akita.
 
-Load artifact bytes from application-owned storage and construct the scheme:
+Load artifact bytes from application-owned storage and supply the expected
+chunking from trusted application configuration. This example uses a single
+chunk:
 
 ```rust
+use akita_config::proof_optimized::fp128;
+use akita_params::ChunkedWitnessCfg;
+use akita_pcs::AkitaCommitmentScheme;
+
 let bytes = std::fs::read("parameters/fp128_onehot.aks")?;
-let scheme = AkitaCommitmentScheme::<fp128::OneHot>::from_schedule_artifact(&bytes)?;
+let chunking = ChunkedWitnessCfg::default_non_chunked();
+let scheme = AkitaCommitmentScheme::<fp128::OneHot>::from_schedule_artifact(&bytes, chunking)?;
 ```
+
+Admission checks that the artifact matches this geometry. Subsequent operations
+use the admitted `scheme.schedules().policy()`. See
+[runtime witness chunking](book/src/how/configuration.md#runtime-witness-chunking)
+for selecting a different chunk count and number of chunked folds.
 
 Git tracks deterministic family artifacts under `artifacts/schedules/`.
 Regenerate them after changing planner policy, candidate search, or artifact

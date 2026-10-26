@@ -40,7 +40,6 @@ pub use golomb_rice::{
     golomb_rice_encode_vec, golomb_rice_max_quotient_for_cap, golomb_rice_total_wire_bits,
     golomb_rice_values_within_cap, golomb_rice_zigzag_width,
 };
-pub use layout::setup_prefix_slots::setup_prefix_compression_plan;
 pub use layout::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
     active_setup_field_len, basis_weights, basis_weights_prefix, checked_opening_source_index,
@@ -72,11 +71,12 @@ pub use layout::{
 pub use proof_size::{nonterminal_level_layout, NonterminalLevelLayout};
 pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
 pub use schedule::{
-    detect_field_modulus, r_decomp_levels, root_input_witness_len, CommittedGroupBatchProfile,
-    CommittedSourceEncoding, FoldParams, FoldSchedule, FoldScheduleDescriptorStep,
-    FoldScheduleEstimate, FoldSuccessor, GroupCommitPhaseParams, NextWitnessBindingPolicy,
-    PlannedFoldSchedule, PrecommittedGroupProfiles, ScheduleLookupKey, ScheduleLookupOrderKey,
-    ScheduleSisBound, ScheduleSisOccurrence, ScheduleSisRole, TerminalFoldParams,
+    detect_field_modulus, fold_requires_coefficient_packing, r_decomp_levels,
+    root_input_witness_len, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldParams,
+    FoldSchedule, FoldScheduleDescriptorStep, FoldScheduleEstimate, FoldSuccessor,
+    GroupCommitPhaseParams, NextWitnessBindingPolicy, PlannedFoldSchedule,
+    PrecommittedGroupProfiles, ScheduleLookupKey, ScheduleLookupOrderKey, ScheduleSisBound,
+    ScheduleSisOccurrence, ScheduleSisRole, TerminalFoldParams,
     TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};

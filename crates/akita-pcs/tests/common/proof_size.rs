@@ -19,12 +19,17 @@
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_params::{OpeningScheduleSelection, ScheduleLookupKey};
+use std::cell::RefCell;
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::Once;
 use tracing::field::{Field, Visit};
-use tracing::{Event, Subscriber};
+use tracing::subscriber::Interest;
+use tracing::{Event, Metadata, Subscriber};
 use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::Layer;
+
+/// The two prover events that report variable-section widths.
+const CAPTURED_FIELDS: [&str; 2] = ["native_terminal_z_bytes", "native_nonce_bytes_actual"];
 
 /// Variable-section widths the prover reported during one `batched_prove`.
 #[derive(Debug, Default)]
@@ -45,12 +50,61 @@ impl Visit for VariableSectionBytes {
     fn record_debug(&mut self, _field: &Field, _value: &dyn fmt::Debug) {}
 }
 
-struct CaptureLayer(Arc<Mutex<VariableSectionBytes>>);
+thread_local! {
+    /// Widths reported on this thread while a capture is active.
+    static CAPTURE: RefCell<Option<VariableSectionBytes>> = const { RefCell::new(None) };
+}
+
+/// Records the width events into the reporting thread's active capture.
+///
+/// It is interested only in those two events, so every other callsite, and
+/// every `tracing::enabled!` diagnostics guard, stays disabled as it would be
+/// with no subscriber.
+struct CaptureLayer;
+
+fn captures(metadata: &Metadata<'_>) -> bool {
+    metadata.is_event()
+        && CAPTURED_FIELDS
+            .iter()
+            .any(|name| metadata.fields().field(name).is_some())
+}
 
 impl<S: Subscriber> Layer<S> for CaptureLayer {
-    fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
-        event.record(&mut *self.0.lock().expect("capture lock"));
+    fn register_callsite(&self, metadata: &'static Metadata<'static>) -> Interest {
+        if captures(metadata) {
+            Interest::always()
+        } else {
+            Interest::never()
+        }
     }
+
+    fn enabled(&self, metadata: &Metadata<'_>, _context: Context<'_, S>) -> bool {
+        captures(metadata)
+    }
+
+    fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
+        CAPTURE.with(|capture| {
+            if let Some(bytes) = capture.borrow_mut().as_mut() {
+                event.record(bytes);
+            }
+        });
+    }
+}
+
+/// Install the capture layer as the global default, once per test binary.
+///
+/// A scoped subscriber is not enough. While at most one dispatcher is
+/// registered, tracing-core computes a callsite's interest from the default of
+/// whichever thread reaches it first. A concurrent test that proves without a
+/// subscriber can then cache both width callsites as never interested, and
+/// this capture silently records nothing. With a global default, every thread
+/// that has no scoped subscriber sees an interested default.
+fn install_capture_layer() {
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| {
+        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(CaptureLayer))
+            .expect("the proof-size capture is the test binary's only global subscriber");
+    });
 }
 
 /// Run `prove`, then check its proof against the byte model of `selection`.
@@ -59,13 +113,13 @@ pub(crate) fn prove_matching_byte_model<Cfg: CommitmentConfig>(
     selection: OpeningScheduleSelection,
     prove: impl FnOnce() -> Result<Vec<u8>, AkitaError>,
 ) -> Vec<u8> {
-    let observed = Arc::new(Mutex::new(VariableSectionBytes::default()));
-    let proof = tracing::subscriber::with_default(
-        tracing_subscriber::registry().with(CaptureLayer(Arc::clone(&observed))),
-        prove,
-    )
-    .expect("prove");
-    let observed = observed.lock().expect("capture lock");
+    install_capture_layer();
+    CAPTURE.with(|capture| *capture.borrow_mut() = Some(VariableSectionBytes::default()));
+    let proof = prove();
+    let observed = CAPTURE
+        .with(|capture| capture.borrow_mut().take())
+        .expect("the capture stays active for the whole prove");
+    let proof = proof.expect("prove");
     let (&[z_payload], &[nonce]) = (observed.z_payload.as_slice(), observed.nonce.as_slice())
     else {
         panic!("prover must report one terminal z payload and one nonce total: {observed:?}");
@@ -83,8 +137,8 @@ pub(crate) fn prove_matching_byte_model<Cfg: CommitmentConfig>(
         precommitteds: resolved.profiles().precommitteds.clone(),
     };
     let schedule = resolved.schedule();
-    let policy = akita_config::policy_of::<Cfg>();
-    let bound = akita_schedules::expanded_schedule_proof_bound(&key, schedule, &policy)
+    let policy = schedules.policy();
+    let bound = akita_schedules::expanded_schedule_proof_bound(&key, schedule, policy)
         .expect("native proof bound");
     let z_payload_cap = schedule.terminal.response_shape.layout.z_payload_bytes();
     let nonce_max = akita_params::derive_transcript_grinding_plan_from_public_shape(

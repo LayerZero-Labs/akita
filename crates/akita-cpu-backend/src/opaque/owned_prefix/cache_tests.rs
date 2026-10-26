@@ -9,7 +9,10 @@ use std::time::Duration;
 fn prefix_id() -> SetupPrefixSlotId {
     type Cfg = fp128::Dense;
     const NV: usize = 14;
-    let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .unwrap();
     let row = catalog
         .resolve_key(&akita_params::ScheduleLookupKey::single(
             akita_params::PolynomialGroupLayout::new(NV, 1),
@@ -173,8 +176,9 @@ fn cold_setup_prefix_rayon_acquisitions_complete() {
     use rayon::prelude::*;
 
     watchdog(Duration::from_secs(120), || {
-        const D: usize = 64;
-        // Reuse the audited D64 fixture used by commitment/setup_prefix_tests.
+        // q32 compression starts at D=128, so the prefix B image must be D=128.
+        // This retargets the audited fixture used by commitment/setup_prefix_tests.
+        const D: usize = 128;
         let mut params = sample_level_params();
         retarget_group_role_dims_wide(&mut params, D, D, 64);
         let prefix = akita_params::setup_prefix_precommitted_params(&params, D).unwrap();

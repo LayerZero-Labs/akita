@@ -5,7 +5,9 @@ fn profile_commit_group_returns_exact_frozen_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
-    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
+    let scheme =
+        workspace_scheme::<OneHotCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     let key = akita_params::PolynomialGroupLayout::new(NV, GROUP_SIZE);
     let profile = catalog_profile(&scheme, key);
     let total_field = (profile.blocks.live_blocks * profile.blocks.positions_per_block)
@@ -78,7 +80,9 @@ fn profile_commit_group_allows_independent_groups() {
     // cover the largest standalone group rather than the sum of all groups.
     const SETUP_CAPACITY_SIZE: usize = PRE_B_SIZE;
 
-    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
+    let scheme =
+        workspace_scheme::<OneHotCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     let pre_a_key = akita_params::PolynomialGroupLayout::new(NV, PRE_A_SIZE);
     let pre_b_key = akita_params::PolynomialGroupLayout::new(NV, PRE_B_SIZE);
     let pre_a_profile = catalog_profile(&scheme, pre_a_key);
@@ -138,7 +142,9 @@ fn group_batch_schedule_preserves_precommitted_order() {
     const PRE_C_SIZE: usize = 1;
     const MAIN_SIZE: usize = 4;
 
-    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
+    let scheme =
+        workspace_scheme::<OneHotCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     let pre_a_key = akita_params::PolynomialGroupLayout::new(PRE_NV, PRE_A_SIZE);
     let pre_b_key = akita_params::PolynomialGroupLayout::new(PRE_NV, PRE_B_SIZE);
     let pre_c_key = akita_params::PolynomialGroupLayout::new(PRE_NV, PRE_C_SIZE);
@@ -190,7 +196,9 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     const FINAL_SIZE: usize = 4;
     const SETUP_CAPACITY_SIZE: usize = FINAL_SIZE + 2 * GROUP_SIZE;
 
-    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
+    let scheme =
+        workspace_scheme::<OneHotCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     let pre_a_key = akita_params::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
     let pre_b_key = akita_params::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
     let pre_a_frozen = catalog_profile(&scheme, pre_a_key);
@@ -317,7 +325,9 @@ fn commit_group_returns_frozen_exact_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
-    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
+    let scheme =
+        workspace_scheme::<OneHotCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     let key = akita_params::PolynomialGroupLayout::new(NV, GROUP_SIZE);
     let profile = catalog_profile(&scheme, key);
     let total_field = (profile.blocks.live_blocks * profile.blocks.positions_per_block)
@@ -375,7 +385,9 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     const NV: usize = 20;
     const BATCH_SIZE: usize = 2;
 
-    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
+    let scheme =
+        workspace_scheme::<OneHotCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
     let layout = catalog_root_layout(&scheme, NV, BATCH_SIZE);
     let total_field = (layout.blocks().live_blocks * layout.blocks().positions_per_block)
         .checked_mul(ONEHOT_D)

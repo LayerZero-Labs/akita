@@ -5,7 +5,9 @@
 //! element table precede it as precommitted groups in one grouped Akita proof.
 
 use super::FieldFamily;
-use crate::shipped::{ShippedCatalogError, SupportedGeometry, SUPPORTED_GEOMETRIES};
+use crate::shipped::{
+    ShippedCatalogError, SupportedGeometry, SUPPORTED_GEOMETRIES, WITNESS_CHUNKING,
+};
 use akita_config::{policy_of, CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_error::{checked, AkitaError};
 use akita_labinius_verifier::admitted::field_characteristic;
@@ -152,12 +154,15 @@ impl DigitTables {
                 binary_rows.push((row.profiles().clone(), row.schedule().clone()));
             }
         }
-        let binary = TrustedScheduleCatalog::<P::Digits>::new(ValidatedScheduleCatalog::try_new(
-            P::Digits::schedule_family_name(),
-            binary_rows,
-            &policy_of::<P::Digits>(),
-            P::Digits::ring_challenge_config,
-        )?)?;
+        let binary = TrustedScheduleCatalog::<P::Digits>::new(
+            ValidatedScheduleCatalog::try_new(
+                P::Digits::schedule_family_name(),
+                binary_rows,
+                &policy_of::<P::Digits>(WITNESS_CHUNKING),
+                P::Digits::ring_challenge_config,
+            )?,
+            WITNESS_CHUNKING,
+        )?;
         SetupRequirements::from_catalog(&binary, max_num_vars, 2)
     }
 }
@@ -197,13 +202,15 @@ pub fn shipped_catalog<P: FieldFamily>(
     });
     let bytes = std::fs::read(directory.join(format!("{}.aks", P::Digits::schedule_family_name())))
         .map_err(ShippedCatalogError::Io)?;
-    let catalog = TrustedScheduleCatalog::<P::Digits>::from_artifact_bytes(&bytes)
-        .map_err(ShippedCatalogError::Admission)?;
+    let catalog =
+        TrustedScheduleCatalog::<P::Digits>::from_artifact_bytes(&bytes, WITNESS_CHUNKING)
+            .map_err(ShippedCatalogError::Admission)?;
     let bytes =
         std::fs::read(directory.join(format!("{}.aks", P::Elements::schedule_family_name())))
             .map_err(ShippedCatalogError::Io)?;
-    let elements = TrustedScheduleCatalog::<P::Elements>::from_artifact_bytes(&bytes)
-        .map_err(ShippedCatalogError::Admission)?;
+    let elements =
+        TrustedScheduleCatalog::<P::Elements>::from_artifact_bytes(&bytes, WITNESS_CHUNKING)
+            .map_err(ShippedCatalogError::Admission)?;
     let producer = elements
         .resolve_key(&tables.element_key())
         .map_err(ShippedCatalogError::Admission)?

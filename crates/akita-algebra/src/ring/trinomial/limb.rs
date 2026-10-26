@@ -8,9 +8,12 @@
 //! all eight phases without unpacking a signed coefficient array.
 //!
 //! NEON runs only on `cfg(all(target_arch = "aarch64", target_feature = "neon"))`.
-//! All other targets, including AArch64 without NEON, use the portable backend.
-//! `AKITA_SCALAR_NTT=1` also selects the portable backend on NEON targets.
-//! Both backends return the same lazy representatives for the same path.
+//! x86_64 detects AVX2 and AVX-512/VBMI source-index acceleration at runtime;
+//! other targets use the portable backend.
+//! `AKITA_SCALAR_NTT=1` selects the portable backend on either architecture.
+//! It is read once, at the first cached NTT backend selection in the process.
+//! Domains constructed later do not re-read it, so set it before first use.
+//! All backends return the same lazy representatives for the same path.
 //! Different paths can differ by a multiple of `p`; slots have no structural
 //! equality. Compare canonical residues or the inverse-transformed coefficients.
 //!
@@ -64,34 +67,38 @@
 //! checked shadows exercise every retained forward/inverse level, table phase,
 //! and accumulator checkpoint using extremal signs for every admitted prime.
 
-use super::TrinomialError;
-use std::sync::OnceLock;
-
+mod accumulator;
 pub(super) mod arithmetic;
+#[cfg(target_arch = "x86_64")]
+mod avx2;
+mod backend;
 mod gather;
 mod interleaved;
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 mod neon;
+#[cfg(target_arch = "x86_64")]
+mod source_batch;
 #[cfg(test)]
 mod tests;
+#[cfg(target_arch = "x86_64")]
+mod tile;
+mod tiled_accumulator;
+#[cfg(target_arch = "x86_64")]
+mod vbmi;
+#[cfg(target_arch = "x86_64")]
+mod x86;
 
+use super::TrinomialError;
 use arithmetic::{Arithmetic, Split, Twiddle};
+#[cfg(test)]
+use backend::available_backends;
+use backend::{selected_backend, Backend};
+use std::sync::OnceLock;
 
 const DEGREE: usize = 648;
 const LANES: usize = 8;
 const PIECE: usize = 81;
 const EXPONENTS: [u32; LANES] = [1, 5, 7, 11, 13, 17, 19, 23];
-
-fn use_neon() -> bool {
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    {
-        crate::ntt::neon::use_neon_ntt()
-    }
-    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
-    {
-        false
-    }
-}
 
 #[cfg(test)]
 fn canonical_slots(slots: &TrinomialLimbSlots) -> [i32; DEGREE] {
@@ -103,6 +110,7 @@ fn canonical_slots(slots: &TrinomialLimbSlots) -> [i32; DEGREE] {
 /// One admitted prime below `2^28` and its degree-648 transform plan.
 #[derive(Clone, Debug)]
 pub struct TrinomialLimbDomain {
+    backend: Backend,
     arithmetic: Arithmetic,
     interleaved_first_level: OnceLock<Box<[[[i32; 3 * LANES]; 256]]>>,
     evaluation: [[i32; LANES]; LANES],
@@ -129,6 +137,7 @@ pub struct TrinomialLimbSlots {
 /// `128*(p-1)^2 + floor(p/2) < i64::MAX` for every `p < 2^28`.
 #[derive(Clone, Debug)]
 pub struct TrinomialLimbAccumulator {
+    backend: Backend,
     arithmetic: Arithmetic,
     sums: [i64; DEGREE],
     terms: u16,
@@ -175,13 +184,24 @@ impl TrinomialLimbDomain {
             let mut children = Vec::with_capacity(exponents.len() * 3);
             for (group, exponents) in exponents.iter().enumerate() {
                 let roots = exponents.map(|e| e / 3);
+                let r = roots.map(twiddle);
+                let r2 = roots.map(|e| twiddle(2 * e));
+                let ri = roots.map(|e| twiddle((1944 - e % 1944) % 1944));
+                let ri2 = roots.map(|e| twiddle((1944 - 2 * e % 1944) % 1944));
+                #[cfg(target_arch = "x86_64")]
+                let packed = [r, r2, ri, ri2].map(|weights| arithmetic::PackedTwiddles {
+                    values: weights.map(|w| w.value),
+                    quotients: weights.map(|w| w.quotient),
+                });
                 splits.push(Split {
+                    #[cfg(target_arch = "x86_64")]
+                    packed,
                     start: group * len,
                     stride,
-                    r: roots.map(twiddle),
-                    r2: roots.map(|e| twiddle(2 * e)),
-                    ri: roots.map(|e| twiddle((1944 - e % 1944) % 1944)),
-                    ri2: roots.map(|e| twiddle((1944 - 2 * e % 1944) % 1944)),
+                    r,
+                    r2,
+                    ri,
+                    ri2,
                 });
                 for branch in 0..3 {
                     children.push(roots.map(|e| e + 648 * branch));
@@ -200,7 +220,23 @@ impl TrinomialLimbDomain {
                 reason: "limb lazy bound exceeds signed lanes",
             });
         }
+        let one = Twiddle::new(arithmetic, 1);
+        let quotient = one.quotient as u32;
+        let normalization_shift = 31 - quotient.trailing_zeros();
+        // The admitted primes round 2^31/p to exactly 2^(31-k).
+        // B4 + 2^(k-1) <= 1_520_783_036 + 134_217_728 < i32::MAX;
+        // the negative extreme only moves toward zero. Thus the rounding
+        // add is exact in i32 throughout the full admitted lazy interval.
+        if !quotient.is_power_of_two()
+            || !(25..=28).contains(&normalization_shift)
+            || bounds[4] + (1i64 << (normalization_shift - 1)) > i64::from(i32::MAX)
+        {
+            return Err(TrinomialError::LimbInput {
+                reason: "limb normalization requires a bounded power-of-two quotient",
+            });
+        }
         Ok(Self {
+            backend: selected_backend(),
             arithmetic,
             interleaved_first_level: OnceLock::new(),
             evaluation,
@@ -208,7 +244,7 @@ impl TrinomialLimbDomain {
             splits,
             omega,
             inverse_omega,
-            one: Twiddle::new(arithmetic, 1),
+            one,
         })
     }
 
@@ -225,19 +261,19 @@ impl TrinomialLimbDomain {
         }
     }
 
-    fn check_bits(bits: &[u64]) -> Result<(), TrinomialError> {
-        if bits.len() != 11 {
-            return Err(TrinomialError::CoefficientLength {
+    fn check_bits(bits: &[u64]) -> Result<&[u64; 11], TrinomialError> {
+        let words: &[u64; 11] = bits
+            .try_into()
+            .map_err(|_| TrinomialError::CoefficientLength {
                 expected: 11,
                 actual: bits.len(),
-            });
-        }
-        if bits[10] >> 8 != 0 {
+            })?;
+        if words[10] >> 8 != 0 {
             return Err(TrinomialError::LimbInput {
                 reason: "unused tail bits must be zero",
             });
         }
-        Ok(())
+        Ok(words)
     }
 
     fn check_slots(&self, slots: &TrinomialLimbSlots) -> Result<(), TrinomialError> {
@@ -257,14 +293,14 @@ impl TrinomialLimbDomain {
         coefficients: &[i32],
         out: &mut TrinomialLimbSlots,
     ) -> Result<(), TrinomialError> {
-        self.forward_centered_backend(coefficients, out, use_neon())
+        self.forward_centered_backend(coefficients, out, self.backend)
     }
 
     fn forward_centered_backend(
         &self,
         coefficients: &[i32],
         out: &mut TrinomialLimbSlots,
-        neon: bool,
+        backend: Backend,
     ) -> Result<(), TrinomialError> {
         if coefficients.len() != DEGREE {
             return Err(TrinomialError::CoefficientLength {
@@ -279,13 +315,22 @@ impl TrinomialLimbDomain {
             });
         }
         self.check_slots(out)?;
+        #[cfg(target_arch = "x86_64")]
+        match backend {
+            Backend::Avx2 | Backend::Avx512VbmiBatch => {
+                // SAFETY: Selection establishes AVX2 and validation bounds buffers.
+                unsafe { avx2::forward_centered(self, coefficients, &mut out.values) };
+                return Ok(());
+            }
+            Backend::Scalar => {}
+        }
         for t in 0..PIECE {
             let input: [i32; LANES] = std::array::from_fn(|j| coefficients[t + PIECE * j]);
             for (lane, weights) in self.evaluation.iter().enumerate() {
                 out.values[t * LANES + lane] = self.arithmetic.dot(&input, weights);
             }
         }
-        self.transform(&mut out.values, false, neon, false);
+        self.transform(&mut out.values, false, backend, false);
         Ok(())
     }
 
@@ -295,14 +340,14 @@ impl TrinomialLimbDomain {
         slots: &TrinomialLimbSlots,
         out: &mut [i32],
     ) -> Result<(), TrinomialError> {
-        self.inverse_centered_backend(slots, out, use_neon())
+        self.inverse_centered_backend(slots, out, self.backend)
     }
 
     fn inverse_centered_backend(
         &self,
         slots: &TrinomialLimbSlots,
         out: &mut [i32],
-        neon: bool,
+        backend: Backend,
     ) -> Result<(), TrinomialError> {
         if out.len() != DEGREE {
             return Err(TrinomialError::CoefficientLength {
@@ -311,8 +356,17 @@ impl TrinomialLimbDomain {
             });
         }
         self.check_slots(slots)?;
+        #[cfg(target_arch = "x86_64")]
+        match backend {
+            Backend::Avx2 | Backend::Avx512VbmiBatch => {
+                // SAFETY: Selection establishes AVX2.
+                unsafe { avx2::inverse_centered(self, &slots.values, out) };
+                return Ok(());
+            }
+            Backend::Scalar => {}
+        }
         let mut values = slots.values.map(|v| self.arithmetic.center(i64::from(v)));
-        self.transform(&mut values, true, neon, false);
+        self.transform(&mut values, true, backend, false);
         for (t, row) in values.chunks_exact(LANES).enumerate() {
             for (j, weights) in self.interpolation.iter().enumerate() {
                 out[t + PIECE * j] = self.arithmetic.dot(row, weights);
@@ -321,12 +375,23 @@ impl TrinomialLimbDomain {
         Ok(())
     }
 
-    fn transform(&self, values: &mut [i32; DEGREE], inverse: bool, neon: bool, skip_first: bool) {
-        #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-        if neon {
-            return neon::transform(self, values, inverse, skip_first);
+    fn transform(
+        &self,
+        values: &mut [i32; DEGREE],
+        inverse: bool,
+        backend: Backend,
+        skip_first: bool,
+    ) {
+        match backend {
+            #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+            Backend::Neon => return neon::transform(self, values, inverse, skip_first),
+            #[cfg(target_arch = "x86_64")]
+            Backend::Avx2 | Backend::Avx512VbmiBatch => {
+                // SAFETY: Plan selection (or explicit tests) establishes AVX2.
+                return unsafe { avx2::transform(self, values, inverse, skip_first) };
+            }
+            Backend::Scalar => {}
         }
-        let _ = neon;
         if inverse {
             for split in self.splits.iter().rev() {
                 arithmetic::butterfly(
@@ -350,82 +415,11 @@ impl TrinomialLimbDomain {
                 );
             }
             // C(B4)<p: normalization gives the accumulator's strict |slot|<p bound.
+            let shift = 31 - self.one.quotient.trailing_zeros();
             for value in values {
-                *value = self.arithmetic.mul(*value, self.one);
+                let quotient = (*value + (1 << (shift - 1))) >> shift;
+                *value = value.wrapping_sub(quotient.wrapping_mul(self.prime() as i32));
             }
         }
-    }
-}
-
-impl TrinomialLimbAccumulator {
-    pub(super) const REDUCTION_TERMS: u16 = 128;
-
-    /// Create an empty accumulator tagged with this domain's prime.
-    pub fn new(domain: &TrinomialLimbDomain) -> Self {
-        Self {
-            arithmetic: domain.arithmetic,
-            sums: [0; DEGREE],
-            terms: 0,
-        }
-    }
-
-    /// Add one product; reject mismatched primes before changing the sum.
-    pub fn add_product(
-        &mut self,
-        lhs: &TrinomialLimbSlots,
-        rhs: &TrinomialLimbSlots,
-    ) -> Result<(), TrinomialError> {
-        self.add_product_backend(lhs, rhs, use_neon())
-    }
-
-    fn add_product_backend(
-        &mut self,
-        lhs: &TrinomialLimbSlots,
-        rhs: &TrinomialLimbSlots,
-        neon: bool,
-    ) -> Result<(), TrinomialError> {
-        if lhs.prime != self.arithmetic.prime || rhs.prime != self.arithmetic.prime {
-            return Err(TrinomialError::LimbInput {
-                reason: "product prime does not match the accumulator",
-            });
-        }
-        #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-        if neon {
-            neon::accumulate(&mut self.sums, &lhs.values, &rhs.values);
-        } else {
-            arithmetic::accumulate(&mut self.sums, &lhs.values, &rhs.values);
-        }
-        #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
-        {
-            let _ = neon;
-            arithmetic::accumulate(&mut self.sums, &lhs.values, &rhs.values);
-        }
-        self.advance();
-        Ok(())
-    }
-
-    fn advance(&mut self) {
-        self.terms += 1;
-        if self.terms == Self::REDUCTION_TERMS {
-            for sum in &mut self.sums {
-                *sum = i64::from(self.arithmetic.center(*sum));
-            }
-            self.terms = 0;
-        }
-    }
-
-    /// Write the centered sum and clear it, rejecting a mismatched prime.
-    pub fn finish(&mut self, out: &mut TrinomialLimbSlots) -> Result<(), TrinomialError> {
-        if out.prime != self.arithmetic.prime {
-            return Err(TrinomialError::LimbInput {
-                reason: "output prime does not match the accumulator",
-            });
-        }
-        for (value, &sum) in out.values.iter_mut().zip(&self.sums) {
-            *value = self.arithmetic.center(sum);
-        }
-        self.sums.fill(0);
-        self.terms = 0;
-        Ok(())
     }
 }
