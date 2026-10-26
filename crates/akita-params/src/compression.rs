@@ -192,6 +192,11 @@ pub enum CompressionPolicyId {
     /// Two-map exact monotone cutover with a minimum two-fold compressed prefix.
     #[default]
     NegativeBinaryTwoMapExactMonotoneCutover8KiBV3,
+    /// The same two rank-one maps, with the source bounded by the first
+    /// map's SIS cell instead of 8 KiB: Whiteout's split images
+    /// ([`CompressionChainPlan::for_certified_source`]). Never a clear
+    /// schedule's policy; descriptors admit only [`COMPRESSION_POLICY`].
+    NegativeBinaryTwoMapSisBoundV1,
 }
 
 impl CompressionPolicyId {
@@ -199,6 +204,7 @@ impl CompressionPolicyId {
     pub const fn tag(self) -> u8 {
         match self {
             Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV3 => 3,
+            Self::NegativeBinaryTwoMapSisBoundV1 => 4,
         }
     }
 
@@ -206,6 +212,7 @@ impl CompressionPolicyId {
     pub const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
             3 => Some(Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV3),
+            4 => Some(Self::NegativeBinaryTwoMapSisBoundV1),
             _ => None,
         }
     }
@@ -216,6 +223,7 @@ impl CompressionPolicyId {
             Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV3 => {
                 "NegativeBinaryTwoMapExactMonotoneCutover8KiBV3"
             }
+            Self::NegativeBinaryTwoMapSisBoundV1 => "NegativeBinaryTwoMapSisBoundV1",
         }
     }
 }
@@ -686,6 +694,29 @@ mod tests {
         assert!(PackedNegativeBinary::from_bytes(map, vec![0; 5]).is_err());
         let packed = PackedNegativeBinary::from_bytes(map, vec![0; 4]).unwrap();
         assert!(packed.expand_rows::<64>().is_err());
+    }
+
+    /// The q128 first map is certified up to 7,077 `R_16` columns of 128
+    /// bits per source coefficient: 884 coefficients (7,072 columns), not 885
+    /// (7,080), under its own policy. The clear cap stays at 512.
+    #[test]
+    fn certified_source_bound_is_the_first_maps_sis_width() {
+        let profile = SisModulusProfileId::Q128OffsetA7F7;
+        assert_eq!(
+            CompressionChainPlan::max_certified_source_coefficients(profile).unwrap(),
+            884
+        );
+        let plan = CompressionChainPlan::for_certified_source(profile, 884).unwrap();
+        assert_eq!(plan.maps()[0].input_width(), 7_072);
+        assert_eq!(
+            plan.policy(),
+            CompressionPolicyId::NegativeBinaryTwoMapSisBoundV1
+        );
+        assert_eq!(plan.terminal_coefficients() * 16, COMPRESSION_TARGET_BYTES);
+        assert!(CompressionChainPlan::for_certified_source(profile, 885).is_err());
+        assert!(CompressionChainPlan::try_for_complete_source(profile, 513)
+            .unwrap()
+            .is_none());
     }
 
     #[test]

@@ -1079,7 +1079,8 @@ plus `recursive_folds[..cut_level]`, with no terminal. `ResidualCutParams` is:
 - `r_a` columns from the §3.2 helper (97 R_256);
 - payload mode `Raw`: Akita's own compression is not used at the cut. The
   cut level sends Whiteout's compression `cm(u_a)` under the response
-  proof's chain, split at the 512-coefficient cap (§5.4, A47); u_a is
+  proof's chain, split into the fewest balanced chunks of at most 884
+  coefficients (§5.4, A47; 512 before O5); u_a is
   `rank × d_B` coefficients, 19 × 64 = 1,216 on every checked-in row since
   W5e (§5.5.2).
 
@@ -1573,7 +1574,8 @@ argument. Raw images cost about 25 KB at the headline, against the paper's
   constraint joins the fused sumcheck on `I_bin`, and item 2 gains the chain
   equations of each image.
 - Images above 512 coefficients are split into ⌈len/512⌉ chunks, each
-  compressed by the existing two-map chain (Q4).
+  compressed by the existing two-map chain (Q4). Since O5 the chunks hold up
+  to 884 coefficients (§5.5, W5c deltas).
 - jolt-zk sends compressed t_p and t_D through a `ResponseProver` hook, so
   I1 holds. The Σ oracle input becomes (σ, cm(t_D), n).
 
@@ -2016,6 +2018,19 @@ code does, and why.
   (`MAX_COMPRESSION_INPUT_BYTES`), each with its own chain, so `cm(t)` is
   `8·⌈len/512⌉` coefficients (Q4). Why: Akita's chain plans stop at that
   cap; the script's `FCHAIN_MAX_IMAGE = 884` has no Akita counterpart.
+  *O5 (jolt D34):* Whiteout's chunks now hold up to 884 coefficients,
+  `CompressionChainPlan::max_certified_source_coefficients`: the largest
+  source whose first map stays inside its rank-one SIS cell (d = 16,
+  7,077 columns; 884 · 128 / 16 = 7,072). The second map's input is the
+  first map's fixed 16-coefficient output (256 columns of 508), so it does
+  not bound the source. `for_certified_source` derives the same two maps
+  under the same certification, without the 8 KiB cap, which still bounds
+  every clear B/D image; such a plan carries its own policy id,
+  `NegativeBinaryTwoMapSisBoundV1` (tag 4), which no descriptor admits.
+  An image takes the fewest chunks, balanced to within one coefficient, so
+  `cm(t)` is `8·⌈len/884⌉` coefficients: t_p and u_a (1,216 coefficients
+  each at rank 19) go from three chunks to two of 608, whose first maps
+  are 4,864 of the cell's 7,077 columns.
 - **Rows after reduction.** Paper `02_preliminaries.tex:199-203` and
   `04_protocol.tex:329-330`: the verifier checks `t = G₁ξ₁`,
   `K₁ξ₁ = G₂ξ₂`, `K₂ξ₂ = cm(t)`. Code: `t = G₁ξ₁` coefficient by
@@ -2537,7 +2552,8 @@ The numbering continues the W4 note's A1–A23.
   - **What is sent.** At the cut level's `NextWitnessPayload` site the
     masked prefix sends `cm(u_a)`: Whiteout's chain (§5.4, W5c), u_a cut
     into ⌈1,216/512⌉ = 3 chunks (512, 512, 192 coefficients), each with
-    its own two-map chain, so `cm(u_a)` is 3 × 8 coefficients, 384 B. The
+    its own two-map chain, so `cm(u_a)` is 3 × 8 coefficients, 384 B
+    (O5: two chunks of 608, 256 B). The
     site, its position (after the commitment to w_k, before the ring
     switch) and its class (public, `exchange_public_all`) are unchanged;
     only the length changes. Every other fold, clear or masked, still
@@ -2642,8 +2658,9 @@ The numbering continues the W4 note's A1–A23.
     `ZK_CUT_LEVEL = 1`.
   - jolt passes `WhiteoutTail::compression` (the response prover) on the
     prover side and `CompressionShape` on the verifier's.
-  - Size: `ξ_a` is 161,792 digits (two 512-coefficient chunks of 67,584,
-    one 192-coefficient chunk of 26,624). Measured on jolt (O4): the
+  - Size: `ξ_a` is 159,744 digits since O5 (two 608-coefficient chunks of
+    77,824 + 2,048; before O5, 161,792 in chunks of 512, 512 and 192).
+    Measured on jolt (O4): the
     masked prefix falls by 19,072 B on muldiv, fib 2^16 and fib 2^20, and
     ν stays 24 / 25 / 26 (jolt D29).
   - Tests (zk_end_to_end):
@@ -2660,7 +2677,8 @@ The numbering continues the W4 note's A1–A23.
       rejects with `ResponseRejected("fused sumcheck")`.
     - `honest_masked_prefix_satisfies_its_residual_rows` checks the
       claim's payload is the compression of the opened u_a; jolt's
-      `whiteout_compressed_residual_commitment_is_three_chunk_payloads`
+      `whiteout_compressed_residual_commitment_is_two_chunk_payloads`
+      (three before O5)
       pins its size on muldiv.
   - `tests/masked_prefix.rs` requires `test-support` (it compresses
     through `BackendCompression`); CI runs it in `test-zk` and, with
@@ -2684,9 +2702,11 @@ The numbering continues the W4 note's A1–A23.
   coefficients per slice to 8 pads per commitment.
 - **Q2.** A7 (d_A = d_B), A9 (the box envelope) and A14 (⊥ after T_att) remain
   open from W4. A8 (L) looks fine to the reviewer.
-- **Q4, compression above 8 KiB.** The cost script's `FCHAIN_MAX_IMAGE = 884`
-  disagrees with Akita's 512-coefficient cap. Should the model count the
-  split chain (§5.4)?
+- **Q4, compression above 8 KiB.** *Closed by O5 (jolt D34).* The cost
+  script's `FCHAIN_MAX_IMAGE = 884` disagreed with Akita's 512-coefficient
+  cap. Whiteout's images now chunk at 884, the first map's SIS bound, so
+  the split chain and the model agree whenever an image fits in one chunk;
+  t_p and u_a (1,216 coefficients) still take two (§5.4).
 - **Q6, Q_tot.** `05_security.tex:316` defines Q_tot, which bounds the
   distinguisher's and the honest algorithms' oracle queries together, but
   §6.2 gives no value. At Q_tot = 2^100 the term is about 2^−148.6. What
