@@ -1,7 +1,8 @@
 use super::*;
 use jolt_algebra::checked;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct SetupPrefixSearchKey {
@@ -16,16 +17,36 @@ struct SetupPrefixSearchKey {
     masking: LevelMasking,
 }
 
+/// Setup-prefix frontiers by search key, shared by the search's worker
+/// threads.
 #[derive(Default)]
 pub(crate) struct SetupPrefixSearchCache {
-    entries: HashMap<SetupPrefixSearchKey, Arc<[GroupOpenPhaseParams]>>,
-    hits: usize,
-    misses: usize,
+    entries: Mutex<HashMap<SetupPrefixSearchKey, Arc<[GroupOpenPhaseParams]>>>,
+    hits: AtomicUsize,
+    misses: AtomicUsize,
 }
 
 impl SetupPrefixSearchCache {
-    pub(crate) const fn diagnostics(&self) -> (usize, usize) {
-        (self.hits, self.misses)
+    pub(crate) fn diagnostics(&self) -> (usize, usize) {
+        (
+            self.hits.load(Ordering::Relaxed),
+            self.misses.load(Ordering::Relaxed),
+        )
+    }
+
+    fn get(&self, key: &SetupPrefixSearchKey) -> Option<Arc<[GroupOpenPhaseParams]>> {
+        self.entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(key)
+            .cloned()
+    }
+
+    fn insert(&self, key: SetupPrefixSearchKey, frontier: Arc<[GroupOpenPhaseParams]>) {
+        self.entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, frontier);
     }
 }
 
@@ -218,7 +239,7 @@ fn setup_prefix_slice_counts(
 /// Defines the setup-prefix domain by physical-width/setup Pareto pruning;
 /// restricted query search intentionally reuses it without query tradeoffs.
 pub(in crate::schedule_params) fn derive_setup_prefix_groups(
-    cache: &mut SetupPrefixSearchCache,
+    cache: &SetupPrefixSearchCache,
     request: SetupPrefixSearchRequest<'_>,
 ) -> Result<Vec<GroupOpenPhaseParams>, AkitaError> {
     let SetupPrefixSearchRequest {
@@ -243,11 +264,11 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         guide,
         masking,
     };
-    if let Some(cached) = cache.entries.get(&cache_key) {
-        cache.hits = cache.hits.saturating_add(1);
+    if let Some(cached) = cache.get(&cache_key) {
+        cache.hits.fetch_add(1, Ordering::Relaxed);
         return Ok(cached.to_vec());
     }
-    cache.misses = cache.misses.saturating_add(1);
+    cache.misses.fetch_add(1, Ordering::Relaxed);
     if outer_ring_dimension == 0
         || !outer_ring_dimension.is_power_of_two()
         || !inner_ring_dimension.is_multiple_of(outer_ring_dimension)
@@ -386,7 +407,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         .into_iter()
         .map(|(_, _, _, params)| params)
         .collect();
-    cache.entries.insert(cache_key, Arc::clone(&result));
+    cache.insert(cache_key, Arc::clone(&result));
     Ok(result.to_vec())
 }
 
@@ -422,7 +443,7 @@ mod tests {
         let opening = PlannerOpeningCandidate::evaluation_trace(
             Recursive::ring_challenge_config(64).expect("challenge config"),
         );
-        let mut cache = SetupPrefixSearchCache::default();
+        let cache = SetupPrefixSearchCache::default();
         let request = |guide| SetupPrefixSearchRequest {
             policy: &policy,
             opening,
@@ -434,7 +455,7 @@ mod tests {
             guide,
             masking: LevelMasking::Clear,
         };
-        let unguided = derive_setup_prefix_groups(&mut cache, request(None))
+        let unguided = derive_setup_prefix_groups(&cache, request(None))
             .expect("unguided setup-prefix frontier");
         let unguided_layouts = unguided
             .iter()
@@ -461,7 +482,7 @@ mod tests {
                         position_index_bits,
                         outer_slice_count,
                     };
-                    let guided = derive_setup_prefix_groups(&mut cache, request(Some(guide)))
+                    let guided = derive_setup_prefix_groups(&cache, request(Some(guide)))
                         .expect("guided setup-prefix candidate");
                     if !guided.is_empty()
                         && !unguided_layouts.contains(&(

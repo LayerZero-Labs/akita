@@ -368,10 +368,10 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
             .unwrap()
         );
     }
-    let mut prefix_cache = SetupPrefixSearchCache::default();
+    let prefix_cache = SetupPrefixSearchCache::default();
     let with_prefix = derive_fold_candidates(
         request,
-        RecursiveFoldWork::setup_prefixed(&mut prefix_cache, 1 << 14),
+        RecursiveFoldWork::setup_prefixed(&prefix_cache, 1 << 14),
         FoldCandidatePolicy::Best,
     )
     .expect("packing candidates with setup prefix");
@@ -1088,7 +1088,7 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
         PlannerOpeningCandidate::coefficient_packing(policy.claim_ext_degree, dimensions, 64)
             .unwrap()
             .unwrap();
-    let mut cache = SetupPrefixSearchCache::default();
+    let cache = SetupPrefixSearchCache::default();
     let request = |opening| SetupPrefixSearchRequest {
         policy: &policy,
         opening,
@@ -1100,9 +1100,9 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
         guide: None,
         masking: crate::schedule_params::LevelMasking::Clear,
     };
-    let trace_groups = derive_setup_prefix_groups(&mut cache, request(trace)).unwrap();
-    let exact_groups = derive_setup_prefix_groups(&mut cache, request(exact_packing)).unwrap();
-    let reduced_groups = derive_setup_prefix_groups(&mut cache, request(reduced_packing)).unwrap();
+    let trace_groups = derive_setup_prefix_groups(&cache, request(trace)).unwrap();
+    let exact_groups = derive_setup_prefix_groups(&cache, request(exact_packing)).unwrap();
+    let reduced_groups = derive_setup_prefix_groups(&cache, request(reduced_packing)).unwrap();
     assert!(!trace_groups.is_empty() && !exact_groups.is_empty() && !reduced_groups.is_empty());
     assert!(trace_groups
         .iter()
@@ -1129,7 +1129,7 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
     let natural_len = (1 << 14) - 513;
     let n_prefix = akita_params::padded_setup_prefix_len(natural_len);
     let full_prefix_groups = derive_setup_prefix_groups(
-        &mut cache,
+        &cache,
         SetupPrefixSearchRequest {
             n_prefix,
             ..request(trace)
@@ -1153,7 +1153,7 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
     }
 
     let error = derive_setup_prefix_groups(
-        &mut cache,
+        &cache,
         SetupPrefixSearchRequest {
             n_prefix: natural_len,
             ..request(trace)
@@ -1171,9 +1171,9 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
     let mut policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     policy.claim_ext_degree = 2;
     let mut params = audited_grouped_level_params();
-    let mut cache = SetupPrefixSearchCache::default();
+    let cache = SetupPrefixSearchCache::default();
     let prefix_params = derive_setup_prefix_groups(
-        &mut cache,
+        &cache,
         SetupPrefixSearchRequest {
             policy: &policy,
             opening: PlannerOpeningCandidate::evaluation_trace(params.fold_challenge_config()),
@@ -1250,10 +1250,10 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
     type Recursive = RecursiveCommitmentConfig<OneHot>;
     let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let challenge = Recursive::ring_challenge_config(64).expect("challenge config");
-    let mut cache = SetupPrefixSearchCache::default();
+    let cache = SetupPrefixSearchCache::default();
     for log_prefix in 12..=20 {
         let groups = derive_setup_prefix_groups(
-            &mut cache,
+            &cache,
             SetupPrefixSearchRequest {
                 policy: &policy,
                 opening: PlannerOpeningCandidate::evaluation_trace(challenge),

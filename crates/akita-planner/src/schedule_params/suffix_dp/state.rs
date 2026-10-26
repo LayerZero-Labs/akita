@@ -1,4 +1,7 @@
 use super::*;
+#[cfg(feature = "parallel")]
+use std::collections::HashSet;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// Result of the suffix DP at one state. Each selection objective retains the
 /// candidates its parent needs because proof-size and setup-envelope pricing
@@ -142,11 +145,22 @@ impl ScheduleMemoKey {
     }
 }
 
+/// Completed suffix states, shared by the search's worker threads.
+///
+/// An entry is the state's result as a function of its key alone, so which
+/// thread computes it, and when, never changes what a reader sees.
 pub(crate) struct ScheduleMemo {
+    states: Mutex<MemoStates>,
+    pub(super) setup_prefixes: SetupPrefixSearchCache,
+}
+
+struct MemoStates {
     entries: HashMap<ScheduleMemoKey, MemoEntry>,
+    /// States some thread is completing now.
+    #[cfg(feature = "parallel")]
+    claimed: HashSet<ScheduleMemoKey>,
     direct_insertion_order: VecDeque<ScheduleMemoKey>,
     prefixed_insertion_order: VecDeque<ScheduleMemoKey>,
-    pub(super) setup_prefixes: SetupPrefixSearchCache,
 }
 
 pub(super) struct MemoEntry {
@@ -170,7 +184,7 @@ const MAX_SECOND_CHANCE_PROBES: usize = 16;
 #[ignore = "manual peak-RSS measurement with both cache quotas saturated"]
 fn memo_cache_pressure() {
     let multi = std::env::var_os("AKITA_MEMO_MULTI_CHUNK").is_some();
-    let mut memo = ScheduleMemo::new();
+    let memo = ScheduleMemo::new();
     let result = empty_suffix_result();
     for (topology, capacity) in [
         (
@@ -250,37 +264,71 @@ pub(super) fn evict_suffix_entry(
 impl ScheduleMemo {
     pub(crate) fn new() -> Self {
         Self {
-            entries: HashMap::new(),
-            direct_insertion_order: VecDeque::new(),
-            prefixed_insertion_order: VecDeque::new(),
+            states: Mutex::new(MemoStates {
+                entries: HashMap::new(),
+                #[cfg(feature = "parallel")]
+                claimed: HashSet::new(),
+                direct_insertion_order: VecDeque::new(),
+                prefixed_insertion_order: VecDeque::new(),
+            }),
             setup_prefixes: SetupPrefixSearchCache::default(),
         }
     }
 
+    fn states(&self) -> MutexGuard<'_, MemoStates> {
+        self.states.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     #[cfg(test)]
     pub(super) fn len(&self) -> usize {
-        self.entries.len()
+        self.states().entries.len()
     }
 
     #[cfg(test)]
     pub(super) fn contains(&self, key: &ScheduleMemoKey) -> bool {
-        self.entries.contains_key(key)
+        self.states().entries.contains_key(key)
     }
 
-    pub(super) fn get(&mut self, key: &ScheduleMemoKey) -> Option<&Arc<SuffixResult>> {
-        self.entries.get_mut(key).map(|entry| {
+    /// Whether `key` is completed, or some thread is completing it.
+    #[cfg(feature = "parallel")]
+    pub(super) fn is_completed_or_claimed(&self, key: &ScheduleMemoKey) -> bool {
+        let states = self.states();
+        states.entries.contains_key(key) || states.claimed.contains(key)
+    }
+
+    /// Records that the caller is completing `key` until the claim drops.
+    #[cfg(feature = "parallel")]
+    /// A claim only steers which successors a thread starts; two threads
+    /// may still complete one state, to the same result.
+    pub(super) fn claim(&self, key: &ScheduleMemoKey) -> MemoClaim<'_> {
+        self.states().claimed.insert(key.clone());
+        MemoClaim {
+            memo: self,
+            key: key.clone(),
+        }
+    }
+
+    pub(super) fn get(&self, key: &ScheduleMemoKey) -> Option<Arc<SuffixResult>> {
+        self.states().entries.get_mut(key).map(|entry| {
             entry.referenced = true;
-            &entry.result
+            Arc::clone(&entry.result)
         })
     }
 
     pub(super) fn insert(
-        &mut self,
+        &self,
         key: ScheduleMemoKey,
         result: Arc<SuffixResult>,
         diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
     ) {
-        if let Entry::Occupied(mut existing) = self.entries.entry(key.clone()) {
+        let mut states = self.states();
+        let MemoStates {
+            entries,
+            direct_insertion_order,
+            prefixed_insertion_order,
+            ..
+        } = &mut *states;
+        if let Entry::Occupied(mut existing) = entries.entry(key.clone()) {
             existing.insert(MemoEntry {
                 result,
                 referenced: true,
@@ -289,20 +337,20 @@ impl ScheduleMemo {
         }
         let (insertion_order, capacity) = if key.is_direct() {
             (
-                &mut self.direct_insertion_order,
+                &mut *direct_insertion_order,
                 MAX_DIRECT_SUFFIX_CACHE_ENTRIES,
             )
         } else {
             (
-                &mut self.prefixed_insertion_order,
+                &mut *prefixed_insertion_order,
                 MAX_PREFIXED_SUFFIX_CACHE_ENTRIES,
             )
         };
         if insertion_order.len() >= capacity {
-            evict_suffix_entry(&mut self.entries, insertion_order);
+            evict_suffix_entry(entries, insertion_order);
         }
         insertion_order.push_back(key.clone());
-        self.entries.insert(
+        entries.insert(
             key,
             MemoEntry {
                 result,
@@ -311,15 +359,28 @@ impl ScheduleMemo {
         );
         if let Some(diagnostics) = diagnostics {
             diagnostics.record_memo_occupancy(
-                self.entries.len(),
-                self.direct_insertion_order.len(),
-                self.prefixed_insertion_order.len(),
+                entries.len(),
+                direct_insertion_order.len(),
+                prefixed_insertion_order.len(),
             );
         }
     }
 
     pub(crate) fn setup_prefix_cache_diagnostics(&self) -> (usize, usize) {
         self.setup_prefixes.diagnostics()
+    }
+}
+
+#[cfg(feature = "parallel")]
+pub(super) struct MemoClaim<'a> {
+    memo: &'a ScheduleMemo,
+    key: ScheduleMemoKey,
+}
+
+#[cfg(feature = "parallel")]
+impl Drop for MemoClaim<'_> {
+    fn drop(&mut self) {
+        self.memo.states().claimed.remove(&self.key);
     }
 }
 
@@ -339,8 +400,8 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
     pub(crate) challenge_order: akita_params::ChallengeFieldOrder,
     pub(crate) diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
-    pub(crate) ring_challenge_config:
-        &'a dyn Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>,
+    pub(crate) ring_challenge_config: &'a (dyn Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>
+             + Sync),
     pub(crate) key: PolynomialGroupLayout,
     pub(crate) setup_field_budget: Option<usize>,
     pub(crate) root_lookup_key: Option<&'a ScheduleLookupKey>,

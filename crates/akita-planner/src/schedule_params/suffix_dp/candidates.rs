@@ -582,7 +582,7 @@ impl<'a> CandidateDomain<'a> {
         ctx: &SuffixCtx<'_>,
         state: SuffixState<'_>,
         open_lb: u32,
-        setup_prefixes: &mut SetupPrefixSearchCache,
+        setup_prefixes: &SetupPrefixSearchCache,
     ) -> Result<GeneratedCandidates, AkitaError> {
         let policy = ctx.policy;
         let incoming_setup_prefix = state.topology.incoming_setup_prefix();

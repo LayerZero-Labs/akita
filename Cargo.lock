@@ -234,6 +234,7 @@ dependencies = [
  "jolt-algebra",
  "jolt-crypto",
  "libm",
+ "rayon",
 ]
 
 [[package]]

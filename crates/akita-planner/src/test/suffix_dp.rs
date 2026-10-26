@@ -26,7 +26,7 @@ fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::Schedu
 fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
     let direct = memo_key(1, None);
     let prefixed = memo_key(2, Some(1));
-    let mut memo = super::ScheduleMemo::new();
+    let memo = super::ScheduleMemo::new();
     for key in [direct.clone(), prefixed.clone()] {
         memo.insert(key, super::empty_suffix_result(), None);
     }
@@ -442,10 +442,10 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
             relation_phase: super::RingRelationPhase::QuotientPrefix,
         },
     };
-    let mut memo = super::ScheduleMemo::new();
+    let memo = super::ScheduleMemo::new();
     let domain = super::candidates::CandidateDomain::prepare(&ctx, state).unwrap();
     let generated = domain
-        .generate_recursive_for_opening_basis(&ctx, state, 6, &mut memo.setup_prefixes)
+        .generate_recursive_for_opening_basis(&ctx, state, 6, &memo.setup_prefixes)
         .unwrap();
     let candidates = super::attach_source_moments(&ctx, state, false, generated.folds).unwrap();
     let coords = |candidate: &super::PlannedFoldCandidate| {
@@ -502,7 +502,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     );
     let child = super::derive_selected_suffix_schedule(
         &ctx,
-        &mut memo,
+        &memo,
         child_state,
         2,
         super::QuerySearch::Unconstrained,
@@ -551,7 +551,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     let mut frontiers = super::StateFrontiers::new();
     super::search::process_candidate_batch(
         &ctx,
-        &mut memo,
+        &memo,
         state,
         1,
         6,
@@ -573,7 +573,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
                 == low_query.params.canonical_descriptor_bytes()
         })));
     assert!(std::sync::Arc::ptr_eq(
-        memo.get(&child_state.memo_key(&policy)).unwrap(),
+        &memo.get(&child_state.memo_key(&policy)).unwrap(),
         &child,
     ));
 }

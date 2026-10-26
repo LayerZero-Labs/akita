@@ -78,7 +78,7 @@ pub(crate) struct SetupPrefixLayoutGuide {
 enum RecursiveSetupPrefix<'a> {
     None,
     Search {
-        cache: &'a mut SetupPrefixSearchCache,
+        cache: &'a SetupPrefixSearchCache,
         natural_len: usize,
     },
 }
@@ -88,7 +88,7 @@ pub(crate) enum RecursiveFoldWork<'a> {
         relation_domain: RelationSearchDomain,
     },
     SetupPrefixed {
-        cache: &'a mut SetupPrefixSearchCache,
+        cache: &'a SetupPrefixSearchCache,
         natural_len: usize,
     },
 }
@@ -98,10 +98,7 @@ impl<'a> RecursiveFoldWork<'a> {
         Self::Direct { relation_domain }
     }
 
-    pub(crate) fn setup_prefixed(
-        cache: &'a mut SetupPrefixSearchCache,
-        natural_len: usize,
-    ) -> Self {
+    pub(crate) fn setup_prefixed(cache: &'a SetupPrefixSearchCache, natural_len: usize) -> Self {
         Self::SetupPrefixed { cache, natural_len }
     }
 

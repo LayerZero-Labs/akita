@@ -11,22 +11,6 @@ struct OpeningSearch<'a> {
     query_search: QuerySearch,
 }
 
-struct ChildPlan<'a> {
-    chunk_shape: Option<akita_params::WitnessChunkShape>,
-    params: &'a CommittedGroupParams,
-    next_witness_len: usize,
-    next_source_moment: Option<crate::response_model::SourceMomentEstimate>,
-
-    natural_setup_field_len: usize,
-    direct_edge_is_admissible: bool,
-    prune_direct_edge: bool,
-}
-
-struct PlannedChildren {
-    direct: Option<Arc<SuffixResult>>,
-    offloaded: Option<Arc<SuffixResult>>,
-}
-
 fn adaptation_guide_allows_state(ctx: &SuffixCtx<'_>, state: SuffixState<'_>) -> bool {
     let Some(guide) = ctx.adaptation_guide else {
         return true;
@@ -42,120 +26,66 @@ fn adaptation_guide_allows_state(ctx: &SuffixCtx<'_>, state: SuffixState<'_>) ->
         && state.topology.incoming_setup_prefix().is_none()
 }
 
-fn plan_candidate_children(
-    ctx: &SuffixCtx<'_>,
-    memo: &mut ScheduleMemo,
-    search: &OpeningSearch<'_>,
-    plan: ChildPlan<'_>,
-) -> Result<PlannedChildren, AkitaError> {
-    let state = search.state;
-    let Some(child_query_search) =
-        search
-            .query_search
-            .child(ctx, state, search.opening_layout, plan.params)?
-    else {
-        return Ok(PlannedChildren {
-            direct: None,
-            offloaded: None,
-        });
-    };
-    let guided_successor_is_offloaded = ctx.adaptation_guide.map(|guide| {
-        guide
-            .recursive_folds
-            .get(state.level)
-            .is_some_and(|successor| successor.params.setup_prefix().is_some())
-    });
-    let input_chunks = plan.chunk_shape.map(Arc::new);
-    let offload_forced = ctx.zk.is_some_and(|zk| zk.forces_offload_from(state.level));
-    let direct_child = if guided_successor_is_offloaded == Some(true)
-        || offload_forced
-        || !plan.direct_edge_is_admissible
-        || plan.prune_direct_edge
-    {
-        None
-    } else if search.depth == MAX_RECURSION_DEPTH {
-        Some(empty_suffix_result())
-    } else {
-        Some(derive_selected_suffix_schedule(
-            ctx,
-            memo,
-            SuffixState {
-                input_chunks: input_chunks.as_ref(),
-                level: state.level + 1,
-                current_witness_len: plan.next_witness_len,
-                current_lb: search.open_log_basis,
-                source_moment: plan.next_source_moment,
-                dimension_ceiling: plan.params.role_dims(),
-                topology: state
-                    .topology
-                    .direct_successor(plan.params.payload_mode, plan.params.ring_relation_mode),
-            },
-            search.depth + 1,
-            child_query_search.clone(),
-        )?)
-    };
-    let offload_search_enabled = ctx.policy.recursive_setup_planning
-        && ctx
-            .policy
-            .recursive_setup_search_policy
-            .admits_offloaded_edge_at(state.level)
-        // An offloaded edge accepts only a child suffix with at least two
-        // folds. That topology cannot fit at the last two depths.
-        && search.depth + 2 < MAX_RECURSION_DEPTH;
-    if offload_search_enabled
-        && plan.params.payload_mode.is_compressed()
-        && plan.params.ring_relation_mode.is_reduced_evaluation()
-    {
-        if let Some(diagnostics) = ctx.diagnostics {
-            diagnostics.record_reduced_rejection(ReducedTransitionRejection::OutgoingSetupOffload);
-        }
-    }
-    let offloaded_child = SuffixTopology::offloaded_successor(
-        plan.params.ring_relation_mode,
-        plan.params.payload_mode,
-        plan.natural_setup_field_len,
-    )
-    .filter(|_| guided_successor_is_offloaded != Some(false) && offload_search_enabled)
-    .map(|topology| {
-        derive_selected_suffix_schedule(
-            ctx,
-            memo,
-            SuffixState {
-                input_chunks: input_chunks.as_ref(),
-                level: state.level + 1,
-                current_witness_len: plan.next_witness_len,
-                current_lb: search.open_log_basis,
-                source_moment: plan.next_source_moment,
-                dimension_ceiling: plan.params.role_dims(),
-                topology,
-            },
-            search.depth + 1,
-            child_query_search.clone(),
-        )
-    })
-    .transpose()?;
-    Ok(PlannedChildren {
-        direct: direct_child,
-        offloaded: offloaded_child,
-    })
+/// What a fold candidate's edges into its successors need, decided before
+/// any successor is planned.
+struct CandidateEdges {
+    natural_setup_field_len: usize,
+    direct_edge_is_admissible: bool,
+    prune_direct_edge: bool,
 }
 
-fn price_planned_fold_candidate(
+enum EdgeDecision {
+    /// The candidate enters no frontier. `pruned` records a guided prune.
+    Dropped {
+        pruned: bool,
+    },
+    Planned(CandidateEdges),
+}
+
+/// The successor states one planned fold candidate requests: they share the
+/// fold's output and differ only in topology.
+struct ChildRequests {
+    query: QuerySearch,
+    input_chunks: Option<Arc<akita_params::WitnessChunkShape>>,
+    level: usize,
+    next_witness_len: usize,
+    open_log_basis: u32,
+    next_source_moment: Option<crate::response_model::SourceMomentEstimate>,
+    dimension_ceiling: CommitmentRingDims,
+    direct: Option<DirectChild>,
+    offloaded: Option<SuffixTopology>,
+}
+
+enum DirectChild {
+    /// The recursion bound ends the schedule with this fold's successor.
+    Empty,
+    Search(SuffixTopology),
+}
+
+impl ChildRequests {
+    fn state(&self, topology: SuffixTopology) -> SuffixState<'_> {
+        SuffixState {
+            input_chunks: self.input_chunks.as_ref(),
+            level: self.level,
+            current_witness_len: self.next_witness_len,
+            current_lb: self.open_log_basis,
+            source_moment: self.next_source_moment,
+            dimension_ceiling: self.dimension_ceiling,
+            topology,
+        }
+    }
+}
+
+/// Decides `candidate`'s edges against the state's current `frontiers`.
+fn candidate_edges(
     ctx: &SuffixCtx<'_>,
-    memo: &mut ScheduleMemo,
     search: &OpeningSearch<'_>,
     guide: Option<(CompleteObjectiveBound, usize)>,
-    candidate: PlannedFoldCandidate,
-    frontiers: &mut StateFrontiers,
-) -> Result<(), AkitaError> {
+    candidate: &PlannedFoldCandidate,
+    frontiers: &StateFrontiers,
+) -> Result<EdgeDecision, AkitaError> {
     let state = search.state;
-    let PlannedFoldCandidate {
-        chunk_shape,
-        params,
-        next_witness_len,
-        opening_reduction_bytes: _,
-        next_source_moment,
-    } = candidate;
+    let params = &candidate.params;
     if let Some(natural_prefix_len) = state.topology.incoming_setup_prefix() {
         let padded_prefix_len = akita_params::padded_setup_prefix_len(natural_prefix_len);
         if !offloaded_witness_contracts(
@@ -163,17 +93,16 @@ fn price_planned_fold_candidate(
             state.current_lb,
             padded_prefix_len,
             ctx.policy.decomposition.field_bits(),
-            next_witness_len,
+            candidate.next_witness_len,
             search.open_log_basis,
             ctx.policy.min_offloaded_witness_contraction,
         )? {
-            return Ok(());
+            return Ok(EdgeDecision::Dropped { pruned: false });
         }
     }
-    let natural_len = guide.map(|(_, natural_len)| natural_len).map_or_else(
-        || active_setup_field_len(&params, search.opening_layout),
-        Ok,
-    )?;
+    let natural_len = guide
+        .map(|(_, natural_len)| natural_len)
+        .map_or_else(|| active_setup_field_len(params, search.opening_layout), Ok)?;
     let direct_edge_is_admissible =
         state
             .topology
@@ -190,10 +119,7 @@ fn price_planned_fold_candidate(
             complete_root_setup_bound_is_strictly_worse(lower_bound, &frontiers.projected)
         })
     {
-        if let Some(diagnostics) = ctx.diagnostics {
-            diagnostics.record_guided_direct_edge_prune();
-        }
-        return Ok(());
+        return Ok(EdgeDecision::Dropped { pruned: true });
     }
     let prune_direct_edge = if direct_edge_is_admissible {
         guide
@@ -202,7 +128,7 @@ fn price_planned_fold_candidate(
                 direct_edge_bound_is_strictly_worse(
                     ctx.policy,
                     guide_scope,
-                    &params,
+                    params,
                     natural_len,
                     lower_bound,
                     &frontiers.projected,
@@ -213,44 +139,253 @@ fn price_planned_fold_candidate(
     } else {
         false
     };
-    if prune_direct_edge {
+    if prune_direct_edge && !ctx.policy.recursive_setup_planning {
+        return Ok(EdgeDecision::Dropped { pruned: true });
+    }
+    Ok(EdgeDecision::Planned(CandidateEdges {
+        natural_setup_field_len: natural_len,
+        direct_edge_is_admissible,
+        prune_direct_edge,
+    }))
+}
+
+/// The successor states `candidate` requests under `edges`, or `None` when
+/// its query budget admits none.
+fn child_requests(
+    ctx: &SuffixCtx<'_>,
+    search: &OpeningSearch<'_>,
+    candidate: &PlannedFoldCandidate,
+    edges: &CandidateEdges,
+    diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
+) -> Result<Option<ChildRequests>, AkitaError> {
+    let state = search.state;
+    let params = &candidate.params;
+    let Some(query) = search
+        .query_search
+        .child(ctx, state, search.opening_layout, params)?
+    else {
+        return Ok(None);
+    };
+    let guided_successor_is_offloaded = ctx.adaptation_guide.map(|guide| {
+        guide
+            .recursive_folds
+            .get(state.level)
+            .is_some_and(|successor| successor.params.setup_prefix().is_some())
+    });
+    let offload_forced = ctx.zk.is_some_and(|zk| zk.forces_offload_from(state.level));
+    let direct = if guided_successor_is_offloaded == Some(true)
+        || offload_forced
+        || !edges.direct_edge_is_admissible
+        || edges.prune_direct_edge
+    {
+        None
+    } else if search.depth == MAX_RECURSION_DEPTH {
+        Some(DirectChild::Empty)
+    } else {
+        Some(DirectChild::Search(state.topology.direct_successor(
+            params.payload_mode,
+            params.ring_relation_mode,
+        )))
+    };
+    let offload_search_enabled = ctx.policy.recursive_setup_planning
+        && ctx
+            .policy
+            .recursive_setup_search_policy
+            .admits_offloaded_edge_at(state.level)
+        // An offloaded edge accepts only a child suffix with at least two
+        // folds. That topology cannot fit at the last two depths.
+        && search.depth + 2 < MAX_RECURSION_DEPTH;
+    if offload_search_enabled
+        && params.payload_mode.is_compressed()
+        && params.ring_relation_mode.is_reduced_evaluation()
+    {
+        if let Some(diagnostics) = diagnostics {
+            diagnostics.record_reduced_rejection(ReducedTransitionRejection::OutgoingSetupOffload);
+        }
+    }
+    let offloaded = SuffixTopology::offloaded_successor(
+        params.ring_relation_mode,
+        params.payload_mode,
+        edges.natural_setup_field_len,
+    )
+    .filter(|_| guided_successor_is_offloaded != Some(false) && offload_search_enabled);
+    Ok(Some(ChildRequests {
+        query,
+        input_chunks: candidate.chunk_shape.map(Arc::new),
+        level: state.level + 1,
+        next_witness_len: candidate.next_witness_len,
+        open_log_basis: search.open_log_basis,
+        next_source_moment: candidate.next_source_moment,
+        dimension_ceiling: params.role_dims(),
+        direct,
+        offloaded,
+    }))
+}
+
+fn price_planned_fold_candidate(
+    ctx: &SuffixCtx<'_>,
+    memo: &ScheduleMemo,
+    search: &OpeningSearch<'_>,
+    guide: Option<(CompleteObjectiveBound, usize)>,
+    candidate: PlannedFoldCandidate,
+    frontiers: &mut StateFrontiers,
+) -> Result<(), AkitaError> {
+    let edges = match candidate_edges(ctx, search, guide, &candidate, frontiers)? {
+        EdgeDecision::Dropped { pruned } => {
+            if pruned {
+                if let Some(diagnostics) = ctx.diagnostics {
+                    diagnostics.record_guided_direct_edge_prune();
+                }
+            }
+            return Ok(());
+        }
+        EdgeDecision::Planned(edges) => edges,
+    };
+    if edges.prune_direct_edge {
         if let Some(diagnostics) = ctx.diagnostics {
             diagnostics.record_guided_direct_edge_prune();
         }
-        if !ctx.policy.recursive_setup_planning {
-            return Ok(());
-        }
     }
-    let children = plan_candidate_children(
-        ctx,
-        memo,
-        search,
-        ChildPlan {
-            chunk_shape,
-            params: &params,
-            next_witness_len,
-            next_source_moment,
-
-            natural_setup_field_len: natural_len,
-            direct_edge_is_admissible,
-            prune_direct_edge,
-        },
-    )?;
+    let (direct, offloaded) =
+        match child_requests(ctx, search, &candidate, &edges, ctx.diagnostics)? {
+            None => (None, None),
+            Some(requests) => {
+                let direct = requests
+                    .direct
+                    .as_ref()
+                    .map(|child| match child {
+                        DirectChild::Empty => Ok(empty_suffix_result()),
+                        DirectChild::Search(topology) => derive_selected_suffix_schedule(
+                            ctx,
+                            memo,
+                            requests.state(*topology),
+                            search.depth + 1,
+                            requests.query.clone(),
+                        ),
+                    })
+                    .transpose()?;
+                let offloaded = requests
+                    .offloaded
+                    .map(|topology| {
+                        derive_selected_suffix_schedule(
+                            ctx,
+                            memo,
+                            requests.state(topology),
+                            search.depth + 1,
+                            requests.query.clone(),
+                        )
+                    })
+                    .transpose()?;
+                (direct, offloaded)
+            }
+        };
     price_level_candidate_with_children(
         ctx,
-        state,
+        search.state,
         search.opening_layout,
         LevelCandidateEdge {
-            params: &params,
-            natural_setup_field_len: natural_len,
+            params: &candidate.params,
+            natural_setup_field_len: edges.natural_setup_field_len,
             require_child_fold: search.require_child_fold,
         },
         CandidateChildren {
-            direct: children.direct.as_deref(),
-            offloaded: children.offloaded.as_deref(),
+            direct: direct.as_deref(),
+            offloaded: offloaded.as_deref(),
         },
         frontiers,
     )
+}
+
+/// How many candidates of a state's traversal have their successors
+/// completed together. A guided traversal prunes against the frontier its
+/// earlier candidates built, so it completes one pool-width wave at a time
+/// and a candidate pruned by an earlier wave costs nothing.
+fn successor_wave(guide_scope: Option<GuideScope>) -> usize {
+    #[cfg(feature = "parallel")]
+    if guide_scope.is_some() {
+        return rayon::current_num_threads();
+    }
+    #[cfg(not(feature = "parallel"))]
+    let _ = guide_scope;
+    usize::MAX
+}
+
+/// Completes, in parallel, the successor states that `traversal`'s
+/// candidates request under the state's current `frontiers`, so the ordered
+/// traversal that follows reads them from `memo`. `search` is the state's
+/// search; each candidate's opening layout replaces its layout.
+///
+/// This only fills the memo, whose entries are functions of their keys, so
+/// the traversal selects exactly what it selects without it. Prunes are
+/// decided against the frontier at the start of the wave; within the wave
+/// the traversal's frontiers only grow, so it may prune a candidate whose
+/// successors were completed here (wasted work, never a different result).
+/// This skips a successor only when it is already completed or claimed by
+/// another thread, when deciding its candidate's edges failed, or when the
+/// traversal's request differs (a query budget that admits no successor);
+/// the traversal completes any skipped successor it needs. Every successor
+/// is completed unconstrained by the query budget, which is how a
+/// restricted request first looks it up. An error is dropped here and
+/// reported by the traversal if it reaches that state.
+#[cfg(feature = "parallel")]
+fn complete_successors(
+    ctx: &SuffixCtx<'_>,
+    memo: &ScheduleMemo,
+    search: &OpeningSearch<'_>,
+    traversal: &[(
+        Option<(CompleteObjectiveBound, usize)>,
+        PlannedFoldCandidate,
+    )],
+    frontiers: &StateFrontiers,
+) {
+    use rayon::prelude::*;
+
+    let mut requests = Vec::new();
+    for (guide, candidate) in traversal {
+        let Ok(opening_layout) = candidate
+            .params
+            .opening_layout_for_final_group(candidate.params.group())
+        else {
+            continue;
+        };
+        let candidate_search = OpeningSearch {
+            opening_layout: &opening_layout,
+            query_search: QuerySearch::Unconstrained,
+            ..*search
+        };
+        let Ok(EdgeDecision::Planned(edges)) =
+            candidate_edges(ctx, &candidate_search, *guide, candidate, frontiers)
+        else {
+            continue;
+        };
+        if let Ok(Some(request)) = child_requests(ctx, &candidate_search, candidate, &edges, None) {
+            requests.push(request);
+        }
+    }
+    let mut pending = std::collections::HashSet::new();
+    let states: Vec<_> = requests
+        .iter()
+        .flat_map(|request| {
+            let direct = match request.direct {
+                Some(DirectChild::Search(topology)) => Some(topology),
+                Some(DirectChild::Empty) | None => None,
+            };
+            direct
+                .into_iter()
+                .chain(request.offloaded)
+                .map(|topology| request.state(topology))
+        })
+        .filter(|state| {
+            let key = state.memo_key(ctx.policy);
+            !memo.is_completed_or_claimed(&key) && pending.insert(key)
+        })
+        .collect();
+    let depth = search.depth + 1;
+    states.into_par_iter().for_each(|state| {
+        // The traversal reports this state's error if it reaches the state.
+        let _ =
+            derive_selected_suffix_schedule(ctx, memo, state, depth, QuerySearch::Unconstrained);
+    });
 }
 
 fn finish_state(retains_setup_projection: bool, frontiers: StateFrontiers) -> SuffixResult {
@@ -275,7 +410,7 @@ fn finish_state(retains_setup_projection: bool, frontiers: StateFrontiers) -> Su
 #[allow(clippy::too_many_arguments)]
 pub(super) fn process_candidate_batch(
     ctx: &SuffixCtx<'_>,
-    memo: &mut ScheduleMemo,
+    memo: &ScheduleMemo,
     state: SuffixState<'_>,
     depth: usize,
     open_log_basis: u32,
@@ -319,21 +454,42 @@ pub(super) fn process_candidate_batch(
     }
     let incoming_setup_prefix = state.topology.incoming_setup_prefix();
     let guide_scope = GuideScope::for_state(is_root_level, incoming_setup_prefix);
-    let traversal = candidate_traversal(ctx.policy, guide_scope, opening_layout, candidates)?;
-    for (guide, candidate) in traversal {
-        let opening_layout = candidate
-            .params
-            .opening_layout_for_final_group(candidate.params.group())?;
-        let search = OpeningSearch {
-            state,
-            depth,
-            open_log_basis,
-            opening_layout: &opening_layout,
-            require_child_fold,
-            guide_scope,
-            query_search: query_search.clone(),
-        };
-        price_planned_fold_candidate(ctx, memo, &search, guide, candidate, frontiers)?;
+    let mut traversal: Vec<_> =
+        candidate_traversal(ctx.policy, guide_scope, opening_layout, candidates)?.collect();
+    while !traversal.is_empty() {
+        let rest = traversal.split_off(successor_wave(guide_scope).min(traversal.len()));
+        #[cfg(feature = "parallel")]
+        complete_successors(
+            ctx,
+            memo,
+            &OpeningSearch {
+                state,
+                depth,
+                open_log_basis,
+                opening_layout,
+                require_child_fold,
+                guide_scope,
+                query_search: QuerySearch::Unconstrained,
+            },
+            &traversal,
+            frontiers,
+        );
+        for (guide, candidate) in traversal {
+            let opening_layout = candidate
+                .params
+                .opening_layout_for_final_group(candidate.params.group())?;
+            let search = OpeningSearch {
+                state,
+                depth,
+                open_log_basis,
+                opening_layout: &opening_layout,
+                require_child_fold,
+                guide_scope,
+                query_search: query_search.clone(),
+            };
+            price_planned_fold_candidate(ctx, memo, &search, guide, candidate, frontiers)?;
+        }
+        traversal = rest;
     }
     Ok(())
 }
@@ -342,7 +498,7 @@ pub(super) fn process_candidate_batch(
 /// `(level, current_witness_len, current_lb)`.
 pub(crate) fn derive_selected_suffix_schedule(
     ctx: &SuffixCtx<'_>,
-    memo: &mut ScheduleMemo,
+    memo: &ScheduleMemo,
     state: SuffixState<'_>,
     depth: usize,
     query_search: QuerySearch,
@@ -360,7 +516,7 @@ pub(crate) fn derive_selected_suffix_schedule(
     // caller reuses that result when it fits its exact root prefix; otherwise
     // it recomputes this state locally and never replaces the primary entry.
     if let QuerySearch::Restricted(prefix) = &query_search {
-        let cached = memo.get(&memo_key).cloned().map_or_else(
+        let cached = memo.get(&memo_key).map_or_else(
             || derive_selected_suffix_schedule(ctx, memo, state, depth, QuerySearch::Unconstrained),
             Ok,
         )?;
@@ -379,7 +535,7 @@ pub(crate) fn derive_selected_suffix_schedule(
             diagnostics.record_memo_result(relation_phase, cached.is_some());
         }
         if let Some(cached) = cached {
-            return Ok(Arc::clone(cached));
+            return Ok(cached);
         }
     }
     if depth > MAX_RECURSION_DEPTH {
@@ -396,6 +552,8 @@ pub(crate) fn derive_selected_suffix_schedule(
     let incoming_setup_prefix = state.topology.incoming_setup_prefix();
     let retains_setup_projection =
         incoming_setup_prefix.is_some() || (ctx.level_zero_is_root && state.level == 0);
+    #[cfg(feature = "parallel")]
+    let _claim = matches!(query_search, QuerySearch::Unconstrained).then(|| memo.claim(&memo_key));
     let candidate_domain = candidates::CandidateDomain::prepare(ctx, state)?;
     let root_level_key = candidate_domain.root_level_key;
     let opening_layout = &candidate_domain.opening_layout;
@@ -422,7 +580,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                 ctx,
                 state,
                 open_log_basis,
-                &mut memo.setup_prefixes,
+                &memo.setup_prefixes,
             )?;
             process_candidate_batch(
                 ctx,
